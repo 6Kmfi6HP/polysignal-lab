@@ -308,11 +308,158 @@ class SkewMeanReversionConfig(BaseModel):
     max_seconds_to_close: int = 86400  # 24h — works across full lifecycle
 
 
+class OneCentBuyConfig(BaseModel):
+    """1c Buy 极端低价被动限价捕捉配置"""
+    enabled: bool = True
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    entry_prices: list[float] = Field(default_factory=lambda: [0.01, 0.02, 0.03])
+    shares_per_level: int = 10
+    cancel_before_close_seconds: float = 20.0
+    min_seconds_after_open: float = 0.0
+    max_seconds_after_open: float = 280.0
+    take_profit_ladder: str = "[(0.10, 0.50), (0.15, 1.00)]"
+
+
+class NinetyNineCentSniperConfig(BaseModel):
+    """99c Sniper 临近结算高概率狙击配置"""
+    enabled: bool = True
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    max_entry_price: float = 0.99
+    min_external_probability: float = 0.995
+    min_seconds_before_close: float = 0.0
+    max_seconds_before_close: float = 90.0
+    max_notional_per_trade: float = 25.0
+    stop_price: float = 0.94
+    require_effectively_settled: bool = True
+
+
+class BinaryMomentumConfig(BaseModel):
+    """MACD/RSI/VWAP 二元动量配置"""
+    enabled: bool = True
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    macd_fast: int = 12
+    macd_slow: int = 26
+    macd_signal: int = 9
+    rsi_period: int = 14
+    rsi_upper: int = 75
+    rsi_lower: int = 25
+    rsi_up_min: int = 50
+    rsi_down_max: int = 50
+    vwap_deviation: float = 0.002
+    max_token_price: float = 0.70
+    max_notional: float = 25.0
+    stop_loss_pct: float = 0.20
+    take_profit_pct: float = 0.25
+
+
+class LowSideDualReversionConfig(BaseModel):
+    """弱势双边均值回归 (pair-cost) 配置"""
+    enabled: bool = True
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    bid_prices: list[float] = Field(default_factory=lambda: [0.35, 0.40, 0.45])
+    shares_per_level: int = 5
+    pair_cost_cap: float = 0.98
+    max_unhedged_seconds: float = 20.0
+    stop_loss_hedge_cap: float = 1.03
+    cancel_before_close_seconds: float = 15.0
+    fee_rate: float = 0.01
+    slippage_buffer: float = 0.01
+
+
+class DumpHedgeConfig(BaseModel):
+    """急跌对冲配置"""
+    enabled: bool = True
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    move_threshold: float = 0.15
+    lookback_seconds: float = 30.0
+    detection_window_minutes: float = 5.0
+    leg_shares: int = 10
+    pair_cost_cap: float = 0.95
+    stop_loss_max_wait_seconds: float = 90.0
+    stop_loss_pair_cap: float = 1.05
+
+
+class PreOrderMarketConfig(BaseModel):
+    """预挂单盘前布局配置"""
+    enabled: bool = True
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    seconds_before_open: float = 180.0
+    seconds_after_open_expiry: float = 30.0
+    ladder: str = "[(0.45, 5), (0.40, 5)]"
+    pair_cost_cap: float = 0.98
+    reconcile_max_pair_cost: float = 1.00
+
+
+class CrossMarketBotConfig(BaseModel):
+    """跨市场组合套利配置"""
+    enabled: bool = True
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    min_edge: float = 0.01
+    max_leg_timeout_seconds: float = 1.5
+    max_basket_notional: float = 50.0
+    min_depth_shares: int = 5
+    fee_rate: float = 0.01
+
+
+class MidPriceSizingConfig(BaseModel):
+    """中段价位马丁/反马丁仓位管理配置"""
+    enabled: bool = True
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    mode: str = "MARTINGALE"
+    entry_center: float = 0.45
+    entry_band: float = 0.05
+    base_notional: float = 5.0
+    adverse_step: float = 0.05
+    favorable_step: float = 0.05
+    max_layers: int = 3
+    martingale_multiplier: float = 1.0
+    anti_martingale_multiplier: float = 1.5
+    min_signal_probability_edge: float = 0.03
+    max_price: float = 0.60
+    stop_price: float = 0.30
+    take_profit_price: float = 0.70
+
+
+class FibonacciBotConfig(BaseModel):
+    """斐波那契回撤策略配置"""
+    enabled: bool = True
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    zigzag_pct: float = 0.005
+    zone_width_pct: float = 0.001
+    ratios: list[float] = Field(default_factory=lambda: [0.236, 0.382, 0.500, 0.618, 0.786])
+    extension_ratios: list[float] = Field(default_factory=lambda: [1.000, 1.272, 1.618])
+    fib_size_weights: list[int] = Field(default_factory=lambda: [1, 1, 2, 3, 5])
+    max_token_price: float = 0.60
+    max_notional: float = 25.0
+    require_momentum_confirmation: bool = True
+    momentum_window: int = 8
+    min_momentum_zscore: float = 1.0
+    offset_from_fib: float = 0.02
+
+
 class StrategyConfig(BaseModel):
     vwap_momentum: VWAPMomentumConfig = Field(default_factory=VWAPMomentumConfig)
     late_consensus: LateConsensusConfig = Field(default_factory=LateConsensusConfig)
     ptb_diff: PTBDiffConfig = Field(default_factory=PTBDiffConfig)
     skew_mean_reversion: SkewMeanReversionConfig = Field(default_factory=SkewMeanReversionConfig)
+    one_cent_buy: OneCentBuyConfig = Field(default_factory=OneCentBuyConfig)
+    ninety_nine_cent_sniper: NinetyNineCentSniperConfig = Field(default_factory=NinetyNineCentSniperConfig)
+    binary_momentum: BinaryMomentumConfig = Field(default_factory=BinaryMomentumConfig)
+    low_side_dual_reversion: LowSideDualReversionConfig = Field(default_factory=LowSideDualReversionConfig)
+    dump_hedge: DumpHedgeConfig = Field(default_factory=DumpHedgeConfig)
+    pre_order_market: PreOrderMarketConfig = Field(default_factory=PreOrderMarketConfig)
+    cross_market_bot: CrossMarketBotConfig = Field(default_factory=CrossMarketBotConfig)
+    mid_price_sizing: MidPriceSizingConfig = Field(default_factory=MidPriceSizingConfig)
+    fibonacci_bot: FibonacciBotConfig = Field(default_factory=FibonacciBotConfig)
 
 
 class Settings(BaseSettings):
