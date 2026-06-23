@@ -16,11 +16,7 @@ from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 from polysignal_lab.utils import mask_secret, redact_text, utc_iso
 
 
-DEFAULT_MESSAGE = (
-    "[PolySignal Lab]\n"
-    "Paper-only Telegram QA send. No real order was placed. "
-    "No profit guarantee. Not financial advice."
-)
+DEFAULT_MESSAGE = "<b>PolySignal Lab</b>\nTelegram QA send · Mode: Paper"
 
 
 class TelegramQaEvidence(TypedDict):

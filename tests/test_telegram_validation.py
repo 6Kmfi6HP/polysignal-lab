@@ -7,7 +7,7 @@ import pytest
 
 from polysignal_lab.app.scheduler import PolySignalScheduler, TelegramStartupConfigError
 from polysignal_lab.config import Settings, TelegramConfig
-from polysignal_lab.publish.telegram_qa import parse_args, run
+from polysignal_lab.publish.telegram_qa import DEFAULT_MESSAGE, parse_args, run
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 
 
@@ -25,6 +25,18 @@ def _live_telegram_config() -> TelegramConfig:
         send_daily_report=False,
         retry_attempts=1,
     )
+
+
+def test_telegram_qa_default_message_is_compact() -> None:
+    assert DEFAULT_MESSAGE == "<b>PolySignal Lab</b>\nTelegram QA send · Mode: Paper"
+    assert parse_args([]).message == DEFAULT_MESSAGE
+    for removed in (
+        "No real order",
+        "No profit guarantee",
+        "Not financial advice",
+        "Paper-only Telegram QA",
+    ):
+        assert removed not in DEFAULT_MESSAGE
 
 
 def test_missing_telegram_credentials_fail_startup_when_publish_enabled(

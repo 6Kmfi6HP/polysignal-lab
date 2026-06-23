@@ -26,11 +26,29 @@ async def test_formatter_signal_message_within_limit(snapshot, settings):
     # When: the Telegram signal message is formatted.
     message = MessageFormatter(max_chars=4096).signal_message(sig, 10.0)
 
-    # Then: the message is bounded and explicit about paper-only, non-guaranteed use.
+    # Then: the message is bounded, compact, and free of verbose risk copy.
     assert len(message) <= 4096
-    assert "Paper Simulation" in message
-    assert "not a real order" in message
-    assert "No profit guarantee" in message
+    assert "<b>🟢 " in message
+    assert " · BUY " in message
+    assert "</b>" in message
+    assert "<code>" in message
+    assert "Entry  " in message
+    assert "Max    " in message
+    assert "Stake  10.00 USDC" in message
+    assert "Conf   " in message
+    assert "Close  " in message
+    assert "<b>Why</b>" in message
+    assert "Mode: Paper" in message
+    assert "ID: <code>" in message
+    for removed in (
+        "Risk:",
+        "Manual execution only",
+        "Do not chase above max entry",
+        "not financial advice",
+        "No profit guarantee",
+        "No real order",
+    ):
+        assert removed not in message
 
 
 async def test_telegram_dry_run_publish(settings):
@@ -219,13 +237,47 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
     result_message = formatter.result_message(result)
     daily_message = formatter.daily_report_message(report)
 
-    # Then: both messages use non-guarantee paper-only language.
-    assert "Paper result only" in result_message
-    assert "No real order was placed" in result_message
-    assert "No profit guarantee" in result_message
-    assert "Paper results only" in daily_message
-    assert "No real trades were placed" in daily_message
-    assert "No profit guarantee" in daily_message
+    # Then: result messages are compact, paper-marked, and free of stale disclaimers.
+    assert result_message.startswith("<b>")
+    assert " · WIN</b>" in result_message
+    assert "<code>" in result_message
+    assert "Side   " in result_message
+    assert "Entry  " in result_message
+    assert "Stake  " in result_message
+    assert "Shares " in result_message
+    assert "PnL    " in result_message
+    assert "ROI    " in result_message
+    assert "Settle " in result_message
+    assert "Mode: Paper" in result_message
+    assert "ID: <code>" in result_message
+    for removed in (
+        "Note:",
+        "Paper result only",
+        "No real order was placed",
+        "No profit guarantee",
+    ):
+        assert removed not in result_message
+
+    # Then: daily messages use the compact report layout and no stale disclaimers.
+    assert daily_message.startswith("<b>📊 Daily Paper Report</b>")
+    assert "Equity  " in daily_message
+    assert " → " in daily_message
+    assert "PnL     " in daily_message
+    assert "ROI     " in daily_message
+    assert "Signals " in daily_message
+    assert "Filled  " in daily_message
+    assert "Closed  " in daily_message
+    assert "W/L     " in daily_message
+    assert "WR      " in daily_message
+    assert "<b>Strategies</b>" in daily_message
+    assert "•" in daily_message
+    for removed in (
+        "Notes:",
+        "Paper results only",
+        "No real trades were placed",
+        "No profit guarantee",
+    ):
+        assert removed not in daily_message
 
 
 async def test_formatter_truncates_long_signal_message(snapshot, settings) -> None:
@@ -239,4 +291,5 @@ async def test_formatter_truncates_long_signal_message(snapshot, settings) -> No
 
     # Then: the message is bounded and visibly marked as truncated.
     assert len(message) <= 240
+    assert message.startswith("<b>🟢 ")
     assert message.endswith("[truncated for Telegram]")

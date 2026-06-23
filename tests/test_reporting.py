@@ -103,4 +103,6 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
 
     message = MessageFormatter().daily_report_message(report)
     assert "SPLIT" not in message
+    assert message.startswith("<b>📊 Daily Paper Report</b>")
+    assert "<b>Strategies</b>" in message
     assert {state.value for state in TradeResultStatus} == {"WIN", "LOSS", "VOID", "UNKNOWN"}
