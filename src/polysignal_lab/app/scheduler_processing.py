@@ -214,7 +214,10 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
                 scheduler.sqlite.upsert_paper_position(position)
             if scheduler.paper.fill_notifier:
                 scheduler.paper.fill_notifier(result.order, "filled", result.fills[0] if result.fills else None)
-        elif result.status == OrderStatus.REJECTED:
+        elif result.status == OrderStatus.REJECTED or (
+            result.status == OrderStatus.CANCELLED
+            and (result.reject_reason or result.order.reject_reason)
+        ):
             original_reason = result.reject_reason or result.order.reject_reason
             normalized_reason = normalize_paper_reject_reason(original_reason)
             result.reject_reason = normalized_reason
@@ -227,8 +230,9 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
             scheduler.logs.append("paper_wallet_snapshots", wallet_snapshot)
             scheduler.sqlite.insert_wallet_snapshot(wallet_snapshot)
             scheduler.logger.info(
-                "Resting paper order %s rejected: %s",
+                "Resting paper order %s %s: %s",
                 result.order.paper_order_id,
+                result.order.status.lower(),
                 result.reject_reason or result.order.reject_reason,
             )
             if scheduler.paper.fill_notifier:
