@@ -101,6 +101,22 @@ def test_order_book_parses_hash_field() -> None:
     assert book.hash == "test-hash-value"
 
 
+def test_book_epoch_state_instantiation() -> None:
+    from polysignal_lab.data.book_reconciliation import BookEpochState
+
+    state = BookEpochState(
+        token_id="token-1",
+        epoch=1,
+        has_snapshot=True,
+        stale_reason=None,
+        last_hash="hash-1",
+        last_source_timestamp=None,
+        last_received_at=None,
+    )
+
+    assert state.token_id == "token-1"
+
+
 async def test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids() -> None:
     fixtures = _fixtures()
     page_1 = fixtures["gamma_event_page_1"]
