@@ -216,7 +216,8 @@ def test_taker_still_fails_ask_above_max_entry():
     )
     snap = _make_active_snapshot(_make_fresh_book())
     reason = gate._max_entry(sig, snap)
-    assert reason == "ASK_ABOVE_MAX_ENTRY"
+    assert reason is not None
+    assert reason.reason_code == "ASK_ABOVE_MAX_ENTRY"
 
 def test_gtd_expiry_rejects_missing():
     gate = _make_gate()
@@ -233,7 +234,8 @@ def test_gtd_expiry_rejects_missing():
     gate = _make_gate()
     snap = _make_active_snapshot(_make_fresh_book())
     reason = gate._gtd_expiry(sig, snap)
-    assert reason == "MISSING_GTD_EXPIRY"
+    assert reason is not None
+    assert reason.reason_code == "MISSING_GTD_EXPIRY"
 
 def test_gtd_expiry_rejects_too_long():
     gate = _make_gate()
@@ -248,7 +250,8 @@ def test_gtd_expiry_rejects_too_long():
     )
     snap = _make_active_snapshot(_make_fresh_book())
     reason = gate._gtd_expiry(sig, snap)
-    assert reason == "GTD_EXPIRY_EXCEEDS_24H"
+    assert reason is not None
+    assert reason.reason_code == "GTD_EXPIRY_EXCEEDS_24H"
 
 def test_gtd_expiry_accepts_valid():
     gate = _make_gate()

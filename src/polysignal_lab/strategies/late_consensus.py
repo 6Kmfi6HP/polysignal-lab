@@ -4,6 +4,7 @@ from datetime import datetime
 
 from polysignal_lab.config import LateConsensusConfig
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy
@@ -36,6 +37,13 @@ class LateConsensusStrategy(BaseStrategy):
         self._last_favorite: dict[str, tuple[Side, datetime]] = {}
         # Track last entry timestamp per market for frequency gating (Step 2)
         self._last_entry_at: dict[str, datetime] = {}
+
+    @property
+    def freshness_policy(self) -> FreshnessPolicy:
+        return FreshnessPolicy(
+            max_orderbook_staleness_ms=self.config.max_orderbook_staleness_ms,
+            max_spot_staleness_ms=self.config.max_spot_staleness_ms,
+        )
 
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalCandidate]:
         # --- Pre-checks: enabled, asset, timeframe ---
@@ -132,8 +140,6 @@ class LateConsensusStrategy(BaseStrategy):
         mid_threshold = int(120 * scale)
         contracts = self._dynamic_position_size(seconds, high_threshold, mid_threshold)
 
-        # --- Record this entry for frequency gating ---
-        self._last_entry_at[market_id] = now
 
         # --- Build SignalCandidate with exit logic metadata ---
         reason_codes = [
@@ -209,15 +215,7 @@ class LateConsensusStrategy(BaseStrategy):
         return 900
 
     def _side_change_blocked(self, snapshot: MarketSnapshot, side: Side) -> bool:
-        """Side change guard: prevent rapid direction flips within the guard window.
-
-        If the last recorded favorite for this market was the opposite side
-        within the last `flip_guard_window_sec` seconds, block the entry.
-        This is a strict side-change guard (not flip-stop).
-
-        Only updates the tracked favorite when the entry is NOT blocked,
-        so a blocked flip does not poison the state for the next call.
-        """
+        """Side change guard: prevent rapid direction flips within the guard window."""
         if not self.config.flip_guard_enabled:
             return False
         now = utc_now()
@@ -226,5 +224,9 @@ class LateConsensusStrategy(BaseStrategy):
             prev_side, prev_time = previous
             if prev_side != side and (now - prev_time).total_seconds() <= self.config.flip_guard_window_sec:
                 return True
-        self._last_favorite[snapshot.market.market_id] = (side, now)
         return False
+
+    def notify_signal_accepted(self, signal: SignalCandidate) -> None:
+        self._last_entry_at[signal.market_id] = signal.created_at
+        if self.config.flip_guard_enabled:
+            self._last_favorite[signal.market_id] = (signal.side, signal.created_at)

@@ -5,16 +5,29 @@ from collections import defaultdict, deque
 from statistics import mean, pstdev
 
 from polysignal_lab.domain.enums import OrderIntent, Side
-from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.domain.freshness import FreshnessPolicy
+from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 
 
 class BaseStrategy(ABC):
     name: str
 
+    @property
+    def freshness_policy(self) -> FreshnessPolicy | None:
+        return None
+
     @abstractmethod
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalCandidate]:
         raise NotImplementedError
+
+    def notify_signal_accepted(self, signal: SignalCandidate) -> None:
+        pass
+
+    def notify_signal_rejected(
+        self, signal: SignalCandidate, rejected: RejectedSignal
+    ) -> None:
+        pass
 
     def _candidate(
         self,
@@ -48,6 +61,7 @@ class BaseStrategy(ABC):
             max_entry_price=max_entry_price,
             seconds_to_close=snapshot.seconds_to_close,
             data_freshness_ms=snapshot.freshness.max_ms,
+            freshness_policy=self.freshness_policy,
             reason_codes=reason_codes,
             metrics=metrics,
             snapshot_id=snapshot.snapshot_id,

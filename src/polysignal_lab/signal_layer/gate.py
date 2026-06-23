@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
-from polysignal_lab.config import PolymarketDataConfig, SignalConfig, BinanceDataConfig
+from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import OrderIntent
+from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
+from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.signal_layer.deduper import SignalDeduper
 from polysignal_lab.signal_layer.rate_limit import ChannelRateLimiter
 
@@ -15,6 +18,16 @@ class GateDecision:
     accepted: bool
     signal: SignalCandidate | None = None
     rejected: RejectedSignal | None = None
+
+
+GateDetails = dict[str, str | float | int | None]
+GateCheck = Callable[[SignalCandidate, MarketSnapshot], "GateRejection | None"]
+
+
+@dataclass(frozen=True, slots=True)
+class GateRejection:
+    reason_code: str
+    details: GateDetails = field(default_factory=dict)
 
 
 class SignalGate:
@@ -33,7 +46,7 @@ class SignalGate:
         self.rate_limiter = rate_limiter or ChannelRateLimiter(signal_config.max_signals_per_hour, signal_config.max_signals_per_market)
 
     def evaluate(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateDecision:
-        checks = [
+        checks: list[GateCheck] = [
             self._market_active,
             self._time_window,
             self._book_freshness,
@@ -47,8 +60,9 @@ class SignalGate:
         ]
         log = logging.getLogger("polysignal_lab.gate")
         for check in checks:
-            reason = check(candidate, snapshot)
-            if reason:
+            rejection = check(candidate, snapshot)
+            if rejection:
+                reason = rejection.reason_code
                 log.info(
                     "GATE_REJECT %s %s market=%s side=%s reason=%s",
                     check.__name__,
@@ -63,7 +77,7 @@ class SignalGate:
                         candidate=candidate,
                         gate_name=check.__name__,
                         reason_code=reason,
-                        details=self._rejection_details(candidate, reason),
+                        details=self._rejection_details(candidate, rejection),
                     ),
                 )
         log.info(
@@ -76,10 +90,10 @@ class SignalGate:
         return GateDecision(True, signal=candidate)
 
     def _rejection_details(
-        self, candidate: SignalCandidate, reason: str
+        self, candidate: SignalCandidate, rejection: GateRejection
     ) -> dict[str, str | float | int | None]:
-        return {
-            "reason_code": reason,
+        details: dict[str, str | float | int | None] = {
+            "reason_code": rejection.reason_code,
             "signal_id": candidate.signal_id,
             "strategy": candidate.strategy,
             "asset": candidate.asset,
@@ -92,63 +106,138 @@ class SignalGate:
             "seconds_to_close": candidate.seconds_to_close,
             "dedupe_key": candidate.dedupe_key,
         }
+        details.update(rejection.details)
+        return details
 
-    def _market_active(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> str | None:
-        return None if snapshot.market.is_active else "MARKET_NOT_ACTIVE"
+    def _policy_threshold(
+        self,
+        policy: FreshnessPolicy | None,
+        policy_value: int | None,
+        global_value: int,
+    ) -> tuple[int, str]:
+        if policy is None or policy_value is None:
+            return global_value, "global"
+        return min(global_value, policy_value), "strategy_and_global"
 
-    def _time_window(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> str | None:
+    @staticmethod
+    def _freshness_details(
+        *,
+        source: str,
+        lag_ms: int | None,
+        threshold_ms: int,
+        policy_source: str,
+    ) -> GateDetails:
+        return {
+            "source": source,
+            "lag_ms": lag_ms,
+            "threshold_ms": threshold_ms,
+            "policy_source": policy_source,
+        }
+
+    def _market_active(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
+        return None if snapshot.market.is_active else GateRejection("MARKET_NOT_ACTIVE")
+
+    def _time_window(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
         if candidate.order_intent == OrderIntent.PASSIVE_GTD and candidate.expiry_seconds is not None:
             return None
         if candidate.seconds_to_close is None or candidate.seconds_to_close <= 0:
-            return "OUTSIDE_ENTRY_WINDOW"
+            return GateRejection("OUTSIDE_ENTRY_WINDOW")
         return None
 
-    def _book_freshness(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> str | None:
+    def _book_freshness(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
+        threshold_ms, policy_source = self._policy_threshold(
+            candidate.freshness_policy,
+            candidate.freshness_policy.max_orderbook_staleness_ms if candidate.freshness_policy else None,
+            self.poly_config.max_book_staleness_ms,
+        )
         book = snapshot.book_for(candidate.side)
-        if not book or not book.is_fresh(self.poly_config.max_book_staleness_ms, snapshot.created_at):
-            return "STALE_ORDERBOOK"
+        if book is None:
+            return GateRejection(
+                "MISSING_ORDERBOOK",
+                self._freshness_details(
+                    source="orderbook",
+                    lag_ms=None,
+                    threshold_ms=threshold_ms,
+                    policy_source=policy_source,
+                ),
+            )
+        lag_ms = book.freshness_ms(snapshot.created_at)
+        if lag_ms > threshold_ms:
+            return GateRejection(
+                "STALE_ORDERBOOK",
+                self._freshness_details(
+                    source="orderbook",
+                    lag_ms=lag_ms,
+                    threshold_ms=threshold_ms,
+                    policy_source=policy_source,
+                ),
+            )
         return None
 
-    def _spot_freshness(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> str | None:
-        if not snapshot.spot or not snapshot.spot.is_fresh(self.binance_config.max_price_staleness_ms, snapshot.created_at):
-            return "STALE_SPOT_PRICE"
+    def _spot_freshness(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
+        threshold_ms, policy_source = self._policy_threshold(
+            candidate.freshness_policy,
+            candidate.freshness_policy.max_spot_staleness_ms if candidate.freshness_policy else None,
+            self.binance_config.max_price_staleness_ms,
+        )
+        if snapshot.spot is None:
+            return GateRejection(
+                "MISSING_SPOT_PRICE",
+                self._freshness_details(
+                    source="spot_price",
+                    lag_ms=None,
+                    threshold_ms=threshold_ms,
+                    policy_source=policy_source,
+                ),
+            )
+        lag_ms = snapshot.spot.freshness_ms(snapshot.created_at)
+        if lag_ms > threshold_ms:
+            return GateRejection(
+                "STALE_SPOT_PRICE",
+                self._freshness_details(
+                    source="spot_price",
+                    lag_ms=lag_ms,
+                    threshold_ms=threshold_ms,
+                    policy_source=policy_source,
+                ),
+            )
         return None
 
-    def _spread(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> str | None:
+    def _spread(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
         if candidate.order_intent == OrderIntent.PASSIVE_GTD:
             return None
         book = snapshot.book_for(candidate.side)
         max_spread = candidate.metrics.get("max_spread", 0.12)
         if book and book.spread is not None and book.spread <= max_spread:
             return None
-        return "SPREAD_TOO_WIDE"
+        return GateRejection("SPREAD_TOO_WIDE")
 
-    def _max_entry(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> str | None:
+    def _max_entry(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
         if candidate.order_intent == OrderIntent.PASSIVE_GTD:
             return None
         ask = snapshot.ask_for(candidate.side)
         if ask is None or ask > candidate.max_entry_price:
-            return "ASK_ABOVE_MAX_ENTRY"
+            return GateRejection("ASK_ABOVE_MAX_ENTRY")
         return None
 
-    def _gtd_expiry(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> str | None:
+    def _gtd_expiry(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
         if candidate.order_intent != OrderIntent.PASSIVE_GTD:
             return None
         if candidate.expiry_seconds is None or candidate.expiry_seconds <= 0:
-            return "MISSING_GTD_EXPIRY"
+            return GateRejection("MISSING_GTD_EXPIRY")
         if candidate.expiry_seconds > 86400:
-            return "GTD_EXPIRY_EXCEEDS_24H"
+            return GateRejection("GTD_EXPIRY_EXCEEDS_24H")
         return None
 
-    def _confidence(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> str | None:
-        return None if candidate.confidence >= self.signal_config.min_confidence_to_publish else "CONFIDENCE_TOO_LOW"
+    def _confidence(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
+        return None if candidate.confidence >= self.signal_config.min_confidence_to_publish else GateRejection("CONFIDENCE_TOO_LOW")
 
-    def _dedupe(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> str | None:
+    def _dedupe(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
         if self.signal_config.dedupe_enabled and self.deduper.is_duplicate(candidate):
-            return "DUPLICATE_SIGNAL"
+            return GateRejection("DUPLICATE_SIGNAL")
         return None
 
-    def _rate_limit(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> str | None:
+    def _rate_limit(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
         if not self.rate_limiter.allow(candidate.market_id):
-            return "CHANNEL_RATE_LIMIT"
+            return GateRejection("CHANNEL_RATE_LIMIT")
         return None

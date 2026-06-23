@@ -4,6 +4,7 @@ from typing import NotRequired, TypedDict, assert_never
 
 from polysignal_lab.config import PTBDiffConfig
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy
@@ -71,6 +72,14 @@ class PTBDiffStrategy(BaseStrategy):
     def __init__(self, config: PTBDiffConfig):
         self.config = config
 
+    @property
+    def freshness_policy(self) -> FreshnessPolicy:
+        max_lag_ms = self.config.exit_config.market_data_max_lag_sec * 1000
+        return FreshnessPolicy(
+            max_orderbook_staleness_ms=max_lag_ms,
+            max_spot_staleness_ms=max_lag_ms,
+        )
+
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalCandidate]:
         if not self.config.enabled:
             return []
@@ -133,11 +142,6 @@ class PTBDiffStrategy(BaseStrategy):
             max_lag_ms = exit_cfg.market_data_max_lag_sec * 1000
             orderbook_freshness_ms = side_book.freshness_ms(now)
             spot_freshness_ms = snapshot.spot.freshness_ms(now)
-            if orderbook_freshness_ms > max_lag_ms:
-                continue
-
-            if spot_freshness_ms > max_lag_ms:
-                continue
 
             tp_sl = compute_tp_sl_thresholds(
                 entry_prob=entry_price,
@@ -154,7 +158,6 @@ class PTBDiffStrategy(BaseStrategy):
                 "PTB_TOKEN_PRICE_OK",
                 prob_ok_code,
                 "PTB_TIME_WINDOW_OK",
-                "PTB_ORDERBOOK_FRESH",
                 "PTB_SPREAD_OK",
                 trigger.name,
             ]
@@ -192,6 +195,7 @@ class PTBDiffStrategy(BaseStrategy):
                     "spread": side_book.spread,
                     "max_spread": self.config.max_spread,
                     "orderbook_freshness_ms": orderbook_freshness_ms,
+                    "max_lag_ms": max_lag_ms,
                     "spot_freshness_ms": spot_freshness_ms,
                 },
             )
