@@ -87,6 +87,26 @@ def test_polymarket_ws_book_message_updates_registry() -> None:
     assert book.last_trade_price == 0.49
 
 
+def test_websocket_event_types_reconciliation() -> None:
+    from polysignal_lab.domain.orderbook import OrderBook
+    from polysignal_lab.utils import utc_now
+
+    registry = OrderBookRegistry()
+    ws = PolymarketMarketWebSocket(PolymarketDataConfig(), registry)
+
+    registry.update_from_snapshot(OrderBook(token_id="token-up", source_timestamp="1710000000000"))
+
+    ws.handle_message({"event_type": "tick_size_change", "asset_id": "token-up"})
+    state = registry.get_state("token-up")
+    assert state is not None
+    assert registry.is_fill_eligible("token-up", 10000, utc_now()) is False
+    assert state.stale_reason == "TICK_SIZE_CHANGE_RESEED_REQUIRED"
+    assert registry.metrics.snapshot()["counters"].get("ws_event_tick_size_change") == 1
+
+    ws.handle_message({"event_type": "some_unknown_event_type"})
+    assert registry.metrics.snapshot()["counters"].get("ws_event_unknown_some_unknown_event_type") == 1
+
+
 def test_order_book_parses_hash_field() -> None:
     from polysignal_lab.domain.orderbook import OrderBook
 

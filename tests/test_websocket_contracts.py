@@ -42,7 +42,10 @@ def test_polymarket_price_changes_event_updates_registry() -> None:
     book = registry.get("token-up")
     assert book is not None
     assert book.best_bid == 0.41
-    assert book.best_ask == 0.53
+    assert book.best_ask is None
+    telemetry = registry.telemetry_for("token-up")
+    assert telemetry["best_bid"] == 0.41
+    assert telemetry["best_ask"] == 0.53
 
 
 def test_polymarket_book_best_bid_ask_last_trade_and_lifecycle_events_are_public_contract_safe() -> None:
@@ -57,10 +60,14 @@ def test_polymarket_book_best_bid_ask_last_trade_and_lifecycle_events_are_public
 
     book = registry.get("token-up")
     assert book is not None
-    assert book.best_bid == 0.42
-    assert book.best_ask == 0.54
+    assert book.best_bid == 0.4
+    assert book.best_ask == 0.52
     assert book.last_trade_price == 0.51
+    telemetry = registry.telemetry_for("token-up")
+    assert telemetry["best_bid"] == 0.42
+    assert telemetry["best_ask"] == 0.54
     assert ws.resolved_events.qsize() == 1
+    assert registry.metrics.snapshot()["counters"].get("ws_event_market_resolved") == 1
 
 
 def test_binance_bookticker_updates_spot_registry() -> None:
@@ -90,6 +97,7 @@ def test_malformed_public_market_events_are_ignored_without_crash() -> None:
     assert after is not None
     assert after.best_bid == before.best_bid
     assert after.best_ask == before.best_ask
+    assert registry.metrics.snapshot()["counters"].get("ws_decode_errors") == 1
 
 
 def test_polymarket_public_payload_text_is_not_executed() -> None:
