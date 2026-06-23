@@ -106,3 +106,73 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
     assert message.startswith("<b>📊 Daily Paper Report</b>")
     assert "<b>Strategies</b>" in message
     assert {state.value for state in TradeResultStatus} == {"WIN", "LOSS", "VOID", "UNKNOWN"}
+
+
+def test_daily_report_aggregates_paper_execution_quality() -> None:
+    order_payloads = [
+        {
+            "paper_order_id": "po-fill",
+            "status": "FILLED",
+            "order_intent": "taker_fok",
+            "metrics": {
+                "paper_order_intent": "taker_fok",
+                "paper_orderbook_staleness_ms": 42.0,
+                "paper_available_depth_usdc": 50.0,
+            },
+        },
+        {
+            "paper_order_id": "po-partial",
+            "status": "PARTIAL",
+            "order_intent": "taker_fak",
+            "metrics": {
+                "paper_order_intent": "taker_fak",
+                "paper_orderbook_staleness_ms": 64.0,
+                "paper_available_depth_usdc": 4.0,
+            },
+        },
+        {
+            "paper_order_id": "po-reject",
+            "status": "REJECTED",
+            "order_intent": None,
+            "reject_reason": "PAPER_ENTRY_PRICE_MOVED",
+            "metrics": {
+                "paper_order_intent": None,
+                "paper_normalized_reason": "PAPER_ENTRY_PRICE_MOVED",
+                "paper_original_reason": "ASK_ABOVE_MAX_ENTRY",
+                "paper_orderbook_staleness_ms": 20.0,
+                "paper_available_depth_usdc": 100.0,
+            },
+        },
+    ]
+    fill_payloads = [
+        {"paper_order_id": "po-fill", "fill_ratio": 1.0},
+        {"paper_order_id": "po-partial", "fill_ratio": 0.4},
+    ]
+
+    report = PaperReportService().build_daily_report(
+        report_date=date(2026, 6, 22),
+        starting_equity=1000.0,
+        ending_equity=1000.0,
+        total_signals=3,
+        paper_orders=3,
+        paper_fills=2,
+        rejected_paper_orders=1,
+        open_positions=1,
+        results=[],
+        paper_order_payloads=order_payloads,
+        paper_fill_payloads=fill_payloads,
+        paper_execution_assumptions={"slippage_bps": 25.0, "require_depth_check": True},
+    )
+
+    assert report.paper_attempts_by_intent == {
+        "default": 1,
+        "taker_fak": 1,
+        "taker_fok": 1,
+    }
+    assert report.paper_fills_by_intent == {"taker_fak": 1, "taker_fok": 1}
+    assert report.paper_partial_fills_by_intent == {"taker_fak": 1}
+    assert report.paper_rejects_by_reason == {"PAPER_ENTRY_PRICE_MOVED": 1}
+    assert report.paper_rejects_by_original_reason == {"ASK_ABOVE_MAX_ENTRY": 1}
+    assert report.average_execution_staleness_ms == 42.0
+    assert report.average_executable_depth_usdc == 154.0 / 3
+    assert report.paper_execution_assumptions["slippage_bps"] == 25.0
