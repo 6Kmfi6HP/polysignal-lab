@@ -11,9 +11,10 @@ from polysignal_lab.domain.paper_order import PaperOrder
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.paper.wallet import PaperWallet
 from polysignal_lab.data.state import OrderBookRegistry
-from polysignal_lab.config import FillModelConfig
+from polysignal_lab.config import FillModelConfig, PaperTradingConfig, PolymarketDataConfig
 from polysignal_lab.utils import utc_now
 from factories import sample_book, BookFactoryConfig
+from polysignal_lab.paper.simulator import PaperSimulator
 
 def _make_order(token_id="t-up", stake=10.0, limit=1.0) -> PaperOrder:
     return PaperOrder(
@@ -41,6 +42,25 @@ def _make_signal(signal_id="sig-1", token_id="t-up", pair_id=None, hedge_leg=Fal
         order_intent=OrderIntent.TAKER_FOK, pair_id=pair_id,
         hedge_leg=hedge_leg,
     )
+
+def test_paper_simulator_dispatches_passive_gtd_to_resting():
+    config = PaperTradingConfig()
+    data_config = PolymarketDataConfig()
+    wallet = PaperWallet(1000)
+    sim = PaperSimulator(config, data_config, wallet)
+    sig = SignalCandidate.build(
+        strategy="test", asset="BTC", timeframe="5m",
+        market_id="mkt-1", market_slug="s", condition_id="c",
+        token_id="t-up", side=Side.UP, confidence=0.6,
+        entry_reference_price=0.35, max_entry_price=0.35,
+        seconds_to_close=300, data_freshness_ms=100,
+        reason_codes=["T"], metrics={},
+        order_intent=OrderIntent.PASSIVE_GTD, expiry_seconds=300,
+    )
+    book = sample_book("t-up", BookFactoryConfig(ask=0.55, bid=0.30, size=100))
+    result = sim.process_signal(sig, book)
+    assert result.status == OrderStatus.RESTING
+    assert sim.passive.resting_count == 1
 
 def test_fak_fills_all_at_best_ask():
     executor = BestAskTakerExecutor(FillModelConfig(slippage_bps=0), 60000)
