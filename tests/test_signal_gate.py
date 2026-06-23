@@ -281,3 +281,31 @@ def test_gate_distinguishes_missing_spot_from_stale_spot() -> None:
     assert stale.rejected.reason_code == "STALE_SPOT_PRICE"
     assert stale.rejected.details["lag_ms"] == 2_000
     assert stale.rejected.details["threshold_ms"] == 1_500
+
+async def test_ptb_diff_stale_spot_candidate_is_rejected_by_gate(snapshot, settings) -> None:
+    stale_snapshot = snapshot.model_copy(
+        update={
+            "spot": snapshot.spot.model_copy(
+                update={"received_at": snapshot.created_at - timedelta(seconds=3)}
+            ),
+            "freshness": snapshot.freshness.model_copy(
+                update={"spot_ms": 3_000, "max_ms": 3_000}
+            ),
+        }
+    )
+    strategy = PTBDiffStrategy(settings.strategies.ptb_diff)
+    signals = strategy.evaluate(stale_snapshot)
+
+    assert signals
+
+    gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
+    decision = gate.evaluate(signals[0], stale_snapshot)
+
+    assert decision.accepted is False
+    assert decision.rejected is not None
+    assert decision.rejected.reason_code == "STALE_SPOT_PRICE"
+    assert decision.rejected.details["lag_ms"] == 3_000
+    assert (
+        decision.rejected.details["threshold_ms"]
+        == settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000
+    )

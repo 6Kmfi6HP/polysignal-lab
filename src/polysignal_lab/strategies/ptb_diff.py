@@ -142,11 +142,6 @@ class PTBDiffStrategy(BaseStrategy):
             max_lag_ms = exit_cfg.market_data_max_lag_sec * 1000
             orderbook_freshness_ms = side_book.freshness_ms(now)
             spot_freshness_ms = snapshot.spot.freshness_ms(now)
-            if orderbook_freshness_ms > max_lag_ms:
-                continue
-
-            if spot_freshness_ms > max_lag_ms:
-                continue
 
             tp_sl = compute_tp_sl_thresholds(
                 entry_prob=entry_price,
@@ -201,6 +196,7 @@ class PTBDiffStrategy(BaseStrategy):
                     "spread": side_book.spread,
                     "max_spread": self.config.max_spread,
                     "orderbook_freshness_ms": orderbook_freshness_ms,
+                    "max_lag_ms": max_lag_ms,
                     "spot_freshness_ms": spot_freshness_ms,
                 },
             )

@@ -15,8 +15,21 @@ def _client_with_store(tmp_path, snapshot, settings) -> tuple[TestClient, SQLite
     store = SQLiteStore(tmp_path / "dashboard.sqlite3")
     signal = PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0]
     lifecycle = sample_storage_lifecycle(signal)
+    rejected = lifecycle.rejected.model_copy(
+        update={
+            "reason_code": "STALE_SPOT_PRICE",
+            "details": {
+                **lifecycle.rejected.details,
+                "reason_code": "STALE_SPOT_PRICE",
+                "source": "spot_price",
+                "lag_ms": 3_000,
+                "threshold_ms": 2_000,
+                "policy_source": "strategy_and_global",
+            },
+        }
+    )
     store.insert_signal(signal)
-    store.insert_rejected_signal(lifecycle.rejected)
+    store.insert_rejected_signal(rejected)
     store.insert_paper_order(lifecycle.order)
     store.insert_paper_fill(lifecycle.fill)
     store.upsert_paper_position(lifecycle.position)
@@ -50,6 +63,10 @@ async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapsho
     assert overview.json()["counts"]["paper_trade_results"] == 1
     assert signals.json()[0]["signal_id"] == signal["signal_id"]
     assert rejected.json()[0]["candidate"]["signal_id"] == signal["signal_id"]
+    assert rejected.json()[0]["reason_code"] == "STALE_SPOT_PRICE"
+    assert rejected.json()[0]["details"]["lag_ms"] == 3_000
+    assert rejected.json()[0]["details"]["threshold_ms"] == 2_000
+    assert rejected.json()[0]["details"]["policy_source"] == "strategy_and_global"
     assert positions.json()[0]["paper_position_id"] == "pp-1"
     assert trades.json()[0]["paper_trade_id"] == "pt-1"
     assert html.status_code == 200
