@@ -60,6 +60,9 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
                         if consensus:
                             accepted.append(consensus)
                     elif decision.rejected:
+                        strategy.notify_signal_rejected(
+                            decision.rejected.candidate, decision.rejected
+                        )
                         try:
                             scheduler.logs.append("rejected_signals", decision.rejected)
                             scheduler.sqlite.insert_rejected_signal(decision.rejected)

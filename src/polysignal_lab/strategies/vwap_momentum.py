@@ -6,7 +6,7 @@ from polysignal_lab.config import VWAPMomentumConfig
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.snapshot import MarketSnapshot
-from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.domain.trade import Trade
 from polysignal_lab.strategies.base import BaseStrategy
 
@@ -24,6 +24,22 @@ class TradeHistory:
 
     def push(self, key: str, price: float, size: float, timestamp: float) -> None:
         self._trades[key].append(Trade(price=price, size=size, timestamp=timestamp))
+
+    def remove(self, key: str, price: float, size: float, timestamp: float) -> None:
+        trades = self._trades.get(key)
+        if not trades:
+            return
+        for idx in range(len(trades) - 1, -1, -1):
+            trade = trades[idx]
+            if (
+                trade.price == price
+                and trade.size == size
+                and trade.timestamp == timestamp
+            ):
+                del trades[idx]
+                if not trades:
+                    self._trades.pop(key, None)
+                return
 
     def _prune(self, key: str, window_sec: float, now: float) -> None:
         """Trim trades older than `window_sec` from storage.
@@ -128,6 +144,9 @@ class VWAPMomentumStrategy(BaseStrategy):
         self.trades = TradeHistory()
         # Per-market one-shot entry guard: market_id -> bool
         self._can_enter: dict[str, bool] = defaultdict(lambda: True)
+        self._pending_signal_samples: dict[
+            str, list[tuple[str, float, float, float]]
+        ] = {}
 
     def reset_entry_guard(self, market_id: str) -> None:
         """Re-allow entry for a market (used by tests or manual reset)."""
@@ -135,6 +154,15 @@ class VWAPMomentumStrategy(BaseStrategy):
 
     def notify_signal_accepted(self, signal: SignalCandidate) -> None:
         self._can_enter[signal.market_id] = False
+        self._pending_signal_samples.pop(signal.signal_id, None)
+
+    def notify_signal_rejected(
+        self, signal: SignalCandidate, rejected: RejectedSignal
+    ) -> None:
+        for key, price, size, timestamp in self._pending_signal_samples.pop(
+            signal.signal_id, []
+        ):
+            self.trades.remove(key, price, size, timestamp)
 
     @property
     def freshness_policy(self) -> FreshnessPolicy:
@@ -192,6 +220,7 @@ class VWAPMomentumStrategy(BaseStrategy):
         # 原版用 WS trade stream 的 last_price, 我们 REST 环境改用 ask
         # ------------------------------------------------------------------
         now_ts = snapshot.created_at.timestamp()
+        pushed_samples: list[tuple[str, float, float, float]] = []
         for side in [Side.UP, Side.DOWN]:
             book = snapshot.book_for(side)
             if book is None:
@@ -201,7 +230,9 @@ class VWAPMomentumStrategy(BaseStrategy):
             price = book.best_ask if book.best_ask is not None else book.last_trade_price
             if price is not None and price > 0:
                 key = self._market_key(snapshot.market.market_id, side)
-                self.trades.push(key, price, 1.0, now_ts)
+                size = 1.0
+                self.trades.push(key, price, size, now_ts)
+                pushed_samples.append((key, price, size, now_ts))
 
         # ------------------------------------------------------------------
         # Determine favorite side (higher current price)
@@ -298,6 +329,8 @@ class VWAPMomentumStrategy(BaseStrategy):
                 "down_last_price": down_price,
             },
         )
+        if signal and pushed_samples:
+            self._pending_signal_samples[signal.signal_id] = pushed_samples
         return [signal] if signal else []
 
     # ------------------------------------------------------------------

@@ -6,7 +6,7 @@ from statistics import mean, pstdev
 
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
-from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 
 
@@ -22,6 +22,11 @@ class BaseStrategy(ABC):
         raise NotImplementedError
 
     def notify_signal_accepted(self, signal: SignalCandidate) -> None:
+        pass
+
+    def notify_signal_rejected(
+        self, signal: SignalCandidate, rejected: RejectedSignal
+    ) -> None:
         pass
 
     def _candidate(

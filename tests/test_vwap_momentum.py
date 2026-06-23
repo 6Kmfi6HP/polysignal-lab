@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 from statistics import mean
+from types import SimpleNamespace
 
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import Side
@@ -308,6 +309,162 @@ def test_vwap_momentum_gate_rejection_does_not_consume_entry_guard() -> None:
     fresh_decision = gate.evaluate(fresh_signals[0], fresh_snapshot)
     assert fresh_decision.accepted is True
 
+
+def _timed_snapshot(
+    side: Side,
+    price: float,
+    staleness_ms: int,
+    previous_snapshots: list[MarketSnapshot],
+) -> MarketSnapshot:
+    scenario = VwapScenario(
+        side=side,
+        prices=(),
+        staleness_ms=staleness_ms,
+        price_interval_sec=5.0,
+        seconds_to_close=150,
+        elapsed_sec=150,
+    )
+    return _snapshot_for(
+        scenario,
+        price,
+        previous_snapshots=previous_snapshots if previous_snapshots else None,
+    )
+
+
+def test_vwap_momentum_rejected_stale_sample_does_not_pollute_next_signal() -> None:
+    config = _fast_config().model_copy(
+        update={
+            "momentum_window_sec": 10,
+            "min_deviation_pct": 0.015,
+            "max_deviation_pct": 1.0,
+            "max_orderbook_staleness_ms": 1_000,
+        }
+    )
+    strategy = VWAPMomentumStrategy(config)
+    gate = _gate_for_vwap()
+    snapshots: list[MarketSnapshot] = []
+
+    for price, staleness_ms in ((0.50, 0), (0.52, 0), (0.60, 2_000)):
+        snapshot = _with_fresh_spot(
+            _timed_snapshot(Side.UP, price, staleness_ms, snapshots)
+        )
+        snapshots.append(snapshot)
+        signals = strategy.evaluate(snapshot)
+
+    assert len(signals) == 1
+    stale_decision = gate.evaluate(signals[0], snapshots[-1])
+    assert stale_decision.accepted is False
+    assert stale_decision.rejected is not None
+    assert stale_decision.rejected.reason_code == "STALE_ORDERBOOK"
+
+    strategy.notify_signal_rejected(signals[0], stale_decision.rejected)
+
+    fresh_snapshot = _with_fresh_spot(_timed_snapshot(Side.UP, 0.54, 0, snapshots))
+    fresh_signals = strategy.evaluate(fresh_snapshot)
+
+    assert len(fresh_signals) == 1
+    assert abs(fresh_signals[0].metrics["vwap"] - 0.52) < 1e-12
+
+
+def test_vwap_momentum_accepted_sample_remains_in_history() -> None:
+    config = _fast_config().model_copy(
+        update={
+            "momentum_window_sec": 10,
+            "min_deviation_pct": 0.015,
+            "max_deviation_pct": 1.0,
+        }
+    )
+    strategy = VWAPMomentumStrategy(config)
+    gate = _gate_for_vwap()
+    snapshots: list[MarketSnapshot] = []
+
+    for price in (0.50, 0.52, 0.60):
+        snapshot = _with_fresh_spot(_timed_snapshot(Side.UP, price, 0, snapshots))
+        snapshots.append(snapshot)
+        signals = strategy.evaluate(snapshot)
+
+    assert len(signals) == 1
+    decision = gate.evaluate(signals[0], snapshots[-1])
+    assert decision.accepted is True
+    assert decision.signal is not None
+
+    strategy.notify_signal_accepted(decision.signal)
+
+    up_key = strategy._market_key(decision.signal.market_id, Side.UP)
+    down_key = strategy._market_key(decision.signal.market_id, Side.DOWN)
+    assert strategy.trades.latest_price(up_key) == 0.60
+    assert strategy.trades.latest_price(down_key) == 0.40
+
+
+async def test_scheduler_notifies_strategy_when_gate_rejects_vwap_signal() -> None:
+    from polysignal_lab.app.scheduler_processing import evaluate_once
+
+    class _Markets:
+        def __init__(self, market) -> None:
+            self._market = market
+
+        def active(self) -> list:
+            return [self._market]
+
+    class _SnapshotBuilder:
+        def __init__(self, snapshot: MarketSnapshot) -> None:
+            self.snapshot = snapshot
+
+        async def build(self, market) -> MarketSnapshot:
+            return self.snapshot
+
+    class _Consensus:
+        def add(self, signal):
+            return None
+
+    class _Logs:
+        def append(self, stream: str, row: object) -> None:
+            pass
+
+    class _SQLite:
+        def insert_rejected_signal(self, rejected: object) -> None:
+            pass
+
+    class _Logger:
+        def info(self, *args, **kwargs) -> None:
+            pass
+
+        def exception(self, *args, **kwargs) -> None:
+            pass
+
+    config = _fast_config().model_copy(
+        update={
+            "momentum_window_sec": 10,
+            "min_deviation_pct": 0.015,
+            "max_deviation_pct": 1.0,
+            "max_orderbook_staleness_ms": 1_000,
+        }
+    )
+    strategy = VWAPMomentumStrategy(config)
+    snapshots: list[MarketSnapshot] = []
+    for price, staleness_ms in ((0.50, 0), (0.52, 0), (0.60, 2_000)):
+        snapshots.append(
+            _with_fresh_spot(_timed_snapshot(Side.UP, price, staleness_ms, snapshots))
+        )
+    strategy.evaluate(snapshots[0])
+    strategy.evaluate(snapshots[1])
+
+    scheduler = SimpleNamespace(
+        ctx=SimpleNamespace(markets=_Markets(snapshots[2].market)),
+        snapshot_builder=_SnapshotBuilder(snapshots[2]),
+        logger=_Logger(),
+        strategies=[strategy],
+        gate=_gate_for_vwap(),
+        consensus=_Consensus(),
+        logs=_Logs(),
+        sqlite=_SQLite(),
+    )
+
+    accepted = await evaluate_once(scheduler)
+
+    assert accepted == []
+    up_key = strategy._market_key(snapshots[2].market.market_id, Side.UP)
+    assert strategy.trades.latest_price(up_key) == 0.52
 
 def test_vwap_momentum_entry_guard_is_consumed_only_after_acceptance() -> None:
     config = _fast_config()
