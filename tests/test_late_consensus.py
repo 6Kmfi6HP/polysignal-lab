@@ -247,3 +247,54 @@ def test_late_consensus_signal_carries_configured_freshness_policy() -> None:
     assert signal.freshness_policy.max_orderbook_staleness_ms == config.max_orderbook_staleness_ms
     assert signal.freshness_policy.max_spot_staleness_ms == config.max_spot_staleness_ms
     assert signal.freshness_policy.max_anchor_staleness_ms is None
+
+
+def test_late_consensus_stale_spot_is_rejected_by_signal_gate() -> None:
+    from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
+    from polysignal_lab.signal_layer.gate import SignalGate
+
+    strategy = LateConsensusStrategy(_config())
+    snapshot = _snapshot(
+        LateConsensusScenario(
+            spot=SpotState(price=101.0, price_to_beat=100.0, staleness_ms=2_000)
+        )
+    )
+    signal = strategy.evaluate(snapshot)[0]
+
+    decision = SignalGate(
+        SignalConfig(dedupe_enabled=False),
+        PolymarketDataConfig(max_book_staleness_ms=60_000),
+        BinanceDataConfig(max_price_staleness_ms=60_000),
+    ).evaluate(signal, snapshot)
+
+    assert decision.accepted is False
+    assert decision.rejected is not None
+    assert decision.rejected.reason_code == "STALE_SPOT_PRICE"
+    assert decision.rejected.details["lag_ms"] == 2_000
+    assert decision.rejected.details["threshold_ms"] == 1_500
+
+
+def test_late_consensus_stale_orderbook_is_rejected_by_signal_gate() -> None:
+    from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
+    from polysignal_lab.signal_layer.gate import SignalGate
+
+    strategy = LateConsensusStrategy(_config())
+    snapshot = _snapshot(
+        LateConsensusScenario(
+            books=ConsensusBooks(staleness_ms=2_000),
+            spot=SpotState(price=101.0, price_to_beat=100.0),
+        )
+    )
+    signal = strategy.evaluate(snapshot)[0]
+
+    decision = SignalGate(
+        SignalConfig(dedupe_enabled=False),
+        PolymarketDataConfig(max_book_staleness_ms=60_000),
+        BinanceDataConfig(max_price_staleness_ms=60_000),
+    ).evaluate(signal, snapshot)
+
+    assert decision.accepted is False
+    assert decision.rejected is not None
+    assert decision.rejected.reason_code == "STALE_ORDERBOOK"
+    assert decision.rejected.details["lag_ms"] == 2_000
+    assert decision.rejected.details["threshold_ms"] == 1_500
