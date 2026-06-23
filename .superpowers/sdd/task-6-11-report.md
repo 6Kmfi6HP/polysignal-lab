@@ -11,4 +11,5 @@ Verification:
 - `uv run --python /home/gyue/.local/bin/python3.11 python -m pytest tests/test_strategies.py -v` — 14 passed.
 - `uv run --python /home/gyue/.local/bin/python3.11 python -m pytest tests/ -v` — 162 passed, 1 warning.
 
-Commit: pending.
+Commits:
+- ef5ac2c Align additional strategy order intents
