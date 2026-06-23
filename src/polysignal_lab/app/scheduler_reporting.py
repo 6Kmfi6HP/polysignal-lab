@@ -15,7 +15,6 @@ from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
 from polysignal_lab.paper.report import PaperReportService
-from polysignal_lab.utils import utc_iso
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
