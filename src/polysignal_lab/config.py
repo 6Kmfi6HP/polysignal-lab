@@ -239,7 +239,12 @@ class Settings(BaseSettings):
             if not isinstance(target, dict):
                 continue
             target[parts[-1]] = _yaml_bool(env_val)
+        explicit_strategy_names: tuple[str, ...] = ()
+        strategies_data = data.get("strategies")
+        if isinstance(strategies_data, dict):
+            explicit_strategy_names = tuple(strategies_data)
         settings = cls.model_validate(data)
+        settings.strategies.set_explicit_strategy_names(explicit_strategy_names)
         settings.validate_runtime_environment()
         return settings
 

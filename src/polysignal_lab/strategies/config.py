@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, RootModel
 
 from polysignal_lab.domain.enums import Side
 
@@ -340,30 +340,15 @@ class StrategyConfig(BaseModel):
         default_factory=SkewMeanReversionConfig
     )
 
-    @model_validator(mode="before")
-    @classmethod
-    def reject_restored_strategy_overrides(cls, data):
-        if not isinstance(data, dict):
-            return data
-        restored = {
-            "binary_momentum",
-            "cross_market_bot",
-            "dump_hedge",
-            "fibonacci_bot",
-            "low_side_dual_reversion",
-            "mid_price_sizing",
-            "ninety_nine_cent_sniper",
-            "one_cent_buy",
-            "pre_order_market",
-            "skew_mean_reversion",
-        }
-        requested = restored.intersection(data)
-        if requested:
-            names = ", ".join(sorted(requested))
-            raise ValueError(f"Non-PRD strategies are not accepted in production config: {names}")
-        return data
+
+    _explicit_strategy_names: tuple[str, ...] = PrivateAttr(default=())
+
+    def set_explicit_strategy_names(self, names: Iterable[str]) -> None:
+        self._explicit_strategy_names = tuple(names)
+
+    def explicit_strategy_names(self) -> tuple[str, ...]:
+        return self._explicit_strategy_names
 
     def __iter__(self) -> Iterator[BaseModel]:
-        yield self.vwap_momentum
-        yield self.late_consensus
-        yield self.ptb_diff
+        for name in self._explicit_strategy_names:
+            yield getattr(self, name)

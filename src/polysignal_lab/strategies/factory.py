@@ -33,25 +33,54 @@ from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
 from polysignal_lab.strategies.skew_mean_reversion import SkewMeanReversionStrategy
 from polysignal_lab.strategies.vwap_momentum import VWAPMomentumStrategy
 
-PrdStrategyConfig = VWAPMomentumConfig | LateConsensusConfig | PTBDiffConfig
+StrategyConfigModel = (
+    VWAPMomentumConfig
+    | LateConsensusConfig
+    | PTBDiffConfig
+    | BinaryMomentumConfig
+    | CrossMarketBotConfig
+    | DumpHedgeConfig
+    | FibonacciBotConfig
+    | LowSideDualReversionConfig
+    | MidPriceSizingConfig
+    | NinetyNineCentSniperConfig
+    | OneCentBuyConfig
+    | PreOrderMarketConfig
+    | SkewMeanReversionConfig
+)
 
 _STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     "vwap_momentum": VWAPMomentumStrategy,
     "late_consensus": LateConsensusStrategy,
     "ptb_diff": PTBDiffStrategy,
+    "binary_momentum": BinaryMomentumStrategy,
+    "cross_market_bot": CrossMarketBotStrategy,
+    "dump_hedge": DumpHedgeStrategy,
+    "fibonacci_bot": FibonacciStrategyBot,
+    "low_side_dual_reversion": LowSideDualReversionStrategy,
+    "mid_price_sizing": MidPriceSizingStrategy,
+    "ninety_nine_cent_sniper": NinetyNineCentSniperStrategy,
+    "one_cent_buy": OneCentBuyStrategy,
+    "pre_order_market": PreOrderMarketStrategy,
+    "skew_mean_reversion": SkewMeanReversionStrategy,
 }
 
 
 def build_strategies(config: StrategyConfig) -> list[BaseStrategy]:
     strategies: list[BaseStrategy] = []
-    for name, strategy_cls in _STRATEGY_REGISTRY.items():
-        cfg = getattr(config, name, None)
-        if cfg is not None and getattr(cfg, "enabled", False):
+    for name in config.explicit_strategy_names():
+        strategy_cls = _STRATEGY_REGISTRY.get(name)
+        if strategy_cls is None:
+            raise ValueError(
+                f"Strategy {name!r} has config but no registered implementation"
+            )
+        cfg = getattr(config, name)
+        if getattr(cfg, "enabled", False):
             strategies.append(strategy_cls(cfg))
     return strategies
 
 
-def build_strategy(config: PrdStrategyConfig) -> BaseStrategy:
+def build_strategy(config: StrategyConfigModel) -> BaseStrategy:
     match config:
         case VWAPMomentumConfig():
             return VWAPMomentumStrategy(config)
