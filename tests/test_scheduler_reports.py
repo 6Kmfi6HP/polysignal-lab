@@ -4,7 +4,7 @@ import sqlite3
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from polysignal_lab.app import scheduler_reporting
+from polysignal_lab.app import scheduler_reporting, scheduler_runtime
 from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.domain.enums import ExitMode, OrderStatus, PositionStatus, Side, TradeResultStatus
 from polysignal_lab.domain.paper_result import PaperTradeResult
@@ -238,6 +238,40 @@ async def test_daily_report_includes_fractional_timestamp_in_first_second(
     assert report is not None
     assert report.report_date == date(2026, 6, 23)
     assert report.total_signals == 1
+
+
+async def test_iteration_report_uses_configured_report_date_when_local_date_differs(
+    tmp_path: Path, settings, monkeypatch
+) -> None:
+    # Given: the configured report timezone is still on the previous local date.
+    settings.app.timezone = "America/Los_Angeles"
+    scheduler = _scheduler(tmp_path, settings)
+
+    class FixedProcessDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 23)
+
+    class FixedReportDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return cls(2026, 6, 23, 6, 30, tzinfo=UTC)
+            return cls(2026, 6, 22, 23, 30, tzinfo=tz)
+
+    monkeypatch.setattr(scheduler_runtime, "date", FixedProcessDate)
+    monkeypatch.setattr(scheduler_reporting, "datetime", FixedReportDateTime)
+
+    monkeypatch.setattr(scheduler_runtime, "datetime", FixedReportDateTime)
+    # When: the run-loop gate has already recorded the process-local date.
+    report_date = await scheduler_runtime._generate_iteration_report(
+        scheduler, last_report_date=date(2026, 6, 23)
+    )
+
+    # Then: the configured local report is not skipped and the stored date is returned.
+    assert report_date == date(2026, 6, 22)
+    report_rows = scheduler.sqlite.query_json("daily_reports")
+    assert [row["report_date"] for row in report_rows] == ["2026-06-22"]
 
 async def test_daily_report_publish_record_written(tmp_path: Path, snapshot, settings) -> None:
     # Given: stored signals, one filled paper order, one rejected paper order, and a closed result.

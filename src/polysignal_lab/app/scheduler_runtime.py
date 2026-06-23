@@ -3,6 +3,7 @@ from __future__ import annotations
 from asyncio import CancelledError, Task, create_task, sleep
 from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.signal import SignalCandidate
@@ -166,16 +167,24 @@ async def _check_iteration_settlements(scheduler: PolySignalScheduler) -> None:
         scheduler.logger.error("check_settlements failed: %s", exc)
 
 
+def _configured_report_date(scheduler: PolySignalScheduler) -> date:
+    try:
+        report_tz = ZoneInfo(scheduler.settings.app.timezone)
+    except ZoneInfoNotFoundError:
+        report_tz = timezone.utc
+    return datetime.now(report_tz).date()
+
+
 async def _generate_iteration_report(
     scheduler: PolySignalScheduler, last_report_date: date | None
 ) -> date | None:
-    today = date.today()
-    if last_report_date == today:
+    report_date = _configured_report_date(scheduler)
+    if last_report_date == report_date:
         return last_report_date
     try:
         report = await scheduler.generate_daily_report()
         if report:
-            return today
+            return report.report_date
     except Exception as exc:
         scheduler.logger.error("generate_daily_report failed: %s", exc)
     return last_report_date
