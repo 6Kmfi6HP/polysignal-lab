@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from pydantic import JsonValue, TypeAdapter
 
-from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig
+from polysignal_lab.app.scheduler import PolySignalScheduler
+from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, Settings
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
 from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
 from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
+from polysignal_lab.utils import utc_now
+from factories import sample_book
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "public_market_payloads.json"
@@ -25,6 +29,57 @@ def _seed_polymarket_book(registry: OrderBookRegistry) -> PolymarketMarketWebSoc
     if isinstance(book, dict):
         ws.handle_message(book)
     return ws
+
+
+class _FakeReseedRest:
+    def __init__(self, returned_token_ids: tuple[str, ...]) -> None:
+        self.returned_token_ids = returned_token_ids
+        self.requested: tuple[str, ...] | None = None
+
+    async def get_books(self, token_ids: list[str]) -> list[object]:
+        self.requested = tuple(token_ids)
+        return [sample_book(token_id) for token_id in self.returned_token_ids]
+
+
+@pytest.mark.parametrize(
+    "returned_token_ids",
+    [
+        pytest.param((), id="empty"),
+        pytest.param(("token-refresh",), id="partial"),
+    ],
+)
+async def test_reseed_marks_requested_tokens_missing_from_successful_response_stale(
+    tmp_path: Path, returned_token_ids: tuple[str, ...]
+) -> None:
+    scheduler = PolySignalScheduler(Settings(), base_dir=tmp_path)
+    requested_token_ids = ["token-refresh", "token-missing"]
+    max_staleness_ms = scheduler.settings.data.polymarket.max_book_staleness_ms
+
+    for token_id in requested_token_ids:
+        scheduler.ctx.books.update(sample_book(token_id))
+        assert scheduler.ctx.books.is_fill_eligible(token_id, max_staleness_ms, utc_now())
+
+    rest = _FakeReseedRest(returned_token_ids)
+    scheduler.rest = rest
+
+    await scheduler._reseed_ws_books(requested_token_ids)
+
+    assert rest.requested == tuple(requested_token_ids)
+    for token_id in set(requested_token_ids) - set(returned_token_ids):
+        state = scheduler.ctx.books.get_state(token_id)
+        assert state is not None
+        assert state.has_snapshot is False
+        assert state.stale_reason == "RECONNECT_RESEED_FAILED"
+        assert not scheduler.ctx.books.is_fill_eligible(
+            token_id, max_staleness_ms, utc_now()
+        )
+    for token_id in returned_token_ids:
+        state = scheduler.ctx.books.get_state(token_id)
+        assert state is not None
+        assert state.has_snapshot is True
+        assert scheduler.ctx.books.is_fill_eligible(
+            token_id, max_staleness_ms, utc_now()
+        )
 
 
 async def test_websocket_subscribe_calls_reseed_hook() -> None:

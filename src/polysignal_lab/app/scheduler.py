@@ -177,10 +177,14 @@ class PolySignalScheduler:
         return await scheduler_processing.evaluate_once(self)
 
     async def _reseed_ws_books(self, token_ids: list[str]) -> None:
+        refreshed_token_ids: set[str] = set()
         try:
             books = await self.rest.get_books(token_ids)
             for book in books:
                 self.ctx.books.update_from_snapshot(book)
+                refreshed_token_ids.add(book.token_id)
+            for token_id in set(token_ids) - refreshed_token_ids:
+                self.ctx.books.mark_stale(token_id, "RECONNECT_RESEED_FAILED")
         except Exception as exc:
             self.logger.exception(
                 "Failed to reseed order books on WebSocket reconnect: %s", exc
