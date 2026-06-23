@@ -282,6 +282,21 @@ def test_gate_distinguishes_missing_spot_from_stale_spot() -> None:
     assert stale.rejected.details["lag_ms"] == 2_000
     assert stale.rejected.details["threshold_ms"] == 1_500
 
+
+async def test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason(
+    snapshot, settings
+) -> None:
+    strategy = PTBDiffStrategy(settings.strategies.ptb_diff)
+    signals = strategy.evaluate(snapshot)
+
+    assert signals
+    metrics = signals[0].metrics
+    assert metrics["orderbook_freshness_ms"] <= metrics["max_lag_ms"]
+    assert isinstance(metrics["orderbook_freshness_ms"], int | float)
+    assert isinstance(metrics["spot_freshness_ms"], int | float)
+    assert isinstance(metrics["max_lag_ms"], int | float)
+    assert "PTB_ORDERBOOK_FRESH" not in signals[0].reason_codes
+
 async def test_ptb_diff_stale_spot_candidate_is_rejected_by_gate(snapshot, settings) -> None:
     stale_snapshot = snapshot.model_copy(
         update={

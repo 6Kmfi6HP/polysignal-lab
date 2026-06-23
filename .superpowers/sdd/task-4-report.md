@@ -272,3 +272,70 @@ Output:
 ```text
 66cd72f fix: correct ptb stale orderbook reason code
 ```
+
+## Review fix: remove PTB_ORDERBOOK_FRESH from all PTB candidates
+
+Status: DONE
+
+### RED
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_signal_gate.py::test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason -q
+```
+
+Output:
+
+```text
+F                                                                        [100%]
+FAILED tests/test_signal_gate.py::test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason - AssertionError: assert 'PTB_ORDERBOOK_FRESH' not in ['PTB_SPOT_ABOVE_PTB', 'PTB_DIFF_THRESHOLD_OK', 'PTB_TOKEN_PRICE_OK', 'PTB_PROB_RANGE_OK', 'PTB_TIME_WINDOW_OK', 'PTB_ORDERBOOK_FRESH', ...]
+```
+
+### GREEN focused reason-code test
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_signal_gate.py::test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason -q
+```
+
+Output:
+
+```text
+.                                                                        [100%]
+```
+
+### Covering tests
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_signal_gate.py::test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason tests/test_signal_gate.py::test_ptb_diff_stale_orderbook_candidate_has_no_fresh_reason tests/test_signal_gate.py::test_ptb_diff_stale_spot_candidate_is_rejected_by_gate tests/test_dashboard.py::test_dashboard_readonly_endpoints_return_stored_data -q
+```
+
+Output:
+
+```text
+....                                                                     [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.11/site-packages/fastapi/testclient.py:1
+  /home/gyue/polysignal-lab/.worktrees/strategy-freshness-gates/.venv/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+```
+
+### Source check
+
+Command:
+
+```text
+search PTB_ORDERBOOK_FRESH in src and tests
+```
+
+Output:
+
+```text
+PTB_ORDERBOOK_FRESH remains only in negative test assertions under tests/test_signal_gate.py.
+```
