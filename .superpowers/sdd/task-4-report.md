@@ -54,3 +54,17 @@ DONE
 
 ### Notes
 - `generate_daily_report` now computes `day_end` from the next configured-timezone local midnight, so DST-short and DST-long local report days use the correct UTC bounds.
+
+## Fractional SQLite TEXT daily-window bounds fix
+
+### Red/green evidence
+- RED: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler_reports.py::test_daily_report_includes_fractional_timestamp_in_first_second -v` failed before implementation with `assert report.total_signals == 1` and observed `0`, proving the lower TEXT bound `2026-06-23T00:00:00Z` excluded persisted `2026-06-23T00:00:00.500000Z`.
+- GREEN: same targeted regression passed after scheduler daily-window bounds switched to fixed-width UTC strings with microseconds: 1 passed.
+- DST COVER: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler_reports.py::test_daily_report_uses_next_local_midnight_for_dst_day -v` passed: 1 passed, with next-local-midnight bounds preserved as fixed-width UTC strings.
+- COVERING: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler_reports.py -v` passed: 7 passed.
+
+### Commit SHA
+- `103ec22f93f4f97431a1a4f61a9aa826498ff1e4` — `fix: compare scheduler report timestamp bounds`
+
+### Notes
+- `generate_daily_report` now compares SQLite TEXT timestamps against UTC bounds formatted as `.000000Z` for both the local-day start and next-local-midnight end, matching persisted fractional timestamp shape while preserving DST-short and DST-long local days.
