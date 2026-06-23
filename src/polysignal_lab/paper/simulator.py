@@ -11,6 +11,7 @@ from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.paper.fill_model import BestAskTakerFillModel, FillDecision
+from polysignal_lab.paper.preflight import PaperExecutionPreflight, normalize_paper_reject_reason
 from polysignal_lab.paper.order_intent_executor import (
     BestAskTakerExecutor,
     IntentDispatchResult,
@@ -44,6 +45,12 @@ class PaperSimulator:
         self.fill_model = BestAskTakerFillModel(
             config.fill_model, data_config.max_book_staleness_ms, registry
         )
+        self.preflight = PaperExecutionPreflight(
+            config.fill_model,
+            data_config.max_book_staleness_ms,
+            config.fixed_stake_usdc,
+            registry,
+        )
         self.taker = BestAskTakerExecutor(
             config.fill_model, data_config.max_book_staleness_ms, registry
         )
@@ -76,15 +83,20 @@ class PaperSimulator:
         if rejection:
             self._reject_order(order, rejection)
             return SimulationResult(order=order, status=OrderStatus.REJECTED)
-        if orderbook is None:
-            self._reject_order(order, "MISSING_ORDERBOOK")
-            return SimulationResult(order=order, status=OrderStatus.REJECTED)
-
         intent = signal.order_intent
+        preflight = self.preflight.evaluate(signal, orderbook, order.created_at, intent)
+        order.metrics.update(preflight.metrics)
+        if not preflight.accepted:
+            self._reject_order(order, str(preflight.metrics.get("paper_original_reason") or preflight.reason_code))
+            return SimulationResult(order=order, status=OrderStatus.REJECTED)
 
         if intent == OrderIntent.PASSIVE_GTD:
             result = self.passive.enqueue(order, signal)
             return self._to_result(result)
+
+        if orderbook is None:
+            self._reject_order(order, "MISSING_ORDERBOOK")
+            return SimulationResult(order=order, status=OrderStatus.REJECTED)
 
         if intent in (OrderIntent.TAKER_FAK, OrderIntent.TAKER_FOK):
             if signal.pair_id:
@@ -156,6 +168,7 @@ class PaperSimulator:
         metrics: dict[str, bool | float | str | None] = {
             "fill_decision_accepted": decision.accepted,
             "fill_decision_reason": reason,
+            "fill_original_reason": decision.reason_code,
             "orderbook_token_id": orderbook.token_id,
             "orderbook_fresh": orderbook.is_fresh(self.fill_model.max_book_staleness_ms, order.created_at),
             "orderbook_staleness_ms": float(orderbook.freshness_ms(order.created_at)),
@@ -169,10 +182,13 @@ class PaperSimulator:
         return metrics
 
     def _reject_order(self, order: PaperOrder, reason: str) -> None:
+        normalized = normalize_paper_reject_reason(reason)
         order.status = OrderStatus.REJECTED
-        order.reject_reason = reason
+        order.reject_reason = normalized
         order.metrics.setdefault("fill_decision_accepted", False)
-        order.metrics["fill_decision_reason"] = reason
+        order.metrics["fill_decision_reason"] = normalized
+        order.metrics.setdefault("paper_original_reason", reason)
+        order.metrics["paper_normalized_reason"] = normalized
 
     def _paper_gate(self, order: PaperOrder) -> str | None:
         if not self.wallet.can_afford(order.stake_usdc):

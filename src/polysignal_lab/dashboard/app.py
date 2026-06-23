@@ -56,6 +56,17 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
     def rejected_signals(limit: int = 100) -> list[dict[str, JsonValue]]:
         return store.query_json("rejected_signals", limit=_bounded_limit(limit))
 
+    @app.get("/api/paper-orders", response_model=None)
+    def paper_orders(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
+        if status:
+            return store.query_json(
+                "paper_orders",
+                where="WHERE status=?",
+                params=(status.upper(),),
+                limit=_bounded_limit(limit),
+            )
+        return store.query_json("paper_orders", limit=_bounded_limit(limit))
+
     @app.get("/api/positions", response_model=None)
     def positions(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
         if status:
@@ -116,11 +127,32 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
             "</tr>"
             for row in leaderboard_rows
         ) or "<tr><td colspan='4' class='muted'>No stored report rows yet.</td></tr>"
+        reject_reason_rows = ""
+        if report:
+            rejects = report.get("paper_rejects_by_reason", {})
+            if isinstance(rejects, dict) and rejects:
+                reject_reason_rows = "".join(
+                    f"<li><code>{_text(reason)}</code>: {_text(count)}</li>"
+                    for reason, count in sorted(rejects.items())
+                )
+        execution_summary = (
+            f"<div><dt>Paper fills</dt><dd>{_text(report.get('paper_fills', 0))}</dd></div>"
+            f"<div><dt>Paper rejects</dt><dd>{_text(report.get('rejected_paper_orders', 0))}</dd></div>"
+            f"<div><dt>Avg exec lag</dt><dd>{_text(report.get('average_execution_staleness_ms', 'n/a'))} ms</dd></div>"
+            if report
+            else ""
+        )
+        reject_summary = (
+            f"<div><dt>Reject reasons</dt><dd><ul>{reject_reason_rows}</ul></dd></div>"
+            if reject_reason_rows
+            else ""
+        )
         report_summary = (
             f"<dl class='summary'><div><dt>Report date</dt><dd>{_text(report.get('report_date', ''))}</dd></div>"
             f"<div><dt>Total signals</dt><dd>{_text(report.get('total_signals', 0))}</dd></div>"
             f"<div><dt>Closed positions</dt><dd>{_text(report.get('closed_positions', 0))}</dd></div>"
-            f"<div><dt>Paper PnL</dt><dd>{_fmt_money(report.get('total_pnl_usdc', 0.0))}</dd></div></dl>"
+            f"<div><dt>Paper PnL</dt><dd>{_fmt_money(report.get('total_pnl_usdc', 0.0))}</dd></div>"
+            f"{execution_summary}{reject_summary}</dl>"
             if report
             else "<p class='muted'>No daily report has been stored yet.</p>"
         )
@@ -213,6 +245,7 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
                 <li><a href="/api/overview">Overview JSON</a></li>
                 <li><a href="/api/signals">Signals JSON</a></li>
                 <li><a href="/api/rejected-signals">Rejected JSON</a></li>
+                <li><a href="/api/paper-orders">Paper Orders JSON</a></li>
                 <li><a href="/api/positions">Positions JSON</a></li>
                 <li><a href="/api/trades">Trades JSON</a></li>
                 <li><a href="/api/leaderboard">Leaderboard JSON</a></li>

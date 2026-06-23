@@ -229,6 +229,8 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
         average_roi=0.6129,
         max_drawdown=0.0,
         profit_factor=None,
+        paper_rejects_by_reason={"PAPER_ENTRY_PRICE_MOVED": 1},
+        average_execution_staleness_ms=25.0,
         strategy_breakdown={"ptb_diff": {"closed_positions": 1}},
     )
     formatter = MessageFormatter(max_chars=4096)
@@ -265,6 +267,10 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
     assert "PnL     " in daily_message
     assert "ROI     " in daily_message
     assert "Signals " in daily_message
+    assert "Orders  " in daily_message
+    assert "Rejects " in daily_message
+    assert "ExecLag " in daily_message
+    assert "PAPER_ENTRY_PRICE_MOVED" in daily_message
     assert "Filled  " in daily_message
     assert "Closed  " in daily_message
     assert "W/L     " in daily_message

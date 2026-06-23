@@ -5,6 +5,8 @@ from datetime import date
 from fastapi.testclient import TestClient
 
 from polysignal_lab.dashboard.app import create_dashboard_app
+from polysignal_lab.domain.enums import OrderStatus, Side
+from polysignal_lab.domain.paper_order import PaperOrder
 from polysignal_lab.domain.paper_result import DailyReport
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
@@ -83,6 +85,70 @@ async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapsho
     assert "create_" + "order" not in html.text
 
 
+async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
+    # Given: a rejected paper order and daily report with paper execution aggregates.
+    store = SQLiteStore(tmp_path / "db.sqlite3")
+    order = PaperOrder(
+        paper_order_id="po-rejected-dashboard",
+        signal_id="sig-dashboard",
+        asset="BTC",
+        timeframe="5m",
+        strategy="ptb_diff",
+        market_id="mkt-1",
+        market_slug="btc-updown-5m",
+        token_id="token-up",
+        side=Side.UP,
+        limit_price=0.60,
+        reference_price=0.50,
+        stake_usdc=10.0,
+        status=OrderStatus.REJECTED,
+        reject_reason="PAPER_ENTRY_PRICE_MOVED",
+        metrics={
+            "paper_normalized_reason": "PAPER_ENTRY_PRICE_MOVED",
+            "paper_original_reason": "ASK_ABOVE_MAX_ENTRY",
+        },
+    )
+    report = DailyReport(
+        report_date=date(2026, 6, 22),
+        starting_equity=1000.0,
+        ending_equity=1000.0,
+        paper_pnl=0.0,
+        paper_roi=0.0,
+        total_signals=1,
+        paper_orders=1,
+        paper_fills=0,
+        rejected_paper_orders=1,
+        open_positions=0,
+        closed_positions=0,
+        win_count=0,
+        loss_count=0,
+        void_count=0,
+        win_rate=0.0,
+        total_pnl_usdc=0.0,
+        average_roi=0.0,
+        max_drawdown=0.0,
+        profit_factor=None,
+        paper_rejects_by_reason={"PAPER_ENTRY_PRICE_MOVED": 1},
+        average_execution_staleness_ms=25.0,
+    )
+    store.insert_paper_order(order)
+    store.insert_daily_report(report)
+    client = TestClient(create_dashboard_app(store))
+
+    # When: paper execution quality surfaces are read from the dashboard.
+    orders = client.get("/api/paper-orders", params={"status": "rejected"})
+    overview = client.get("/api/overview")
+    html = client.get("/")
+
+    # Then: paper order rows, latest report aggregates, and HTML summary expose them.
+    assert orders.status_code == 200
+    assert orders.json()[0]["reject_reason"] == "PAPER_ENTRY_PRICE_MOVED"
+    assert overview.json()["latest_report"]["paper_rejects_by_reason"] == {
+        "PAPER_ENTRY_PRICE_MOVED": 1
+    }
+    assert "Paper rejects" in html.text
+    assert "PAPER_ENTRY_PRICE_MOVED" in html.text
+
 async def test_leaderboard_uses_sqlite_report_data(tmp_path, snapshot, settings) -> None:
     # Given: stored report rows where voids must remain in the closed-position denominator.
     client, store = _client_with_store(tmp_path, snapshot, settings)
@@ -141,6 +207,7 @@ async def test_dashboard_rejects_write_methods(tmp_path, snapshot, settings) -> 
         "/api/overview",
         "/api/signals",
         "/api/rejected-signals",
+        "/api/paper-orders",
         "/api/positions",
         "/api/trades",
         "/api/leaderboard",

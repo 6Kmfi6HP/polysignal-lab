@@ -46,14 +46,14 @@ async def test_missing_orderbook_persists_rejected_paper_order_without_fill(
     order_rows = scheduler.sqlite.query_json("paper_orders")
     assert result["paper_order"] is not None
     assert result["paper_order"].status == "REJECTED"
-    assert result["paper_order"].reject_reason == "MISSING_ORDERBOOK"
+    assert result["paper_order"].reject_reason == "PAPER_MISSING_ORDERBOOK"
     assert counts["signals"] == 1
     assert counts["paper_orders"] == 1
     assert counts["paper_fills"] == 0
     assert counts["paper_positions"] == 0
-    assert order_rows[0]["reject_reason"] == "MISSING_ORDERBOOK"
-    assert order_rows[0]["metrics"]["fill_decision_reason"] == "MISSING_ORDERBOOK"
-    assert scheduler.logs.read_all("paper_orders")[0]["reject_reason"] == "MISSING_ORDERBOOK"
+    assert order_rows[0]["reject_reason"] == "PAPER_MISSING_ORDERBOOK"
+    assert order_rows[0]["metrics"]["fill_decision_reason"] == "PAPER_MISSING_ORDERBOOK"
+    assert scheduler.logs.read_all("paper_orders")[0]["reject_reason"] == "PAPER_MISSING_ORDERBOOK"
 
 
 async def test_process_signal_writes_prd_named_telegram_jsonl_stream(
@@ -94,7 +94,7 @@ async def test_stale_paper_fill_count_is_zero(tmp_path: Path, snapshot, settings
     order_rows = scheduler.sqlite.query_json("paper_orders")
     assert result["paper_order"] is not None
     assert result["paper_order"].status == "REJECTED"
-    assert result["paper_order"].reject_reason == "STALE_ORDERBOOK"
+    assert result["paper_order"].reject_reason == "PAPER_STALE_ORDERBOOK"
     assert report is not None
     assert report.paper_orders == 1
     assert report.paper_fills == 0
@@ -104,7 +104,7 @@ async def test_stale_paper_fill_count_is_zero(tmp_path: Path, snapshot, settings
     assert counts["paper_orders"] == 1
     assert counts["paper_fills"] == 0
     assert counts["paper_positions"] == 0
-    assert order_rows[0]["metrics"]["fill_decision_reason"] == "STALE_ORDERBOOK"
+    assert order_rows[0]["metrics"]["fill_decision_reason"] == "PAPER_STALE_ORDERBOOK"
 
 
 def test_scheduler_fill_notifier_dispatches_cancel_to_matching_strategy() -> None:
@@ -192,12 +192,144 @@ async def test_rejected_resting_order_is_persisted_logged_and_notified(
 
     assert len(results) == 1
     assert results[0].order.status == "REJECTED"
-    assert results[0].order.reject_reason == "STALE_ORDERBOOK"
+    assert results[0].order.reject_reason == "PAPER_STALE_ORDERBOOK"
     order_rows = scheduler.sqlite.query_json("paper_orders")
     assert len(order_rows) == 1
     assert order_rows[0]["status"] == "REJECTED"
-    assert order_rows[0]["reject_reason"] == "STALE_ORDERBOOK"
+    assert order_rows[0]["reject_reason"] == "PAPER_STALE_ORDERBOOK"
+    assert order_rows[0]["metrics"]["paper_original_reason"] == "STALE_ORDERBOOK"
+    assert order_rows[0]["metrics"]["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
+    assert "paper_terminal_at" in order_rows[0]["metrics"]
     paper_order_logs = scheduler.logs.read_all("paper_orders")
     assert paper_order_logs[-1]["status"] == "REJECTED"
-    assert paper_order_logs[-1]["reject_reason"] == "STALE_ORDERBOOK"
+    assert paper_order_logs[-1]["reject_reason"] == "PAPER_STALE_ORDERBOOK"
+    assert paper_order_logs[-1]["metrics"]["paper_original_reason"] == "STALE_ORDERBOOK"
+    assert paper_order_logs[-1]["metrics"]["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
+    assert "paper_terminal_at" in paper_order_logs[-1]["metrics"]
+    assert notifications == [(results[0].order, "cancelled", None)]
+
+
+async def test_cancelled_resting_gtd_expiry_is_persisted_with_normalized_reason(
+    tmp_path: Path, settings
+) -> None:
+    from polysignal_lab.app.scheduler_processing import tick_resting_orders
+    from polysignal_lab.domain.enums import OrderIntent, Side
+    from polysignal_lab.domain.signal import SignalCandidate
+
+    scheduler = _paper_scheduler(tmp_path, settings)
+    signal = SignalCandidate.build(
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="mkt-1",
+        market_slug="s",
+        condition_id="c",
+        token_id="t-up",
+        side=Side.UP,
+        confidence=0.6,
+        entry_reference_price=0.35,
+        max_entry_price=0.35,
+        seconds_to_close=300,
+        data_freshness_ms=100,
+        reason_codes=["T"],
+        metrics={},
+        order_intent=OrderIntent.PASSIVE_GTD,
+        expiry_seconds=1,
+    ).model_copy(update={"created_at": utc_now() - timedelta(seconds=10)})
+    scheduler.ctx.books.update(
+        sample_book("t-up", BookFactoryConfig(ask=0.55, bid=0.30, size=100))
+    )
+    await scheduler.process_signal(signal)
+    wallet_snapshots_before = len(scheduler.logs.read_all("paper_wallet_snapshots"))
+    notifications = []
+    scheduler.paper.fill_notifier = (
+        lambda order, event, fill: notifications.append((order, event, fill))
+    )
+
+    results = tick_resting_orders(scheduler)
+
+    assert len(results) == 1
+    assert results[0].status == "CANCELLED"
+    assert results[0].order.status == "CANCELLED"
+    assert results[0].reject_reason == "PAPER_GTD_EXPIRED"
+    assert results[0].order.reject_reason == "PAPER_GTD_EXPIRED"
+    order_rows = scheduler.sqlite.query_json("paper_orders")
+    assert len(order_rows) == 1
+    assert order_rows[0]["status"] == "CANCELLED"
+    assert order_rows[0]["reject_reason"] == "PAPER_GTD_EXPIRED"
+    assert order_rows[0]["metrics"]["paper_original_reason"] == "GTD_EXPIRED"
+    assert order_rows[0]["metrics"]["paper_normalized_reason"] == "PAPER_GTD_EXPIRED"
+    assert "paper_terminal_at" in order_rows[0]["metrics"]
+    paper_order_logs = scheduler.logs.read_all("paper_orders")
+    assert paper_order_logs[-1]["status"] == "CANCELLED"
+    assert paper_order_logs[-1]["reject_reason"] == "PAPER_GTD_EXPIRED"
+    assert paper_order_logs[-1]["metrics"]["paper_original_reason"] == "GTD_EXPIRED"
+    assert paper_order_logs[-1]["metrics"]["paper_normalized_reason"] == "PAPER_GTD_EXPIRED"
+    assert "paper_terminal_at" in paper_order_logs[-1]["metrics"]
+    assert len(scheduler.logs.read_all("paper_wallet_snapshots")) == wallet_snapshots_before + 1
+    assert notifications == [(results[0].order, "cancelled", None)]
+
+
+async def test_cancelled_resting_no_cash_is_persisted_with_normalized_reason(
+    tmp_path: Path, settings
+) -> None:
+    from polysignal_lab.app.scheduler_processing import tick_resting_orders
+    from polysignal_lab.domain.enums import OrderIntent, Side
+    from polysignal_lab.domain.signal import SignalCandidate
+
+    scheduler = _paper_scheduler(tmp_path, settings)
+    signal = SignalCandidate.build(
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="mkt-1",
+        market_slug="s",
+        condition_id="c",
+        token_id="t-up",
+        side=Side.UP,
+        confidence=0.6,
+        entry_reference_price=0.35,
+        max_entry_price=0.35,
+        seconds_to_close=300,
+        data_freshness_ms=100,
+        reason_codes=["T"],
+        metrics={},
+        order_intent=OrderIntent.PASSIVE_GTD,
+        expiry_seconds=300,
+    )
+    scheduler.ctx.books.update(
+        sample_book("t-up", BookFactoryConfig(ask=0.55, bid=0.30, size=100))
+    )
+    await scheduler.process_signal(signal)
+    scheduler.wallet.cash_balance = 0.0
+    scheduler.ctx.books.update(
+        sample_book("t-up", BookFactoryConfig(ask=0.55, bid=0.35, size=100))
+    )
+    wallet_snapshots_before = len(scheduler.logs.read_all("paper_wallet_snapshots"))
+    notifications = []
+    scheduler.paper.fill_notifier = (
+        lambda order, event, fill: notifications.append((order, event, fill))
+    )
+
+    results = tick_resting_orders(scheduler)
+
+    assert len(results) == 1
+    assert results[0].status == "CANCELLED"
+    assert results[0].order.status == "CANCELLED"
+    assert results[0].reject_reason == "PAPER_WALLET_INSUFFICIENT_CASH"
+    assert results[0].order.reject_reason == "PAPER_WALLET_INSUFFICIENT_CASH"
+    order_rows = scheduler.sqlite.query_json("paper_orders")
+    assert len(order_rows) == 1
+    assert order_rows[0]["status"] == "CANCELLED"
+    assert order_rows[0]["reject_reason"] == "PAPER_WALLET_INSUFFICIENT_CASH"
+    assert order_rows[0]["metrics"]["paper_original_reason"] == "WALLET_INSUFFICIENT_CASH"
+    assert (
+        order_rows[0]["metrics"]["paper_normalized_reason"]
+        == "PAPER_WALLET_INSUFFICIENT_CASH"
+    )
+    assert "paper_terminal_at" in order_rows[0]["metrics"]
+    assert (
+        len(scheduler.logs.read_all("paper_wallet_snapshots"))
+        == wallet_snapshots_before + 1
+    )
     assert notifications == [(results[0].order, "cancelled", None)]

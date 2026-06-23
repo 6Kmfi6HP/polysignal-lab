@@ -61,6 +61,14 @@ class DailyReport(BaseModel):
     paper_fills: int
     rejected_paper_orders: int
     stale_paper_fills: int = 0
+    paper_attempts_by_intent: dict[str, int] = Field(default_factory=dict)
+    paper_fills_by_intent: dict[str, int] = Field(default_factory=dict)
+    paper_partial_fills_by_intent: dict[str, int] = Field(default_factory=dict)
+    paper_rejects_by_reason: dict[str, int] = Field(default_factory=dict)
+    paper_rejects_by_original_reason: dict[str, int] = Field(default_factory=dict)
+    average_execution_staleness_ms: float | None = None
+    average_executable_depth_usdc: float | None = None
+    paper_execution_assumptions: dict[str, Any] = Field(default_factory=dict)
     open_positions: int
     closed_positions: int
     win_count: int

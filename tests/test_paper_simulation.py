@@ -60,7 +60,9 @@ async def test_paper_rejects_ask_above_max(snapshot, books, settings):
     sim = PaperSimulator(settings.paper_trading, settings.data.polymarket, wallet)
     result = sim.process_signal(sig, books.get(sig.token_id))
     assert result.order.status == "REJECTED"
-    assert result.order.reject_reason == "ASK_ABOVE_MAX_ENTRY"
+    assert result.order.reject_reason == "PAPER_ENTRY_PRICE_MOVED"
+    assert result.order.metrics["paper_original_reason"] == "ASK_ABOVE_MAX_ENTRY"
+    assert result.order.metrics["paper_normalized_reason"] == "PAPER_ENTRY_PRICE_MOVED"
 
 
 async def test_paper_rejects_insufficient_cash(snapshot, books, settings):
@@ -68,7 +70,9 @@ async def test_paper_rejects_insufficient_cash(snapshot, books, settings):
     wallet = PaperWallet(starting_balance=1)
     sim = PaperSimulator(settings.paper_trading, settings.data.polymarket, wallet)
     result = sim.process_signal(sig, books.get(sig.token_id))
-    assert result.order.reject_reason == "WALLET_INSUFFICIENT_CASH"
+    assert result.order.reject_reason == "PAPER_WALLET_INSUFFICIENT_CASH"
+    assert result.order.metrics["paper_original_reason"] == "WALLET_INSUFFICIENT_CASH"
+    assert result.order.metrics["paper_normalized_reason"] == "PAPER_WALLET_INSUFFICIENT_CASH"
 
 
 async def test_paper_rejects_insufficient_depth(snapshot, settings):
@@ -77,7 +81,28 @@ async def test_paper_rejects_insufficient_depth(snapshot, settings):
     wallet = PaperWallet(starting_balance=1000)
     sim = PaperSimulator(settings.paper_trading, settings.data.polymarket, wallet)
     result = sim.process_signal(sig, book)
-    assert result.order.reject_reason == "INSUFFICIENT_DEPTH"
+    assert result.order.reject_reason == "PAPER_DEPTH_TOO_THIN"
+    assert result.order.metrics["paper_original_reason"] == "INSUFFICIENT_DEPTH"
+    assert result.order.metrics["paper_normalized_reason"] == "PAPER_DEPTH_TOO_THIN"
+
+async def test_paper_preflight_rejects_edge_vanished(snapshot, books, settings):
+    sig = (await _signal(snapshot, settings)).model_copy(
+        update={
+            "max_entry_price": 0.90,
+            "metrics": {"directional_probability": 0.83, "min_probability_edge": 0.05},
+        }
+    )
+    wallet = PaperWallet(starting_balance=1000)
+    sim = PaperSimulator(settings.paper_trading, settings.data.polymarket, wallet)
+
+    result = sim.process_signal(sig, books.get(sig.token_id))
+
+    assert result.order.status == "REJECTED"
+    assert result.order.reject_reason == "PAPER_EDGE_VANISHED"
+    assert result.fill is None
+    assert result.position is None
+    assert wallet.cash_balance == 1000.0
+    assert result.order.metrics["paper_edge_revalidated"] is True
 
 
 async def test_stale_orderbook_rejects_fill_without_position(snapshot, books, settings):
@@ -94,15 +119,17 @@ async def test_stale_orderbook_rejects_fill_without_position(snapshot, books, se
     result = sim.process_signal(sig, stale_book)
 
     assert result.order.status == "REJECTED"
-    assert result.order.reject_reason == "STALE_ORDERBOOK"
+    assert result.order.reject_reason == "PAPER_STALE_ORDERBOOK"
     assert result.fill is None
     assert result.position is None
     assert wallet.cash_balance == 1000.0
     assert wallet.equity == 1000.0
     assert wallet.open_position_count == 0
     assert wallet.exposure_by_market(sig.market_id) == 0.0
-    assert result.order.metrics["fill_decision_reason"] == "STALE_ORDERBOOK"
-    assert result.order.metrics["orderbook_fresh"] is False
+    assert result.order.metrics["fill_decision_reason"] == "PAPER_STALE_ORDERBOOK"
+    assert result.order.metrics["paper_orderbook_fresh"] is False
+    assert result.order.metrics["paper_original_reason"] == "STALE_ORDERBOOK"
+    assert result.order.metrics["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
 
 
 async def test_reconciliation_ineligibility_rejects_fills(snapshot, settings) -> None:
@@ -124,7 +151,9 @@ async def test_reconciliation_ineligibility_rejects_fills(snapshot, settings) ->
     res = sim.process_signal(sig, delta_book)
 
     assert res.status == "REJECTED"
-    assert res.order.reject_reason == "NO_SNAPSHOT"
+    assert res.order.reject_reason == "PAPER_STALE_ORDERBOOK"
+    assert res.order.metrics["paper_original_reason"] == "NO_SNAPSHOT"
+    assert res.order.metrics["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
 
 async def test_missing_and_malformed_orderbooks_reject_without_position(snapshot, settings):
     sig = await _signal(snapshot, settings)
@@ -140,9 +169,13 @@ async def test_missing_and_malformed_orderbooks_reject_without_position(snapshot
     )
 
     assert missing.order.status == "REJECTED"
-    assert missing.order.reject_reason == "MISSING_ORDERBOOK"
+    assert missing.order.reject_reason == "PAPER_MISSING_ORDERBOOK"
+    assert missing.order.metrics["paper_original_reason"] == "MISSING_ORDERBOOK"
+    assert missing.order.metrics["paper_normalized_reason"] == "PAPER_MISSING_ORDERBOOK"
     assert malformed.order.status == "REJECTED"
-    assert malformed.order.reject_reason == "MALFORMED_ORDERBOOK"
+    assert malformed.order.reject_reason == "PAPER_MALFORMED_ORDERBOOK"
+    assert malformed.order.metrics["paper_original_reason"] == "MALFORMED_ORDERBOOK"
+    assert malformed.order.metrics["paper_normalized_reason"] == "PAPER_MALFORMED_ORDERBOOK"
     assert missing.position is None
     assert malformed.position is None
     assert wallet.cash_balance == 1000.0
@@ -161,14 +194,16 @@ async def test_nan_ask_rejects_malformed_without_depth_check(snapshot, settings)
     result = sim.process_signal(sig, book)
 
     assert result.order.status == "REJECTED"
-    assert result.order.reject_reason == "MALFORMED_ORDERBOOK"
+    assert result.order.reject_reason == "PAPER_MALFORMED_ORDERBOOK"
     assert result.fill is None
     assert result.position is None
     assert wallet.cash_balance == 1000.0
     assert wallet.equity == 1000.0
     assert wallet.open_position_count == 0
     assert wallet.exposure_by_market(sig.market_id) == 0.0
-    assert result.order.metrics["fill_decision_reason"] == "MALFORMED_ORDERBOOK"
+    assert result.order.metrics["fill_decision_reason"] == "PAPER_MALFORMED_ORDERBOOK"
+    assert result.order.metrics["paper_original_reason"] == "MALFORMED_ORDERBOOK"
+    assert result.order.metrics["paper_normalized_reason"] == "PAPER_MALFORMED_ORDERBOOK"
 
 
 async def test_settlement_win_and_loss(snapshot, books, market, settings):

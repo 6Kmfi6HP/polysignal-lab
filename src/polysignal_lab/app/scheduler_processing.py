@@ -6,6 +6,7 @@ from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.paper.simulator import SimulationResult
+from polysignal_lab.utils import utc_now
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
@@ -192,6 +193,7 @@ async def process_accepted_signals(
 def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
     """Poll resting GTD orders for fills/expiry each scheduler cycle."""
     from polysignal_lab.domain.enums import OrderStatus
+    from polysignal_lab.paper.preflight import normalize_paper_reject_reason
     def _risk_check(order):
         """Check paper trading risk limits before filling a resting order."""
         cfg = scheduler.settings.paper_trading
@@ -213,15 +215,26 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
                 scheduler.sqlite.upsert_paper_position(position)
             if scheduler.paper.fill_notifier:
                 scheduler.paper.fill_notifier(result.order, "filled", result.fills[0] if result.fills else None)
-        elif result.status == OrderStatus.REJECTED:
+        elif result.status == OrderStatus.REJECTED or (
+            result.status == OrderStatus.CANCELLED
+            and (result.reject_reason or result.order.reject_reason)
+        ):
+            original_reason = result.reject_reason or result.order.reject_reason
+            normalized_reason = normalize_paper_reject_reason(original_reason)
+            result.reject_reason = normalized_reason
+            result.order.reject_reason = normalized_reason
+            result.order.metrics["paper_original_reason"] = original_reason
+            result.order.metrics["paper_normalized_reason"] = normalized_reason
+            result.order.metrics["paper_terminal_at"] = utc_now()
             scheduler.logs.append("paper_orders", result.order)
             scheduler.sqlite.upsert_paper_order(result.order)
             wallet_snapshot = scheduler.wallet.snapshot()
             scheduler.logs.append("paper_wallet_snapshots", wallet_snapshot)
             scheduler.sqlite.insert_wallet_snapshot(wallet_snapshot)
             scheduler.logger.info(
-                "Resting paper order %s rejected: %s",
+                "Resting paper order %s %s: %s",
                 result.order.paper_order_id,
+                result.order.status.lower(),
                 result.reject_reason or result.order.reject_reason,
             )
             if scheduler.paper.fill_notifier:
