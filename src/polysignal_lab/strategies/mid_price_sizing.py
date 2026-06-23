@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.strategies.base import BaseStrategy
@@ -101,6 +101,11 @@ class MidPriceSizingStrategy(BaseStrategy):
         # 入场均价追踪: key = f"{market_id}:{side.value}" -> list[float]
         # 每层的入场价格保存在列表中
         self._entry_prices: dict[str, list[float]] = {}
+
+    def notify_fill(self, market_id: str, side: Side, fill_price: float, shares: float) -> None:
+        key = self._pos_key(market_id, side)
+        self._layer_count[key] = self._layer_count.get(key, 0) + 1
+        self._entry_prices.setdefault(key, []).append(fill_price)
 
     # ------------------------------------------------------------------
     # 内部 key 构造
@@ -392,5 +397,6 @@ class MidPriceSizingStrategy(BaseStrategy):
                 **metrics,
                 "mode": self.config.mode.value,
             },
+            order_intent=OrderIntent.TAKER_FAK,
         )
         return [signal] if signal else []

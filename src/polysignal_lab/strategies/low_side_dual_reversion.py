@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy
@@ -60,6 +60,19 @@ class LowSideDualReversionStrategy(BaseStrategy):
         self._entered_markets: set[str] = set()
         # 单腿持仓状态: market_id -> {side, entry_price, filled_at, hedged}
         self._positions: dict[str, dict[str, Any]] = {}
+
+    def notify_fill(self, market_id: str, side: Side, fill_price: float, shares: float) -> None:
+        if market_id in self._positions:
+            self._positions[market_id]["hedged"] = True
+            self._entered_markets.add(market_id)
+            return
+        self._positions[market_id] = {
+            "side": side,
+            "entry_price": fill_price,
+            "filled_at": self._utc_now(),
+            "hedged": False,
+        }
+        self._entered_markets.add(market_id)
 
     # ------------------------------------------------------------------
     # 辅助计算
@@ -117,11 +130,10 @@ class LowSideDualReversionStrategy(BaseStrategy):
         if position and not position.get("hedged", False):
             return self._try_hedge(snapshot, market_id, position)
 
-        # === 步骤 2: 收盘前取消窗口 — 不产生新信号 ===
-        if (
-            snapshot.seconds_to_close is not None
-            and snapshot.seconds_to_close <= self.config.cancel_before_close_seconds
-        ):
+        # === 步骤 2: 收盘前取消窗口 — 不产生无法设置有效 GTD 到期的信号 ===
+        if snapshot.seconds_to_close is None:
+            return []
+        if snapshot.seconds_to_close <= max(self.config.cancel_before_close_seconds, 60):
             return []
 
         # 已入场且已完全对冲, 不再重复信号
@@ -170,6 +182,9 @@ class LowSideDualReversionStrategy(BaseStrategy):
                     "bid_price": best_price,
                     "shares": self.config.shares_per_level,
                 },
+                order_intent=OrderIntent.PASSIVE_GTD,
+                expiry_seconds=min(snapshot.seconds_to_close - 60, 300) if snapshot.seconds_to_close is not None else None,
+                pair_id=f"{market_id}:dual",
             )
             if signal:
                 signals.append(signal)
@@ -218,6 +233,9 @@ class LowSideDualReversionStrategy(BaseStrategy):
                         "hedge_weighted_ask": depth_ask,
                         "elapsed_seconds": round(elapsed, 2),
                     },
+                    order_intent=OrderIntent.TAKER_FAK,
+                    pair_id=f"{market_id}:dual",
+                    hedge_leg=True,
                 )
                 if signal:
                     signals.append(signal)
@@ -243,6 +261,9 @@ class LowSideDualReversionStrategy(BaseStrategy):
                             "filled_leg_price": filled_price,
                             "elapsed_seconds": round(elapsed, 2),
                         },
+                        order_intent=OrderIntent.TAKER_FAK,
+                        pair_id=f"{market_id}:dual",
+                        hedge_leg=True,
                     )
                     if signal:
                         signals.append(signal)

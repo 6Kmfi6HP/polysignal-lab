@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.strategies.base import BaseStrategy, RollingPriceStats
@@ -451,6 +451,8 @@ class FibonacciStrategyBot(BaseStrategy):
                 max_entry_price=min(token_ask + self.config.offset_from_fib, self.config.max_token_price),
                 reason_codes=reason_codes,
                 metrics=metrics,
+                order_intent=OrderIntent.PASSIVE_GTD,
+                expiry_seconds=300,
             )
             if signal:
                 signals.append(signal)

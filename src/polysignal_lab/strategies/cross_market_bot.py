@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.strategies.base import BaseStrategy
@@ -97,6 +97,21 @@ class CrossMarketBotStrategy(BaseStrategy):
         # 用于跨市场状态追踪
         self._active_baskets: dict[str, dict[str, Any]] = {}  # relation_id -> state
 
+
+    def notify_fill(self, market_id: str, side: Side, fill_price: float, shares: float) -> None:
+        for basket in self._active_baskets.values():
+            if market_id in basket.get("markets", set()):
+                basket.setdefault("fills", {})[market_id] = {
+                    "side": side,
+                    "fill_price": fill_price,
+                    "shares": shares,
+                }
+                return
+
+    def notify_leg_failure(self, pair_id: str, market_id: str, side: Side) -> None:
+        basket = self._active_baskets.setdefault(pair_id, {"fills": {}, "markets": set()})
+        basket["failed"] = True
+        basket["failed_leg"] = {"market_id": market_id, "side": side}
     # ------------------------------------------------------------------
     # 公开方法: 注册关系
     # ------------------------------------------------------------------
@@ -296,6 +311,11 @@ class CrossMarketBotStrategy(BaseStrategy):
             0.60 + (1.0 - metrics.get("estimated_pair_cost", 1.0)) * 2.0,
         )
 
+        basket = self._active_baskets.setdefault(
+            rel.relation_id,
+            {"fills": {}, "markets": set(), "failed": False},
+        )
+        basket["markets"].add(snapshot.market.market_id)
         signal = self._candidate(
             snapshot=snapshot,
             side=target_side,
@@ -303,5 +323,7 @@ class CrossMarketBotStrategy(BaseStrategy):
             max_entry_price=exec_price,
             reason_codes=reason_codes,
             metrics=metrics,
+            order_intent=OrderIntent.TAKER_FOK,
+            pair_id=rel.relation_id,
         )
         return [signal] if signal else []

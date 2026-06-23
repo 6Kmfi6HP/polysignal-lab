@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy
@@ -63,6 +63,21 @@ class PreOrderMarketStrategy(BaseStrategy):
         self._positions: dict[str, dict[str, Any]] = {}
         # 开盘后已经过 reconcile 的市场
         self._reconciled: set[str] = set()
+
+    def notify_fill(self, market_id: str, side: Side, fill_price: float, shares: float) -> None:
+        position = self._positions.get(market_id)
+        if position is not None:
+            if position["side"] != side:
+                position["hedged"] = True
+                self._entered_markets.add(market_id)
+            return
+        self._positions[market_id] = {
+            "side": side,
+            "entry_price": fill_price,
+            "filled_at": self._utc_now(),
+            "hedged": False,
+        }
+        self._entered_markets.add(market_id)
 
     # ------------------------------------------------------------------
     # 辅助计算
@@ -164,6 +179,9 @@ class PreOrderMarketStrategy(BaseStrategy):
                         "pre_order_shares": shares,
                         "expiry_ts": snapshot.market.start_ts.timestamp() + self.config.seconds_after_open_expiry,
                     },
+                    order_intent=OrderIntent.PASSIVE_GTD,
+                    expiry_seconds=int(max(0.0, (snapshot.market.start_ts - now).total_seconds()) + self.config.seconds_after_open_expiry),
+                    pair_id=f"{market_id}:pre",
                 )
                 if signal:
                     signals.append(signal)
@@ -220,5 +238,8 @@ class PreOrderMarketStrategy(BaseStrategy):
                 "filled_leg_price": filled_price,
                 "hedge_ask": hedge_ask,
             },
+            order_intent=OrderIntent.TAKER_FAK,
+            pair_id=f"{market_id}:pre",
+            hedge_leg=True,
         )
         return [signal] if signal else []

@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy, RollingPriceStats
@@ -69,6 +69,20 @@ class DumpHedgeStrategy(BaseStrategy):
         self._dump_detected: set[str] = set()
         # 每 token 最近一次 push 的价格缓存（用于计算变动幅度）
         self._last_price: dict[str, float] = {}
+
+    def notify_fill(self, market_id: str, side: Side, fill_price: float, shares: float) -> None:
+        if market_id in self._positions:
+            self._positions[market_id]["hedged"] = True
+            return
+        self._positions[market_id] = {
+            "side": side,
+            "entry_price": fill_price,
+            "filled_at": self._utc_now(),
+            "hedged": False,
+        }
+
+    def notify_leg_failure(self, pair_id: str, market_id: str, side: Side) -> None:
+        self._positions.pop(market_id, None)
 
     # ------------------------------------------------------------------
     # 辅助计算
@@ -172,6 +186,8 @@ class DumpHedgeStrategy(BaseStrategy):
                         "move_threshold": self.config.move_threshold,
                         "shares": self.config.leg_shares,
                     },
+                    order_intent=OrderIntent.TAKER_FAK,
+                    pair_id=f"{market_id}:dump",
                 )
                 if signal:
                     signals.append(signal)
@@ -219,6 +235,9 @@ class DumpHedgeStrategy(BaseStrategy):
                         "hedge_ask": hedge_ask,
                         "elapsed_seconds": round(elapsed, 2),
                     },
+                    order_intent=OrderIntent.TAKER_FOK,
+                    pair_id=f"{market_id}:dump",
+                    hedge_leg=True,
                 )
                 if signal:
                     signals.append(signal)
@@ -244,6 +263,9 @@ class DumpHedgeStrategy(BaseStrategy):
                             "filled_leg_price": filled_price,
                             "elapsed_seconds": round(elapsed, 2),
                         },
+                        order_intent=OrderIntent.TAKER_FOK,
+                        pair_id=f"{market_id}:dump",
+                        hedge_leg=True,
                     )
                     if signal:
                         signals.append(signal)

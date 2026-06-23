@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy
@@ -156,6 +156,7 @@ class NinetyNineCentSniperStrategy(BaseStrategy):
                     "NINETY_NINE_SNIPE",
                     "EFFECTIVELY_SETTLED",
                     "HIGH_PROBABILITY",
+                    "FOK_EXECUTION",
                 ],
                 metrics={
                     "best_ask": book.best_ask,
@@ -168,6 +169,7 @@ class NinetyNineCentSniperStrategy(BaseStrategy):
                     "require_effectively_settled": self.config.require_effectively_settled,
                     "opposite_ask": opp_book.best_ask if self.config.require_effectively_settled else None,
                 },
+                order_intent=OrderIntent.TAKER_FOK,
             )
             if signal is not None:
                 signals.append(signal)

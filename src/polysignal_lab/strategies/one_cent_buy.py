@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy
@@ -144,6 +144,8 @@ class OneCentBuyStrategy(BaseStrategy):
                         "best_ask": book.best_ask,
                         "best_bid": book.best_bid,
                     },
+                    order_intent=OrderIntent.PASSIVE_GTD,
+                    expiry_seconds=int(seconds_to_close - self.config.cancel_before_close_seconds),
                 )
                 if signal is not None:
                     signals.append(signal)

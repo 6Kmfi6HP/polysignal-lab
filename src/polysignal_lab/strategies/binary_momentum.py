@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy, RollingPriceStats
@@ -306,6 +306,7 @@ class BinaryMomentumStrategy(BaseStrategy):
                     "take_profit_pct": self.config.take_profit_pct,
                     "max_notional": self.config.max_notional,
                 },
+                order_intent=OrderIntent.TAKER_FAK,
             )
             if signal is not None:
                 signals.append(signal)
