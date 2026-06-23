@@ -40,6 +40,23 @@ from polysignal_lab.storage.state_store import StateStore
 from polysignal_lab.strategies.factory import build_strategies
 
 
+from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
+from polysignal_lab.domain.enums import Side
+from polysignal_lab.strategies.base import BaseStrategy
+
+
+def _make_fill_notifier(strategies: list[BaseStrategy]) -> object:
+    """Create a callback that notifies strategies when paper fills/cancels occur."""
+    def notify(order: PaperOrder, event: str, fill: PaperFill | None = None) -> None:
+        for strat in strategies:
+            if not hasattr(strat, "name") or strat.name != order.strategy:
+                continue
+            if event == "filled" and fill is not None:
+                strat.notify_fill(order.market_id, order.side, fill.fill_price, fill.shares)
+            elif event == "cancelled":
+                strat.notify_cancel(order.market_id, order.side, order.reject_reason or "GTD_EXPIRED")
+    return notify
+
 @dataclass
 class ServiceContext:
     settings: Settings
@@ -99,6 +116,7 @@ class PolySignalScheduler:
         self.paper = PaperSimulator(
             self.settings.paper_trading, self.settings.data.polymarket, self.wallet
         )
+        self.paper.fill_notifier = _make_fill_notifier(self.strategies)
         self.exits = PaperExitEngine(self.settings.paper_trading.exit_model, self.wallet)
         self.settlement = PaperSettlementEngine(self.wallet)
         self._trading_components_initialized = True

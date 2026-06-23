@@ -177,3 +177,23 @@ async def process_accepted_signals(
         published=sum(1 for result in results if result["published"]),
         filled=sum(1 for result in results if result["paper_fill"]),
     )
+
+
+def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
+    """Poll resting GTD orders for fills/expiry each scheduler cycle."""
+    from polysignal_lab.domain.enums import OrderStatus
+    results = scheduler.paper.passive.tick(scheduler.ctx.books, scheduler.wallet)
+    for result in results:
+        if result.fills:
+            for fill in result.fills:
+                scheduler.logs.append("paper_fills", fill)
+                scheduler.sqlite.insert_paper_fill(fill)
+            for position in result.positions:
+                scheduler.logs.append("paper_positions", position)
+                scheduler.sqlite.upsert_paper_position(position)
+            if scheduler.paper.fill_notifier:
+                scheduler.paper.fill_notifier(result.order, "filled", result.fills[0] if result.fills else None)
+        elif result.status == OrderStatus.CANCELLED:
+            if scheduler.paper.fill_notifier:
+                scheduler.paper.fill_notifier(result.order, "cancelled", None)
+    return results
