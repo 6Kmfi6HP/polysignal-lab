@@ -70,6 +70,10 @@ class PreOrderMarketStrategy(BaseStrategy):
             if position["side"] != side:
                 position["hedged"] = True
                 self._entered_markets.add(market_id)
+            else:
+                # Same-side fill: accumulate average entry price
+                old_price = position["entry_price"]
+                position["entry_price"] = (old_price + fill_price) / 2.0
             return
         self._positions[market_id] = {
             "side": side,
@@ -180,7 +184,7 @@ class PreOrderMarketStrategy(BaseStrategy):
                         "expiry_ts": snapshot.market.start_ts.timestamp() + self.config.seconds_after_open_expiry,
                     },
                     order_intent=OrderIntent.PASSIVE_GTD,
-                    expiry_seconds=int(max(0.0, (snapshot.market.start_ts - now).total_seconds()) + self.config.seconds_after_open_expiry),
+                    expiry_seconds=max(1, int((snapshot.market.start_ts.timestamp() + self.config.seconds_after_open_expiry - now.timestamp()))),
                     pair_id=f"{market_id}:pre",
                 )
                 if signal:
