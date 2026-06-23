@@ -93,6 +93,7 @@ class PolySignalScheduler:
         self._trading_components_initialized = False
 
         self.poly_ws = PolymarketMarketWebSocket(settings.data.polymarket, self.ctx.books)
+        self.poly_ws.reseed_hook = self._reseed_ws_books
         self.binance_ws = BinanceSpotFeed(settings.data.binance, self.ctx.spots)
 
         base = Path(base_dir)
@@ -168,6 +169,16 @@ class PolySignalScheduler:
 
     async def evaluate_once(self) -> list[SignalCandidate]:
         return await scheduler_processing.evaluate_once(self)
+
+    async def _reseed_ws_books(self, token_ids: list[str]) -> None:
+        try:
+            books = await self.rest.get_books(token_ids)
+            for book in books:
+                self.ctx.books.update_from_snapshot(book)
+        except Exception as exc:
+            self.logger.exception(
+                "Failed to reseed order books on WebSocket reconnect: %s", exc
+            )
 
     async def _stop_market_ws_subscription(self) -> None:
         await scheduler_market_data.stop_market_ws_subscription(self)

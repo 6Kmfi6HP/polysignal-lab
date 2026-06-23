@@ -27,6 +27,23 @@ def _seed_polymarket_book(registry: OrderBookRegistry) -> PolymarketMarketWebSoc
     return ws
 
 
+async def test_websocket_subscribe_calls_reseed_hook() -> None:
+    from unittest.mock import AsyncMock, patch
+
+    registry = OrderBookRegistry()
+    ws = PolymarketMarketWebSocket(None, registry)
+    ws.reseed_hook = AsyncMock()
+
+    ws.config = type("Config", (), {"market_ws_url": "ws://dummy"})()
+    with patch("websockets.connect", side_effect=ValueError("stop")):
+        try:
+            ws.running = True
+            await ws.subscribe(["token-1"])
+        except ValueError as exc:
+            assert str(exc) == "stop"
+    ws.reseed_hook.assert_awaited_once_with(["token-1"])
+
+
 def test_polymarket_price_changes_event_updates_registry() -> None:
     registry = OrderBookRegistry()
     ws = _seed_polymarket_book(registry)

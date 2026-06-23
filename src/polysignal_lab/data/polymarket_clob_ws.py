@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
+
 import json
 from queue import Queue
+from typing import Any
 
 import anyio
 import websockets
@@ -21,12 +24,18 @@ class PolymarketMarketWebSocket:
         self.registry = registry
         self.resolved_events: Queue[JsonObject] = Queue()
         self.running = False
+        self.reseed_hook: Callable[[list[str]], Coroutine[Any, Any, None]] | None = None
 
     async def subscribe(self, token_ids: list[str]) -> None:
         self.running = True
         payload = {"assets_ids": token_ids, "type": "market", "custom_feature_enabled": True}
         while self.running:
             try:
+                if self.reseed_hook is not None:
+                    try:
+                        await self.reseed_hook(token_ids)
+                    except Exception:
+                        pass
                 async with websockets.connect(self.config.market_ws_url, ping_interval=20, ping_timeout=20) as ws:
                     await ws.send(json.dumps(payload))
                     async for message in ws:
