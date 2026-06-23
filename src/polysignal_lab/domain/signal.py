@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from polysignal_lab.domain.enums import Action, Side
+from polysignal_lab.domain.enums import Action, OrderIntent, Side
 from polysignal_lab.utils import new_id, stable_hash, utc_now
 
 
@@ -32,6 +32,10 @@ class SignalCandidate(BaseModel):
     dedupe_key: str
     snapshot_id: str | None = None
     source_signal_ids: list[str] = Field(default_factory=list)
+    order_intent: OrderIntent | None = None
+    expiry_seconds: int | None = None
+    pair_id: str | None = None
+    hedge_leg: bool = False
 
     @classmethod
     def build(
@@ -54,6 +58,10 @@ class SignalCandidate(BaseModel):
         metrics: dict[str, Any],
         snapshot_id: str | None = None,
         source_signal_ids: list[str] | None = None,
+        order_intent: OrderIntent | None = None,
+        expiry_seconds: int | None = None,
+        pair_id: str | None = None,
+        hedge_leg: bool = False,
     ) -> "SignalCandidate":
         dedupe_key = f"{asset}:{timeframe}:{market_id}:{side.value}:{strategy}"
         sid = f"sig_{stable_hash(strategy, asset, timeframe, market_id, side.value, utc_now().isoformat(), length=20)}"
@@ -77,6 +85,10 @@ class SignalCandidate(BaseModel):
             dedupe_key=dedupe_key,
             snapshot_id=snapshot_id,
             source_signal_ids=source_signal_ids or [],
+            order_intent=order_intent,
+            expiry_seconds=expiry_seconds,
+            pair_id=pair_id,
+            hedge_leg=hedge_leg,
         )
 
 

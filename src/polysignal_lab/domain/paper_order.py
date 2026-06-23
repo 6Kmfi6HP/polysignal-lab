@@ -22,6 +22,7 @@ class PaperOrder(BaseModel):
     token_id: str
     side: Side
     order_type: str = "SIMULATED_MARKETABLE_LIMIT"
+    order_intent: str | None = None
     limit_price: float
     reference_price: float
     stake_usdc: float

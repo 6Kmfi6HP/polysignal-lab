@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from statistics import mean, pstdev
 
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 
@@ -24,6 +24,11 @@ class BaseStrategy(ABC):
         max_entry_price: float,
         reason_codes: list[str],
         metrics: dict,
+        *,
+        order_intent: OrderIntent | None = None,
+        expiry_seconds: int | None = None,
+        pair_id: str | None = None,
+        hedge_leg: bool = False,
     ) -> SignalCandidate | None:
         ask = snapshot.ask_for(side)
         if ask is None:
@@ -46,6 +51,10 @@ class BaseStrategy(ABC):
             reason_codes=reason_codes,
             metrics=metrics,
             snapshot_id=snapshot.snapshot_id,
+            order_intent=order_intent,
+            expiry_seconds=expiry_seconds,
+            pair_id=pair_id,
+            hedge_leg=hedge_leg,
         )
 
 

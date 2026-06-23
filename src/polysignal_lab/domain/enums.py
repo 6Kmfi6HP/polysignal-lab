@@ -28,6 +28,20 @@ class OrderStatus(StrEnum):
     PENDING = "PENDING"
     FILLED = "FILLED"
     REJECTED = "REJECTED"
+    RESTING = "RESTING"
+    CANCELLED = "CANCELLED"
+    PARTIAL = "PARTIAL"
+
+
+class OrderIntent(StrEnum):
+    PASSIVE_GTD = "passive_gtd"
+    """Resting limit buy; fills when best bid <= limit price; expires at expiry_seconds."""
+    TAKER_FAK = "taker_fak"
+    """Fill-and-kill: immediate execution, partial fill ok, unexecuted portion cancelled."""
+    TAKER_FOK = "taker_fok"
+    """Fill-or-kill: all-or-nothing; rejects if depth insufficient for full size."""
+    TAKER_IOC = "taker_ioc"
+    """Immediate-or-cancel: execute immediately at best available; cancel remainder."""
 
 
 class PositionStatus(StrEnum):
@@ -39,8 +53,8 @@ class TradeResultStatus(StrEnum):
     WIN = "WIN"
     LOSS = "LOSS"
     VOID = "VOID"
-    UNKNOWN = "UNKNOWN"
     SPLIT = "SPLIT"
+    UNKNOWN = "UNKNOWN"
 
 
 class ExitMode(StrEnum):
