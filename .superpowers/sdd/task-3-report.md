@@ -22,6 +22,7 @@ DONE
 
 ## Commit SHA(s)
 - `5b2d9bc` — `feat: aggregate paper execution report metrics`
+- `2836c56` — `chore: report task 3 aggregates`
 
 ## Self-Review Notes
 - Implemented only Task 3 report model/service/test scope; scheduler propagation and dashboard/formatter output remain untouched for Task 4.
