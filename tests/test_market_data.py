@@ -117,6 +117,37 @@ def test_book_epoch_state_instantiation() -> None:
     assert state.token_id == "token-1"
 
 
+def test_registry_reconciliation_methods() -> None:
+    from polysignal_lab.data.state import OrderBookRegistry
+    from polysignal_lab.domain.orderbook import OrderBook
+    from polysignal_lab.utils import utc_now
+
+    registry = OrderBookRegistry()
+    now = utc_now()
+
+    # 1. Delta without snapshot is ignored/counted
+    delta_book = OrderBook(token_id="token-1", source_timestamp="1710000000100", received_at=now)
+    registry.update_from_delta(delta_book)
+    assert registry.get("token-1") is None
+    assert registry.metrics.snapshot()["counters"].get("delta_without_snapshot") == 1
+
+    # 2. Snapshot creates eligibility
+    snapshot_book = OrderBook(token_id="token-1", source_timestamp="1710000000000", received_at=now)
+    registry.update_from_snapshot(snapshot_book)
+    assert registry.get("token-1") == snapshot_book
+    assert registry.is_fill_eligible("token-1", 10000, now) is True
+
+    # 3. Delta after snapshot is accepted
+    registry.update_from_delta(delta_book)
+    assert registry.get("token-1") == delta_book
+
+    # 4. Regression invalidates
+    regressed_book = OrderBook(token_id="token-1", source_timestamp="1700000000000", received_at=now)
+    registry.update_from_delta(regressed_book)
+    assert registry.is_fill_eligible("token-1", 10000, now) is False
+    assert registry.metrics.snapshot()["counters"].get("book_sequence_invalid") == 1
+
+
 async def test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids() -> None:
     fixtures = _fixtures()
     page_1 = fixtures["gamma_event_page_1"]
