@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from polysignal_lab.domain.enums import Action, OrderIntent, Side
+from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.utils import new_id, stable_hash, utc_now
 
 
@@ -27,6 +28,7 @@ class SignalCandidate(BaseModel):
     max_entry_price: float
     seconds_to_close: int | None = None
     data_freshness_ms: int | None = None
+    freshness_policy: FreshnessPolicy | None = None
     reason_codes: list[str] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
     dedupe_key: str
@@ -56,6 +58,7 @@ class SignalCandidate(BaseModel):
         data_freshness_ms: int | None,
         reason_codes: list[str],
         metrics: dict[str, Any],
+        freshness_policy: FreshnessPolicy | None = None,
         snapshot_id: str | None = None,
         source_signal_ids: list[str] | None = None,
         order_intent: OrderIntent | None = None,
@@ -80,6 +83,7 @@ class SignalCandidate(BaseModel):
             max_entry_price=max_entry_price,
             seconds_to_close=seconds_to_close,
             data_freshness_ms=data_freshness_ms,
+            freshness_policy=freshness_policy,
             reason_codes=reason_codes,
             metrics=metrics,
             dedupe_key=dedupe_key,

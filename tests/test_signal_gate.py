@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from polysignal_lab.config import SignalConfig
+from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.freshness import FreshnessPolicy
+from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.signal_layer.gate import SignalGate
 from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
 
@@ -74,3 +77,36 @@ async def test_signal_rate_limiter_rejects_after_channel_limit(
     assert second.rejected is not None
     assert second.rejected.reason_code == "CHANNEL_RATE_LIMIT"
     assert second.rejected.details["market_id"] == signal.market_id
+
+
+def test_signal_candidate_carries_freshness_policy() -> None:
+    policy = FreshnessPolicy(
+        max_orderbook_staleness_ms=1_500,
+        max_spot_staleness_ms=1_500,
+    )
+
+    signal = SignalCandidate.build(
+        strategy="unit",
+        asset="BTC",
+        timeframe="5m",
+        market_id="mkt-1",
+        market_slug="btc-updown-5m-test",
+        condition_id="condition-1",
+        token_id="token-up",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.82,
+        max_entry_price=0.92,
+        seconds_to_close=90,
+        data_freshness_ms=10,
+        reason_codes=["UNIT"],
+        metrics={},
+        freshness_policy=policy,
+    )
+
+    assert signal.freshness_policy == policy
+    assert signal.model_dump()["freshness_policy"] == {
+        "max_orderbook_staleness_ms": 1_500,
+        "max_spot_staleness_ms": 1_500,
+        "max_anchor_staleness_ms": None,
+    }
