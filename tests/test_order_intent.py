@@ -283,6 +283,56 @@ def test_passive_gtd_full_evaluate_accepted():
     assert decision.signal is not None
 
 
+def test_simulator_fak_allows_partial_preflight(settings):
+    from polysignal_lab.paper.simulator import PaperSimulator
+    from polysignal_lab.paper.wallet import PaperWallet
+
+    sig = SignalCandidate.build(
+        strategy="test", asset="BTC", timeframe="5m",
+        market_id="mkt-1", market_slug="s", condition_id="c",
+        token_id="t-up", side=Side.UP, confidence=0.6,
+        entry_reference_price=0.35, max_entry_price=0.55,
+        seconds_to_close=300, data_freshness_ms=100,
+        reason_codes=["TEST"], metrics={},
+        order_intent=OrderIntent.TAKER_FAK,
+    )
+    book = OrderBook(
+        token_id="t-up",
+        bids=[BookLevel(price=0.30, size=100)],
+        asks=[BookLevel(price=0.50, size=5)],
+        received_at=utc_now(),
+    )
+    result = PaperSimulator(settings.paper_trading, settings.data.polymarket, PaperWallet(1000)).process_signal(sig, book)
+    assert result.order.status == OrderStatus.PARTIAL
+    assert result.fill is not None
+    assert result.fill.fill_ratio < 1.0
+    assert result.order.metrics["paper_normalized_reason"] is None
+
+
+def test_simulator_passive_gtd_preflight_does_not_require_taker_depth(settings):
+    from polysignal_lab.paper.simulator import PaperSimulator
+    from polysignal_lab.paper.wallet import PaperWallet
+
+    sig = SignalCandidate.build(
+        strategy="test", asset="BTC", timeframe="5m",
+        market_id="mkt-1", market_slug="s", condition_id="c",
+        token_id="t-up", side=Side.UP, confidence=0.6,
+        entry_reference_price=0.35, max_entry_price=0.35,
+        seconds_to_close=300, data_freshness_ms=100,
+        reason_codes=["TEST"], metrics={},
+        order_intent=OrderIntent.PASSIVE_GTD,
+        expiry_seconds=200,
+    )
+    book = OrderBook(
+        token_id="t-up",
+        bids=[BookLevel(price=0.30, size=100)],
+        asks=[BookLevel(price=0.80, size=1)],
+        received_at=utc_now(),
+    )
+    result = PaperSimulator(settings.paper_trading, settings.data.polymarket, PaperWallet(1000)).process_signal(sig, book)
+    assert result.order.status == OrderStatus.RESTING
+    assert result.order.metrics["paper_depth_revalidated"] is False
+
 def test_base_strategy_notify_defaults_are_noops():
     from polysignal_lab.strategies.base import BaseStrategy
     from polysignal_lab.domain.enums import Side
