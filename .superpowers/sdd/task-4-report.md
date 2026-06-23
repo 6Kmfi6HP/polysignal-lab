@@ -62,9 +62,11 @@ DONE
 - GREEN: same targeted regression passed after scheduler daily-window bounds switched to fixed-width UTC strings with microseconds: 1 passed.
 - DST COVER: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler_reports.py::test_daily_report_uses_next_local_midnight_for_dst_day -v` passed: 1 passed, with next-local-midnight bounds preserved as fixed-width UTC strings.
 - COVERING: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler_reports.py -v` passed: 7 passed.
+- POST-CLEANUP COVERING: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler_reports.py -v` passed after removing the stale `utc_iso` import: 7 passed.
 
 ### Commit SHA
 - `103ec22f93f4f97431a1a4f61a9aa826498ff1e4` — `fix: compare scheduler report timestamp bounds`
+- `cb527fb5fdc2a2b051f73e054179d61f8fab0700` — `fix: remove stale timestamp import`
 
 ### Notes
 - `generate_daily_report` now compares SQLite TEXT timestamps against UTC bounds formatted as `.000000Z` for both the local-day start and next-local-midnight end, matching persisted fractional timestamp shape while preserving DST-short and DST-long local days.
