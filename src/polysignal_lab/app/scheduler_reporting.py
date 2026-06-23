@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, assert_never
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from polysignal_lab.app.scheduler_reporting_storage import (
     delete_daily_report_rows,
@@ -14,6 +15,7 @@ from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
 from polysignal_lab.paper.report import PaperReportService
+from polysignal_lab.utils import utc_iso
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
@@ -159,8 +161,17 @@ async def _store_paper_result(
 
 
 async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport | None:
-    today = date.today()
+    try:
+        report_tz = ZoneInfo(scheduler.settings.app.timezone)
+    except ZoneInfoNotFoundError:
+        report_tz = UTC
+    today = datetime.now(report_tz).date()
     today_iso = today.isoformat()
+    day_start = datetime.combine(today, time.min, tzinfo=report_tz).astimezone(UTC)
+    day_end = day_start + timedelta(days=1)
+    day_params = (utc_iso(day_start), utc_iso(day_end))
+    day_created_where = "WHERE created_at >= ? AND created_at < ?"
+    day_closed_where = "WHERE closed_at >= ? AND closed_at < ?"
 
     existing = scheduler.sqlite.query_json(
         "daily_reports", where="WHERE report_date = ?", params=(today_iso,)
@@ -171,27 +182,27 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
 
     today_results_raw = scheduler.sqlite.query_json(
         "paper_trade_results",
-        where="WHERE DATE(closed_at) = ?",
-        params=(today_iso,),
+        where=day_closed_where,
+        params=day_params,
     )
     trade_results = [PaperTradeResult(**result) for result in today_results_raw]
 
     today_fills_raw = scheduler.sqlite.query_json(
         "paper_fills",
-        where="WHERE DATE(created_at) = ?",
-        params=(today_iso,),
+        where=day_created_where,
+        params=day_params,
         limit=10000,
     )
     today_orders_raw = scheduler.sqlite.query_json(
         "paper_orders",
-        where="WHERE DATE(created_at) = ?",
-        params=(today_iso,),
+        where=day_created_where,
+        params=day_params,
         limit=10000,
     )
     today_signals_raw = scheduler.sqlite.query_json(
         "signals",
-        where="WHERE DATE(created_at) = ?",
-        params=(today_iso,),
+        where=day_created_where,
+        params=day_params,
         limit=10000,
     )
     rejected_paper_orders = sum(
@@ -203,6 +214,14 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
         if order.get("status") == "FILLED"
         and order.get("metrics", {}).get("orderbook_fresh") is False
     )
+    fill_cfg = scheduler.settings.paper_trading.fill_model
+    paper_execution_assumptions = {
+        "max_book_staleness_ms": scheduler.settings.data.polymarket.max_book_staleness_ms,
+        "min_fill_ratio": fill_cfg.min_fill_ratio,
+        "reject_if_partial": fill_cfg.reject_if_partial,
+        "require_depth_check": fill_cfg.require_depth_check,
+        "slippage_bps": fill_cfg.slippage_bps,
+    }
 
     try:
         report = PaperReportService().build_daily_report(
@@ -217,6 +236,9 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
             results=trade_results,
             equity_curve=[scheduler.wallet.starting_balance, scheduler.wallet.equity],
             stale_paper_fills=stale_paper_fills,
+            paper_order_payloads=today_orders_raw,
+            paper_fill_payloads=today_fills_raw,
+            paper_execution_assumptions=paper_execution_assumptions,
         )
     except (KeyError, TypeError, ValueError) as exc:
         scheduler.logger.error("Failed to build daily report: %s", exc)

@@ -209,6 +209,19 @@ async def test_daily_report_publish_record_written(tmp_path: Path, snapshot, set
     assert report.win_count == 1
     assert report.total_pnl_usdc == result.pnl_usdc
     assert report.stale_paper_fills == 0
+    assert report.paper_attempts_by_intent == {"default": 2}
+    assert report.paper_fills_by_intent == {"default": 1}
+    assert report.paper_rejects_by_reason == {"PAPER_MISSING_ORDERBOOK": 1}
+    assert report.paper_rejects_by_original_reason == {"MISSING_ORDERBOOK": 1}
+    assert report.average_execution_staleness_ms is not None
+    assert report.average_executable_depth_usdc is not None
+    assert report.paper_execution_assumptions == {
+        "max_book_staleness_ms": settings.data.polymarket.max_book_staleness_ms,
+        "min_fill_ratio": settings.paper_trading.fill_model.min_fill_ratio,
+        "reject_if_partial": settings.paper_trading.fill_model.reject_if_partial,
+        "require_depth_check": settings.paper_trading.fill_model.require_depth_check,
+        "slippage_bps": settings.paper_trading.fill_model.slippage_bps,
+    }
     assert report.strategy_breakdown["ptb_diff"]["win_count"] == 1
     assert report.asset_breakdown["BTC"]["closed_positions"] == 1
     assert report.timeframe_breakdown["5m"]["total_pnl_usdc"] == result.pnl_usdc

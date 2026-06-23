@@ -65,6 +65,16 @@ ID: <code>{html.escape(result.signal_id)}</code>"""
                 f"{row.get('total_pnl_usdc', 0.0):+.2f} USDC"
             )
         strategy_text = "\n".join(lines) if lines else "• No closed trades"
+        reject_text = "none"
+        if report.paper_rejects_by_reason:
+            reject_text = ", ".join(
+                f"{reason}:{count}" for reason, count in sorted(report.paper_rejects_by_reason.items())
+            )
+        exec_lag = (
+            "n/a"
+            if report.average_execution_staleness_ms is None
+            else f"{report.average_execution_staleness_ms:.0f} ms"
+        )
         message = f"""<b>📊 Daily Paper Report</b>
 {report.report_date.isoformat()}
 
@@ -73,6 +83,9 @@ PnL     {report.paper_pnl:+.2f} USDC
 ROI     {report.paper_roi:+.2%}
 
 Signals {report.total_signals}
+Orders  {report.paper_orders}
+Rejects {report.rejected_paper_orders} ({reject_text})
+ExecLag {exec_lag}
 Filled  {report.paper_fills}
 Closed  {report.closed_positions}
 W/L     {report.win_count} / {report.loss_count}
