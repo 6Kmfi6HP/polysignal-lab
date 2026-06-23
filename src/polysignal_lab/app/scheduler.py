@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,7 +46,7 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.strategies.base import BaseStrategy
 
 
-def _make_fill_notifier(strategies: list[BaseStrategy]) -> object:
+def _make_fill_notifier(strategies: list[BaseStrategy]) -> Callable[..., None]:
     """Create a callback that notifies strategies when paper fills/cancels occur."""
     def notify(order: PaperOrder, event: str, fill: PaperFill | None = None, pair_id: str | None = None) -> None:
         for strat in strategies:
@@ -57,6 +58,8 @@ def _make_fill_notifier(strategies: list[BaseStrategy]) -> object:
                 strat.notify_cancel(order.market_id, order.side, order.reject_reason or "GTD_EXPIRED")
             elif event == "leg_failed" and pair_id is not None:
                 strat.notify_leg_failure(pair_id, order.market_id, order.side)
+
+    return notify
 
 @dataclass
 class ServiceContext:
@@ -182,6 +185,8 @@ class PolySignalScheduler:
             self.logger.exception(
                 "Failed to reseed order books on WebSocket reconnect: %s", exc
             )
+            for token_id in token_ids:
+                self.ctx.books.mark_stale(token_id, "RECONNECT_RESEED_FAILED")
 
     async def _stop_market_ws_subscription(self) -> None:
         await scheduler_market_data.stop_market_ws_subscription(self)

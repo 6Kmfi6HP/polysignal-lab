@@ -105,3 +105,99 @@ async def test_stale_paper_fill_count_is_zero(tmp_path: Path, snapshot, settings
     assert counts["paper_fills"] == 0
     assert counts["paper_positions"] == 0
     assert order_rows[0]["metrics"]["fill_decision_reason"] == "STALE_ORDERBOOK"
+
+
+def test_scheduler_fill_notifier_dispatches_cancel_to_matching_strategy() -> None:
+    from polysignal_lab.app.scheduler import _make_fill_notifier
+    from polysignal_lab.domain.enums import Side
+    from polysignal_lab.domain.paper_order import PaperOrder
+
+    class Strategy:
+        name = "test"
+
+        def __init__(self) -> None:
+            self.cancels = []
+
+        def notify_cancel(self, market_id, side, reason):
+            self.cancels.append((market_id, side, reason))
+
+    strategy = Strategy()
+    order = PaperOrder(
+        signal_id="sig-1",
+        asset="BTC",
+        timeframe="5m",
+        strategy="test",
+        market_id="mkt-1",
+        market_slug="s",
+        token_id="t-up",
+        side=Side.UP,
+        limit_price=0.35,
+        reference_price=0.35,
+        stake_usdc=3.5,
+        reject_reason="STALE_ORDERBOOK",
+    )
+
+    notifier = _make_fill_notifier([strategy])
+    notifier(order, "cancelled", None)
+
+    assert strategy.cancels == [("mkt-1", Side.UP, "STALE_ORDERBOOK")]
+
+async def test_rejected_resting_order_is_persisted_logged_and_notified(
+    tmp_path: Path, settings
+) -> None:
+    from polysignal_lab.app.scheduler_processing import tick_resting_orders
+    from polysignal_lab.domain.enums import OrderIntent, Side
+    from polysignal_lab.domain.signal import SignalCandidate
+
+    scheduler = _paper_scheduler(tmp_path, settings)
+    signal = SignalCandidate.build(
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="mkt-1",
+        market_slug="s",
+        condition_id="c",
+        token_id="t-up",
+        side=Side.UP,
+        confidence=0.6,
+        entry_reference_price=0.35,
+        max_entry_price=0.35,
+        seconds_to_close=300,
+        data_freshness_ms=100,
+        reason_codes=["T"],
+        metrics={},
+        order_intent=OrderIntent.PASSIVE_GTD,
+        expiry_seconds=300,
+    )
+    scheduler.ctx.books.update(
+        sample_book("t-up", BookFactoryConfig(ask=0.55, bid=0.30, size=100))
+    )
+    await scheduler.process_signal(signal)
+    scheduler.ctx.books.update(
+        sample_book("t-up", BookFactoryConfig(ask=0.55, bid=0.35, size=100)).model_copy(
+            update={
+                "received_at": utc_now()
+                - timedelta(
+                    milliseconds=settings.data.polymarket.max_book_staleness_ms + 1000
+                )
+            }
+        )
+    )
+    notifications = []
+    scheduler.paper.fill_notifier = (
+        lambda order, event, fill: notifications.append((order, event, fill))
+    )
+
+    results = tick_resting_orders(scheduler)
+
+    assert len(results) == 1
+    assert results[0].order.status == "REJECTED"
+    assert results[0].order.reject_reason == "STALE_ORDERBOOK"
+    order_rows = scheduler.sqlite.query_json("paper_orders")
+    assert len(order_rows) == 1
+    assert order_rows[0]["status"] == "REJECTED"
+    assert order_rows[0]["reject_reason"] == "STALE_ORDERBOOK"
+    paper_order_logs = scheduler.logs.read_all("paper_orders")
+    assert paper_order_logs[-1]["status"] == "REJECTED"
+    assert paper_order_logs[-1]["reject_reason"] == "STALE_ORDERBOOK"
+    assert notifications == [(results[0].order, "cancelled", None)]

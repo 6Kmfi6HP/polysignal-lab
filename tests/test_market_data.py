@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
@@ -85,6 +86,55 @@ def test_polymarket_ws_book_message_updates_registry() -> None:
     assert book is not None
     assert book.best_ask == 0.5
     assert book.last_trade_price == 0.49
+
+
+def test_last_trade_does_not_refresh_orderbook_depth_freshness() -> None:
+    from polysignal_lab.domain.orderbook import OrderBook
+    from polysignal_lab.utils import utc_now
+
+    registry = OrderBookRegistry()
+    now = utc_now()
+    stale_received_at = now - timedelta(milliseconds=20_000)
+    registry.update_from_snapshot(
+        OrderBook(
+            token_id="tok",
+            bids=[],
+            asks=[],
+            received_at=stale_received_at,
+        )
+    )
+
+    registry.update_last_trade("tok", 0.49)
+
+    book = registry.get("tok")
+    assert book is not None
+    assert book.last_trade_price == 0.49
+    assert book.received_at == stale_received_at
+    assert registry.is_fill_eligible("tok", 10_000, now) is False
+
+
+async def test_failed_websocket_reseed_marks_subscribed_books_stale(
+    tmp_path: Path, settings
+) -> None:
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+    from polysignal_lab.domain.orderbook import OrderBook
+
+    class FailingRestClient:
+        async def get_books(self, token_ids: list[str]) -> list[OrderBook]:
+            raise RuntimeError("reseed failed")
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler.rest = FailingRestClient()
+    scheduler.ctx.books.update_from_snapshot(OrderBook(token_id="token-up"))
+    scheduler.ctx.books.update_from_snapshot(OrderBook(token_id="token-down"))
+
+    await scheduler._reseed_ws_books(["token-up", "token-down"])
+
+    for token_id in ("token-up", "token-down"):
+        state = scheduler.ctx.books.get_state(token_id)
+        assert state is not None
+        assert state.has_snapshot is False
+        assert state.stale_reason == "RECONNECT_RESEED_FAILED"
 
 
 def test_websocket_event_types_reconciliation() -> None:

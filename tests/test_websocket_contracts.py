@@ -44,6 +44,24 @@ async def test_websocket_subscribe_calls_reseed_hook() -> None:
     ws.reseed_hook.assert_awaited_once_with(["token-1"])
 
 
+
+def test_polymarket_price_change_before_snapshot_is_dropped_and_counted() -> None:
+    registry = OrderBookRegistry()
+    ws = PolymarketMarketWebSocket(PolymarketDataConfig(), registry)
+
+    ws.handle_message(
+        {
+            "event_type": "price_change",
+            "asset_id": "token-before-snapshot",
+            "price": "0.41",
+            "size": "10",
+            "side": "BUY",
+        }
+    )
+
+    assert registry.get("token-before-snapshot") is None
+    assert registry.metrics.snapshot()["counters"].get("delta_without_snapshot") == 1
+
 def test_polymarket_price_changes_event_updates_registry() -> None:
     registry = OrderBookRegistry()
     ws = _seed_polymarket_book(registry)

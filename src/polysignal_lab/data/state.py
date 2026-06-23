@@ -11,7 +11,6 @@ from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.orderbook import OrderBook
 from polysignal_lab.domain.spot import SpotPrice
 from polysignal_lab.observability.metrics import MetricsRegistry
-from polysignal_lab.utils import utc_now
 
 
 def parse_source_timestamp(ts_val: Any) -> datetime | None:
@@ -170,7 +169,6 @@ class OrderBookRegistry:
             if book is not None:
                 updated = book.model_copy(deep=True)
                 updated.last_trade_price = price
-                updated.received_at = utc_now()
                 self.books[token_id] = updated
 
     def telemetry_for(self, token_id: str) -> dict[str, str | int | float | bool | None]:

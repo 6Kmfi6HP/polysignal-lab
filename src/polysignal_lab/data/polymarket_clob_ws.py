@@ -100,6 +100,7 @@ class PolymarketMarketWebSocket:
             return
         book = self.registry.get(token_id)
         if not book:
+            self.registry.update_from_delta(OrderBook(token_id=token_id, received_at=utc_now()))
             return
         price = safe_float(change.get("price"))
         size = safe_float(change.get("size"), 0.0)
