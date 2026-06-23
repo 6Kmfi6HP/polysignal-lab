@@ -201,10 +201,43 @@ async def test_daily_report_uses_next_local_midnight_for_dst_day(
     assert report is not None
     assert report.report_date == date(2026, 3, 29)
     assert captured_day_params["signals"] == (
-        "2026-03-28T23:00:00Z",
-        "2026-03-29T22:00:00Z",
+        "2026-03-28T23:00:00.000000Z",
+        "2026-03-29T22:00:00.000000Z",
     )
 
+
+async def test_daily_report_includes_fractional_timestamp_in_first_second(
+    tmp_path: Path, snapshot, settings, monkeypatch
+) -> None:
+    # Given: a persisted signal in the first UTC second of the report day.
+    settings.app.timezone = "UTC"
+    scheduler = _scheduler(tmp_path, settings)
+    signal = await _signal(snapshot, settings)
+    scheduler.sqlite.insert_signal(
+        signal.model_copy(
+            update={
+                "signal_id": "sig-first-second-fractional",
+                "created_at": datetime(2026, 6, 23, 0, 0, 0, 500000, tzinfo=UTC),
+            }
+        )
+    )
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return cls(2026, 6, 23, 12, 0, tzinfo=UTC)
+            return cls(2026, 6, 23, 12, 0, tzinfo=tz)
+
+    monkeypatch.setattr(scheduler_reporting, "datetime", FixedDateTime)
+
+    # When: the daily report queries the local day's stored UTC TEXT window.
+    report = await scheduler.generate_daily_report()
+
+    # Then: the fractional timestamp still belongs to the report day.
+    assert report is not None
+    assert report.report_date == date(2026, 6, 23)
+    assert report.total_signals == 1
 
 async def test_daily_report_publish_record_written(tmp_path: Path, snapshot, settings) -> None:
     # Given: stored signals, one filled paper order, one rejected paper order, and a closed result.

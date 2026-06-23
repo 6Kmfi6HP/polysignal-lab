@@ -160,6 +160,10 @@ async def _store_paper_result(
         scheduler.logs.append("telegram_publishes", publish_payload)
 
 
+def _utc_text_bound(dt: datetime) -> str:
+    return dt.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
 async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport | None:
     try:
         report_tz = ZoneInfo(scheduler.settings.app.timezone)
@@ -171,7 +175,7 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
     day_end_local = datetime.combine(today + timedelta(days=1), time.min, tzinfo=report_tz)
     day_start = day_start_local.astimezone(UTC)
     day_end = day_end_local.astimezone(UTC)
-    day_params = (utc_iso(day_start), utc_iso(day_end))
+    day_params = (_utc_text_bound(day_start), _utc_text_bound(day_end))
     day_created_where = "WHERE created_at >= ? AND created_at < ?"
     day_closed_where = "WHERE closed_at >= ? AND closed_at < ?"
 
