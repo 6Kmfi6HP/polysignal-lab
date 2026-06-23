@@ -192,12 +192,16 @@ async def test_rejected_resting_order_is_persisted_logged_and_notified(
 
     assert len(results) == 1
     assert results[0].order.status == "REJECTED"
-    assert results[0].order.reject_reason == "STALE_ORDERBOOK"
+    assert results[0].order.reject_reason == "PAPER_STALE_ORDERBOOK"
     order_rows = scheduler.sqlite.query_json("paper_orders")
     assert len(order_rows) == 1
     assert order_rows[0]["status"] == "REJECTED"
-    assert order_rows[0]["reject_reason"] == "STALE_ORDERBOOK"
+    assert order_rows[0]["reject_reason"] == "PAPER_STALE_ORDERBOOK"
+    assert order_rows[0]["metrics"]["paper_original_reason"] == "STALE_ORDERBOOK"
+    assert order_rows[0]["metrics"]["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
     paper_order_logs = scheduler.logs.read_all("paper_orders")
     assert paper_order_logs[-1]["status"] == "REJECTED"
-    assert paper_order_logs[-1]["reject_reason"] == "STALE_ORDERBOOK"
+    assert paper_order_logs[-1]["reject_reason"] == "PAPER_STALE_ORDERBOOK"
+    assert paper_order_logs[-1]["metrics"]["paper_original_reason"] == "STALE_ORDERBOOK"
+    assert paper_order_logs[-1]["metrics"]["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
     assert notifications == [(results[0].order, "cancelled", None)]
