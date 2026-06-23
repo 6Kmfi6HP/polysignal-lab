@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from math import isfinite
 
 from polysignal_lab.config import FillModelConfig
 from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side
@@ -48,6 +49,14 @@ class BestAskTakerExecutor:
             return self._reject(order, "MISSING_BEST_ASK")
         if book.best_ask > order.limit_price:
             return self._reject(order, "ASK_ABOVE_MAX_ENTRY")
+        if any(
+            not isfinite(level.price)
+            or level.price <= 0
+            or not isfinite(level.size)
+            or level.size <= 0
+            for level in book.asks
+        ):
+            return self._reject(order, "MALFORMED_ORDERBOOK")
 
         if intent == OrderIntent.TAKER_FOK:
             return self._execute_fok(order, book)
@@ -101,21 +110,22 @@ class BestAskTakerExecutor:
 
     def _execute_fak(self, order: PaperOrder, book: OrderBook) -> IntentDispatchResult:
         remaining = order.stake_usdc
-        fill_price = book.best_ask
         filled_usdc = 0.0
+        shares = 0.0
         for level in sorted(book.asks, key=lambda x: x.price):
             if level.price > order.limit_price:
                 break
             available = level.price * level.size
             take = min(remaining, available)
             filled_usdc += take
+            shares += take / level.price
             remaining -= take
             if remaining <= 0:
                 break
-        if filled_usdc <= 0:
+        if filled_usdc <= 0 or shares <= 0:
             return self._reject(order, "FAK_NO_LIQUIDITY")
         fill_ratio = filled_usdc / order.stake_usdc
-        shares = filled_usdc / fill_price
+        fill_price = filled_usdc / shares
         fill = PaperFill(
             paper_fill_id=new_id("pf"),
             paper_order_id=order.paper_order_id,
@@ -148,8 +158,7 @@ class BestAskTakerExecutor:
         available = book.depth_until(order.limit_price)
         if available < order.stake_usdc:
             return self._reject(order, "FOK_INSUFFICIENT_DEPTH", available_depth_usdc=available)
-        fill_price = book.best_ask
-        shares = order.stake_usdc / fill_price
+        filled_usdc, shares, fill_price = self._consume_asks(order, book)
         fill = PaperFill(
             paper_fill_id=new_id("pf"),
             paper_order_id=order.paper_order_id,
@@ -177,6 +186,45 @@ class BestAskTakerExecutor:
         )
         order.status = OrderStatus.FILLED
         return IntentDispatchResult(order=order, fills=[fill], positions=[position], status=OrderStatus.FILLED)
+
+    def _consume_asks(self, order: PaperOrder, book: OrderBook) -> tuple[float, float, float]:
+        remaining = order.stake_usdc
+        filled_usdc = 0.0
+        shares = 0.0
+        for level in sorted(book.asks, key=lambda x: x.price):
+            if level.price > order.limit_price:
+                break
+            available = level.price * level.size
+            take = min(remaining, available)
+            filled_usdc += take
+            shares += take / level.price
+            remaining -= take
+            if remaining <= 0:
+                break
+        fill_price = filled_usdc / shares if shares > 0 else 0.0
+        return filled_usdc, shares, fill_price
+
+    def _preflight_fok(self, order: PaperOrder, book: OrderBook) -> tuple[bool, str | None, float | None]:
+        if book.token_id != order.token_id:
+            return False, "MALFORMED_ORDERBOOK", None
+        if not book.is_fresh(self.max_book_staleness_ms, order.created_at):
+            return False, "STALE_ORDERBOOK", None
+        if not book.asks or book.best_ask is None:
+            return False, "MISSING_BEST_ASK", None
+        if book.best_ask > order.limit_price:
+            return False, "ASK_ABOVE_MAX_ENTRY", None
+        if any(
+            not isfinite(level.price)
+            or level.price <= 0
+            or not isfinite(level.size)
+            or level.size <= 0
+            for level in book.asks
+        ):
+            return False, "MALFORMED_ORDERBOOK", None
+        available = book.depth_until(order.limit_price)
+        if available < order.stake_usdc:
+            return False, "FOK_INSUFFICIENT_DEPTH", available
+        return True, None, available
 
     def _reject(self, order: PaperOrder, reason: str, available_depth_usdc: float | None = None) -> IntentDispatchResult:
         order.status = OrderStatus.REJECTED
@@ -279,6 +327,7 @@ class MultiLegCoordinator:
     def __init__(self):
         self._pair_legs: dict[str, dict[str, bool]] = defaultdict(dict)  # pair_id -> {signal_id: filled}
         self._pending_fok: dict[str, tuple[SignalCandidate, PaperOrder, object]] = {}
+        self._failed_pairs: set[str] = set()
 
     def register(self, signal: SignalCandidate) -> None:
         if signal.pair_id:
@@ -309,17 +358,22 @@ class MultiLegCoordinator:
         if pending_key is None:
             return None
 
-        # Try both legs: leg1 must have depth for FOK too
+        leg1_ok, leg1_reason, leg1_available = executor._preflight_fok(leg1_order, leg1_book)
+        hedge_ok, hedge_reason, hedge_available = executor._preflight_fok(hedge_order, hedge_book)
+        if not leg1_ok or not hedge_ok:
+            reason = leg1_reason if not leg1_ok else hedge_reason
+            result_order = leg1_order if not leg1_ok else hedge_order
+            available = leg1_available if not leg1_ok else hedge_available
+            result = executor._reject(result_order, reason or "FOK_PAIR_REJECTED", available_depth_usdc=available)
+            if leg1_order.status != OrderStatus.REJECTED:
+                executor._reject(leg1_order, "FOK_PAIR_REJECTED")
+            if hedge_order.status != OrderStatus.REJECTED:
+                executor._reject(hedge_order, "FOK_PAIR_REJECTED")
+            self._pair_failed(pair_id, result)
+            return result
+
         result1 = executor.execute(leg1_order, leg1_book, OrderIntent.TAKER_FOK)
         result2 = executor.execute(hedge_order, hedge_book, OrderIntent.TAKER_FOK)
-
-        if result1.status == OrderStatus.REJECTED:
-            self._pair_failed(pair_id, result1)
-            return result1
-
-        if result2.status == OrderStatus.REJECTED:
-            self._pair_failed(pair_id, result2)
-            return result2
 
         # Both filled — combine results
         combined = IntentDispatchResult(
@@ -328,6 +382,8 @@ class MultiLegCoordinator:
             positions=result1.positions + result2.positions,
             status=OrderStatus.FILLED,
         )
+        self._pair_legs[pair_id][leg1_sig.signal_id] = True
+        self._pair_legs[pair_id][hedge_signal.signal_id] = True
         del self._pending_fok[pending_key]
         return combined
 
@@ -342,8 +398,8 @@ class MultiLegCoordinator:
         return cancelled
 
     def any_leg_failed(self, pair_id: str) -> bool:
-        legs = self._pair_legs.get(pair_id, {})
-        return any(failed for failed in legs.values())
+        return pair_id in self._failed_pairs
 
     def _pair_failed(self, pair_id: str, result: IntentDispatchResult) -> None:
+        self._failed_pairs.add(pair_id)
         self.cancel_pair(pair_id)
