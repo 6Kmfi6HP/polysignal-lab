@@ -15,7 +15,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from polysignal_lab.strategies.config import (
+from polysignal_lab.strategies.config import (  # noqa: F401
     LateConsensusConfig,
     PTBDiffConfig,
     StrategyConfig,
@@ -37,17 +37,19 @@ DISALLOWED_ENV_KEY_PARTS = (
     "TRADING_SECRET",
 )
 
-DISALLOWED_SOURCE_SYMBOLS = tuple([
-    "Secure" + "Client",
-    "Async" + "Secure" + "Client",
-    "Clob" + "Client(",
-    "create_" + "order",
-    "post_" + "order",
-    "submit_" + "order",
-    "cancel_" + "order",
-    "cancel_" + "all",
-    "redeem_" + "positions",
-])
+DISALLOWED_SOURCE_SYMBOLS = tuple(
+    [
+        "Secure" + "Client",
+        "Async" + "Secure" + "Client",
+        "Clob" + "Client(",
+        "create_" + "order",
+        "post_" + "order",
+        "submit_" + "order",
+        "cancel_" + "order",
+        "cancel_" + "all",
+        "redeem_" + "positions",
+    ]
+)
 
 YAML_CONFIG_ADAPTER: Final = TypeAdapter(dict[str, JsonValue])
 
@@ -65,7 +67,9 @@ def _yaml_bool(val: str) -> bool | str:
 class AppConfig(BaseModel):
     name: str = "PolySignal Lab"
     environment: str = "production"
-    mode: Literal["signal_only", "paper_only", "signal_plus_paper"] = "signal_plus_paper"
+    mode: Literal["signal_only", "paper_only", "signal_plus_paper"] = (
+        "signal_plus_paper"
+    )
     timezone: str = "Asia/Bangkok"
     log_level: str = "INFO"
 
@@ -79,7 +83,12 @@ class SafetyConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_locked_down(self) -> "SafetyConfig":
-        if self.allow_secret_key_material or self.allow_secure_polymarket_client or self.allow_live_market_actions or self.allow_position_redemption:
+        if (
+            self.allow_secret_key_material
+            or self.allow_secure_polymarket_client
+            or self.allow_live_market_actions
+            or self.allow_position_redemption
+        ):
             raise ValueError("Safety flags must remain false for PolySignal Lab.")
         return self
 
@@ -123,6 +132,7 @@ class MarketConfig(BaseModel):
 class PolymarketDataConfig(BaseModel):
     gamma_base_url: str = "https://gamma-api.polymarket.com"
     clob_base_url: str = "https://clob.polymarket.com"
+    chain_id: int = 137
     market_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     use_market_ws: bool = True
     use_crypto_price_api: bool = False
@@ -134,14 +144,18 @@ class PolymarketDataConfig(BaseModel):
 class BinanceDataConfig(BaseModel):
     enabled: bool = True
     base_ws_url: str = "wss://stream.binance.com:9443/stream"
-    symbols: dict[str, str] = Field(default_factory=lambda: {
-        "BTC": "BTCUSDT",
-        "ETH": "ETHUSDT",
-        "SOL": "SOLUSDT",
-        "XRP": "XRPUSDT",
-    })
+    symbols: dict[str, str] = Field(
+        default_factory=lambda: {
+            "BTC": "BTCUSDT",
+            "ETH": "ETHUSDT",
+            "SOL": "SOLUSDT",
+            "XRP": "XRPUSDT",
+        }
+    )
     streams: list[str] = Field(default_factory=lambda: ["aggTrade", "bookTicker"])
-    max_price_staleness_ms: int = 60000  # 60s — Binance WS updates every ~1s but allow initial lag
+    max_price_staleness_ms: int = (
+        60000  # 60s — Binance WS updates every ~1s but allow initial lag
+    )
     reconnect_before_hours: int = 23
 
 
@@ -222,6 +236,7 @@ class Settings(BaseSettings):
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Settings":
         import os as _os
+
         with open(path, "r", encoding="utf-8") as fh:
             data = YAML_CONFIG_ADAPTER.validate_python(yaml.safe_load(fh) or {})
         # Apply env overrides (POLYSIGNAL_LAB__SECTION__KEY format)
@@ -229,7 +244,7 @@ class Settings(BaseSettings):
         for env_key, env_val in _os.environ.items():
             if not env_key.startswith(prefix):
                 continue
-            parts = env_key[len(prefix):].lower().split("__")
+            parts = env_key[len(prefix) :].lower().split("__")
             target = data
             for part in parts[:-1]:
                 section = target.get(part)
@@ -249,13 +264,17 @@ class Settings(BaseSettings):
         settings.validate_runtime_environment()
         return settings
 
-    def validate_runtime_environment(self, environ: dict[str, str] | None = None) -> None:
+    def validate_runtime_environment(
+        self, environ: dict[str, str] | None = None
+    ) -> None:
         env = environ or os.environ
         if self.safety.fail_on_disallowed_env_keys:
             for key in env:
                 upper = key.upper()
                 if any(part in upper for part in DISALLOWED_ENV_KEY_PARTS):
-                    raise SecurityConfigError(f"Disallowed environment variable detected: {key}")
+                    raise SecurityConfigError(
+                        f"Disallowed environment variable detected: {key}"
+                    )
 
 
 def load_settings(path: str | Path | None = None) -> Settings:
