@@ -61,7 +61,21 @@ def test_strategy_factory_builds_default_configured_strategies() -> None:
         build_strategy(strategy_config).name for strategy_config in settings.strategies
     ]
 
-    assert strategy_names == ["vwap_momentum", "late_consensus", "ptb_diff"]
+    assert strategy_names == [
+        "vwap_momentum",
+        "late_consensus",
+        "ptb_diff",
+        "binary_momentum",
+        "cross_market_bot",
+        "dump_hedge",
+        "fibonacci_bot",
+        "low_side_dual_reversion",
+        "mid_price_sizing",
+        "ninety_nine_cent_sniper",
+        "one_cent_buy",
+        "pre_order_market",
+        "skew_mean_reversion",
+    ]
     assert single_strategy_names == strategy_names
 
 
