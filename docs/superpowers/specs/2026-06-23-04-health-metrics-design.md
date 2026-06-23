@@ -1,6 +1,6 @@
 # 04 Health and Metrics Wiring Design
 
-**Status:** Draft for review
+**Status:** Approved
 **Scope:** One standalone architecture change. Do not execute with specs 01-03 or 05-08 in the same implementation batch.
 **Goal:** Turn existing logs and isolated observability helpers into actionable runtime health for scheduler, dashboard, smoke evidence, and operations.
 

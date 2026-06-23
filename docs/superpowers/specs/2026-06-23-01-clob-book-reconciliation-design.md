@@ -1,6 +1,6 @@
 # 01 CLOB Book Reconciliation Design
 
-**Status:** Draft for review
+**Status:** Approved
 **Scope:** One standalone architecture change. Do not execute with specs 02-08 in the same implementation batch.
 **Goal:** Make Polymarket order book state safe enough for signal gates and paper fills by treating WebSocket data as a reconciled local book, not as best-effort price hints.
 

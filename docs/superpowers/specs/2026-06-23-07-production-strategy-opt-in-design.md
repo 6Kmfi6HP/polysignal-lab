@@ -1,6 +1,6 @@
 # 07 Production Strategy Opt-In and Calibration Design
 
-**Status:** Draft for review
+**Status:** Approved
 **Scope:** One standalone architecture change. Do not execute with specs 01-06 or 08 in the same implementation batch.
 **Goal:** Prevent untuned or unsupported strategies from polluting production signals by making production strategy activation explicit and calibration-aware.
 

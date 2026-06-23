@@ -1,6 +1,6 @@
 # 05 Anchor Price Service Design
 
-**Status:** Draft for review
+**Status:** Approved
 **Scope:** One standalone architecture change. Do not execute with specs 01-04 or 06-08 in the same implementation batch.
 **Goal:** Replace opportunistic price-to-beat lookup with a durable, boundary-aware anchor price service for short-cycle crypto Up/Down markets.
 

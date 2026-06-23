@@ -1,6 +1,6 @@
 # 02 Strategy Freshness Gates Design
 
-**Status:** Draft for review
+**Status:** Approved
 **Scope:** One standalone architecture change. Do not execute with specs 01 or 03-08 in the same implementation batch.
 **Goal:** Prevent short-window strategies from acting on stale orderbook, spot, or anchor data by enforcing the strictest applicable freshness threshold at the central gate.
 

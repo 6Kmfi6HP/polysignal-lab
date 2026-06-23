@@ -1,6 +1,6 @@
 # 06 Public Market Data Capability Boundary Design
 
-**Status:** Draft for review
+**Status:** Approved
 **Scope:** One standalone architecture change. Do not execute with specs 01-05 or 07-08 in the same implementation batch.
 **Goal:** Make the read-only Polymarket boundary enforceable by construction, not only by substring safety scanning.
 

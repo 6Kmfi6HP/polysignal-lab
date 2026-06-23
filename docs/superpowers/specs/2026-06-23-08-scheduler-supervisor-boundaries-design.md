@@ -1,6 +1,6 @@
 # 08 Scheduler Supervisor Boundaries Design
 
-**Status:** Draft for review
+**Status:** Approved
 **Scope:** One standalone architecture change. Execute only after earlier targeted specs have stabilized; do not batch with specs 01-07.
 **Goal:** Reduce `PolySignalScheduler` from a god-object into a thin supervisor over explicit services with owned lifecycle, health, and failure boundaries.
 

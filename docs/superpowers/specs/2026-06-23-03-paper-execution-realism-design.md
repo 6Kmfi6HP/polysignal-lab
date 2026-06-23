@@ -1,6 +1,6 @@
 # 03 Paper Execution Realism Design
 
-**Status:** Draft for review
+**Status:** Approved
 **Scope:** One standalone architecture change. Do not execute with specs 01-02 or 04-08 in the same implementation batch.
 **Goal:** Make paper trading results more trustworthy by revalidating market conditions at simulated execution time and recording why fills are accepted or rejected.
 
