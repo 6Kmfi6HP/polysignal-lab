@@ -25,8 +25,10 @@ class MarketDiscovery:
 
     async def discover(self) -> list[Market]:
         payloads = await self._fetch_gamma_events()
+        payloads.extend(await self._fetch_current_slot_payloads())
         candidates = self._flatten_markets(payloads)
         markets: list[Market] = []
+        seen: set[str] = set()
         for payload in candidates:
             match = self._match_crypto_updown(payload)
             if match is None or not self._is_allowed_active_market(payload):
@@ -43,6 +45,10 @@ class MarketDiscovery:
             if not self._is_allowed_window(market):
                 continue
             if len(market.outcome_tokens) >= 2:
+                key = market.condition_id or market.market_id or market.market_slug
+                if key in seen:
+                    continue
+                seen.add(key)
                 markets.append(market)
         return markets
 
@@ -68,6 +74,58 @@ class MarketDiscovery:
         response = await self.client.get(f"{self.config.gamma_base_url}/events", params=params)
         response.raise_for_status()
         return _gamma_events_from_json(JSON_VALUE_ADAPTER.validate_python(response.json()))
+
+    async def _fetch_current_slot_payloads(self) -> list[JsonObject]:
+        if not (self.market_config.active_only and not self.market_config.closed):
+            return []
+        payloads: list[JsonObject] = []
+        for slug in self._current_slot_slugs():
+            payload = await self._fetch_gamma_event_by_slug(slug)
+            if payload is None:
+                payload = await self._fetch_gamma_market_by_slug(slug)
+            if payload is not None:
+                payloads.append(payload)
+        return payloads
+
+    def _current_slot_slugs(self) -> list[str]:
+        now_ts = int(utc_now().timestamp())
+        slugs: list[str] = []
+        for asset in self.market_config.assets:
+            asset_slug = str(asset).strip().lower()
+            if not asset_slug:
+                continue
+            for timeframe in self.market_config.timeframes:
+                timeframe_slug = str(timeframe).strip().lower()
+                seconds = _timeframe_seconds(timeframe_slug)
+                if seconds is None:
+                    continue
+                slot_base = now_ts // seconds * seconds
+                slugs.append(f"{asset_slug}-updown-{timeframe_slug}-{slot_base}")
+        return slugs
+
+    async def _fetch_gamma_event_by_slug(self, slug: str) -> JsonObject | None:
+        return await self._fetch_gamma_slug_payload(f"{self.config.gamma_base_url}/events/slug/{slug}")
+
+    async def _fetch_gamma_market_by_slug(self, slug: str) -> JsonObject | None:
+        try:
+            response = await self.client.get(
+                f"{self.config.gamma_base_url}/markets",
+                params={"slug": slug},
+            )
+            response.raise_for_status()
+            payloads = _gamma_events_from_json(JSON_VALUE_ADAPTER.validate_python(response.json()))
+        except (httpx.HTTPError, TypeError, ValueError):
+            return None
+        return payloads[0] if payloads else None
+
+    async def _fetch_gamma_slug_payload(self, url: str) -> JsonObject | None:
+        try:
+            response = await self.client.get(url)
+            response.raise_for_status()
+            payload = JSON_VALUE_ADAPTER.validate_python(response.json())
+        except (httpx.HTTPError, TypeError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
 
     def _flatten_markets(self, payloads: list[JsonObject]) -> list[JsonObject]:
         out: list[JsonObject] = []
@@ -141,3 +199,10 @@ def _json_list(raw: JsonValue | None) -> list[JsonValue]:
             return []
         return decoded if isinstance(decoded, list) else []
     return []
+
+
+def _timeframe_seconds(timeframe: str) -> int | None:
+    match = re.fullmatch(r"([1-9]\d*)m", timeframe)
+    if match is None:
+        return None
+    return int(match.group(1)) * 60

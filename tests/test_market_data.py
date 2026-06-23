@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
@@ -58,6 +58,38 @@ class FakeAsyncClient:
         payload = self.payloads[len(self.calls) - 1] if len(self.calls) <= len(self.payloads) else []
         return FakeResponse(payload)
 
+
+def _gamma_market_payload(
+    *,
+    slug: str,
+    market_id: str,
+    start: str,
+    end: str,
+    outcomes: str = "[\"Up\", \"Down\"]",
+    token_ids: str = "[\"token-up\", \"token-down\"]",
+) -> dict[str, JsonValue]:
+    return {
+        "id": f"event-{market_id}",
+        "slug": slug,
+        "ticker": slug,
+        "title": "Bitcoin Up or Down",
+        "active": True,
+        "closed": False,
+        "markets": [
+            {
+                "id": market_id,
+                "conditionId": f"condition-{market_id}",
+                "slug": slug,
+                "question": "Bitcoin Up or Down",
+                "active": True,
+                "closed": False,
+                "eventStartTime": start,
+                "endDate": end,
+                "outcomes": outcomes,
+                "clobTokenIds": token_ids,
+            }
+        ],
+    }
 
 def test_binance_feed_url_and_parse_message() -> None:
     spots = SpotRegistry()
@@ -281,7 +313,8 @@ async def test_gamma_active_market_discovery_paginates_filters_and_extracts_toke
 
     markets = await discovery.discover()
 
-    assert [call.params["offset"] for call in client.calls] == ["0", "200"]
+    event_list_calls = [call for call in client.calls if call.url.endswith("/events")]
+    assert [call.params["offset"] for call in event_list_calls] == ["0", "200"]
     assert all("Authorization" not in call.headers for call in client.calls)
     assert len(markets) == 1
     market = markets[0]
@@ -324,6 +357,88 @@ async def test_gamma_discovery_skips_future_active_crypto_windows() -> None:
     markets = await discovery.discover()
 
     assert markets == []
+
+
+async def test_gamma_discovery_fetches_current_slot_by_slug_when_list_has_only_future_windows(
+    monkeypatch,
+) -> None:
+    from polysignal_lab.data import polymarket_market_discovery as discovery_module
+
+    now = datetime(2026, 6, 23, 22, 41, tzinfo=timezone.utc)
+    monkeypatch.setattr(discovery_module, "utc_now", lambda: now)
+    future = _gamma_market_payload(
+        slug="btc-updown-5m-4102444800",
+        market_id="market-future",
+        start="2100-01-01T00:00:00Z",
+        end="2100-01-01T00:05:00Z",
+    )
+    current = _gamma_market_payload(
+        slug="btc-updown-5m-1782254400",
+        market_id="market-current",
+        start="2026-06-23T22:40:00Z",
+        end="2026-06-23T22:45:00Z",
+    )
+    client = FakeAsyncClient([[future], current])
+    discovery = MarketDiscovery(
+        PolymarketDataConfig(),
+        MarketConfig(assets=["BTC"], timeframes=["5m"], active_only=True, closed=False),
+        client=client,
+    )
+
+    markets = await discovery.discover()
+
+    assert [market.market_id for market in markets] == ["market-current"]
+    assert any(call.url.endswith("/events/slug/btc-updown-5m-1782254400") for call in client.calls)
+
+
+async def test_gamma_discovery_maps_current_slot_tokens_by_outcome_label(monkeypatch) -> None:
+    from polysignal_lab.data import polymarket_market_discovery as discovery_module
+
+    now = datetime(2026, 6, 23, 22, 41, tzinfo=timezone.utc)
+    monkeypatch.setattr(discovery_module, "utc_now", lambda: now)
+    current = _gamma_market_payload(
+        slug="btc-updown-5m-1782254400",
+        market_id="market-current",
+        start="2026-06-23T22:40:00Z",
+        end="2026-06-23T22:45:00Z",
+        outcomes="[\"Down\", \"Up\"]",
+        token_ids="[\"token-down\", \"token-up\"]",
+    )
+    client = FakeAsyncClient([[], current])
+    discovery = MarketDiscovery(
+        PolymarketDataConfig(),
+        MarketConfig(assets=["BTC"], timeframes=["5m"], active_only=True, closed=False),
+        client=client,
+    )
+
+    markets = await discovery.discover()
+
+    assert len(markets) == 1
+    assert markets[0].token_for(Side.UP).token_id == "token-up"
+    assert markets[0].token_for(Side.DOWN).token_id == "token-down"
+
+
+async def test_gamma_discovery_dedupes_list_and_current_slug_payload(monkeypatch) -> None:
+    from polysignal_lab.data import polymarket_market_discovery as discovery_module
+
+    now = datetime(2026, 6, 23, 22, 41, tzinfo=timezone.utc)
+    monkeypatch.setattr(discovery_module, "utc_now", lambda: now)
+    current = _gamma_market_payload(
+        slug="btc-updown-5m-1782254400",
+        market_id="market-current",
+        start="2026-06-23T22:40:00Z",
+        end="2026-06-23T22:45:00Z",
+    )
+    client = FakeAsyncClient([[current], current])
+    discovery = MarketDiscovery(
+        PolymarketDataConfig(),
+        MarketConfig(assets=["BTC"], timeframes=["5m"], active_only=True, closed=False),
+        client=client,
+    )
+
+    markets = await discovery.discover()
+
+    assert [market.market_id for market in markets] == ["market-current"]
 
 async def test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes() -> None:
     fixtures = _fixtures()
