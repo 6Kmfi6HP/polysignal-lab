@@ -70,3 +70,17 @@ DONE
 
 ### Notes
 - `generate_daily_report` now compares SQLite TEXT timestamps against UTC bounds formatted as `.000000Z` for both the local-day start and next-local-midnight end, matching persisted fractional timestamp shape while preserving DST-short and DST-long local days.
+
+## Run-loop configured report date gating fix
+
+### Red/green evidence
+- RED: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler_reports.py::test_iteration_report_uses_configured_report_date_when_local_date_differs -v` failed before implementation with `assert datetime.date(2026, 6, 23) == datetime.date(2026, 6, 22)`, proving `_generate_iteration_report()` skipped the configured local report date when `last_report_date` matched the process-local date.
+- GREEN: same targeted regression passed after `_generate_iteration_report()` compared against the configured app-timezone date and returned `report.report_date`: 1 passed.
+- COVERING: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler_reports.py -v` passed: 8 passed.
+- RUNTIME/REPORT SLICE: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler.py tests/test_scheduler_reports.py -v` passed: 15 passed.
+
+### Commit SHA
+- `9c0797d17d86c53bc50f19f29dd30b278ebe70be` — `fix: gate daily report by app timezone`
+
+### Notes
+- `_generate_iteration_report()` now gates on the configured app timezone date instead of process-local `date.today()` and records the generated `DailyReport.report_date`.
