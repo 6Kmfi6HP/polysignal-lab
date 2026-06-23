@@ -158,10 +158,11 @@ class PTBDiffStrategy(BaseStrategy):
                 "PTB_TOKEN_PRICE_OK",
                 prob_ok_code,
                 "PTB_TIME_WINDOW_OK",
-                "PTB_ORDERBOOK_FRESH",
                 "PTB_SPREAD_OK",
                 trigger.name,
             ]
+            if orderbook_freshness_ms <= max_lag_ms:
+                reason_codes.insert(-2, "PTB_ORDERBOOK_FRESH")
 
             signal = self._candidate(
                 snapshot,

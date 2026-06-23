@@ -309,3 +309,38 @@ async def test_ptb_diff_stale_spot_candidate_is_rejected_by_gate(snapshot, setti
         decision.rejected.details["threshold_ms"]
         == settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000
     )
+
+
+async def test_ptb_diff_stale_orderbook_candidate_has_no_fresh_reason(
+    snapshot, settings
+) -> None:
+    stale_snapshot = snapshot.model_copy(
+        update={
+            "up_book": snapshot.up_book.model_copy(
+                update={"received_at": snapshot.created_at - timedelta(seconds=3)}
+            ),
+            "down_book": snapshot.down_book.model_copy(
+                update={"received_at": snapshot.created_at - timedelta(seconds=3)}
+            ),
+            "freshness": snapshot.freshness.model_copy(
+                update={"up_book_ms": 3_000, "down_book_ms": 3_000, "max_ms": 3_000}
+            ),
+        }
+    )
+    strategy = PTBDiffStrategy(settings.strategies.ptb_diff)
+    signals = strategy.evaluate(stale_snapshot)
+
+    assert signals
+    assert "PTB_ORDERBOOK_FRESH" not in signals[0].reason_codes
+
+    gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
+    decision = gate.evaluate(signals[0], stale_snapshot)
+
+    assert decision.accepted is False
+    assert decision.rejected is not None
+    assert decision.rejected.reason_code == "STALE_ORDERBOOK"
+    assert decision.rejected.details["lag_ms"] == 3_000
+    assert (
+        decision.rejected.details["threshold_ms"]
+        == settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000
+    )
