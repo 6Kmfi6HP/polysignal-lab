@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
 
 from polysignal_lab.config import BinanceDataConfig, MarketConfig, PolymarketDataConfig
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
+from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
 from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
 from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
 from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
+from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
-
+from polysignal_lab.domain.enums import Side
+from factories import BookFactoryConfig, SpotFactoryConfig, sample_book, sample_spot
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "public_market_payloads.json"
 FIXTURE_ADAPTER = TypeAdapter(dict[str, JsonValue])
@@ -85,6 +89,180 @@ def test_polymarket_ws_book_message_updates_registry() -> None:
     assert book is not None
     assert book.best_ask == 0.5
     assert book.last_trade_price == 0.49
+
+
+def test_last_trade_does_not_refresh_orderbook_depth_freshness() -> None:
+    from polysignal_lab.domain.orderbook import OrderBook
+    from polysignal_lab.utils import utc_now
+
+    registry = OrderBookRegistry()
+    now = utc_now()
+    stale_received_at = now - timedelta(milliseconds=20_000)
+    registry.update_from_snapshot(
+        OrderBook(
+            token_id="tok",
+            bids=[],
+            asks=[],
+            received_at=stale_received_at,
+        )
+    )
+
+    registry.update_last_trade("tok", 0.49)
+
+    book = registry.get("tok")
+    assert book is not None
+    assert book.last_trade_price == 0.49
+    assert book.received_at == stale_received_at
+    assert registry.is_fill_eligible("tok", 10_000, now) is False
+
+
+def test_books_for_market_hides_stale_marked_book_but_get_keeps_raw(market) -> None:
+    registry = OrderBookRegistry()
+    up_book = sample_book(market.token_for(Side.UP).token_id, BookFactoryConfig(ask=0.82))
+    down_book = sample_book(market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=0.18))
+    registry.update_from_snapshot(up_book)
+    registry.update_from_snapshot(down_book)
+
+    registry.mark_stale(up_book.token_id, "TICK_SIZE_CHANGE_RESEED_REQUIRED")
+
+    up, down = registry.books_for_market(market)
+    assert up is None
+    assert down == down_book
+    assert registry.get(up_book.token_id) == up_book
+    assert registry.is_fill_eligible(up_book.token_id, 10_000, up_book.received_at) is False
+    assert (
+        registry.metrics.snapshot()["counters"].get(
+            "paper_fill_rejected_TICK_SIZE_CHANGE_RESEED_REQUIRED"
+        )
+        == 1
+    )
+
+
+async def test_market_snapshot_builder_hides_stale_marked_book_from_signal_inputs(
+    market,
+) -> None:
+    books = OrderBookRegistry()
+    spots = SpotRegistry()
+    up_book = sample_book(market.token_for(Side.UP).token_id, BookFactoryConfig(ask=0.82))
+    down_book = sample_book(market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=0.18))
+    books.update_from_snapshot(up_book)
+    books.update_from_snapshot(down_book)
+    books.mark_stale(up_book.token_id, "RECONNECT_RESEED_FAILED")
+    spots.update(sample_spot(SpotFactoryConfig(asset=market.asset, price=100120.0)))
+
+    snapshot = await MarketSnapshotBuilder(books, spots, PriceToBeatProvider()).build(market)
+
+    assert snapshot.book_for(Side.UP) is None
+    assert snapshot.up_ask is None
+    assert snapshot.freshness.up_book_ms is None
+    assert snapshot.metrics["up_ask"] is None
+    assert snapshot.book_for(Side.DOWN) == down_book
+    assert books.get(up_book.token_id) == up_book
+
+
+async def test_failed_websocket_reseed_marks_subscribed_books_stale(
+    tmp_path: Path, settings
+) -> None:
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+    from polysignal_lab.domain.orderbook import OrderBook
+
+    class FailingRestClient:
+        async def get_books(self, token_ids: list[str]) -> list[OrderBook]:
+            raise RuntimeError("reseed failed")
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler.rest = FailingRestClient()
+    scheduler.ctx.books.update_from_snapshot(OrderBook(token_id="token-up"))
+    scheduler.ctx.books.update_from_snapshot(OrderBook(token_id="token-down"))
+
+    await scheduler._reseed_ws_books(["token-up", "token-down"])
+
+    for token_id in ("token-up", "token-down"):
+        state = scheduler.ctx.books.get_state(token_id)
+        assert state is not None
+        assert state.has_snapshot is False
+        assert state.stale_reason == "RECONNECT_RESEED_FAILED"
+
+
+def test_websocket_event_types_reconciliation() -> None:
+    from polysignal_lab.domain.orderbook import OrderBook
+    from polysignal_lab.utils import utc_now
+
+    registry = OrderBookRegistry()
+    ws = PolymarketMarketWebSocket(PolymarketDataConfig(), registry)
+
+    registry.update_from_snapshot(OrderBook(token_id="token-up", source_timestamp="1710000000000"))
+
+    ws.handle_message({"event_type": "tick_size_change", "asset_id": "token-up"})
+    state = registry.get_state("token-up")
+    assert state is not None
+    assert registry.is_fill_eligible("token-up", 10000, utc_now()) is False
+    assert state.stale_reason == "TICK_SIZE_CHANGE_RESEED_REQUIRED"
+    assert registry.metrics.snapshot()["counters"].get("ws_event_tick_size_change") == 1
+
+    ws.handle_message({"event_type": "some_unknown_event_type"})
+    assert registry.metrics.snapshot()["counters"].get("ws_event_unknown_some_unknown_event_type") == 1
+
+
+def test_order_book_parses_hash_field() -> None:
+    from polysignal_lab.domain.orderbook import OrderBook
+
+    payload = {
+        "market": "market-1",
+        "asset_id": "token-up",
+        "hash": "test-hash-value",
+        "bids": [],
+        "asks": [],
+    }
+    book = OrderBook.from_polymarket(payload)
+    assert book.hash == "test-hash-value"
+
+
+def test_book_epoch_state_instantiation() -> None:
+    from polysignal_lab.data.book_reconciliation import BookEpochState
+
+    state = BookEpochState(
+        token_id="token-1",
+        epoch=1,
+        has_snapshot=True,
+        stale_reason=None,
+        last_hash="hash-1",
+        last_source_timestamp=None,
+        last_received_at=None,
+    )
+
+    assert state.token_id == "token-1"
+
+
+def test_registry_reconciliation_methods() -> None:
+    from polysignal_lab.data.state import OrderBookRegistry
+    from polysignal_lab.domain.orderbook import OrderBook
+    from polysignal_lab.utils import utc_now
+
+    registry = OrderBookRegistry()
+    now = utc_now()
+
+    # 1. Delta without snapshot is ignored/counted
+    delta_book = OrderBook(token_id="token-1", source_timestamp="1710000000100", received_at=now)
+    registry.update_from_delta(delta_book)
+    assert registry.get("token-1") is None
+    assert registry.metrics.snapshot()["counters"].get("delta_without_snapshot") == 1
+
+    # 2. Snapshot creates eligibility
+    snapshot_book = OrderBook(token_id="token-1", source_timestamp="1710000000000", received_at=now)
+    registry.update_from_snapshot(snapshot_book)
+    assert registry.get("token-1") == snapshot_book
+    assert registry.is_fill_eligible("token-1", 10000, now) is True
+
+    # 3. Delta after snapshot is accepted
+    registry.update_from_delta(delta_book)
+    assert registry.get("token-1") == delta_book
+
+    # 4. Regression invalidates
+    regressed_book = OrderBook(token_id="token-1", source_timestamp="1700000000000", received_at=now)
+    registry.update_from_delta(regressed_book)
+    assert registry.is_fill_eligible("token-1", 10000, now) is False
+    assert registry.metrics.snapshot()["counters"].get("book_sequence_invalid") == 1
 
 
 async def test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids() -> None:

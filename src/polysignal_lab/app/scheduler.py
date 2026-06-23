@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,7 +46,7 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.strategies.base import BaseStrategy
 
 
-def _make_fill_notifier(strategies: list[BaseStrategy]) -> object:
+def _make_fill_notifier(strategies: list[BaseStrategy]) -> Callable[..., None]:
     """Create a callback that notifies strategies when paper fills/cancels occur."""
     def notify(order: PaperOrder, event: str, fill: PaperFill | None = None, pair_id: str | None = None) -> None:
         for strat in strategies:
@@ -57,6 +58,8 @@ def _make_fill_notifier(strategies: list[BaseStrategy]) -> object:
                 strat.notify_cancel(order.market_id, order.side, order.reject_reason or "GTD_EXPIRED")
             elif event == "leg_failed" and pair_id is not None:
                 strat.notify_leg_failure(pair_id, order.market_id, order.side)
+
+    return notify
 
 @dataclass
 class ServiceContext:
@@ -93,6 +96,7 @@ class PolySignalScheduler:
         self._trading_components_initialized = False
 
         self.poly_ws = PolymarketMarketWebSocket(settings.data.polymarket, self.ctx.books)
+        self.poly_ws.reseed_hook = self._reseed_ws_books
         self.binance_ws = BinanceSpotFeed(settings.data.binance, self.ctx.spots)
 
         base = Path(base_dir)
@@ -115,7 +119,10 @@ class PolySignalScheduler:
         self.strategies = build_strategies(self.settings.strategies)
         self.wallet = PaperWallet(self.settings.paper_trading.starting_balance_usdc)
         self.paper = PaperSimulator(
-            self.settings.paper_trading, self.settings.data.polymarket, self.wallet
+            self.settings.paper_trading,
+            self.settings.data.polymarket,
+            self.wallet,
+            self.ctx.books,
         )
         self.paper.fill_notifier = _make_fill_notifier(self.strategies)
         self.exits = PaperExitEngine(self.settings.paper_trading.exit_model, self.wallet)
@@ -168,6 +175,22 @@ class PolySignalScheduler:
 
     async def evaluate_once(self) -> list[SignalCandidate]:
         return await scheduler_processing.evaluate_once(self)
+
+    async def _reseed_ws_books(self, token_ids: list[str]) -> None:
+        refreshed_token_ids: set[str] = set()
+        try:
+            books = await self.rest.get_books(token_ids)
+            for book in books:
+                self.ctx.books.update_from_snapshot(book)
+                refreshed_token_ids.add(book.token_id)
+            for token_id in set(token_ids) - refreshed_token_ids:
+                self.ctx.books.mark_stale(token_id, "RECONNECT_RESEED_FAILED")
+        except Exception as exc:
+            self.logger.exception(
+                "Failed to reseed order books on WebSocket reconnect: %s", exc
+            )
+            for token_id in token_ids:
+                self.ctx.books.mark_stale(token_id, "RECONNECT_RESEED_FAILED")
 
     async def _stop_market_ws_subscription(self) -> None:
         await scheduler_market_data.stop_market_ws_subscription(self)

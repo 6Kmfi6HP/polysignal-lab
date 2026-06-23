@@ -97,6 +97,25 @@ class SQLiteStore:
                 (p["paper_order_id"], p["signal_id"], p["strategy"], p["asset"], p["timeframe"], p["market_id"], p["status"], p["created_at"], self._json(p)),
             )
 
+    def upsert_paper_order(self, order: Any) -> None:
+        p = to_jsonable(order)
+        with self._lock, self._conn:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO paper_orders(paper_order_id,signal_id,strategy,asset,timeframe,market_id,status,created_at,payload_json)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+                (
+                    p["paper_order_id"],
+                    p["signal_id"],
+                    p["strategy"],
+                    p["asset"],
+                    p["timeframe"],
+                    p["market_id"],
+                    p["status"],
+                    p["created_at"],
+                    self._json(p),
+                ),
+            )
+
     def insert_paper_fill(self, fill: Any) -> None:
         p = to_jsonable(fill)
         with self._lock, self._conn:

@@ -105,6 +105,27 @@ async def test_stale_orderbook_rejects_fill_without_position(snapshot, books, se
     assert result.order.metrics["orderbook_fresh"] is False
 
 
+async def test_reconciliation_ineligibility_rejects_fills(snapshot, settings) -> None:
+    from polysignal_lab.data.state import OrderBookRegistry
+    from polysignal_lab.domain.enums import OrderIntent
+    from polysignal_lab.domain.orderbook import OrderBook
+
+    registry = OrderBookRegistry()
+    wallet = PaperWallet(1000)
+    sim = PaperSimulator(settings.paper_trading, settings.data.polymarket, wallet, registry)
+
+    sig = (await _signal(snapshot, settings)).model_copy(
+        update={"order_intent": OrderIntent.TAKER_FOK}
+    )
+
+    # Delta before snapshot -> ineligible for fill simulation.
+    delta_book = OrderBook(token_id=sig.token_id, source_timestamp="1710000000000")
+    registry.update_from_delta(delta_book)
+    res = sim.process_signal(sig, delta_book)
+
+    assert res.status == "REJECTED"
+    assert res.order.reject_reason == "NO_SNAPSHOT"
+
 async def test_missing_and_malformed_orderbooks_reject_without_position(snapshot, settings):
     sig = await _signal(snapshot, settings)
     wallet = PaperWallet(starting_balance=1000)

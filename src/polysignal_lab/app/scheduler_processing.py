@@ -209,6 +209,19 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
                 scheduler.sqlite.upsert_paper_position(position)
             if scheduler.paper.fill_notifier:
                 scheduler.paper.fill_notifier(result.order, "filled", result.fills[0] if result.fills else None)
+        elif result.status == OrderStatus.REJECTED:
+            scheduler.logs.append("paper_orders", result.order)
+            scheduler.sqlite.upsert_paper_order(result.order)
+            wallet_snapshot = scheduler.wallet.snapshot()
+            scheduler.logs.append("paper_wallet_snapshots", wallet_snapshot)
+            scheduler.sqlite.insert_wallet_snapshot(wallet_snapshot)
+            scheduler.logger.info(
+                "Resting paper order %s rejected: %s",
+                result.order.paper_order_id,
+                result.reject_reason or result.order.reject_reason,
+            )
+            if scheduler.paper.fill_notifier:
+                scheduler.paper.fill_notifier(result.order, "cancelled", None)
         elif result.status == OrderStatus.CANCELLED:
             if scheduler.paper.fill_notifier:
                 scheduler.paper.fill_notifier(result.order, "cancelled", None)

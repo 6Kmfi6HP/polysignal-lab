@@ -4,9 +4,11 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from math import isfinite
 
 from polysignal_lab.config import FillModelConfig
+from polysignal_lab.data.state import OrderBookRegistry
 from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side
 from polysignal_lab.domain.orderbook import OrderBook
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
@@ -34,16 +36,27 @@ class RestingOrder:
 
 
 class BestAskTakerExecutor:
-    def __init__(self, fill_model: FillModelConfig, max_book_staleness_ms: int):
+    def __init__(
+        self,
+        fill_model: FillModelConfig,
+        max_book_staleness_ms: int,
+        registry: OrderBookRegistry | None = None,
+    ):
         self.fill_model = fill_model
         self.max_book_staleness_ms = max_book_staleness_ms
+        self.registry = registry
 
     def execute(
         self, order: PaperOrder, book: OrderBook, intent: OrderIntent | None = None
     ) -> IntentDispatchResult:
         if book.token_id != order.token_id:
             return self._reject(order, "MALFORMED_ORDERBOOK")
-        if not book.is_fresh(self.max_book_staleness_ms, order.created_at):
+        registry_reason = self._registry_reject_reason(order.token_id, order.created_at)
+        if registry_reason is not None:
+            return self._reject(order, registry_reason)
+        if self.registry is None and not book.is_fresh(
+            self.max_book_staleness_ms, order.created_at
+        ):
             return self._reject(order, "STALE_ORDERBOOK")
         if not book.asks or book.best_ask is None:
             return self._reject(order, "MISSING_BEST_ASK")
@@ -64,6 +77,15 @@ class BestAskTakerExecutor:
             return self._execute_fak(order, book)
         # Default: existing best-ask taker with slippage
         return self._execute_default(order, book)
+
+    def _registry_reject_reason(self, token_id: str, now: datetime) -> str | None:
+        if self.registry is None:
+            return None
+        if self.registry.is_fill_eligible(token_id, self.max_book_staleness_ms, now):
+            return None
+        state = self.registry.get_state(token_id)
+        reason = state.stale_reason if state else "NO_SNAPSHOT"
+        return reason or "STALE_ORDERBOOK"
 
     def _execute_default(self, order: PaperOrder, book: OrderBook) -> IntentDispatchResult:
         fill_price = book.best_ask + book.best_ask * self.fill_model.slippage_bps / 10000
@@ -211,7 +233,12 @@ class BestAskTakerExecutor:
     def _preflight_fok(self, order: PaperOrder, book: OrderBook) -> tuple[bool, str | None, float | None]:
         if book.token_id != order.token_id:
             return False, "MALFORMED_ORDERBOOK", None
-        if not book.is_fresh(self.max_book_staleness_ms, order.created_at):
+        registry_reason = self._registry_reject_reason(order.token_id, order.created_at)
+        if registry_reason is not None:
+            return False, registry_reason, None
+        if self.registry is None and not book.is_fresh(
+            self.max_book_staleness_ms, order.created_at
+        ):
             return False, "STALE_ORDERBOOK", None
         if not book.asks or book.best_ask is None:
             return False, "MISSING_BEST_ASK", None
@@ -241,8 +268,9 @@ class BestAskTakerExecutor:
 
 
 class PassiveGtdExecutor:
-    def __init__(self):
+    def __init__(self, max_book_staleness_ms: int = 10000):
         self._store: dict[str, list[RestingOrder]] = defaultdict(list)
+        self.max_book_staleness_ms = max_book_staleness_ms
 
     def enqueue(self, order: PaperOrder, signal: SignalCandidate) -> IntentDispatchResult:
         expiry_ts = signal.created_at.timestamp() + (signal.expiry_seconds or 300)
@@ -259,6 +287,7 @@ class PassiveGtdExecutor:
 
     def tick(self, books, wallet, risk_check=None) -> list[IntentDispatchResult]:
         now = time.time()
+        now_dt = datetime.fromtimestamp(now, tz=timezone.utc)
         results: list[IntentDispatchResult] = []
         for token_id in list(self._store.keys()):
             book = books.get(token_id)
@@ -272,6 +301,19 @@ class PassiveGtdExecutor:
                     ))
                     continue
                 if book is not None and book.best_bid is not None and book.best_bid >= resting.limit_price:
+                    if hasattr(books, "is_fill_eligible") and not books.is_fill_eligible(
+                        token_id, self.max_book_staleness_ms, now_dt
+                    ):
+                        state = books.get_state(token_id)
+                        reason = state.stale_reason if state else "NO_SNAPSHOT"
+                        resting.order.status = OrderStatus.REJECTED
+                        resting.order.reject_reason = reason or "STALE_ORDERBOOK"
+                        results.append(IntentDispatchResult(
+                            order=resting.order,
+                            status=OrderStatus.REJECTED,
+                            reject_reason=resting.order.reject_reason,
+                        ))
+                        continue
                     can_fill = wallet.can_afford(resting.order.stake_usdc)
                     if can_fill and risk_check is not None:
                         can_fill = risk_check(resting.order)

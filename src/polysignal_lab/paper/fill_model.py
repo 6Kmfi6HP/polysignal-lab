@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from math import isfinite
 
 from polysignal_lab.config import FillModelConfig
+from polysignal_lab.data.state import OrderBookRegistry
 from polysignal_lab.domain.orderbook import OrderBook
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 
@@ -17,14 +18,27 @@ class FillDecision:
 
 
 class BestAskTakerFillModel:
-    def __init__(self, config: FillModelConfig, max_book_staleness_ms: int):
+    def __init__(
+        self,
+        config: FillModelConfig,
+        max_book_staleness_ms: int,
+        registry: OrderBookRegistry | None = None,
+    ):
         self.config = config
         self.max_book_staleness_ms = max_book_staleness_ms
+        self.registry = registry
 
     def fill(self, order: PaperOrder, orderbook: OrderBook) -> FillDecision:
         if orderbook.token_id != order.token_id:
             return FillDecision(False, reason_code="MALFORMED_ORDERBOOK")
-        if not orderbook.is_fresh(self.max_book_staleness_ms, order.created_at):
+        if self.registry is not None:
+            if not self.registry.is_fill_eligible(
+                order.token_id, self.max_book_staleness_ms, order.created_at
+            ):
+                state = self.registry.get_state(order.token_id)
+                reason = state.stale_reason if state else "NO_SNAPSHOT"
+                return FillDecision(False, reason_code=reason or "STALE_ORDERBOOK")
+        elif not orderbook.is_fresh(self.max_book_staleness_ms, order.created_at):
             return FillDecision(False, reason_code="STALE_ORDERBOOK")
         raw = orderbook.best_ask
         if not orderbook.asks or raw is None:
