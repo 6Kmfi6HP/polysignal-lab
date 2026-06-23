@@ -70,9 +70,12 @@ DONE
   - Targeted result after implementation: 21 passed.
 - `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_paper_execution_preflight.py -v`
   - Acceptance result before report append: 30 passed.
+- `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_paper_execution_preflight.py -v`
+  - Fresh result after report commit: 30 passed.
 
 ### Commit SHA(s)
 - `abc02e4564acc9b2eca920eb596978ef6393efd6` (`fix: handle preflight stale edges`)
+- `1240fe02ed74d1eb718122ff6e7539e3ba5ae6fa` (`chore: report task 1 re-review fixes`)
 
 ### Fix notes
 - Refs-style PTB signals with `min_token_price` now revalidate against the token price floor before falling back to legacy stored `probability_edge` semantics.
