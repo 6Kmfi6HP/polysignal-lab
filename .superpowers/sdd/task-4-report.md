@@ -11,6 +11,7 @@ DONE
 - RED 3: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_storage_reporting_publish.py::test_formatter_result_and_daily_messages_are_paper_only -v` failed because the daily message did not contain `Orders  ` / `Rejects ` / `ExecLag `.
 - GREEN 3: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_storage_reporting_publish.py::test_formatter_result_and_daily_messages_are_paper_only tests/test_reporting.py::test_daily_report_includes_strategy_win_rate_and_pnl -v` passed: 2 passed, 1 Starlette/httpx deprecation warning.
 - Slice: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_reporting.py tests/test_scheduler_reports.py tests/test_storage_reporting_publish.py tests/test_dashboard.py -v` passed: 21 passed, 1 Starlette/httpx deprecation warning.
+- Final slice after commits: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_reporting.py tests/test_scheduler_reports.py tests/test_storage_reporting_publish.py tests/test_dashboard.py -v` passed: 21 passed, 1 Starlette/httpx deprecation warning.
 
 ## Files changed
 - `src/polysignal_lab/app/scheduler_reporting.py`
@@ -27,9 +28,11 @@ DONE
 - `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_storage_reporting_publish.py::test_formatter_result_and_daily_messages_are_paper_only -v`
 - `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_storage_reporting_publish.py::test_formatter_result_and_daily_messages_are_paper_only tests/test_reporting.py::test_daily_report_includes_strategy_win_rate_and_pnl -v`
 - `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_reporting.py tests/test_scheduler_reports.py tests/test_storage_reporting_publish.py tests/test_dashboard.py -v`
+- Final post-commit rerun: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_reporting.py tests/test_scheduler_reports.py tests/test_storage_reporting_publish.py tests/test_dashboard.py -v`
 
 ## Commit SHA(s)
 - `79a8b2d` — `feat: surface paper execution quality`
+- `9108ccd` — `docs: record task 4 report`
 
 ## Self-review notes
 - Scheduler now sends raw order/fill JSON rows and the configured fill-model/data staleness assumptions into `PaperReportService.build_daily_report(...)`.
