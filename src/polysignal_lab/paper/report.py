@@ -26,6 +26,7 @@ class PaperReportService:
         stale_paper_fills: int = 0,
         paper_order_payloads: Iterable[dict[str, Any]] = (),
         paper_fill_payloads: Iterable[dict[str, Any]] = (),
+        paper_reject_payloads: Iterable[dict[str, Any]] | None = None,
         paper_execution_assumptions: dict[str, Any] | None = None,
     ) -> DailyReport:
         result_list = list(results)
@@ -46,6 +47,7 @@ class PaperReportService:
             paper_order_payloads,
             paper_fill_payloads,
             paper_execution_assumptions or {},
+            paper_reject_payloads=paper_reject_payloads,
         )
         return DailyReport(
             report_date=report_date,
@@ -96,8 +98,15 @@ class PaperReportService:
         paper_orders: Iterable[dict[str, Any]],
         paper_fills: Iterable[dict[str, Any]],
         assumptions: dict[str, Any],
+        *,
+        paper_reject_payloads: Iterable[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         orders = list(paper_orders)
+        reject_orders = (
+            list(paper_reject_payloads)
+            if paper_reject_payloads is not None
+            else orders
+        )
         fills = list(paper_fills)
         order_intents: dict[str, str] = {}
         attempts: Counter[str] = Counter()
@@ -123,6 +132,9 @@ class PaperReportService:
             depth = _optional_float(metrics.get("paper_available_depth_usdc"))
             if depth is not None:
                 depth_values.append(depth)
+        for order in reject_orders:
+            metrics_payload = order.get("metrics")
+            metrics = metrics_payload if isinstance(metrics_payload, dict) else {}
             if is_rejected_paper_order_payload(order, metrics):
                 normalized = normalize_paper_reject_reason(
                     metrics.get("paper_normalized_reason")

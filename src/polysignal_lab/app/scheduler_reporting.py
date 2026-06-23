@@ -18,6 +18,7 @@ from polysignal_lab.paper.report import (
     PaperReportService,
     is_rejected_paper_order_payload,
 )
+from polysignal_lab.utils import parse_dt
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
@@ -171,6 +172,18 @@ def _paper_order_metrics(order: dict[str, object]) -> dict[str, object]:
     return metrics_payload if isinstance(metrics_payload, dict) else {}
 
 
+def _paper_terminal_at(order: dict[str, object]) -> datetime | None:
+    metrics = _paper_order_metrics(order)
+    terminal_at = parse_dt(
+        metrics.get("paper_terminal_at") or metrics.get("paper_cancelled_at")
+    )
+    if terminal_at is None:
+        return None
+    if terminal_at.tzinfo is None:
+        terminal_at = terminal_at.replace(tzinfo=UTC)
+    return terminal_at.astimezone(UTC)
+
+
 def _paper_order_intent(order: dict[str, object]) -> str:
     metrics = _paper_order_metrics(order)
     return str(
@@ -271,6 +284,29 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
         params=day_params,
         limit=10000,
     )
+    today_order_ids = {
+        str(order.get("paper_order_id") or "")
+        for order in today_orders_raw
+        if order.get("paper_order_id")
+    }
+    terminal_order_candidates = scheduler.sqlite.query_json(
+        "paper_orders",
+        where="WHERE status IN (?, ?)",
+        params=("REJECTED", "CANCELLED"),
+        limit=10000,
+    )
+    today_terminal_orders_raw = []
+    for order in terminal_order_candidates:
+        order_id = str(order.get("paper_order_id") or "")
+        if order_id in today_order_ids:
+            continue
+        terminal_at = _paper_terminal_at(order)
+        if terminal_at is None or not (day_start <= terminal_at < day_end):
+            continue
+        if not is_rejected_paper_order_payload(order, _paper_order_metrics(order)):
+            continue
+        today_terminal_orders_raw.append(order)
+    today_reject_orders_raw = [*today_orders_raw, *today_terminal_orders_raw]
     today_signals_raw = scheduler.sqlite.query_json(
         "signals",
         where=day_created_where,
@@ -282,7 +318,7 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
     )
     rejected_paper_orders = sum(
         1
-        for order in today_orders_raw
+        for order in today_reject_orders_raw
         if is_rejected_paper_order_payload(order, _paper_order_metrics(order))
     )
     stale_paper_fills = sum(
@@ -315,6 +351,7 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
             stale_paper_fills=stale_paper_fills,
             paper_order_payloads=today_orders_raw,
             paper_fill_payloads=today_fill_payloads,
+            paper_reject_payloads=today_reject_orders_raw,
             paper_execution_assumptions=paper_execution_assumptions,
         )
     except (KeyError, TypeError, ValueError) as exc:

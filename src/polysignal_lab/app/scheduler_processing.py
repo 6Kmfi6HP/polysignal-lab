@@ -6,6 +6,7 @@ from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.paper.simulator import SimulationResult
+from polysignal_lab.utils import utc_now
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
@@ -224,6 +225,7 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
             result.order.reject_reason = normalized_reason
             result.order.metrics["paper_original_reason"] = original_reason
             result.order.metrics["paper_normalized_reason"] = normalized_reason
+            result.order.metrics["paper_terminal_at"] = utc_now()
             scheduler.logs.append("paper_orders", result.order)
             scheduler.sqlite.upsert_paper_order(result.order)
             wallet_snapshot = scheduler.wallet.snapshot()

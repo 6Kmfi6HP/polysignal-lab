@@ -396,6 +396,63 @@ async def test_daily_report_counts_cancelled_paper_rejects(
     assert report.paper_rejects_by_reason == {"PAPER_GTD_EXPIRED": 1}
     assert report.paper_rejects_by_original_reason == {"GTD_EXPIRED": 1}
 
+
+async def test_daily_report_counts_prior_day_resting_terminal_rejects_today(
+    tmp_path: Path, settings, monkeypatch
+) -> None:
+    # Given: a passive GTD order created before today's report window is
+    # cancelled today and carries its durable terminal timestamp.
+    settings.app.timezone = "UTC"
+    scheduler = _scheduler(tmp_path, settings)
+    cancelled = PaperOrder(
+        paper_order_id="po-prior-day-cancelled-resting",
+        signal_id="sig-prior-day-cancelled-resting",
+        created_at=datetime(2026, 6, 22, 23, 55, tzinfo=UTC),
+        asset="BTC",
+        timeframe="5m",
+        strategy="ptb_diff",
+        market_id="m-prior-day-cancelled-resting",
+        market_slug="prior-day-cancelled-resting",
+        token_id="t-prior-day-cancelled-resting",
+        side=Side.UP,
+        order_intent=OrderIntent.PASSIVE_GTD,
+        limit_price=0.7,
+        reference_price=0.7,
+        stake_usdc=10.0,
+        status=OrderStatus.CANCELLED,
+        reject_reason="PAPER_GTD_EXPIRED",
+        metrics={
+            "paper_order_intent": OrderIntent.PASSIVE_GTD,
+            "paper_original_reason": "GTD_EXPIRED",
+            "paper_normalized_reason": "PAPER_GTD_EXPIRED",
+            "paper_terminal_at": datetime(2026, 6, 23, 0, 5, tzinfo=UTC),
+        },
+    )
+    scheduler.sqlite.insert_paper_order(cancelled)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return cls(2026, 6, 23, 12, 30, tzinfo=UTC)
+            return cls(2026, 6, 23, 12, 30, tzinfo=tz)
+
+    monkeypatch.setattr(scheduler_reporting, "datetime", FixedDateTime)
+
+    # When: today's daily report aggregates paper-order rejects.
+    report = await scheduler.generate_daily_report()
+
+    # Then: the terminal reject is reported today without becoming a new
+    # report-day paper-order attempt.
+    assert report is not None
+    assert report.report_date == date(2026, 6, 23)
+    assert report.paper_orders == 0
+    assert report.paper_fills == 0
+    assert report.rejected_paper_orders == 1
+    assert report.paper_attempts_by_intent == {}
+    assert report.paper_rejects_by_reason == {"PAPER_GTD_EXPIRED": 1}
+    assert report.paper_rejects_by_original_reason == {"GTD_EXPIRED": 1}
+
 async def test_daily_report_publish_record_written(tmp_path: Path, snapshot, settings) -> None:
     # Given: stored signals, one filled paper order, one rejected paper order, and a closed result.
     signal = await _signal(snapshot, settings)

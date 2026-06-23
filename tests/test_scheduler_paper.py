@@ -199,11 +199,13 @@ async def test_rejected_resting_order_is_persisted_logged_and_notified(
     assert order_rows[0]["reject_reason"] == "PAPER_STALE_ORDERBOOK"
     assert order_rows[0]["metrics"]["paper_original_reason"] == "STALE_ORDERBOOK"
     assert order_rows[0]["metrics"]["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
+    assert "paper_terminal_at" in order_rows[0]["metrics"]
     paper_order_logs = scheduler.logs.read_all("paper_orders")
     assert paper_order_logs[-1]["status"] == "REJECTED"
     assert paper_order_logs[-1]["reject_reason"] == "PAPER_STALE_ORDERBOOK"
     assert paper_order_logs[-1]["metrics"]["paper_original_reason"] == "STALE_ORDERBOOK"
     assert paper_order_logs[-1]["metrics"]["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
+    assert "paper_terminal_at" in paper_order_logs[-1]["metrics"]
     assert notifications == [(results[0].order, "cancelled", None)]
 
 
@@ -257,11 +259,13 @@ async def test_cancelled_resting_gtd_expiry_is_persisted_with_normalized_reason(
     assert order_rows[0]["reject_reason"] == "PAPER_GTD_EXPIRED"
     assert order_rows[0]["metrics"]["paper_original_reason"] == "GTD_EXPIRED"
     assert order_rows[0]["metrics"]["paper_normalized_reason"] == "PAPER_GTD_EXPIRED"
+    assert "paper_terminal_at" in order_rows[0]["metrics"]
     paper_order_logs = scheduler.logs.read_all("paper_orders")
     assert paper_order_logs[-1]["status"] == "CANCELLED"
     assert paper_order_logs[-1]["reject_reason"] == "PAPER_GTD_EXPIRED"
     assert paper_order_logs[-1]["metrics"]["paper_original_reason"] == "GTD_EXPIRED"
     assert paper_order_logs[-1]["metrics"]["paper_normalized_reason"] == "PAPER_GTD_EXPIRED"
+    assert "paper_terminal_at" in paper_order_logs[-1]["metrics"]
     assert len(scheduler.logs.read_all("paper_wallet_snapshots")) == wallet_snapshots_before + 1
     assert notifications == [(results[0].order, "cancelled", None)]
 
@@ -323,6 +327,7 @@ async def test_cancelled_resting_no_cash_is_persisted_with_normalized_reason(
         order_rows[0]["metrics"]["paper_normalized_reason"]
         == "PAPER_WALLET_INSUFFICIENT_CASH"
     )
+    assert "paper_terminal_at" in order_rows[0]["metrics"]
     assert (
         len(scheduler.logs.read_all("paper_wallet_snapshots"))
         == wallet_snapshots_before + 1
