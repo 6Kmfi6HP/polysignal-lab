@@ -1,0 +1,18 @@
+{
+  "bot_token_env": "TELEGRAM_BOT_TOKEN",
+  "bot_token_redacted": "1234...fghi",
+  "channel_id_env": "TELEGRAM_CHANNEL_ID",
+  "channel_id_redacted": "-100...7890",
+  "command": ".venv/bin/python -m polysignal_lab.publish.telegram_qa --evidence .omo/evidence/todo-12-final-gate-dry-run-redacted.json",
+  "dry_run": true,
+  "error": null,
+  "evidence_path": ".omo/evidence/todo-12-final-gate-dry-run-redacted.json",
+  "max_chars": 4096,
+  "message_type": "telegram_qa",
+  "mode": "dry_run",
+  "recorded_at": "2026-06-22T05:20:15.188666Z",
+  "retry_attempts": 1,
+  "sent_at": "2026-06-22T05:20:15.188232Z",
+  "status": "DRY_RUN",
+  "telegram_message_id": null
+}

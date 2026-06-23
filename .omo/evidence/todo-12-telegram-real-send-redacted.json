@@ -1,0 +1,14 @@
+{
+  "bot_token_env": "TELEGRAM_BOT_TOKEN",
+  "bot_token_redacted": "",
+  "channel_id_env": "TELEGRAM_CHANNEL_ID",
+  "channel_id_redacted": "",
+  "command": ".venv/bin/python -m polysignal_lab.publish.telegram_qa --live --evidence .omo/evidence/final-telegram-real-send-redacted.json",
+  "dry_run": false,
+  "error": "TELEGRAM_NOT_CONFIGURED",
+  "message_type": "telegram_qa",
+  "recorded_at": "2026-06-22T04:59:16.879732Z",
+  "sent_at": null,
+  "status": "FAILED",
+  "telegram_message_id": null
+}

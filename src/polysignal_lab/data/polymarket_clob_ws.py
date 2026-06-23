@@ -1,23 +1,25 @@
 from __future__ import annotations
 
-import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
-from typing import Any
+from queue import Queue
 
+import anyio
 import websockets
+from pydantic import JsonValue
 
 from polysignal_lab.config import PolymarketDataConfig
 from polysignal_lab.data.state import OrderBookRegistry
-from polysignal_lab.domain.orderbook import OrderBook
-from polysignal_lab.utils import new_id, utc_now
+from polysignal_lab.domain.orderbook import BookLevel, OrderBook
+from polysignal_lab.utils import new_id, safe_float, utc_now
+
+JsonObject = dict[str, JsonValue]
 
 
 class PolymarketMarketWebSocket:
     def __init__(self, config: PolymarketDataConfig, registry: OrderBookRegistry):
         self.config = config
         self.registry = registry
-        self.resolved_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self.resolved_events: Queue[JsonObject] = Queue()
         self.running = False
 
     async def subscribe(self, token_ids: list[str]) -> None:
@@ -29,78 +31,115 @@ class PolymarketMarketWebSocket:
                     await ws.send(json.dumps(payload))
                     async for message in ws:
                         self.handle_message(message)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                await asyncio.sleep(2.0)
+            except (OSError, TimeoutError, websockets.exceptions.WebSocketException):
+                await anyio.sleep(2.0)
 
     def stop(self) -> None:
         self.running = False
 
-    def handle_message(self, message: str | bytes | dict[str, Any]) -> None:
+    def handle_message(self, message: str | bytes | JsonObject | list[JsonValue]) -> None:
         if isinstance(message, (str, bytes)):
-            payload = json.loads(message)
+            try:
+                payload = json.loads(message)
+            except json.JSONDecodeError:
+                return
         else:
             payload = message
         if isinstance(payload, list):
             for item in payload:
-                self.handle_message(item)
+                if isinstance(item, dict):
+                    self.handle_message(item)
+            return
+        if not isinstance(payload, dict):
             return
         event_type = payload.get("event_type") or payload.get("type")
-        if event_type == "book":
-            book = OrderBook.from_polymarket(payload, received_at=utc_now())
-            self.registry.update(book)
-        elif event_type == "price_change":
-            self._apply_price_change(payload)
-        elif event_type == "best_bid_ask":
-            self._apply_best_bid_ask(payload)
-        elif event_type == "last_trade_price":
-            self._apply_last_trade(payload)
-        elif event_type == "market_resolved":
-            self.resolved_events.put_nowait({"event_id": new_id("resolved"), **payload})
+        match event_type:
+            case "book":
+                self.registry.update(OrderBook.from_polymarket(payload, received_at=utc_now()))
+            case "price_change" | "price_changes":
+                self._apply_price_change(payload)
+            case "best_bid_ask":
+                self._apply_best_bid_ask(payload)
+            case "last_trade_price":
+                self._apply_last_trade(payload)
+            case "market_resolved":
+                self.resolved_events.put_nowait({"event_id": new_id("resolved"), **payload})
+            case "new_market" | None:
+                return
+            case _:
+                return
 
-    def _apply_price_change(self, payload: dict[str, Any]) -> None:
-        token_id = str(payload.get("asset_id") or payload.get("token_id"))
+    def _apply_price_change(self, payload: JsonObject) -> None:
+        raw_changes = payload.get("price_changes") or payload.get("changes") or [payload]
+        if not isinstance(raw_changes, list):
+            return
+        for change in raw_changes:
+            if isinstance(change, dict):
+                self._apply_single_price_change(change)
+
+    def _apply_single_price_change(self, change: JsonObject) -> None:
+        token_id = _token_id(change)
+        if token_id is None:
+            return
         book = self.registry.get(token_id)
         if not book:
             return
+        price = safe_float(change.get("price"))
+        size = safe_float(change.get("size"), 0.0)
+        if price is None or size is None:
+            return
         updated = book.model_copy(deep=True)
-        for change in payload.get("changes", []):
-            side = change.get("side", "").upper()
-            price = float(change.get("price", 0))
-            size = float(change.get("size", 0))
-            target = updated.bids if side == "BUY" else updated.asks
-            target[:] = [level for level in target if level.price != price]
-            if size > 0:
-                from polysignal_lab.domain.orderbook import BookLevel
-                target.append(BookLevel(price=price, size=size))
-            updated.bids = sorted(updated.bids, key=lambda x: x.price, reverse=True)
-            updated.asks = sorted(updated.asks, key=lambda x: x.price)
+        target = updated.bids if str(change.get("side") or "").upper() == "BUY" else updated.asks
+        target[:] = [level for level in target if level.price != price]
+        if size > 0:
+            target.append(BookLevel(price=price, size=size))
+        updated.bids = sorted(updated.bids, key=lambda level: level.price, reverse=True)
+        updated.asks = sorted(updated.asks, key=lambda level: level.price)
+        updated = _with_best_bid_ask(updated, change)
         updated.received_at = utc_now()
         self.registry.update(updated)
 
-    def _apply_best_bid_ask(self, payload: dict[str, Any]) -> None:
-        token_id = str(payload.get("asset_id") or payload.get("token_id"))
+    def _apply_best_bid_ask(self, payload: JsonObject) -> None:
+        token_id = _token_id(payload)
+        if token_id is None:
+            return
         book = self.registry.get(token_id)
         if not book:
             return
-        from polysignal_lab.domain.orderbook import BookLevel
-        updated = book.model_copy(deep=True)
-        if payload.get("best_bid") is not None:
-            updated.bids = [BookLevel(price=float(payload["best_bid"]), size=updated.bids[0].size if updated.bids else 0.0)] + updated.bids[1:]
-        if payload.get("best_ask") is not None:
-            updated.asks = [BookLevel(price=float(payload["best_ask"]), size=updated.asks[0].size if updated.asks else 0.0)] + updated.asks[1:]
+        updated = _with_best_bid_ask(book.model_copy(deep=True), payload)
         updated.received_at = utc_now()
         self.registry.update(updated)
 
-    def _apply_last_trade(self, payload: dict[str, Any]) -> None:
-        token_id = str(payload.get("asset_id") or payload.get("token_id"))
+    def _apply_last_trade(self, payload: JsonObject) -> None:
+        token_id = _token_id(payload)
+        if token_id is None:
+            return
         book = self.registry.get(token_id)
         if not book:
             return
+        price = safe_float(payload.get("price") or payload.get("last_trade_price"))
+        if price is None:
+            return
         updated = book.model_copy(deep=True)
-        price = payload.get("price") or payload.get("last_trade_price")
-        if price is not None:
-            updated.last_trade_price = float(price)
+        updated.last_trade_price = price
         updated.received_at = utc_now()
         self.registry.update(updated)
+
+
+def _token_id(payload: JsonObject) -> str | None:
+    raw = payload.get("asset_id") or payload.get("token_id") or payload.get("assetId")
+    return str(raw) if raw else None
+
+
+def _with_best_bid_ask(book: OrderBook, payload: JsonObject) -> OrderBook:
+    best_bid = safe_float(payload.get("best_bid"))
+    best_ask = safe_float(payload.get("best_ask"))
+    if best_bid is not None:
+        size = book.bids[0].size if book.bids else 0.0
+        book.bids = [BookLevel(price=best_bid, size=size), *[level for level in book.bids[1:] if level.price != best_bid]]
+        book.bids = sorted(book.bids, key=lambda level: level.price, reverse=True)
+    if best_ask is not None:
+        size = book.asks[0].size if book.asks else 0.0
+        book.asks = [BookLevel(price=best_ask, size=size), *[level for level in book.asks[1:] if level.price != best_ask]]
+        book.asks = sorted(book.asks, key=lambda level: level.price)
+    return book

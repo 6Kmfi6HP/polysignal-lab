@@ -1,0 +1,113 @@
+Task 17 evidence - CLI, Docker, packaging, runtime modes
+Date: 2026-06-22
+
+Changed files
+- src/polysignal_lab/app/main.py
+- tests/test_cli_runtime_modes.py
+- docker-entrypoint.sh
+- Dockerfile
+- pyproject.toml
+- README.md
+- docs/PRD_OLD_COMPLIANCE.md
+- docs/EXTERNAL_API_RESEARCH.md
+- docs/GENERATED_HISTORY_DELETION.md
+
+Dirty worktree preservation
+- Invocation: git status --short
+- Binary observable: worktree was already heavily dirty before edits, including unrelated config/source/doc/test additions and deleted legacy strategy/app files. I only edited the files listed above and did not revert unrelated work.
+- Captured artifact path: this file
+
+Baseline stale-state grep
+- Invocation: rg -n "demo|polysignal-demo" pyproject.toml docker-entrypoint.sh README.md docs src
+- Binary observable before edits: matches existed only in docs text naming old plan/evidence paths.
+- Binary observable after edits: command exited 1 with no output.
+- Captured artifact path: terminal run recorded in this file; final acceptance command also recorded below.
+
+CLI help acceptance
+- Invocation: .venv/bin/python -m polysignal_lab.app.main --help >/tmp/polysignal-help.txt
+- Binary observable: exit 0; /tmp/polysignal-help.txt is non-empty and lists only CLI app modes scheduler/dashboard/smoke plus --dashboard compatibility, --once, --real-readonly-smoke, and --evidence.
+- Captured artifact path: /tmp/polysignal-help.txt
+- Help excerpt:
+  usage: main.py [-h] [--mode {scheduler,dashboard,smoke}] [--config CONFIG]
+                 [--dashboard] [--once] [--real-readonly-smoke]
+                 [--evidence EVIDENCE]
+                 [{scheduler,dashboard,smoke}]
+
+No removed runtime surface in acceptance scope
+- Invocation: ! rg "demo|polysignal-demo" pyproject.toml docker-entrypoint.sh README.md docs src
+- Binary observable: exit 0 for negated grep; underlying rg exited 1 with no matches.
+- Captured artifact path: this file
+
+Help output removed-surface check
+- Invocation: ! rg "demo|polysignal-demo" /tmp/polysignal-help.txt
+- Binary observable: exit 0 for negated grep; no matches in help output.
+- Captured artifact path: /tmp/polysignal-help.txt
+
+Targeted Python tests
+- Invocation: .venv/bin/python -m pytest tests/test_cli_runtime_modes.py tests/test_scheduler.py tests/test_config.py tests/test_config_security.py -q
+- Binary observable: exit 0, 17 passed.
+- Captured artifact path: this file
+
+Full local tests
+- Invocation: .venv/bin/python -m pytest -q
+- Binary observable: exit 0, 119 passed with one StarletteDeprecationWarning from fastapi.testclient/httpx.
+- Captured artifact path: this file
+
+Bounded local smoke
+- Invocation: .venv/bin/python -m polysignal_lab.app.main --once --real-readonly-smoke --evidence /tmp/polysignal-smoke.json
+- Binary observable: exit 0; printed "Bounded read-only smoke passed"; evidence JSON has mode=smoke, bounded=true, network_calls=false, authenticated_endpoints=false, trading_actions=false, strategy_count=3.
+- Captured artifact path: /tmp/polysignal-smoke.json
+- Residual scope for Todo 18: this is a bounded local readiness hook only. Public market HTTP/WS live checks remain for Todo 18.
+
+Docker availability
+- Invocation: docker --version
+- Binary observable: exit 0, Docker version 29.0.2, build 8108357.
+- Captured artifact path: this file
+
+Docker build happy path
+- Invocation: docker build -t polysignal-lab:prd-old .
+- Binary observable: exit 0; final image named docker.io/library/polysignal-lab:prd-old, sha256:ae8e1b3a167291e4b14f352437686d785bf4840e82d8b0a3395063992e2d87e4.
+- Captured artifact path: Docker build terminal output in session; summary recorded here.
+
+Docker bad-mode failure
+- Invocation: docker run --rm polysignal-lab:prd-old demo > /tmp/polysignal-docker-demo.txt 2>&1; rc=$?; test "$rc" -ne 0; ! rg "demo|polysignal-demo" /tmp/polysignal-docker-demo.txt
+- Binary observable: exit 0 for the assertion harness; container command rc=1; output was exactly usage for scheduler/dashboard/test/shell/smoke and had no removed-mode text.
+- Captured artifact path: /tmp/polysignal-docker-demo.txt
+
+Docker bounded smoke
+- Invocation: docker run --rm polysignal-lab:prd-old smoke --evidence /tmp/container-smoke.json
+- Binary observable: exit 0; output included "[entrypoint] Running bounded read-only smoke..." and "Bounded read-only smoke passed".
+- Captured artifact path: /tmp/polysignal-docker-smoke.txt
+
+Docker test mode dependencies
+- Invocation: ! rg -n "pip install|pytest pytest-asyncio" docker-entrypoint.sh
+- Binary observable: exit 0 for negated grep; entrypoint has no runtime install.
+- Invocation: docker run --rm polysignal-lab:prd-old test > /tmp/polysignal-docker-test.txt 2>&1; rc=$?; test "$rc" -eq 0
+- Binary observable: exit 0; container test mode ran pytest from packaged dev deps and reported 119 passed with one StarletteDeprecationWarning.
+- Captured artifact path: /tmp/polysignal-docker-test.txt
+
+No real trading/private-key path introduced
+- Invocation: ! rg -n "SecureClient|AsyncSecureClient|ClobClient\\(|create_order|post_order|submit_order|cancel_order|cancel_all|redeem_positions|private_key|mnemonic" src/polysignal_lab/app/main.py docker-entrypoint.sh Dockerfile pyproject.toml
+- Binary observable: exit 0 for negated grep; no matches in changed runtime/packaging files.
+- Captured artifact path: this file
+
+Programming quality / file size
+- Invocation: for f in src/polysignal_lab/app/main.py tests/test_cli_runtime_modes.py; do awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(#)/ { n++ } END { print n }' "$f"; done
+- Binary observable: src/polysignal_lab/app/main.py = 157 pure LOC; tests/test_cli_runtime_modes.py = 29 pure LOC.
+- Captured artifact path: this file
+
+Cleanup
+- Invocation: docker ps --filter ancestor=polysignal-lab:prd-old --format '{{.ID}} {{.Status}} {{.Names}}'
+- Binary observable: exit 0 with no output; no long-lived containers left running from this image.
+- Captured artifact path: this file
+
+Risks
+- The smoke hook is intentionally local and bounded for Todo 17; Todo 18 must add the live public read-only market checks.
+- Docker build uses network during image build to resolve dependencies, but runtime test mode no longer installs packages.
+- The worktree remains shared and dirty with many unrelated pre-existing changes.
+
+Gate artifact repair
+- Invocation: patched .omo/evidence/complete-prd-old-remove-demo-todo-17-code-review.md after the first gate rejected evidence completeness only.
+- Binary observable from first gate: CLI help, no-demo grep, full pytest, Docker build, Docker bad-mode, Docker test, Docker smoke, and cleanup all passed; blocker was missing explicit programming/remove-ai-slops coverage in the code-review artifact.
+- Repair content: added explicit programming perspective and remove-ai-slops / overfit coverage for typed CLI boundaries, exhaustive dispatch, bounded smoke side effects, runtime test deps, public-behavior tests, deletion-only-test avoidance, implementation-mirroring-test avoidance, and forbidden compatibility/fake fallback avoidance.
+- Product files edited during repair: none.

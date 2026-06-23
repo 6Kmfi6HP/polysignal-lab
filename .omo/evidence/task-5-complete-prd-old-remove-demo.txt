@@ -1,0 +1,77 @@
+ M .gitignore
+ M config/signal_bot.yaml
+ M docker-entrypoint.sh
+ D src/polysignal_lab/app/demo.py
+ D src/polysignal_lab/app/demo_data.py
+ M src/polysignal_lab/config.py
+ M src/polysignal_lab/observability/safety.py
+ D src/polysignal_lab/strategies/binary_momentum.py
+ D src/polysignal_lab/strategies/cross_market_bot.py
+ D src/polysignal_lab/strategies/dump_hedge.py
+ M src/polysignal_lab/strategies/factory.py
+ D src/polysignal_lab/strategies/fibonacci_bot.py
+ D src/polysignal_lab/strategies/low_side_dual_reversion.py
+ D src/polysignal_lab/strategies/mid_price_sizing.py
+ D src/polysignal_lab/strategies/ninety_nine_cent_sniper.py
+ D src/polysignal_lab/strategies/one_cent_buy.py
+ D src/polysignal_lab/strategies/pre_order_market.py
+?? .claude/
+?? .dockerignore
+?? .github/
+?? .mcp.json
+?? .omo/
+?? Dockerfile
+?? LICENSE
+?? README.md
+?? docker-compose.yml
+?? docs/
+?? polyscan.py
+?? pyproject.toml
+?? refined_scan.py
+?? tests/
+?? uv.lock
+!! .codegraph
+!! .env
+!! .pytest_cache/
+!! .venv/
+!! src/polysignal_lab/__pycache__/
+!! src/polysignal_lab/app/__pycache__/
+!! src/polysignal_lab/dashboard/__pycache__/
+!! src/polysignal_lab/data/__pycache__/
+!! src/polysignal_lab/domain/__pycache__/
+!! src/polysignal_lab/observability/__pycache__/
+!! src/polysignal_lab/paper/__pycache__/
+!! src/polysignal_lab/publish/__pycache__/
+!! src/polysignal_lab/signal_layer/__pycache__/
+!! src/polysignal_lab/storage/__pycache__/
+!! src/polysignal_lab/strategies/__pycache__/
+!! tests/__pycache__/
+
+--- Task 5 command receipts ---
+baseline: timeout 120 .venv/bin/python scripts/safety_scan.py . -> exit 1; artifact .omo/evidence/task-5-baseline-safety-scan.txt; failed on .venv site-packages cancel_all before fix.
+red_first: .omo/tmp-safety product_like/.venv/data fixtures with create_order -> exit 1; artifact .omo/evidence/task-5-red-first-safety-scan.txt; old scanner reported product, virtualenv, and generated fixture paths.
+green_probe: product fixture plus ignored .venv and top-level data fixtures -> exit 1 only for product fixture; artifact .omo/evidence/task-5-green-probe-product-still-fails.txt.
+acceptance_1: timeout 120 .venv/bin/python scripts/safety_scan.py . -> exit 0; observable "Safety scan passed".
+acceptance_2: test ! -e logs && test ! -e state && test ! -e data/paper_trades.sqlite && test ! -e data/polysignal_lab.sqlite3 && test ! -e scan_results.json && test ! -e refined_results.json -> exit 0.
+acceptance_3: git status --short --ignored | tee .omo/evidence/task-5-complete-prd-old-remove-demo.txt -> exit 0; status captured above.
+failure_probe: create .omo/tmp-safety/product_like/blocked.py with create_order, plus ignored .venv and data fixtures; safety scan -> exit 1 only for product fixture; artifact .omo/evidence/task-5-failure-probe-output.txt.
+cleanup_acceptance: removed .omo/tmp-safety and data/task5_generated_probe.py, reran safety_scan.py . and deletion tests -> exit 0.
+env_check: test -e .env || true -> exit 0; .env was not read or altered.
+unit_check: .venv/bin/python -m pytest tests/test_safety.py -q -> exit 0; 1 passed.
+code_size: awk pure LOC on src/polysignal_lab/observability/safety.py and scripts/safety_scan.py -> 74.
+
+--- Adversarial probes ---
+stale_state: reread plan Todo 5 and docs/GENERATED_HISTORY_DELETION.md before final verification; exact manifest paths used.
+dirty_worktree: git status captured before and after; unrelated pre-existing strategy/config/demo changes preserved.
+misleading_success_output: paired safety scan pass with deletion existence tests and negative product fixture failure probe.
+malformed_input: generated/ignored path fixtures with forbidden content were skipped, while product-like forbidden fixture failed.
+prompt_injection: not applicable; no external untrusted text consumed.
+cancel_resume: not applicable; no resumable flow.
+long_external_commands: safety scan wrapped with timeout 120; skip rules prevent .venv/.git traversal.
+flaky_tests: deterministic local file probes, rerun after cleanup passed.
+repeated_interruption: not applicable; no interruption occurred.
+
+--- Cleanup receipt ---
+removed .omo/tmp-safety; removed data/task5_generated_probe.py; removed manifest-generated logs/, state/, data/*.sqlite, data/*.sqlite3, scan_results.json, refined_results.json; no runtime process started.
+
+exact_acceptance_1: .venv/bin/python scripts/safety_scan.py . -> exit 0; artifact .omo/evidence/task-5-exact-final-safety-scan.txt; observable "Safety scan passed".

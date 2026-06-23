@@ -1,0 +1,23 @@
+{
+  "servers": {
+    "basedpyright": {
+      "command": "basedpyright-langserver",
+      "args": ["--stdio"],
+      "fileTypes": [".py", ".pyi"],
+      "rootMarkers": ["pyproject.toml", "uv.lock", ".git"]
+    },
+    "ruff": {
+      "command": "ruff",
+      "args": ["server"],
+      "fileTypes": [".py", ".pyi"],
+      "rootMarkers": ["pyproject.toml", "uv.lock", ".git"],
+      "isLinter": true
+    },
+    "pyright": {
+      "disabled": true
+    },
+    "pylsp": {
+      "disabled": true
+    }
+  }
+}

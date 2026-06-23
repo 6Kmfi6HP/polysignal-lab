@@ -1,0 +1,9 @@
+2026-06-22 15:19:11,745 INFO httpx HTTP Request: GET https://gamma-api.polymarket.com/events?active=true&closed=false&limit=3 "HTTP/1.1 200 OK"
+2026-06-22 15:19:12,087 INFO httpx HTTP Request: GET https://clob.polymarket.com/book?token_id=34626184950254225208692030156208941308358060420950772251072421141618169142241 "HTTP/1.1 200 OK"
+2026-06-22 15:19:12,328 INFO httpx HTTP Request: GET https://clob.polymarket.com/book?token_id=polysignal-readonly-smoke-invalid-token "HTTP/1.1 404 Not Found"
+2026-06-22 15:19:12,465 INFO httpx HTTP Request: GET https://api.binance.com/api/v3/ticker/bookTicker?symbol=BTCUSDT "HTTP/1.1 200 OK"
+2026-06-22 15:19:12,626 INFO httpx HTTP Request: GET http://dashboard.local/health "HTTP/1.1 200 OK"
+2026-06-22 15:19:12,629 INFO httpx HTTP Request: GET http://dashboard.local/api/overview "HTTP/1.1 200 OK"
+2026-06-22 15:19:12,632 INFO httpx HTTP Request: GET http://dashboard.local/api/leaderboard "HTTP/1.1 200 OK"
+2026-06-22 15:19:12,638 INFO httpx HTTP Request: GET http://dashboard.local/ "HTTP/1.1 200 OK"
+Bounded read-only smoke passed

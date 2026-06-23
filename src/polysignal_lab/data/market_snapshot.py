@@ -5,7 +5,7 @@ from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
-from polysignal_lab.utils import stable_hash, utc_now
+from polysignal_lab.utils import stable_hash, utc_iso, utc_now
 
 
 class MarketSnapshotBuilder:
@@ -52,6 +52,13 @@ class MarketSnapshotBuilder:
             "ask_sum": snapshot.ask_sum,
             "ask_skew": snapshot.ask_skew,
             "favorite_side": snapshot.favorite_side.value if snapshot.favorite_side else None,
+            "market_status": snapshot.market.status.value,
+            "resolved_outcome": snapshot.market.resolved_outcome.value if snapshot.market.resolved_outcome else None,
+            "resolution_source": snapshot.market.resolution_source,
+            "market_start_ts": utc_iso(snapshot.market.start_ts) if snapshot.market.start_ts else None,
+            "market_end_ts": utc_iso(snapshot.market.end_ts) if snapshot.market.end_ts else None,
+            "up_token_id": snapshot.market.token_for(Side.UP).token_id if any(token.side == Side.UP for token in snapshot.market.outcome_tokens) else None,
+            "down_token_id": snapshot.market.token_for(Side.DOWN).token_id if any(token.side == Side.DOWN for token in snapshot.market.outcome_tokens) else None,
         }
         if snapshot.spot and snapshot.price_to_beat:
             metrics["spot_price"] = snapshot.spot.price

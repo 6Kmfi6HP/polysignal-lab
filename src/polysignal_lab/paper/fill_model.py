@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 from polysignal_lab.config import FillModelConfig
 from polysignal_lab.domain.orderbook import OrderBook
@@ -21,14 +22,28 @@ class BestAskTakerFillModel:
         self.max_book_staleness_ms = max_book_staleness_ms
 
     def fill(self, order: PaperOrder, orderbook: OrderBook) -> FillDecision:
+        if orderbook.token_id != order.token_id:
+            return FillDecision(False, reason_code="MALFORMED_ORDERBOOK")
         if not orderbook.is_fresh(self.max_book_staleness_ms, order.created_at):
             return FillDecision(False, reason_code="STALE_ORDERBOOK")
-        if orderbook.best_ask is None:
-            return FillDecision(False, reason_code="STALE_ORDERBOOK")
         raw = orderbook.best_ask
+        if not orderbook.asks or raw is None:
+            return FillDecision(False, reason_code="MISSING_BEST_ASK")
+        if not isfinite(raw) or not isfinite(order.limit_price):
+            return FillDecision(False, reason_code="MALFORMED_ORDERBOOK")
+        if any(
+            not isfinite(level.price)
+            or not isfinite(level.size)
+            or level.price <= 0
+            or level.size <= 0
+            for level in orderbook.asks
+        ):
+            return FillDecision(False, reason_code="MALFORMED_ORDERBOOK")
         if raw > order.limit_price:
             return FillDecision(False, reason_code="ASK_ABOVE_MAX_ENTRY")
         fill_price = raw + raw * self.config.slippage_bps / 10000
+        if not isfinite(fill_price):
+            return FillDecision(False, reason_code="MALFORMED_ORDERBOOK")
         if fill_price > order.limit_price:
             return FillDecision(False, reason_code="SLIPPAGE_EXCEEDS_MAX_ENTRY")
         available = None

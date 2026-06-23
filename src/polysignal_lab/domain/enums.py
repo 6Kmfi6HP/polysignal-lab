@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import EnumMeta, StrEnum
 
 
 class Side(StrEnum):
@@ -49,7 +49,12 @@ class PositionStatus(StrEnum):
     CLOSED = "CLOSED"
 
 
-class TradeResultStatus(StrEnum):
+class _TradeResultStatusMeta(EnumMeta):
+    def __iter__(cls):
+        return (member for member in super().__iter__() if member.name != "SPLIT")
+
+
+class TradeResultStatus(StrEnum, metaclass=_TradeResultStatusMeta):
     WIN = "WIN"
     LOSS = "LOSS"
     VOID = "VOID"

@@ -1,0 +1,636 @@
+TASK 4 evidence - complete-prd-old-remove-demo
+## Baseline: git status before
+ M .gitignore
+ M config/signal_bot.yaml
+ M docker-entrypoint.sh
+ D src/polysignal_lab/app/demo.py
+ D src/polysignal_lab/app/demo_data.py
+ M src/polysignal_lab/config.py
+ M src/polysignal_lab/observability/safety.py
+ D src/polysignal_lab/strategies/binary_momentum.py
+ D src/polysignal_lab/strategies/cross_market_bot.py
+ D src/polysignal_lab/strategies/dump_hedge.py
+ M src/polysignal_lab/strategies/factory.py
+ D src/polysignal_lab/strategies/fibonacci_bot.py
+ D src/polysignal_lab/strategies/low_side_dual_reversion.py
+ D src/polysignal_lab/strategies/mid_price_sizing.py
+ D src/polysignal_lab/strategies/ninety_nine_cent_sniper.py
+ D src/polysignal_lab/strategies/one_cent_buy.py
+ D src/polysignal_lab/strategies/pre_order_market.py
+?? .claude/
+?? .dockerignore
+?? .github/
+?? .mcp.json
+?? .omo/
+?? Dockerfile
+?? LICENSE
+?? README.md
+?? docker-compose.yml
+?? docs/
+?? polyscan.py
+?? pyproject.toml
+?? refined_scan.py
+?? tests/
+?? uv.lock
+
+## Baseline: forbidden PRD-old scope grep before production edits
+$ rg -n "skew_mean_reversion|DOGE|BNB|HYPE" config src README.md docs/PRD_OLD_COMPLIANCE.md
+config/signal_bot.yaml:29:  assets: [BTC, ETH, SOL, XRP, DOGE, BNB, HYPE]
+config/signal_bot.yaml:183:  skew_mean_reversion:
+config/signal_bot.yaml:185:    assets: [BTC, ETH, SOL, XRP, DOGE, BNB, HYPE]
+src/polysignal_lab/strategies/factory.py:7:from polysignal_lab.strategies.skew_mean_reversion import SkewMeanReversionStrategy
+src/polysignal_lab/strategies/factory.py:19:    if config.skew_mean_reversion.enabled:
+src/polysignal_lab/strategies/factory.py:20:        strategies.append(SkewMeanReversionStrategy(config.skew_mean_reversion))
+src/polysignal_lab/strategies/skew_mean_reversion.py:21:    name = "skew_mean_reversion"
+src/polysignal_lab/config.py:94:    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+src/polysignal_lab/config.py:125:        "DOGE": "DOGEUSDT",
+src/polysignal_lab/config.py:126:        "BNB": "BNBUSDT",
+src/polysignal_lab/config.py:299:    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+src/polysignal_lab/config.py:315:    skew_mean_reversion: SkewMeanReversionConfig = Field(default_factory=SkewMeanReversionConfig)
+exit=0
+
+## Baseline: current focused tests before adding tests
+$ .venv/bin/python -m pytest tests/test_config.py tests/test_strategies.py -q
+ERROR: file or directory not found: tests/test_config.py
+exit=4
+
+$ .venv/bin/python -m pytest tests/test_config.py::test_strategy_factory_builds_only_prd_strategies -q
+ERROR: file or directory not found: tests/test_config.py::test_strategy_factory_builds_only_prd_strategies
+exit=4
+
+$ .venv/bin/python -m pytest tests/test_config.py::test_non_prd_strategy_config_rejected -q
+ERROR: file or directory not found: tests/test_config.py::test_non_prd_strategy_config_rejected
+exit=4
+
+## Red-first proof after adding focused tests, before production edits
+$ .venv/bin/python -m pytest tests/test_config.py::test_strategy_factory_builds_only_prd_strategies -q
+FAILED tests/test_config.py::test_strategy_factory_builds_only_prd_strategies
+ImportError: cannot import name 'build_strategy' from 'polysignal_lab.strategies.factory'
+exit=1
+
+$ .venv/bin/python -m pytest tests/test_config.py::test_non_prd_strategy_config_rejected -q
+FAILED tests/test_config.py::test_non_prd_strategy_config_rejected
+Failed: DID NOT RAISE ValidationError
+exit=1
+
+$ .venv/bin/python -m pytest tests/test_config.py::test_prd_result_states_exclude_partial_settlement -q
+FAILED tests/test_config.py::test_prd_result_states_exclude_partial_settlement
+Extra items in the left set: 'SPLIT'
+exit=1
+
+## Verification 1
+$ .venv/bin/python -m pytest tests/test_config.py tests/test_strategies.py -q
+........                                                                 [100%]
+exit=0
+
+## Verification 2
+$ .venv/bin/python -m pytest tests/test_config.py::test_strategy_factory_builds_only_prd_strategies -q
+.                                                                        [100%]
+exit=0
+
+## Verification 3
+$ .venv/bin/python -m pytest tests/test_config.py::test_non_prd_strategy_config_rejected -q
+.                                                                        [100%]
+exit=0
+
+## Verification 4
+$ ! rg "skew_mean_reversion|DOGE|BNB|HYPE" config src README.md docs/PRD_OLD_COMPLIANCE.md
+exit=0
+
+## Verification 5
+$ .venv/bin/python -m pytest tests/test_config.py tests/test_strategies.py -q && ! rg "skew_mean_reversion|DOGE|BNB|HYPE" config src README.md docs/PRD_OLD_COMPLIANCE.md
+........                                                                 [100%]
+exit=0
+
+## Additional settlement regression
+$ .venv/bin/python -m pytest tests/test_paper_simulation.py::test_settlement_split -q
+.                                                                        [100%]
+exit=0
+
+## Verification 6: post-write Python no-excuse/code-size review
+$ awk pure LOC src/polysignal_lab/config.py
+src/polysignal_lab/config.py pure_loc=276
+$ awk pure LOC src/polysignal_lab/strategies/factory.py
+src/polysignal_lab/strategies/factory.py pure_loc=27
+$ awk pure LOC src/polysignal_lab/domain/enums.py
+src/polysignal_lab/domain/enums.py pure_loc=34
+$ awk pure LOC src/polysignal_lab/paper/settlement.py
+src/polysignal_lab/paper/settlement.py pure_loc=58
+$ awk pure LOC src/polysignal_lab/paper/report.py
+src/polysignal_lab/paper/report.py pure_loc=88
+$ awk pure LOC tests/test_config.py
+tests/test_config.py pure_loc=27
+$ awk pure LOC tests/test_strategies.py
+tests/test_strategies.py pure_loc=53
+$ awk pure LOC tests/test_paper_simulation.py
+tests/test_paper_simulation.py pure_loc=70
+$ rg -n "breakpoint\(|import pdb|debugpy|ipdb|pudb|DEBUG" changed Python files
+exit=0
+
+## Final verification after strategy config split
+$ .venv/bin/python -m pytest tests/test_config.py tests/test_strategies.py -q
+........                                                                 [100%]
+exit=0
+$ .venv/bin/python -m pytest tests/test_config.py::test_strategy_factory_builds_only_prd_strategies -q
+.                                                                        [100%]
+exit=0
+$ .venv/bin/python -m pytest tests/test_config.py::test_non_prd_strategy_config_rejected -q
+.                                                                        [100%]
+exit=0
+$ ! rg "skew_mean_reversion|DOGE|BNB|HYPE" config src README.md docs/PRD_OLD_COMPLIANCE.md
+exit=0
+$ .venv/bin/python -m pytest tests/test_config.py tests/test_strategies.py -q && ! rg "skew_mean_reversion|DOGE|BNB|HYPE" config src README.md docs/PRD_OLD_COMPLIANCE.md
+........                                                                 [100%]
+exit=0
+$ .venv/bin/python -m pytest tests/test_paper_simulation.py::test_settlement_split -q
+.                                                                        [100%]
+exit=0
+$ manual QA config/factory invocation
+['vwap_momentum', 'late_consensus', 'ptb_diff']
+['vwap_momentum', 'late_consensus', 'ptb_diff']
+exit=0
+
+## Final post-write Python no-excuse/code-size review
+src/polysignal_lab/config.py pure_loc=204
+src/polysignal_lab/strategies/config.py pure_loc=78
+src/polysignal_lab/strategies/factory.py pure_loc=27
+src/polysignal_lab/domain/enums.py pure_loc=34
+src/polysignal_lab/paper/settlement.py pure_loc=58
+src/polysignal_lab/paper/report.py pure_loc=88
+tests/test_config.py pure_loc=27
+tests/test_strategies.py pure_loc=53
+tests/test_paper_simulation.py pure_loc=70
+$ rg -n "breakpoint\(|import pdb|debugpy|ipdb|pudb|DEBUG" changed Python files
+exit=0
+
+## Adversarial probes
+stale_state: PASS - reread .omo plan Todo 4, docs/PRD-old strategy/result lines, and current config/factory before finalization. Observable: plan still requires only VWAP Momentum, Late Consensus, PTB Diff; final grep has no forbidden identifiers.
+dirty_worktree: PASS_WITH_PREEXISTING_DIRTY_TREE - git status before already showed prior Todo changes and many untracked project files; final status below preserves them and adds scoped Todo 4 changes.
+misleading_success_output: PASS - paired focused pytest, strict absence grep, exact manual config/factory load, and combined acceptance command.
+malformed_input: PASS - tests/test_config.py::test_non_prd_strategy_config_rejected rejects non-PRD strategy config with ValidationError.
+prompt_injection: NOT_APPLICABLE - no external untrusted text consumed by runtime path.
+cancel_resume: NOT_APPLICABLE - no resumable/cancelable runtime flow.
+long_external_commands: PASS - pytest commands used timeout 120/180 and completed with exit=0.
+flaky_tests: PASS - focused tests rerun deterministically; no intermittent failures observed after final code.
+repeated_interruption: NOT_APPLICABLE - no interruption occurred.
+env_secrecy: PASS - .env was not read, modified, copied, or cited; evidence contains no credential dump.
+
+## Cleanup receipt
+runtime_processes: none started; no server/tmux/debugpy/browser sessions to stop.
+temporary_files: none created outside .omo/evidence/task-4-complete-prd-old-remove-demo.txt and .omo/start-work/ledger.jsonl.
+debug_artifacts: rg scan for breakpoint/import pdb/debugpy/ipdb/pudb/DEBUG returned no matches in changed Python files.
+
+## Final git status after
+$ git status --short
+ M .gitignore
+ M config/signal_bot.yaml
+ M docker-entrypoint.sh
+ D src/polysignal_lab/app/demo.py
+ D src/polysignal_lab/app/demo_data.py
+ M src/polysignal_lab/config.py
+ M src/polysignal_lab/domain/enums.py
+ M src/polysignal_lab/observability/safety.py
+ M src/polysignal_lab/paper/report.py
+ M src/polysignal_lab/paper/settlement.py
+ D src/polysignal_lab/strategies/binary_momentum.py
+ D src/polysignal_lab/strategies/cross_market_bot.py
+ D src/polysignal_lab/strategies/dump_hedge.py
+ M src/polysignal_lab/strategies/factory.py
+ D src/polysignal_lab/strategies/fibonacci_bot.py
+ D src/polysignal_lab/strategies/low_side_dual_reversion.py
+ D src/polysignal_lab/strategies/mid_price_sizing.py
+ D src/polysignal_lab/strategies/ninety_nine_cent_sniper.py
+ D src/polysignal_lab/strategies/one_cent_buy.py
+ D src/polysignal_lab/strategies/pre_order_market.py
+ D src/polysignal_lab/strategies/skew_mean_reversion.py
+?? .claude/
+?? .dockerignore
+?? .github/
+?? .mcp.json
+?? .omo/
+?? Dockerfile
+?? LICENSE
+?? README.md
+?? docker-compose.yml
+?? docs/
+?? polyscan.py
+?? pyproject.toml
+?? refined_scan.py
+?? src/polysignal_lab/strategies/config.py
+?? tests/
+?? uv.lock
+
+## Ledger sanity
+$ tail -n 1 .omo/start-work/ledger.jsonl | .venv/bin/python -m json.tool >/dev/null
+ledger_json_valid=1
+
+## Todo 4 programming-quality blocker repair: remove Any from config.py
+date: 2026-06-22
+artifact: .omo/evidence/task-4-complete-prd-old-remove-demo.txt
+
+### Rejection reread / stale_state
+scenario: gate rejection reread before finalizing
+invocation: rg -n "src/polysignal_lab/config.py:5|imports Any|programming_quality|needs-fix|blocking_findings" .omo/start-work/ledger.jsonl && nl -ba src/polysignal_lab/config.py | sed -n '1,250p'
+observable:
+- ledger line 31 records verdict=needs-fix with blocking_findings=["src/polysignal_lab/config.py imports Any in touched file"].
+- final config.py line 5 is "from typing import Final, Literal"; line 47 is "YAML_CONFIG_ADAPTER: Final = TypeAdapter(dict[str, JsonValue])".
+result: PASS
+
+### Dirty worktree
+scenario: preserve unrelated shared worktree changes
+invocation_before: git status --short
+observable_before: worktree was already dirty across config/signal_bot.yaml, docker-entrypoint.sh, deleted demo/strategy modules, strategy/factory/domain/paper files, and many untracked project files.
+invocation_after: git status --short
+observable_after: same unrelated dirty tree remains; repair only intentionally touched src/polysignal_lab/config.py and this evidence file.
+result: PASS_WITH_PREEXISTING_DIRTY_TREE
+
+### Exact fix
+changed_files:
+- src/polysignal_lab/config.py
+- .omo/evidence/task-4-complete-prd-old-remove-demo.txt
+fix:
+- Removed the explicit "Any" import from src/polysignal_lab/config.py.
+- Added a typed YAML boundary with pydantic JsonValue and a Final TypeAdapter: YAML_CONFIG_ADAPTER: Final = TypeAdapter(dict[str, JsonValue]).
+- Routed yaml.safe_load output through YAML_CONFIG_ADAPTER.validate_python(...) before env override merging and Settings.model_validate(...).
+- Preserved existing env override behavior for POLYSIGNAL_LAB__SECTION__KEY values.
+
+### Required verification
+scenario: programming-quality grep forbids Any/cast/type-ignore/asyncio/pandas/broad-except in config.py
+invocation: rg -n "\bAny\b|cast\(|type:\s*ignore|import asyncio|import pandas|except (Exception|BaseException)" src/polysignal_lab/config.py
+binary_observable: exit=1, stdout empty
+
+## Todo 4 remaining code-quality blocker repair: typed stop-loss config and dead alias removal
+date: 2026-06-22
+artifact: .omo/evidence/task-4-complete-prd-old-remove-demo.txt
+review_artifact: .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md
+
+### Rejection reread / stale_state
+scenario: independent gate blockers reread before finalization
+invocation: sed -n '1,260p' .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md && nl -ba src/polysignal_lab/config.py | sed -n '250,275p' && nl -ba src/polysignal_lab/strategies/config.py | sed -n '1,115p'
+observable:
+- blocker 1 repaired by replacing the narrow previous code-review artifact with full programming/raw-public-field/helper-dead/overfit/deletion-only/SPLIT coverage.
+- blocker 2 repaired by replacing `stop_loss_per_coin: dict[str, dict]` with typed `StopLossPerCoinConfig` and `FixedStopLossConfig` Pydantic values.
+- blocker 3 repaired by removing dead public `load_config(...)`; `load_settings(...)` remains the canonical project config loader.
+result: PASS
+
+### Dirty worktree
+scenario: preserve unrelated shared worktree changes
+invocation_before: git status --short
+observable_before: worktree was already dirty across config/signal_bot.yaml, docker-entrypoint.sh, deleted demo/strategy modules, strategy/factory/domain/paper files, and many untracked project files.
+invocation_after: git status --short
+observable_after: unrelated dirty tree remains; this repair intentionally changed only src/polysignal_lab/config.py, src/polysignal_lab/strategies/config.py, tests/test_config.py, and the two Todo 4 evidence files.
+result: PASS_WITH_PREEXISTING_DIRTY_TREE
+
+### Exact fixes
+changed_files:
+- src/polysignal_lab/strategies/config.py
+- src/polysignal_lab/config.py
+- tests/test_config.py
+- .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md
+- .omo/evidence/task-4-complete-prd-old-remove-demo.txt
+fixes:
+- Added `FixedStopLossConfig` with `type: Literal["fixed"]` and `value: float`.
+- Added `StopLossPerCoinConfig` as a Pydantic RootModel over `Mapping[str, FixedStopLossConfig]`.
+- Changed `LateConsensusConfig.stop_loss_per_coin` from `dict[str, dict]` to `StopLossPerCoinConfig`.
+- Added behavior-oriented malformed input coverage: `tests/test_config.py::test_late_consensus_stop_loss_config_rejects_malformed_entry`.
+- Removed dead public `load_config(...)` alias from `src/polysignal_lab/config.py`; canonical loading remains `load_settings(...)` and `Settings.from_yaml(...)`.
+- Replaced the Todo 4 code-review artifact with explicit programming, raw dict/public field, helper/dead, overfit/deletion-only, split-state, exact command-result, and cleanup coverage.
+
+### Red proof
+scenario: malformed stop-loss entries were previously accepted
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_config.py::test_late_consensus_stop_loss_config_rejects_malformed_entry -q
+binary_observable_before_fix: exit=1, failed with "DID NOT RAISE ValidationError"
+binary_observable_after_fix: exit=0, ". [100%]"
+result: PASS
+
+### Required verification
+scenario: programming-quality grep forbids Any/cast/type-ignore/asyncio/pandas/broad-except/raw nested dict
+invocation: rg -n "\bAny\b|cast\(|type:\s*ignore|import asyncio|import pandas|except (Exception|BaseException)|dict\[str, dict\]" src/polysignal_lab/config.py src/polysignal_lab/strategies/config.py
+binary_observable: exit=1, stdout empty
+result: PASS
+
+scenario: focused config and strategy regression suite
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_config.py tests/test_strategies.py -q
+binary_observable: exit=0, "9 passed"
+result: PASS
+
+scenario: standalone PRD factory behavior
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_config.py::test_strategy_factory_builds_only_prd_strategies -q
+binary_observable: exit=0, ". [100%]"
+result: PASS
+
+scenario: non-PRD strategy config rejection
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_config.py::test_non_prd_strategy_config_rejected -q
+binary_observable: exit=0, ". [100%]"
+result: PASS
+
+scenario: forbidden PRD-old strategy/assets scan
+invocation: bash -lc '! rg "skew_mean_reversion|DOGE|BNB|HYPE" config src README.md docs/PRD_OLD_COMPLIANCE.md'
+binary_observable: exit=0, stdout empty
+result: PASS
+
+scenario: split result-state absence scan
+invocation: rg -n "SPLIT" README.md docs src tests config
+binary_observable: exit=1, stdout empty
+result: PASS
+
+scenario: removed load_config source/test/config search
+invocation: rg -n "load_config\(" src tests config
+binary_observable: exit=1, stdout empty
+result: PASS
+
+scenario: standalone code-review artifact keyword coverage
+invocation: test -f .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md && rg "programming|raw dict|public field|helper|dead|overfit|deletion-only|SPLIT|WIN/LOSS/VOID/UNKNOWN|dict\[str, dict\]" .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md
+binary_observable: exit=0 with matches for the required programming, raw dict, public field, helper, dead, overfit, deletion-only, SPLIT, WIN/LOSS/VOID/UNKNOWN, and dict[str, dict] review terms.
+result: PASS
+
+scenario: manual canonical config/factory load
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -c "from polysignal_lab.config import load_settings; from polysignal_lab.strategies.factory import build_strategies; settings = load_settings('config/signal_bot.yaml'); print([strategy.name for strategy in build_strategies(settings.strategies)]); print([strategy.name for strategy in build_strategies(load_settings('config/signal_bot.yaml').strategies)])"
+binary_observable:
+['vwap_momentum', 'late_consensus', 'ptb_diff']
+['vwap_momentum', 'late_consensus', 'ptb_diff']
+result: PASS
+
+### Post-write programming self-review
+scenario: pure LOC review for scoped Python files
+invocation: for f in src/polysignal_lab/config.py src/polysignal_lab/strategies/config.py tests/test_config.py; do printf '%s pure_loc=' "$f"; awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(\/\/|#|--)/' "$f" | wc -l; done
+binary_observable:
+src/polysignal_lab/config.py pure_loc=213
+src/polysignal_lab/strategies/config.py pure_loc=88
+tests/test_config.py pure_loc=43
+result: PASS_WITH_WARNING - config.py remains in the 200-250 warning band; no additive refactor was made because this repair removed dead API surface and kept scope narrow.
+
+### Cleanup receipt
+runtime_processes: none started.
+temporary_files: none created.
+debug_artifacts: none created.
+plan_checkbox: not marked.
+env_secrecy: .env was not read, copied, modified, or cited.
+result: PASS
+
+scenario: focused config and strategy suite
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_config.py tests/test_strategies.py -q
+binary_observable: exit=0
+stdout:
+........                                                                 [100%]
+result: PASS
+
+scenario: PRD strategy factory only builds allowed strategies
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_config.py::test_strategy_factory_builds_only_prd_strategies -q
+binary_observable: exit=0
+stdout:
+.                                                                        [100%]
+result: PASS
+
+scenario: malformed/non-PRD strategy config is still rejected
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_config.py::test_non_prd_strategy_config_rejected -q
+binary_observable: exit=0
+stdout:
+.                                                                        [100%]
+result: PASS
+
+scenario: forbidden non-PRD strategies/assets are absent
+invocation: bash -lc '! rg "skew_mean_reversion|DOGE|BNB|HYPE" config src README.md docs/PRD_OLD_COMPLIANCE.md'
+binary_observable: exit=0, stdout empty
+result: PASS
+
+### Manual QA / config factory load
+scenario: typed YAML config parsing still loads factory strategy set
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<'PY'
+from polysignal_lab.config import load_settings
+from polysignal_lab.strategies.factory import build_strategies, build_strategy
+settings = load_settings('config/signal_bot.yaml')
+print([strategy.name for strategy in build_strategies(settings.strategies)])
+print([build_strategy(strategy_config).name for strategy_config in settings.strategies])
+PY
+binary_observable: exit=0
+stdout:
+['vwap_momentum', 'late_consensus', 'ptb_diff']
+['vwap_momentum', 'late_consensus', 'ptb_diff']
+result: PASS
+
+### Programming post-write review
+scenario: code-size check for modified Python file
+invocation: awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(\/\/|#|--)/' src/polysignal_lab/config.py | wc -l
+binary_observable: exit=0
+stdout: 215
+result: PASS_BELOW_250
+
+### Adversarial probes
+stale_state: PASS - reread ledger rejection and final config.py; blocker changed from explicit Any import to Final/Literal plus JsonValue TypeAdapter.
+dirty_worktree: PASS_WITH_PREEXISTING_DIRTY_TREE - git status before/after showed existing unrelated Todo work; no unrelated runtime files were edited by this repair.
+misleading_success_output: PASS - paired empty programming-quality grep with focused pytest and manual config/factory load.
+malformed_input: PASS - tests/test_config.py::test_non_prd_strategy_config_rejected passed.
+env_secrecy: PASS - .env was not read, copied, modified, or cited.
+long_external_commands: PASS - focused pytest commands were deterministic and completed quickly.
+flaky_tests: PASS - all focused tests completed successfully on the final pass.
+
+### Cleanup receipt
+runtime_processes: none started; no server, tmux, browser, debugpy, or background runtime process to stop.
+temporary_files: none created.
+debug_artifacts: none introduced.
+plan_checkbox: not marked by this repair executor.
+
+### Risks
+- Worktree remains dirty from pre-existing Todo work outside this repair scope.
+- Earlier evidence sections still contain the rejected state; this appended repair section supersedes them for the programming-quality blocker.
+
+## Todo 4 final documentation/evidence blocker repair
+date: 2026-06-22
+artifact:
+- .omo/evidence/task-4-complete-prd-old-remove-demo.txt
+- .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md
+
+### Rejection reread / stale_state
+scenario: latest Todo 4 rejection reread before finalizing
+invocation: sed -n '1,220p' .omo/evidence/complete-prd-old-remove-demo-todo-4-repair-gate-review.md
+observable:
+- gate review recommendation was REJECT because docs/IMPLEMENTATION_SUMMARY.md:15 still said WIN/LOSS/VOID/UNKNOWN/SPLIT.
+- gate review also required a standalone Todo 4 code-review report artifact with explicit programming and remove-ai-slops overfit/slop coverage.
+result: PASS
+
+### Dirty worktree
+scenario: preserve unrelated shared worktree changes
+invocation_before: git status --short
+observable_before: worktree was already dirty across config, source, deleted demo/strategy modules, docs, tests, and untracked project files.
+invocation_after: git status --short
+observable_after: unrelated dirty tree remains; this repair intentionally touched only docs/IMPLEMENTATION_SUMMARY.md, .omo/evidence/task-4-complete-prd-old-remove-demo.txt, and .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md.
+result: PASS_WITH_PREEXISTING_DIRTY_TREE
+
+### Exact fix
+changed_files:
+- docs/IMPLEMENTATION_SUMMARY.md
+- .omo/evidence/task-4-complete-prd-old-remove-demo.txt
+- .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md
+fix:
+- Replaced the stale result-state claim WIN/LOSS/VOID/UNKNOWN/SPLIT with WIN/LOSS/VOID/UNKNOWN in docs/IMPLEMENTATION_SUMMARY.md line 15.
+- Added a standalone Todo 4 code-review artifact covering programming quality, remove-ai-slops/overfit review, SPLIT review, evidence commands/results, cleanup, and risks.
+- Appended this final repair receipt to the Todo 4 task evidence.
+
+### Required verification
+scenario: SPLIT is not PRD-facing in current README/docs/src/tests/config scan
+invocation: rg -n "SPLIT" README.md docs src tests config
+binary_observable: exit=1, stdout empty
+result: PASS
+
+scenario: forbidden non-PRD strategy/assets are absent from current PRD-facing scope
+invocation: bash -lc '! rg "skew_mean_reversion|DOGE|BNB|HYPE" config src README.md docs/PRD_OLD_COMPLIANCE.md'
+binary_observable: exit=0, stdout empty
+result: PASS
+
+scenario: focused config and strategy suite
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_config.py tests/test_strategies.py -q
+binary_observable: exit=0
+stdout:
+........                                                                 [100%]
+result: PASS
+
+scenario: standalone Todo 4 code-review artifact exists and contains required review terms
+invocation: test -f .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md && rg "programming|remove-ai-slops|overfit|deletion-only|Any|SPLIT|WIN/LOSS/VOID/UNKNOWN" .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md
+binary_observable: exit=0
+stdout: matched required terms in the artifact, including programming, remove-ai-slops, overfit, deletion-only, Any, SPLIT, and WIN/LOSS/VOID/UNKNOWN.
+result: PASS
+
+scenario: manual direct doc-line review for strict final states
+invocation: nl -ba docs/IMPLEMENTATION_SUMMARY.md | sed -n '12,16p'
+binary_observable: exit=0
+stdout:
+    12	| Signal layer | SignalCandidate schema, gate, dedupe, channel rate limiter, consensus engine, formatter |
+    13	| Telegram | Dry-run default publisher, retry-capable HTTP sender, publish audit record |
+    14	| Paper trading | Wallet, paper order, conservative best-ask fill, slippage, depth, position creation |
+    15	| Exits/settlement | Paper TP/SL/max-hold virtual exit, hold-to-resolution settlement, WIN/LOSS/VOID/UNKNOWN |
+    16	| Reporting | Daily report, PnL, ROI, win rate, drawdown, profit factor, breakdowns |
+result: PASS
+
+### Code review coverage
+scenario: programming-quality review for Todo 4 touched Python surface
+invocation: rg -n "\bAny\b|cast\(|type:\s*ignore|import asyncio|import pandas|except (Exception|BaseException)" src/polysignal_lab/config.py src/polysignal_lab/strategies/config.py src/polysignal_lab/strategies/factory.py src/polysignal_lab/domain/enums.py src/polysignal_lab/paper/settlement.py src/polysignal_lab/paper/report.py tests/test_config.py tests/test_strategies.py
+binary_observable: exit=1, stdout empty
+result: PASS
+
+scenario: remove-ai-slops/overfit review
+observable:
+- tests/test_config.py:23-33 rejects non-PRD strategy config through Settings.model_validate rather than testing only file deletion.
+- tests/test_config.py:11-20 checks factory behavior returns exactly vwap_momentum, late_consensus, and ptb_diff.
+- tests/test_config.py:36-39 checks the public TradeResultStatus values are exactly WIN, LOSS, VOID, UNKNOWN.
+- No Todo 4 test was added for this documentation-only repair.
+result: PASS
+
+### Adversarial probes
+stale_state: PASS - reread latest rejection artifact and current docs before finalizing.
+dirty_worktree: PASS_WITH_PREEXISTING_DIRTY_TREE - git status before/after recorded; unrelated changes preserved.
+misleading_success_output: PASS - paired greps with direct line review and the focused pytest command.
+split_result_state: PASS - current source/docs scan has no SPLIT matches; docs line 15 lists WIN/LOSS/VOID/UNKNOWN only.
+env_secrecy: PASS - .env was not read, copied, modified, or cited.
+
+### Cleanup receipt
+runtime_processes: none started; no server, tmux, browser, debugpy, or background runtime process to stop.
+temporary_files: none created.
+debug_artifacts: none introduced.
+plan_checkbox: not marked by this repair executor.
+
+### Risks
+- Worktree remains dirty from pre-existing Todo work outside this repair scope.
+- Historical evidence and plan text under .omo may still mention rejected or superseded SPLIT states; current PRD-facing README/docs/src/tests/config scan is clean.
+
+## Todo 4 dead-import blocker repair
+date: 2026-06-22
+artifact:
+- .omo/evidence/task-4-complete-prd-old-remove-demo.txt
+- .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md
+
+### Rejection reread / stale_state
+scenario: latest Todo 4 gate rejection and current config import block were reread before finalizing
+invocation:
+- `rg -n "ValidationError|dead-import|dead import|unused production import|Todo 4|task-4|complete-prd-old-remove-demo" .omo src/polysignal_lab/config.py src/polysignal_lab/strategies/config.py`
+- `sed -n '1,220p' src/polysignal_lab/config.py`
+binary_observable:
+- exit=0; latest gate rejection at `.omo/evidence/complete-prd-old-remove-demo-todo-4-gate-review.md` says `src/polysignal_lab/config.py:13` imported unused `ValidationError`.
+- current source before repair showed `ValidationError` in the pydantic import block.
+result: PASS
+
+### Dirty worktree
+scenario: preserve unrelated shared worktree changes
+invocation_before: `git status --short`
+binary_observable_before: exit=0; worktree was already dirty across config, source, deleted demo/strategy modules, docs/tests, and untracked project files before this scoped repair.
+invocation_after: `git status --short`
+binary_observable_after: exit=0; unrelated dirty tree remains. This repair intentionally touched only `src/polysignal_lab/config.py`, `.omo/evidence/task-4-complete-prd-old-remove-demo.txt`, and `.omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md`.
+result: PASS_WITH_PREEXISTING_DIRTY_TREE
+
+### Exact fix
+changed_files:
+- `src/polysignal_lab/config.py`
+- `.omo/evidence/task-4-complete-prd-old-remove-demo.txt`
+- `.omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md`
+fix:
+- Removed the unused production import `ValidationError` from `src/polysignal_lab/config.py`.
+- Updated the Todo 4 code-review artifact to explicitly state the dead-import check was rerun after removing `ValidationError` and is clean.
+- Corrected the code-review artifact's `config.py` pure LOC count to 212 after the import removal.
+
+### Required verification
+scenario: programming-quality forbidden token and dead-import scan
+invocation: `rg -n "ValidationError|\bAny\b|cast\(|type:\s*ignore|import asyncio|import pandas|except (Exception|BaseException)|dict\[str, dict\]" src/polysignal_lab/config.py src/polysignal_lab/strategies/config.py`
+binary_observable: exit=1, stdout empty
+artifact_path: `.omo/evidence/task-4-complete-prd-old-remove-demo.txt`
+result: PASS
+
+scenario: focused config and strategy regression suite
+invocation: `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_config.py tests/test_strategies.py -q`
+binary_observable: exit=0
+stdout: `.........                                                                [100%]`
+artifact_path: `.omo/evidence/task-4-complete-prd-old-remove-demo.txt`
+result: PASS
+
+scenario: forbidden non-PRD strategy/assets scan
+invocation: `bash -lc '! rg "skew_mean_reversion|DOGE|BNB|HYPE" config src README.md docs/PRD_OLD_COMPLIANCE.md'`
+binary_observable: exit=0, stdout empty
+artifact_path: `.omo/evidence/task-4-complete-prd-old-remove-demo.txt`
+result: PASS
+
+scenario: PRD-facing split-state scan
+invocation: `rg -n "SPLIT" README.md docs src tests config`
+binary_observable: exit=1, stdout empty
+artifact_path: `.omo/evidence/task-4-complete-prd-old-remove-demo.txt`
+result: PASS
+
+scenario: removed dead public config API search
+invocation: `rg -n "load_config\(" src tests config`
+binary_observable: exit=1, stdout empty
+artifact_path: `.omo/evidence/task-4-complete-prd-old-remove-demo.txt`
+result: PASS
+
+scenario: code-review artifact keyword gate and dead-import mention
+invocation: `test -f .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md && rg "programming|raw dict|public field|helper|dead|dead-import|ValidationError|overfit|deletion-only|SPLIT|WIN/LOSS/VOID/UNKNOWN|dict\[str, dict\]" .omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md`
+binary_observable: exit=0; matched required terms including `dead-import` and `ValidationError`.
+artifact_path: `.omo/evidence/complete-prd-old-remove-demo-todo-4-code-review.md`
+result: PASS
+
+### Programming post-write review
+scenario: code-size check for modified Python source
+invocation: `awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(\/\/|#|--)/' src/polysignal_lab/config.py | wc -l`
+binary_observable: exit=0, stdout `212`
+artifact_path: `.omo/evidence/task-4-complete-prd-old-remove-demo.txt`
+result: PASS_WITH_WARNING_BELOW_250
+
+scenario: final import block source snapshot
+invocation: `nl -ba src/polysignal_lab/config.py | sed -n '1,20p'`
+binary_observable: exit=0; lines 8-15 import `BaseModel`, `Field`, `JsonValue`, `TypeAdapter`, `field_validator`, and `model_validator`; `ValidationError` is absent.
+artifact_path: `.omo/evidence/task-4-complete-prd-old-remove-demo.txt`
+result: PASS
+
+### Adversarial probes
+stale_state: PASS - reread latest gate rejection and current `config.py`; blocker matched the requested unused `ValidationError` import and is now removed.
+dirty_worktree: PASS_WITH_PREEXISTING_DIRTY_TREE - status was captured before and after; unrelated existing changes were preserved.
+programming_quality: PASS - no unused `ValidationError`, no `Any`, no `cast`, no `type: ignore`, no `dict[str, dict]`, no `import asyncio`, no `import pandas`, and no broad `except` matches in the required touched config surfaces.
+misleading_success_output: PASS - paired the no-match grep with the focused config/strategy pytest suite.
+env_secrecy: PASS - `.env` was not read, copied, modified, or cited.
+
+### Cleanup receipt
+runtime_processes: none started; no server, tmux, browser, debugpy, or background runtime process to stop.
+temporary_files: none created.
+debug_artifacts: none introduced.
+plan_checkbox: not marked by this repair executor.
+
+### Risks
+- Worktree remains dirty from pre-existing Todo work outside this repair scope.
+- `src/polysignal_lab/config.py` remains in the Python programming warning band at 212 pure LOC; no broad refactor was performed because the task asked for the smallest scoped dead-import repair.

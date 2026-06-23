@@ -2,11 +2,25 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Final, Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from polysignal_lab.strategies.config import (
+    LateConsensusConfig,
+    PTBDiffConfig,
+    StrategyConfig,
+    VWAPMomentumConfig,
+)
 
 
 class SecurityConfigError(RuntimeError):
@@ -34,6 +48,8 @@ DISALLOWED_SOURCE_SYMBOLS = tuple([
     "cancel_" + "all",
     "redeem_" + "positions",
 ])
+
+YAML_CONFIG_ADAPTER: Final = TypeAdapter(dict[str, JsonValue])
 
 
 def _yaml_bool(val: str) -> bool | str:
@@ -91,7 +107,7 @@ class TelegramConfig(BaseModel):
 
 
 class MarketConfig(BaseModel):
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP"])
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     refresh_interval_sec: int = 10
     active_only: bool = True
@@ -122,8 +138,6 @@ class BinanceDataConfig(BaseModel):
         "ETH": "ETHUSDT",
         "SOL": "SOLUSDT",
         "XRP": "XRPUSDT",
-        "DOGE": "DOGEUSDT",
-        "BNB": "BNBUSDT",
     })
     streams: list[str] = Field(default_factory=lambda: ["aggTrade", "bookTicker"])
     max_price_staleness_ms: int = 60000  # 60s — Binance WS updates every ~1s but allow initial lag
@@ -190,278 +204,6 @@ class DashboardConfig(BaseModel):
     read_only: bool = True
 
 
-class VWAPMomentumConfig(BaseModel):
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    min_price: float = 0.35
-    max_price: float = 0.85
-    # Time-based windows (replaces old count-based window_size)
-    vwap_window_sec: int = 30
-    momentum_window_sec: int = 60
-    # Deviation limits (percentages: 3.0 = 3.0%)
-    min_deviation_pct: float = 3.0
-    max_deviation_pct: float = 100.0
-    # Entry window
-    min_elapsed_sec: int = 150
-    no_entry_before_end_sec: int = 90
-    # Momentum threshold (%): signals require momentum > this value to avoid noise
-    min_momentum_pct: float = 5.0
-
-
-class LateConsensusConfig(BaseModel):
-    """Meridian Late Entry V3 configuration.
-
-    Implements the 8-step Late Entry V3 strategy from PolyBullLabs.
-    """
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-
-    # -- Step 1: Entry window (seconds before close) --
-    entry_window_sec: int = 240
-
-    # -- Step 2: Entry frequency (minimum seconds between entries per market) --
-    entry_frequency_sec: int = 7
-
-    # -- Step 3: Spread = ask_sum (up_ask + down_ask) must be <= this --
-    max_ask_sum: float = 1.05
-
-    # -- Step 4: Confidence = |up_ask - down_ask| --
-    min_confidence_abs: float = 0.30
-
-    # -- Step 6: Price ceiling --
-    max_entry_price: float = 0.92
-
-    # -- Step 7: Max investment per market (enforced by paper wallet layer) --
-    max_investment_per_market: float = 300.0
-
-    # -- Step 8: Dynamic position sizing (contracts) --
-    sizing_above_180: int = 8
-    sizing_above_120: int = 10
-    sizing_below_120: int = 12
-
-    # -- Flip guard (prevent side flips within window) --
-    flip_guard_enabled: bool = True
-    flip_guard_window_sec: int = 20
-
-    # -- Flip stop (exit when price drops below threshold) --
-    flip_stop_enabled: bool = True
-    flip_stop_price: float = 0.48
-
-    # -- Per-coin stop loss config --
-    stop_loss_per_coin: dict[str, dict] = Field(default_factory=lambda: {
-        "BTC": {"type": "fixed", "value": -12.0},
-        "ETH": {"type": "fixed", "value": -12.0},
-        "SOL": {"type": "fixed", "value": -12.0},
-        "XRP": {"type": "fixed", "value": -11.0},
-    })
-
-    # Kept for backward compatibility (no longer used by strategy logic)
-    min_confidence: float | None = None
-    max_spread: float | None = None
-
-
-class PTBConditionConfig(BaseModel):
-    """一组 PTB 触发条件 (C1-C4)"""
-    name: str  # e.g. "C1", "C2", "C3", "C4"
-    side: str  # "UP" or "DOWN"
-    time_sec: int  # 允许的最大剩余秒数
-    min_diff_usd: float  # 最小差价 USD
-    min_prob: float  # 最小买入概率
-    max_prob: float  # 最大买入概率
-
-
-class PTBExitConfig(BaseModel):
-    """概率空间 TP/SL 退出配置"""
-    stop_loss_prob_pct: float = 0.20  # 止损比例 (entry_prob 的百分比下跌)
-    take_profit_rr: float = 3.0  # 风险回报比
-    take_profit_cap: float = 0.95  # 最大止盈概率
-    market_data_max_lag_sec: int = 2  # 数据最大延迟秒数
-
-
-class PTBDiffConfig(BaseModel):
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    require_verified_ptb_source: bool = True
-    conditions: list[PTBConditionConfig] = Field(default_factory=lambda: [
-        PTBConditionConfig(name="C1", side="UP", time_sec=120, min_diff_usd=30, min_prob=0.80, max_prob=0.92),
-        PTBConditionConfig(name="C2", side="DOWN", time_sec=120, min_diff_usd=30, min_prob=0.80, max_prob=0.92),
-        PTBConditionConfig(name="C3", side="UP", time_sec=60, min_diff_usd=50, min_prob=0.80, max_prob=0.92),
-        PTBConditionConfig(name="C4", side="DOWN", time_sec=60, min_diff_usd=50, min_prob=0.80, max_prob=0.92),
-    ])
-    exit_config: PTBExitConfig = Field(default_factory=PTBExitConfig)
-
-
-class SkewMeanReversionConfig(BaseModel):
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    min_skew_ratio: float = 0.015  # 1.5% — typical dev is ~1.98% (0.51 vs 0.50)
-    max_skew_ratio: float = 0.10
-    min_confidence: float = 0.50
-    base_confidence: float = 0.55
-    max_confidence: float = 0.90
-    max_entry_price: float = 0.85
-    max_spread: float = 0.10
-    max_seconds_to_close: int = 86400  # 24h — works across full lifecycle
-
-
-class OneCentBuyConfig(BaseModel):
-    """1c Buy 极端低价被动限价捕捉配置"""
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    entry_prices: list[float] = Field(default_factory=lambda: [0.01, 0.02, 0.03])
-    shares_per_level: int = 10
-    cancel_before_close_seconds: float = 20.0
-    min_seconds_after_open: float = 0.0
-    max_seconds_after_open: float = 280.0
-    take_profit_ladder: str = "[(0.10, 0.50), (0.15, 1.00)]"
-
-
-class NinetyNineCentSniperConfig(BaseModel):
-    """99c Sniper 临近结算高概率狙击配置"""
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    max_entry_price: float = 0.99
-    min_external_probability: float = 0.995
-    min_seconds_before_close: float = 0.0
-    max_seconds_before_close: float = 90.0
-    max_notional_per_trade: float = 25.0
-    stop_price: float = 0.94
-    require_effectively_settled: bool = True
-
-
-class BinaryMomentumConfig(BaseModel):
-    """MACD/RSI/VWAP 二元动量配置"""
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    macd_fast: int = 12
-    macd_slow: int = 26
-    macd_signal: int = 9
-    rsi_period: int = 14
-    rsi_upper: int = 75
-    rsi_lower: int = 25
-    rsi_up_min: int = 50
-    rsi_down_max: int = 50
-    vwap_deviation: float = 0.002
-    max_token_price: float = 0.70
-    max_notional: float = 25.0
-    stop_loss_pct: float = 0.20
-    take_profit_pct: float = 0.25
-
-
-class LowSideDualReversionConfig(BaseModel):
-    """弱势双边均值回归 (pair-cost) 配置"""
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    bid_prices: list[float] = Field(default_factory=lambda: [0.35, 0.40, 0.45])
-    shares_per_level: int = 5
-    pair_cost_cap: float = 0.98
-    max_unhedged_seconds: float = 20.0
-    stop_loss_hedge_cap: float = 1.03
-    cancel_before_close_seconds: float = 15.0
-    fee_rate: float = 0.01
-    slippage_buffer: float = 0.01
-
-
-class DumpHedgeConfig(BaseModel):
-    """急跌对冲配置"""
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    move_threshold: float = 0.15
-    lookback_seconds: float = 30.0
-    detection_window_minutes: float = 5.0
-    leg_shares: int = 10
-    pair_cost_cap: float = 0.95
-    stop_loss_max_wait_seconds: float = 90.0
-    stop_loss_pair_cap: float = 1.05
-
-
-class PreOrderMarketConfig(BaseModel):
-    """预挂单盘前布局配置"""
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    seconds_before_open: float = 180.0
-    seconds_after_open_expiry: float = 30.0
-    ladder: str = "[(0.45, 5), (0.40, 5)]"
-    pair_cost_cap: float = 0.98
-    reconcile_max_pair_cost: float = 1.00
-
-
-class CrossMarketBotConfig(BaseModel):
-    """跨市场组合套利配置"""
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    min_edge: float = 0.01
-    max_leg_timeout_seconds: float = 1.5
-    max_basket_notional: float = 50.0
-    min_depth_shares: int = 5
-    fee_rate: float = 0.01
-
-
-class MidPriceSizingConfig(BaseModel):
-    """中段价位马丁/反马丁仓位管理配置"""
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    mode: str = "MARTINGALE"
-    entry_center: float = 0.45
-    entry_band: float = 0.05
-    base_notional: float = 5.0
-    adverse_step: float = 0.05
-    favorable_step: float = 0.05
-    max_layers: int = 3
-    martingale_multiplier: float = 1.0
-    anti_martingale_multiplier: float = 1.5
-    min_signal_probability_edge: float = 0.03
-    max_price: float = 0.60
-    stop_price: float = 0.30
-    take_profit_price: float = 0.70
-
-
-class FibonacciBotConfig(BaseModel):
-    """斐波那契回撤策略配置"""
-    enabled: bool = True
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    zigzag_pct: float = 0.005
-    zone_width_pct: float = 0.001
-    ratios: list[float] = Field(default_factory=lambda: [0.236, 0.382, 0.500, 0.618, 0.786])
-    extension_ratios: list[float] = Field(default_factory=lambda: [1.000, 1.272, 1.618])
-    fib_size_weights: list[int] = Field(default_factory=lambda: [1, 1, 2, 3, 5])
-    max_token_price: float = 0.60
-    max_notional: float = 25.0
-    require_momentum_confirmation: bool = True
-    momentum_window: int = 8
-    min_momentum_zscore: float = 1.0
-    offset_from_fib: float = 0.02
-
-
-class StrategyConfig(BaseModel):
-    vwap_momentum: VWAPMomentumConfig = Field(default_factory=VWAPMomentumConfig)
-    late_consensus: LateConsensusConfig = Field(default_factory=LateConsensusConfig)
-    ptb_diff: PTBDiffConfig = Field(default_factory=PTBDiffConfig)
-    skew_mean_reversion: SkewMeanReversionConfig = Field(default_factory=SkewMeanReversionConfig)
-    one_cent_buy: OneCentBuyConfig = Field(default_factory=OneCentBuyConfig)
-    ninety_nine_cent_sniper: NinetyNineCentSniperConfig = Field(default_factory=NinetyNineCentSniperConfig)
-    binary_momentum: BinaryMomentumConfig = Field(default_factory=BinaryMomentumConfig)
-    low_side_dual_reversion: LowSideDualReversionConfig = Field(default_factory=LowSideDualReversionConfig)
-    dump_hedge: DumpHedgeConfig = Field(default_factory=DumpHedgeConfig)
-    pre_order_market: PreOrderMarketConfig = Field(default_factory=PreOrderMarketConfig)
-    cross_market_bot: CrossMarketBotConfig = Field(default_factory=CrossMarketBotConfig)
-    mid_price_sizing: MidPriceSizingConfig = Field(default_factory=MidPriceSizingConfig)
-    fibonacci_bot: FibonacciBotConfig = Field(default_factory=FibonacciBotConfig)
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="forbid")
 
@@ -480,7 +222,7 @@ class Settings(BaseSettings):
     def from_yaml(cls, path: str | Path) -> "Settings":
         import os as _os
         with open(path, "r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
+            data = YAML_CONFIG_ADAPTER.validate_python(yaml.safe_load(fh) or {})
         # Apply env overrides (POLYSIGNAL_LAB__SECTION__KEY format)
         prefix = "POLYSIGNAL_LAB__"
         for env_key, env_val in _os.environ.items():
@@ -489,9 +231,11 @@ class Settings(BaseSettings):
             parts = env_key[len(prefix):].lower().split("__")
             target = data
             for part in parts[:-1]:
-                if part not in target:
-                    target[part] = {}
-                target = target[part]
+                section = target.get(part)
+                if not isinstance(section, dict):
+                    section = {}
+                    target[part] = section
+                target = section
             if not isinstance(target, dict):
                 continue
             target[parts[-1]] = _yaml_bool(env_val)

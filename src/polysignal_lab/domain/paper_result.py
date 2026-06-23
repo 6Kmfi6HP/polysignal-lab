@@ -60,6 +60,7 @@ class DailyReport(BaseModel):
     paper_orders: int
     paper_fills: int
     rejected_paper_orders: int
+    stale_paper_fills: int = 0
     open_positions: int
     closed_positions: int
     win_count: int

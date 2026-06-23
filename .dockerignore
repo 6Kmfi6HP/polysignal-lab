@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+.github/
+.gitignore
+.idea/
+.vscode/
+.env
+data/
+logs/
+state/
+docs/
+assets/

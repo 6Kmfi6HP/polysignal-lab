@@ -1,0 +1,62 @@
+version: "3.9"
+
+services:
+  polysignal-lab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: polysignal-lab
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Override YAML config via environment (read by pydantic-settings)
+      POLYSIGNAL_LAB__TELEGRAM__DRY_RUN: "false"
+      POLYSIGNAL_LAB__TELEGRAM__ENABLED: "true"
+      POLYSIGNAL_LAB__TELEGRAM__SEND_SIGNALS: "true"
+      POLYSIGNAL_LAB__TELEGRAM__SEND_CONSENSUS_SIGNALS: "true"
+      POLYSIGNAL_LAB__TELEGRAM__SEND_PAPER_RESULTS: "true"
+      POLYSIGNAL_LAB__TELEGRAM__SEND_DAILY_REPORT: "true"
+      POLYSIGNAL_LAB__APP__TIMEZONE: "${TZ:-Asia/Bangkok}"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./state:/app/state
+      - ./config:/app/config:ro
+    command: ["scheduler"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('data/polysignal_lab.sqlite3').execute('SELECT 1')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: polysignal-lab-dashboard
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POLYSIGNAL_LAB__TELEGRAM__DRY_RUN: "true"
+      POLYSIGNAL_LAB__DASHBOARD__HOST: "0.0.0.0"
+      POLYSIGNAL_LAB__DASHBOARD__PORT: "8080"
+    volumes:
+      - ./data:/app/data:ro
+      - ./logs:/app/logs:ro
+      - ./state:/app/state:ro
+      - ./config:/app/config:ro
+    ports:
+      - "0.0.0.0:8081:8080"
+    command: ["dashboard"]
+    depends_on:
+      polysignal-lab:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

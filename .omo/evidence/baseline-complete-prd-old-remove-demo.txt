@@ -1,0 +1,290 @@
+...........FFFFFFF.FFFFFF..F.F.FFF                                       [100%]
+=================================== FAILURES ===================================
+_______________________ test_paper_fill_wallet_position ________________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_e9728d0973d1bfe0', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+books = OrderBookRegistry(books={'btc-5m-demo-UP': OrderBook(schema_version=1, market_id='btc-5m-demo', token_id='btc-5m-demo-...one.utc), best_bid=0.35, best_ask=0.38, spread=0.03, mid=0.365)}, _lock=<unlocked _thread.lock object at 0x7fada61380>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:20: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_e9728d0973d1bfe0', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:16: IndexError
+_______________________ test_paper_rejects_ask_above_max _______________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_077699648cbed629', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+books = OrderBookRegistry(books={'btc-5m-demo-UP': OrderBook(schema_version=1, market_id='btc-5m-demo', token_id='btc-5m-demo-...one.utc), best_bid=0.35, best_ask=0.38, spread=0.03, mid=0.365)}, _lock=<unlocked _thread.lock object at 0x7fada76280>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:32: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_077699648cbed629', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:16: IndexError
+_____________________ test_paper_rejects_insufficient_cash _____________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_63be927f43d93eab', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+books = OrderBookRegistry(books={'btc-5m-demo-UP': OrderBook(schema_version=1, market_id='btc-5m-demo', token_id='btc-5m-demo-...one.utc), best_bid=0.35, best_ask=0.38, spread=0.03, mid=0.365)}, _lock=<unlocked _thread.lock object at 0x7fada98a40>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:41: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_63be927f43d93eab', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:16: IndexError
+____________________ test_paper_rejects_insufficient_depth _____________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_198508177290d6b0', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:49: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_198508177290d6b0', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:16: IndexError
+_________________________ test_settlement_win_and_loss _________________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_746380c8d01ddb05', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+books = OrderBookRegistry(books={'btc-5m-demo-UP': OrderBook(schema_version=1, market_id='btc-5m-demo', token_id='btc-5m-demo-...one.utc), best_bid=0.35, best_ask=0.38, spread=0.03, mid=0.365)}, _lock=<unlocked _thread.lock object at 0x7fadaa5b40>)
+market = Market(schema_version=1, market_id='btc-5m-demo', market_slug='btc-updown-5m-demo', condition_id='condition-btc-5m-dem...d='btc-5m-demo-DOWN', side=<Side.DOWN: 'DOWN'>, outcome_name='Down', market_id='btc-5m-demo')], raw={}, is_active=True)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:58: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_746380c8d01ddb05', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:16: IndexError
+____________________________ test_settlement_split _____________________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_927c15e7a250c2f8', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+books = OrderBookRegistry(books={'btc-5m-demo-UP': OrderBook(schema_version=1, market_id='btc-5m-demo', token_id='btc-5m-demo-...one.utc), best_bid=0.35, best_ask=0.38, spread=0.03, mid=0.365)}, _lock=<unlocked _thread.lock object at 0x7fadac0600>)
+market = Market(schema_version=1, market_id='btc-5m-demo', market_slug='btc-updown-5m-demo', condition_id='condition-btc-5m-dem...d='btc-5m-demo-DOWN', side=<Side.DOWN: 'DOWN'>, outcome_name='Down', market_id='btc-5m-demo')], raw={}, is_active=True)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:71: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_927c15e7a250c2f8', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:16: IndexError
+_________________________ test_exit_engine_take_profit _________________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_322f1cd0ac8c2d7a', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+books = OrderBookRegistry(books={'btc-5m-demo-UP': OrderBook(schema_version=1, market_id='btc-5m-demo', token_id='btc-5m-demo-...one.utc), best_bid=0.35, best_ask=0.38, spread=0.03, mid=0.365)}, _lock=<unlocked _thread.lock object at 0x7fada9ae40>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:81: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_322f1cd0ac8c2d7a', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_paper_simulation.py:16: IndexError
+_____________________ test_signal_gate_accepts_good_signal _____________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_d088d66084f1b3fc', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_signal_layer.py:20: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_d088d66084f1b3fc', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_signal_layer.py:16: IndexError
+___________________ test_signal_gate_rejects_inactive_market ___________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_cc2b67e93c6c240f', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_signal_layer.py:27: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_cc2b67e93c6c240f', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_signal_layer.py:16: IndexError
+___________________ test_signal_gate_rejects_low_confidence ____________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_7c06446a8d7ae858', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_signal_layer.py:37: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_7c06446a8d7ae858', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_signal_layer.py:16: IndexError
+_________________________ test_deduper_flags_duplicate _________________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_aa6990dce3712ff3', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_signal_layer.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_aa6990dce3712ff3', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_signal_layer.py:16: IndexError
+_________________ test_consensus_engine_merges_two_strategies __________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_59dc89f569e92189', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_signal_layer.py:51: IndexError
+__________________ test_formatter_signal_message_within_limit __________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_92892dac7b9f219d', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_storage_reporting_publish.py:18: IndexError
+_______________________ test_sqlite_store_and_dashboard ________________________
+
+tmp_path = PosixPath('/tmp/pytest-of-gyue/pytest-5/test_sqlite_store_and_dashboar0')
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_a9871d3391af5c3b', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   IndexError: list index out of range
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_storage_reporting_publish.py:43: IndexError
+________________________ test_ptb_diff_generates_buy_up ________________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_15d7793d47c78c45', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   assert []
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_strategies.py:17: AssertionError
+_________________ test_late_consensus_generates_favorite_side __________________
+
+snapshot = MarketSnapshot(schema_version=1, snapshot_id='snap_52113360cec91631', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   assert []
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_strategies.py:31: AssertionError
+______________ test_late_consensus_flip_guard_blocks_recent_flip _______________
+
+market = Market(schema_version=1, market_id='btc-5m-demo', market_slug='btc-updown-5m-demo', condition_id='condition-btc-5m-dem...d='btc-5m-demo-DOWN', side=<Side.DOWN: 'DOWN'>, outcome_name='Down', market_id='btc-5m-demo')], raw={}, is_active=True)
+spots = SpotRegistry(spots={'BTC': SpotPrice(schema_version=1, asset='BTC', symbol='BTCUSDT', price=100120.0, source='binance_...026, 6, 21, 23, 44, 47, 951910, tzinfo=datetime.timezone.utc))]}, _lock=<unlocked _thread.lock object at 0x7fadaec680>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   AssertionError: assert []
+E    +  where [] = evaluate(MarketSnapshot(schema_version=1, snapshot_id='snap_1061514ac8f11463', created_at=datetime.datetime(2026, 6, 21, 23, 44...s_to_close=119, up_ask=0.62, down_ask=0.38, max_spread=0.03, ask_sum=1.0, ask_skew=0.24, favorite_side=<Side.UP: 'UP'>))
+E    +    where evaluate = <polysignal_lab.strategies.late_consensus.LateConsensusStrategy object at 0x7fadaed4d0>.evaluate
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_strategies.py:43: AssertionError
+__________________ test_vwap_momentum_generates_after_window ___________________
+
+market = Market(schema_version=1, market_id='btc-5m-demo', market_slug='btc-updown-5m-demo', condition_id='condition-btc-5m-dem...d='btc-5m-demo-DOWN', side=<Side.DOWN: 'DOWN'>, outcome_name='Down', market_id='btc-5m-demo')], raw={}, is_active=True)
+spots = SpotRegistry(spots={'BTC': SpotPrice(schema_version=1, asset='BTC', symbol='BTCUSDT', price=100120.0, source='binance_...026, 6, 21, 23, 44, 47, 969860, tzinfo=datetime.timezone.utc))]}, _lock=<unlocked _thread.lock object at 0x7fadae3fc0>)
+settings = Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_paper', timezone='Asia/Bangk...ence=0.5, base_confidence=0.55, max_confidence=0.9, max_entry_price=0.85, max_spread=0.1, max_seconds_to_close=86400)))
+
+>   ???
+E   assert []
+
+/tmp/polysignal-lab/polysignal-lab/tests/test_strategies.py:60: AssertionError
+=============================== warnings summary ===============================
+.venv/lib/python3.11/site-packages/fastapi/testclient.py:1
+  /home/gyue/polysignal-lab/.venv/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_paper_simulation.py::test_paper_fill_wallet_position - Inde...
+FAILED tests/test_paper_simulation.py::test_paper_rejects_ask_above_max - Ind...
+FAILED tests/test_paper_simulation.py::test_paper_rejects_insufficient_cash
+FAILED tests/test_paper_simulation.py::test_paper_rejects_insufficient_depth
+FAILED tests/test_paper_simulation.py::test_settlement_win_and_loss - IndexEr...
+FAILED tests/test_paper_simulation.py::test_settlement_split - IndexError: li...
+FAILED tests/test_paper_simulation.py::test_exit_engine_take_profit - IndexEr...
+FAILED tests/test_signal_layer.py::test_signal_gate_accepts_good_signal - Ind...
+FAILED tests/test_signal_layer.py::test_signal_gate_rejects_inactive_market
+FAILED tests/test_signal_layer.py::test_signal_gate_rejects_low_confidence - ...
+FAILED tests/test_signal_layer.py::test_deduper_flags_duplicate - IndexError:...
+FAILED tests/test_signal_layer.py::test_consensus_engine_merges_two_strategies
+FAILED tests/test_storage_reporting_publish.py::test_formatter_signal_message_within_limit
+FAILED tests/test_storage_reporting_publish.py::test_sqlite_store_and_dashboard
+FAILED tests/test_strategies.py::test_ptb_diff_generates_buy_up - assert []
+FAILED tests/test_strategies.py::test_late_consensus_generates_favorite_side
+FAILED tests/test_strategies.py::test_late_consensus_flip_guard_blocks_recent_flip
+FAILED tests/test_strategies.py::test_vwap_momentum_generates_after_window - ...

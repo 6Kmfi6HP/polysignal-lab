@@ -1,0 +1,585 @@
+TASK 7 BASELINE START 2026-06-22T09:17:14+07:00
+
+## git status before
+ M .gitignore
+ M config/signal_bot.yaml
+ M docker-entrypoint.sh
+ D src/polysignal_lab/app/demo.py
+ D src/polysignal_lab/app/demo_data.py
+ M src/polysignal_lab/app/scheduler.py
+ M src/polysignal_lab/config.py
+ M src/polysignal_lab/domain/enums.py
+ M src/polysignal_lab/observability/safety.py
+ M src/polysignal_lab/paper/report.py
+ M src/polysignal_lab/paper/settlement.py
+ D src/polysignal_lab/strategies/binary_momentum.py
+ D src/polysignal_lab/strategies/cross_market_bot.py
+ D src/polysignal_lab/strategies/dump_hedge.py
+ M src/polysignal_lab/strategies/factory.py
+ D src/polysignal_lab/strategies/fibonacci_bot.py
+ D src/polysignal_lab/strategies/low_side_dual_reversion.py
+ D src/polysignal_lab/strategies/mid_price_sizing.py
+ D src/polysignal_lab/strategies/ninety_nine_cent_sniper.py
+ D src/polysignal_lab/strategies/one_cent_buy.py
+ D src/polysignal_lab/strategies/pre_order_market.py
+ D src/polysignal_lab/strategies/skew_mean_reversion.py
+?? .claude/
+?? .dockerignore
+?? .github/
+?? .mcp.json
+?? .omo/
+?? Dockerfile
+?? LICENSE
+?? README.md
+?? docker-compose.yml
+?? docs/
+?? polyscan.py
+?? pyproject.toml
+?? refined_scan.py
+?? src/polysignal_lab/app/scheduler_market_data.py
+?? src/polysignal_lab/app/scheduler_processing.py
+?? src/polysignal_lab/app/scheduler_reporting.py
+?? src/polysignal_lab/app/scheduler_runtime.py
+?? src/polysignal_lab/app/scheduler_state.py
+?? src/polysignal_lab/strategies/config.py
+?? tests/
+?? uv.lock
+
+## baseline required tests before changes
+ERROR: file or directory not found: tests/test_websocket_contracts.py
+
+
+
+## baseline happy focused before changes
+ERROR: file or directory not found: tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry
+
+
+
+## baseline malformed focused before changes
+ERROR: file or directory not found: tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash
+
+
+
+TASK 7 RED-FIRST TESTS 2026-06-22T09:19:51+07:00
+
+## new websocket contract tests before production changes
+F.FF.                                                                    [100%]
+=================================== FAILURES ===================================
+_____________ test_polymarket_price_changes_event_updates_registry _____________
+
+    def test_polymarket_price_changes_event_updates_registry() -> None:
+        registry = OrderBookRegistry()
+        ws = _seed_polymarket_book(registry)
+        before = registry.get("token-up")
+        assert before is not None
+        assert before.best_bid == 0.4
+        assert before.best_ask == 0.52
+    
+        event = _fixtures()["polymarket_price_change"]
+        if isinstance(event, dict):
+            ws.handle_message(event)
+    
+        book = registry.get("token-up")
+        assert book is not None
+>       assert book.best_bid == 0.41
+E       AssertionError: assert 0.4 == 0.41
+E        +  where 0.4 = OrderBook(schema_version=1, market_id='0xcondition', token_id='token-up', bids=[BookLevel(price=0.4, size=12.0)], asks...time(2026, 6, 22, 2, 19, 52, 244652, tzinfo=datetime.timezone.utc), best_bid=0.4, best_ask=0.52, spread=0.12, mid=0.46).best_bid
+
+tests/test_websocket_contracts.py:44: AssertionError
+________________ test_binance_bookticker_updates_spot_registry _________________
+
+    def test_binance_bookticker_updates_spot_registry() -> None:
+        spots = SpotRegistry()
+        feed = BinanceSpotFeed(BinanceDataConfig(streams=["bookTicker"]), spots)
+    
+        event = _fixtures()["binance_book_ticker"]
+        if isinstance(event, dict):
+            feed.handle_message(event)
+    
+        spot = spots.get("BTC")
+        assert spot is not None
+        assert spot.symbol == "BTCUSDT"
+>       assert spot.price == 100.15
+E       AssertionError: assert 100.2 == 100.15
+E        +  where 100.2 = SpotPrice(schema_version=1, asset='BTC', symbol='BTCUSDT', price=100.2, source='binance_spot', event_time=None, received_at=datetime.datetime(2026, 6, 22, 2, 19, 52, 276575, tzinfo=datetime.timezone.utc)).price
+
+tests/test_websocket_contracts.py:77: AssertionError
+________ test_malformed_public_market_events_are_ignored_without_crash _________
+
+    def test_malformed_public_market_events_are_ignored_without_crash() -> None:
+        registry = OrderBookRegistry()
+        ws = _seed_polymarket_book(registry)
+        before = registry.get("token-up")
+        assert before is not None
+    
+        for event in ("{", {"event_type": "price_change", "price_changes": [{"asset_id": "token-up", "price": "bad"}]}, []):
+>           ws.handle_message(event)
+
+tests/test_websocket_contracts.py:87: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/polysignal_lab/data/polymarket_clob_ws.py:42: in handle_message
+    payload = json.loads(message)
+              ^^^^^^^^^^^^^^^^^^^
+../.local/share/uv/python/cpython-3.11.15-linux-aarch64-gnu/lib/python3.11/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+../.local/share/uv/python/cpython-3.11.15-linux-aarch64-gnu/lib/python3.11/json/decoder.py:337: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <json.decoder.JSONDecoder object at 0x7fbab35c50>, s = '{', idx = 0
+
+    def raw_decode(self, s, idx=0):
+        """Decode a JSON document from ``s`` (a ``str`` beginning with
+        a JSON document) and return a 2-tuple of the Python
+        representation and the index in ``s`` where the document ended.
+    
+        This can be used to decode a JSON document from a string that may
+        have extraneous data at the end.
+    
+        """
+        try:
+>           obj, end = self.scan_once(s, idx)
+                       ^^^^^^^^^^^^^^^^^^^^^^
+E           json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+
+../.local/share/uv/python/cpython-3.11.15-linux-aarch64-gnu/lib/python3.11/json/decoder.py:353: JSONDecodeError
+=========================== short test summary info ============================
+FAILED tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry
+FAILED tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry
+FAILED tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash
+
+## new Gamma/CLOB focused tests before production changes
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids __
+
+    async def test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids() -> None:
+        fixtures = _fixtures()
+        page_1 = fixtures["gamma_event_page_1"]
+        page_2 = fixtures["gamma_event_page_2"]
+        if not isinstance(page_1, list) or not isinstance(page_2, list):
+            raise AssertionError("gamma fixtures must be lists")
+        padded_page_1 = page_1 + [page_1[1]] * 198
+        client = FakeAsyncClient([padded_page_1, page_2, []])
+        discovery = MarketDiscovery(
+            PolymarketDataConfig(),
+            MarketConfig(assets=["BTC"], timeframes=["5m"], active_only=True, closed=False),
+            client=client,
+        )
+    
+        markets = await discovery.discover()
+    
+>       assert [call.params["offset"] for call in client.calls] == ["0", "200", "400"]
+E       AssertionError: assert ['0'] == ['0', '200', '400']
+E         
+E         Right contains 2 more items, first extra item: '200'
+E         Use -v to get more diff
+
+tests/test_market_data.py:106: AssertionError
+__ test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes ___
+
+    async def test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes() -> None:
+        fixtures = _fixtures()
+        client = FakeAsyncClient(
+            [
+                fixtures["polymarket_book"],
+                fixtures["clob_midpoint"],
+                fixtures["clob_spread"],
+            ]
+        )
+        rest = PolymarketCLOBRestClient(PolymarketDataConfig(), client=client)
+    
+        book = await rest.get_book("token-up")
+>       mid = await rest.get_mid("token-up")
+                    ^^^^^^^^^^^^
+E       AttributeError: 'PolymarketCLOBRestClient' object has no attribute 'get_mid'
+
+tests/test_market_data.py:126: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_market_data.py::test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids
+FAILED tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes
+
+TASK 7 GREEN FOCUSED 2026-06-22T09:23:12+07:00
+
+## websocket contract tests after production changes
+.F...                                                                    [100%]
+=================================== FAILURES ===================================
+_ test_polymarket_book_best_bid_ask_last_trade_and_lifecycle_events_are_public_contract_safe _
+
+    def test_polymarket_book_best_bid_ask_last_trade_and_lifecycle_events_are_public_contract_safe() -> None:
+        registry = OrderBookRegistry()
+        ws = _seed_polymarket_book(registry)
+    
+        fixtures = _fixtures()
+        for key in ("polymarket_best_bid_ask", "polymarket_last_trade_price", "polymarket_new_market", "polymarket_market_resolved"):
+            event = fixtures[key]
+            if isinstance(event, dict):
+                ws.handle_message(event)
+    
+        book = registry.get("token-up")
+        assert book is not None
+        assert book.best_bid == 0.42
+>       assert book.best_ask == 0.54
+E       AssertionError: assert 0.52 == 0.54
+E        +  where 0.52 = OrderBook(schema_version=1, market_id='0xcondition', token_id='token-up', bids=[BookLevel(price=0.42, size=12.0), Book...time(2026, 6, 22, 2, 23, 13, 256380, tzinfo=datetime.timezone.utc), best_bid=0.42, best_ask=0.52, spread=0.1, mid=0.47).best_ask
+
+tests/test_websocket_contracts.py:61: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_websocket_contracts.py::test_polymarket_book_best_bid_ask_last_trade_and_lifecycle_events_are_public_contract_safe
+
+## Gamma/CLOB focused tests after production changes
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids __
+
+    async def test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids() -> None:
+        fixtures = _fixtures()
+        page_1 = fixtures["gamma_event_page_1"]
+        page_2 = fixtures["gamma_event_page_2"]
+        if not isinstance(page_1, list) or not isinstance(page_2, list):
+            raise AssertionError("gamma fixtures must be lists")
+        padded_page_1 = page_1 + [page_1[1]] * 198
+        client = FakeAsyncClient([padded_page_1, page_2, []])
+        discovery = MarketDiscovery(
+            PolymarketDataConfig(),
+            MarketConfig(assets=["BTC"], timeframes=["5m"], active_only=True, closed=False),
+            client=client,
+        )
+    
+        markets = await discovery.discover()
+    
+>       assert [call.params["offset"] for call in client.calls] == ["0", "200", "400"]
+E       AssertionError: assert ['0', '200'] == ['0', '200', '400']
+E         
+E         Right contains one more item: '400'
+E         Use -v to get more diff
+
+tests/test_market_data.py:106: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_market_data.py::test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids
+
+TASK 7 GREEN FOCUSED RERUN 2026-06-22T09:23:40+07:00
+.....                                                                    [100%]
+..                                                                       [100%]
+
+TASK 7 FULL REQUIRED TESTS 2026-06-22T09:23:52+07:00
+.........                                                                [100%]
+
+## happy manual QA command
+...                                                                      [100%]
+
+## plan happy focused command
+..                                                                       [100%]
+
+## plan malformed focused command
+.                                                                        [100%]
+
+## Gamma/CLOB REST focused command
+..                                                                       [100%]
+
+TASK 7 GUARDS 2026-06-22T09:24:17+07:00
+
+## compatibility blast-radius tests
+...                                                                      [100%]
+
+## authenticated/trading client guard
+
+## py_compile touched python files
+py_compile passed
+
+## pure LOC scan touched python files
+115 src/polysignal_lab/data/polymarket_market_discovery.py
+128 src/polysignal_lab/data/polymarket_clob_ws.py
+31 src/polysignal_lab/data/polymarket_clob_rest.py
+78 src/polysignal_lab/data/binance_spot_ws.py
+104 tests/test_market_data.py
+80 tests/test_websocket_contracts.py
+
+TASK 7 EXACT ACCEPTANCE GUARD 2026-06-22T09:24:27+07:00
+
+TASK 7 ADVERSARIAL AND CLEANUP 2026-06-22T09:24:46+07:00
+
+## stale_state reread: docs API contract keys
+24:## Public / No-Auth Surfaces Allowed
+26:### Polymarket Gamma REST
+41:- `GET /book` returns bids, asks, market, asset_id, timestamp, hash, min_order_size, tick_size, neg_risk, and last_trade_price for a token ID.
+52:  - `price_change`: includes a `price_changes` array; each change has `asset_id`, `price`, `size`, `side`, `hash`, `best_bid`, and `best_ask`; a size of `"0"` removes that price level.
+53:  - `last_trade_price`: trade event with asset, price, side, size, and timestamp.
+54:  - `best_bid_ask`: requires `custom_feature_enabled: true`; includes best_bid, best_ask, and spread.
+65:- Relevant stream: `<symbol>@bookTicker`.
+66:- `bookTicker` payload fields: `u` update id, `s` symbol, `b` best bid price, `B` best bid quantity, `a` best ask price, `A` best ask quantity.
+94:## Forbidden Authenticated / Trading / Order Surfaces
+
+## stale_state reread: current data adapter keys
+src/polysignal_lab/data/polymarket_market_discovery.py:48:        offset = 0
+src/polysignal_lab/data/polymarket_market_discovery.py:50:            page = await self._fetch_gamma_events_page(offset)
+src/polysignal_lab/data/polymarket_market_discovery.py:54:            offset += GAMMA_PAGE_LIMIT
+src/polysignal_lab/data/polymarket_market_discovery.py:56:    async def _fetch_gamma_events_page(self, offset: int) -> list[JsonObject]:
+src/polysignal_lab/data/polymarket_market_discovery.py:63:            "offset": str(offset),
+src/polysignal_lab/data/polymarket_clob_rest.py:26:        payload = await self._get_public_json("/midpoint", token_id)
+src/polysignal_lab/data/polymarket_clob_rest.py:27:        return safe_float(payload.get("mid") or payload.get("midpoint"))
+src/polysignal_lab/data/polymarket_clob_rest.py:29:    async def get_spread(self, token_id: str) -> float | None:
+src/polysignal_lab/data/polymarket_clob_rest.py:30:        payload = await self._get_public_json("/spread", token_id)
+src/polysignal_lab/data/polymarket_clob_rest.py:31:        return safe_float(payload.get("spread"))
+src/polysignal_lab/data/polymarket_clob_ws.py:59:            case "price_change" | "price_changes":
+src/polysignal_lab/data/polymarket_clob_ws.py:61:            case "best_bid_ask":
+src/polysignal_lab/data/polymarket_clob_ws.py:62:                self._apply_best_bid_ask(payload)
+src/polysignal_lab/data/polymarket_clob_ws.py:63:            case "last_trade_price":
+src/polysignal_lab/data/polymarket_clob_ws.py:65:            case "market_resolved":
+src/polysignal_lab/data/polymarket_clob_ws.py:73:        raw_changes = payload.get("price_changes") or payload.get("changes") or [payload]
+src/polysignal_lab/data/polymarket_clob_ws.py:98:        updated = _with_best_bid_ask(updated, change)
+src/polysignal_lab/data/polymarket_clob_ws.py:102:    def _apply_best_bid_ask(self, payload: JsonObject) -> None:
+src/polysignal_lab/data/polymarket_clob_ws.py:109:        updated = _with_best_bid_ask(book.model_copy(deep=True), payload)
+src/polysignal_lab/data/polymarket_clob_ws.py:120:        price = safe_float(payload.get("price") or payload.get("last_trade_price"))
+src/polysignal_lab/data/polymarket_clob_ws.py:124:        updated.last_trade_price = price
+src/polysignal_lab/data/polymarket_clob_ws.py:134:def _with_best_bid_ask(book: OrderBook, payload: JsonObject) -> OrderBook:
+
+## prompt_injection artifact check
+no prompt injection artifact present
+
+## live websocket/process cleanup check
+2140201 /usr/bin/zsh -c {   printf '\nTASK 7 ADVERSARIAL AND CLEANUP %s\n' "$(date -Is)"   printf '\n## stale_state reread: docs API contract keys\n'   rg -n "Gamma REST|price_changes|best_bid_ask|last_trade_price|bookTicker|Public / No-Auth|Forbidden Authenticated" docs/EXTERNAL_API_RESEARCH.md   printf '\n## stale_state reread: current data adapter keys\n'   rg -n "price_changes|best_bid_ask|last_trade_price|market_resolved|bookTicker|midpoint|spread|offset|Authorization" src/polysignal_lab/data/polymarket_clob_ws.py src/polysignal_lab/data/binance_spot_ws.py src/polysignal_lab/data/polymarket_clob_rest.py src/polysignal_lab/data/polymarket_market_discovery.py   printf '\n## prompt_injection artifact check\n'   test ! -e /tmp/polysignal_prompt_injection && printf 'no prompt injection artifact present\n'   printf '\n## live websocket/process cleanup check\n'   pgrep -af 'polymarket|binance|websocket|websockets' || true   printf 'no live websocket process started by task; tests were in-process parser calls only\n'   printf '\n## temp cleanup\n'   rm -f /tmp/unused /tmp/polysignal_prompt_injection   test ! -e /tmp/unused && test ! -e /tmp/polysignal_prompt_injection && printf 'temporary files absent\n'   printf '\n## git status after\n'   git status --short } 2>&1 | tee -a .omo/evidence/task-7-complete-prd-old-remove-demo.txt
+2140204 /usr/bin/zsh -c {   printf '\nTASK 7 ADVERSARIAL AND CLEANUP %s\n' "$(date -Is)"   printf '\n## stale_state reread: docs API contract keys\n'   rg -n "Gamma REST|price_changes|best_bid_ask|last_trade_price|bookTicker|Public / No-Auth|Forbidden Authenticated" docs/EXTERNAL_API_RESEARCH.md   printf '\n## stale_state reread: current data adapter keys\n'   rg -n "price_changes|best_bid_ask|last_trade_price|market_resolved|bookTicker|midpoint|spread|offset|Authorization" src/polysignal_lab/data/polymarket_clob_ws.py src/polysignal_lab/data/binance_spot_ws.py src/polysignal_lab/data/polymarket_clob_rest.py src/polysignal_lab/data/polymarket_market_discovery.py   printf '\n## prompt_injection artifact check\n'   test ! -e /tmp/polysignal_prompt_injection && printf 'no prompt injection artifact present\n'   printf '\n## live websocket/process cleanup check\n'   pgrep -af 'polymarket|binance|websocket|websockets' || true   printf 'no live websocket process started by task; tests were in-process parser calls only\n'   printf '\n## temp cleanup\n'   rm -f /tmp/unused /tmp/polysignal_prompt_injection   test ! -e /tmp/unused && test ! -e /tmp/polysignal_prompt_injection && printf 'temporary files absent\n'   printf '\n## git status after\n'   git status --short } 2>&1 | tee -a .omo/evidence/task-7-complete-prd-old-remove-demo.txt
+no live websocket process started by task; tests were in-process parser calls only
+
+## temp cleanup
+temporary files absent
+
+## git status after
+ M .gitignore
+ M config/signal_bot.yaml
+ M docker-entrypoint.sh
+ D src/polysignal_lab/app/demo.py
+ D src/polysignal_lab/app/demo_data.py
+ M src/polysignal_lab/app/scheduler.py
+ M src/polysignal_lab/config.py
+ M src/polysignal_lab/data/binance_spot_ws.py
+ M src/polysignal_lab/data/polymarket_clob_rest.py
+ M src/polysignal_lab/data/polymarket_clob_ws.py
+ M src/polysignal_lab/data/polymarket_market_discovery.py
+ M src/polysignal_lab/domain/enums.py
+ M src/polysignal_lab/observability/safety.py
+ M src/polysignal_lab/paper/report.py
+ M src/polysignal_lab/paper/settlement.py
+ D src/polysignal_lab/strategies/binary_momentum.py
+ D src/polysignal_lab/strategies/cross_market_bot.py
+ D src/polysignal_lab/strategies/dump_hedge.py
+ M src/polysignal_lab/strategies/factory.py
+ D src/polysignal_lab/strategies/fibonacci_bot.py
+ D src/polysignal_lab/strategies/low_side_dual_reversion.py
+ D src/polysignal_lab/strategies/mid_price_sizing.py
+ D src/polysignal_lab/strategies/ninety_nine_cent_sniper.py
+ D src/polysignal_lab/strategies/one_cent_buy.py
+ D src/polysignal_lab/strategies/pre_order_market.py
+ D src/polysignal_lab/strategies/skew_mean_reversion.py
+?? .claude/
+?? .dockerignore
+?? .github/
+?? .mcp.json
+?? .omo/
+?? Dockerfile
+?? LICENSE
+?? README.md
+?? docker-compose.yml
+?? docs/
+?? polyscan.py
+?? pyproject.toml
+?? refined_scan.py
+?? src/polysignal_lab/app/scheduler_market_data.py
+?? src/polysignal_lab/app/scheduler_processing.py
+?? src/polysignal_lab/app/scheduler_reporting.py
+?? src/polysignal_lab/app/scheduler_runtime.py
+?? src/polysignal_lab/app/scheduler_state.py
+?? src/polysignal_lab/strategies/config.py
+?? tests/
+?? uv.lock
+
+TASK 7 CLEAN PROCESS RECHECK 2026-06-22T09:24:54+07:00
+2140772 /usr/bin/zsh -c {   printf '\nTASK 7 CLEAN PROCESS RECHECK %s\n' "$(date -Is)"   if pgrep -af '[w]s-subscriptions-clob|[d]ata-stream.binance|[s]tream.binance|[p]olysignal_lab.data'; then     printf 'unexpected live market-data process found\n'     exit 1   fi   printf 'no live market-data websocket/process found\n' } 2>&1 | tee -a .omo/evidence/task-7-complete-prd-old-remove-demo.txt
+2140811 /usr/bin/zsh -c {   printf '\nTASK 7 CLEAN PROCESS RECHECK %s\n' "$(date -Is)"   if pgrep -af '[w]s-subscriptions-clob|[d]ata-stream.binance|[s]tream.binance|[p]olysignal_lab.data'; then     printf 'unexpected live market-data process found\n'     exit 1   fi   printf 'no live market-data websocket/process found\n' } 2>&1 | tee -a .omo/evidence/task-7-complete-prd-old-remove-demo.txt
+unexpected live market-data process found
+
+TASK 7 CLEAN PROCESS RECHECK CORRECTED 2026-06-22T09:25:07+07:00
+no live market-data websocket/process found
+
+TASK 7 EVIDENCE INTEGRITY 2026-06-22T09:25:41+07:00
+407 .omo/evidence/task-7-complete-prd-old-remove-demo.txt
+
+TODO 7 MIDPOINT REPAIR EVIDENCE 2026-06-22T09:40:37+07:00
+
+## stale_state reread
+latest gate rejection: .omo/evidence/todo-7-gate-review.md lines 23-31 identify official mid_price blocker.
+docs/EXTERNAL_API_RESEARCH.md:22:Only official source URLs are listed above; third-party API claims were not used.
+docs/EXTERNAL_API_RESEARCH.md:32:- Discovery approach from official docs: use `events?active=true&closed=false&limit=...` with `offset` pagination; events contain associated markets and are the efficient path for all active market discovery.
+.omo/evidence/todo-7-gate-review.md:10:Todo 7 was intended to align public market-data contracts with official public APIs only:
+.omo/evidence/todo-7-gate-review.md:19:The user should be able to check off Todo 7 only if current source and tests prove official public payload shapes are parsed, authenticated/trading surfaces are absent, malformed public events are ignored safely, and the requested test/grep/compile/quality gates pass.
+.omo/evidence/todo-7-gate-review.md:23:The requested tests and guard commands pass on the current tree, and most of the implementation matches the intended public contracts. However, Todo 7 cannot be checked off because CLOB midpoint parsing is not aligned with the current official Polymarket response shape. The current code parses `mid` or `midpoint`, while current official Polymarket docs show `/midpoint` returning `mid_price`. The fixture also uses `mid`, so the tests pass by mirroring the implementation rather than proving the official payload.
+.omo/evidence/todo-7-gate-review.md:27:1. `src/polysignal_lab/data/polymarket_clob_rest.py:27` does not parse official CLOB midpoint payloads using `mid_price`. Local adversarial probe with `{"mid_price": "0.475"}` returned `None`.
+.omo/evidence/todo-7-gate-review.md:29:2. `tests/fixtures/public_market_payloads.json:147` through `tests/fixtures/public_market_payloads.json:149` uses `"mid": "0.475"` for `clob_midpoint`, which is not the current official docs response field.
+.omo/evidence/todo-7-gate-review.md:31:3. `tests/test_market_data.py:125` through `tests/test_market_data.py:134` proves midpoint parsing only for the non-official fixture key, creating false confidence for the CLOB REST acceptance criterion.
+.omo/evidence/todo-7-gate-review.md:58:- `.venv/bin/python -m pytest tests/test_market_data.py::test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q` -> PASS, 2 tests.
+.omo/evidence/todo-7-gate-review.md:63:- Adversarial CLOB midpoint probe:
+.omo/evidence/todo-7-gate-review.md:64:  `PolymarketCLOBRestClient(... FakeAsyncClient([{"mid_price": "0.475"}])).get_mid("token-up")` -> `None`.
+.omo/evidence/todo-7-gate-review.md:68:- stale_state: reread `docs/EXTERNAL_API_RESEARCH.md` and current data files. Local research says public/no-auth surfaces only; current code mostly follows that, but official docs spot-check found the CLOB midpoint field mismatch.
+.omo/evidence/todo-7-gate-review.md:70:- misleading_success_output: tests assert concrete registry state and parsed values, but the CLOB midpoint test uses a non-official fixture key and misses `mid_price`.
+.omo/evidence/todo-7-gate-review.md:76:- remove_ai_slops direct pass: tests are not deletion-only or tautological for WebSocket/Binance/Gamma registry behavior, but the CLOB midpoint test is implementation-mirroring because the fixture shape matches the code rather than current official docs.
+.omo/evidence/todo-7-gate-review.md:77:- programming direct pass: no `Any`, broad catches, `asyncio`, casts, type ignores, or oversized touched Todo 7 files found. Remaining blocker is boundary parsing incompleteness for official CLOB midpoint payloads.
+.omo/evidence/todo-7-gate-review.md:84:- Tests lack an official `mid_price` CLOB midpoint fixture/probe.
+.omo/evidence/todo-7-gate-review.md:88:Todo 7 should not be checked off until CLOB midpoint parsing accepts `mid_price`, the official-payload fixture is corrected, and the focused test proves that official payload shape.
+official docs source: https://docs.polymarket.com/api-reference/data/get-midpoint-price shows 200 response {mid_price: "0.45"}.
+
+## dirty_worktree before scoped repair verification
+ M .gitignore
+ M config/signal_bot.yaml
+ M docker-entrypoint.sh
+ D src/polysignal_lab/app/demo.py
+ D src/polysignal_lab/app/demo_data.py
+ M src/polysignal_lab/app/scheduler.py
+ M src/polysignal_lab/config.py
+ M src/polysignal_lab/data/binance_spot_ws.py
+ M src/polysignal_lab/data/polymarket_clob_rest.py
+ M src/polysignal_lab/data/polymarket_clob_ws.py
+ M src/polysignal_lab/data/polymarket_market_discovery.py
+ M src/polysignal_lab/domain/enums.py
+ M src/polysignal_lab/observability/safety.py
+ M src/polysignal_lab/paper/report.py
+ M src/polysignal_lab/paper/settlement.py
+ D src/polysignal_lab/strategies/binary_momentum.py
+ D src/polysignal_lab/strategies/cross_market_bot.py
+ D src/polysignal_lab/strategies/dump_hedge.py
+ M src/polysignal_lab/strategies/factory.py
+ D src/polysignal_lab/strategies/fibonacci_bot.py
+ D src/polysignal_lab/strategies/low_side_dual_reversion.py
+ D src/polysignal_lab/strategies/mid_price_sizing.py
+ D src/polysignal_lab/strategies/ninety_nine_cent_sniper.py
+ D src/polysignal_lab/strategies/one_cent_buy.py
+ D src/polysignal_lab/strategies/pre_order_market.py
+ D src/polysignal_lab/strategies/skew_mean_reversion.py
+?? .claude/
+?? .dockerignore
+?? .github/
+?? .mcp.json
+?? .omo/
+?? Dockerfile
+?? LICENSE
+?? README.md
+?? docker-compose.yml
+?? docs/
+?? polyscan.py
+?? pyproject.toml
+?? refined_scan.py
+?? src/polysignal_lab/app/scheduler_market_data.py
+?? src/polysignal_lab/app/scheduler_processing.py
+?? src/polysignal_lab/app/scheduler_reporting.py
+?? src/polysignal_lab/app/scheduler_runtime.py
+?? src/polysignal_lab/app/scheduler_state.py
+?? src/polysignal_lab/strategies/config.py
+?? tests/
+?? uv.lock
+
+## red-first proof captured before parser fix
+scenario: official CLOB /midpoint fixture uses only mid_price and get_mid must parse it.
+invocation: .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q
+binary observable: exit 1 before parser change; fixture assertion midpoint_payload == {"mid_price": "0.475"} passed, then assert mid == 0.475 failed with None.
+
+## command 1 full market data + websocket contracts
+invocation: .venv/bin/python -m pytest tests/test_market_data.py tests/test_websocket_contracts.py -q
+.........                                                                [100%]
+
+## command 2 focused CLOB REST official mid_price midpoint
+invocation: .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q
+.                                                                        [100%]
+manual probe invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (FakeAsyncClient([{mid_price: 0.45}]).get_mid)
+official_mid_price_probe result=0.45 calls=[('https://clob.polymarket.com/midpoint', {'token_id': 'token-up'}, {})]
+
+## command 3 focused websocket registry updates
+invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry -q
+..                                                                       [100%]
+
+## command 4 malformed public market events
+invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash -q
+.                                                                        [100%]
+
+## command 5 authenticated client guard
+invocation: bash -lc '! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|submit_order|order submit" src/polysignal_lab/data src/polysignal_lab/app'
+result: PASS, no authenticated/trading client surface matched.
+
+## command 6 py_compile scoped touched Python
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py
+result: PASS, exit 0.
+
+## command 7 quality and LOC scan for touched Python files
+invocation: awk pure LOC scan
+src/polysignal_lab/data/polymarket_clob_rest.py 31
+tests/test_market_data.py 108
+invocation: rg quality scan no Any/cast/type-ignore/asyncio/pandas/broad except/raw dict escape hatches
+result: PASS, quality scan had no matches.
+
+## misleading_success_output probe
+src/polysignal_lab/data/polymarket_clob_rest.py:27:        return safe_float(payload.get("mid_price") or payload.get("mid") or payload.get("midpoint"))
+tests/test_market_data.py:119:    assert midpoint_payload == {"mid_price": "0.475"}
+tests/fixtures/public_market_payloads.json:148:    "mid_price": "0.475"
+
+## cleanup receipt
+2203292 bash -lc  set -euo pipefail EVIDENCE=.omo/evidence/task-7-complete-prd-old-remove-demo.txt {   printf "\nTODO 7 MIDPOINT REPAIR EVIDENCE %s\n" "$(date -Is)"   printf "\n## stale_state reread\n"   printf "latest gate rejection: .omo/evidence/todo-7-gate-review.md lines 23-31 identify official mid_price blocker.\n"   rg -n "mid_price|CLOB midpoint|official" .omo/evidence/todo-7-gate-review.md docs/EXTERNAL_API_RESEARCH.md   printf "official docs source: https://docs.polymarket.com/api-reference/data/get-midpoint-price shows 200 response {mid_price: \"0.45\"}.\n"    printf "\n## dirty_worktree before scoped repair verification\n"   git status --short    printf "\n## red-first proof captured before parser fix\n"   printf "scenario: official CLOB /midpoint fixture uses only mid_price and get_mid must parse it.\n"   printf "invocation: .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q\n"   printf "binary observable: exit 1 before parser change; fixture assertion midpoint_payload == {\"mid_price\": \"0.475\"} passed, then assert mid == 0.475 failed with None.\n"    printf "\n## command 1 full market data + websocket contracts\n"   printf "invocation: .venv/bin/python -m pytest tests/test_market_data.py tests/test_websocket_contracts.py -q\n"   .venv/bin/python -m pytest tests/test_market_data.py tests/test_websocket_contracts.py -q    printf "\n## command 2 focused CLOB REST official mid_price midpoint\n"   printf "invocation: .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q\n"   .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q   printf "manual probe invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (FakeAsyncClient([{mid_price: 0.45}]).get_mid)\n"   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<"PY" from polysignal_lab.config import PolymarketDataConfig from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient from tests.test_market_data import FakeAsyncClient  async def main() -> None:     client = FakeAsyncClient([{"mid_price": "0.45"}])     rest = PolymarketCLOBRestClient(PolymarketDataConfig(), client=client)     result = await rest.get_mid("token-up")     print(f"official_mid_price_probe result={result!r} calls={[(call.url, call.params, call.headers) for call in client.calls]!r}")  import anyio anyio.run(main) PY    printf "\n## command 3 focused websocket registry updates\n"   printf "invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry -q\n"   .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry -q    printf "\n## command 4 malformed public market events\n"   printf "invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash -q\n"   .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash -q    printf "\n## command 5 authenticated client guard\n"   printf "invocation: bash -lc '! rg \"Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|submit_order|order submit\" src/polysignal_lab/data src/polysignal_lab/app'\n"   bash -lc '! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|submit_order|order submit" src/polysignal_lab/data src/polysignal_lab/app'   printf "result: PASS, no authenticated/trading client surface matched.\n"    printf "\n## command 6 py_compile scoped touched Python\n"   printf "invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py\n"   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py   printf "result: PASS, exit 0.\n"    printf "\n## command 7 quality and LOC scan for touched Python files\n"   printf "invocation: awk pure LOC scan\n"   for f in src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py; do printf "%s " "$f"; awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(#)/' "$f" | wc -l; done   printf "invocation: rg quality scan no Any/cast/type-ignore/asyncio/pandas/broad except/raw dict escape hatches\n"   if rg -n "\\bAny\\b|cast\\(|type:\\s*ignore|import asyncio|import pandas|except (Exception|BaseException)|dict\\[str, (Any|object)\\]" src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py; then     printf "result: FAIL, quality scan matched forbidden pattern.\n"     exit 1   fi   printf "result: PASS, quality scan had no matches.\n"    printf "\n## misleading_success_output probe\n"   rg -n "mid_price|midpoint_payload ==" tests/fixtures/public_market_payloads.json tests/test_market_data.py src/polysignal_lab/data/polymarket_clob_rest.py    printf "\n## cleanup receipt\n"   if pgrep -af "[w]s-subscriptions-clob|[d]ata-stream.binance|[s]tream.binance|[p]olysignal_lab.data"; then     printf "result: FAIL, unexpected live market-data process found.\n"     exit 1   fi   printf "result: PASS, no live market-data websocket/process found.\n"   printf "network/live processes: none started for repair; tests used in-process fakes.\n"    printf "\n## dirty_worktree after scoped repair verification\n"   git status --short } 2>&1 | tee -a "$EVIDENCE" 
+2203299 bash -lc  set -euo pipefail EVIDENCE=.omo/evidence/task-7-complete-prd-old-remove-demo.txt {   printf "\nTODO 7 MIDPOINT REPAIR EVIDENCE %s\n" "$(date -Is)"   printf "\n## stale_state reread\n"   printf "latest gate rejection: .omo/evidence/todo-7-gate-review.md lines 23-31 identify official mid_price blocker.\n"   rg -n "mid_price|CLOB midpoint|official" .omo/evidence/todo-7-gate-review.md docs/EXTERNAL_API_RESEARCH.md   printf "official docs source: https://docs.polymarket.com/api-reference/data/get-midpoint-price shows 200 response {mid_price: \"0.45\"}.\n"    printf "\n## dirty_worktree before scoped repair verification\n"   git status --short    printf "\n## red-first proof captured before parser fix\n"   printf "scenario: official CLOB /midpoint fixture uses only mid_price and get_mid must parse it.\n"   printf "invocation: .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q\n"   printf "binary observable: exit 1 before parser change; fixture assertion midpoint_payload == {\"mid_price\": \"0.475\"} passed, then assert mid == 0.475 failed with None.\n"    printf "\n## command 1 full market data + websocket contracts\n"   printf "invocation: .venv/bin/python -m pytest tests/test_market_data.py tests/test_websocket_contracts.py -q\n"   .venv/bin/python -m pytest tests/test_market_data.py tests/test_websocket_contracts.py -q    printf "\n## command 2 focused CLOB REST official mid_price midpoint\n"   printf "invocation: .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q\n"   .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q   printf "manual probe invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (FakeAsyncClient([{mid_price: 0.45}]).get_mid)\n"   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<"PY" from polysignal_lab.config import PolymarketDataConfig from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient from tests.test_market_data import FakeAsyncClient  async def main() -> None:     client = FakeAsyncClient([{"mid_price": "0.45"}])     rest = PolymarketCLOBRestClient(PolymarketDataConfig(), client=client)     result = await rest.get_mid("token-up")     print(f"official_mid_price_probe result={result!r} calls={[(call.url, call.params, call.headers) for call in client.calls]!r}")  import anyio anyio.run(main) PY    printf "\n## command 3 focused websocket registry updates\n"   printf "invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry -q\n"   .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry -q    printf "\n## command 4 malformed public market events\n"   printf "invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash -q\n"   .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash -q    printf "\n## command 5 authenticated client guard\n"   printf "invocation: bash -lc '! rg \"Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|submit_order|order submit\" src/polysignal_lab/data src/polysignal_lab/app'\n"   bash -lc '! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|submit_order|order submit" src/polysignal_lab/data src/polysignal_lab/app'   printf "result: PASS, no authenticated/trading client surface matched.\n"    printf "\n## command 6 py_compile scoped touched Python\n"   printf "invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py\n"   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py   printf "result: PASS, exit 0.\n"    printf "\n## command 7 quality and LOC scan for touched Python files\n"   printf "invocation: awk pure LOC scan\n"   for f in src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py; do printf "%s " "$f"; awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(#)/' "$f" | wc -l; done   printf "invocation: rg quality scan no Any/cast/type-ignore/asyncio/pandas/broad except/raw dict escape hatches\n"   if rg -n "\\bAny\\b|cast\\(|type:\\s*ignore|import asyncio|import pandas|except (Exception|BaseException)|dict\\[str, (Any|object)\\]" src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py; then     printf "result: FAIL, quality scan matched forbidden pattern.\n"     exit 1   fi   printf "result: PASS, quality scan had no matches.\n"    printf "\n## misleading_success_output probe\n"   rg -n "mid_price|midpoint_payload ==" tests/fixtures/public_market_payloads.json tests/test_market_data.py src/polysignal_lab/data/polymarket_clob_rest.py    printf "\n## cleanup receipt\n"   if pgrep -af "[w]s-subscriptions-clob|[d]ata-stream.binance|[s]tream.binance|[p]olysignal_lab.data"; then     printf "result: FAIL, unexpected live market-data process found.\n"     exit 1   fi   printf "result: PASS, no live market-data websocket/process found.\n"   printf "network/live processes: none started for repair; tests used in-process fakes.\n"    printf "\n## dirty_worktree after scoped repair verification\n"   git status --short } 2>&1 | tee -a "$EVIDENCE" 
+result: FAIL, unexpected live market-data process found.
+
+TODO 7 MIDPOINT REPAIR VERIFICATION RERUN 2026-06-22T09:41:31+07:00
+reason: previous cleanup probe self-matched the verification command text; rerunning full required verification with corrected cleanup probe.
+
+## command 1 full market data + websocket contracts
+invocation: .venv/bin/python -m pytest tests/test_market_data.py tests/test_websocket_contracts.py -q
+.........                                                                [100%]
+
+## command 2 focused CLOB REST official mid_price midpoint
+invocation: .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q
+.                                                                        [100%]
+manual probe invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (FakeAsyncClient official mid_price midpoint)
+official_mid_price_probe result=0.45 headers={}
+
+## command 3 focused websocket registry updates
+invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry -q
+..                                                                       [100%]
+
+## command 4 malformed public market events
+invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash -q
+.                                                                        [100%]
+
+## command 5 authenticated client guard
+invocation: bash -lc '! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|submit_order|order submit" src/polysignal_lab/data src/polysignal_lab/app'
+result: PASS, no authenticated/trading client surface matched.
+
+## command 6 py_compile scoped touched Python
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py
+result: PASS, exit 0.
+
+## command 7 quality and LOC scan for touched Python files
+invocation: awk pure LOC scan
+src/polysignal_lab/data/polymarket_clob_rest.py 31
+tests/test_market_data.py 108
+invocation: rg quality scan no Any/cast/type-ignore/asyncio/pandas/broad except/raw dict escape hatches
+result: PASS, quality scan had no matches.
+
+## cleanup receipt corrected
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (process table scan for live market data processes)
+unexpected live market-data processes:
+2206667 bash -lc  set -euo pipefail EVIDENCE=.omo/evidence/task-7-complete-prd-old-remove-demo.txt {   printf "\nTODO 7 MIDPOINT REPAIR VERIFICATION RERUN %s\n" "$(date -Is)"   printf "reason: previous cleanup probe self-matched the verification command text; rerunning full required verification with corrected cleanup probe.\n"    printf "\n## command 1 full market data + websocket contracts\n"   printf "invocation: .venv/bin/python -m pytest tests/test_market_data.py tests/test_websocket_contracts.py -q\n"   .venv/bin/python -m pytest tests/test_market_data.py tests/test_websocket_contracts.py -q    printf "\n## command 2 focused CLOB REST official mid_price midpoint\n"   printf "invocation: .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q\n"   .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q   printf "manual probe invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (FakeAsyncClient official mid_price midpoint)\n"   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<"PY" import anyio  from polysignal_lab.config import PolymarketDataConfig from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient from tests.test_market_data import FakeAsyncClient   async def main() -> None:     client = FakeAsyncClient([{"mid_price": "0.45"}])     rest = PolymarketCLOBRestClient(PolymarketDataConfig(), client=client)     result = await rest.get_mid("token-up")     print(f"official_mid_price_probe result={result!r} headers={client.calls[0].headers!r}")   anyio.run(main) PY    printf "\n## command 3 focused websocket registry updates\n"   printf "invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry -q\n"   .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry -q    printf "\n## command 4 malformed public market events\n"   printf "invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash -q\n"   .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash -q    printf "\n## command 5 authenticated client guard\n"   printf "invocation: bash -lc '! rg \"Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|submit_order|order submit\" src/polysignal_lab/data src/polysignal_lab/app'\n"   bash -lc '! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|submit_order|order submit" src/polysignal_lab/data src/polysignal_lab/app'   printf "result: PASS, no authenticated/trading client surface matched.\n"    printf "\n## command 6 py_compile scoped touched Python\n"   printf "invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py\n"   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py   printf "result: PASS, exit 0.\n"    printf "\n## command 7 quality and LOC scan for touched Python files\n"   printf "invocation: awk pure LOC scan\n"   for f in src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py; do printf "%s " "$f"; awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(#)/' "$f" | wc -l; done   printf "invocation: rg quality scan no Any/cast/type-ignore/asyncio/pandas/broad except/raw dict escape hatches\n"   if rg -n "\\bAny\\b|cast\\(|type:\\s*ignore|import asyncio|import pandas|except (Exception|BaseException)|dict\\[str, (Any|object)\\]" src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py; then     printf "result: FAIL, quality scan matched forbidden pattern.\n"     exit 1   fi   printf "result: PASS, quality scan had no matches.\n"    printf "\n## cleanup receipt corrected\n"   printf "invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (process table scan for live market data processes)\n"   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<"PY" import os import subprocess  needles = [     "ws-" + "subscriptions-clob",     "data-" + "stream.binance",     "stream." + "binance",     "polysignal_lab." + "data", ] current_pid = str(os.getpid()) processes = subprocess.run(["ps", "-eo", "pid=,args="], check=True, capture_output=True, text=True).stdout matches = [] for row in processes.splitlines():     pid, _, args = row.strip().partition(" ")     if pid == current_pid:         continue     if any(needle in args for needle in needles):         matches.append(row) if matches:     print("unexpected live market-data processes:")     print("\n".join(matches))     raise SystemExit(1) print("result: PASS, no live market-data websocket/process found") PY    printf "\n## stale_state + misleading_success_output final probes\n"   rg -n "mid_price|CLOB midpoint|official" .omo/evidence/todo-7-gate-review.md tests/fixtures/public_market_payloads.json tests/test_market_data.py src/polysignal_lab/data/polymarket_clob_rest.py   printf "official docs source verified during repair: https://docs.polymarket.com/api-reference/data/get-midpoint-price, 200 response has mid_price.\n"    printf "\n## dirty_worktree after scoped repair verification\n"   git status --short } 2>&1 | tee -a "$EVIDENCE" 
+2206673 bash -lc  set -euo pipefail EVIDENCE=.omo/evidence/task-7-complete-prd-old-remove-demo.txt {   printf "\nTODO 7 MIDPOINT REPAIR VERIFICATION RERUN %s\n" "$(date -Is)"   printf "reason: previous cleanup probe self-matched the verification command text; rerunning full required verification with corrected cleanup probe.\n"    printf "\n## command 1 full market data + websocket contracts\n"   printf "invocation: .venv/bin/python -m pytest tests/test_market_data.py tests/test_websocket_contracts.py -q\n"   .venv/bin/python -m pytest tests/test_market_data.py tests/test_websocket_contracts.py -q    printf "\n## command 2 focused CLOB REST official mid_price midpoint\n"   printf "invocation: .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q\n"   .venv/bin/python -m pytest tests/test_market_data.py::test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes -q   printf "manual probe invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (FakeAsyncClient official mid_price midpoint)\n"   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<"PY" import anyio  from polysignal_lab.config import PolymarketDataConfig from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient from tests.test_market_data import FakeAsyncClient   async def main() -> None:     client = FakeAsyncClient([{"mid_price": "0.45"}])     rest = PolymarketCLOBRestClient(PolymarketDataConfig(), client=client)     result = await rest.get_mid("token-up")     print(f"official_mid_price_probe result={result!r} headers={client.calls[0].headers!r}")   anyio.run(main) PY    printf "\n## command 3 focused websocket registry updates\n"   printf "invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry -q\n"   .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry -q    printf "\n## command 4 malformed public market events\n"   printf "invocation: .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash -q\n"   .venv/bin/python -m pytest tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash -q    printf "\n## command 5 authenticated client guard\n"   printf "invocation: bash -lc '! rg \"Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|submit_order|order submit\" src/polysignal_lab/data src/polysignal_lab/app'\n"   bash -lc '! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|submit_order|order submit" src/polysignal_lab/data src/polysignal_lab/app'   printf "result: PASS, no authenticated/trading client surface matched.\n"    printf "\n## command 6 py_compile scoped touched Python\n"   printf "invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py\n"   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py   printf "result: PASS, exit 0.\n"    printf "\n## command 7 quality and LOC scan for touched Python files\n"   printf "invocation: awk pure LOC scan\n"   for f in src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py; do printf "%s " "$f"; awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(#)/' "$f" | wc -l; done   printf "invocation: rg quality scan no Any/cast/type-ignore/asyncio/pandas/broad except/raw dict escape hatches\n"   if rg -n "\\bAny\\b|cast\\(|type:\\s*ignore|import asyncio|import pandas|except (Exception|BaseException)|dict\\[str, (Any|object)\\]" src/polysignal_lab/data/polymarket_clob_rest.py tests/test_market_data.py; then     printf "result: FAIL, quality scan matched forbidden pattern.\n"     exit 1   fi   printf "result: PASS, quality scan had no matches.\n"    printf "\n## cleanup receipt corrected\n"   printf "invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (process table scan for live market data processes)\n"   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<"PY" import os import subprocess  needles = [     "ws-" + "subscriptions-clob",     "data-" + "stream.binance",     "stream." + "binance",     "polysignal_lab." + "data", ] current_pid = str(os.getpid()) processes = subprocess.run(["ps", "-eo", "pid=,args="], check=True, capture_output=True, text=True).stdout matches = [] for row in processes.splitlines():     pid, _, args = row.strip().partition(" ")     if pid == current_pid:         continue     if any(needle in args for needle in needles):         matches.append(row) if matches:     print("unexpected live market-data processes:")     print("\n".join(matches))     raise SystemExit(1) print("result: PASS, no live market-data websocket/process found") PY    printf "\n## stale_state + misleading_success_output final probes\n"   rg -n "mid_price|CLOB midpoint|official" .omo/evidence/todo-7-gate-review.md tests/fixtures/public_market_payloads.json tests/test_market_data.py src/polysignal_lab/data/polymarket_clob_rest.py   printf "official docs source verified during repair: https://docs.polymarket.com/api-reference/data/get-midpoint-price, 200 response has mid_price.\n"    printf "\n## dirty_worktree after scoped repair verification\n"   git status --short } 2>&1 | tee -a "$EVIDENCE" 
+
+TODO 7 MIDPOINT REPAIR CLEANUP RERUN 2026-06-22T09:41:55+07:00
+reason: prior cleanup process scan matched its own ancestor shell command text; this scan ignores current process ancestors.
+invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (ancestor-aware process table scan)
+result: PASS, no live market-data websocket/process found
+network/live processes: none started for repair; tests used in-process fakes.
+plan checkbox: not marked by this repair.
+
+TODO 7 MIDPOINT REPAIR DONECLAIM 2026-06-22T09:42:27+07:00
+changed_files: src/polysignal_lab/data/polymarket_clob_rest.py; tests/fixtures/public_market_payloads.json; tests/test_market_data.py; .omo/evidence/task-7-complete-prd-old-remove-demo.txt
+exact_fix: get_mid now checks official mid_price before backward-compatible mid/midpoint; fixture clob_midpoint now uses only mid_price; CLOB REST test asserts the official fixture shape before parsing.
+red_first: focused pytest exited 1 before parser change; fixture assertion for mid_price passed; get_mid returned None and failed assert mid == 0.475.
+verification: full market_data+websocket suite passed 9 tests; focused CLOB REST official mid_price test passed; manual FakeAsyncClient mid_price probe returned 0.45 with empty headers; focused websocket update tests passed 2; malformed event test passed 1; auth guard passed; py_compile passed; LOC 31/108; quality rg clean.
+manual_QA_cleanup: official docs spot-check https://docs.polymarket.com/api-reference/data/get-midpoint-price shows mid_price; ancestor-aware process scan found no live market-data process; plan checkbox not marked; .env not read.
+risks: broader worktree was already dirty/untracked; two earlier cleanup probes in this evidence self-matched their own verification command text and are superseded by the final ancestor-aware cleanup pass.

@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "active_work_id": "complete-prd-old-remove-demo-019eec90",
+  "works": {
+    "complete-prd-old-remove-demo-019eec90": {
+      "work_id": "complete-prd-old-remove-demo-019eec90",
+      "active_plan": ".omo/plans/complete-prd-old-remove-demo.md",
+      "plan_name": "complete-prd-old-remove-demo",
+      "session_ids": [
+        "codex:019eec90-22a8-7f63-bc1d-a078709d442b"
+      ],
+      "status": "active",
+      "worktree_path": null
+    }
+  }
+}

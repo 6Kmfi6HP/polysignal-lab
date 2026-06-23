@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date
-from typing import Iterable
+from typing import Iterable, assert_never
 
 from polysignal_lab.domain.enums import TradeResultStatus
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
@@ -22,18 +22,19 @@ class PaperReportService:
         open_positions: int,
         results: Iterable[PaperTradeResult],
         equity_curve: list[float] | None = None,
+        stale_paper_fills: int = 0,
     ) -> DailyReport:
         result_list = list(results)
-        closed = [r for r in result_list if r.result in {TradeResultStatus.WIN, TradeResultStatus.LOSS, TradeResultStatus.VOID, TradeResultStatus.SPLIT}]
+        closed = [r for r in result_list if _is_closed_result(r)]
         wins = sum(1 for r in closed if r.result == TradeResultStatus.WIN)
         losses = sum(1 for r in closed if r.result == TradeResultStatus.LOSS)
         voids = sum(1 for r in closed if r.result == TradeResultStatus.VOID)
-        denominator = wins + losses
+        denominator = len(closed)
         win_rate = wins / denominator if denominator else 0.0
-        total_pnl = sum(r.pnl_usdc for r in result_list)
-        avg_roi = sum(r.roi for r in result_list) / len(result_list) if result_list else 0.0
-        profit = sum(r.pnl_usdc for r in result_list if r.pnl_usdc > 0)
-        loss = abs(sum(r.pnl_usdc for r in result_list if r.pnl_usdc < 0))
+        total_pnl = sum(r.pnl_usdc for r in closed)
+        avg_roi = sum(r.roi for r in closed) / len(closed) if closed else 0.0
+        profit = sum(r.pnl_usdc for r in closed if r.pnl_usdc > 0)
+        loss = abs(sum(r.pnl_usdc for r in closed if r.pnl_usdc < 0))
         profit_factor = profit / loss if loss else None
         curve = equity_curve or [starting_equity, ending_equity]
         max_drawdown = self._max_drawdown(curve)
@@ -47,6 +48,7 @@ class PaperReportService:
             paper_orders=paper_orders,
             paper_fills=paper_fills,
             rejected_paper_orders=rejected_paper_orders,
+            stale_paper_fills=stale_paper_fills,
             open_positions=open_positions,
             closed_positions=len(closed),
             win_count=wins,
@@ -57,9 +59,9 @@ class PaperReportService:
             average_roi=avg_roi,
             max_drawdown=max_drawdown,
             profit_factor=profit_factor,
-            strategy_breakdown=self._breakdown(result_list, "strategy"),
-            asset_breakdown=self._breakdown(result_list, "asset"),
-            timeframe_breakdown=self._breakdown(result_list, "timeframe"),
+            strategy_breakdown=self._breakdown(closed, "strategy"),
+            asset_breakdown=self._breakdown(closed, "asset"),
+            timeframe_breakdown=self._breakdown(closed, "timeframe"),
         )
 
     def _breakdown(self, results: list[PaperTradeResult], attr: str) -> dict[str, dict[str, float | int]]:
@@ -79,7 +81,7 @@ class PaperReportService:
             row["average_roi"] = roi_sum[key] / count
             wins = row["win_count"]
             losses = row["loss_count"]
-            row["win_rate"] = wins / (wins + losses) if wins + losses else 0.0
+            row["win_rate"] = wins / count if count else 0.0
         return dict(rows)
 
     def _max_drawdown(self, curve: list[float]) -> float:
@@ -92,3 +94,13 @@ class PaperReportService:
             if peak > 0:
                 max_dd = max(max_dd, (peak - value) / peak)
         return max_dd
+
+
+def _is_closed_result(result: PaperTradeResult) -> bool:
+    match result.result:
+        case TradeResultStatus.WIN | TradeResultStatus.LOSS | TradeResultStatus.VOID:
+            return True
+        case TradeResultStatus.UNKNOWN:
+            return False
+        case unreachable:
+            assert_never(unreachable)

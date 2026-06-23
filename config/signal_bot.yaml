@@ -26,7 +26,7 @@ telegram:
   dry_run: true
 
 markets:
-  assets: [BTC, ETH, SOL, XRP, DOGE, BNB, HYPE]
+  assets: [BTC, ETH, SOL, XRP]
   timeframes: [5m, 15m]
   refresh_interval_sec: 10
   active_only: true
@@ -95,7 +95,7 @@ storage:
 
 dashboard:
   enabled: true
-  host: 127.0.0.1
+  host: 0.0.0.0
   port: 8080
   read_only: true
 
@@ -108,11 +108,14 @@ strategies:
     max_price: 0.85
     vwap_window_sec: 30
     momentum_window_sec: 60
-    min_deviation_pct: 3.0
-    max_deviation_pct: 100.0
-    min_elapsed_sec: 150
-    no_entry_before_end_sec: 90
-    min_momentum_pct: 5.0
+    min_deviation_pct: 0.015
+    max_deviation_pct: 1.0
+    min_momentum: 0.01
+    min_z_score: 1.2
+    min_elapsed_sec: 45
+    no_entry_before_end_sec: 20
+    max_spread: 0.03
+    max_orderbook_staleness_ms: 60000
   late_consensus:
     enabled: true
     assets: [BTC, ETH, SOL, XRP]
@@ -150,45 +153,24 @@ strategies:
     assets: [BTC]
     timeframes: [5m, 15m]
     require_verified_ptb_source: true
-    conditions:
-      - name: C1
+    max_spread: 0.08
+    triggers:
+      - name: strong_up_late
         side: UP
-        time_sec: 120
-        min_diff_usd: 30
-        min_prob: 0.80
-        max_prob: 0.92
-      - name: C2
+        min_diff_usd: 80
+        max_token_price: 0.78
+        min_probability_edge: 0.08
+        min_seconds_to_close: 30
+        max_seconds_to_close: 180
+      - name: strong_down_late
         side: DOWN
-        time_sec: 120
-        min_diff_usd: 30
-        min_prob: 0.80
-        max_prob: 0.92
-      - name: C3
-        side: UP
-        time_sec: 60
-        min_diff_usd: 50
-        min_prob: 0.80
-        max_prob: 0.92
-      - name: C4
-        side: DOWN
-        time_sec: 60
-        min_diff_usd: 50
-        min_prob: 0.80
-        max_prob: 0.92
+        min_diff_usd: 80
+        max_token_price: 0.78
+        min_probability_edge: 0.08
+        min_seconds_to_close: 30
+        max_seconds_to_close: 180
     exit_config:
       stop_loss_prob_pct: 0.20
       take_profit_rr: 3.0
       take_profit_cap: 0.95
       market_data_max_lag_sec: 2
-  skew_mean_reversion:
-    enabled: true
-    assets: [BTC, ETH, SOL, XRP, DOGE, BNB, HYPE]
-    timeframes: [5m, 15m]
-    min_skew_ratio: 0.015
-    max_skew_ratio: 0.10
-    min_confidence: 0.50
-    base_confidence: 0.55
-    max_confidence: 0.90
-    max_entry_price: 0.85
-    max_spread: 0.10
-    max_seconds_to_close: 86400

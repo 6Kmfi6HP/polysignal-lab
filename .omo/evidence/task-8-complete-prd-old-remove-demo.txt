@@ -1,0 +1,376 @@
+Task 8 evidence - Parse PTB/resolution metadata and normalized snapshots correctly
+Date: 2026-06-22T03:05:13Z
+
+Adversarial: dirty_worktree / stale_state / env_secrecy
+Scenario: dirty_worktree
+Invocation: git status --short
+Binary observable: existing unrelated dirty files were present before and after; task edits are limited to market parsing, snapshot metadata, settlement, and new tests/evidence.
+ M .gitignore
+ M config/signal_bot.yaml
+ M docker-entrypoint.sh
+ D src/polysignal_lab/app/demo.py
+ D src/polysignal_lab/app/demo_data.py
+ M src/polysignal_lab/app/scheduler.py
+ M src/polysignal_lab/config.py
+ M src/polysignal_lab/data/binance_spot_ws.py
+ M src/polysignal_lab/data/market_snapshot.py
+ M src/polysignal_lab/data/polymarket_clob_rest.py
+ M src/polysignal_lab/data/polymarket_clob_ws.py
+ M src/polysignal_lab/data/polymarket_market_discovery.py
+ M src/polysignal_lab/domain/enums.py
+ M src/polysignal_lab/domain/market.py
+ M src/polysignal_lab/observability/safety.py
+ M src/polysignal_lab/paper/report.py
+ M src/polysignal_lab/paper/settlement.py
+ D src/polysignal_lab/strategies/binary_momentum.py
+ D src/polysignal_lab/strategies/cross_market_bot.py
+ D src/polysignal_lab/strategies/dump_hedge.py
+ M src/polysignal_lab/strategies/factory.py
+ D src/polysignal_lab/strategies/fibonacci_bot.py
+ D src/polysignal_lab/strategies/low_side_dual_reversion.py
+ D src/polysignal_lab/strategies/mid_price_sizing.py
+ D src/polysignal_lab/strategies/ninety_nine_cent_sniper.py
+ D src/polysignal_lab/strategies/one_cent_buy.py
+ D src/polysignal_lab/strategies/pre_order_market.py
+ D src/polysignal_lab/strategies/skew_mean_reversion.py
+?? .claude/
+?? .dockerignore
+?? .github/
+?? .mcp.json
+?? .omo/
+?? Dockerfile
+?? LICENSE
+?? README.md
+?? docker-compose.yml
+?? docs/
+?? polyscan.py
+?? pyproject.toml
+?? refined_scan.py
+?? src/polysignal_lab/app/scheduler_market_data.py
+?? src/polysignal_lab/app/scheduler_processing.py
+?? src/polysignal_lab/app/scheduler_reporting.py
+?? src/polysignal_lab/app/scheduler_runtime.py
+?? src/polysignal_lab/app/scheduler_state.py
+?? src/polysignal_lab/strategies/config.py
+?? tests/
+?? uv.lock
+
+Scenario: env_secrecy
+Invocation: test -e .env || true
+Binary observable: exit 0; no .env content read.
+Result: exit 0
+
+Scenario: stale_state
+Invocation: codegraph reads of current src/polysignal_lab/domain/market.py, src/polysignal_lab/app/scheduler_market_data.py, src/polysignal_lab/paper/settlement.py, src/polysignal_lab/data/market_snapshot.py before editing
+Binary observable: current split scheduler refresh uses Market.from_gamma; settlement used Market.resolved_outcome; snapshot builder controls normalized metrics.
+
+Red-first proof
+Invocation: .venv/bin/python -m pytest tests/test_market_parsing.py tests/test_settlement.py -q
+Binary observable: initial red run failed 6 behavioral assertions: missing resolved_outcome, missing winning token mapping, void status not CANCELLED, snapshot metadata key missing, cancelled settlement UNKNOWN, unknown settlement closed position.
+
+Scenario: acceptance
+Invocation: .venv/bin/python -m pytest tests/test_market_parsing.py tests/test_settlement.py -q
+........                                                                 [100%]
+
+Scenario: happy_qa
+Invocation: .venv/bin/python -m pytest tests/test_market_parsing.py::test_gamma_resolved_payload_sets_resolved_outcome tests/test_settlement.py::test_resolved_up_and_down_positions_settle_win_loss -q
+..                                                                       [100%]
+
+Scenario: failure_qa
+Invocation: .venv/bin/python -m pytest tests/test_settlement.py::test_missing_resolved_outcome_stays_unknown_and_retriable -q
+.                                                                        [100%]
+
+Scenario: programming_quality_py_compile
+Invocation: .venv/bin/python -m py_compile src/polysignal_lab/domain/market.py src/polysignal_lab/data/market_snapshot.py src/polysignal_lab/paper/settlement.py
+Binary observable: exit 0
+
+Scenario: programming_quality_escape_hatches
+Invocation: ! rg -n "\bAny\b|cast\(|type: ignore|except Exception" touched files
+Binary observable: no matches
+
+Scenario: enum_contract_source_surface
+Invocation: ! rg -n "SPLIT" src/polysignal_lab/domain src/polysignal_lab/paper src/polysignal_lab/data/market_snapshot.py
+Binary observable: no source-facing SPLIT result state; tests assert enum excludes SPLIT.
+
+Scenario: programming_quality_loc
+Invocation: awk pure LOC on touched Python files
+src/polysignal_lab/domain/market.py 201
+src/polysignal_lab/data/market_snapshot.py 62
+src/polysignal_lab/paper/settlement.py 63
+tests/test_market_parsing.py 78
+tests/test_settlement.py 69
+Binary observable: source files remain <=250 pure LOC; market.py is in the 200-250 warning band.
+
+Adversarial coverage mapping
+malformed_input: tests/test_market_parsing.py::test_gamma_malformed_official_resolution_stays_unknown asserts malformed official outcome stays unresolved despite misleading text.
+misleading_success_output: tests assert concrete IDs, timestamps, PTB, token IDs, result statuses, outcome values, wallet/position state.
+enum_contract: tests/test_settlement.py::test_void_market_refunds_position_without_split_result_state asserts TradeResultStatus has no SPLIT.
+settlement_safety: tests/test_settlement.py::test_missing_resolved_outcome_stays_unknown_and_retriable asserts no close/wallet release without authoritative outcome.
+cleanup: no long-lived processes started by this task.
+
+---
+
+Repair after Todo 8 gate rejection - 2026-06-22
+
+Changed files:
+- `src/polysignal_lab/app/scheduler_market_data.py`
+- `src/polysignal_lab/app/scheduler_reporting.py`
+- `tests/test_scheduler_cancelled_markets.py`
+- `.omo/evidence/complete-prd-old-remove-demo-todo-8-code-review.md`
+- `.omo/evidence/todo-8-manual-qa-notepad.md`
+- `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+
+Scenario: dirty_worktree
+Invocation: `git status --short`
+Binary observable: dirty shared worktree observed before editing, including unrelated modifications/deletions and untracked project files. No unrelated changes were reverted.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: env_secrecy
+Invocation: no `.env` read commands were run.
+Binary observable: no `.env` content was inspected or copied into artifacts.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: stale_state
+Invocation: read `.omo/evidence/complete-prd-old-remove-demo-todo-8-gate-review.md`, inspected current scheduler/parser/settlement code, then reran direct probes.
+Binary observable: direct red-first pytest reproduced the rejected scheduler paths before implementation.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Red-first proof:
+Invocation: `.venv/bin/python -m pytest tests/test_scheduler_cancelled_markets.py -q`
+Binary observable:
+```
+FF                                                                       [100%]
+FAILED tests/test_scheduler_cancelled_markets.py::test_cancelled_gamma_refresh_reaches_registry_and_storage
+assert None is not None
+FAILED tests/test_scheduler_cancelled_markets.py::test_scheduler_settles_cancelled_market_as_void_refund
+AssertionError: assert [] == [<TradeResultStatus.VOID: 'VOID'>]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS - failure matched the gate rejection: cancelled Gamma payload skipped registry/storage; cancelled scheduler settlement skipped VOID/refund.
+
+Scenario: scheduler_propagation
+Invocation: `.venv/bin/python -m pytest tests/test_scheduler_cancelled_markets.py -q`
+Binary observable:
+```
+..                                                                       [100%]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS - cancelled Gamma payload reaches runtime registry and SQLite, then cancelled scheduler settlement closes/refunds as VOID.
+
+Scenario: acceptance_market_and_settlement_suite
+Invocation: `.venv/bin/python -m pytest tests/test_market_parsing.py tests/test_settlement.py -q`
+Binary observable:
+```
+........                                                                 [100%]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: acceptance_happy_path_subset
+Invocation: `.venv/bin/python -m pytest tests/test_market_parsing.py::test_gamma_resolved_payload_sets_resolved_outcome tests/test_settlement.py::test_resolved_up_and_down_positions_settle_win_loss -q`
+Binary observable:
+```
+..                                                                       [100%]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: acceptance_retriable_unknown_subset
+Invocation: `.venv/bin/python -m pytest tests/test_settlement.py::test_missing_resolved_outcome_stays_unknown_and_retriable -q`
+Binary observable:
+```
+.                                                                        [100%]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: scheduler_existing_regression
+Invocation: `.venv/bin/python -m pytest tests/test_scheduler.py tests/test_scheduler_cancelled_markets.py -q`
+Binary observable:
+```
+.........                                                                [100%]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: programming_quality_py_compile
+Invocation: `.venv/bin/python -m py_compile src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_reporting.py tests/test_scheduler_cancelled_markets.py`
+Binary observable: exit 0, no stdout/stderr.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: programming_quality_escape_hatches
+Invocation: `rg -n "\bAny\b|cast\(|type: ignore|import asyncio|import pandas|except Exception|dict\[str, (Any|object)\]" src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_reporting.py tests/test_scheduler_cancelled_markets.py`
+Binary observable: exit 1, no matches.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: enum_contract_source_surface
+Invocation: `rg -n "SPLIT" src/polysignal_lab/domain src/polysignal_lab/paper src/polysignal_lab/data/market_snapshot.py`
+Binary observable: exit 1, no matches.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: programming_quality_loc
+Invocation: `for f in src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_reporting.py tests/test_scheduler_cancelled_markets.py; do printf '%s ' "$f"; awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(#)/' "$f" | wc -l; done`
+Binary observable:
+```
+src/polysignal_lab/app/scheduler_market_data.py 154
+src/polysignal_lab/app/scheduler_reporting.py 132
+tests/test_scheduler_cancelled_markets.py 104
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: malformed_input
+Invocation: `.venv/bin/python -m pytest tests/test_market_parsing.py tests/test_settlement.py -q`
+Binary observable: `........ [100%]`; malformed official resolution test remains green and does not infer from misleading question text.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: settlement_safety
+Invocation: `.venv/bin/python -m pytest tests/test_scheduler_cancelled_markets.py tests/test_settlement.py::test_missing_resolved_outcome_stays_unknown_and_retriable -q`
+Binary observable: cancelled scheduler settlement emits VOID and closes/refunds; unknown resolved outcome stays open/retriable.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: remove_ai_slops_overfit
+Invocation: manual inspection plus red/green scheduler pytest runs.
+Binary observable: focused tests fail red on real scheduler boundaries and pass green with concrete assertions on registry, SQLite, wallet, position, and result rows. Fake is limited to Gamma HTTP response.
+Captured artifact path: `.omo/evidence/complete-prd-old-remove-demo-todo-8-code-review.md`
+Result: PASS
+
+Scenario: cleanup
+Invocation: process discipline check.
+Binary observable: no dev server or long-lived command session started; all commands exited.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Standalone artifacts:
+- `.omo/evidence/complete-prd-old-remove-demo-todo-8-code-review.md`
+- `.omo/evidence/todo-8-manual-qa-notepad.md`
+
+Residual risks:
+- The Gamma cancelled propagation test uses a deterministic fake HTTP boundary rather than a live Gamma request; this avoids network flake while proving scheduler parsing/registry/storage behavior.
+- The broader worktree remains dirty with unrelated changes that were not touched or reverted.
+
+Exact standalone artifact invocation confirmation:
+
+Scenario: scheduler_propagation_single
+Invocation: `.venv/bin/python -m pytest tests/test_scheduler_cancelled_markets.py::test_cancelled_gamma_refresh_reaches_registry_and_storage -q`
+Binary observable:
+```
+.                                                                        [100%]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: settlement_safety_combined
+Invocation: `.venv/bin/python -m pytest tests/test_scheduler_cancelled_markets.py::test_scheduler_settles_cancelled_market_as_void_refund tests/test_settlement.py::test_missing_resolved_outcome_stays_unknown_and_retriable -q`
+Binary observable:
+```
+..                                                                       [100%]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+---
+
+Narrow repair after Todo 8 programming-quality blocker - 2026-06-22
+
+Changed files:
+- `src/polysignal_lab/app/scheduler_market_data.py`
+- `src/polysignal_lab/app/scheduler_runtime.py`
+- `.omo/evidence/complete-prd-old-remove-demo-todo-8-code-review.md`
+- `.omo/evidence/todo-8-manual-qa-notepad.md`
+- `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+
+Exact fix:
+- Removed `from asyncio import CancelledError, Task, create_task` from `scheduler_market_data.py`.
+- Routed market WebSocket task creation through `scheduler_runtime.create_task`, cancellation handling through `scheduler_runtime.CancelledError`, and task return typing through `scheduler_runtime.Task`.
+- Preserved existing WebSocket task behavior: scheduler task objects remain cancellable, awaitable, and compatible with the existing `_ws_tasks`, `_market_ws_task`, and `_binance_ws_task` lifecycle.
+
+Scenario: dirty_worktree
+Invocation: `git status --short`
+Binary observable: dirty shared worktree observed before editing, including broad unrelated tracked/untracked changes. No unrelated changes were reverted.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: gate_artifact_recheck
+Invocation: `sed -n '1,260p' .omo/evidence/complete-prd-old-remove-demo-todo-8-after-repair-gate-review.md`
+Binary observable: gate recommendation was `REJECT` only for `src/polysignal_lab/app/scheduler_market_data.py:4` importing asyncio runtime symbols.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: scheduler_existing_regression
+Invocation: `.venv/bin/python -m pytest tests/test_scheduler_cancelled_markets.py tests/test_scheduler.py -q`
+Binary observable:
+```
+.........                                                                [100%]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: market_parsing_and_settlement_regression
+Invocation: `.venv/bin/python -m pytest tests/test_market_parsing.py tests/test_settlement.py -q`
+Binary observable:
+```
+........                                                                 [100%]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: programming_quality_py_compile_required
+Invocation: `.venv/bin/python -m py_compile src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_reporting.py tests/test_scheduler_cancelled_markets.py`
+Binary observable: exit 0, no stdout/stderr.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: programming_quality_py_compile_runtime_facade
+Invocation: `.venv/bin/python -m py_compile src/polysignal_lab/app/scheduler_runtime.py`
+Binary observable: exit 0, no stdout/stderr.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: strict_scoped_quality_grep
+Invocation: `rg -n "asyncio|\bAny\b|cast\(|type: ignore|import pandas|except Exception|dict\[str, (Any|object)\]" src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_reporting.py tests/test_scheduler_cancelled_markets.py`
+Binary observable: exit 1, no matches.
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: cancelled_gamma_propagation
+Invocation: `.venv/bin/python -m pytest tests/test_scheduler_cancelled_markets.py::test_cancelled_gamma_refresh_reaches_registry_and_storage -q`
+Binary observable:
+```
+.                                                                        [100%]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: cancelled_settlement_and_unknown_retriable
+Invocation: `.venv/bin/python -m pytest tests/test_scheduler_cancelled_markets.py::test_scheduler_settles_cancelled_market_as_void_refund tests/test_settlement.py::test_missing_resolved_outcome_stays_unknown_and_retriable -q`
+Binary observable:
+```
+..                                                                       [100%]
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Scenario: programming_quality_loc
+Invocation: `for f in src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_runtime.py src/polysignal_lab/app/scheduler_reporting.py tests/test_scheduler_cancelled_markets.py; do printf '%s ' "$f"; awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(#)/' "$f" | wc -l; done`
+Binary observable:
+```
+src/polysignal_lab/app/scheduler_market_data.py 158
+src/polysignal_lab/app/scheduler_runtime.py 139
+src/polysignal_lab/app/scheduler_reporting.py 132
+tests/test_scheduler_cancelled_markets.py 104
+```
+Captured artifact path: `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+Result: PASS
+
+Residual risks:
+- `scheduler_runtime.py` and `scheduler.py` still own inherited asyncio runtime compatibility outside the scoped Todo 8 grep. This repair intentionally removed asyncio usage from `scheduler_market_data.py` without rewriting scheduler lifecycle behavior.
+- The broader worktree remains dirty with unrelated changes that were not touched or reverted.

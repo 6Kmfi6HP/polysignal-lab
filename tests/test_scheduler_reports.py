@@ -1,0 +1,259 @@
+from __future__ import annotations
+
+import sqlite3
+from datetime import date
+from pathlib import Path
+
+from polysignal_lab.app.scheduler import PolySignalScheduler
+from polysignal_lab.domain.enums import ExitMode, OrderStatus, PositionStatus, Side, TradeResultStatus
+from polysignal_lab.domain.paper_result import PaperTradeResult
+from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
+from factories import BookFactoryConfig, sample_book
+
+
+def _scheduler(tmp_path: Path, settings) -> PolySignalScheduler:
+    settings.telegram.enabled = True
+    settings.telegram.dry_run = True
+    settings.telegram.send_signals = False
+    settings.telegram.send_paper_results = True
+    settings.telegram.send_daily_report = True
+    settings.data.binance.enabled = False
+    settings.data.polymarket.use_market_ws = False
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler._initialize_trading_components()
+    return scheduler
+
+
+async def _signal(snapshot, settings):
+    return PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0]
+
+
+def _trade_result(position, result: TradeResultStatus = TradeResultStatus.WIN) -> PaperTradeResult:
+    return PaperTradeResult(
+        signal_id=position.signal_id,
+        paper_position_id=position.paper_position_id,
+        strategy=position.strategy,
+        asset=position.asset,
+        timeframe=position.timeframe,
+        market_id=position.market_id,
+        market_slug=position.market_slug,
+        side=position.side,
+        entry_price=position.entry_price,
+        shares=position.shares,
+        stake_usdc=position.stake_usdc,
+        exit_mode=ExitMode.RESOLUTION,
+        outcome_value=1.0,
+        settlement_value=position.shares,
+        pnl_usdc=position.shares - position.stake_usdc,
+        roi=(position.shares - position.stake_usdc) / position.stake_usdc,
+        result=result,
+        opened_at=position.opened_at,
+    )
+
+
+async def test_paper_exit_publish_record_written(tmp_path: Path, snapshot, settings) -> None:
+    # Given: an open paper position, active market, and a TP-triggering best bid.
+    signal = await _signal(snapshot, settings)
+    scheduler = _scheduler(tmp_path, settings)
+    scheduler.ctx.markets.upsert_many([snapshot.market])
+    scheduler.ctx.books.update(
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500))
+    )
+    processed = await scheduler.process_signal(signal)
+    assert processed["paper_position"] is not None
+    scheduler.ctx.books.update(
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.94, bid=0.91, size=500))
+    )
+
+    # When: scheduler reporting checks settlements/exits.
+    results = await scheduler.check_settlements()
+
+    # Then: the paper exit closes only paper state and persists result/publish rows.
+    result_rows = scheduler.sqlite.query_json("paper_trade_results")
+    position_rows = scheduler.sqlite.query_json("paper_positions")
+    publish_rows = scheduler.sqlite.query_json("telegram_publishes")
+    assert [result.result for result in results] == [TradeResultStatus.WIN]
+    assert results[0].exit_mode == ExitMode.TAKE_PROFIT
+    assert processed["paper_position"].status == PositionStatus.CLOSED
+    assert scheduler.wallet.open_position_count == 0
+    assert [row["result"] for row in result_rows] == ["WIN"]
+    assert [row["exit_mode"] for row in result_rows] == ["TAKE_PROFIT"]
+    assert [row["status"] for row in position_rows] == ["CLOSED"]
+    assert [(row["message_type"], row["status"]) for row in publish_rows] == [
+        ("paper_result", "DRY_RUN")
+    ]
+    assert scheduler.logs.read_all("paper_trade_results")[0]["result"] == "WIN"
+    assert [
+        (row["message_type"], row["status"])
+        for row in scheduler.logs.read_all("telegram_publishes")
+    ] == [("paper_result", "DRY_RUN")]
+    assert not (scheduler.logs.base_dir / "paper_results.jsonl").exists()
+    assert not (scheduler.logs.base_dir / "telegram_publish.jsonl").exists()
+
+
+async def test_paper_exit_storage_failure_rolls_back_and_returns_no_success(
+    tmp_path: Path, snapshot, settings
+) -> None:
+    # Given: an open paper position and a TP-triggering bid, but result storage fails.
+    signal = await _signal(snapshot, settings)
+    scheduler = _scheduler(tmp_path, settings)
+    scheduler.ctx.markets.upsert_many([snapshot.market])
+    scheduler.ctx.books.update(
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500))
+    )
+    processed = await scheduler.process_signal(signal)
+    assert processed["paper_position"] is not None
+    position = processed["paper_position"]
+    cash_before = scheduler.wallet.cash_balance
+    realized_before = scheduler.wallet.realized_pnl
+    scheduler.ctx.books.update(
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.94, bid=0.91, size=500))
+    )
+
+    def fail_insert_trade_result(result: PaperTradeResult) -> None:
+        raise sqlite3.OperationalError("paper result insert failed")
+
+    scheduler.sqlite.insert_paper_trade_result = fail_insert_trade_result
+
+    # When: scheduler reporting checks paper exits.
+    results = await scheduler.check_settlements()
+
+    # Then: no successful settlement is returned and in-memory/durable state remains open.
+    result_rows = scheduler.sqlite.query_json("paper_trade_results")
+    position_rows = scheduler.sqlite.query_json("paper_positions")
+    publish_rows = scheduler.sqlite.query_json("telegram_publishes")
+    assert results == []
+    assert result_rows == []
+    assert [row["status"] for row in position_rows] == ["OPEN"]
+    assert publish_rows == []
+    assert position.status == PositionStatus.OPEN
+    assert position.closed_at is None
+    assert scheduler.wallet.open_position_count == 1
+    assert scheduler.wallet.cash_balance == cash_before
+    assert scheduler.wallet.realized_pnl == realized_before
+
+
+async def test_paper_exit_publish_row_failure_rolls_back_without_closed_rows(
+    tmp_path: Path, snapshot, settings
+) -> None:
+    # Given: an open paper position and a TP-triggering bid, but publish-row storage fails.
+    signal = await _signal(snapshot, settings)
+    scheduler = _scheduler(tmp_path, settings)
+    scheduler.ctx.markets.upsert_many([snapshot.market])
+    scheduler.ctx.books.update(
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500))
+    )
+    processed = await scheduler.process_signal(signal)
+    assert processed["paper_position"] is not None
+    position = processed["paper_position"]
+    scheduler.ctx.books.update(
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.94, bid=0.91, size=500))
+    )
+
+    def fail_insert_publish(publish: dict[str, str | None]) -> None:
+        raise sqlite3.OperationalError("paper publish insert failed")
+
+    scheduler.sqlite.insert_telegram_publish = fail_insert_publish
+
+    # When: scheduler reporting checks paper exits with paper-result publishing enabled.
+    results = await scheduler.check_settlements()
+
+    # Then: no success is returned and no closed durable rows remain.
+    assert results == []
+    assert scheduler.sqlite.query_json("paper_trade_results") == []
+    assert [row["status"] for row in scheduler.sqlite.query_json("paper_positions")] == [
+        "OPEN"
+    ]
+    assert scheduler.sqlite.query_json("telegram_publishes") == []
+    assert position.status == PositionStatus.OPEN
+    assert scheduler.wallet.open_position_count == 1
+
+
+async def test_daily_report_publish_record_written(tmp_path: Path, snapshot, settings) -> None:
+    # Given: stored signals, one filled paper order, one rejected paper order, and a closed result.
+    signal = await _signal(snapshot, settings)
+    scheduler = _scheduler(tmp_path, settings)
+    scheduler.ctx.books.update(
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500))
+    )
+    filled = await scheduler.process_signal(signal)
+    assert filled["paper_position"] is not None
+    rejected_signal = signal.model_copy(
+        update={"signal_id": "sig-rejected-report", "token_id": "missing-token-report"}
+    )
+    rejected = await scheduler.process_signal(rejected_signal)
+    assert rejected["paper_order"] is not None
+    assert rejected["paper_order"].status == OrderStatus.REJECTED
+    position = filled["paper_position"]
+    result = _trade_result(position)
+    position.status = PositionStatus.CLOSED
+    position.closed_at = result.closed_at
+    scheduler.wallet.close_position(position.paper_position_id, result.settlement_value, result.pnl_usdc)
+    scheduler.sqlite.upsert_paper_position(position)
+    scheduler.sqlite.insert_paper_trade_result(result)
+
+    # When: the daily report is generated with Telegram daily reporting enabled.
+    report = await scheduler.generate_daily_report()
+
+    # Then: the report uses persisted rows and writes a durable Telegram publish record.
+    assert report is not None
+    report_rows = scheduler.sqlite.query_json("daily_reports")
+    publish_rows = scheduler.sqlite.query_json("telegram_publishes")
+    assert report.report_date == date.today()
+    assert report.total_signals == 2
+    assert report.paper_orders == 2
+    assert report.paper_fills == 1
+    assert report.rejected_paper_orders == 1
+    assert report.open_positions == 0
+    assert report.closed_positions == 1
+    assert report.win_count == 1
+    assert report.total_pnl_usdc == result.pnl_usdc
+    assert report.stale_paper_fills == 0
+    assert report.strategy_breakdown["ptb_diff"]["win_count"] == 1
+    assert report.asset_breakdown["BTC"]["closed_positions"] == 1
+    assert report.timeframe_breakdown["5m"]["total_pnl_usdc"] == result.pnl_usdc
+    assert [row["report_id"] for row in report_rows] == [report.report_id]
+    assert [(row["message_type"], row["status"]) for row in publish_rows] == [
+        ("daily_report", "DRY_RUN")
+    ]
+    assert scheduler.logs.read_all("daily_reports")[0]["report_id"] == report.report_id
+    assert [
+        (row["message_type"], row["status"])
+        for row in scheduler.logs.read_all("telegram_publishes")
+    ] == [("daily_report", "DRY_RUN")]
+    assert not (scheduler.logs.base_dir / "telegram_publish.jsonl").exists()
+
+
+async def test_daily_report_publish_row_failure_returns_no_report(
+    tmp_path: Path, snapshot, settings
+) -> None:
+    # Given: stored report inputs, but daily publish-row persistence fails.
+    signal = await _signal(snapshot, settings)
+    scheduler = _scheduler(tmp_path, settings)
+    scheduler.ctx.books.update(
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500))
+    )
+    filled = await scheduler.process_signal(signal)
+    assert filled["paper_position"] is not None
+    position = filled["paper_position"]
+    result = _trade_result(position)
+    position.status = PositionStatus.CLOSED
+    position.closed_at = result.closed_at
+    scheduler.wallet.close_position(
+        position.paper_position_id, result.settlement_value, result.pnl_usdc
+    )
+    scheduler.sqlite.upsert_paper_position(position)
+    scheduler.sqlite.insert_paper_trade_result(result)
+
+    def fail_insert_publish(publish: dict[str, str | None]) -> None:
+        raise sqlite3.OperationalError("publish insert failed")
+
+    scheduler.sqlite.insert_telegram_publish = fail_insert_publish
+
+    # When: the daily report is generated with Telegram daily reporting enabled.
+    report = await scheduler.generate_daily_report()
+
+    # Then: runtime receives no successful report and no durable report/publish rows exist.
+    assert report is None
+    assert scheduler.sqlite.query_json("daily_reports") == []
+    assert scheduler.sqlite.query_json("telegram_publishes") == []

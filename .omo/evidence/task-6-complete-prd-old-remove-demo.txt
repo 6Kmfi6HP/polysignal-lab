@@ -1,0 +1,992 @@
+## Todo 6 Evidence
+
+### Dirty worktree before
+ M .gitignore
+ M config/signal_bot.yaml
+ M docker-entrypoint.sh
+ D src/polysignal_lab/app/demo.py
+ D src/polysignal_lab/app/demo_data.py
+ M src/polysignal_lab/config.py
+ M src/polysignal_lab/domain/enums.py
+ M src/polysignal_lab/observability/safety.py
+ M src/polysignal_lab/paper/report.py
+ M src/polysignal_lab/paper/settlement.py
+ D src/polysignal_lab/strategies/binary_momentum.py
+ D src/polysignal_lab/strategies/cross_market_bot.py
+ D src/polysignal_lab/strategies/dump_hedge.py
+ M src/polysignal_lab/strategies/factory.py
+ D src/polysignal_lab/strategies/fibonacci_bot.py
+ D src/polysignal_lab/strategies/low_side_dual_reversion.py
+ D src/polysignal_lab/strategies/mid_price_sizing.py
+ D src/polysignal_lab/strategies/ninety_nine_cent_sniper.py
+ D src/polysignal_lab/strategies/one_cent_buy.py
+ D src/polysignal_lab/strategies/pre_order_market.py
+ D src/polysignal_lab/strategies/skew_mean_reversion.py
+?? .claude/
+?? .dockerignore
+?? .github/
+?? .mcp.json
+?? .omo/
+?? Dockerfile
+?? LICENSE
+?? README.md
+?? docker-compose.yml
+?? docs/
+?? polyscan.py
+?? pyproject.toml
+?? refined_scan.py
+?? src/polysignal_lab/strategies/config.py
+?? tests/
+?? uv.lock
+
+### PRD startup lines docs/PRD-old.md:154-170
+## 9. 核心流程
+
+## 9.1 启动流程
+
+1. 读取配置文件。
+2. 校验 Telegram bot token 和 channel id。
+3. 加载启用资产、周期、策略。
+4. 初始化虚拟钱包。
+5. 发现当前 Polymarket crypto Up/Down 市场。
+6. 建立 Polymarket market data stream。
+7. 建立 Binance spot stream。
+8. 生成 normalized market snapshot。
+9. 周期性运行策略。
+10. 信号通过 gate 后发送 Telegram。
+11. 同步创建 paper trade。
+12. 市场结束后结算 paper trade。
+13. 更新胜率、PnL、资金曲线。
+
+### Baseline relevant tests before Todo 6 edits
+ERROR: file or directory not found: tests/test_scheduler.py
+
+
+
+### Red-first new scheduler tests before production edits
+
+#### test_refresh_markets_before_starting_streams
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________________ test_refresh_markets_before_starting_streams _________________
+
+tmp_path = PosixPath('/tmp/pytest-of-gyue/pytest-6/test_refresh_markets_before_st0')
+
+    async def test_refresh_markets_before_starting_streams(tmp_path: Path) -> None:
+        # Given: startup discovery returns token-bearing markets.
+        scheduler = _scheduler(tmp_path)
+        market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+        events: list[str] = []
+    
+        async def refresh_markets_once() -> None:
+            events.append("discover")
+            scheduler.ctx.markets.upsert_many([market])
+    
+        async def start_websockets() -> list[object]:
+            events.append("streams_started")
+            assert scheduler.ctx.markets.active()
+            return []
+    
+        async def evaluate_once() -> list[object]:
+            scheduler._running = False
+            return []
+    
+        async def generate_daily_report() -> None:
+            return None
+    
+        scheduler.refresh_markets_once = refresh_markets_once
+        scheduler.start_websockets = start_websockets
+        scheduler.evaluate_once = evaluate_once
+        scheduler.check_settlements = evaluate_once
+        scheduler.generate_daily_report = generate_daily_report
+    
+        # When: the scheduler run loop starts.
+>       await scheduler.run()
+
+tests/test_scheduler.py:102: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/polysignal_lab/app/scheduler.py:591: in run
+    await self.start_websockets()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    async def start_websockets() -> list[object]:
+        events.append("streams_started")
+>       assert scheduler.ctx.markets.active()
+E       AssertionError: assert []
+E        +  where [] = active()
+E        +    where active = MarketRegistry(markets={}, _lock=<unlocked _thread.lock object at 0x7fa5a74340>).active
+E        +      where MarketRegistry(markets={}, _lock=<unlocked _thread.lock object at 0x7fa5a74340>) = ServiceContext(settings=Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_pape...ject at 0x7fa5a74540>), spots=SpotRegistry(spots={}, history={}, _lock=<unlocked _thread.lock object at 0x7fa5997600>)).markets
+E        +        where ServiceContext(settings=Settings(app=AppConfig(name='PolySignal Lab', environment='production', mode='signal_plus_pape...ject at 0x7fa5a74540>), spots=SpotRegistry(spots={}, history={}, _lock=<unlocked _thread.lock object at 0x7fa5997600>)) = <polysignal_lab.app.scheduler.PolySignalScheduler object at 0x7fa67a0810>.ctx
+
+tests/test_scheduler.py:85: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_scheduler.py::test_refresh_markets_before_starting_streams
+
+#### test_market_ws_subscribes_after_token_discovery
+.                                                                        [100%]
+
+#### test_empty_market_refresh_does_not_subscribe_market_ws
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_empty_market_refresh_does_not_subscribe_market_ws ____________
+
+tmp_path = PosixPath('/tmp/pytest-of-gyue/pytest-8/test_empty_market_refresh_does0')
+
+    async def test_empty_market_refresh_does_not_subscribe_market_ws(tmp_path: Path) -> None:
+        # Given: an existing subscription has been started from a prior non-empty discovery.
+        scheduler = _scheduler(tmp_path)
+        market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+        events: list[str] = []
+        poly_ws = RecordingPolymarketWs(events)
+        scheduler.discovery = FakeDiscovery([[market], []], events)
+        scheduler.rest = FakeRest()
+        scheduler.poly_ws = poly_ws
+    await scheduler.refresh_markets_once()
+        tasks = await scheduler.start_websockets()
+        for task in tasks:
+            await task
+    
+        # When: the next market refresh discovers no token ids.
+        await scheduler.refresh_markets_once()
+    
+        # Then: the old market websocket is stopped and no empty subscription is sent.
+>       assert poly_ws.stop_count == 1
+E       assert 0 == 1
+E        +  where 0 = <test_scheduler.RecordingPolymarketWs object at 0x7f9fbfac90>.stop_count
+
+tests/test_scheduler.py:147: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_scheduler.py::test_empty_market_refresh_does_not_subscribe_market_ws
+
+#### test_market_ws_resubscribes_when_token_set_changes
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________ test_market_ws_resubscribes_when_token_set_changes ______________
+
+tmp_path = PosixPath('/tmp/pytest-of-gyue/pytest-9/test_market_ws_resubscribes_wh0')
+
+    async def test_market_ws_resubscribes_when_token_set_changes(tmp_path: Path) -> None:
+        # Given: a running market websocket subscription for one token set.
+        scheduler = _scheduler(tmp_path)
+        first_market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+        second_market = sample_market(MarketFactoryConfig(asset="ETH", timeframe="15m"))
+        events: list[str] = []
+        poly_ws = RecordingPolymarketWs(events)
+        scheduler.discovery = FakeDiscovery([[first_market], [second_market]], events)
+        scheduler.rest = FakeRest()
+        scheduler.poly_ws = poly_ws
+        await scheduler.refresh_markets_once()
+        tasks = await scheduler.start_websockets()
+        for task in tasks:
+            await task
+    
+        # When: discovery returns a changed token set.
+        await scheduler.refresh_markets_once()
+    
+        # Then: the scheduler stops the old subscription and starts a new non-empty one.
+>       assert poly_ws.stop_count == 1
+E       assert 0 == 1
+E        +  where 0 = <test_scheduler.RecordingPolymarketWs object at 0x7f8957a910>.stop_count
+
+tests/test_scheduler.py:171: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_scheduler.py::test_market_ws_resubscribes_when_token_set_changes
+
+### Red-first adjusted subscription startup test before production edits
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______________ test_market_ws_subscribes_after_token_discovery ________________
+
+tmp_path = PosixPath('/tmp/pytest-of-gyue/pytest-10/test_market_ws_subscribes_afte0')
+
+    async def test_market_ws_subscribes_after_token_discovery(tmp_path: Path) -> None:
+        # Given: startup discovery can find one active Polymarket market with Up/Down token ids.
+        scheduler = _scheduler(tmp_path)
+        market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+        events: list[str] = []
+        poly_ws = RecordingPolymarketWs(events)
+        scheduler.discovery = FakeDiscovery([[market]], events)
+        scheduler.rest = FakeRest()
+        scheduler.poly_ws = poly_ws
+    
+        async def evaluate_once() -> list[object]:
+            await scheduler_module.asyncio.sleep(0)
+            scheduler._running = False
+            return []
+    
+        async def generate_daily_report() -> None:
+            return None
+    
+        scheduler.evaluate_once = evaluate_once
+        scheduler.check_settlements = evaluate_once
+        scheduler.generate_daily_report = generate_daily_report
+    
+        # When: the scheduler starts normally.
+        await scheduler.run()
+    
+        # Then: the Polymarket subscription receives the non-empty discovered token set.
+        expected_tokens = tuple(token.token_id for token in market.outcome_tokens)
+>       assert poly_ws.subscriptions == [expected_tokens]
+E       AssertionError: assert [] == [('btc-5m-tes...m-test-DOWN')]
+E         
+E         Right contains one more item: ('btc-5m-test-UP', 'btc-5m-test-DOWN')
+E         Use -v to get more diff
+
+tests/test_scheduler.py:136: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_scheduler.py::test_market_ws_subscribes_after_token_discovery
+
+### Red-first Telegram startup validation test before production edits
+
+### Green run focused Todo 6 tests after scheduler patch
+....F                                                                    [100%]
+=================================== FAILURES ===================================
+______________ test_market_ws_resubscribes_when_token_set_changes ______________
+
+tmp_path = PosixPath('/tmp/pytest-of-gyue/pytest-12/test_market_ws_resubscribes_wh0')
+
+    async def test_market_ws_resubscribes_when_token_set_changes(tmp_path: Path) -> None:
+        # Given: a running market websocket subscription for one token set.
+        scheduler = _scheduler(tmp_path)
+        first_market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+        second_market = sample_market(MarketFactoryConfig(asset="ETH", timeframe="15m"))
+        events: list[str] = []
+        poly_ws = RecordingPolymarketWs(events)
+        scheduler.discovery = FakeDiscovery([[first_market], [second_market]], events)
+        scheduler.rest = FakeRest()
+        scheduler.poly_ws = poly_ws
+        await scheduler.refresh_markets_once()
+        tasks = await scheduler.start_websockets()
+        for task in tasks:
+            await task
+    
+        # When: discovery returns a changed token set.
+        await scheduler.refresh_markets_once()
+    
+        # Then: the scheduler stops the old subscription and starts a new non-empty one.
+        assert poly_ws.stop_count == 1
+>       assert poly_ws.subscriptions == [
+            tuple(token.token_id for token in first_market.outcome_tokens),
+            tuple(token.token_id for token in second_market.outcome_tokens),
+        ]
+E       AssertionError: assert [('btc-5m-tes...m-test-DOWN')] == [('btc-5m-tes...m-test-DOWN')]
+E         
+E         Right contains one more item: ('eth-15m-test-UP', 'eth-15m-test-DOWN')
+E         Use -v to get more diff
+
+tests/test_scheduler.py:206: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_scheduler.py::test_market_ws_resubscribes_when_token_set_changes
+
+### Green rerun focused Todo 6 tests after resubscribe observation fix
+.....                                                                    [100%]
+
+### Verify 1 full required test surface
+Invocation: timeout 120 .venv/bin/python -m pytest tests/test_scheduler.py tests/test_market_data.py -q
+.......                                                                  [100%]
+Exit code: 0
+
+### Verify 2 happy scheduler startup/subscription tests
+Invocation: .venv/bin/python -m pytest tests/test_scheduler.py::test_refresh_markets_before_starting_streams tests/test_scheduler.py::test_market_ws_subscribes_after_token_discovery -q
+..                                                                       [100%]
+Exit code: 0
+
+### Verify 3 empty discovery no-subscribe test
+Invocation: .venv/bin/python -m pytest tests/test_scheduler.py::test_empty_market_refresh_does_not_subscribe_market_ws -q
+.                                                                        [100%]
+Exit code: 0
+
+### Verify 4 resubscribe focused test
+Invocation: .venv/bin/python -m pytest tests/test_scheduler.py::test_market_ws_resubscribes_when_token_set_changes -q
+.                                                                        [100%]
+Exit code: 0
+
+### Manual QA exact CLI/test-surface proof
+Invocation: .venv/bin/python -m pytest tests/test_scheduler.py::test_refresh_markets_before_starting_streams tests/test_scheduler.py::test_market_ws_subscribes_after_token_discovery tests/test_scheduler.py::test_empty_market_refresh_does_not_subscribe_market_ws -q
+...                                                                      [100%]
+Exit code: 0
+
+### Verify 5 safety grep scheduler/data scope
+Invocation: ! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|order submit|submit_order" src/polysignal_lab/app src/polysignal_lab/data
+Exit code: 0 (no forbidden pattern found)
+
+### Post-write Python pure LOC review
+src/polysignal_lab/app/scheduler.py 644
+tests/test_scheduler.py 147
+tests/test_market_data.py 29
+
+### Post-write focused ruff/python syntax review
+Invocation: .venv/bin/python -m py_compile src/polysignal_lab/app/scheduler.py tests/test_scheduler.py tests/test_market_data.py
+Exit code: 0
+
+### Post-write ruff review for edited Python files
+Invocation: .venv/bin/python -m ruff check src/polysignal_lab/app/scheduler.py tests/test_scheduler.py tests/test_market_data.py
+/home/gyue/polysignal-lab/.venv/bin/python: No module named ruff
+Exit code: 1
+
+### Verify rerun after lifecycle edge-case patch
+Invocation: timeout 120 .venv/bin/python -m pytest tests/test_scheduler.py tests/test_market_data.py -q
+.......                                                                  [100%]
+Exit code: 0
+
+### Verify rerun named scheduler scenarios after lifecycle edge-case patch
+Invocation: .venv/bin/python -m pytest tests/test_scheduler.py::test_refresh_markets_before_starting_streams tests/test_scheduler.py::test_market_ws_subscribes_after_token_discovery tests/test_scheduler.py::test_empty_market_refresh_does_not_subscribe_market_ws tests/test_scheduler.py::test_market_ws_resubscribes_when_token_set_changes -q
+....                                                                     [100%]
+Exit code: 0
+
+### Dirty worktree after Todo 6 edits
+ M .gitignore
+ M config/signal_bot.yaml
+ M docker-entrypoint.sh
+ D src/polysignal_lab/app/demo.py
+ D src/polysignal_lab/app/demo_data.py
+ M src/polysignal_lab/app/scheduler.py
+ M src/polysignal_lab/config.py
+ M src/polysignal_lab/domain/enums.py
+ M src/polysignal_lab/observability/safety.py
+ M src/polysignal_lab/paper/report.py
+ M src/polysignal_lab/paper/settlement.py
+ D src/polysignal_lab/strategies/binary_momentum.py
+ D src/polysignal_lab/strategies/cross_market_bot.py
+ D src/polysignal_lab/strategies/dump_hedge.py
+ M src/polysignal_lab/strategies/factory.py
+ D src/polysignal_lab/strategies/fibonacci_bot.py
+ D src/polysignal_lab/strategies/low_side_dual_reversion.py
+ D src/polysignal_lab/strategies/mid_price_sizing.py
+ D src/polysignal_lab/strategies/ninety_nine_cent_sniper.py
+ D src/polysignal_lab/strategies/one_cent_buy.py
+ D src/polysignal_lab/strategies/pre_order_market.py
+ D src/polysignal_lab/strategies/skew_mean_reversion.py
+?? .claude/
+?? .dockerignore
+?? .github/
+?? .mcp.json
+?? .omo/
+?? Dockerfile
+?? LICENSE
+?? README.md
+?? docker-compose.yml
+?? docs/
+?? polyscan.py
+?? pyproject.toml
+?? refined_scan.py
+?? src/polysignal_lab/strategies/config.py
+?? tests/
+?? uv.lock
+
+### Stale-state reread: Todo 6 plan and PRD startup lines
+111:  Acceptance criteria (agent-executable): `test -f docs/PRD_OLD_COMPLIANCE.md && rg "AC-006|SIM-|SEC-|Telegram|real channel|generated history" docs/PRD_OLD_COMPLIANCE.md && test -f .omo/evidence/baseline-complete-prd-old-remove-demo.txt`
+112:  QA scenarios (name the exact tool + invocation): happy: `.venv/bin/python -m pytest -q | tee .omo/evidence/baseline-complete-prd-old-remove-demo.txt`; failure: search for unmapped PRD acceptance rows with `rg "AC-|SIM-|SEC-" docs/PRD-old.md` and verify each is represented in `docs/PRD_OLD_COMPLIANCE.md`. Evidence `.omo/evidence/task-1-complete-prd-old-remove-demo.txt`
+119:  Acceptance criteria (agent-executable): `test -f docs/EXTERNAL_API_RESEARCH.md && test -f docs/GENERATED_HISTORY_DELETION.md && rg "https://docs.polymarket.com|https://developers.binance.com|https://core.telegram.org/bots/api" docs/EXTERNAL_API_RESEARCH.md && rg "logs/|state/|data/paper_trades.sqlite|data/polysignal_lab.sqlite3|scan_results.json|refined_results.json|\\.env" docs/GENERATED_HISTORY_DELETION.md`
+120:  QA scenarios (name the exact tool + invocation): happy: `rg "public|no auth|sendMessage|bookTicker|price_changes" docs/EXTERNAL_API_RESEARCH.md`; failure: `! rg "Medium|StackOverflow|blog" docs/EXTERNAL_API_RESEARCH.md`. Evidence `.omo/evidence/task-2-complete-prd-old-remove-demo.txt`
+127:  Acceptance criteria (agent-executable): `test ! -e src/polysignal_lab/app/demo.py && test ! -e src/polysignal_lab/app/demo_data.py && ! rg "run_demo|demo_data|polysignal-demo|fake data|offline demo" src tests README.md docs pyproject.toml docker-entrypoint.sh`
+128:  QA scenarios (name the exact tool + invocation): happy: `.venv/bin/python -m pytest tests/test_orderbook_snapshot.py tests/test_paper_simulation.py -q`; failure: `python - <<'PY'\nimport importlib.util\nassert importlib.util.find_spec('polysignal_lab.app.demo') is None\nPY`. Evidence `.omo/evidence/task-3-complete-prd-old-remove-demo.txt`
+135:  Acceptance criteria (agent-executable): `.venv/bin/python -m pytest tests/test_config.py tests/test_strategies.py -q && ! rg "skew_mean_reversion|DOGE|BNB|HYPE" config src README.md docs/PRD_OLD_COMPLIANCE.md`
+136:  QA scenarios (name the exact tool + invocation): happy: `.venv/bin/python -m pytest tests/test_config.py::test_strategy_factory_builds_only_prd_strategies -q`; failure: `.venv/bin/python -m pytest tests/test_config.py::test_non_prd_strategy_config_rejected -q && ! rg "skew_mean_reversion|DOGE|BNB|HYPE" config src README.md docs/PRD_OLD_COMPLIANCE.md`. Evidence `.omo/evidence/task-4-complete-prd-old-remove-demo.txt`
+143:  Acceptance criteria (agent-executable): `.venv/bin/python scripts/safety_scan.py . && test ! -e logs && test ! -e state && test ! -e data/paper_trades.sqlite && test ! -e data/polysignal_lab.sqlite3 && test ! -e scan_results.json && test ! -e refined_results.json`
+144:  QA scenarios (name the exact tool + invocation): happy: `git status --short --ignored | tee .omo/evidence/task-5-complete-prd-old-remove-demo.txt`; failure: create a temp fixture under `.omo/tmp-safety` containing `create_order` in product-like path and assert safety scan fails, then remove temp fixture. Evidence `.omo/evidence/task-5-complete-prd-old-remove-demo.txt`
+147:- [ ] 6. Repair scheduler startup order and subscription lifecycle.
+151:  Acceptance criteria (agent-executable): `.venv/bin/python -m pytest tests/test_scheduler.py tests/test_market_data.py -q` with tests asserting discovery precedes WebSocket subscription and subscription receives non-empty token ids.
+152:  QA scenarios (name the exact tool + invocation): happy: `.venv/bin/python -m pytest tests/test_scheduler.py::test_refresh_markets_before_starting_streams tests/test_scheduler.py::test_market_ws_subscribes_after_token_discovery -q`; failure: `.venv/bin/python -m pytest tests/test_scheduler.py::test_empty_market_refresh_does_not_subscribe_market_ws -q`. Evidence `.omo/evidence/task-6-complete-prd-old-remove-demo.txt`
+159:  Acceptance criteria (agent-executable): `.venv/bin/python -m pytest tests/test_market_data.py tests/test_websocket_contracts.py -q` and `! rg "Authorization|private_key|create_order|cancel_order" src/polysignal_lab/data src/polysignal_lab/app`
+160:  QA scenarios (name the exact tool + invocation): happy: `.venv/bin/python -m pytest tests/test_websocket_contracts.py::test_polymarket_price_changes_event_updates_registry tests/test_websocket_contracts.py::test_binance_bookticker_updates_spot_registry -q`; failure: `.venv/bin/python -m pytest tests/test_websocket_contracts.py::test_malformed_public_market_events_are_ignored_without_crash -q`. Evidence `.omo/evidence/task-7-complete-prd-old-remove-demo.txt`
+167:  Acceptance criteria (agent-executable): `.venv/bin/python -m pytest tests/test_market_parsing.py tests/test_settlement.py -q` with explicit WIN/LOSS/VOID/UNKNOWN cases and no PRD-facing `SPLIT` result.
+168:  QA scenarios (name the exact tool + invocation): happy: `.venv/bin/python -m pytest tests/test_market_parsing.py::test_gamma_resolved_payload_sets_resolved_outcome tests/test_settlement.py::test_resolved_up_and_down_positions_settle_win_loss -q`; failure: `.venv/bin/python -m pytest tests/test_settlement.py::test_missing_resolved_outcome_stays_unknown_and_retriable -q`. Evidence `.omo/evidence/task-8-complete-prd-old-remove-demo.txt`
+175:  Acceptance criteria (agent-executable): `.venv/bin/python -m pytest tests/test_vwap_momentum.py tests/test_strategies.py -q` with accept/reject tests for z_score, momentum mismatch, stale book, wide spread, and entry window.
+176:  QA scenarios (name the exact tool + invocation): happy: `.venv/bin/python -m pytest tests/test_vwap_momentum.py::test_vwap_momentum_emits_buy_up_and_down_with_z_score -q`; failure: `.venv/bin/python -m pytest tests/test_vwap_momentum.py::test_vwap_momentum_rejects_below_z_score_threshold tests/test_vwap_momentum.py::test_vwap_momentum_rejects_stale_or_wide_spread_book -q`. Evidence `.omo/evidence/task-9-complete-prd-old-remove-demo.txt`
+183:  Acceptance criteria (agent-executable): `.venv/bin/python -m pytest tests/test_late_consensus.py tests/test_strategies.py -q` with BTC/ETH/SOL/XRP coverage, max_spread rejects, confidence rejects, flip guard, and stale spot rejects.
+
+PRD docs/PRD-old.md:154-170
+## 9. 核心流程
+
+## 9.1 启动流程
+
+1. 读取配置文件。
+2. 校验 Telegram bot token 和 channel id。
+3. 加载启用资产、周期、策略。
+4. 初始化虚拟钱包。
+5. 发现当前 Polymarket crypto Up/Down 市场。
+6. 建立 Polymarket market data stream。
+7. 建立 Binance spot stream。
+8. 生成 normalized market snapshot。
+9. 周期性运行策略。
+10. 信号通过 gate 后发送 Telegram。
+11. 同步创建 paper trade。
+12. 市场结束后结算 paper trade。
+13. 更新胜率、PnL、资金曲线。
+
+Scheduler lifecycle lines
+
+@dataclass
+class ServiceContext:
+    settings: Settings
+    markets: MarketRegistry = field(default_factory=MarketRegistry)
+    books: OrderBookRegistry = field(default_factory=OrderBookRegistry)
+    spots: SpotRegistry = field(default_factory=SpotRegistry)
+
+
+@dataclass(frozen=True, slots=True)
+class TelegramStartupConfigError(RuntimeError):
+    missing_fields: tuple[str, ...]
+
+    def __str__(self) -> str:
+        fields = ", ".join(self.missing_fields)
+        return f"Telegram live publishing is enabled but missing: {fields}"
+
+
+class PolySignalScheduler:
+    def __init__(self, settings: Settings, base_dir: str | Path = "."):
+        self.settings = settings
+        self.ctx = ServiceContext(settings=settings)
+        self.discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
+        self.rest = PolymarketCLOBRestClient(settings.data.polymarket)
+        self.ptb = PriceToBeatProvider()
+        self.snapshot_builder = MarketSnapshotBuilder(self.ctx.books, self.ctx.spots, self.ptb)
+        self.strategies = build_strategies(settings.strategies)
+        self.gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
+        self.consensus = ConsensusEngine(settings.signal.consensus_window_sec, settings.signal.consensus_enabled)
+        self.wallet = PaperWallet(settings.paper_trading.starting_balance_usdc)
+        self.paper = PaperSimulator(settings.paper_trading, settings.data.polymarket, self.wallet)
+        self.settlement = PaperSettlementEngine(self.wallet)
+        self.formatter = MessageFormatter(settings.telegram.max_message_chars)
+        self.publisher = TelegramPublisher(settings.telegram)
+        self.logger = logging.getLogger("polysignal_lab.scheduler")
+
+        # WebSocket connections
+        self.poly_ws = PolymarketMarketWebSocket(settings.data.polymarket, self.ctx.books)
+        self.binance_ws = BinanceSpotFeed(settings.data.binance, self.ctx.spots)
+
+        # Storage
+        base = Path(base_dir)
+        self.logs = JSONLStore(base / settings.storage.jsonl_dir)
+        self.state = StateStore(base / settings.storage.state_dir)
+        self.sqlite = SQLiteStore(base / settings.storage.sqlite_path)
+
+        # Background tasks
+        self._ws_tasks: list[asyncio.Task] = []
+        self._market_ws_task: asyncio.Task | None = None
+        self._binance_ws_task: asyncio.Task | None = None
+        self._latest_market_token_ids: tuple[str, ...] = ()
+        self._market_ws_token_ids: tuple[str, ...] = ()
+        self._market_refresh_completed = False
+        self._streams_started = False
+        self._running = False
+
+    def _validate_telegram_startup(self) -> None:
+        telegram = self.settings.telegram
+        live_publish_enabled = (
+            telegram.enabled
+            and not telegram.dry_run
+            and (
+                telegram.send_signals
+                or telegram.send_consensus_signals
+                or telegram.send_paper_results
+                or telegram.send_daily_report
+            )
+        )
+        if not live_publish_enabled:
+            return
+        missing: list[str] = []
+        if not telegram.resolved_bot_token:
+            missing.append(telegram.bot_token_env)
+        if not telegram.resolved_channel_id:
+            missing.append(telegram.channel_id_env)
+        if missing:
+            raise TelegramStartupConfigError(tuple(missing))
+
+    @staticmethod
+    def _token_ids_for_markets(markets: list[Market]) -> tuple[str, ...]:
+        token_ids = (
+            token.token_id
+            for market in markets
+            for token in market.outcome_tokens
+            if token.token_id
+        )
+        return tuple(dict.fromkeys(token_ids))
+
+    async def _restore_wallet_state(self) -> None:
+        """Restore wallet from persisted state on restart.
+
+        Reads state/open_positions.json and state/paper_wallet.json
+        to rebuild in-memory wallet state so open positions from
+        before a container restart can still be settled.
+
+        Priority: SQLite > state files (SQLite is the authoritative store).
+        """
+        from polysignal_lab.domain.paper_position import PaperPosition
+        from polysignal_lab.domain.enums import PositionStatus
+
+        restored = 0
+
+        # Phase 1: restore from SQLite (most reliable, has all data)
+        try:
+            sqlite_positions = self.sqlite.query_json(
+                "paper_positions",
+                where="WHERE status = ?",
+                params=(PositionStatus.OPEN.value,),
+            )
+            for pdata in sqlite_positions:
+                try:
+                    position = PaperPosition.model_validate(pdata)
+                    self.wallet.open_positions[position.paper_position_id] = position
+                    restored += 1
+                except Exception as exc:
+                    self.logger.warning("Failed to restore position from SQLite: %s", exc)
+            if restored > 0:
+                self.logger.info("Restored %d open positions from SQLite", restored)
+        except Exception as exc:
+            self.logger.warning("SQLite restore failed: %s", exc)
+
+        # Phase 2: supplement from state files (for cash balance / realized_pnl)
+        if restored == 0:
+            # Fallback to state files if SQLite has nothing
+            positions_data = self.state.read("open_positions", default=[])
+            for pdata in positions_data:
+                try:
+                    position = PaperPosition.model_validate(pdata)
+                    if position.paper_position_id not in self.wallet.open_positions:
+                        self.wallet.open_positions[position.paper_position_id] = position
+                        restored += 1
+                except Exception as exc:
+                    self.logger.warning("Failed to restore position %s: %s", pdata.get("paper_position_id", "?"), exc)
+
+        # Restore cash balance and realized PnL from wallet snapshot
+        wallet_data = self.state.read("paper_wallet", default=None)
+        if wallet_data:
+            cash = wallet_data.get("cash_balance")
+            if cash is not None:
+                self.wallet.cash_balance = float(cash)
+            rpnl = wallet_data.get("realized_pnl")
+            if rpnl is not None:
+                self.wallet.realized_pnl = float(rpnl)
+
+        if restored > 0:
+            self.logger.info(
+                "Restored wallet: %d open positions, cash=%.2f, realized_pnl=%.2f",
+                    if resolved:
+                        # Re-build market from gamma to get status=RESOLVED
+                        try:
+                            match = self.discovery._match_crypto_updown(payload)
+                            asset, timeframe = match if match else ("UNKNOWN", "UNKNOWN")
+                            m = MarketModel.from_gamma(payload, asset=asset, timeframe=timeframe)
+                            self.ctx.markets.upsert_many([m])
+                            self.sqlite.upsert_market(m)
+                            updated += 1
+                        except Exception:
+                            pass
+
+                if updated > 0:
+                    self.logger.info("Fetched %d resolved markets from Gamma API", updated)
+        except Exception as exc:
+            self.logger.warning("Failed to fetch resolved markets: %s", exc)
+
+    async def evaluate_once(self) -> list[SignalCandidate]:
+        """Evaluate all active markets through strategies and gate, return accepted signals."""
+        accepted: list[SignalCandidate] = []
+        for market in self.ctx.markets.active():
+            try:
+                snapshot = await self.snapshot_builder.build(market)
+            except Exception:
+                self.logger.exception("Failed to build snapshot for market %s", market.market_slug)
+                continue
+            secs = snapshot.seconds_to_close
+            self.logger.info("DIAG ev %-40s asset=%-5s tf=%-3s secs=%-8s up=%-5s down=%-5s spot=%-8s spread=%-5s",
+                             market.market_slug, market.asset, market.timeframe,
+                             secs if secs else "N/A",
+                             snapshot.up_ask, snapshot.down_ask,
+                             snapshot.spot.price if snapshot.spot else "NONE",
+                             snapshot.max_spread)
+            for strategy in self.strategies:
+                try:
+                    for candidate in strategy.evaluate(snapshot):
+                        decision = self.gate.evaluate(candidate, snapshot)
+                        if decision.accepted and decision.signal:
+                            accepted.append(decision.signal)
+                            cons = self.consensus.add(decision.signal)
+                            if cons:
+                                accepted.append(cons)
+                        elif decision.rejected:
+                            try:
+                                self.logs.append("rejected_signals", decision.rejected)
+                                self.sqlite.insert_rejected_signal(decision.rejected)
+                            except Exception:
+                                pass
+                except Exception:
+                    self.logger.exception("Strategy %s evaluate failed", strategy.name if hasattr(strategy, "name") else "?")
+        return accepted
+
+    async def _stop_market_ws_subscription(self) -> None:
+        if self._market_ws_task is None and not self._market_ws_token_ids:
+            return
+        self.poly_ws.stop()
+        task = self._market_ws_task
+        self._market_ws_task = None
+        self._market_ws_token_ids = ()
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        if task in self._ws_tasks:
+            self._ws_tasks.remove(task)
+
+    async def _sync_market_ws_subscription(self, token_ids: tuple[str, ...]) -> None:
+        if self.settings.data.polymarket.use_market_ws:
+            if not token_ids:
+                await self._stop_market_ws_subscription()
+                self.logger.info(
+                    "No token IDs available for Polymarket WebSocket, falling back to REST polling"
+                )
+            except Exception as exc:
+                self.logger.error(
+                    "Failed to settle position %s: %s", position.paper_position_id, exc
+                )
+
+        return settled
+
+    async def generate_daily_report(self) -> DailyReport | None:
+        """Generate and publish a daily paper-trading report if one hasn't been generated today.
+
+        Queries today's trade results from SQLite, builds a DailyReport via PaperReportService,
+        persists it, and publishes to Telegram.
+        """
+        today = date.today()
+        today_iso = today.isoformat()
+
+        # Check if we already have a report for today
+        existing = self.sqlite.query_json(
+            "daily_reports", where="WHERE report_date = ?", params=(today_iso,)
+        )
+        if existing:
+            self.logger.info("Daily report already exists for %s, skipping", today_iso)
+            return None
+
+        # Collect today's trade results from SQLite
+        today_results_raw = self.sqlite.query_json(
+            "paper_trade_results",
+            where="WHERE DATE(closed_at) = ?",
+            params=(today_iso,),
+        )
+        trade_results = [PaperTradeResult(**r) for r in today_results_raw]
+
+        # Count today's paper fills (positions opened today)
+        today_fills_raw = self.sqlite.query_json(
+            "paper_fills",
+            where="WHERE DATE(created_at) = ?",
+            params=(today_iso,),
+        )
+
+### Cleanup process check
+Invocation: pgrep -af "polysignal|pytest|websockets"
+1271834 /home/gyue/.omo/codegraph/node --liftoff-only /home/gyue/.omo/codegraph/lib/dist/bin/codegraph.js serve --mcp --path /home/gyue/polysignal-lab
+1925145 /usr/bin/zsh -c { printf '\n### Cleanup process check\n'; printf 'Invocation: pgrep -af "polysignal|pytest|websockets"\n'; pgrep -af "polysignal|pytest|websockets" || true; } 2>&1 | tee -a .omo/evidence/task-6-complete-prd-old-remove-demo.txt
+1925146 /usr/bin/zsh -c { printf '\n### Cleanup process check\n'; printf 'Invocation: pgrep -af "polysignal|pytest|websockets"\n'; pgrep -af "polysignal|pytest|websockets" || true; } 2>&1 | tee -a .omo/evidence/task-6-complete-prd-old-remove-demo.txt
+
+### Cleanup process check narrow
+Invocation: pgrep -af "python.*(polysignal|pytest)"
+1925626 /usr/bin/zsh -c { printf '\n### Cleanup process check narrow\n'; printf 'Invocation: pgrep -af "python.*(polysignal|pytest)"\n'; pgrep -af "python.*(polysignal|pytest)" || true; printf 'Result: no long-lived scheduler/websocket pytest process listed except this command if present.\n'; } 2>&1 | tee -a .omo/evidence/task-6-complete-prd-old-remove-demo.txt
+1925634 /usr/bin/zsh -c { printf '\n### Cleanup process check narrow\n'; printf 'Invocation: pgrep -af "python.*(polysignal|pytest)"\n'; pgrep -af "python.*(polysignal|pytest)" || true; printf 'Result: no long-lived scheduler/websocket pytest process listed except this command if present.\n'; } 2>&1 | tee -a .omo/evidence/task-6-complete-prd-old-remove-demo.txt
+Result: no long-lived scheduler/websocket pytest process listed except this command if present.
+
+### Final syntax review after last patch
+Invocation: .venv/bin/python -m py_compile src/polysignal_lab/app/scheduler.py tests/test_scheduler.py tests/test_market_data.py
+Exit code: 0
+
+### Final required test rerun
+Invocation: .venv/bin/python -m pytest tests/test_scheduler.py tests/test_market_data.py -q
+.......                                                                  [100%]
+Exit code: 0
+
+### Post-write no Any/cast/type-ignore scan edited files
+Invocation: rg "Any|cast\(|type: ignore" src/polysignal_lab/app/scheduler.py tests/test_scheduler.py tests/test_market_data.py
+Exit code: 0 (no Any/cast/type-ignore in edited files)
+
+### Post-write no Any/cast/type-ignore scan edited files rerun
+Invocation: rg "Any|cast\(|type: ignore" src/polysignal_lab/app/scheduler.py tests/test_scheduler.py tests/test_market_data.py
+Exit code: 0 (no Any/cast/type-ignore in edited files)
+
+### DoneClaim summary
+{
+  "changed_files": [
+    "src/polysignal_lab/app/scheduler.py",
+    "tests/test_scheduler.py",
+    "tests/test_market_data.py",
+    ".omo/evidence/task-6-complete-prd-old-remove-demo.txt"
+  ],
+  "baseline_red_first_proof": {
+    "baseline": "timeout 120 .venv/bin/python -m pytest tests/test_scheduler.py tests/test_market_data.py -q failed before edits because the requested test files were missing",
+    "red_first": [
+      "test_refresh_markets_before_starting_streams failed because streams_started ran before discover and active markets were empty",
+      "test_market_ws_subscribes_after_token_discovery failed because subscription list stayed empty during normal run startup",
+      "test_empty_market_refresh_does_not_subscribe_market_ws failed because stop_count remained 0 after empty refresh",
+      "test_market_ws_resubscribes_when_token_set_changes failed because stop_count remained 0 after changed token set",
+      "test_live_telegram_settings_validate_before_market_discovery timed out under bounded run because current code did not fail fast before discovery"
+    ]
+  },
+  "verification": {
+    "full_surface": ".venv/bin/python -m pytest tests/test_scheduler.py tests/test_market_data.py -q => 7 passed",
+    "happy": ".venv/bin/python -m pytest tests/test_scheduler.py::test_refresh_markets_before_starting_streams tests/test_scheduler.py::test_market_ws_subscribes_after_token_discovery -q => 2 passed",
+    "empty_failure_path": ".venv/bin/python -m pytest tests/test_scheduler.py::test_empty_market_refresh_does_not_subscribe_market_ws -q => 1 passed",
+    "resubscribe": ".venv/bin/python -m pytest tests/test_scheduler.py::test_market_ws_resubscribes_when_token_set_changes -q => 1 passed",
+    "manual_qa": ".venv/bin/python -m pytest tests/test_scheduler.py::test_refresh_markets_before_starting_streams tests/test_scheduler.py::test_market_ws_subscribes_after_token_discovery tests/test_scheduler.py::test_empty_market_refresh_does_not_subscribe_market_ws -q => 3 passed",
+    "safety_grep": "no forbidden authenticated/trading client patterns in src/polysignal_lab/app src/polysignal_lab/data",
+    "syntax": ".venv/bin/python -m py_compile edited files => exit 0"
+  },
+  "manual_qa_artifacts": [".omo/evidence/task-6-complete-prd-old-remove-demo.txt"],
+  "cleanup_receipt": "No long-lived scheduler/websocket/pytest process remained; only the grep shell command itself appeared during process check.",
+  "risks": [
+    "src/polysignal_lab/app/scheduler.py remains an inherited oversized module at 644 pure LOC; splitting it would exceed Todo 6 scope.",
+    "ruff is not installed in .venv, so ruff check could not run; py_compile, pytest, grep, and focused scans passed."
+  ]
+}
+
+### Todo 6 Repair Evidence - 2026-06-22
+
+{
+  "changed_files": [
+    "src/polysignal_lab/app/scheduler.py",
+    "tests/test_scheduler.py",
+    ".omo/evidence/task-6-complete-prd-old-remove-demo.txt"
+  ],
+  "exact_fixes": [
+    "Moved scheduler strategy, PaperWallet, PaperSimulator, and PaperSettlementEngine initialization behind `run()` startup Telegram validation via `_initialize_trading_components()`.",
+    "Removed the initial startup `except Exception` wrapper around `refresh_markets_once()` / `_fetch_resolved_markets()` so discovery failure propagates and `start_websockets()` is not reached.",
+    "Kept stream startup after successful market discovery; startup lines captured in `.omo/evidence/todo-6-repair-startup-lines.log` show validation at lines 676-677, discovery at 682-683, and streams at 686.",
+    "Added focused tests for discovery-failure no-stream behavior and validation-before-strategy/wallet/paper initialization order."
+  ],
+  "red_first_tests": [
+    {
+      "scenario": "initial discovery failure prevents stream startup",
+      "invocation": ".venv/bin/python -m pytest tests/test_scheduler.py::test_initial_discovery_failure_prevents_stream_startup tests/test_scheduler.py::test_live_telegram_validation_runs_before_strategy_and_paper_initialization -q",
+      "pre_fix_result": "FAILED: test_initial_discovery_failure_prevents_stream_startup did not raise RuntimeError; captured log included `initial refresh_markets_once failed: discovery failed`, proving the broad catch swallowed discovery failure and allowed continuation."
+    },
+    {
+      "scenario": "Telegram validation before strategy/wallet/paper init",
+      "invocation": ".venv/bin/python -m pytest tests/test_scheduler.py::test_initial_discovery_failure_prevents_stream_startup tests/test_scheduler.py::test_live_telegram_validation_runs_before_strategy_and_paper_initialization -q",
+      "pre_fix_result": "FAILED: events were `['strategy_load', 'wallet_init', 'paper_init', 'telegram_validate']` instead of `['telegram_validate']`."
+    }
+  ],
+  "verification_commands_results": [
+    {
+      "invocation": ".venv/bin/python -m pytest tests/test_scheduler.py tests/test_market_data.py -q",
+      "result": "9 passed",
+      "artifact": ".omo/evidence/todo-6-repair-full-pytest.log"
+    },
+    {
+      "invocation": ".venv/bin/python -m pytest tests/test_scheduler.py::test_refresh_markets_before_starting_streams tests/test_scheduler.py::test_market_ws_subscribes_after_token_discovery -q",
+      "result": "2 passed",
+      "artifact": ".omo/evidence/todo-6-repair-focused-refresh-subscribe.log"
+    },
+    {
+      "invocation": ".venv/bin/python -m pytest tests/test_scheduler.py::test_empty_market_refresh_does_not_subscribe_market_ws -q",
+      "result": "1 passed",
+      "artifact": ".omo/evidence/todo-6-repair-focused-empty-refresh.log"
+    },
+    {
+      "invocation": ".venv/bin/python -m pytest tests/test_scheduler.py::test_market_ws_resubscribes_when_token_set_changes -q",
+      "result": "1 passed",
+      "artifact": ".omo/evidence/todo-6-repair-focused-resubscribe.log"
+    },
+    {
+      "invocation": ".venv/bin/python -m pytest tests/test_scheduler.py::test_initial_discovery_failure_prevents_stream_startup -q",
+      "result": "1 passed",
+      "artifact": ".omo/evidence/todo-6-repair-focused-discovery-failure.log"
+    },
+    {
+      "invocation": ".venv/bin/python -m pytest tests/test_scheduler.py::test_live_telegram_validation_runs_before_strategy_and_paper_initialization -q",
+      "result": "1 passed",
+      "artifact": ".omo/evidence/todo-6-repair-focused-validation-before-init.log"
+    },
+    {
+      "invocation": "bash -lc '! rg \"Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|order submit|submit_order\" src/polysignal_lab/app src/polysignal_lab/data'",
+      "result": "PASS: no matches",
+      "artifact": ".omo/evidence/todo-6-repair-authenticated-client-guard.log"
+    },
+    {
+      "invocation": "rg -n \"except Exception|except BaseException|\\bAny\\b|cast\\(|type:\\s*ignore|import asyncio|import pandas|dict\\[str, dict\\]\" src/polysignal_lab/app/scheduler.py tests/test_scheduler.py tests/test_market_data.py",
+      "result": "Inherited scheduler broad catches and inherited `import asyncio` remain; no `Any`, `cast`, `type: ignore`, `import pandas`, or `dict[str, dict]` matches. The Todo 6 startup broad catch is gone; see startup lines artifact.",
+      "artifact": ".omo/evidence/todo-6-repair-quality-scan.log"
+    },
+    {
+      "invocation": ".venv/bin/python -m py_compile src/polysignal_lab/app/scheduler.py tests/test_scheduler.py tests/test_market_data.py",
+      "result": "PASS",
+      "artifact": ".omo/evidence/todo-6-repair-py-compile.log"
+    }
+  ],
+  "manual_qa_evidence": [
+    {
+      "scenario": "combined CLI/test surface with both new tests plus original scheduler startup tests",
+      "invocation": ".venv/bin/python -m pytest tests/test_scheduler.py::test_initial_discovery_failure_prevents_stream_startup tests/test_scheduler.py::test_live_telegram_validation_runs_before_strategy_and_paper_initialization tests/test_scheduler.py::test_refresh_markets_before_starting_streams tests/test_scheduler.py::test_market_ws_subscribes_after_token_discovery tests/test_scheduler.py::test_empty_market_refresh_does_not_subscribe_market_ws -q",
+      "result": "5 passed",
+      "artifact": ".omo/evidence/todo-6-repair-manual-cli-surface.log"
+    },
+    {
+      "scenario": "call-order traces",
+      "result": "discovery_failure_no_stream_trace=['discover_raise']; validation_before_init_trace=['telegram_validate']",
+      "artifact": ".omo/evidence/todo-6-repair-call-order-traces.log"
+    }
+  ],
+  "cleanup_receipt": {
+    "process_check": "PASS: no runtime scheduler/websocket/pytest processes remain after verification",
+    "artifact": ".omo/evidence/todo-6-repair-cleanup-processes.log",
+    "temp_files": "No temp files intentionally left; evidence logs are retained under `.omo/evidence/`."
+  },
+  "dirty_worktree_receipt": {
+    "before": "Initial `git status --short` showed many unrelated modified/deleted/untracked files; this repair preserved them.",
+    "after": "Final status still includes unrelated work plus scoped edits to scheduler/test/evidence paths.",
+    "after_artifact": ".omo/evidence/todo-6-repair-git-status-after.log"
+  },
+  "risks": [
+    "The scheduler remains an inherited oversized module at 656 pure LOC; a split is outside the scoped repair.",
+    "The quality scan still reports inherited broad catches outside the repaired startup path and inherited `import asyncio`; no new broad catch/Any/cast/type-ignore/import pandas was added."
+  ]
+}
+
+### Todo 6 scheduler refactor evidence - 2026-06-22
+Scope: behavior-preserving extraction of scheduler lifecycle, market data, processing, reporting, runtime, and state responsibilities.
+Stale-state reread: latest gate rejection summary from verify-todo-6-after-repair-gate-review.md follows.
+4:- Verify Todo 6 after repair for `.omo/plans/complete-prd-old-remove-demo.md`: scheduler startup order and subscription lifecycle must match PRD-old.
+9:- Todo 6 also requires discovery before WebSocket subscription, non-empty Polymarket token subscriptions, stale subscription stop, token-set resubscribe, and no authenticated/trading client surface.
+14:- Evidence should include current passing tests, manual call-order proof, auth/trading guard proof, py_compile proof, and a current code-review/report artifact covering `programming` and `remove-ai-slops` overfit/slop criteria.
+24:- The authenticated/trading client guard passed with no matches in `src/polysignal_lab/app` or `src/polysignal_lab/data`.
+25:- However, approval is blocked by artifact/quality requirements from the gate role:
+26:  - Existing Todo 6 gate-review artifacts are stale rejected reports from before this repair; no current post-repair code-review report was found that explicitly covers `programming` and `remove-ai-slops` overfit/slop criteria.
+28:  - The direct programming/slop pass still finds `src/polysignal_lab/app/scheduler.py` oversized at 656 non-blank/non-comment lines. This appears inherited, but Todo 6 adds lifecycle responsibility to the same oversized module, so it remains a maintenance-risk finding rather than a clean approval condition.
+31:- Missing current post-repair code-review report with explicit `programming` and `remove-ai-slops` overfit/slop criterion coverage. Prior `.omo/evidence/*todo-6*gate-review.md` reports are stale and reject the pre-repair state.
+33:- `src/polysignal_lab/app/scheduler.py` is still oversized under the loaded programming/remove-ai-slops criteria: direct scan measured 656 non-blank/non-comment lines. Classified as a quality/artifact blocker for final approval, not as evidence that the three repaired functional blockers remain broken.
+48:- `.omo/evidence/todo-6-repair-authenticated-client-guard.log`
+70:- authenticated_client_guard: Clean forbidden-pattern grep over app/data scope; no `Authorization`, private key, signing, or order submit/create/cancel surface found.
+71:- programming_quality: No new startup broad catch found. Existing broad exceptions remain outside the repaired startup block. Oversized scheduler remains unresolved at 656 pure-ish LOC.
+77:- No current post-repair code-review report artifact explicitly covering the `programming` and `remove-ai-slops` overfit/slop criteria.
+
+Invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_scheduler.py tests/test_market_data.py -q
+.........                                                                [100%]
+
+Invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider focused Todo 6 scheduler scenarios -q
+......                                                                   [100%]
+
+Invocation: bash -lc '! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|order submit|submit_order" src/polysignal_lab/app src/polysignal_lab/data'
+Result: PASS, no authenticated/trading client surface matched.
+
+Invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile touched scheduler Python files
+Result: PASS, exit 0.
+
+Invocation: awk pure LOC size check for every touched Python file
+src/polysignal_lab/app/scheduler.py 152
+src/polysignal_lab/app/scheduler_market_data.py 140
+src/polysignal_lab/app/scheduler_state.py 77
+src/polysignal_lab/app/scheduler_processing.py 135
+src/polysignal_lab/app/scheduler_reporting.py 125
+src/polysignal_lab/app/scheduler_runtime.py 139
+
+Invocation: rg -n "\bAny\b|cast\(|type:\s*ignore|import asyncio|import pandas|except (Exception|BaseException)|dict\[str, dict\]" touched scheduler Python files
+src/polysignal_lab/app/scheduler_processing.py:36:        except Exception:
+src/polysignal_lab/app/scheduler_processing.py:65:                        except Exception:
+src/polysignal_lab/app/scheduler_processing.py:67:            except Exception:
+src/polysignal_lab/app/scheduler_processing.py:92:    except Exception as exc:
+src/polysignal_lab/app/scheduler_processing.py:105:        except Exception as exc:
+src/polysignal_lab/app/scheduler_processing.py:119:    except Exception as exc:
+src/polysignal_lab/app/scheduler_reporting.py:31:            except Exception:
+src/polysignal_lab/app/scheduler_reporting.py:68:                except Exception as exc:
+src/polysignal_lab/app/scheduler_reporting.py:74:        except Exception as exc:
+src/polysignal_lab/app/scheduler_reporting.py:119:    except Exception as exc:
+src/polysignal_lab/app/scheduler_reporting.py:126:    except Exception as exc:
+src/polysignal_lab/app/scheduler_reporting.py:135:        except Exception as exc:
+src/polysignal_lab/app/scheduler_state.py:26:            except Exception as exc:
+src/polysignal_lab/app/scheduler_state.py:30:    except Exception as exc:
+src/polysignal_lab/app/scheduler_state.py:41:            except Exception as exc:
+src/polysignal_lab/app/scheduler_state.py:87:    except Exception as exc:
+src/polysignal_lab/app/scheduler_runtime.py:38:    except Exception:
+src/polysignal_lab/app/scheduler_runtime.py:66:                except Exception as exc:
+src/polysignal_lab/app/scheduler_runtime.py:108:    except Exception as exc:
+src/polysignal_lab/app/scheduler_runtime.py:142:    except Exception as exc:
+src/polysignal_lab/app/scheduler_runtime.py:151:    except Exception as exc:
+src/polysignal_lab/app/scheduler_runtime.py:165:    except Exception as exc:
+src/polysignal_lab/app/scheduler_market_data.py:31:        except Exception:
+src/polysignal_lab/app/scheduler_market_data.py:43:        except Exception:
+src/polysignal_lab/app/scheduler_market_data.py:91:                    except Exception:
+src/polysignal_lab/app/scheduler_market_data.py:96:    except Exception as exc:
+src/polysignal_lab/app/scheduler.py:3:import asyncio
+Result: inherited broad catches and inherited scheduler.py import asyncio are listed above; no Any/cast/type-ignore/import pandas/dict[str, dict] matched.
+
+Invocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (manual call-order QA)
+manual.discovery_failure_no_stream events=['discover_raise'] result=PASS
+manual.validation_before_init events=['telegram_validate'] result=PASS
+
+Invocation: pgrep -af "python.*(polysignal|pytest)"
+2065862 /usr/bin/zsh -c {   printf '\n### Todo 6 scheduler refactor evidence - 2026-06-22\n';   printf 'Scope: behavior-preserving extraction of scheduler lifecycle, market data, processing, reporting, runtime, and state responsibilities.\n';   printf 'Stale-state reread: latest gate rejection summary from verify-todo-6-after-repair-gate-review.md follows.\n';   rg -n "approval is blocked|post-repair|programming|remove-ai-slops|oversized|startup order|auth" .omo/evidence/verify-todo-6-after-repair-gate-review.md || true;   printf '\nInvocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_scheduler.py tests/test_market_data.py -q\n';   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_scheduler.py tests/test_market_data.py -q;   printf '\nInvocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider focused Todo 6 scheduler scenarios -q\n';   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_scheduler.py::test_refresh_markets_before_starting_streams tests/test_scheduler.py::test_market_ws_subscribes_after_token_discovery tests/test_scheduler.py::test_empty_market_refresh_does_not_subscribe_market_ws tests/test_scheduler.py::test_market_ws_resubscribes_when_token_set_changes tests/test_scheduler.py::test_initial_discovery_failure_prevents_stream_startup tests/test_scheduler.py::test_live_telegram_validation_runs_before_strategy_and_paper_initialization -q;   printf '\nInvocation: bash -lc '\''! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|order submit|submit_order" src/polysignal_lab/app src/polysignal_lab/data'\''\n';   bash -lc '! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|order submit|submit_order" src/polysignal_lab/app src/polysignal_lab/data';   printf 'Result: PASS, no authenticated/trading client surface matched.\n';   printf '\nInvocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile touched scheduler Python files\n';   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/app/scheduler.py src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_state.py src/polysignal_lab/app/scheduler_processing.py src/polysignal_lab/app/scheduler_reporting.py src/polysignal_lab/app/scheduler_runtime.py;   printf 'Result: PASS, exit 0.\n';   printf '\nInvocation: awk pure LOC size check for every touched Python file\n';   for f in src/polysignal_lab/app/scheduler.py src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_state.py src/polysignal_lab/app/scheduler_processing.py src/polysignal_lab/app/scheduler_reporting.py src/polysignal_lab/app/scheduler_runtime.py; do printf '%s ' "$f"; awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(#)/' "$f" | wc -l; done;   printf '\nInvocation: rg -n "\\bAny\\b|cast\\(|type:\\s*ignore|import asyncio|import pandas|except (Exception|BaseException)|dict\\[str, dict\\]" touched scheduler Python files\n';   rg -n "\bAny\b|cast\(|type:\s*ignore|import asyncio|import pandas|except (Exception|BaseException)|dict\[str, dict\]" src/polysignal_lab/app/scheduler.py src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_state.py src/polysignal_lab/app/scheduler_processing.py src/polysignal_lab/app/scheduler_reporting.py src/polysignal_lab/app/scheduler_runtime.py || true;   printf 'Result: inherited broad catches and inherited scheduler.py import asyncio are listed above; no Any/cast/type-ignore/import pandas/dict[str, dict] matched.\n';   printf '\nInvocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (manual call-order QA)\n';   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<'PY' import asyncio import tempfile from pathlib import Path  from polysignal_lab.app.scheduler import PolySignalScheduler, TelegramStartupConfigError from polysignal_lab.config import Settings   def settings() -> Settings:     cfg = Settings()     cfg.telegram.enabled = False     cfg.telegram.send_signals = False     cfg.telegram.send_paper_results = False     cfg.telegram.send_daily_report = False     cfg.data.binance.enabled = False     cfg.data.polymarket.use_market_ws = True     cfg.markets.refresh_interval_sec = 0     return cfg   async def discovery_failure_no_stream() -> None:     events: list[str] = []     with tempfile.TemporaryDirectory() as tmp:         scheduler = PolySignalScheduler(settings(), base_dir=Path(tmp))          async def refresh_markets_once() -> None:             events.append("discover_raise")             raise RuntimeError("discovery failed")          async def start_websockets() -> list[asyncio.Task]:             events.append("streams_started")             return []          scheduler.refresh_markets_once = refresh_markets_once         scheduler.start_websockets = start_websockets         try:             await scheduler.run()         except RuntimeError as exc:             result = "PASS" if str(exc) == "discovery failed" and events == ["discover_raise"] else "FAIL"             print(f"manual.discovery_failure_no_stream events={events!r} result={result}")         finally:             scheduler.sqlite.close()   async def validation_before_init() -> None:     events: list[str] = []     cfg = settings()     cfg.telegram.enabled = True     cfg.telegram.dry_run = False     cfg.telegram.send_signals = True     with tempfile.TemporaryDirectory() as tmp:         scheduler = PolySignalScheduler(cfg, base_dir=Path(tmp))          def validate_telegram_startup() -> None:             events.append("telegram_validate")             raise TelegramStartupConfigError(("TELEGRAM_BOT_TOKEN",))          scheduler._validate_telegram_startup = validate_telegram_startup         try:             await scheduler.run()         except TelegramStartupConfigError:             result = "PASS" if events == ["telegram_validate"] else "FAIL"             print(f"manual.validation_before_init events={events!r} result={result}")         finally:             scheduler.sqlite.close()   asyncio.run(discovery_failure_no_stream()) asyncio.run(validation_before_init()) PY   printf '\nInvocation: pgrep -af "python.*(polysignal|pytest)"\n';   pgrep -af "python.*(polysignal|pytest)" || true;   printf 'Result: PASS if no long-lived scheduler/websocket/pytest process appears other than this capture command.\n'; } 2>&1 | tee -a .omo/evidence/task-6-complete-prd-old-remove-demo.txt
+2065865 /usr/bin/zsh -c {   printf '\n### Todo 6 scheduler refactor evidence - 2026-06-22\n';   printf 'Scope: behavior-preserving extraction of scheduler lifecycle, market data, processing, reporting, runtime, and state responsibilities.\n';   printf 'Stale-state reread: latest gate rejection summary from verify-todo-6-after-repair-gate-review.md follows.\n';   rg -n "approval is blocked|post-repair|programming|remove-ai-slops|oversized|startup order|auth" .omo/evidence/verify-todo-6-after-repair-gate-review.md || true;   printf '\nInvocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_scheduler.py tests/test_market_data.py -q\n';   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_scheduler.py tests/test_market_data.py -q;   printf '\nInvocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider focused Todo 6 scheduler scenarios -q\n';   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider tests/test_scheduler.py::test_refresh_markets_before_starting_streams tests/test_scheduler.py::test_market_ws_subscribes_after_token_discovery tests/test_scheduler.py::test_empty_market_refresh_does_not_subscribe_market_ws tests/test_scheduler.py::test_market_ws_resubscribes_when_token_set_changes tests/test_scheduler.py::test_initial_discovery_failure_prevents_stream_startup tests/test_scheduler.py::test_live_telegram_validation_runs_before_strategy_and_paper_initialization -q;   printf '\nInvocation: bash -lc '\''! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|order submit|submit_order" src/polysignal_lab/app src/polysignal_lab/data'\''\n';   bash -lc '! rg "Authorization|private_key|create_order|cancel_order|POLY_|api_secret|signer|order submit|submit_order" src/polysignal_lab/app src/polysignal_lab/data';   printf 'Result: PASS, no authenticated/trading client surface matched.\n';   printf '\nInvocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile touched scheduler Python files\n';   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m py_compile src/polysignal_lab/app/scheduler.py src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_state.py src/polysignal_lab/app/scheduler_processing.py src/polysignal_lab/app/scheduler_reporting.py src/polysignal_lab/app/scheduler_runtime.py;   printf 'Result: PASS, exit 0.\n';   printf '\nInvocation: awk pure LOC size check for every touched Python file\n';   for f in src/polysignal_lab/app/scheduler.py src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_state.py src/polysignal_lab/app/scheduler_processing.py src/polysignal_lab/app/scheduler_reporting.py src/polysignal_lab/app/scheduler_runtime.py; do printf '%s ' "$f"; awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(#)/' "$f" | wc -l; done;   printf '\nInvocation: rg -n "\\bAny\\b|cast\\(|type:\\s*ignore|import asyncio|import pandas|except (Exception|BaseException)|dict\\[str, dict\\]" touched scheduler Python files\n';   rg -n "\bAny\b|cast\(|type:\s*ignore|import asyncio|import pandas|except (Exception|BaseException)|dict\[str, dict\]" src/polysignal_lab/app/scheduler.py src/polysignal_lab/app/scheduler_market_data.py src/polysignal_lab/app/scheduler_state.py src/polysignal_lab/app/scheduler_processing.py src/polysignal_lab/app/scheduler_reporting.py src/polysignal_lab/app/scheduler_runtime.py || true;   printf 'Result: inherited broad catches and inherited scheduler.py import asyncio are listed above; no Any/cast/type-ignore/import pandas/dict[str, dict] matched.\n';   printf '\nInvocation: PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<PY (manual call-order QA)\n';   PYTHONDONTWRITEBYTECODE=1 .venv/bin/python - <<'PY' import asyncio import tempfile from pathlib import Path  from polysignal_lab.app.scheduler import PolySignalScheduler, TelegramStartupConfigError from polysignal_lab.config import Settings   def settings() -> Settings:     cfg = Settings()     cfg.telegram.enabled = False     cfg.telegram.send_signals = False     cfg.telegram.send_paper_results = False     cfg.telegram.send_daily_report = False     cfg.data.binance.enabled = False     cfg.data.polymarket.use_market_ws = True     cfg.markets.refresh_interval_sec = 0     return cfg   async def discovery_failure_no_stream() -> None:     events: list[str] = []     with tempfile.TemporaryDirectory() as tmp:         scheduler = PolySignalScheduler(settings(), base_dir=Path(tmp))          async def refresh_markets_once() -> None:             events.append("discover_raise")             raise RuntimeError("discovery failed")          async def start_websockets() -> list[asyncio.Task]:             events.append("streams_started")             return []          scheduler.refresh_markets_once = refresh_markets_once         scheduler.start_websockets = start_websockets         try:             await scheduler.run()         except RuntimeError as exc:             result = "PASS" if str(exc) == "discovery failed" and events == ["discover_raise"] else "FAIL"             print(f"manual.discovery_failure_no_stream events={events!r} result={result}")         finally:             scheduler.sqlite.close()   async def validation_before_init() -> None:     events: list[str] = []     cfg = settings()     cfg.telegram.enabled = True     cfg.telegram.dry_run = False     cfg.telegram.send_signals = True     with tempfile.TemporaryDirectory() as tmp:         scheduler = PolySignalScheduler(cfg, base_dir=Path(tmp))          def validate_telegram_startup() -> None:             events.append("telegram_validate")             raise TelegramStartupConfigError(("TELEGRAM_BOT_TOKEN",))          scheduler._validate_telegram_startup = validate_telegram_startup         try:             await scheduler.run()         except TelegramStartupConfigError:             result = "PASS" if events == ["telegram_validate"] else "FAIL"             print(f"manual.validation_before_init events={events!r} result={result}")         finally:             scheduler.sqlite.close()   asyncio.run(discovery_failure_no_stream()) asyncio.run(validation_before_init()) PY   printf '\nInvocation: pgrep -af "python.*(polysignal|pytest)"\n';   pgrep -af "python.*(polysignal|pytest)" || true;   printf 'Result: PASS if no long-lived scheduler/websocket/pytest process appears other than this capture command.\n'; } 2>&1 | tee -a .omo/evidence/task-6-complete-prd-old-remove-demo.txt
+Result: PASS if no long-lived scheduler/websocket/pytest process appears other than this capture command.
+
+### Todo 6 refactor artifact and cleanup closeout - 2026-06-22
+Invocation: test -f .omo/evidence/complete-prd-old-remove-demo-todo-6-code-review.md && rg "programming|remove-ai-slops|overfit|deletion-only|oversized|startup order|broad catch|WIN|auth" .omo/evidence/complete-prd-old-remove-demo-todo-6-code-review.md
+Todo 6 scheduler behavior was preserved while the oversized scheduler module was split by responsibility:
+| `src/polysignal_lab/app/scheduler.py` | 152 | PASS, no longer oversized |
+- No touched Python file exceeds the 250 pure LOC `programming` ceiling.
+- The broad catch grep lists inherited scheduler resilience paths moved into smaller modules. They remain around existing storage, network, strategy, Telegram publish, settlement, and shutdown boundaries; no startup broad `except Exception` wrapper was added back.
+## remove-ai-slops / Overfit Coverage
+- The refactor is behavior-preserving extraction, not a deletion-only cleanup.
+- Existing Todo 6 tests are behavioral: startup order, discovery failure no-stream, non-empty subscription, empty no-subscribe, resubscribe, and validation-before-init. They are not deletion-only tests.
+- No auth/trading clients: forbidden auth/order-surface grep over `src/polysignal_lab/app` and `src/polysignal_lab/data` returned no matches.
+- Result-state scope note: this Todo 6 refactor did not alter paper settlement result semantics; no unrelated WIN/LOSS/VOID/UNKNOWN result-state behavior was changed.
+- Quality grep -> documented inherited broad catch and inherited scheduler `import asyncio` matches; no `Any`, `cast(`, `type: ignore`, `import pandas`, or `dict[str, dict]` matches.
+- Existing broad `except Exception` resilience behavior remains in moved code paths. This refactor did not narrow those catches because Todo 6 scope requires behavior-preserving extraction and the catches are existing I/O/runtime isolation behavior, not the removed startup-order broad catch.
+- `ruff` is not installed in `.venv`, so the optional linter check could not run locally; requested pytest, py_compile, size, auth guard, quality grep, and manual QA evidence are current and recorded.
+
+Stale-state current scheduler reread: codegraph_node src/polysignal_lab/app/scheduler.py reported 186 total lines and wrapper-only scheduler surface after refactor.
+
+Invocation: find src/polysignal_lab/app -type d -name __pycache__ -print
+Result: PASS, no app __pycache__ directories remain.
+
+Invocation: pgrep -af "python.*(polysignal|pytest)"
+2071714 /usr/bin/zsh -c {   printf '\n### Todo 6 refactor artifact and cleanup closeout - 2026-06-22\n';   printf 'Invocation: test -f .omo/evidence/complete-prd-old-remove-demo-todo-6-code-review.md && rg "programming|remove-ai-slops|overfit|deletion-only|oversized|startup order|broad catch|WIN|auth" .omo/evidence/complete-prd-old-remove-demo-todo-6-code-review.md\n';   test -f .omo/evidence/complete-prd-old-remove-demo-todo-6-code-review.md && rg "programming|remove-ai-slops|overfit|deletion-only|oversized|startup order|broad catch|WIN|auth" .omo/evidence/complete-prd-old-remove-demo-todo-6-code-review.md;   printf '\nStale-state current scheduler reread: codegraph_node src/polysignal_lab/app/scheduler.py reported 186 total lines and wrapper-only scheduler surface after refactor.\n';   printf '\nInvocation: find src/polysignal_lab/app -type d -name __pycache__ -print\n';   find src/polysignal_lab/app -type d -name __pycache__ -print;   printf 'Result: PASS, no app __pycache__ directories remain.\n';   printf '\nInvocation: pgrep -af "python.*(polysignal|pytest)"\n';   pgrep -af "python.*(polysignal|pytest)" || true;   printf 'Result: PASS if no long-lived scheduler/websocket/pytest process appears other than this capture command.\n';   printf '\nInvocation: git status --short\n';   git status --short; } 2>&1 | tee -a .omo/evidence/task-6-complete-prd-old-remove-demo.txt
+2071717 /usr/bin/zsh -c {   printf '\n### Todo 6 refactor artifact and cleanup closeout - 2026-06-22\n';   printf 'Invocation: test -f .omo/evidence/complete-prd-old-remove-demo-todo-6-code-review.md && rg "programming|remove-ai-slops|overfit|deletion-only|oversized|startup order|broad catch|WIN|auth" .omo/evidence/complete-prd-old-remove-demo-todo-6-code-review.md\n';   test -f .omo/evidence/complete-prd-old-remove-demo-todo-6-code-review.md && rg "programming|remove-ai-slops|overfit|deletion-only|oversized|startup order|broad catch|WIN|auth" .omo/evidence/complete-prd-old-remove-demo-todo-6-code-review.md;   printf '\nStale-state current scheduler reread: codegraph_node src/polysignal_lab/app/scheduler.py reported 186 total lines and wrapper-only scheduler surface after refactor.\n';   printf '\nInvocation: find src/polysignal_lab/app -type d -name __pycache__ -print\n';   find src/polysignal_lab/app -type d -name __pycache__ -print;   printf 'Result: PASS, no app __pycache__ directories remain.\n';   printf '\nInvocation: pgrep -af "python.*(polysignal|pytest)"\n';   pgrep -af "python.*(polysignal|pytest)" || true;   printf 'Result: PASS if no long-lived scheduler/websocket/pytest process appears other than this capture command.\n';   printf '\nInvocation: git status --short\n';   git status --short; } 2>&1 | tee -a .omo/evidence/task-6-complete-prd-old-remove-demo.txt
+Result: PASS if no long-lived scheduler/websocket/pytest process appears other than this capture command.
+
+Invocation: git status --short
+ M .gitignore
+ M config/signal_bot.yaml
+ M docker-entrypoint.sh
+ D src/polysignal_lab/app/demo.py
+ D src/polysignal_lab/app/demo_data.py
+ M src/polysignal_lab/app/scheduler.py
+ M src/polysignal_lab/config.py
+ M src/polysignal_lab/domain/enums.py
+ M src/polysignal_lab/observability/safety.py
+ M src/polysignal_lab/paper/report.py
+ M src/polysignal_lab/paper/settlement.py
+ D src/polysignal_lab/strategies/binary_momentum.py
+ D src/polysignal_lab/strategies/cross_market_bot.py
+ D src/polysignal_lab/strategies/dump_hedge.py
+ M src/polysignal_lab/strategies/factory.py
+ D src/polysignal_lab/strategies/fibonacci_bot.py
+ D src/polysignal_lab/strategies/low_side_dual_reversion.py
+ D src/polysignal_lab/strategies/mid_price_sizing.py
+ D src/polysignal_lab/strategies/ninety_nine_cent_sniper.py
+ D src/polysignal_lab/strategies/one_cent_buy.py
+ D src/polysignal_lab/strategies/pre_order_market.py
+ D src/polysignal_lab/strategies/skew_mean_reversion.py
+?? .claude/
+?? .dockerignore
+?? .github/
+?? .mcp.json
+?? .omo/
+?? Dockerfile
+?? LICENSE
+?? README.md
+?? docker-compose.yml
+?? docs/
+?? polyscan.py
+?? pyproject.toml
+?? refined_scan.py
+?? src/polysignal_lab/app/scheduler_market_data.py
+?? src/polysignal_lab/app/scheduler_processing.py
+?? src/polysignal_lab/app/scheduler_reporting.py
+?? src/polysignal_lab/app/scheduler_runtime.py
+?? src/polysignal_lab/app/scheduler_state.py
+?? src/polysignal_lab/strategies/config.py
+?? tests/
+?? uv.lock

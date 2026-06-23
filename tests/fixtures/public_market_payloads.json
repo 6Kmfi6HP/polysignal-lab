@@ -1,0 +1,153 @@
+{
+  "polymarket_book": {
+    "event_type": "book",
+    "market": "0xcondition",
+    "asset_id": "token-up",
+    "timestamp": "1710000000000",
+    "hash": "book-hash",
+    "bids": [
+      {
+        "price": "0.40",
+        "size": "12"
+      }
+    ],
+    "asks": [
+      {
+        "price": "0.52",
+        "size": "8"
+      }
+    ],
+    "min_order_size": "5",
+    "tick_size": "0.01",
+    "last_trade_price": "0.49"
+  },
+  "polymarket_price_change": {
+    "event_type": "price_change",
+    "price_changes": [
+      {
+        "asset_id": "token-up",
+        "price": "0.41",
+        "size": "7",
+        "side": "BUY",
+        "hash": "change-hash",
+        "best_bid": "0.41",
+        "best_ask": "0.52"
+      },
+      {
+        "asset_id": "token-up",
+        "price": "0.52",
+        "size": "0",
+        "side": "SELL",
+        "hash": "remove-hash",
+        "best_bid": "0.41",
+        "best_ask": "0.53"
+      }
+    ]
+  },
+  "polymarket_best_bid_ask": {
+    "event_type": "best_bid_ask",
+    "asset_id": "token-up",
+    "best_bid": "0.42",
+    "best_ask": "0.54",
+    "spread": "0.12"
+  },
+  "polymarket_last_trade_price": {
+    "event_type": "last_trade_price",
+    "asset_id": "token-up",
+    "price": "0.51",
+    "side": "BUY",
+    "size": "20",
+    "timestamp": "1710000000100"
+  },
+  "polymarket_new_market": {
+    "event_type": "new_market",
+    "condition_id": "0xnewcondition",
+    "active": true,
+    "clob_token_ids": [
+      "token-new-up",
+      "token-new-down"
+    ]
+  },
+  "polymarket_market_resolved": {
+    "event_type": "market_resolved",
+    "condition_id": "0xcondition",
+    "winning_asset_id": "token-up",
+    "winning_outcome": "Up"
+  },
+  "binance_book_ticker": {
+    "stream": "btcusdt@bookTicker",
+    "data": {
+      "u": 400900217,
+      "s": "BTCUSDT",
+      "b": "100.10",
+      "B": "3.4",
+      "a": "100.20",
+      "A": "5.6"
+    }
+  },
+  "gamma_event_page_1": [
+    {
+      "id": "event-1",
+      "slug": "btc-updown-5m-1710000000",
+      "title": "Bitcoin Up or Down - 5m",
+      "active": true,
+      "closed": false,
+      "markets": [
+        {
+          "id": "market-1",
+          "conditionId": "0xcondition",
+          "slug": "btc-updown-5m-1710000000",
+          "question": "Bitcoin Up or Down - 5m",
+          "active": true,
+          "closed": false,
+          "outcomes": "[\"Up\", \"Down\"]",
+          "clobTokenIds": "[\"token-up\", \"token-down\"]"
+        }
+      ]
+    },
+    {
+      "id": "event-closed",
+      "slug": "eth-updown-5m-1710000000",
+      "title": "Ethereum Up or Down - 5m",
+      "active": false,
+      "closed": true,
+      "markets": [
+        {
+          "id": "market-closed",
+          "conditionId": "0xclosed",
+          "slug": "eth-updown-5m-1710000000",
+          "active": false,
+          "closed": true,
+          "outcomes": "[\"Up\", \"Down\"]",
+          "clobTokenIds": "[\"closed-up\", \"closed-down\"]"
+        }
+      ]
+    }
+  ],
+  "gamma_event_page_2": [
+    {
+      "id": "event-unsupported",
+      "slug": "ada-updown-5m-1710000000",
+      "title": "Cardano Up or Down - 5m",
+      "active": true,
+      "closed": false,
+      "markets": [
+        {
+          "id": "market-unsupported",
+          "conditionId": "0xunsupported",
+          "slug": "ada-updown-5m-1710000000",
+          "active": true,
+          "closed": false,
+          "outcomes": "[\"Up\", \"Down\"]",
+          "clobTokenIds": "[\"ada-up\", \"ada-down\"]"
+        }
+      ]
+    }
+  ],
+  "clob_midpoint": {
+    "mid_price": "0.475"
+  },
+  "clob_spread": {
+    "spread": "0.12"
+  }
+}

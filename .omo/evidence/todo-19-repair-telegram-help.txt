@@ -1,0 +1,12 @@
+usage: telegram_qa.py [-h] [--live] [--evidence EVIDENCE] [--message MESSAGE]
+                      [--message-type MESSAGE_TYPE] [--max-chars MAX_CHARS]
+                      [--retry-attempts RETRY_ATTEMPTS]
+
+options:
+  -h, --help            show this help message and exit
+  --live
+  --evidence EVIDENCE
+  --message MESSAGE
+  --message-type MESSAGE_TYPE
+  --max-chars MAX_CHARS
+  --retry-attempts RETRY_ATTEMPTS

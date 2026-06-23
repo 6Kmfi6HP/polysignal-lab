@@ -1,0 +1,72 @@
+Task 16 evidence: complete read-only dashboard APIs and leaderboard from real stored data.
+
+Dirty worktree:
+- Initial `git status --short` showed many pre-existing modified/deleted/untracked files across config, scheduler, storage, strategies, docs, tests, and .omo.
+- Files intentionally changed for this task only:
+  - DESIGN.md
+  - src/polysignal_lab/dashboard/app.py
+  - tests/test_dashboard.py
+  - .omo/evidence/task-16-complete-prd-old-remove-demo.txt
+  - .omo/evidence/complete-prd-old-remove-demo-todo-16-code-review.md
+  - .omo/evidence/todo-16-manual-qa-notepad.md
+
+Implementation summary:
+- `/health`, `/api/overview`, `/api/signals`, `/api/rejected-signals`, `/api/positions`, `/api/trades`, `/api/leaderboard`, and `/` remain GET-only FastAPI routes.
+- `/api/overview` reads counts from `SQLiteStore.counts()` and latest daily report from `SQLiteStore.restore_daily_reports(limit=1)`.
+- `/api/leaderboard` now delegates to `SQLiteStore.restore_strategy_leaderboard()`, preserving Todo 15 stored report restoration and PRD win-rate math: wins / closed_positions, including voids in the denominator.
+- `/` renders a dense read-only operations dashboard from stored SQLite rows: counts, latest daily report, recent signals, recent paper trades, and leaderboard preview.
+- Root DESIGN.md was created before dashboard UI changes with 7 required sections and mirrored CSS tokens.
+
+Acceptance command:
+- Scenario: full dashboard acceptance suite.
+- Invocation: `.venv/bin/python -m pytest tests/test_dashboard.py -q`
+- Binary observable: exit code 0; output `3 passed`.
+- Captured artifact path: `.omo/evidence/task-16-complete-prd-old-remove-demo.txt`
+- Output summary: `... [100%]`, one existing StarletteDeprecationWarning from FastAPI TestClient/httpx.
+
+Happy QA command:
+- Scenario: read-only endpoint payloads and leaderboard math from stored rows.
+- Invocation: `.venv/bin/python -m pytest tests/test_dashboard.py::test_dashboard_readonly_endpoints_return_stored_data tests/test_dashboard.py::test_leaderboard_uses_sqlite_report_data -q`
+- Binary observable: exit code 0; output `2 passed`.
+- Captured artifact path: `.omo/evidence/todo-16-manual-qa-notepad.md`
+- Output summary: both tests passed with the existing TestClient warning.
+
+Failure QA command:
+- Scenario: write methods are rejected on every dashboard route.
+- Invocation: `.venv/bin/python -m pytest tests/test_dashboard.py::test_dashboard_rejects_write_methods -q`
+- Binary observable: exit code 0; output `1 passed`.
+- Captured artifact path: `.omo/evidence/todo-16-manual-qa-notepad.md`
+- Output summary: POST/PUT/PATCH/DELETE returned 405 for `/`, `/health`, `/api/overview`, `/api/signals`, `/api/rejected-signals`, `/api/positions`, `/api/trades`, and `/api/leaderboard`.
+
+Endpoint smoke:
+- Scenario: temp populated SQLite store returns non-empty overview and leaderboard rows.
+- Invocation: `.venv/bin/python - <<'PY' ... PY; rm -f /tmp/polysignal-dashboard-smoke.sqlite3`
+- Binary observable: exit code 0; printed `{'overview_report': 'smoke-report-1', 'daily_reports': 1, 'leaderboard_rows': 1, 'top_win_rate': 0.5}`.
+- Captured artifact path: `.omo/evidence/todo-16-manual-qa-notepad.md`
+
+Visual/frontend QA:
+- Scenario: HTML semantic/readability assertions via FastAPI TestClient.
+- Invocation: `.venv/bin/python -m pytest tests/test_dashboard.py::test_dashboard_readonly_endpoints_return_stored_data -q`
+- Binary observable: exit code 0; assertions covered `header`, `nav`, `main`, stored `ptb_diff`/signal content, no forms, no buttons, no lorem copy, no order-placement copy, no `create_order` copy.
+- Browser screenshot attempt: `.venv/bin/python - <<'PY' ... import playwright ... PY`
+- Binary observable: exit code 1 due `ModuleNotFoundError: No module named 'playwright'`.
+- Screenshot artifact paths: unavailable because Playwright is not installed in `.venv`; no server was left running.
+
+Adversarial checks:
+- dirty_worktree: preserved unrelated pre-existing changes; only dashboard/design/test/evidence files were touched.
+- stale_state: current dashboard/storage files were inspected before edits; tests were rerun after every code fix.
+- misleading_success_output: tests assert actual persisted values: signal id, rejected candidate id, position id `pp-1`, trade id `pt-1`, daily report id `dr-1`, leaderboard `late_consensus` void-inclusive win rate `0.5`.
+- readonly_surface: no write decorators added; write methods return 405 by test.
+- real_storage_data: all API/HTML tests populate a temp `SQLiteStore` through public insert/upsert APIs and read through the FastAPI surface.
+- leaderboard_math: `/api/leaderboard` uses `restore_strategy_leaderboard()` and tests one WIN plus one VOID gives `1 / 2 = 0.5`.
+- design_system: DESIGN.md created before UI implementation; CSS raw colors are variable definitions mirrored from DESIGN.md.
+- accessibility/performance: semantic landmarks, skip link, title/meta/viewport, table captions, focus states, no JS bundles.
+- temp_db_hygiene: `find data -maxdepth 1 \( -name '*.sqlite' -o -name '*.sqlite3' \) -print` produced no output.
+- no_real_trading: `rg "@app\.(post|put|patch|delete)|private_key|mnemonic|create_order|cancel_order|submit_order|place_order|authenticated" src/polysignal_lab/dashboard/app.py DESIGN.md` produced no output.
+- programming_quality: pure LOC check after final code: app.py 216, test_dashboard.py 113.
+- env_secrecy: no `.env` or dotenv files were read.
+- cleanup: no long-lived server/process was started.
+
+Residual risks:
+- Playwright/browser screenshots could not be captured because Playwright is absent from the project virtualenv.
+- `src/polysignal_lab/dashboard/app.py` is in the 200-250 pure-LOC warning band at 216; the next UI expansion should split HTML rendering helpers/templates before adding more lines.

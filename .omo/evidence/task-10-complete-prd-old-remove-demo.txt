@@ -1,0 +1,170 @@
+Todo 10 DoneClaim - Late Consensus PRD semantics
+Timestamp UTC: 2026-06-22T04:07:27Z
+
+Changed files:
+- src/polysignal_lab/strategies/late_consensus.py
+- src/polysignal_lab/strategies/config.py
+- tests/test_late_consensus.py
+- .omo/evidence/task-10-complete-prd-old-remove-demo.txt
+- .omo/evidence/complete-prd-old-remove-demo-todo-10-code-review.md
+- .omo/evidence/todo-10-manual-qa-notepad.md
+
+Worktree discipline:
+- Initial `git status --short` showed many pre-existing modified/deleted/untracked files across config, app, data, strategy, docs, tests, and .omo.
+- This task touched only Late Consensus strategy/config, a new dedicated Late Consensus test module, and requested evidence files.
+- Did not read `.env`; no command opened or printed `.env`.
+- Did not mark the plan checkbox.
+
+Red-first proof:
+- Scenario: requested acceptance command before implementation.
+  Invocation: `.venv/bin/python -m pytest tests/test_late_consensus.py tests/test_strategies.py -q`
+  Binary observable: exit code 4.
+  Captured output: `ERROR: file or directory not found: tests/test_late_consensus.py`
+- Scenario: new PRD tests before implementation.
+  Invocation: `.venv/bin/python -m pytest tests/test_late_consensus.py tests/test_strategies.py -q`
+  Binary observable: exit code 1.
+  Captured output: 4 failed, 6 passed. Failures proved old V3 reason codes, wide spread accepted, stale spot accepted, and weak spot movement accepted.
+
+Implemented behavior:
+- `ask_sum`: rejects missing/non-positive/above `max_ask_sum`, emits `ask_sum` and `max_ask_sum`.
+- `confidence_abs`: rejects below `min_confidence` compatibility value or `min_confidence_abs`, emits `confidence_abs`.
+- `favorite side`: requires non-tie favorite by ask price, emits `favorite_side` and `favorite_price`.
+- `max_entry_price`: rejects favorite ask above cap, emits `max_entry_price`.
+- `max_spread`: rejects missing/wide CLOB book spread, emits `max_spread` and `max_allowed_spread`.
+- Freshness: rejects missing/stale UP or DOWN orderbook and missing/stale Binance spot, emits orderbook and spot freshness metrics.
+- Late-entry window: requires `0 < seconds_to_close <= entry_window_sec`, emits `seconds_to_close` and `entry_window_sec`.
+- Flip guard: records valid candidate-side state after other gates and blocks rapid side flips.
+- Binance spot movement/freshness: requires fresh spot and spot-vs-PTB movement magnitude/direction to agree with favorite side.
+- Asset surface: strategy emits only BTC/ETH/SOL/XRP even if config or market data includes another asset.
+- Reason codes: replaced old `LATE_V3_*` codes with concrete `LATE_CONSENSUS_*` PRD-readable codes.
+
+Acceptance criteria:
+- Scenario: full Todo 10 suite.
+  Invocation: `.venv/bin/python -m pytest tests/test_late_consensus.py tests/test_strategies.py -q`
+  Binary observable: exit code 0.
+  Captured output: `.......... [100%]`
+  Artifact path: `.omo/evidence/task-10-complete-prd-old-remove-demo.txt`
+- Scenario: happy QA.
+  Invocation: `.venv/bin/python -m pytest tests/test_late_consensus.py::test_late_consensus_emits_multi_asset_signal_with_metrics -q`
+  Binary observable: exit code 0.
+  Captured output: `. [100%]`
+  Artifact path: `.omo/evidence/todo-10-manual-qa-notepad.md`
+- Scenario: failure QA.
+  Invocation: `.venv/bin/python -m pytest tests/test_late_consensus.py::test_late_consensus_rejects_wide_spread tests/test_late_consensus.py::test_late_consensus_rejects_stale_spot_or_flip_guard -q`
+  Binary observable: exit code 0.
+  Captured output: `.. [100%]`
+  Artifact path: `.omo/evidence/todo-10-manual-qa-notepad.md`
+
+Additional verification:
+- Scenario: downstream consensus smoke.
+  Invocation: `.venv/bin/python -m pytest tests/test_signal_layer.py::test_consensus_engine_merges_two_strategies -q`
+  Binary observable: exit code 0.
+  Captured output: `. [100%]`
+- Scenario: compile touched Python files.
+  Invocation: `.venv/bin/python -m py_compile src/polysignal_lab/strategies/late_consensus.py src/polysignal_lab/strategies/config.py tests/test_late_consensus.py`
+  Binary observable: exit code 0.
+  Captured output: empty stdout/stderr.
+- Scenario: touched-file pure LOC scan.
+  Invocation: `for f in src/polysignal_lab/strategies/late_consensus.py src/polysignal_lab/strategies/config.py tests/test_late_consensus.py; do printf '%s ' "$f"; awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(#|--)/' "$f" | wc -l; done`
+  Binary observable: exit code 0.
+  Captured output: late_consensus.py 200, strategies/config.py 94, tests/test_late_consensus.py 160.
+- Scenario: quality grep for touched files.
+  Invocation: `! rg "demo_data|run_demo|fake market data|offline demo|typing import Any|cast\(|type: ignore|except Exception|import asyncio" src/polysignal_lab/strategies/late_consensus.py src/polysignal_lab/strategies/config.py tests/test_late_consensus.py`
+  Binary observable: exit code 0.
+  Captured output: empty stdout/stderr.
+- Scenario: forbidden asset grep.
+  Invocation: `! rg "DOGE|BNB|HYPE" config src tests docs/PRD_OLD_COMPLIANCE.md README.md -g '!*.env'`
+  Binary observable: exit code 0.
+  Captured output: empty stdout/stderr.
+
+Adversarial classes:
+- dirty_worktree: verified up front; did not revert or normalize unrelated modified/deleted/untracked files.
+- stale_state: tests build deterministic fresh/stale snapshots from current `utc_now()` and assert freshness rejection paths directly.
+- misleading_success_output: tests assert concrete signals, reason codes, and metrics, not only non-empty lists.
+- malformed_input: covered missing unsupported asset path, stale/wide books via spread/freshness gates, stale spot, insufficient spot movement, and confidence rejects.
+- strategy_semantics: covered ask_sum, confidence_abs, favorite side, max entry, max spread, freshness, seconds-to-close window, flip guard, and Binance spot movement/freshness.
+- no_forbidden_assets: grep proves DOGE/BNB/HYPE absent from config/src/tests/docs compliance/README search surface.
+- no_demo_data: touched-file grep proves no demo/fake market-data surface in this task; tests use deterministic factories only.
+- programming_quality: py_compile, pure LOC scan, and quality grep passed; touched Python files are <=250 pure LOC.
+- remove_ai_slops_overfit: tests assert externally visible candidates/reasons/metrics and reject classes rather than private helper outputs.
+- env_secrecy: no `.env` read; grep commands explicitly excluded `.env`.
+- cleanup: no dev servers or long-lived processes started.
+
+Residual risks:
+- Spot movement is interpreted as fresh Binance spot price versus PTB because the current `MarketSnapshot` carries latest spot and PTB, not historical spot movement. This is source-backed by current snapshot inputs and is documented in the manual QA artifact.
+- `src/polysignal_lab/strategies/config.py` was already untracked in the shared worktree; this task used it because Late Consensus config lives there.
+
+Todo 10 Narrow Repair DoneClaim - repeated flip guard and slop review evidence
+Timestamp UTC: 2026-06-22T04:18:45Z
+
+Changed files in this repair:
+- `src/polysignal_lab/strategies/late_consensus.py`
+- `tests/test_late_consensus.py`
+- `.omo/evidence/complete-prd-old-remove-demo-todo-10-code-review.md`
+- `.omo/evidence/todo-10-manual-qa-notepad.md`
+- `.omo/evidence/task-10-complete-prd-old-remove-demo.txt`
+
+Worktree discipline:
+- Initial `git status --short` showed a dirty shared worktree with broad pre-existing modified/deleted/untracked files.
+- This repair did not revert unrelated work and did not mark the plan checkbox.
+- `.env` was not read.
+
+Red-first proof:
+- Scenario: repeated flip guard state poisoning.
+  Invocation: `.venv/bin/python -m pytest tests/test_late_consensus.py::test_late_consensus_rejects_repeated_flip_inside_guard -q`
+  Binary observable: exit code 1.
+  Captured output: `FAILED tests/test_late_consensus.py::test_late_consensus_rejects_repeated_flip_inside_guard`; assertion showed `second_down_signals` contained one `SignalCandidate` instead of `[]`.
+  Artifact path: `.omo/evidence/todo-10-manual-qa-notepad.md`
+
+Implemented repair:
+- `_flip_guard_blocks` now reads the previous favorite first, returns `True` before mutating state when an opposite-side candidate is inside `flip_guard_window_sec`, and updates `_last_favorite` only for unblocked candidates.
+- Added `test_late_consensus_rejects_repeated_flip_inside_guard`, which proves first UP emits, first immediate DOWN is blocked, and second immediate DOWN remains blocked.
+- Updated the code-review artifact to explicitly cover required `remove-ai-slops` overfit/slop criteria.
+- Updated the manual QA matrix with the repeated-flip case.
+
+Commands and results:
+- Scenario: repeated flip guard focused regression after fix.
+  Invocation: `.venv/bin/python -m pytest tests/test_late_consensus.py::test_late_consensus_rejects_repeated_flip_inside_guard -q`
+  Binary observable: exit code 0.
+  Captured output: `. [100%]`
+- Scenario: full Todo 10 strategy suite.
+  Invocation: `.venv/bin/python -m pytest tests/test_late_consensus.py tests/test_strategies.py -q`
+  Binary observable: exit code 0.
+  Captured output: `........... [100%]`
+- Scenario: happy Late Consensus metrics selector.
+  Invocation: `.venv/bin/python -m pytest tests/test_late_consensus.py::test_late_consensus_emits_multi_asset_signal_with_metrics -q`
+  Binary observable: exit code 0.
+  Captured output: `. [100%]`
+- Scenario: reject spread/stale/flip selector.
+  Invocation: `.venv/bin/python -m pytest tests/test_late_consensus.py::test_late_consensus_rejects_wide_spread tests/test_late_consensus.py::test_late_consensus_rejects_stale_spot_or_flip_guard -q`
+  Binary observable: exit code 0.
+  Captured output: `.. [100%]`
+- Scenario: downstream consensus smoke.
+  Invocation: `.venv/bin/python -m pytest tests/test_signal_layer.py::test_consensus_engine_merges_two_strategies -q`
+  Binary observable: exit code 0.
+  Captured output: `. [100%]`
+- Scenario: py_compile touched Python files.
+  Invocation: `.venv/bin/python -m py_compile src/polysignal_lab/strategies/late_consensus.py tests/test_late_consensus.py`
+  Binary observable: exit code 0.
+  Captured output: empty stdout/stderr.
+- Scenario: quality grep on touched Python files.
+  Invocation: `if rg -n 'Any|cast\(|type: ignore|import asyncio|import pandas|except Exception|except BaseException|dict\[str, Any\]|dict\[str, object\]' src/polysignal_lab/strategies/late_consensus.py tests/test_late_consensus.py; then exit 1; else exit 0; fi`
+  Binary observable: exit code 0.
+  Captured output: empty stdout/stderr.
+- Scenario: forbidden asset grep across required surfaces.
+  Invocation: `paths=(config src tests docs README.md); if [ -e compliance ]; then paths+=(compliance); fi; if rg -n 'DOGE|BNB|HYPE' "$paths[@]" -g '!*.env'; then exit 1; else exit 0; fi`
+  Binary observable: exit code 0.
+  Captured output: empty stdout/stderr. `compliance` is absent in this checkout.
+- Scenario: touched Python pure LOC scan.
+  Invocation: `for f in src/polysignal_lab/strategies/late_consensus.py tests/test_late_consensus.py; do printf '%s ' "$f"; awk '!/^[[:space:]]*$/ && !/^[[:space:]]*(#|--)/' "$f" | wc -l; done`
+  Binary observable: exit code 0.
+  Captured output: `src/polysignal_lab/strategies/late_consensus.py 199`, `tests/test_late_consensus.py 177`.
+
+Evidence paths:
+- `.omo/evidence/task-10-complete-prd-old-remove-demo.txt`
+- `.omo/evidence/complete-prd-old-remove-demo-todo-10-code-review.md`
+- `.omo/evidence/todo-10-manual-qa-notepad.md`
+
+Residual risks:
+- The broader Todo 10 diff is pre-existing shared work; this repair only changed the flip guard mutation order, added the repeated-flip regression, and updated requested evidence.
+- Historical Binance spot movement remains represented as current spot-vs-PTB in the existing strategy input surface, as documented in prior evidence.

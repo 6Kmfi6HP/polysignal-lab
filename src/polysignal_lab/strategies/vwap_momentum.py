@@ -25,11 +25,21 @@ class TradeHistory:
         self._trades[key].append(Trade(price=price, size=size, timestamp=timestamp))
 
     def _prune(self, key: str, window_sec: float, now: float) -> None:
+        """Trim trades older than `window_sec` from storage.
+
+        The momentum() method accesses _trades directly and needs trades
+        at a specific time band (now - momentum_window_sec ± 1.5s), which
+        may be far outside the VWAP window.  Pruning only kicks in when
+        the list grows beyond a safe bound to avoid unbounded memory; it
+        never removes the last trade.
+        """
         trades = self._trades.get(key)
         if not trades:
             return
+        # Only prune when the list is excessively large
+        if len(trades) < 10_000:
+            return
         cutoff = now - window_sec
-        # Remove expired trades while keeping at least 1 for momentum reference
         idx = 0
         while idx < len(trades) - 1 and trades[idx].timestamp < cutoff:
             idx += 1
@@ -37,8 +47,12 @@ class TradeHistory:
             self._trades[key] = trades[idx:]
 
     def trades_in_window(self, key: str, window_sec: float, now: float) -> list[Trade]:
-        self._prune(key, window_sec, now)
-        return list(self._trades.get(key, []))
+        """Return trades within the window WITHOUT modifying storage."""
+        trades = self._trades.get(key)
+        if not trades:
+            return []
+        cutoff = now - window_sec
+        return [t for t in trades if t.timestamp >= cutoff]
 
     def vwap(self, key: str, window_sec: float, now: float) -> float | None:
         trades = self.trades_in_window(key, window_sec, now)
@@ -49,21 +63,38 @@ class TradeHistory:
             return None
         return sum(t.price * t.size for t in trades) / total_vol
 
-    def momentum_pct(self, key: str, window_sec: float, now: float) -> float | None:
-        """Return the percentage price change over the window.
+    def momentum(self, key: str, window_sec: float, now: float) -> float | None:
+        """Price change vs arithmetic mean price ~window_sec seconds ago.
 
-        Formula: ((P_latest - P_earliest) / P_earliest) * 100
+        Uses a time-band approach matching PolyBullLabs:
+        takes all trades in [now - window_sec - 1.5, now - window_sec + 1.5]
+        (a 3-second band), computes the arithmetic mean of prices in that
+        band, and returns the fractional change from that mean to the
+        current price.
 
-        Returns None if we don't have enough data.
+        Returns None if no trades are found in the band.
         """
-        trades = self.trades_in_window(key, window_sec, now)
-        if len(trades) < 2:
+        trades = self._trades.get(key)
+        if not trades:
             return None
-        p0 = trades[0].price
-        p1 = trades[-1].price
-        if p0 <= 0:
+
+        band_start = now - window_sec - 1.5
+        band_end = now - window_sec + 1.5
+
+        band_prices = [t.price for t in trades if band_start <= t.timestamp <= band_end]
+
+        if not band_prices:
             return None
-        return ((p1 - p0) / p0) * 100.0
+
+        mean_price_ago = sum(band_prices) / len(band_prices)
+        if mean_price_ago <= 0:
+            return None
+
+        current_price = self.latest_price(key)
+        if current_price is None or current_price <= 0:
+            return None
+
+        return (current_price - mean_price_ago) / mean_price_ago
 
     def latest_price(self, key: str) -> float | None:
         trades = self._trades.get(key)
@@ -81,8 +112,9 @@ class VWAPMomentumStrategy(BaseStrategy):
     Evaluates market snapshots using the same logic as PolyBullLabs'
     VWAP momentum bot:
       - VWAP computed over `vwap_window_sec` of trades
-      - Deviation = ((price - VWAP) / VWAP) * 100 (percentage)
-      - Momentum = % price change over `momentum_window_sec`
+      - Deviation = (price - VWAP) / VWAP (fractional)
+      - Momentum = fractional price change vs mean price at
+        `momentum_window_sec` ago (time-band approach)
       - Favorite side = the token with the higher last-trade price
       - Entry window: [min_elapsed_sec, duration - no_entry_before_end_sec]
       - Per-market one-shot entry (can_enter flag)
@@ -194,30 +226,29 @@ class VWAPMomentumStrategy(BaseStrategy):
             return []
 
         # ------------------------------------------------------------------
-        # VWAP & Deviation (percentage)
+        # VWAP & Deviation (fractional)
         # ------------------------------------------------------------------
         vwap = self.trades.vwap(fav_key, self.config.vwap_window_sec, now_ts)
         if vwap is None or vwap <= 0:
             return []
 
-        deviation_pct = ((fav_price - vwap) / vwap) * 100.0
+        deviation_pct = (fav_price - vwap) / vwap
 
         # Condition 4: Deviation in range
         if not (self.config.min_deviation_pct < deviation_pct < self.config.max_deviation_pct):
             return []
 
         # ------------------------------------------------------------------
-        # Momentum (%) — 原版用 WS trade stream 的价格变化
-        # 我们改用 ask 价格序列的动量
+        # Momentum (fractional) — time-band approach matching PolyBullLabs
         # ------------------------------------------------------------------
-        momentum = self.trades.momentum_pct(
+        momentum = self.trades.momentum(
             fav_key, self.config.momentum_window_sec, now_ts
         )
         if momentum is None:
             return []
 
         # Condition 5: Positive momentum above noise threshold
-        if momentum <= self.config.min_momentum_pct:
+        if momentum <= self.config.min_momentum:
             return []
 
         # ------------------------------------------------------------------
@@ -248,7 +279,9 @@ class VWAPMomentumStrategy(BaseStrategy):
             metrics={
                 "vwap": vwap,
                 "deviation_pct": deviation_pct,
+                "deviation_percent": deviation_pct * 100.0,
                 "momentum_pct": momentum,
+                "momentum": momentum,
                 "favorite_side": fav_side.value,
                 "fav_price": fav_price,
                 "elapsed_sec": elapsed_sec,
@@ -264,7 +297,7 @@ class VWAPMomentumStrategy(BaseStrategy):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _compute_confidence(deviation_pct: float, momentum_pct: float) -> float:
+    def _compute_confidence(deviation_pct: float, momentum: float) -> float:
         """Map deviation + momentum to a confidence score in [0, 1].
 
         Matches PolyBullLabs heuristic: stronger deviation and momentum
@@ -272,8 +305,8 @@ class VWAPMomentumStrategy(BaseStrategy):
         """
         # Base confidence
         base = 0.50
-        # Deviation contribution: each 1% deviation beyond minimum adds ~2%
-        dev_contrib = max(0.0, min(0.25, abs(deviation_pct) * 0.02))
-        # Momentum contribution: each 5% momentum adds ~3%
-        mom_contrib = max(0.0, min(0.20, momentum_pct * 0.006))
+        # Deviation contribution: each 1% deviation adds ~2%
+        dev_contrib = max(0.0, min(0.25, abs(deviation_pct) * 2.0))
+        # Momentum contribution: each 1% momentum adds ~3%
+        mom_contrib = max(0.0, min(0.20, momentum * 3.0))
         return min(0.95, base + dev_contrib + mom_contrib)

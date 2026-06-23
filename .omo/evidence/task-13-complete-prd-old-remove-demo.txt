@@ -1,0 +1,153 @@
+Task 13 evidence: Complete paper simulator fills, wallet, exposure, and stale-fill rejection.
+
+Changed files in this task:
+- src/polysignal_lab/paper/fill_model.py
+- src/polysignal_lab/paper/simulator.py
+- src/polysignal_lab/app/scheduler_processing.py
+- src/polysignal_lab/app/scheduler_reporting.py
+- src/polysignal_lab/domain/paper_result.py
+- src/polysignal_lab/paper/report.py
+- tests/test_paper_simulation.py
+- tests/test_scheduler_paper.py
+
+Implementation summary:
+- Accepted paper signals now produce paper orders even when the orderbook is missing; missing books are stored as rejected paper orders with MISSING_ORDERBOOK.
+- BestAskTakerFillModel rejects wrong-token/malformed books, stale books, missing best ask, ask above max entry, slippage above max entry, and insufficient depth without creating fills or positions.
+- Paper orders now carry inspectable metrics for fill_decision_accepted, fill_decision_reason, orderbook freshness/staleness, raw_best_ask, available_depth_usdc, fill_price, fill_ratio, and shares where applicable.
+- Scheduler persists/logs every paper order decision. Fills and positions are persisted only when a fill is accepted. Wallet snapshots are persisted/logged for paper decisions so cash/equity/open-position state is inspectable.
+- Daily report metrics now count same-day paper orders/rejections from paper_orders and expose stale_paper_fills. Stale accepted fills are counted from filled orders whose metrics show orderbook_fresh=false; required scenario observes zero.
+
+Commands run and results:
+- Initial dirty-worktree check:
+  - Invocation: git status --short
+  - Observable: many pre-existing modified/deleted/untracked files before this task, including scheduler/paper/report/tests paths.
+  - Result: dirty_worktree acknowledged; unrelated edits preserved.
+- Red proof:
+  - Invocation: .venv/bin/python -m pytest tests/test_paper_simulation.py::test_stale_orderbook_rejects_fill_without_position tests/test_paper_simulation.py::test_missing_and_malformed_orderbooks_reject_without_position tests/test_scheduler_paper.py -q
+  - Observable: 4 failures before production edits: missing metrics, None orderbook crash, no missing-book paper order, and paper_orders report count 0.
+  - Result: failed for expected behavior gaps.
+- Happy QA:
+  - Invocation: .venv/bin/python -m pytest tests/test_paper_simulation.py::test_accepted_signal_fills_at_best_ask_and_updates_wallet -q
+  - Output summary: 1 passed.
+  - Binary observable: test asserts FILLED order, raw_best_ask equals target book best ask, fill_price includes slippage, cash_balance=990.0, equity=1000.0, open_position_count=1, market/strategy exposure=10.0, available_depth_usdc >= stake.
+  - Captured artifact path: .omo/evidence/todo-13-manual-qa-notepad.md
+- Failure QA:
+  - Invocation: .venv/bin/python -m pytest tests/test_paper_simulation.py::test_stale_orderbook_rejects_fill_without_position tests/test_scheduler_paper.py::test_stale_paper_fill_count_is_zero -q
+  - Output summary: 2 passed.
+  - Binary observable: tests assert REJECTED order, reject_reason=STALE_ORDERBOOK, no fill, no position, wallet unchanged, persisted order metrics reason=STALE_ORDERBOOK, report.paper_fills=0, report.rejected_paper_orders=1, report.stale_paper_fills=0.
+  - Captured artifact path: .omo/evidence/todo-13-manual-qa-notepad.md
+- Acceptance:
+  - Invocation: .venv/bin/python -m pytest tests/test_paper_simulation.py tests/test_scheduler_paper.py -q
+  - Output summary: 12 passed.
+  - Binary observable: simulator and scheduler paper acceptance tests pass, including fill, stale/missing/malformed/depth rejection, storage/logging, wallet/exposure, and report metrics.
+  - Captured artifact path: .omo/evidence/task-13-complete-prd-old-remove-demo.txt
+- Syntax gate:
+  - Invocation: .venv/bin/python -m compileall -q src/polysignal_lab/paper/fill_model.py src/polysignal_lab/paper/simulator.py src/polysignal_lab/app/scheduler_processing.py src/polysignal_lab/app/scheduler_reporting.py src/polysignal_lab/domain/paper_result.py src/polysignal_lab/paper/report.py tests/test_paper_simulation.py tests/test_scheduler_paper.py
+  - Output summary: exited 0.
+- LSP/static tool availability:
+  - Invocation: mcp__lsp.status
+  - Observable: basedpyright, pyright, and ruff LSP servers missing; active LSP clients 0.
+  - Invocation: .venv/bin/python -m basedpyright <changed files>
+  - Output summary: failed because module basedpyright is not installed.
+  - Invocation: .venv/bin/python -m ruff check <changed files>
+  - Output summary: failed because module ruff is not installed.
+  - Fallback observable: compileall passed and pytest acceptance passed.
+- Programming quality line-count check:
+  - Invocation: per-file awk pure-LOC count over changed files.
+  - Output summary: fill_model.py 52, simulator.py 104, scheduler_processing.py 151, scheduler_reporting.py 155, paper_result.py 68, report.py 90, test_paper_simulation.py 132, test_scheduler_paper.py 63. No changed file exceeds 250 pure LOC.
+- No real trading path:
+  - Invocation: rg "private_key|mnemonic|SecureClient|ClobClient\(|create_order|post_order|submit_order|cancel_order|redeem_positions" src/polysignal_lab/paper src/polysignal_lab/app/scheduler_processing.py src/polysignal_lab/app/scheduler_reporting.py tests/test_paper_simulation.py tests/test_scheduler_paper.py
+  - Output summary: no matches, rg exit 1.
+  - Observable: touched paper/scheduler scope introduces no private-key, CLOB secure client, create/cancel/submit order, or redemption path.
+- Runtime artifact cleanup:
+  - Invocation: find data -maxdepth 1 \( -name '*.sqlite' -o -name '*.sqlite3' \) -print
+  - Output summary: no output.
+  - Invocation: pgrep -af "polysignal_lab.app.main|pytest"
+  - Output summary: no output, pgrep exit 1.
+  - Observable: no repo runtime DB artifacts and no long-lived pytest/app process.
+- Final dirty-worktree check:
+  - Invocation: git status --short
+  - Observable: shared worktree remains dirty with many pre-existing unrelated edits; files touched by this task listed above.
+
+Adversarial checks:
+- dirty_worktree: verified before and after with git status --short; did not revert or modify unrelated files.
+- stale_state: read current disk state before edits, reran full required tests after final code cleanup, checked no repo data/*.sqlite* artifacts.
+- misleading_success_output: tests assert concrete statuses/reasons/positions/wallet counts/order metrics/report counts, not only pytest pass.
+- malformed_input: covered missing orderbook, missing/malformed best ask, stale orderbook, insufficient depth.
+- paper_accounting: covered cash_balance, equity, open_position_count, market exposure, strategy exposure, and wallet snapshots.
+- no_real_trading: scoped grep over touched paper/scheduler/tests returned no forbidden private-key/order-placement symbols.
+- storage_logging: scheduler test asserts paper_orders persisted/logged for rejection, paper_fills and paper_positions remain 0 for rejection, and report counts use persisted orders.
+- programming_quality and remove_ai_slops_overfit: changes are scoped to existing paper/scheduler/report seams; no new abstractions beyond small helper methods; focused tests exercise public behavior.
+- env_secrecy: did not read .env or any dotenv file.
+- cleanup: no long-lived app/pytest process and no repo runtime sqlite/sqlite3 artifacts.
+
+Residual risks:
+- LSP, basedpyright, and ruff could not run because the servers/modules are not installed in this environment.
+- The shared worktree contains many pre-existing uncommitted changes outside this task; this evidence covers only the files listed in Changed files.
+
+Gate repair 019eedd5-7056-7e60-a617-c5e40328a522:
+
+Repair changed files:
+- src/polysignal_lab/paper/fill_model.py
+- src/polysignal_lab/app/scheduler_processing.py
+- tests/test_paper_simulation.py
+- .omo/evidence/task-13-complete-prd-old-remove-demo.txt
+- .omo/evidence/complete-prd-old-remove-demo-todo-13-code-review.md
+- .omo/evidence/todo-13-manual-qa-notepad.md
+
+Repair implementation summary:
+- Added finite-number checks in BestAskTakerFillModel for best ask, order limit price, ask price, ask size, and computed fill price before any fill, wallet debit, or depth check.
+- Added targeted regression coverage for a NaN ask with require_depth_check=False. The test asserts MALFORMED_ORDERBOOK, no fill, no position, unchanged wallet cash/equity/open-position count, zero market exposure, and decision metrics reason MALFORMED_ORDERBOOK.
+- Replaced the silent rejected-signal persistence swallow in scheduler evaluation with logger.exception including market slug, strategy name, and rejection reason_code.
+- Changed paper-trading exception logging to logger.exception with signal_id and token_id context.
+- Delayed paper_order/paper_fill/paper_position result assignment until after the corresponding paper decision persistence calls complete, so storage failures do not return misleading stored decisions.
+
+Repair commands run and results:
+- Red proof:
+  - Invocation: .venv/bin/python -m pytest tests/test_paper_simulation.py::test_nan_ask_rejects_malformed_without_depth_check -q
+  - Output summary before production fix: 1 failed.
+  - Binary observable: expected REJECTED but observed FILLED, proving NaN best ask bypassed malformed orderbook validation when require_depth_check=False.
+  - Captured artifact path: .omo/evidence/task-13-complete-prd-old-remove-demo.txt
+- Required full suite:
+  - Invocation: .venv/bin/python -m pytest tests/test_paper_simulation.py tests/test_scheduler_paper.py -q
+  - Output summary: 13 passed.
+  - Binary observable: simulator and scheduler paper tests pass, including accepted fill accounting, stale/missing/malformed/depth rejection, storage/logging, report counts, and NaN malformed-orderbook regression.
+  - Captured artifact path: .omo/evidence/task-13-complete-prd-old-remove-demo.txt
+- Required accepted-fill target:
+  - Invocation: .venv/bin/python -m pytest tests/test_paper_simulation.py::test_accepted_signal_fills_at_best_ask_and_updates_wallet -q
+  - Output summary: 1 passed.
+  - Binary observable: test asserts FILLED order, best ask fill with slippage, cash_balance=990.0, equity=1000.0, open_position_count=1, and exposure updates.
+  - Captured artifact path: .omo/evidence/todo-13-manual-qa-notepad.md
+- Required stale rejection targets:
+  - Invocation: .venv/bin/python -m pytest tests/test_paper_simulation.py::test_stale_orderbook_rejects_fill_without_position tests/test_scheduler_paper.py::test_stale_paper_fill_count_is_zero -q
+  - Output summary: 2 passed.
+  - Binary observable: tests assert STALE_ORDERBOOK rejection, no fill, no position, unchanged wallet, persisted order metrics reason STALE_ORDERBOOK, report fills 0, and stale_paper_fills 0.
+  - Captured artifact path: .omo/evidence/todo-13-manual-qa-notepad.md
+- Required NaN malformed-orderbook target:
+  - Invocation: .venv/bin/python -m pytest tests/test_paper_simulation.py::test_nan_ask_rejects_malformed_without_depth_check -q
+  - Output summary after production fix: 1 passed.
+  - Binary observable: test asserts MALFORMED_ORDERBOOK, no fill, no position, wallet unchanged, zero market exposure, and fill_decision_reason MALFORMED_ORDERBOOK with require_depth_check=False.
+  - Captured artifact path: .omo/evidence/todo-13-manual-qa-notepad.md
+- Syntax gate:
+  - Invocation: .venv/bin/python -m compileall -q src/polysignal_lab/paper/fill_model.py src/polysignal_lab/app/scheduler_processing.py tests/test_paper_simulation.py
+  - Output summary: exited 0.
+  - Captured artifact path: .omo/evidence/task-13-complete-prd-old-remove-demo.txt
+- No real trading path:
+  - Invocation: rg "private_key|mnemonic|SecureClient|ClobClient\(|create_order|post_order|submit_order|cancel_order|redeem_positions|real[-_ ]?trading|live[-_ ]?order" src/polysignal_lab/paper/fill_model.py src/polysignal_lab/app/scheduler_processing.py tests/test_paper_simulation.py tests/test_scheduler_paper.py
+  - Output summary: no matches, rg exit 1.
+  - Observable: touched repair scope introduces no private-key, secure CLOB client, order placement/cancel/submit, redemption, or live-trading symbols.
+  - Captured artifact path: .omo/evidence/task-13-complete-prd-old-remove-demo.txt
+- Programming quality line-count check:
+  - Invocation: awk pure-LOC count over src/polysignal_lab/paper/fill_model.py, src/polysignal_lab/app/scheduler_processing.py, and tests/test_paper_simulation.py.
+  - Output summary: fill_model.py 63, scheduler_processing.py 160, test_paper_simulation.py 150. No touched Python file exceeds 250 pure LOC.
+
+Repair adversarial checks:
+- malformed_input: NaN ask with finite size and require_depth_check=False now rejects as MALFORMED_ORDERBOOK before fill/debit.
+- misleading_success_output: targeted test asserts concrete order status, reject reason, fill/position absence, wallet values, exposure, and metrics instead of relying only on pytest success.
+- storage_logging: rejected-signal persistence errors are logged with exception context; paper persistence failures are logged with signal/token context and do not populate returned paper decision fields before persistence completes.
+- remove_ai_slops_overfit: repair avoided new abstractions and broad rewrites; it added one focused regression and changed only validation/logging/result-assignment order needed for the gate blockers.
+- env_secrecy: did not read .env or dotenv files.
+
+Repair residual risks:
+- Broad scheduler exceptions remain around strategy evaluation, signal storage, publishing, and paper processing as existing boundary-style isolation. This repair made the gate-blocking silent rejected-signal swallow visible and added paper exception context, but did not refactor all scheduler exception boundaries.
+- The shared worktree remains dirty with many pre-existing unrelated changes outside this repair scope; no plan checkbox was changed.

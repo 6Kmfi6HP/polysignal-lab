@@ -8,7 +8,7 @@ from polysignal_lab.domain.signal import SignalCandidate
 
 
 class MessageFormatter:
-    def __init__(self, max_chars: int = 4096):
+    def __init__(self, max_chars: int = 4096) -> None:
         self.max_chars = max_chars
 
     def signal_message(self, signal: SignalCandidate, stake_usdc: float) -> str:
@@ -36,6 +36,7 @@ Risk:
 - Manual execution only.
 - Do not chase above max entry.
 - This is a signal, not financial advice.
+- No profit guarantee.
 
 Signal ID:
 {html.escape(signal.signal_id)}"""
@@ -61,7 +62,7 @@ Strategy:
 {html.escape(result.strategy)}
 
 Note:
-Paper result only. No real order was placed."""
+Paper result only. No real order was placed. No profit guarantee."""
         return self._truncate(message)
 
     def daily_report_message(self, report: DailyReport) -> str:
@@ -88,7 +89,7 @@ By Strategy:
 {strategy_text}
 
 Notes:
-Paper results only. No real trades were placed."""
+Paper results only. No real trades were placed. No profit guarantee."""
         return self._truncate(message)
 
     def _format_seconds(self, seconds: int | None) -> str:
