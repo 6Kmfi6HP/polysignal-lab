@@ -176,3 +176,31 @@ def test_daily_report_aggregates_paper_execution_quality() -> None:
     assert report.average_execution_staleness_ms == 42.0
     assert report.average_executable_depth_usdc == 154.0 / 3
     assert report.paper_execution_assumptions["slippage_bps"] == 25.0
+
+
+
+def test_daily_report_normalizes_legacy_raw_paper_reject_reason() -> None:
+    order_payloads = [
+        {
+            "paper_order_id": "po-legacy-reject",
+            "status": "REJECTED",
+            "reject_reason": "ASK_ABOVE_MAX_ENTRY",
+            "metrics": {},
+        },
+    ]
+
+    report = PaperReportService().build_daily_report(
+        report_date=date(2026, 6, 22),
+        starting_equity=1000.0,
+        ending_equity=1000.0,
+        total_signals=1,
+        paper_orders=1,
+        paper_fills=0,
+        rejected_paper_orders=1,
+        open_positions=0,
+        results=[],
+        paper_order_payloads=order_payloads,
+    )
+
+    assert report.paper_rejects_by_reason == {"PAPER_ENTRY_PRICE_MOVED": 1}
+    assert report.paper_rejects_by_original_reason == {"ASK_ABOVE_MAX_ENTRY": 1}

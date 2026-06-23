@@ -6,6 +6,7 @@ from typing import Any, Iterable, assert_never
 
 from polysignal_lab.domain.enums import TradeResultStatus
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
+from polysignal_lab.paper.preflight import normalize_paper_reject_reason
 
 
 class PaperReportService:
@@ -123,10 +124,9 @@ class PaperReportService:
             if depth is not None:
                 depth_values.append(depth)
             if order.get("status") == "REJECTED":
-                normalized = str(
+                normalized = normalize_paper_reject_reason(
                     metrics.get("paper_normalized_reason")
                     or order.get("reject_reason")
-                    or "PAPER_FILL_REJECTED"
                 )
                 original = str(
                     metrics.get("paper_original_reason")
