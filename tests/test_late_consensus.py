@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Final
 
 from polysignal_lab.domain.enums import Side
@@ -186,8 +187,10 @@ def test_late_consensus_stale_spot_ok_and_rejects_side_change() -> None:
         )
     )
 
-    # When: the second favorite side changes rapidly within the side-change guard window.
-    assert flip_strategy.evaluate(up_snapshot)
+    # When: the first UP candidate is accepted, then the favorite side changes rapidly.
+    first_up_signals = flip_strategy.evaluate(up_snapshot)
+    assert first_up_signals
+    flip_strategy.notify_signal_accepted(first_up_signals[0])
     side_change_signals = flip_strategy.evaluate(down_snapshot)
 
     # Then: the side-change guard blocks the second candidate.
@@ -207,13 +210,14 @@ def test_late_consensus_rejects_repeated_flip_inside_guard() -> None:
         )
     )
 
-    # When: the same DOWN flip is evaluated twice immediately after the UP entry.
+    # When: the same DOWN flip is evaluated twice immediately after an accepted UP entry.
     first_up_signals = strategy.evaluate(up_snapshot)
+    assert first_up_signals
+    strategy.notify_signal_accepted(first_up_signals[0])
     first_down_signals = strategy.evaluate(down_snapshot)
     second_down_signals = strategy.evaluate(down_snapshot)
 
     # Then: the blocked flip does not poison favorite-side state for the next candidate.
-    assert first_up_signals
     assert first_down_signals == []
     assert second_down_signals == []
 
@@ -298,3 +302,127 @@ def test_late_consensus_stale_orderbook_is_rejected_by_signal_gate() -> None:
     assert decision.rejected.reason_code == "STALE_ORDERBOOK"
     assert decision.rejected.details["lag_ms"] == 2_000
     assert decision.rejected.details["threshold_ms"] == 1_500
+
+
+async def test_late_consensus_gate_rejection_does_not_consume_entry_state() -> None:
+    from polysignal_lab.app.scheduler_processing import evaluate_once
+    from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
+    from polysignal_lab.signal_layer.gate import SignalGate
+
+    class _Markets:
+        def __init__(self, market) -> None:
+            self._market = market
+
+        def active(self) -> list:
+            return [self._market]
+
+    class _SnapshotBuilder:
+        def __init__(self, snapshot: MarketSnapshot) -> None:
+            self.snapshot = snapshot
+
+        async def build(self, market) -> MarketSnapshot:
+            return self.snapshot
+
+    class _Consensus:
+        def add(self, signal):
+            return None
+
+    class _Logs:
+        def __init__(self) -> None:
+            self.rows: list[tuple[str, object]] = []
+
+        def append(self, stream: str, row: object) -> None:
+            self.rows.append((stream, row))
+
+    class _SQLite:
+        def __init__(self) -> None:
+            self.rejected: list[object] = []
+
+        def insert_rejected_signal(self, rejected: object) -> None:
+            self.rejected.append(rejected)
+
+    class _Logger:
+        def info(self, *args, **kwargs) -> None:
+            pass
+
+        def exception(self, *args, **kwargs) -> None:
+            pass
+
+    strategy = LateConsensusStrategy(_config())
+    stale_snapshot = _snapshot(
+        LateConsensusScenario(
+            spot=SpotState(price=101.0, price_to_beat=100.0, staleness_ms=2_000)
+        )
+    )
+    fresh_snapshot = _snapshot(
+        LateConsensusScenario(spot=SpotState(price=101.0, price_to_beat=100.0))
+    )
+    scheduler = SimpleNamespace(
+        ctx=SimpleNamespace(markets=_Markets(stale_snapshot.market)),
+        snapshot_builder=_SnapshotBuilder(stale_snapshot),
+        logger=_Logger(),
+        strategies=[strategy],
+        gate=SignalGate(
+            SignalConfig(dedupe_enabled=False),
+            PolymarketDataConfig(max_book_staleness_ms=60_000),
+            BinanceDataConfig(max_price_staleness_ms=60_000),
+        ),
+        consensus=_Consensus(),
+        logs=_Logs(),
+        sqlite=_SQLite(),
+    )
+
+    stale_accepted = await evaluate_once(scheduler)
+
+    assert stale_accepted == []
+    assert len(scheduler.sqlite.rejected) == 1
+    assert scheduler.sqlite.rejected[0].reason_code == "STALE_SPOT_PRICE"
+
+    scheduler.snapshot_builder.snapshot = fresh_snapshot
+    fresh_accepted = await evaluate_once(scheduler)
+
+    assert len(fresh_accepted) == 1
+    assert fresh_accepted[0].market_id == stale_snapshot.market.market_id
+
+    scheduler.snapshot_builder.snapshot = _snapshot(
+        LateConsensusScenario(spot=SpotState(price=101.0, price_to_beat=100.0))
+    )
+    repeated_after_accept = await evaluate_once(scheduler)
+
+    assert repeated_after_accept == []
+
+
+def test_late_consensus_gate_rejection_does_not_consume_flip_guard_state() -> None:
+    from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
+    from polysignal_lab.signal_layer.gate import SignalGate
+
+    strategy = LateConsensusStrategy(
+        _config().model_copy(update={"entry_frequency_sec": 0})
+    )
+    stale_up_snapshot = _snapshot(
+        LateConsensusScenario(
+            spot=SpotState(price=101.0, price_to_beat=100.0, staleness_ms=2_000)
+        )
+    )
+    stale_up_signal = strategy.evaluate(stale_up_snapshot)[0]
+
+    decision = SignalGate(
+        SignalConfig(dedupe_enabled=False),
+        PolymarketDataConfig(max_book_staleness_ms=60_000),
+        BinanceDataConfig(max_price_staleness_ms=60_000),
+    ).evaluate(stale_up_signal, stale_up_snapshot)
+
+    assert decision.accepted is False
+    assert decision.rejected is not None
+    assert decision.rejected.reason_code == "STALE_SPOT_PRICE"
+
+    fresh_down_snapshot = _snapshot(
+        LateConsensusScenario(
+            books=ConsensusBooks(up_ask=0.18, down_ask=0.82),
+            spot=SpotState(price=99.0, price_to_beat=100.0),
+        )
+    )
+    fresh_down_signals = strategy.evaluate(fresh_down_snapshot)
+
+    assert len(fresh_down_signals) == 1
+    assert fresh_down_signals[0].side == Side.DOWN

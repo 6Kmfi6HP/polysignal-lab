@@ -21,6 +21,9 @@ class BaseStrategy(ABC):
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalCandidate]:
         raise NotImplementedError
 
+    def notify_signal_accepted(self, signal: SignalCandidate) -> None:
+        pass
+
     def _candidate(
         self,
         snapshot: MarketSnapshot,

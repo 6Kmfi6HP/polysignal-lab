@@ -54,6 +54,7 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
                 for candidate in strategy.evaluate(snapshot):
                     decision = scheduler.gate.evaluate(candidate, snapshot)
                     if decision.accepted and decision.signal:
+                        strategy.notify_signal_accepted(decision.signal)
                         accepted.append(decision.signal)
                         consensus = scheduler.consensus.add(decision.signal)
                         if consensus:

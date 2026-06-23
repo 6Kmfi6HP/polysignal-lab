@@ -55,7 +55,9 @@ async def test_late_consensus_flip_guard_blocks_recent_flip(market, spots, setti
     books.update(sample_book(market.token_for(Side.UP).token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500)))
     books.update(sample_book(market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=0.18, bid=0.15, size=500)))
     snap1 = await builder.build(market)
-    assert strategy.evaluate(snap1)
+    first_signals = strategy.evaluate(snap1)
+    assert first_signals
+    strategy.notify_signal_accepted(first_signals[0])
     books.update(sample_book(market.token_for(Side.UP).token_id, BookFactoryConfig(ask=0.18, bid=0.15, size=500)))
     books.update(sample_book(market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500)))
     snap2 = await builder.build(market)
