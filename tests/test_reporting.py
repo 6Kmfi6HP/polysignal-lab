@@ -204,3 +204,36 @@ def test_daily_report_normalizes_legacy_raw_paper_reject_reason() -> None:
 
     assert report.paper_rejects_by_reason == {"PAPER_ENTRY_PRICE_MOVED": 1}
     assert report.paper_rejects_by_original_reason == {"ASK_ABOVE_MAX_ENTRY": 1}
+
+
+def test_daily_report_counts_cancelled_rejects_with_reasons() -> None:
+    order_payloads = [
+        {
+            "paper_order_id": "po-cancelled-reject",
+            "status": "CANCELLED",
+            "order_intent": "passive_gtd",
+            "reject_reason": "GTD_EXPIRED",
+            "metrics": {
+                "paper_order_intent": "passive_gtd",
+                "paper_orderbook_staleness_ms": 18.0,
+                "paper_available_depth_usdc": 12.0,
+            },
+        },
+    ]
+
+    report = PaperReportService().build_daily_report(
+        report_date=date(2026, 6, 22),
+        starting_equity=1000.0,
+        ending_equity=1000.0,
+        total_signals=1,
+        paper_orders=1,
+        paper_fills=0,
+        rejected_paper_orders=1,
+        open_positions=0,
+        results=[],
+        paper_order_payloads=order_payloads,
+    )
+
+    assert report.paper_attempts_by_intent == {"passive_gtd": 1}
+    assert report.paper_rejects_by_reason == {"PAPER_GTD_EXPIRED": 1}
+    assert report.paper_rejects_by_original_reason == {"GTD_EXPIRED": 1}

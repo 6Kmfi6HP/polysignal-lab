@@ -123,7 +123,7 @@ class PaperReportService:
             depth = _optional_float(metrics.get("paper_available_depth_usdc"))
             if depth is not None:
                 depth_values.append(depth)
-            if order.get("status") == "REJECTED":
+            if is_rejected_paper_order_payload(order, metrics):
                 normalized = normalize_paper_reject_reason(
                     metrics.get("paper_normalized_reason")
                     or order.get("reject_reason")
@@ -139,7 +139,11 @@ class PaperReportService:
         partial_by_intent: Counter[str] = Counter()
         for fill in fills:
             order_id = str(fill.get("paper_order_id") or "")
-            intent = order_intents.get(order_id, "default")
+            intent = str(
+                fill.get("paper_order_intent")
+                or fill.get("order_intent")
+                or order_intents.get(order_id, "default")
+            )
             fills_by_intent[intent] += 1
             fill_ratio = _optional_float(fill.get("fill_ratio"))
             if fill_ratio is not None and fill_ratio < 0.999:
@@ -186,6 +190,21 @@ class PaperReportService:
             if peak > 0:
                 max_dd = max(max_dd, (peak - value) / peak)
         return max_dd
+
+
+def is_rejected_paper_order_payload(
+    order: dict[str, Any], metrics: dict[str, Any]
+) -> bool:
+    status = order.get("status")
+    if status == "REJECTED":
+        return True
+    if status != "CANCELLED":
+        return False
+    return bool(
+        metrics.get("paper_normalized_reason")
+        or metrics.get("paper_original_reason")
+        or order.get("reject_reason")
+    )
 
 
 def _optional_float(value: Any) -> float | None:

@@ -14,7 +14,10 @@ from polysignal_lab.domain.enums import MarketStatus, PositionStatus, TradeResul
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
-from polysignal_lab.paper.report import PaperReportService
+from polysignal_lab.paper.report import (
+    PaperReportService,
+    is_rejected_paper_order_payload,
+)
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
@@ -163,6 +166,70 @@ def _utc_text_bound(dt: datetime) -> str:
     return dt.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def _paper_order_metrics(order: dict[str, object]) -> dict[str, object]:
+    metrics_payload = order.get("metrics")
+    return metrics_payload if isinstance(metrics_payload, dict) else {}
+
+
+def _paper_order_intent(order: dict[str, object]) -> str:
+    metrics = _paper_order_metrics(order)
+    return str(
+        metrics.get("paper_order_intent")
+        or order.get("order_intent")
+        or "default"
+    )
+
+
+def _fill_payloads_with_order_intents(
+    scheduler: PolySignalScheduler,
+    fills: list[dict[str, object]],
+    orders: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    today_order_ids = {
+        str(order.get("paper_order_id") or "")
+        for order in orders
+        if order.get("paper_order_id")
+    }
+    missing_order_ids = tuple(
+        sorted(
+            {
+                str(fill.get("paper_order_id") or "")
+                for fill in fills
+                if fill.get("paper_order_id")
+            }
+            - today_order_ids
+        )
+    )
+    if not missing_order_ids:
+        return fills
+
+    placeholders = ",".join("?" for _ in missing_order_ids)
+    fill_orders = scheduler.sqlite.query_json(
+        "paper_orders",
+        where=f"WHERE paper_order_id IN ({placeholders})",
+        params=missing_order_ids,
+        limit=len(missing_order_ids),
+    )
+    orders_by_id = {
+        str(order.get("paper_order_id") or ""): order
+        for order in fill_orders
+        if order.get("paper_order_id")
+    }
+    if not orders_by_id:
+        return fills
+
+    enriched: list[dict[str, object]] = []
+    for fill in fills:
+        order = orders_by_id.get(str(fill.get("paper_order_id") or ""))
+        if order is None:
+            enriched.append(fill)
+            continue
+        enriched_fill = dict(fill)
+        enriched_fill.setdefault("order_intent", _paper_order_intent(order))
+        enriched.append(enriched_fill)
+    return enriched
+
+
 async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport | None:
     try:
         report_tz = ZoneInfo(scheduler.settings.app.timezone)
@@ -210,8 +277,13 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
         params=day_params,
         limit=10000,
     )
+    today_fill_payloads = _fill_payloads_with_order_intents(
+        scheduler, today_fills_raw, today_orders_raw
+    )
     rejected_paper_orders = sum(
-        1 for order in today_orders_raw if order.get("status") == "REJECTED"
+        1
+        for order in today_orders_raw
+        if is_rejected_paper_order_payload(order, _paper_order_metrics(order))
     )
     stale_paper_fills = sum(
         1
@@ -242,7 +314,7 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
             equity_curve=[scheduler.wallet.starting_balance, scheduler.wallet.equity],
             stale_paper_fills=stale_paper_fills,
             paper_order_payloads=today_orders_raw,
-            paper_fill_payloads=today_fills_raw,
+            paper_fill_payloads=today_fill_payloads,
             paper_execution_assumptions=paper_execution_assumptions,
         )
     except (KeyError, TypeError, ValueError) as exc:

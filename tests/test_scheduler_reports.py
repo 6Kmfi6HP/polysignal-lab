@@ -6,8 +6,16 @@ from pathlib import Path
 
 from polysignal_lab.app import scheduler_reporting, scheduler_runtime
 from polysignal_lab.app.scheduler import PolySignalScheduler
-from polysignal_lab.domain.enums import ExitMode, OrderStatus, PositionStatus, Side, TradeResultStatus
+from polysignal_lab.domain.enums import (
+    ExitMode,
+    OrderIntent,
+    OrderStatus,
+    PositionStatus,
+    Side,
+    TradeResultStatus,
+)
 from polysignal_lab.domain.paper_result import PaperTradeResult
+from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
 from factories import BookFactoryConfig, sample_book
 
@@ -272,6 +280,121 @@ async def test_iteration_report_uses_configured_report_date_when_local_date_diff
     assert report_date == date(2026, 6, 22)
     report_rows = scheduler.sqlite.query_json("daily_reports")
     assert [row["report_date"] for row in report_rows] == ["2026-06-22"]
+
+
+async def test_daily_report_uses_prior_day_resting_fill_intent(
+    tmp_path: Path, settings, monkeypatch
+) -> None:
+    # Given: a passive order created before the report day fills today.
+    settings.app.timezone = "UTC"
+    scheduler = _scheduler(tmp_path, settings)
+    prior_day_order = PaperOrder(
+        paper_order_id="po-prior-passive",
+        signal_id="sig-prior-passive",
+        created_at=datetime(2026, 6, 22, 23, 55, tzinfo=UTC),
+        asset="BTC",
+        timeframe="5m",
+        strategy="ptb_diff",
+        market_id="m-prior-passive",
+        market_slug="prior-passive",
+        token_id="t-prior-passive",
+        side=Side.UP,
+        order_intent=OrderIntent.PASSIVE_GTD,
+        limit_price=0.8,
+        reference_price=0.8,
+        stake_usdc=10.0,
+        status=OrderStatus.FILLED,
+        metrics={"paper_order_intent": OrderIntent.PASSIVE_GTD},
+    )
+    fill = PaperFill(
+        paper_fill_id="pf-prior-passive",
+        paper_order_id=prior_day_order.paper_order_id,
+        signal_id=prior_day_order.signal_id,
+        created_at=datetime(2026, 6, 23, 12, 0, tzinfo=UTC),
+        token_id=prior_day_order.token_id,
+        side=Side.UP,
+        raw_best_ask=0.79,
+        slippage_bps=0.0,
+        fill_price=0.79,
+        stake_usdc=10.0,
+        shares=12.658,
+        depth_checked=True,
+        available_depth_usdc=100.0,
+        fill_ratio=1.0,
+    )
+    scheduler.sqlite.insert_paper_order(prior_day_order)
+    scheduler.sqlite.insert_paper_fill(fill)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return cls(2026, 6, 23, 12, 30, tzinfo=UTC)
+            return cls(2026, 6, 23, 12, 30, tzinfo=tz)
+
+    monkeypatch.setattr(scheduler_reporting, "datetime", FixedDateTime)
+
+    # When: the daily report aggregates today's fill.
+    report = await scheduler.generate_daily_report()
+
+    # Then: the fill inherits its prior-day passive intent without counting the
+    # prior-day order as a new report-day attempt.
+    assert report is not None
+    assert report.report_date == date(2026, 6, 23)
+    assert report.paper_orders == 0
+    assert report.paper_fills == 1
+    assert report.paper_attempts_by_intent == {}
+    assert report.paper_fills_by_intent == {"passive_gtd": 1}
+
+
+async def test_daily_report_counts_cancelled_paper_rejects(
+    tmp_path: Path, settings, monkeypatch
+) -> None:
+    # Given: a cancelled resting reject carries today's reject reason.
+    settings.app.timezone = "UTC"
+    scheduler = _scheduler(tmp_path, settings)
+    cancelled = PaperOrder(
+        paper_order_id="po-cancelled-resting",
+        signal_id="sig-cancelled-resting",
+        created_at=datetime(2026, 6, 23, 10, 0, tzinfo=UTC),
+        asset="BTC",
+        timeframe="5m",
+        strategy="ptb_diff",
+        market_id="m-cancelled-resting",
+        market_slug="cancelled-resting",
+        token_id="t-cancelled-resting",
+        side=Side.UP,
+        order_intent=OrderIntent.PASSIVE_GTD,
+        limit_price=0.7,
+        reference_price=0.7,
+        stake_usdc=10.0,
+        status=OrderStatus.CANCELLED,
+        reject_reason="GTD_EXPIRED",
+        metrics={"paper_order_intent": OrderIntent.PASSIVE_GTD},
+    )
+    scheduler.sqlite.insert_paper_order(cancelled)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return cls(2026, 6, 23, 12, 30, tzinfo=UTC)
+            return cls(2026, 6, 23, 12, 30, tzinfo=tz)
+
+    monkeypatch.setattr(scheduler_reporting, "datetime", FixedDateTime)
+
+    # When: the daily report aggregates today's rejected paper orders.
+    report = await scheduler.generate_daily_report()
+
+    # Then: the cancelled reject contributes to today's rejected-paper count.
+    assert report is not None
+    assert report.report_date == date(2026, 6, 23)
+    assert report.paper_orders == 1
+    assert report.paper_fills == 0
+    assert report.rejected_paper_orders == 1
+    assert report.paper_attempts_by_intent == {"passive_gtd": 1}
+    assert report.paper_rejects_by_reason == {"PAPER_GTD_EXPIRED": 1}
+    assert report.paper_rejects_by_original_reason == {"GTD_EXPIRED": 1}
 
 async def test_daily_report_publish_record_written(tmp_path: Path, snapshot, settings) -> None:
     # Given: stored signals, one filled paper order, one rejected paper order, and a closed result.
