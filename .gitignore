@@ -21,4 +21,5 @@ refined_results.json
 .mypy_cache/
 htmlcov/
 .claude/worktrees/
+.worktrees/
 refs/polymarket-arbitrage-bot/
