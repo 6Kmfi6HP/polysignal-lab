@@ -31,6 +31,9 @@ _REASON_MAP: dict[str, str] = {
     "STALE_ORDERBOOK": PAPER_STALE_ORDERBOOK,
     "HASH_REGRESSION": PAPER_STALE_ORDERBOOK,
     "DELTA_BEFORE_SNAPSHOT": PAPER_STALE_ORDERBOOK,
+    "RECONNECT_RESEED_FAILED": PAPER_STALE_ORDERBOOK,
+    "TICK_SIZE_CHANGE_RESEED_REQUIRED": PAPER_STALE_ORDERBOOK,
+    "BOOK_SEQUENCE_INVALID": PAPER_STALE_ORDERBOOK,
     "INSUFFICIENT_DEPTH": PAPER_DEPTH_TOO_THIN,
     "FOK_INSUFFICIENT_DEPTH": PAPER_DEPTH_TOO_THIN,
     "FAK_NO_LIQUIDITY": PAPER_DEPTH_TOO_THIN,
@@ -217,6 +220,13 @@ class PaperExecutionPreflight:
             if current_edge < min_probability_edge:
                 return PAPER_EDGE_VANISHED
             return None
+        min_token_price = _finite_float(signal_metrics.get("min_token_price"))
+        if min_token_price is not None and min_token_price > 0:
+            metrics["paper_execution_min_token_price"] = min_token_price
+            metrics["paper_edge_revalidated"] = True
+            if execution_ask < min_token_price:
+                return PAPER_EDGE_VANISHED
+            return None
         stored_probability_edge = _finite_float(signal_metrics.get("probability_edge"))
         entry_prob = _finite_float(signal_metrics.get("entry_prob"))
         if (
@@ -233,12 +243,6 @@ class PaperExecutionPreflight:
             if current_edge < stored_probability_edge:
                 return PAPER_EDGE_VANISHED
             return None
-        min_token_price = _finite_float(signal_metrics.get("min_token_price"))
-        if min_token_price is not None and min_token_price > 0:
-            metrics["paper_execution_min_token_price"] = min_token_price
-            metrics["paper_edge_revalidated"] = True
-            if execution_ask < min_token_price:
-                return PAPER_EDGE_VANISHED
         return None
 
 

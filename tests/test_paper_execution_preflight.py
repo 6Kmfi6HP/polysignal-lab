@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 
 from polysignal_lab.config import FillModelConfig
+from polysignal_lab.data.state import OrderBookRegistry
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.orderbook import BookLevel, OrderBook
 from polysignal_lab.domain.signal import SignalCandidate
@@ -52,6 +53,9 @@ def _book(*, ask: float = 0.50, size: float = 100.0, received_delta_ms: int = 0)
         ("MISSING_ORDERBOOK", "PAPER_MISSING_ORDERBOOK"),
         ("NO_SNAPSHOT", "PAPER_STALE_ORDERBOOK"),
         ("STALE_ORDERBOOK", "PAPER_STALE_ORDERBOOK"),
+        ("RECONNECT_RESEED_FAILED", "PAPER_STALE_ORDERBOOK"),
+        ("TICK_SIZE_CHANGE_RESEED_REQUIRED", "PAPER_STALE_ORDERBOOK"),
+        ("BOOK_SEQUENCE_INVALID", "PAPER_STALE_ORDERBOOK"),
         ("ASK_ABOVE_MAX_ENTRY", "PAPER_ENTRY_PRICE_MOVED"),
         ("SLIPPAGE_EXCEEDS_MAX_ENTRY", "PAPER_EXTREME_SLIPPAGE"),
         ("INSUFFICIENT_DEPTH", "PAPER_DEPTH_TOO_THIN"),
@@ -92,6 +96,33 @@ def test_preflight_rejects_stale_book() -> None:
     assert decision.accepted is False
     assert decision.reason_code == "PAPER_STALE_ORDERBOOK"
     assert decision.metrics["paper_orderbook_fresh"] is False
+
+@pytest.mark.parametrize(
+    "stale_reason",
+    [
+        "RECONNECT_RESEED_FAILED",
+        "TICK_SIZE_CHANGE_RESEED_REQUIRED",
+        "BOOK_SEQUENCE_INVALID",
+    ],
+)
+def test_preflight_normalizes_registry_stale_reasons(stale_reason: str) -> None:
+    registry = OrderBookRegistry()
+    book = _book()
+    registry.update_from_snapshot(book)
+    registry.mark_stale(book.token_id, stale_reason)
+    preflight = PaperExecutionPreflight(
+        FillModelConfig(require_depth_check=True, min_fill_ratio=1.0, reject_if_partial=True),
+        max_book_staleness_ms=1000,
+        fixed_stake_usdc=10.0,
+        registry=registry,
+    )
+
+    decision = preflight.evaluate(_signal(), book, utc_now())
+
+    assert decision.accepted is False
+    assert decision.reason_code == "PAPER_STALE_ORDERBOOK"
+    assert decision.metrics["paper_original_reason"] == stale_reason
+    assert decision.metrics["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
 
 
 def test_preflight_rejects_price_moved_above_max_entry() -> None:
@@ -171,3 +202,24 @@ def test_preflight_revalidates_stored_probability_edge() -> None:
     assert decision.accepted is False
     assert decision.reason_code == "PAPER_EDGE_VANISHED"
     assert decision.metrics["paper_edge_revalidated"] is True
+
+
+def test_preflight_accepts_refs_style_min_token_price_edge() -> None:
+    entry_price = 0.60
+    min_token_price = 0.55
+    signal = _signal(
+        max_entry_price=0.80,
+        metrics={
+            "directional_probability": entry_price,
+            "entry_prob": entry_price,
+            "probability_edge": entry_price - min_token_price,
+            "min_token_price": min_token_price,
+        },
+    )
+
+    decision = _preflight().evaluate(signal, _book(ask=entry_price, size=100.0), utc_now())
+
+    assert decision.accepted is True
+    assert decision.reason_code == "PAPER_ACCEPTED"
+    assert decision.metrics["paper_edge_revalidated"] is True
+    assert decision.metrics["paper_execution_min_token_price"] == min_token_price
