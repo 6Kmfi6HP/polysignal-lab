@@ -111,6 +111,42 @@ async def test_gamma_active_market_discovery_paginates_filters_and_extracts_toke
     assert {token.token_id for token in market.outcome_tokens} == {"token-up", "token-down"}
 
 
+async def test_gamma_discovery_skips_future_active_crypto_windows() -> None:
+    payloads = [
+        {
+            "id": "event-future",
+            "slug": "btc-updown-5m-4102444800",
+            "title": "Bitcoin Up or Down - 5m",
+            "active": True,
+            "closed": False,
+            "markets": [
+                {
+                    "id": "market-future",
+                    "conditionId": "0xfuture",
+                    "slug": "btc-updown-5m-4102444800",
+                    "question": "Bitcoin Up or Down - 5m",
+                    "active": True,
+                    "closed": False,
+                    "startDate": "2026-06-23T10:39:56Z",
+                    "eventStartTime": "2100-01-01T00:00:00Z",
+                    "endDate": "2100-01-01T00:05:00Z",
+                    "outcomes": "[\"Up\", \"Down\"]",
+                    "clobTokenIds": "[\"future-up\", \"future-down\"]",
+                }
+            ],
+        }
+    ]
+    client = FakeAsyncClient([payloads])
+    discovery = MarketDiscovery(
+        PolymarketDataConfig(),
+        MarketConfig(assets=["BTC"], timeframes=["5m"], active_only=True, closed=False),
+        client=client,
+    )
+
+    markets = await discovery.discover()
+
+    assert markets == []
+
 async def test_clob_rest_public_book_mid_and_spread_parsing_handles_official_shapes() -> None:
     fixtures = _fixtures()
     midpoint_payload = fixtures["clob_midpoint"]

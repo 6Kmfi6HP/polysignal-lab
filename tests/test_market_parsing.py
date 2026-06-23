@@ -48,6 +48,18 @@ def test_gamma_resolved_payload_sets_resolved_outcome() -> None:
     assert market.token_for(Side.DOWN).token_id == "token-down"
 
 
+def test_gamma_crypto_payload_prefers_event_window_over_listing_start_date() -> None:
+    payload = _gamma_payload()
+    payload["startDate"] = "2026-06-23T10:39:56Z"
+    payload["eventStartTime"] = "2026-06-24T10:30:00Z"
+    payload["endDate"] = "2026-06-24T10:35:00Z"
+
+    market = Market.from_gamma(payload, asset="BTC", timeframe="5m")
+
+    assert market.start_ts == datetime(2026, 6, 24, 10, 30, tzinfo=UTC)
+    assert market.end_ts == datetime(2026, 6, 24, 10, 35, tzinfo=UTC)
+
+
 def test_gamma_down_resolution_can_be_parsed_from_winning_token_id() -> None:
     payload = _gamma_payload(outcome=None)
     payload["winning_asset_id"] = "token-down"

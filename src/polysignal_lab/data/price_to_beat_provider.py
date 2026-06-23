@@ -2,12 +2,27 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 
 from polysignal_lab.domain.market import Market
 from polysignal_lab.utils import safe_float
+
+
+class _CryptoPriceResponse(Protocol):
+    status_code: int
+
+    def json(self) -> Any: ...
+
+
+class _CryptoPriceClient(Protocol):
+    async def get(
+        self,
+        url: str,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> _CryptoPriceResponse: ...
 
 
 @dataclass(frozen=True)
@@ -19,36 +34,45 @@ class PriceToBeatResult:
 
 
 class PriceToBeatProvider:
-    """PTB provider — mirrors PolyBullLabs PTB bot's approach.
+    """PTB provider for crypto Up/Down markets.
 
-    Sources (in order):
-      1. market.price_to_beat (from Gamma metadata if present)
-      2. Polymarket crypto-price API (https://polymarket.com/api/crypto/crypto-price)
-         using eventStartTime + endDate from Gamma, with variant=fifteen
-      3. Raw payload extraction
-      4. Text pattern extraction (fallback)
+    Sources:
+      1. market.price_to_beat from Gamma metadata if present.
+      2. Raw Gamma payload extraction.
+      3. Optional Polymarket web crypto-price API.
+      4. Text pattern extraction fallback.
+
+    The crypto-price endpoint is a Polymarket web frontend endpoint protected by
+    Cloudflare in server/container environments. It is opt-in so startup does
+    not flood logs with 403 responses when the endpoint blocks non-browser HTTP.
     """
 
     CRYPTO_PRICE_API = "https://polymarket.com/api/crypto/crypto-price"
-    PTB_VARIANT = "fifteen"
 
-    def __init__(self, client: httpx.AsyncClient | None = None):
+    def __init__(
+        self,
+        client: _CryptoPriceClient | None = None,
+        *,
+        use_crypto_price_api: bool = False,
+    ):
         self.client = client or httpx.AsyncClient(timeout=10.0)
+        self.use_crypto_price_api = use_crypto_price_api
 
     async def get(self, market: Market) -> PriceToBeatResult:
         # Source 1: Direct metadata field
         if market.price_to_beat is not None:
             return PriceToBeatResult(value=market.price_to_beat, source="market_metadata", verified=True)
 
-        # Source 2: Polymarket crypto-price API (most reliable for these markets)
-        ptb = await self._fetch_crypto_price_api(market)
-        if ptb is not None:
-            return PriceToBeatResult(value=ptb, source="crypto_price_api", verified=True)
-
-        # Source 3: Raw payload extraction
+        # Source 2: Raw payload extraction
         raw_value = self._extract_from_raw(market.raw)
         if raw_value is not None:
             return PriceToBeatResult(value=raw_value, source="market_raw", verified=True)
+
+        # Source 3: Optional Polymarket web crypto-price API.
+        if self.use_crypto_price_api:
+            ptb = await self._fetch_crypto_price_api(market)
+            if ptb is not None:
+                return PriceToBeatResult(value=ptb, source="crypto_price_api", verified=True)
 
         # Source 4: Text pattern
         text_value = self._extract_from_text(" ".join(filter(None, [market.question, market.market_slug])))
@@ -58,15 +82,14 @@ class PriceToBeatProvider:
         return PriceToBeatResult(value=None, source="unavailable", verified=False, reason="PTB_UNAVAILABLE")
 
     async def _fetch_crypto_price_api(self, market: Market) -> float | None:
-        """Fetch PTB from Polymarket's crypto-price API.
+        """Fetch PTB from Polymarket's web crypto-price API.
 
-        Mirrors PTB bot's get_crypto_price_api():
-          GET https://polymarket.com/api/crypto/crypto-price
-            ?symbol=BTC&eventStartTime={ISO}&variant=fifteen&endDate={ISO}
+        GET https://polymarket.com/api/crypto/crypto-price
+          ?symbol={asset}&eventStartTime={ISO}&variant={fiveminute|fifteen}&endDate={ISO}
         """
         event_start_time = market.raw.get("eventStartTime") or market.raw.get("event_start_time")
-        end_date = None
-        if market.end_ts:
+        end_date = market.raw.get("endDate") or market.raw.get("end_date")
+        if not isinstance(end_date, str) and market.end_ts:
             end_date = market.end_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         if event_start_time is None or end_date is None:
@@ -80,17 +103,13 @@ class PriceToBeatProvider:
             elif not start_str.endswith("Z"):
                 start_str += "Z"
         else:
-            from polysignal_lab.utils import parse_dt
-            parsed = parse_dt(event_start_time)
-            if parsed is None:
-                return None
-            start_str = parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
+            return None
 
         params = {
-            "symbol": "BTC",
+            "symbol": market.asset.upper(),
             "eventStartTime": start_str,
-            "variant": self.PTB_VARIANT,
-            "endDate": end_date,
+            "variant": self._variant_for(market.timeframe),
+            "endDate": str(end_date),
         }
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -108,6 +127,9 @@ class PriceToBeatProvider:
             return None
         except Exception:
             return None
+
+    def _variant_for(self, timeframe: str) -> str:
+        return "fiveminute" if timeframe == "5m" else "fifteen"
 
     def _extract_from_raw(self, raw: dict[str, Any]) -> float | None:
         for key in ["priceToBeat", "price_to_beat", "priceToBeatValue", "strikePrice", "targetPrice"]:

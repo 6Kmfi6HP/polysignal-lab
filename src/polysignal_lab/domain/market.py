@@ -79,7 +79,7 @@ class Market(BaseModel):
         slug = str(payload.get("slug") or payload.get("market_slug") or market_id)
         question_id = payload.get("questionID") or payload.get("questionId") or payload.get("question_id")
         question = payload.get("question") or payload.get("title")
-        start_ts = parse_dt(_first_text(payload, ("startDate", "startDateIso", "start_ts", "start_date", "eventStartTime")))
+        start_ts = parse_dt(_first_text(payload, ("eventStartTime", "startTime", "startDate", "startDateIso", "start_ts", "start_date")))
         end_ts = parse_dt(_first_text(payload, ("endDate", "endDateIso", "end_ts", "end_date")))
         ptb = _first_float(payload, PTB_KEYS)
         resolution_source = payload.get("resolutionSource") or payload.get("resolution_source")

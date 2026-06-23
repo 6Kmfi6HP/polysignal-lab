@@ -10,6 +10,7 @@ from pydantic import JsonValue, TypeAdapter
 from polysignal_lab.config import MarketConfig, PolymarketDataConfig
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market, OutcomeToken
+from polysignal_lab.utils import utc_now
 
 JsonObject = dict[str, JsonValue]
 GAMMA_PAGE_LIMIT: Final = 200
@@ -39,6 +40,8 @@ class MarketDiscovery:
                 inferred = self._infer_tokens(payload, market.market_id)
                 if inferred:
                     market.outcome_tokens = inferred
+            if not self._is_allowed_window(market):
+                continue
             if len(market.outcome_tokens) >= 2:
                 markets.append(market)
         return markets
@@ -97,6 +100,14 @@ class MarketDiscovery:
         if self.market_config.active_only and not active:
             return False
         return closed == self.market_config.closed
+
+    def _is_allowed_window(self, market: Market) -> bool:
+        if not (self.market_config.active_only and not self.market_config.closed):
+            return True
+        if market.start_ts is None or market.end_ts is None:
+            return True
+        now = utc_now()
+        return market.start_ts <= now <= market.end_ts
 
     def _infer_tokens(self, payload: JsonObject, market_id: str) -> list[OutcomeToken]:
         token_ids = _json_list(payload.get("clobTokenIds") or payload.get("clob_token_ids") or payload.get("tokenIds"))

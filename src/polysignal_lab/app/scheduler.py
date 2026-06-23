@@ -81,7 +81,7 @@ class PolySignalScheduler:
         self.ctx = ServiceContext(settings=settings)
         self.discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
         self.rest = PolymarketCLOBRestClient(settings.data.polymarket)
-        self.ptb = PriceToBeatProvider()
+        self.ptb = PriceToBeatProvider(use_crypto_price_api=settings.data.polymarket.use_crypto_price_api)
         self.snapshot_builder = MarketSnapshotBuilder(self.ctx.books, self.ctx.spots, self.ptb)
         self.gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
         self.consensus = ConsensusEngine(
