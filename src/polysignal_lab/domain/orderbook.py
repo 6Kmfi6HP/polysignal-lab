@@ -23,6 +23,7 @@ class OrderBook(BaseModel):
     min_order_size: float | None = None
     tick_size: float | None = None
     source_timestamp: str | None = None
+    hash: str | None = None
     received_at: datetime = Field(default_factory=utc_now)
 
     @computed_field
@@ -76,5 +77,6 @@ class OrderBook(BaseModel):
             min_order_size=safe_float(payload.get("min_order_size")),
             tick_size=safe_float(payload.get("tick_size")),
             source_timestamp=str(payload.get("timestamp")) if payload.get("timestamp") is not None else None,
+            hash=payload.get("hash"),
             received_at=received_at or utc_now(),
         )

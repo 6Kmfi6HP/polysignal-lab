@@ -87,6 +87,20 @@ def test_polymarket_ws_book_message_updates_registry() -> None:
     assert book.last_trade_price == 0.49
 
 
+def test_order_book_parses_hash_field() -> None:
+    from polysignal_lab.domain.orderbook import OrderBook
+
+    payload = {
+        "market": "market-1",
+        "asset_id": "token-up",
+        "hash": "test-hash-value",
+        "bids": [],
+        "asks": [],
+    }
+    book = OrderBook.from_polymarket(payload)
+    assert book.hash == "test-hash-value"
+
+
 async def test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids() -> None:
     fixtures = _fixtures()
     page_1 = fixtures["gamma_event_page_1"]
