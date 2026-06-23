@@ -6,7 +6,7 @@
 
 ## Problem
 
-The current YAML config enables many strategies beyond the core documented set. Market discovery is limited to BTC/ETH/SOL/XRP and 5m/15m markets, while some restored/default strategy configs support wider or different universes. The scheduler runs every loaded strategy against every active snapshot. This can create hidden no-ops, noisy rejected signals, misleading paper reports, and unclear production behavior.
+The current loader already builds only strategy keys explicitly present in YAML and enabled, but the default runtime YAML explicitly enables many strategies beyond the core documented set. Market discovery is limited to BTC/ETH/SOL/XRP and 5m/15m markets, while some restored/default strategy configs support wider or different universes. The scheduler runs every loaded strategy against every active snapshot. This can create hidden no-ops, mostly silent unsupported-pair skips inside strategy logic, noisy rejected signals, misleading paper reports, and unclear production behavior.
 
 ## Non-goals
 
@@ -17,8 +17,8 @@ The current YAML config enables many strategies beyond the core documented set. 
 
 ## Target behavior
 
-1. Production config uses explicit opt-in strategy activation.
-2. Each strategy declares supported assets/timeframes and required data fields.
+1. Production config uses explicit opt-in strategy activation by narrowing the default profile, not by replacing the existing explicit-YAML-key loader.
+2. Each strategy declares supported assets/timeframes and required data fields, including strategies whose current config lacks `assets`/`timeframes` fields such as 99c sniper and one-cent buy.
 3. Scheduler skips incompatible strategy/market pairs before evaluation and records the reason separately from gate rejection.
 4. Strategy status is visible: active, disabled, unsupported market, missing data, uncalibrated.
 5. Paper outcomes are aggregated per strategy/asset/timeframe to support calibration.
@@ -40,6 +40,8 @@ class StrategyReadiness:
     calibration_status: Literal["unknown", "insufficient_data", "calibrated"]
 ```
 
+For strategies without config-level `assets` or `timeframes`, readiness metadata must supply the production support matrix instead of assuming those fields exist.
+
 Required fields examples:
 
 - `up_book`, `down_book`
@@ -52,19 +54,20 @@ Required fields examples:
 
 Introduce two profiles by convention:
 
-- `production`: only explicitly reviewed strategies enabled.
+- `production`: only explicitly reviewed strategies enabled in the default formal runtime config.
 - `lab`: experimental strategies may be enabled for research.
 
-The default Docker/runtime config should be production-safe. Experimental breadth belongs in a separate config file, not the default formal runtime path.
+This builds on the current loader behavior: it already instantiates only explicit YAML strategy keys whose `enabled` flag is true. The production gap is that the default YAML explicitly enables too many strategies and there is no separate lab profile for that breadth.
 
 ## Calibration metrics
 
-Persist/report per strategy/asset/timeframe:
+Persist/report per strategy/asset/timeframe, not only separate marginal strategy, asset, and timeframe summaries:
 
 - signals emitted;
 - gate accepted/rejected;
 - paper attempted/filled/rejected;
 - resolved wins/losses;
+- sample size and calibration confidence bucket;
 - average entry price;
 - average return;
 - precision by confidence bucket;
@@ -72,10 +75,10 @@ Persist/report per strategy/asset/timeframe:
 
 ## Acceptance criteria
 
-- A strategy unsupported for a market is skipped before `evaluate()` and does not create a rejected signal row as if it failed a trade gate.
-- Default production config contains only intentionally enabled strategies.
-- Dashboard/report can show inactive/no-op strategies separately.
-- Paper leaderboard distinguishes insufficient sample size from poor performance.
+- A strategy unsupported for a market is skipped before `evaluate()` and does not create a rejected signal row as if it failed a trade gate; current silent no-candidate skips are replaced by persisted skip/status data.
+- Default production config contains only intentionally enabled strategies, while the lab profile preserves experimental breadth.
+- Dashboard/report can show inactive/no-op/unsupported strategies separately because skip/status data is persisted and exposed through API fields.
+- Paper leaderboard distinguishes insufficient sample size from poor performance using strategy×asset×timeframe and confidence-bucket fields.
 - Existing lab experimentation remains possible through separate config.
 
 ## Test strategy

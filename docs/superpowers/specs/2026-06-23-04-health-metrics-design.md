@@ -6,7 +6,13 @@
 
 ## Problem
 
-PolySignal has `HealthRegistry` and `MetricsRegistry`, but the long-running scheduler mostly logs failures and continues. Dashboard `/health` currently reports basic OK/count state, not whether Gamma, CLOB WS, Binance WS, Telegram, SQLite, or paper execution are degraded. This makes no-signal periods hard to distinguish from data-source failure.
+PolySignal has a dict-based `HealthRegistry` that reports uppercase `OK`/`DEGRADED` values and a `MetricsRegistry`, but the long-running scheduler mostly logs failures and continues. Dashboard `/health` is currently counts-only/basic-state oriented, not component health for Gamma, CLOB WS, Binance WS, Telegram, SQLite, or paper execution. This makes no-signal periods hard to distinguish from data-source failure.
+
+Current-state caveats this spec intentionally changes:
+
+- The new `ComponentHealth`/`HealthSnapshot` contract replaces or extends the existing uppercase dict health contract; callers must not assume both shapes are equivalent.
+- `MetricsRegistry` exists today, but it is not wired into scheduler or dashboard health.
+- `system_events` has schema/API support, but runtime paths do not yet write component transition events.
 
 ## Non-goals
 
@@ -20,7 +26,7 @@ PolySignal has `HealthRegistry` and `MetricsRegistry`, but the long-running sche
 1. Every major component reports status: `ok`, `degraded`, or `down`.
 2. Health includes last success time, last error, and core lag/counter metrics.
 3. Dashboard `/health` returns degraded status when any critical component is degraded.
-4. Bounded smoke evidence includes health snapshot.
+4. Bounded smoke evidence schema adds a health snapshot field.
 5. Scheduler writes important component transitions to SQLite `system_events`.
 6. Metrics are useful without requiring live trading or external services.
 
@@ -71,7 +77,7 @@ class HealthSnapshot:
 - A simulated Binance stale condition changes health to degraded/down according to config.
 - A CLOB WS reconnect increments counters and is visible in health.
 - Gate rejection counts by reason are observable.
-- SQLite write errors are persisted as system events when possible and shown in health.
+- Component transition events are written through existing `system_events` schema/API paths when possible and shown in health.
 - Existing dashboard read-only boundary remains intact.
 
 ## Test strategy
@@ -79,7 +85,7 @@ class HealthSnapshot:
 - Unit tests for health aggregation severity.
 - Scheduler component tests using fake registries/feed failures.
 - Dashboard API test for `/health` shape and degraded status.
-- Smoke evidence test that health snapshot is included.
+- Smoke evidence test that the schema includes the health snapshot field.
 
 ## Rollout
 

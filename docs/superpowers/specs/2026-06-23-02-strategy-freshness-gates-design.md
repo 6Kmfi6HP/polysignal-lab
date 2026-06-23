@@ -6,9 +6,9 @@
 
 ## Problem
 
-Global config currently allows 60 seconds of orderbook and spot staleness in `config/signal_bot.yaml`. That may be acceptable for low-frequency diagnostics, but not for 5m/15m crypto Up/Down markets where late-window entries happen inside the final 30-240 seconds. Strategy configs already express stricter intent, for example late-consensus config has low-second freshness limits, but `SignalGate` only checks the global data config.
+Global config currently allows 60 seconds of orderbook and spot staleness in `config/signal_bot.yaml`. That may be acceptable for low-frequency diagnostics, but not for 5m/15m crypto Up/Down markets where late-window entries happen inside the final 30-240 seconds. Strategy config models already express stricter intent; for example `LateConsensusConfig` defaults to 1.5s book/spot limits even when the runtime YAML omits those fields, while explicit YAML values should override the model defaults when configured.
 
-The result is architectural drift: strategies assume the pipeline will reject stale data, while the pipeline applies thresholds too wide for their trading horizon.
+The result is architectural drift: strategies assume the pipeline will reject stale data, while the pipeline applies thresholds too wide for their trading horizon unless the gate is taught to resolve strategy-specific model/YAML policy.
 
 ## Non-goals
 
@@ -21,15 +21,16 @@ The result is architectural drift: strategies assume the pipeline will reject st
 
 1. Every `SignalCandidate` carries or can resolve its strategy freshness policy.
 2. Gate freshness uses the strictest threshold among global config and strategy-specific config.
-3. Freshness decisions distinguish:
+3. Freshness decisions distinguish missing data from stale data, replacing the current conflation where an absent book or spot source is returned as `STALE_*`:
    - `STALE_ORDERBOOK`
    - `STALE_SPOT_PRICE`
    - `STALE_PRICE_TO_BEAT`
    - `MISSING_ORDERBOOK`
    - `MISSING_SPOT_PRICE`
-4. `RejectedSignal.details` includes measured lag and threshold used.
-5. Strategies no longer need to duplicate freshness checks unless they need strategy-specific semantic checks beyond raw age.
-6. Tests prove late-window strategies cannot emit accepted signals with old books or spot data.
+4. `STALE_PRICE_TO_BEAT`/`max_anchor_staleness_ms` is only enforceable after snapshots carry anchor provenance, timestamp, and measured lag; current snapshots only expose `price_to_beat` plus `price_to_beat_source`/`price_to_beat_verified` metrics.
+5. `RejectedSignal.details` includes measured lag and threshold used; this requires the gate check to pass snapshot/freshness measurements into detail construction, not only the candidate and reason code.
+6. Strategies no longer need to duplicate freshness checks unless they need strategy-specific semantic checks beyond raw age.
+7. Tests prove late-window strategies cannot emit accepted signals with old books or spot data.
 
 ## Proposed model
 
@@ -81,12 +82,14 @@ Decision: use the strategy property. It is explicit and fits existing factory/co
 
 Recommended: candidate carries a resolved immutable policy copied from the strategy at emission time. This keeps `SignalGate` pure over candidate + snapshot.
 
+Freshness checks should return structured measurements, not only a reason string, so `_rejection_details()` can persist the actual source lag, threshold, and missing-vs-stale reason without re-reading mutable state.
+
 ## Acceptance criteria
 
-- A late-consensus candidate with 2s-old book and 1.5s policy is rejected even though the global config allows 60s.
-- Rejection details include actual lag and threshold.
+- A late-consensus candidate with 2s-old book and a 1.5s policy is rejected even if the 1.5s threshold comes from the current config model default rather than an explicit runtime YAML value, and even though the global config allows 60s.
+- Rejection details include actual lag and threshold for book/spot checks, and PTB lag once PTB provenance/timestamp fields exist.
 - Existing strategies without explicit freshness policy retain current global behavior.
-- No strategy emits accepted signals when its required source is missing.
+- Missing required sources produce `MISSING_*` reasons, not stale reasons.
 - Dashboard rejected-signals endpoint can show the new reason codes because they are persisted through existing rejected signal storage.
 
 ## Test strategy

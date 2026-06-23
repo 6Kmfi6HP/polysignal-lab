@@ -10,6 +10,8 @@
 
 Earlier specs address specific correctness gaps. This spec is deliberately last because broad lifecycle refactoring before fixing book/freshness/paper correctness would move bugs around without reducing risk.
 
+The refactor target is broader than the `PolySignalScheduler` class: it includes module-level runtime logic in `scheduler_runtime`, `scheduler_market_data`, `scheduler_processing`, `scheduler_reporting`, and `scheduler_state` so ownership does not remain split across hidden helper paths.
+
 ## Non-goals
 
 - No new distributed system.
@@ -32,6 +34,8 @@ Earlier specs address specific correctness gaps. This spec is deliberately last 
 - `PersistenceService`: SQLite/JSONL/state writes and restore.
 - `HealthService`: component health aggregation.
 
+This spec depends on spec 04's `ComponentHealth` contract for service health shape and aggregation semantics.
+
 ## Service contract
 
 Each service exposes a minimal lifecycle:
@@ -44,7 +48,7 @@ class RuntimeService(Protocol):
     def health(self) -> ComponentHealth: ...
 ```
 
-Services with periodic work expose explicit methods called by the supervisor, not hidden background loops unless necessary.
+Services with periodic work expose explicit methods called by the supervisor, not hidden background loops unless necessary. Existing feed adapters already run reconnect loops internally; extraction must preserve supervised cancellation, restart, and health semantics for any loop that remains internal.
 
 ## Data boundaries
 
@@ -56,7 +60,7 @@ Services with periodic work expose explicit methods called by the supervisor, no
 
 ## Migration order
 
-1. Extract `PersistenceService` wrapper around existing SQLite/JSONL/state calls.
+1. Extract `PersistenceService` wrapper around existing SQLite/JSONL/state calls, then migrate every callsite to it so no duplicate persistence control paths remain.
 2. Extract `MarketUniverseService` around existing `scheduler_market_data` refresh functions.
 3. Extract `BookFeedService` after spec 01 book reconciliation is complete.
 4. Extract `SignalPipeline` after spec 07 readiness filtering is complete.
@@ -69,7 +73,7 @@ Services with periodic work expose explicit methods called by the supervisor, no
 - `PolySignalScheduler.__init__` no longer constructs every concrete subsystem directly; construction is grouped behind services.
 - `run()` loop reads as orchestration, not business logic.
 - Each service has isolated tests with fakes for external adapters.
-- A failure in publish/reporting does not block feed updates.
+- Slow, hung, blocking, or failing publish/report/storage paths do not block feed updates or snapshot evaluation.
 - Shutdown flushes persistence and stops WebSockets deterministically.
 - Existing CLI modes remain unchanged.
 
@@ -77,7 +81,7 @@ Services with periodic work expose explicit methods called by the supervisor, no
 
 - Unit tests per service using fake dependencies.
 - Scheduler lifecycle test: start order, stop order, cancellation handling.
-- Failure isolation test: publishing failure does not prevent snapshot evaluation in next iteration.
+- Failure isolation test: slow, hung, blocking, and thrown publish/report/storage failures do not prevent snapshot evaluation in the next iteration.
 - State restore/persist regression tests remain passing.
 - Bounded smoke verifies same external read-only behavior.
 

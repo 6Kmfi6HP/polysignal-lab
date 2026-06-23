@@ -20,13 +20,14 @@ Polymarket official docs state that the market channel emits `book`, `price_chan
 ## Target behavior
 
 1. A book is fill-eligible only after a full `book` snapshot or REST `/books` snapshot.
-2. `price_change` events may update depth only for books that already have a valid snapshot.
-3. `best_bid_ask` updates price telemetry only; it must not create or modify depth used by fill simulation.
-4. `tick_size_change` marks the affected token book as stale and starts a new book epoch. The book remains ineligible for paper fills until a fresh full snapshot arrives.
-5. `market_resolved` is queued for settlement/reporting and increments lifecycle metrics.
-6. Unknown events are counted by event type and ignored safely.
-7. Reconnect/startup reseeds active token IDs through batch `/books` before accepting deltas where possible.
-8. Stale/invalid/missing-snapshot reasons are visible in diagnostics and rejected paper-fill metrics.
+2. Every paper-fill path checks fill eligibility immediately before simulating execution, including `BestAskTakerFillModel`, FAK/FOK `BestAskTakerExecutor`, and passive GTD `PassiveGtdExecutor` resting-order fills.
+3. `price_change` events may update depth only for books that already have a valid snapshot.
+4. `best_bid_ask` updates price telemetry only; it must not create or modify depth used by fill simulation.
+5. `tick_size_change` marks the affected token book as stale and starts a new book epoch. The book remains ineligible for paper fills until a fresh full snapshot arrives.
+6. `market_resolved` is queued for settlement/reporting and increments lifecycle metrics.
+7. Unknown events are counted by event type and ignored safely.
+8. Startup reseeds active token IDs through batch `/books`; reconnect reseed is not currently present and must be added as a hook before accepting post-reconnect deltas where possible.
+9. Stale/invalid/missing-snapshot reasons are visible in diagnostics and rejected paper-fill metrics through a concrete counter sink.
 
 ## Proposed interfaces
 
@@ -45,6 +46,8 @@ class BookEpochState:
     last_source_timestamp: datetime | None
     last_received_at: datetime | None
 ```
+
+The current `OrderBook` model does not preserve the CLOB snapshot `hash`, so hash/sequence detection requires storing `last_hash` or equivalent snapshot metadata in the reconciliation state when a full snapshot is ingested.
 
 ### Registry additions
 
@@ -82,26 +85,27 @@ flowchart LR
 - Delta before snapshot: increment `delta_without_snapshot`, keep existing no-book state.
 - Tick-size change: mark stale with reason `TICK_SIZE_CHANGE_RESEED_REQUIRED`.
 - REST reseed failure: keep stale state; gate rejects via existing `STALE_ORDERBOOK` or a more specific reason if added.
-- Hash/timestamp regression, if detectable: mark stale with reason `BOOK_SEQUENCE_INVALID` and require reseed.
+- Hash/timestamp regression, once the snapshot hash or equivalent metadata is stored: mark stale with reason `BOOK_SEQUENCE_INVALID` and require reseed.
 
 ## Acceptance criteria
 
-- `best_bid_ask` cannot change bid/ask depth used by `BestAskTakerFillModel`.
+- Fill eligibility gates every paper-fill entry point: `BestAskTakerFillModel`, FAK/FOK `BestAskTakerExecutor`, and passive GTD `PassiveGtdExecutor` resting-order fills.
+- `best_bid_ask` cannot change bid/ask depth used by fill simulation.
 - `tick_size_change` causes the token to be rejected for paper fills until a new full snapshot.
 - `price_change` without prior snapshot is counted and does not create a book.
-- Startup/reconnect batch reseed path keeps current read-only boundary.
+- Startup/reconnect batch reseed path keeps current read-only boundary; reconnect handling adds the missing reseed hook before accepting post-reconnect deltas where possible.
 - Existing tests for WebSocket book and price-change parsing still pass after being tightened.
-- New tests cover: tick-size stale epoch, best-bid/ask telemetry-only, delta-before-snapshot, and REST reseed recovery.
+- New tests cover: tick-size stale epoch, best-bid/ask telemetry-only, delta-before-snapshot, REST reseed recovery, and counter-sink emission for rejected fill reasons.
 
 ## Test strategy
 
 - Unit tests in `tests/test_market_data.py` or `tests/test_websocket_contracts.py` for each event type.
-- Paper simulation regression in `tests/test_paper_simulation.py`: stale book from tick-size change rejects fill.
+- Paper simulation regressions in `tests/test_paper_simulation.py`: stale books reject fills across taker, FAK/FOK `BestAskTakerExecutor`, and passive GTD `PassiveGtdExecutor` resting-order paths.
 - Read-only smoke remains bounded and must not call authenticated endpoints.
 
 ## Rollout
 
 1. Add reconciliation state and tests with WebSocket handler changes.
-2. Enable REST reseed on startup/reconnect using existing public batch books client.
-3. Expose counters in logs first; spec 04 can later publish them to dashboard health.
+2. Enable REST reseed on startup and add the currently missing reconnect reseed hook before post-reconnect deltas are accepted where possible.
+3. Wire diagnostics/rejected-fill counters to the concrete sink chosen for this change; spec 04 can later publish them to dashboard health.
 4. Keep config defaults unchanged except any new metric/diagnostic flags.
