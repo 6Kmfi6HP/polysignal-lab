@@ -68,3 +68,10 @@ Quality/slop risks:
 Residual risks:
 - The repository is a shared dirty worktree with unrelated pre-existing changes in many files, including some files in neighboring scheduler/paper areas. I preserved those and did not attempt to revert them.
 - The `review-work` skill was loaded after implementation, but its mandatory five-subagent orchestration cannot run in this session because no `multi_agent_v1` spawn/wait tools are exposed. This artifact records a self-review plus executed QA, not a five-lane independent review pass.
+
+Final-review cancelled resting rejection repair:
+- Fix commit: `5d269924067eb58643fd1ab196a72c582e5031ff`.
+- Finding repaired: `tick_resting_orders()` now routes cancelled resting results with `GTD_EXPIRED` or `WALLET_INSUFFICIENT_CASH` reasons through the same normalized paper-order upsert and wallet-snapshot path used by rejected resting results, while preserving strategy cancel notification.
+- Red evidence: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler_paper.py::test_cancelled_resting_gtd_expiry_is_persisted_with_normalized_reason -v` failed before the production fix with `AssertionError: assert 'GTD_EXPIRED' == 'PAPER_GTD_EXPIRED'`.
+- Green evidence: after the fix, `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler_paper.py::test_cancelled_resting_gtd_expiry_is_persisted_with_normalized_reason tests/test_scheduler_paper.py::test_cancelled_resting_no_cash_is_persisted_with_normalized_reason -v` passed with `2 passed`.
+- Acceptance evidence: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler_paper.py tests/test_resting_orders.py -v` passed with `23 passed`.
