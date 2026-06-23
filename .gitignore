@@ -22,4 +22,4 @@ refined_results.json
 htmlcov/
 .claude/worktrees/
 .worktrees/
-refs/polymarket-arbitrage-bot/
+refs/*
