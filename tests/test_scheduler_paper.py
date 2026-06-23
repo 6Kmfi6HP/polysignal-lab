@@ -46,14 +46,14 @@ async def test_missing_orderbook_persists_rejected_paper_order_without_fill(
     order_rows = scheduler.sqlite.query_json("paper_orders")
     assert result["paper_order"] is not None
     assert result["paper_order"].status == "REJECTED"
-    assert result["paper_order"].reject_reason == "MISSING_ORDERBOOK"
+    assert result["paper_order"].reject_reason == "PAPER_MISSING_ORDERBOOK"
     assert counts["signals"] == 1
     assert counts["paper_orders"] == 1
     assert counts["paper_fills"] == 0
     assert counts["paper_positions"] == 0
-    assert order_rows[0]["reject_reason"] == "MISSING_ORDERBOOK"
-    assert order_rows[0]["metrics"]["fill_decision_reason"] == "MISSING_ORDERBOOK"
-    assert scheduler.logs.read_all("paper_orders")[0]["reject_reason"] == "MISSING_ORDERBOOK"
+    assert order_rows[0]["reject_reason"] == "PAPER_MISSING_ORDERBOOK"
+    assert order_rows[0]["metrics"]["fill_decision_reason"] == "PAPER_MISSING_ORDERBOOK"
+    assert scheduler.logs.read_all("paper_orders")[0]["reject_reason"] == "PAPER_MISSING_ORDERBOOK"
 
 
 async def test_process_signal_writes_prd_named_telegram_jsonl_stream(
@@ -94,7 +94,7 @@ async def test_stale_paper_fill_count_is_zero(tmp_path: Path, snapshot, settings
     order_rows = scheduler.sqlite.query_json("paper_orders")
     assert result["paper_order"] is not None
     assert result["paper_order"].status == "REJECTED"
-    assert result["paper_order"].reject_reason == "STALE_ORDERBOOK"
+    assert result["paper_order"].reject_reason == "PAPER_STALE_ORDERBOOK"
     assert report is not None
     assert report.paper_orders == 1
     assert report.paper_fills == 0
@@ -104,7 +104,7 @@ async def test_stale_paper_fill_count_is_zero(tmp_path: Path, snapshot, settings
     assert counts["paper_orders"] == 1
     assert counts["paper_fills"] == 0
     assert counts["paper_positions"] == 0
-    assert order_rows[0]["metrics"]["fill_decision_reason"] == "STALE_ORDERBOOK"
+    assert order_rows[0]["metrics"]["fill_decision_reason"] == "PAPER_STALE_ORDERBOOK"
 
 
 def test_scheduler_fill_notifier_dispatches_cancel_to_matching_strategy() -> None:
