@@ -133,6 +133,9 @@ class VWAPMomentumStrategy(BaseStrategy):
         """Re-allow entry for a market (used by tests or manual reset)."""
         self._can_enter[market_id] = True
 
+    def notify_signal_accepted(self, signal: SignalCandidate) -> None:
+        self._can_enter[signal.market_id] = False
+
     @property
     def freshness_policy(self) -> FreshnessPolicy:
         return FreshnessPolicy(
@@ -264,9 +267,6 @@ class VWAPMomentumStrategy(BaseStrategy):
         # ------------------------------------------------------------------
         if not self._can_enter[snapshot.market.market_id]:
             return []
-
-        # Mark this market as entered (one-shot)
-        self._can_enter[snapshot.market.market_id] = False
 
         # ------------------------------------------------------------------
         # Build signal
