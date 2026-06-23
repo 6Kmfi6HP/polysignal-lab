@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from polysignal_lab.config import PaperTradingConfig, PolymarketDataConfig
+from polysignal_lab.data.state import OrderBookRegistry
 from polysignal_lab.domain.enums import OrderIntent, OrderStatus
 from polysignal_lab.domain.orderbook import OrderBook
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
@@ -30,12 +31,25 @@ class SimulationResult:
 
 
 class PaperSimulator:
-    def __init__(self, config: PaperTradingConfig, data_config: PolymarketDataConfig, wallet: PaperWallet):
+    def __init__(
+        self,
+        config: PaperTradingConfig,
+        data_config: PolymarketDataConfig,
+        wallet: PaperWallet,
+        registry: OrderBookRegistry | None = None,
+    ):
         self.config = config
         self.wallet = wallet
-        self.fill_model = BestAskTakerFillModel(config.fill_model, data_config.max_book_staleness_ms)
-        self.taker = BestAskTakerExecutor(config.fill_model, data_config.max_book_staleness_ms)
-        self.passive = PassiveGtdExecutor()
+        self.registry = registry
+        self.fill_model = BestAskTakerFillModel(
+            config.fill_model, data_config.max_book_staleness_ms, registry
+        )
+        self.taker = BestAskTakerExecutor(
+            config.fill_model, data_config.max_book_staleness_ms, registry
+        )
+        self.passive = PassiveGtdExecutor(
+            max_book_staleness_ms=data_config.max_book_staleness_ms
+        )
         self.pair_coordinator = MultiLegCoordinator()
         self.fill_notifier: Callable[[PaperOrder, str, PaperFill | None], None] | None = None
 

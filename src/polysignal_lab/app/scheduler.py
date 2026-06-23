@@ -116,7 +116,10 @@ class PolySignalScheduler:
         self.strategies = build_strategies(self.settings.strategies)
         self.wallet = PaperWallet(self.settings.paper_trading.starting_balance_usdc)
         self.paper = PaperSimulator(
-            self.settings.paper_trading, self.settings.data.polymarket, self.wallet
+            self.settings.paper_trading,
+            self.settings.data.polymarket,
+            self.wallet,
+            self.ctx.books,
         )
         self.paper.fill_notifier = _make_fill_notifier(self.strategies)
         self.exits = PaperExitEngine(self.settings.paper_trading.exit_model, self.wallet)
