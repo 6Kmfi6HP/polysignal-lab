@@ -149,6 +149,47 @@ def test_late_consensus_stop_loss_config_rejects_malformed_entry() -> None:
         )
 
 
+
+def test_late_consensus_policy_uses_model_defaults_when_yaml_omits_fields(tmp_path: Path) -> None:
+    config_path = tmp_path / "signal_bot.yaml"
+    config_path.write_text(
+        """
+strategies:
+  late_consensus:
+    enabled: true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(config_path)
+    strategies = build_strategies(settings.strategies)
+
+    assert [strategy.name for strategy in strategies] == ["late_consensus"]
+    assert strategies[0].freshness_policy is not None
+    assert strategies[0].freshness_policy.max_orderbook_staleness_ms == 1_500
+    assert strategies[0].freshness_policy.max_spot_staleness_ms == 1_500
+
+
+def test_ptb_diff_policy_uses_exit_lag_default_when_yaml_omits_fields(tmp_path: Path) -> None:
+    config_path = tmp_path / "signal_bot.yaml"
+    config_path.write_text(
+        """
+strategies:
+  ptb_diff:
+    enabled: true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(config_path)
+    strategies = build_strategies(settings.strategies)
+
+    assert [strategy.name for strategy in strategies] == ["ptb_diff"]
+    assert strategies[0].freshness_policy is not None
+    assert strategies[0].freshness_policy.max_orderbook_staleness_ms == 1_000
+    assert strategies[0].freshness_policy.max_spot_staleness_ms == 1_000
+
+
 def test_prd_result_states_exclude_partial_settlement() -> None:
     result_states = {result.value for result in TradeResultStatus}
 

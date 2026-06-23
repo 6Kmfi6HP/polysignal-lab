@@ -253,3 +253,30 @@ def test_vwap_momentum_rejects_too_close_to_end() -> None:
         price_interval_sec=5.0, elapsed_sec=150,
     ))
     assert signals == []
+
+
+def test_vwap_momentum_signal_carries_configured_freshness_policy(snapshot) -> None:
+    config = VWAPMomentumConfig(
+        max_orderbook_staleness_ms=1_000,
+        max_spot_staleness_ms=2_000,
+        min_deviation_pct=0.0,
+        max_deviation_pct=1.0,
+        min_momentum=0.0,
+        min_elapsed_sec=0,
+        no_entry_before_end_sec=0,
+        vwap_window_sec=180,
+    )
+    strategy = VWAPMomentumStrategy(config)
+    now = snapshot.created_at.timestamp()
+    for side in (Side.UP, Side.DOWN):
+        key = strategy._market_key(snapshot.market.market_id, side)
+        price = snapshot.ask_for(side)
+        assert price is not None
+        strategy.trades.push(key, price * 0.95, 1.0, now - config.momentum_window_sec)
+
+    signals = strategy.evaluate(snapshot)
+
+    assert signals
+    assert signals[0].freshness_policy is not None
+    assert signals[0].freshness_policy.max_orderbook_staleness_ms == 1_000
+    assert signals[0].freshness_policy.max_spot_staleness_ms == 2_000

@@ -31,6 +31,7 @@ class VWAPMomentumConfig(BaseModel):
     no_entry_before_end_sec: int = 20
     max_spread: float = 0.03
     max_orderbook_staleness_ms: int = 60_000
+    max_spot_staleness_ms: int = 60_000
 
 
 class FixedStopLossConfig(BaseModel):

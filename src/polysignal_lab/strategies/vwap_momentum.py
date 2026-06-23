@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from polysignal_lab.config import VWAPMomentumConfig
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.trade import Trade
@@ -131,6 +132,13 @@ class VWAPMomentumStrategy(BaseStrategy):
     def reset_entry_guard(self, market_id: str) -> None:
         """Re-allow entry for a market (used by tests or manual reset)."""
         self._can_enter[market_id] = True
+
+    @property
+    def freshness_policy(self) -> FreshnessPolicy:
+        return FreshnessPolicy(
+            max_orderbook_staleness_ms=self.config.max_orderbook_staleness_ms,
+            max_spot_staleness_ms=self.config.max_spot_staleness_ms,
+        )
 
     # ------------------------------------------------------------------
     # Helpers

@@ -4,6 +4,7 @@ from typing import NotRequired, TypedDict, assert_never
 
 from polysignal_lab.config import PTBDiffConfig
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy
@@ -70,6 +71,14 @@ class PTBDiffStrategy(BaseStrategy):
 
     def __init__(self, config: PTBDiffConfig):
         self.config = config
+
+    @property
+    def freshness_policy(self) -> FreshnessPolicy:
+        max_lag_ms = self.config.exit_config.market_data_max_lag_sec * 1000
+        return FreshnessPolicy(
+            max_orderbook_staleness_ms=max_lag_ms,
+            max_spot_staleness_ms=max_lag_ms,
+        )
 
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalCandidate]:
         if not self.config.enabled:

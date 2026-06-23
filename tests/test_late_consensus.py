@@ -235,3 +235,15 @@ def test_late_consensus_rejects_unsupported_asset_and_accepts_zero_spot_move() -
     # Then: unsupported asset rejects; weak spot move is accepted (spot filter disabled).
     assert unsupported_signals == []
     assert weak_spot_signals  # signal emitted even with weak spot move
+
+
+def test_late_consensus_signal_carries_configured_freshness_policy() -> None:
+    config = _config()
+    signal = LateConsensusStrategy(config).evaluate(
+        _snapshot(LateConsensusScenario(spot=SpotState(price=101.0, price_to_beat=100.0)))
+    )[0]
+
+    assert signal.freshness_policy is not None
+    assert signal.freshness_policy.max_orderbook_staleness_ms == config.max_orderbook_staleness_ms
+    assert signal.freshness_policy.max_spot_staleness_ms == config.max_spot_staleness_ms
+    assert signal.freshness_policy.max_anchor_staleness_ms is None

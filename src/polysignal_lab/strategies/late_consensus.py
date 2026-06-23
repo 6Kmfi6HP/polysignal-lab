@@ -4,6 +4,7 @@ from datetime import datetime
 
 from polysignal_lab.config import LateConsensusConfig
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy
@@ -36,6 +37,13 @@ class LateConsensusStrategy(BaseStrategy):
         self._last_favorite: dict[str, tuple[Side, datetime]] = {}
         # Track last entry timestamp per market for frequency gating (Step 2)
         self._last_entry_at: dict[str, datetime] = {}
+
+    @property
+    def freshness_policy(self) -> FreshnessPolicy:
+        return FreshnessPolicy(
+            max_orderbook_staleness_ms=self.config.max_orderbook_staleness_ms,
+            max_spot_staleness_ms=self.config.max_spot_staleness_ms,
+        )
 
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalCandidate]:
         # --- Pre-checks: enabled, asset, timeframe ---
