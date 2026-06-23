@@ -75,34 +75,10 @@ class PaperSimulator:
         if intent in (OrderIntent.TAKER_FAK, OrderIntent.TAKER_FOK):
             if signal.pair_id:
                 self.pair_coordinator.register(signal)
-            # Only use atomic FOK pair coordination when both legs are TAKER_FOK
-            # and the first leg was already recorded as pending. Otherwise execute
-            # independently — the pair_id is for strategy tracking, not simulator atomicity.
-            if (
-                intent == OrderIntent.TAKER_FOK
-                and not signal.hedge_leg
-                and signal.pair_id
-                and not self.pair_coordinator._pending_fok
-            ):
-                # First FOK leg of a potential pair — record and wait for hedge
-                self.pair_coordinator.record_pending(signal, order, orderbook)
-                return SimulationResult(order=order, status=OrderStatus.PENDING)
-            elif (
-                signal.hedge_leg
-                and intent == OrderIntent.TAKER_FOK
-                and signal.pair_id
-                and self.pair_coordinator._pending_fok
-            ):
-                # Hedge leg arrived — try to execute the FOK pair atomically
-                result = self.pair_coordinator.try_execute_fok_pair(
-                    signal, order, orderbook, self.taker
-                )
-                if result is None:
-                    self._reject_order(order, "FOK_PAIR_FAILED")
-                    return SimulationResult(order=order, status=OrderStatus.REJECTED)
-                self._apply_fills_to_wallet(result)
-                return self._to_result(result)
-            # Standalone execution: FAK legs, FOK legs without pending pair, hedge legs
+            # All FAK/FOK legs execute independently in the paper simulation.
+            # The pair_id is for strategy state tracking, not simulator atomicity.
+            # Multi-leg atomicity is not achievable in single-snapshot evaluation;
+            # strategies handle hedge/repair via notify_fill callbacks.
             result = self.taker.execute(order, orderbook, intent)
             self._apply_fills_to_wallet(result)
             return self._to_result(result)

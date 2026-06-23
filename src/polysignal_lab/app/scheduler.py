@@ -47,7 +47,7 @@ from polysignal_lab.strategies.base import BaseStrategy
 
 def _make_fill_notifier(strategies: list[BaseStrategy]) -> object:
     """Create a callback that notifies strategies when paper fills/cancels occur."""
-    def notify(order: PaperOrder, event: str, fill: PaperFill | None = None) -> None:
+    def notify(order: PaperOrder, event: str, fill: PaperFill | None = None, pair_id: str | None = None) -> None:
         for strat in strategies:
             if not hasattr(strat, "name") or strat.name != order.strategy:
                 continue
@@ -55,7 +55,8 @@ def _make_fill_notifier(strategies: list[BaseStrategy]) -> object:
                 strat.notify_fill(order.market_id, order.side, fill.fill_price, fill.shares)
             elif event == "cancelled":
                 strat.notify_cancel(order.market_id, order.side, order.reject_reason or "GTD_EXPIRED")
-    return notify
+            elif event == "leg_failed" and pair_id is not None:
+                strat.notify_leg_failure(pair_id, order.market_id, order.side)
 
 @dataclass
 class ServiceContext:

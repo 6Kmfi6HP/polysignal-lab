@@ -155,6 +155,9 @@ def _store_simulation_result(
             sim.order.signal_id,
             sim.fill.fill_price,
         )
+        # Notify the originating strategy of the fill
+        if scheduler.paper.fill_notifier:
+            scheduler.paper.fill_notifier(sim.order, "filled", sim.fill)
     elif sim.order.reject_reason:
         scheduler.logger.info(
             "Paper order %s rejected for signal %s: %s",
@@ -162,6 +165,9 @@ def _store_simulation_result(
             sim.order.signal_id,
             sim.order.reject_reason,
         )
+        # Notify strategy of rejection/cancellation
+        if scheduler.paper.fill_notifier:
+            scheduler.paper.fill_notifier(sim.order, "cancelled", None)
 
 
 async def process_accepted_signals(
@@ -182,7 +188,17 @@ async def process_accepted_signals(
 def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
     """Poll resting GTD orders for fills/expiry each scheduler cycle."""
     from polysignal_lab.domain.enums import OrderStatus
-    results = scheduler.paper.passive.tick(scheduler.ctx.books, scheduler.wallet)
+    def _risk_check(order):
+        """Check paper trading risk limits before filling a resting order."""
+        cfg = scheduler.settings.paper_trading
+        if scheduler.wallet.open_position_count >= cfg.max_open_positions:
+            return False
+        if scheduler.wallet.exposure_by_market(order.market_id) + order.stake_usdc > cfg.max_market_exposure_usdc:
+            return False
+        if scheduler.wallet.exposure_by_strategy(order.strategy) + order.stake_usdc > cfg.max_strategy_exposure_usdc:
+            return False
+        return True
+    results = scheduler.paper.passive.tick(scheduler.ctx.books, scheduler.wallet, risk_check=_risk_check)
     for result in results:
         if result.fills:
             for fill in result.fills:

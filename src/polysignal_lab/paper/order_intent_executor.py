@@ -126,6 +126,10 @@ class BestAskTakerExecutor:
             return self._reject(order, "FAK_NO_LIQUIDITY")
         fill_ratio = filled_usdc / order.stake_usdc
         fill_price = filled_usdc / shares
+        slippage = fill_price * self.fill_model.slippage_bps / 10000
+        fill_price_with_slippage = fill_price + slippage
+        if fill_price_with_slippage > order.limit_price:
+            return self._reject(order, "SLIPPAGE_EXCEEDS_MAX_ENTRY")
         fill = PaperFill(
             paper_fill_id=new_id("pf"),
             paper_order_id=order.paper_order_id,
@@ -133,8 +137,8 @@ class BestAskTakerExecutor:
             token_id=order.token_id,
             side=order.side,
             raw_best_ask=book.best_ask,
-            slippage_bps=0.0,
-            fill_price=fill_price,
+            slippage_bps=self.fill_model.slippage_bps,
+            fill_price=fill_price_with_slippage,
             stake_usdc=filled_usdc,
             shares=shares,
             depth_checked=False,
@@ -148,7 +152,7 @@ class BestAskTakerExecutor:
             strategy=order.strategy, asset=order.asset, timeframe=order.timeframe,
             market_id=order.market_id, market_slug=order.market_slug,
             token_id=order.token_id, side=order.side,
-            entry_price=fill_price, shares=shares, stake_usdc=filled_usdc,
+            entry_price=fill_price_with_slippage, shares=shares, stake_usdc=filled_usdc,
         )
         status = OrderStatus.FILLED if fill_ratio >= 0.999 else OrderStatus.PARTIAL
         order.status = status
@@ -253,9 +257,9 @@ class PassiveGtdExecutor:
         order.status = OrderStatus.RESTING
         return IntentDispatchResult(order=order, status=OrderStatus.RESTING)
 
-    def tick(self, books, wallet) -> list[IntentDispatchResult]:
-        results: list[IntentDispatchResult] = []
+    def tick(self, books, wallet, risk_check=None) -> list[IntentDispatchResult]:
         now = time.time()
+        results: list[IntentDispatchResult] = []
         for token_id in list(self._store.keys()):
             book = books.get(token_id)
             surviving: list[RestingOrder] = []
@@ -268,7 +272,10 @@ class PassiveGtdExecutor:
                     ))
                     continue
                 if book is not None and book.best_bid is not None and book.best_bid >= resting.limit_price:
-                    if wallet.can_afford(resting.order.stake_usdc):
+                    can_fill = wallet.can_afford(resting.order.stake_usdc)
+                    if can_fill and risk_check is not None:
+                        can_fill = risk_check(resting.order)
+                    if can_fill:
                         fill = PaperFill(
                             paper_fill_id=new_id("pf"),
                             paper_order_id=resting.order.paper_order_id,
