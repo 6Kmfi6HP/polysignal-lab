@@ -1,0 +1,38 @@
+minimum_pre_commit_version: "4.6.0"
+default_install_hook_types: [pre-commit, commit-msg]
+default_language_version:
+  python: python3.11
+
+repos:
+  - repo: local
+    hooks:
+      - id: commit-message-policy
+        name: Commit message policy
+        entry: uv run python scripts/validate_commit_msg.py
+        language: system
+        stages: [commit-msg]
+        always_run: true
+        pass_filenames: true
+
+      - id: staged-whitespace-check
+        name: Staged whitespace check
+        entry: git diff --cached --check
+        language: system
+        stages: [pre-commit]
+        always_run: true
+        pass_filenames: false
+
+      - id: python-compile
+        name: Python syntax compile
+        entry: uv run python -m py_compile
+        language: system
+        stages: [pre-commit]
+        types: [python]
+
+      - id: safety-scan
+        name: PolySignal safety scan
+        entry: uv run python scripts/safety_scan.py .
+        language: system
+        stages: [pre-commit]
+        always_run: true
+        pass_filenames: false
