@@ -112,8 +112,13 @@ class PaperExecutionPreflight:
                 return self._reject("FOK_INSUFFICIENT_DEPTH", metrics)
         elif intent == OrderIntent.TAKER_FAK:
             metrics["paper_depth_revalidated"] = True
-            if float(metrics["paper_available_depth_usdc"] or 0.0) <= 0.0:
+            fak_fill_price = self._fak_fill_price(signal, orderbook)
+            if fak_fill_price is None:
                 return self._reject("FAK_NO_LIQUIDITY", metrics)
+            slippage_price = fak_fill_price + fak_fill_price * self.fill_model.slippage_bps / 10000
+            metrics["paper_slippage_price"] = slippage_price
+            if slippage_price > signal.max_entry_price:
+                return self._reject("SLIPPAGE_EXCEEDS_MAX_ENTRY", metrics)
         elif self.fill_model.require_depth_check:
             metrics["paper_depth_revalidated"] = True
             available = float(metrics["paper_available_depth_usdc"] or 0.0)
@@ -177,6 +182,23 @@ class PaperExecutionPreflight:
             return "STALE_ORDERBOOK"
         return None
 
+    def _fak_fill_price(self, signal: SignalCandidate, orderbook: OrderBook) -> float | None:
+        remaining = self.fixed_stake_usdc
+        filled_usdc = 0.0
+        shares = 0.0
+        for level in sorted(orderbook.asks, key=lambda ask: ask.price):
+            if level.price > signal.max_entry_price:
+                break
+            take = min(remaining, level.price * level.size)
+            filled_usdc += take
+            shares += take / level.price
+            remaining -= take
+            if remaining <= 0:
+                break
+        if filled_usdc <= 0 or shares <= 0:
+            return None
+        return filled_usdc / shares
+
     def _edge_reason(
         self,
         signal: SignalCandidate,
@@ -193,6 +215,22 @@ class PaperExecutionPreflight:
             metrics["paper_required_probability_edge"] = min_probability_edge
             metrics["paper_edge_revalidated"] = True
             if current_edge < min_probability_edge:
+                return PAPER_EDGE_VANISHED
+            return None
+        stored_probability_edge = _finite_float(signal_metrics.get("probability_edge"))
+        entry_prob = _finite_float(signal_metrics.get("entry_prob"))
+        if (
+            stored_probability_edge is not None
+            and stored_probability_edge > 0
+            and entry_prob is not None
+            and directional_probability is not None
+        ):
+            current_edge = directional_probability - execution_ask
+            metrics["paper_execution_probability_edge"] = current_edge
+            metrics["paper_required_probability_edge"] = stored_probability_edge
+            metrics["paper_entry_probability"] = entry_prob
+            metrics["paper_edge_revalidated"] = True
+            if current_edge < stored_probability_edge:
                 return PAPER_EDGE_VANISHED
             return None
         min_token_price = _finite_float(signal_metrics.get("min_token_price"))

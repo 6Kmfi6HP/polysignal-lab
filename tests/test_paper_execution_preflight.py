@@ -123,6 +123,18 @@ def test_preflight_allows_fak_partial_depth() -> None:
     assert decision.metrics["paper_depth_revalidated"] is True
 
 
+def test_preflight_rejects_fak_slippage_above_limit() -> None:
+    decision = _preflight().evaluate(
+        _signal(order_intent=OrderIntent.TAKER_FAK, max_entry_price=0.60),
+        _book(ask=0.599, size=100.0),
+        utc_now(),
+        OrderIntent.TAKER_FAK,
+    )
+    assert decision.accepted is False
+    assert decision.reason_code == "PAPER_EXTREME_SLIPPAGE"
+    assert decision.metrics["paper_original_reason"] == "SLIPPAGE_EXCEEDS_MAX_ENTRY"
+
+
 def test_preflight_passive_gtd_does_not_require_immediate_depth() -> None:
     decision = _preflight().evaluate(
         _signal(order_intent=OrderIntent.PASSIVE_GTD, max_entry_price=0.01),
@@ -140,6 +152,22 @@ def test_preflight_rejects_probability_edge_vanished() -> None:
         metrics={"directional_probability": 0.70, "min_probability_edge": 0.05},
     )
     decision = _preflight().evaluate(signal, _book(ask=0.68, size=100.0), utc_now())
+    assert decision.accepted is False
+    assert decision.reason_code == "PAPER_EDGE_VANISHED"
+    assert decision.metrics["paper_edge_revalidated"] is True
+
+
+
+def test_preflight_revalidates_stored_probability_edge() -> None:
+    signal = _signal(
+        max_entry_price=0.80,
+        metrics={
+            "directional_probability": 0.70,
+            "entry_prob": 0.60,
+            "probability_edge": 0.10,
+        },
+    )
+    decision = _preflight().evaluate(signal, _book(ask=0.72, size=100.0), utc_now())
     assert decision.accepted is False
     assert decision.reason_code == "PAPER_EDGE_VANISHED"
     assert decision.metrics["paper_edge_revalidated"] is True
