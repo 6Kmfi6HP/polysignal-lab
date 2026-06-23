@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
+from polysignal_lab.app import scheduler_reporting
 from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.domain.enums import ExitMode, OrderStatus, PositionStatus, Side, TradeResultStatus
 from polysignal_lab.domain.paper_result import PaperTradeResult
@@ -167,6 +168,42 @@ async def test_paper_exit_publish_row_failure_rolls_back_without_closed_rows(
     assert scheduler.sqlite.query_json("telegram_publishes") == []
     assert position.status == PositionStatus.OPEN
     assert scheduler.wallet.open_position_count == 1
+
+
+async def test_daily_report_uses_next_local_midnight_for_dst_day(
+    tmp_path: Path, settings, monkeypatch
+) -> None:
+    # Given: Europe/Berlin starts DST on 2026-03-29, making that local day 23 hours.
+    settings.app.timezone = "Europe/Berlin"
+    scheduler = _scheduler(tmp_path, settings)
+    captured_day_params: dict[str, tuple[str, str]] = {}
+    original_query_json = scheduler.sqlite.query_json
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return cls(2026, 3, 29, 10, 0, tzinfo=UTC)
+            return cls(2026, 3, 29, 12, 0, tzinfo=tz)
+
+    def capture_query_json(table: str, limit: int = 100, where: str = "", params=()):
+        if table == "signals":
+            captured_day_params[table] = tuple(params)
+        return original_query_json(table, limit=limit, where=where, params=params)
+
+    monkeypatch.setattr(scheduler_reporting, "datetime", FixedDateTime)
+    scheduler.sqlite.query_json = capture_query_json
+
+    # When: the daily report computes the persisted-row UTC window for that local day.
+    report = await scheduler.generate_daily_report()
+
+    # Then: the window ends at the next local midnight, not fixed 24 hours after UTC start.
+    assert report is not None
+    assert report.report_date == date(2026, 3, 29)
+    assert captured_day_params["signals"] == (
+        "2026-03-28T23:00:00Z",
+        "2026-03-29T22:00:00Z",
+    )
 
 
 async def test_daily_report_publish_record_written(tmp_path: Path, snapshot, settings) -> None:

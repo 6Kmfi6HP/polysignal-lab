@@ -167,8 +167,10 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
         report_tz = UTC
     today = datetime.now(report_tz).date()
     today_iso = today.isoformat()
-    day_start = datetime.combine(today, time.min, tzinfo=report_tz).astimezone(UTC)
-    day_end = day_start + timedelta(days=1)
+    day_start_local = datetime.combine(today, time.min, tzinfo=report_tz)
+    day_end_local = datetime.combine(today + timedelta(days=1), time.min, tzinfo=report_tz)
+    day_start = day_start_local.astimezone(UTC)
+    day_end = day_end_local.astimezone(UTC)
     day_params = (utc_iso(day_start), utc_iso(day_end))
     day_created_where = "WHERE created_at >= ? AND created_at < ?"
     day_closed_where = "WHERE closed_at >= ? AND closed_at < ?"
