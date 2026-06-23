@@ -3,6 +3,45 @@ from __future__ import annotations
 from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side
 from polysignal_lab.domain.signal import SignalCandidate
 
+from polysignal_lab.strategies.base import BaseStrategy
+
+
+class CountingStrategy(BaseStrategy):
+    name = "counting"
+
+    def __init__(self):
+        self.fills = 0
+        self.cancels = 0
+        self.leg_failures = 0
+
+    def evaluate(self, snapshot):
+        return []
+
+    def notify_fill(self, market_id, side, fill_price, shares):
+        super().notify_fill(market_id, side, fill_price, shares)
+        self.fills += 1
+
+    def notify_cancel(self, market_id, side, reason):
+        super().notify_cancel(market_id, side, reason)
+        self.cancels += 1
+
+    def notify_leg_failure(self, pair_id, market_id, side):
+        super().notify_leg_failure(pair_id, market_id, side)
+        self.leg_failures += 1
+
+
+def test_base_strategy_notify_defaults_are_noops():
+    strategy = CountingStrategy()
+
+    strategy.notify_fill("m", Side.UP, 0.5, 10.0)
+    assert strategy.fills == 1
+
+    strategy.notify_cancel("m", Side.UP, "EXPIRED")
+    assert strategy.cancels == 1
+
+    strategy.notify_leg_failure("pair-1", "m", Side.UP)
+    assert strategy.leg_failures == 1
+
 
 def test_order_intent_values():
     assert OrderIntent.PASSIVE_GTD == "passive_gtd"
@@ -239,3 +278,20 @@ def test_passive_gtd_full_evaluate_accepted():
     decision = gate.evaluate(sig, snap)
     assert decision.accepted is True
     assert decision.signal is not None
+
+
+def test_base_strategy_notify_defaults_are_noops():
+    from polysignal_lab.strategies.base import BaseStrategy
+    from polysignal_lab.domain.enums import Side
+
+    class CountingStrategy(BaseStrategy):
+        name = "counting"
+        def evaluate(self, snapshot):
+            return []
+
+    s = CountingStrategy()
+    s.notify_fill("mkt", Side.UP, 0.5, 10.0)
+    s.notify_cancel("mkt", Side.UP, "EXPIRED")
+    s.notify_leg_failure("pair-1", "mkt", Side.UP)
+    # If these don't raise, the no-op defaults work
+    assert True

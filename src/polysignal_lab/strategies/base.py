@@ -57,6 +57,15 @@ class BaseStrategy(ABC):
             hedge_leg=hedge_leg,
         )
 
+    def notify_fill(self, market_id: str, side: Side, fill_price: float, shares: float) -> None:
+        pass
+
+    def notify_cancel(self, market_id: str, side: Side, reason: str) -> None:
+        pass
+
+    def notify_leg_failure(self, pair_id: str, market_id: str, side: Side) -> None:
+        pass
+
 
 class RollingPriceStats:
     def __init__(self, window_size: int = 16):
