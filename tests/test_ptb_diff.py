@@ -226,12 +226,35 @@ def test_ptb_diff_rejects_malformed_or_unsupported_inputs() -> None:
         PtbScenario(asset="ETH"),
         PtbScenario(timeframe="1h"),
         PtbScenario(seconds_to_close=None),
-        PtbScenario(staleness_ms=3_000),
         PtbScenario(side_spread=0.09),
     ]
 
     # Then: every malformed input rejects without emitting a candidate.
-    assert [strategy.evaluate(_snapshot(case)) for case in cases] == [[], [], [], [], [], [], [], [], []]
+    assert [strategy.evaluate(_snapshot(case)) for case in cases] == [[], [], [], [], [], [], [], []]
+
+
+def test_ptb_diff_emits_stale_raw_data_candidate_for_signal_gate() -> None:
+    # Given: a PTB snapshot whose raw market data exceeds PTB freshness policy.
+    strategy = PTBDiffStrategy(_config())
+
+    # When: the strategy evaluates otherwise valid stale raw inputs.
+    signals = strategy.evaluate(_snapshot(PtbScenario(staleness_ms=3_000)))
+
+    # Then: PTB still emits a candidate for the central SignalGate freshness rejection.
+    assert len(signals) == 1
+    signal = signals[0]
+    assert signal.freshness_policy is not None
+    assert signal.freshness_policy.max_orderbook_staleness_ms == 1_000
+    assert signal.freshness_policy.max_spot_staleness_ms == 1_000
+    assert signal.data_freshness_ms == 3_000
+    metrics = signal.metrics
+    assert isinstance(metrics["orderbook_freshness_ms"], int | float)
+    assert isinstance(metrics["spot_freshness_ms"], int | float)
+    assert isinstance(metrics["max_lag_ms"], int | float)
+    assert metrics["orderbook_freshness_ms"] == 3_000
+    assert metrics["spot_freshness_ms"] == 3_000
+    assert metrics["max_lag_ms"] == 1_000
+    assert "PTB_ORDERBOOK_FRESH" not in signal.reason_codes
 
 
 def test_ptb_diff_schema_rejects_old_probability_band_keys() -> None:
