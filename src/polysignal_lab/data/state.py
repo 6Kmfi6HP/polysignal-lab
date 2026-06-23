@@ -195,9 +195,24 @@ class OrderBookRegistry:
                 "stale_reason": state.stale_reason if state else "NO_SNAPSHOT",
             }
 
+    def _book_with_snapshot(self, token_id: str) -> OrderBook | None:
+        with self._lock:
+            state = self.states.get(token_id)
+            if state is None or not state.has_snapshot:
+                return None
+            return self.books.get(token_id)
+
     def books_for_market(self, market: Market) -> tuple[OrderBook | None, OrderBook | None]:
-        up = self.get(market.token_for(Side.UP).token_id) if any(t.side == Side.UP for t in market.outcome_tokens) else None
-        down = self.get(market.token_for(Side.DOWN).token_id) if any(t.side == Side.DOWN for t in market.outcome_tokens) else None
+        up = (
+            self._book_with_snapshot(market.token_for(Side.UP).token_id)
+            if any(t.side == Side.UP for t in market.outcome_tokens)
+            else None
+        )
+        down = (
+            self._book_with_snapshot(market.token_for(Side.DOWN).token_id)
+            if any(t.side == Side.DOWN for t in market.outcome_tokens)
+            else None
+        )
         return up, down
 
 

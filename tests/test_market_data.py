@@ -8,11 +8,14 @@ from pydantic import JsonValue, TypeAdapter
 
 from polysignal_lab.config import BinanceDataConfig, MarketConfig, PolymarketDataConfig
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
+from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
 from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
 from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
 from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
+from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
-
+from polysignal_lab.domain.enums import Side
+from factories import BookFactoryConfig, SpotFactoryConfig, sample_book, sample_spot
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "public_market_payloads.json"
 FIXTURE_ADAPTER = TypeAdapter(dict[str, JsonValue])
@@ -111,6 +114,50 @@ def test_last_trade_does_not_refresh_orderbook_depth_freshness() -> None:
     assert book.last_trade_price == 0.49
     assert book.received_at == stale_received_at
     assert registry.is_fill_eligible("tok", 10_000, now) is False
+
+
+def test_books_for_market_hides_stale_marked_book_but_get_keeps_raw(market) -> None:
+    registry = OrderBookRegistry()
+    up_book = sample_book(market.token_for(Side.UP).token_id, BookFactoryConfig(ask=0.82))
+    down_book = sample_book(market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=0.18))
+    registry.update_from_snapshot(up_book)
+    registry.update_from_snapshot(down_book)
+
+    registry.mark_stale(up_book.token_id, "TICK_SIZE_CHANGE_RESEED_REQUIRED")
+
+    up, down = registry.books_for_market(market)
+    assert up is None
+    assert down == down_book
+    assert registry.get(up_book.token_id) == up_book
+    assert registry.is_fill_eligible(up_book.token_id, 10_000, up_book.received_at) is False
+    assert (
+        registry.metrics.snapshot()["counters"].get(
+            "paper_fill_rejected_TICK_SIZE_CHANGE_RESEED_REQUIRED"
+        )
+        == 1
+    )
+
+
+async def test_market_snapshot_builder_hides_stale_marked_book_from_signal_inputs(
+    market,
+) -> None:
+    books = OrderBookRegistry()
+    spots = SpotRegistry()
+    up_book = sample_book(market.token_for(Side.UP).token_id, BookFactoryConfig(ask=0.82))
+    down_book = sample_book(market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=0.18))
+    books.update_from_snapshot(up_book)
+    books.update_from_snapshot(down_book)
+    books.mark_stale(up_book.token_id, "RECONNECT_RESEED_FAILED")
+    spots.update(sample_spot(SpotFactoryConfig(asset=market.asset, price=100120.0)))
+
+    snapshot = await MarketSnapshotBuilder(books, spots, PriceToBeatProvider()).build(market)
+
+    assert snapshot.book_for(Side.UP) is None
+    assert snapshot.up_ask is None
+    assert snapshot.freshness.up_book_ms is None
+    assert snapshot.metrics["up_ask"] is None
+    assert snapshot.book_for(Side.DOWN) == down_book
+    assert books.get(up_book.token_id) == up_book
 
 
 async def test_failed_websocket_reseed_marks_subscribed_books_stale(
