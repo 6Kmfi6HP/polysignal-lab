@@ -14,7 +14,7 @@ def find_forbidden_sdk_imports(paths: list[Path]) -> list[Path]:
             text = path.read_text(encoding="utf-8")
             if "py_clob_client_v2" not in text:
                 continue
-            if path == _ALLOWED_SDK_IMPORT_FILE:
+            if path.resolve() == _ALLOWED_SDK_IMPORT_FILE.resolve():
                 continue
             offenders.append(path)
     return offenders
@@ -22,6 +22,10 @@ def find_forbidden_sdk_imports(paths: list[Path]) -> list[Path]:
 
 def test_polymarket_sdk_imports_are_adapter_only() -> None:
     assert find_forbidden_sdk_imports([Path("src/polysignal_lab")]) == []
+
+
+def test_polymarket_sdk_import_allowlist_accepts_absolute_adapter_path() -> None:
+    assert find_forbidden_sdk_imports([Path("src/polysignal_lab").resolve()]) == []
 
 
 def test_forbidden_sdk_import_fixture_is_detected() -> None:
