@@ -187,8 +187,19 @@ def _evaluate_cross_market_entries(
         for market_index, snapshot in snapshots
     }
     envelopes: list[CandidateEnvelope] = []
+    skew_threshold_ms = _cross_market_skew_threshold_ms(scheduler)
     for entry in entries:
         if entry.execution_mode != "cross_market":
+            continue
+        if batch.max_source_skew_ms > skew_threshold_ms:
+            scheduler.logger.info(
+                "Skipping cross-market strategy %s for stale snapshot batch %s: "
+                "max_source_skew_ms=%d threshold_ms=%d",
+                entry.name,
+                batch.batch_id,
+                batch.max_source_skew_ms,
+                skew_threshold_ms,
+            )
             continue
         for context in _cross_market_contexts(entry, batch):
             try:
@@ -224,6 +235,13 @@ def _snapshot_batch(snapshots: list[tuple[int, MarketSnapshot]]) -> SnapshotBatc
             (snapshot.freshness.max_ms or 0 for _, snapshot in ordered),
             default=0,
         ),
+    )
+
+
+def _cross_market_skew_threshold_ms(scheduler: PolySignalScheduler) -> int:
+    return max(
+        scheduler.settings.data.polymarket.max_book_staleness_ms,
+        scheduler.settings.data.binance.max_price_staleness_ms,
     )
 
 
