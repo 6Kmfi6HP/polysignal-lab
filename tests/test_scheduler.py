@@ -11,7 +11,6 @@ from polysignal_lab.config import PaperTradingConfig, PolymarketDataConfig, Sett
 from polysignal_lab.domain.market import Market
 from polysignal_lab.paper.simulator import PaperSimulator
 from polysignal_lab.paper.wallet import PaperWallet
-from polysignal_lab.strategies.base import BaseStrategy
 from factories import MarketFactoryConfig, sample_market
 
 
@@ -93,9 +92,9 @@ def _scheduler(tmp_path: Path) -> PolySignalScheduler:
     return PolySignalScheduler(settings, base_dir=tmp_path)
 
 
-def test_scheduler_accepts_public_market_data_protocol(settings: Settings) -> None:
+def test_scheduler_accepts_public_market_data_protocol(settings: Settings, tmp_path: Path) -> None:
     fake = _FakeMarketData()
-    scheduler = PolySignalScheduler(settings, market_data_client=fake)
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path, market_data_client=fake)
     assert scheduler.market_data is fake
 
 
@@ -197,7 +196,7 @@ async def test_live_telegram_validation_runs_before_strategy_and_paper_initializ
     settings.markets.refresh_interval_sec = 0
     events: list[str] = []
 
-    def record_build_strategies(config: StrategyConfig) -> list[BaseStrategy]:
+    def record_build_strategy_schedule(config: StrategyConfig) -> list[object]:
         events.append("strategy_load")
         return []
 
@@ -218,7 +217,7 @@ async def test_live_telegram_validation_runs_before_strategy_and_paper_initializ
         events.append("telegram_validate")
         raise TelegramStartupConfigError(("TELEGRAM_BOT_TOKEN",))
 
-    monkeypatch.setattr(scheduler_module, "build_strategies", record_build_strategies)
+    monkeypatch.setattr(scheduler_module, "build_strategy_schedule", record_build_strategy_schedule)
     monkeypatch.setattr(scheduler_module, "PaperWallet", RecordingPaperWallet)
     monkeypatch.setattr(scheduler_module, "PaperSimulator", record_paper_simulator)
     monkeypatch.setattr(PolySignalScheduler, "_validate_telegram_startup", validate_telegram_startup)
