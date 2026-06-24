@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from time import perf_counter
 from collections.abc import Sequence
 from typing import Protocol, cast
 
@@ -10,6 +11,7 @@ from pydantic import JsonValue, TypeAdapter
 from polysignal_lab.config import PolymarketDataConfig
 from polysignal_lab.data.rate_limiter import AsyncRateLimiter
 from polysignal_lab.domain.orderbook import OrderBook
+from polysignal_lab.observability.metrics import MetricsRegistry
 from polysignal_lab.utils import safe_float, utc_now
 
 JsonObject = dict[str, JsonValue]
@@ -30,6 +32,7 @@ class PolymarketCLOBRestClient:
         self.client = client or httpx.AsyncClient(timeout=10.0)
         self._sdk_client_instance: _CLOBSDKClient | None = None
         self.rate_limiter = AsyncRateLimiter(config.rest_rate_limit_per_sec)
+        self.metrics = MetricsRegistry()
 
     async def get_book(self, token_id: str) -> OrderBook:
         payload = await self._get_public_json("/book", token_id)
@@ -48,10 +51,22 @@ class PolymarketCLOBRestClient:
     async def get_books(self, token_ids: list[str]) -> list[OrderBook]:
         if not token_ids:
             return []
+        started = perf_counter()
         try:
-            return await self._get_books_batch(token_ids)
+            books = await self._get_books_batch(token_ids)
+            self.metrics.inc("clob_rest_batch_success")
+            self.metrics.set_gauge(
+                "clob_rest_latency_ms", round((perf_counter() - started) * 1000, 3)
+            )
+            return books
         except Exception:
-            return [await self.get_book(token_id) for token_id in token_ids]
+            self.metrics.inc("clob_rest_batch_failure")
+            self.metrics.inc("clob_rest_fallback_count")
+            books = [await self.get_book(token_id) for token_id in token_ids]
+            self.metrics.set_gauge(
+                "clob_rest_latency_ms", round((perf_counter() - started) * 1000, 3)
+            )
+            return books
 
     async def _get_books_batch(self, token_ids: list[str]) -> list[OrderBook]:
         await self.rate_limiter.wait()

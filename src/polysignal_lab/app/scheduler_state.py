@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
+from polysignal_lab.app import scheduler_health
 from polysignal_lab.domain.paper_position import PaperPosition
 
 if TYPE_CHECKING:
@@ -64,19 +65,37 @@ async def restore_wallet_state(scheduler: PolySignalScheduler) -> None:
 
 
 def persist_state(scheduler: PolySignalScheduler) -> None:
+    wallet_snapshot = scheduler.wallet.snapshot()
+    open_positions = [
+        position.model_dump(mode="json")
+        for position in scheduler.wallet.open_positions.values()
+    ]
+    market_cache = [
+        market.model_dump(mode="json")
+        for market in scheduler.ctx.markets.markets.values()
+    ]
+    signal_dedupe = scheduler.gate.deduper.snapshot()
+
     try:
-        wallet_snapshot = scheduler.wallet.snapshot()
-        scheduler.persistence.persist_state(
-            wallet_snapshot=wallet_snapshot,
-            open_positions=[
-                position.model_dump(mode="json")
-                for position in scheduler.wallet.open_positions.values()
-            ],
-            market_cache=[
-                market.model_dump(mode="json")
-                for market in scheduler.ctx.markets.markets.values()
-            ],
-            signal_dedupe=scheduler.gate.deduper.snapshot(),
-        )
+        scheduler.persistence.append_log("paper_wallet_snapshots", wallet_snapshot)
+        scheduler_health.note_storage_success(scheduler, "jsonl")
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
-        scheduler.logger.warning("Failed to persist state: %s", exc)
+        scheduler.logger.warning("Failed to persist JSONL state: %s", exc)
+        scheduler_health.note_storage_failure(scheduler, "jsonl", exc)
+
+    try:
+        scheduler.persistence.insert_wallet_snapshot(wallet_snapshot)
+        scheduler_health.note_storage_success(scheduler, "sqlite")
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler.logger.warning("Failed to persist SQLite state: %s", exc)
+        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
+
+    try:
+        scheduler.persistence.write_state("paper_wallet", wallet_snapshot)
+        scheduler.persistence.write_state("open_positions", open_positions)
+        scheduler.persistence.write_state("market_cache", market_cache)
+        scheduler.persistence.write_state("signal_dedupe", signal_dedupe)
+        scheduler_health.note_storage_success(scheduler, "state")
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler.logger.warning("Failed to persist state files: %s", exc)
+        scheduler_health.note_storage_failure(scheduler, "state", exc)

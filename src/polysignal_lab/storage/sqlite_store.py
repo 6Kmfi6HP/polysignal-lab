@@ -294,6 +294,19 @@ class SQLiteStore:
                 (p["event_id"], p["event_type"], p["severity"], p["created_at"], self._json(p)),
             )
 
+    def restore_latest_system_event(self, event_type: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT payload_json FROM system_events
+                WHERE event_type = ?
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (event_type,),
+            ).fetchone()
+        return json.loads(row["payload_json"]) if row else None
+
     def query_json(self, table: str, limit: int = 100, where: str = "", params: Iterable[Any] = ()) -> list[dict[str, Any]]:
         if table not in ALLOWED_TABLES:
             raise ValueError("Unknown table")

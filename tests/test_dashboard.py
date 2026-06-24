@@ -63,6 +63,9 @@ async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapsho
     # Then: payloads contain the persisted rows and the HTML has no write controls.
     assert health.status_code == 200
     assert health.json()["counts"]["signals"] == 1
+    assert health.json()["status"] in {"ok", "degraded", "down"}
+    assert isinstance(health.json()["components"], list)
+    assert isinstance(health.json()["recent_system_events"], list)
     assert overview.status_code == 200
     assert overview.json()["latest_report"]["report_id"] == "dr-1"
     assert overview.json()["counts"]["paper_trade_results"] == 1
@@ -87,6 +90,40 @@ async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapsho
     assert "place order" not in html.text.lower()
     assert "create_" + "order" not in html.text
 
+
+def test_dashboard_health_returns_component_snapshot_from_system_events(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
+    store.insert_system_event(
+        {
+            "event_id": "health-snap-1",
+            "event_type": "health_snapshot",
+            "severity": "WARNING",
+            "created_at": "2026-06-23T00:00:00+00:00",
+            "status": "degraded",
+            "generated_at": "2026-06-23T00:00:00+00:00",
+            "components": [
+                {
+                    "name": "binance_ws",
+                    "status": "degraded",
+                    "last_success_at": None,
+                    "last_error_at": "2026-06-23T00:00:00+00:00",
+                    "last_error": "spot prices stale",
+                    "metrics": {"btc_spot_lag_ms": 61000},
+                }
+            ],
+        }
+    )
+    client = TestClient(create_dashboard_app(store))
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "degraded"
+    assert payload["components"][0]["name"] == "binance_ws"
+    assert payload["components"][0]["metrics"]["btc_spot_lag_ms"] == 61000
+    assert "counts" in payload
+    assert payload["recent_system_events"][0]["event_id"] == "health-snap-1"
 
 async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
     # Given: a rejected paper order and daily report with paper execution aggregates.

@@ -51,6 +51,40 @@ def _as_float(value: JsonValue) -> float:
         return 0.0
 
 
+def _health_payload(store: SQLiteStore) -> dict[str, JsonValue]:
+    counts = store.counts()
+    recent_system_events = store.query_json(
+        "system_events",
+        where="ORDER BY created_at DESC, rowid DESC",
+        limit=10,
+    )
+    snapshot = store.restore_latest_system_event("health_snapshot")
+    if isinstance(snapshot, dict):
+        return {
+            "status": str(snapshot.get("status", "degraded")).lower(),
+            "generated_at": snapshot.get("generated_at") or snapshot.get("created_at"),
+            "components": snapshot.get("components", []),
+            "counts": counts,
+            "recent_system_events": recent_system_events,
+        }
+    return {
+        "status": "ok",
+        "generated_at": None,
+        "components": [
+            {
+                "name": "sqlite_storage",
+                "status": "ok",
+                "last_success_at": None,
+                "last_error_at": None,
+                "last_error": None,
+                "metrics": {"row_counts_available": True},
+            }
+        ],
+        "counts": counts,
+        "recent_system_events": recent_system_events,
+    }
+
+
 def _calibration_from_reports(reports: list[dict[str, JsonValue]]) -> dict[str, JsonValue]:
     merged: dict[str, JsonValue] = {}
     average_weighted_sum: dict[str, dict[str, float]] = {}
@@ -111,7 +145,7 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
 
     @app.get("/health", response_model=None)
     def health() -> dict[str, JsonValue]:
-        return {"status": "OK", "counts": store.counts()}
+        return _health_payload(store)
 
     @app.get("/api/overview", response_model=None)
     def overview() -> dict[str, JsonValue]:

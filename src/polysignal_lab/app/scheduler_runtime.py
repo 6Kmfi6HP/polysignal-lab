@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from polysignal_lab.app import scheduler_health
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.signal import SignalCandidate
 
@@ -17,6 +18,7 @@ async def stop(scheduler: PolySignalScheduler) -> None:
     scheduler._running = False
 
     scheduler._persist_state()
+    scheduler_health.persist_health_snapshot(scheduler)
 
     try:
         await scheduler.supervisor.stop_all()

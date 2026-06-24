@@ -65,6 +65,20 @@ def test_once_readonly_smoke_writes_bounded_evidence(
             "snapshot_id": "snap-test",
             "detail": None,
         },
+        "health_snapshot": {
+            "status": "degraded",
+            "generated_at": "2026-06-24T00:00:00Z",
+            "components": [
+                {
+                    "name": "binance_ws",
+                    "status": "degraded",
+                    "last_success_at": None,
+                    "last_error_at": "2026-06-24T00:00:00Z",
+                    "last_error": "bounded smoke uses REST fallback",
+                    "metrics": {},
+                }
+            ],
+        },
         "dashboard_reads": {"ok": True, "endpoint_count": 4, "detail": None},
         "safety_scan": {"ok": True, "finding_count": 0, "detail": None},
     }
@@ -87,3 +101,4 @@ def test_once_readonly_smoke_writes_bounded_evidence(
     assert recorded["network_calls"] is True
     assert recorded["authenticated_endpoints"] is False
     assert recorded["trading_actions"] is False
+    assert recorded["health_snapshot"]["status"] == "degraded"

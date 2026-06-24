@@ -604,3 +604,29 @@ async def test_clob_rest_public_book_mid_and_spread_parsing_handles_official_sha
     assert spread == 0.12
     assert [call.params["token_id"] for call in client.calls] == ["token-up", "token-up", "token-up"]
     assert all("Authorization" not in call.headers for call in client.calls)
+
+
+def test_clob_ws_exposes_connection_and_invalid_event_metrics() -> None:
+    registry = OrderBookRegistry()
+    ws = PolymarketMarketWebSocket(PolymarketDataConfig(), registry)
+
+    ws.note_connected(token_ids=["tok-a", "tok-b"])
+    ws.handle_message(b"not-json")
+    ws.note_reconnect(RuntimeError("network reset"))
+
+    assert ws.connected is False
+    assert ws.subscribed_token_count == 2
+    assert ws.reconnect_count == 1
+    assert ws.last_error == "network reset"
+    assert registry.metrics.snapshot()["counters"]["ws_decode_errors"] == 1
+
+
+def test_binance_feed_exposes_connection_metrics() -> None:
+    feed = BinanceSpotFeed(BinanceDataConfig(), SpotRegistry())
+
+    feed.note_connected()
+    feed.note_reconnect(RuntimeError("closed"))
+
+    assert feed.connected is False
+    assert feed.reconnect_count == 1
+    assert feed.last_error == "closed"

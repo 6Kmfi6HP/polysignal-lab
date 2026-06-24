@@ -53,7 +53,10 @@ async def test_missing_orderbook_persists_rejected_paper_order_without_fill(
     assert counts["paper_positions"] == 0
     assert order_rows[0]["reject_reason"] == "PAPER_MISSING_ORDERBOOK"
     assert order_rows[0]["metrics"]["fill_decision_reason"] == "PAPER_MISSING_ORDERBOOK"
-    assert scheduler.logs.read_all("paper_orders")[0]["reject_reason"] == "PAPER_MISSING_ORDERBOOK"
+    assert (
+        scheduler.logs.read_all("paper_orders")[0]["reject_reason"]
+        == "PAPER_MISSING_ORDERBOOK"
+    )
 
 
 async def test_process_signal_writes_prd_named_telegram_jsonl_stream(
@@ -75,14 +78,39 @@ async def test_process_signal_writes_prd_named_telegram_jsonl_stream(
     assert not (scheduler.logs.base_dir / "telegram_publish.jsonl").exists()
 
 
-async def test_stale_paper_fill_count_is_zero(tmp_path: Path, snapshot, settings) -> None:
+async def test_process_signal_updates_paper_and_telegram_health(
+    tmp_path: Path, snapshot, settings
+) -> None:
+    sig = await _signal(snapshot, settings)
+    scheduler = _publishing_scheduler(tmp_path, settings)
+
+    result = await scheduler.process_signal(sig)
+    components = {
+        component.name: component
+        for component in scheduler.health.snapshot().components
+    }
+
+    assert result["published"] is True
+    assert components["telegram"].status == "ok"
+    assert components["telegram"].metrics["dry_run"] == 1
+    assert components["paper_simulator"].metrics["rejects_PAPER_MISSING_ORDERBOOK"] == 1
+    assert components["paper_simulator"].metrics["wallet_snapshot_count"] == 1
+
+
+async def test_stale_paper_fill_count_is_zero(
+    tmp_path: Path, snapshot, settings
+) -> None:
     sig = await _signal(snapshot, settings)
     scheduler = _paper_scheduler(tmp_path, settings)
     scheduler.ctx.books.update(
-        sample_book(sig.token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500)).model_copy(
+        sample_book(
+            sig.token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500)
+        ).model_copy(
             update={
                 "received_at": utc_now()
-                - timedelta(milliseconds=settings.data.polymarket.max_book_staleness_ms + 1000)
+                - timedelta(
+                    milliseconds=settings.data.polymarket.max_book_staleness_ms + 1000
+                )
             }
         )
     )
@@ -142,6 +170,7 @@ def test_scheduler_fill_notifier_dispatches_cancel_to_matching_strategy() -> Non
 
     assert strategy.cancels == [("mkt-1", Side.UP, "STALE_ORDERBOOK")]
 
+
 async def test_rejected_resting_order_is_persisted_logged_and_notified(
     tmp_path: Path, settings
 ) -> None:
@@ -184,8 +213,8 @@ async def test_rejected_resting_order_is_persisted_logged_and_notified(
         )
     )
     notifications = []
-    scheduler.paper.fill_notifier = (
-        lambda order, event, fill: notifications.append((order, event, fill))
+    scheduler.paper.fill_notifier = lambda order, event, fill: notifications.append(
+        (order, event, fill)
     )
 
     results = tick_resting_orders(scheduler)
@@ -198,13 +227,18 @@ async def test_rejected_resting_order_is_persisted_logged_and_notified(
     assert order_rows[0]["status"] == "REJECTED"
     assert order_rows[0]["reject_reason"] == "PAPER_STALE_ORDERBOOK"
     assert order_rows[0]["metrics"]["paper_original_reason"] == "STALE_ORDERBOOK"
-    assert order_rows[0]["metrics"]["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
+    assert (
+        order_rows[0]["metrics"]["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
+    )
     assert "paper_terminal_at" in order_rows[0]["metrics"]
     paper_order_logs = scheduler.logs.read_all("paper_orders")
     assert paper_order_logs[-1]["status"] == "REJECTED"
     assert paper_order_logs[-1]["reject_reason"] == "PAPER_STALE_ORDERBOOK"
     assert paper_order_logs[-1]["metrics"]["paper_original_reason"] == "STALE_ORDERBOOK"
-    assert paper_order_logs[-1]["metrics"]["paper_normalized_reason"] == "PAPER_STALE_ORDERBOOK"
+    assert (
+        paper_order_logs[-1]["metrics"]["paper_normalized_reason"]
+        == "PAPER_STALE_ORDERBOOK"
+    )
     assert "paper_terminal_at" in paper_order_logs[-1]["metrics"]
     assert notifications == [(results[0].order, "cancelled", None)]
 
@@ -242,8 +276,8 @@ async def test_cancelled_resting_gtd_expiry_is_persisted_with_normalized_reason(
     await scheduler.process_signal(signal)
     wallet_snapshots_before = len(scheduler.logs.read_all("paper_wallet_snapshots"))
     notifications = []
-    scheduler.paper.fill_notifier = (
-        lambda order, event, fill: notifications.append((order, event, fill))
+    scheduler.paper.fill_notifier = lambda order, event, fill: notifications.append(
+        (order, event, fill)
     )
 
     results = tick_resting_orders(scheduler)
@@ -264,9 +298,15 @@ async def test_cancelled_resting_gtd_expiry_is_persisted_with_normalized_reason(
     assert paper_order_logs[-1]["status"] == "CANCELLED"
     assert paper_order_logs[-1]["reject_reason"] == "PAPER_GTD_EXPIRED"
     assert paper_order_logs[-1]["metrics"]["paper_original_reason"] == "GTD_EXPIRED"
-    assert paper_order_logs[-1]["metrics"]["paper_normalized_reason"] == "PAPER_GTD_EXPIRED"
+    assert (
+        paper_order_logs[-1]["metrics"]["paper_normalized_reason"]
+        == "PAPER_GTD_EXPIRED"
+    )
     assert "paper_terminal_at" in paper_order_logs[-1]["metrics"]
-    assert len(scheduler.logs.read_all("paper_wallet_snapshots")) == wallet_snapshots_before + 1
+    assert (
+        len(scheduler.logs.read_all("paper_wallet_snapshots"))
+        == wallet_snapshots_before + 1
+    )
     assert notifications == [(results[0].order, "cancelled", None)]
 
 
@@ -307,8 +347,8 @@ async def test_cancelled_resting_no_cash_is_persisted_with_normalized_reason(
     )
     wallet_snapshots_before = len(scheduler.logs.read_all("paper_wallet_snapshots"))
     notifications = []
-    scheduler.paper.fill_notifier = (
-        lambda order, event, fill: notifications.append((order, event, fill))
+    scheduler.paper.fill_notifier = lambda order, event, fill: notifications.append(
+        (order, event, fill)
     )
 
     results = tick_resting_orders(scheduler)
@@ -322,7 +362,9 @@ async def test_cancelled_resting_no_cash_is_persisted_with_normalized_reason(
     assert len(order_rows) == 1
     assert order_rows[0]["status"] == "CANCELLED"
     assert order_rows[0]["reject_reason"] == "PAPER_WALLET_INSUFFICIENT_CASH"
-    assert order_rows[0]["metrics"]["paper_original_reason"] == "WALLET_INSUFFICIENT_CASH"
+    assert (
+        order_rows[0]["metrics"]["paper_original_reason"] == "WALLET_INSUFFICIENT_CASH"
+    )
     assert (
         order_rows[0]["metrics"]["paper_normalized_reason"]
         == "PAPER_WALLET_INSUFFICIENT_CASH"
@@ -333,3 +375,52 @@ async def test_cancelled_resting_no_cash_is_persisted_with_normalized_reason(
         == wallet_snapshots_before + 1
     )
     assert notifications == [(results[0].order, "cancelled", None)]
+
+
+async def test_process_signal_marks_jsonl_storage_failure_for_paper_write(
+    tmp_path: Path, snapshot, settings, monkeypatch
+) -> None:
+    sig = await _signal(snapshot, settings)
+    scheduler = _paper_scheduler(tmp_path, settings)
+    original_append = scheduler.logs.append
+
+    def fail_paper_order_append(stream: str, record: object) -> None:
+        if stream == "paper_orders":
+            raise OSError("paper jsonl failed")
+        original_append(stream, record)
+
+    monkeypatch.setattr(scheduler.logs, "append", fail_paper_order_append)
+
+    await scheduler.process_signal(sig)
+    components = {
+        component.name: component
+        for component in scheduler.health.snapshot().components
+    }
+
+    assert components["jsonl_storage"].status == "down"
+    assert components["jsonl_storage"].last_error == "paper jsonl failed"
+    assert components["jsonl_storage"].metrics["write_failures"] == 1
+
+
+async def test_process_signal_marks_sqlite_storage_failure_for_paper_write(
+    tmp_path: Path, snapshot, settings, monkeypatch
+) -> None:
+    import sqlite3
+
+    sig = await _signal(snapshot, settings)
+    scheduler = _paper_scheduler(tmp_path, settings)
+
+    def fail_insert_paper_order(_order: object) -> None:
+        raise sqlite3.OperationalError("paper sqlite failed")
+
+    monkeypatch.setattr(scheduler.sqlite, "insert_paper_order", fail_insert_paper_order)
+
+    await scheduler.process_signal(sig)
+    components = {
+        component.name: component
+        for component in scheduler.health.snapshot().components
+    }
+
+    assert components["sqlite_storage"].status == "down"
+    assert components["sqlite_storage"].last_error == "paper sqlite failed"
+    assert components["sqlite_storage"].metrics["write_failures"] == 1

@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, assert_never
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from polysignal_lab.app import scheduler_health
 from polysignal_lab.app.scheduler_reporting_storage import (
     delete_daily_report_rows,
     delete_paper_result_rows,
@@ -146,11 +147,18 @@ async def _store_paper_result(
     try:
         scheduler.persistence.insert_paper_trade_result(result)
         scheduler.persistence.upsert_paper_position(position)
+        scheduler_health.note_storage_success(scheduler, "sqlite")
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
         delete_paper_result_rows(scheduler, result, None)
         raise SchedulerPersistenceError("paper result persistence", str(exc)) from exc
 
-    scheduler.persistence.append_log("paper_trade_results", result)
+    try:
+        scheduler.persistence.append_log("paper_trade_results", result)
+        scheduler_health.note_storage_success(scheduler, "jsonl")
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "jsonl", exc)
+        raise SchedulerPersistenceError("paper result log persistence", str(exc)) from exc
     await _publish_paper_result_best_effort(scheduler, result)
 
 
@@ -160,7 +168,8 @@ async def _publish_paper_result_best_effort(
     if not scheduler.settings.telegram.send_paper_results:
         return
     try:
-        await scheduler.publish_service.publish_paper_result(result)
+        publish = await scheduler.publish_service.publish_paper_result(result)
+        scheduler_health.note_publish_result(scheduler, publish.as_dict())
     except Exception as exc:
         scheduler.logger.warning(
             "Paper result publish failed after durable persistence for %s: %s",
@@ -394,12 +403,20 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
 
     try:
         scheduler.persistence.insert_daily_report(report)
+        scheduler_health.note_storage_success(scheduler, "sqlite")
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
         delete_daily_report_rows(scheduler, report, publish_payload)
         scheduler.logger.error("Failed to store daily report: %s", exc)
         return None
 
-    scheduler.persistence.append_log("daily_reports", report)
+    try:
+        scheduler.persistence.append_log("daily_reports", report)
+        scheduler_health.note_storage_success(scheduler, "jsonl")
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "jsonl", exc)
+        scheduler.logger.error("Failed to store daily report log: %s", exc)
+        return None
 
     scheduler.logger.info(
         "Generated daily report for %s: %d closed trades, pnl=%.2f",

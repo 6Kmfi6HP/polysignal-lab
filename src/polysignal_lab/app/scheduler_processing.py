@@ -1,9 +1,11 @@
 from __future__ import annotations
 import asyncio
+import sqlite3
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict
 
+from polysignal_lab.app import scheduler_health
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
@@ -40,6 +42,59 @@ if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
 
 
+def _append_persistence_log(
+    scheduler: PolySignalScheduler, stream: str, payload: object
+) -> None:
+    try:
+        scheduler.persistence.append_log(stream, payload)
+        scheduler_health.note_storage_success(scheduler, "jsonl")
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "jsonl", exc)
+        raise
+
+
+def _write_persistence_sqlite(
+    scheduler: PolySignalScheduler, write, payload: object
+) -> None:
+    try:
+        write(payload)
+        scheduler_health.note_storage_success(scheduler, "sqlite")
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
+        raise
+
+
+def _note_snapshot_success(scheduler: PolySignalScheduler, snapshot: MarketSnapshot) -> None:
+    health = getattr(scheduler, "health", None)
+    if health is None:
+        return
+    health.inc_metric("snapshot_builder", "build_count")
+    if snapshot.freshness.max_ms is not None:
+        health.set_metric(
+            "snapshot_builder", "max_freshness_lag_ms", snapshot.freshness.max_ms
+        )
+    health.mark_ok("snapshot_builder")
+
+
+def _note_snapshot_failure(scheduler: PolySignalScheduler, market: Market) -> None:
+    health = getattr(scheduler, "health", None)
+    if health is None:
+        return
+    health.inc_metric("snapshot_builder", "failure_count")
+    health.mark_degraded(
+        "snapshot_builder", f"snapshot failed for {market.market_slug}"
+    )
+
+
+async def _build_snapshot_for_market(
+    scheduler: PolySignalScheduler, market: Market
+) -> MarketSnapshot:
+    snapshot_service = getattr(scheduler, "snapshot_service", scheduler.snapshot_builder)
+    snapshot = await snapshot_service.build(market)
+    _note_snapshot_success(scheduler, snapshot)
+    return snapshot
+
+
 class ProcessSignalResult(TypedDict):
     signal_id: str
     stored: bool
@@ -74,9 +129,9 @@ async def build_snapshots_serial(
     snapshots: list[tuple[int, MarketSnapshot]] = []
     for market_index, market in enumerate(markets):
         try:
-            snapshot_service = getattr(scheduler, "snapshot_service", scheduler.snapshot_builder)
-            snapshot = await snapshot_service.build(market)
+            snapshot = await _build_snapshot_for_market(scheduler, market)
         except Exception:
+            _note_snapshot_failure(scheduler, market)
             scheduler.logger.exception(
                 "Failed to build snapshot for market %s", market.market_slug
             )
@@ -99,8 +154,9 @@ async def build_snapshots_bounded(
     ) -> tuple[int, MarketSnapshot] | None:
         async with semaphore:
             try:
-                snapshot = await scheduler.snapshot_builder.build(market)
+                snapshot = await _build_snapshot_for_market(scheduler, market)
             except Exception:
+                _note_snapshot_failure(scheduler, market)
                 scheduler.logger.exception(
                     "Failed to build snapshot for market %s", market.market_slug
                 )
@@ -354,6 +410,22 @@ def _candidate_envelopes(
     ]
 
 
+def _note_signal_gate_accepted(scheduler: PolySignalScheduler) -> None:
+    health = getattr(scheduler, "health", None)
+    if health is None:
+        return
+    health.inc_metric("signal_gate", "accepted_count")
+    health.mark_ok("signal_gate")
+
+
+def _note_signal_gate_rejected(scheduler: PolySignalScheduler, reason_code: str) -> None:
+    health = getattr(scheduler, "health", None)
+    if health is None:
+        return
+    health.inc_metric("signal_gate", f"rejected_{reason_code}")
+    health.mark_ok("signal_gate")
+
+
 def commit_candidates_serial(
     scheduler: PolySignalScheduler, envelopes: list[CandidateEnvelope]
 ) -> list[SignalCandidate]:
@@ -363,6 +435,7 @@ def commit_candidates_serial(
         if decision.accepted and decision.signal:
             if hasattr(envelope.strategy, "notify_signal_accepted"):
                 envelope.strategy.notify_signal_accepted(decision.signal)
+            _note_signal_gate_accepted(scheduler)
             accepted.append(decision.signal)
             consensus = scheduler.consensus.add(decision.signal)
             if consensus:
@@ -372,6 +445,7 @@ def commit_candidates_serial(
                 envelope.strategy.notify_signal_rejected(
                     decision.rejected.candidate, decision.rejected
                 )
+            _note_signal_gate_rejected(scheduler, decision.rejected.reason_code)
             try:
                 persistence = getattr(
                     scheduler, "persistence", _LegacyRejectionPersistence(scheduler)
@@ -398,7 +472,8 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
 
 def _strategy_schedule(scheduler: PolySignalScheduler) -> list[StrategyScheduleEntry]:
     schedule = getattr(scheduler, "strategy_schedule", None)
-    if schedule is not None:
+    strategies = list(getattr(scheduler, "strategies", ()))
+    if schedule is not None and [entry.strategy for entry in schedule] == strategies:
         return order_strategy_schedule(schedule)
     return [
         StrategyScheduleEntry(
@@ -476,6 +551,7 @@ def _notify_arbitration_rejected(
     )
     if hasattr(envelope.strategy, "notify_signal_rejected"):
         envelope.strategy.notify_signal_rejected(envelope.candidate, rejected)
+    _note_signal_gate_rejected(scheduler, "ARBITRATION_SUPPRESSED")
 
 
 def _log_snapshot(
@@ -508,8 +584,8 @@ async def process_signal(
     )
 
     try:
-        scheduler.persistence.append_log("signals", signal)
-        scheduler.persistence.insert_signal(signal)
+        _append_persistence_log(scheduler, "signals", signal)
+        _write_persistence_sqlite(scheduler, scheduler.persistence.insert_signal, signal)
         result["stored"] = True
     except Exception as exc:
         scheduler.logger.error("Failed to store signal %s: %s", signal.signal_id, exc)
@@ -519,9 +595,12 @@ async def process_signal(
             publish = await scheduler.publish_service.publish_signal(
                 signal, scheduler.settings.paper_trading.fixed_stake_usdc
             )
+            scheduler_health.note_publish_result(scheduler, publish.as_dict())
             result["published"] = True
             result["publish_status"] = publish.status
         except Exception as exc:
+            scheduler.health.inc_metric("telegram", "failed")
+            scheduler.health.mark_degraded("telegram", str(exc))
             scheduler.logger.error("Failed to publish signal %s: %s", signal.signal_id, exc)
 
     try:
@@ -541,19 +620,26 @@ def _store_simulation_result(
     sim: SimulationResult,
     result: ProcessSignalResult,
 ) -> None:
-    scheduler.persistence.append_log("paper_orders", sim.order)
-    scheduler.persistence.insert_paper_order(sim.order)
+    _append_persistence_log(scheduler, "paper_orders", sim.order)
+    _write_persistence_sqlite(scheduler, scheduler.persistence.insert_paper_order, sim.order)
     wallet_snapshot = scheduler.wallet.snapshot()
-    scheduler.persistence.append_log("paper_wallet_snapshots", wallet_snapshot)
-    scheduler.persistence.insert_wallet_snapshot(wallet_snapshot)
+    _append_persistence_log(scheduler, "paper_wallet_snapshots", wallet_snapshot)
+    _write_persistence_sqlite(
+        scheduler, scheduler.persistence.insert_wallet_snapshot, wallet_snapshot
+    )
+    scheduler.health.inc_metric("paper_simulator", "wallet_snapshot_count")
     result["paper_order"] = sim.order
     if sim.fill and sim.position:
-        scheduler.persistence.append_log("paper_fills", sim.fill)
-        scheduler.persistence.append_log("paper_positions", sim.position)
-        scheduler.persistence.insert_paper_fill(sim.fill)
-        scheduler.persistence.upsert_paper_position(sim.position)
+        _append_persistence_log(scheduler, "paper_fills", sim.fill)
+        _append_persistence_log(scheduler, "paper_positions", sim.position)
+        _write_persistence_sqlite(scheduler, scheduler.persistence.insert_paper_fill, sim.fill)
+        _write_persistence_sqlite(
+            scheduler, scheduler.persistence.upsert_paper_position, sim.position
+        )
         result["paper_fill"] = sim.fill
         result["paper_position"] = sim.position
+        scheduler.health.inc_metric("paper_simulator", "fills")
+        scheduler.health.mark_ok("paper_simulator")
         scheduler.logger.info(
             "Paper order %s filled for signal %s at %.4f",
             sim.order.paper_order_id,
@@ -564,6 +650,10 @@ def _store_simulation_result(
         if scheduler.paper.fill_notifier:
             scheduler.paper.fill_notifier(sim.order, "filled", sim.fill)
     elif sim.order.reject_reason:
+        scheduler.health.inc_metric(
+            "paper_simulator", f"rejects_{sim.order.reject_reason}"
+        )
+        scheduler.health.mark_degraded("paper_simulator", sim.order.reject_reason)
         scheduler.logger.info(
             "Paper order %s rejected for signal %s: %s",
             sim.order.paper_order_id,
@@ -608,11 +698,15 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
     for result in results:
         if result.fills:
             for fill in result.fills:
-                scheduler.persistence.append_log("paper_fills", fill)
-                scheduler.persistence.insert_paper_fill(fill)
+                _append_persistence_log(scheduler, "paper_fills", fill)
+                _write_persistence_sqlite(scheduler, scheduler.persistence.insert_paper_fill, fill)
             for position in result.positions:
-                scheduler.persistence.append_log("paper_positions", position)
-                scheduler.persistence.upsert_paper_position(position)
+                _append_persistence_log(scheduler, "paper_positions", position)
+                _write_persistence_sqlite(
+                    scheduler, scheduler.persistence.upsert_paper_position, position
+                )
+            scheduler.health.inc_metric("paper_simulator", "fills", len(result.fills))
+            scheduler.health.mark_ok("paper_simulator")
             if scheduler.paper.fill_notifier:
                 scheduler.paper.fill_notifier(result.order, "filled", result.fills[0] if result.fills else None)
         elif result.status == OrderStatus.REJECTED or (
@@ -626,11 +720,20 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
             result.order.metrics["paper_original_reason"] = original_reason
             result.order.metrics["paper_normalized_reason"] = normalized_reason
             result.order.metrics["paper_terminal_at"] = utc_now()
-            scheduler.persistence.append_log("paper_orders", result.order)
-            scheduler.persistence.upsert_paper_order(result.order)
+            _append_persistence_log(scheduler, "paper_orders", result.order)
+            _write_persistence_sqlite(
+                scheduler, scheduler.persistence.upsert_paper_order, result.order
+            )
             wallet_snapshot = scheduler.wallet.snapshot()
-            scheduler.persistence.append_log("paper_wallet_snapshots", wallet_snapshot)
-            scheduler.persistence.insert_wallet_snapshot(wallet_snapshot)
+            _append_persistence_log(scheduler, "paper_wallet_snapshots", wallet_snapshot)
+            _write_persistence_sqlite(
+                scheduler, scheduler.persistence.insert_wallet_snapshot, wallet_snapshot
+            )
+            scheduler.health.inc_metric(
+                "paper_simulator", f"rejects_{normalized_reason}"
+            )
+            scheduler.health.inc_metric("paper_simulator", "wallet_snapshot_count")
+            scheduler.health.mark_degraded("paper_simulator", normalized_reason)
             scheduler.logger.info(
                 "Resting paper order %s %s: %s",
                 result.order.paper_order_id,
