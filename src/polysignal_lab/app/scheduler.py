@@ -233,6 +233,7 @@ class PolySignalScheduler:
             return
         self.strategy_schedule = build_strategy_schedule(self.settings.strategies)
         self.strategies = [entry.strategy for entry in self.strategy_schedule]
+        self.signal_pipeline.strategies = self.strategies
         self.signal_pipeline.set_strategy_dependencies(
             {entry.name: tuple(entry.depends_on) for entry in self.strategy_schedule}
         )
