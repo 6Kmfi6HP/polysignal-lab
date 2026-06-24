@@ -55,53 +55,25 @@ async def fetch_resolved_markets(scheduler: PolySignalScheduler) -> None:
 
 
 async def stop_market_ws_subscription(scheduler: PolySignalScheduler) -> None:
-    if scheduler._market_ws_task is None and not scheduler._market_ws_token_ids:
-        return
-    scheduler.poly_ws.stop()
-    task = scheduler._market_ws_task
-    scheduler._market_ws_task = None
-    scheduler._market_ws_token_ids = ()
-    if task is None:
-        return
-    if not task.done():
-        task.cancel()
-        try:
-            await task
-        except scheduler_runtime.CancelledError:
-            pass
-    if task in scheduler._ws_tasks:
-        scheduler._ws_tasks.remove(task)
+    await scheduler.book_feed.stop_subscription()
+    scheduler._market_ws_task = scheduler.book_feed.market_task
+    scheduler._market_ws_token_ids = scheduler.book_feed.token_ids
+    scheduler._ws_tasks = [
+        *scheduler.book_feed.tasks,
+        *scheduler.spot_feed.tasks(),
+    ]
 
 
 async def sync_market_ws_subscription(
     scheduler: PolySignalScheduler, token_ids: tuple[str, ...]
 ) -> None:
-    if scheduler.settings.data.polymarket.use_market_ws:
-        if not token_ids:
-            await stop_market_ws_subscription(scheduler)
-            scheduler.logger.info(
-                "No token IDs available for Polymarket WebSocket, falling back to REST polling"
-            )
-            return
-        if (
-            token_ids == scheduler._market_ws_token_ids
-            and scheduler._market_ws_task is not None
-            and not scheduler._market_ws_task.done()
-        ):
-            return
-        await stop_market_ws_subscription(scheduler)
-        scheduler.logger.info(
-            "Starting Polymarket WebSocket with %d token subscriptions", len(token_ids)
-        )
-        task = scheduler_runtime.create_task(
-            scheduler.poly_ws.subscribe(list(token_ids))
-        )
-        scheduler._market_ws_task = task
-        scheduler._market_ws_token_ids = token_ids
-        scheduler._ws_tasks.append(task)
-    else:
-        await stop_market_ws_subscription(scheduler)
-        scheduler.logger.info("Polymarket WebSocket disabled in config, using REST polling")
+    await scheduler.book_feed.sync_subscription(token_ids)
+    scheduler._market_ws_task = scheduler.book_feed.market_task
+    scheduler._market_ws_token_ids = scheduler.book_feed.token_ids
+    scheduler._ws_tasks = [
+        *scheduler.book_feed.tasks,
+        *scheduler.spot_feed.tasks(),
+    ]
 
 
 async def start_websockets(
@@ -112,14 +84,10 @@ async def start_websockets(
     if not scheduler._market_refresh_completed:
         token_ids = token_ids_for_markets(list(scheduler.ctx.markets.markets.values()))
     await sync_market_ws_subscription(scheduler, token_ids)
-
-    if scheduler.settings.data.binance.enabled:
-        if scheduler._binance_ws_task is None or scheduler._binance_ws_task.done():
-            scheduler.logger.info("Starting Binance Spot WebSocket feed")
-            task = scheduler_runtime.create_task(scheduler.binance_ws.run())
-            scheduler._binance_ws_task = task
-            scheduler._ws_tasks.append(task)
-    else:
-        scheduler.logger.info("Binance Spot WebSocket disabled in config")
-
+    await scheduler.spot_feed.start()
+    scheduler._binance_ws_task = scheduler.spot_feed.task
+    scheduler._ws_tasks = [
+        *scheduler.book_feed.tasks,
+        *scheduler.spot_feed.tasks(),
+    ]
     return list(scheduler._ws_tasks)

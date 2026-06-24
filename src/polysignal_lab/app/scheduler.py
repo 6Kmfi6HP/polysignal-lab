@@ -13,8 +13,10 @@ from polysignal_lab.app import (
     scheduler_runtime,
     scheduler_state,
 )
+from polysignal_lab.app.services.book_feed_service import BookFeedService
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.app.services.market_universe_service import MarketUniverseService
+from polysignal_lab.app.services.spot_feed_service import SpotFeedService
 from polysignal_lab.config import Settings
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
 from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
@@ -100,6 +102,18 @@ class PolySignalScheduler:
         self.poly_ws = PolymarketMarketWebSocket(settings.data.polymarket, self.ctx.books)
         self.poly_ws.reseed_hook = self._reseed_ws_books
         self.binance_ws = BinanceSpotFeed(settings.data.binance, self.ctx.spots)
+        self.book_feed = BookFeedService(
+            settings.data.polymarket,
+            self.rest,
+            self.ctx.books,
+            websocket=self.poly_ws,
+            logger=self.logger,
+        )
+        self.spot_feed = SpotFeedService(
+            self.binance_ws,
+            enabled=settings.data.binance.enabled,
+            logger=self.logger,
+        )
 
         base = Path(base_dir)
         self.logs = JSONLStore(base / settings.storage.jsonl_dir)
@@ -187,20 +201,8 @@ class PolySignalScheduler:
         return await scheduler_processing.evaluate_once(self)
 
     async def _reseed_ws_books(self, token_ids: list[str]) -> None:
-        refreshed_token_ids: set[str] = set()
-        try:
-            books = await self.rest.get_books(token_ids)
-            for book in books:
-                self.ctx.books.update_from_snapshot(book)
-                refreshed_token_ids.add(book.token_id)
-            for token_id in set(token_ids) - refreshed_token_ids:
-                self.ctx.books.mark_stale(token_id, "RECONNECT_RESEED_FAILED")
-        except Exception as exc:
-            self.logger.exception(
-                "Failed to reseed order books on WebSocket reconnect: %s", exc
-            )
-            for token_id in token_ids:
-                self.ctx.books.mark_stale(token_id, "RECONNECT_RESEED_FAILED")
+        self.book_feed.market_data = self.rest
+        await self.book_feed.reseed(token_ids)
 
     async def _stop_market_ws_subscription(self) -> None:
         await scheduler_market_data.stop_market_ws_subscription(self)

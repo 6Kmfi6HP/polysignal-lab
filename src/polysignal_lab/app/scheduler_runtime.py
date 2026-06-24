@@ -16,16 +16,8 @@ async def stop(scheduler: PolySignalScheduler) -> None:
     scheduler.logger.info("Shutting down scheduler")
     scheduler._running = False
 
-    scheduler.poly_ws.stop()
-    scheduler.binance_ws.stop()
-
-    for task in scheduler._ws_tasks:
-        if not task.done():
-            task.cancel()
-            try:
-                await task
-            except (CancelledError, Exception):
-                pass
+    await scheduler.book_feed.stop()
+    await scheduler.spot_feed.stop()
     scheduler._ws_tasks.clear()
     scheduler._market_ws_task = None
     scheduler._binance_ws_task = None
