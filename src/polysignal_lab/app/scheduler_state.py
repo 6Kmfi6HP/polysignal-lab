@@ -16,7 +16,7 @@ async def restore_wallet_state(scheduler: PolySignalScheduler) -> None:
     restored = 0
 
     try:
-        for position_data in scheduler.sqlite.restore_open_positions():
+        for position_data in scheduler.persistence.restore_open_positions():
             try:
                 position = PaperPosition.model_validate(position_data)
                 scheduler.wallet.open_positions[position.paper_position_id] = position
@@ -29,7 +29,7 @@ async def restore_wallet_state(scheduler: PolySignalScheduler) -> None:
         scheduler.logger.warning("SQLite restore failed: %s", exc)
 
     if restored == 0:
-        positions_data = scheduler.state.read("open_positions", default=[])
+        positions_data = scheduler.persistence.read_state("open_positions", default=[])
         for position_data in positions_data:
             try:
                 position = PaperPosition.model_validate(position_data)
@@ -40,12 +40,12 @@ async def restore_wallet_state(scheduler: PolySignalScheduler) -> None:
                 scheduler.logger.warning("Failed to restore position from state JSON: %s", exc)
 
     try:
-        wallet_data = scheduler.sqlite.restore_latest_wallet_snapshot()
+        wallet_data = scheduler.persistence.restore_latest_wallet_snapshot()
     except (json.JSONDecodeError, sqlite3.Error, TypeError, ValueError) as exc:
         scheduler.logger.warning("SQLite wallet restore failed: %s", exc)
         wallet_data = None
     if wallet_data is None:
-        wallet_data = scheduler.state.read("paper_wallet", default=None)
+        wallet_data = scheduler.persistence.read_state("paper_wallet", default=None)
     if wallet_data:
         cash = wallet_data.get("cash_balance")
         if cash is not None:
@@ -66,23 +66,17 @@ async def restore_wallet_state(scheduler: PolySignalScheduler) -> None:
 def persist_state(scheduler: PolySignalScheduler) -> None:
     try:
         wallet_snapshot = scheduler.wallet.snapshot()
-        scheduler.logs.append("paper_wallet_snapshots", wallet_snapshot)
-        scheduler.sqlite.insert_wallet_snapshot(wallet_snapshot)
-        scheduler.state.write("paper_wallet", wallet_snapshot)
-        scheduler.state.write(
-            "open_positions",
-            [
+        scheduler.persistence.persist_state(
+            wallet_snapshot=wallet_snapshot,
+            open_positions=[
                 position.model_dump(mode="json")
                 for position in scheduler.wallet.open_positions.values()
             ],
-        )
-        scheduler.state.write(
-            "market_cache",
-            [
+            market_cache=[
                 market.model_dump(mode="json")
                 for market in scheduler.ctx.markets.markets.values()
             ],
+            signal_dedupe=scheduler.gate.deduper.snapshot(),
         )
-        scheduler.state.write("signal_dedupe", scheduler.gate.deduper.snapshot())
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         scheduler.logger.warning("Failed to persist state: %s", exc)

@@ -28,8 +28,8 @@ async def refresh_markets_once(scheduler: PolySignalScheduler) -> None:
     scheduler.ctx.markets.upsert_many(markets)
     for market in markets:
         try:
-            scheduler.sqlite.upsert_market(market)
-            scheduler.logs.append("markets", market)
+            scheduler.persistence.upsert_market(market)
+            scheduler.persistence.append_log("markets", market)
         except (OSError, sqlite3.Error, TypeError, ValueError):
             pass
 
@@ -92,7 +92,7 @@ async def fetch_resolved_markets(scheduler: PolySignalScheduler) -> None:
                     match market.status:
                         case MarketStatus.RESOLVED | MarketStatus.CANCELLED:
                             scheduler.ctx.markets.upsert_many([market])
-                            scheduler.sqlite.upsert_market(market)
+                            scheduler.persistence.upsert_market(market)
                             updated += 1
                         case (
                             MarketStatus.ACTIVE

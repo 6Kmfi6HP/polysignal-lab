@@ -15,16 +15,10 @@ def delete_paper_result_rows(
     publish_payload: dict[str, str | None] | None,
 ) -> None:
     try:
-        with scheduler.sqlite._lock, scheduler.sqlite._conn:
-            scheduler.sqlite._conn.execute(
-                "DELETE FROM paper_trade_results WHERE paper_trade_id = ?",
-                (result.paper_trade_id,),
-            )
-            if publish_payload is not None:
-                scheduler.sqlite._conn.execute(
-                    "DELETE FROM telegram_publishes WHERE publish_id = ?",
-                    (publish_payload["publish_id"],),
-                )
+        scheduler.persistence.delete_paper_result_rows(
+            result.paper_trade_id,
+            publish_payload["publish_id"] if publish_payload is not None else None,
+        )
     except sqlite3.Error:
         scheduler.logger.exception(
             "Failed to clean up partial paper result persistence for %s",
@@ -38,16 +32,10 @@ def delete_daily_report_rows(
     publish_payload: dict[str, str | None] | None,
 ) -> None:
     try:
-        with scheduler.sqlite._lock, scheduler.sqlite._conn:
-            scheduler.sqlite._conn.execute(
-                "DELETE FROM daily_reports WHERE report_id = ?",
-                (report.report_id,),
-            )
-            if publish_payload is not None:
-                scheduler.sqlite._conn.execute(
-                    "DELETE FROM telegram_publishes WHERE publish_id = ?",
-                    (publish_payload["publish_id"],),
-                )
+        scheduler.persistence.delete_daily_report_rows(
+            report.report_id,
+            publish_payload["publish_id"] if publish_payload is not None else None,
+        )
     except sqlite3.Error:
         scheduler.logger.exception(
             "Failed to clean up partial daily report persistence for %s",

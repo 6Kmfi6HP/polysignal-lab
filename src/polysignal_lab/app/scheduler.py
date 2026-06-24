@@ -13,6 +13,7 @@ from polysignal_lab.app import (
     scheduler_runtime,
     scheduler_state,
 )
+from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.config import Settings
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
 from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
@@ -103,6 +104,7 @@ class PolySignalScheduler:
         self.logs = JSONLStore(base / settings.storage.jsonl_dir)
         self.state = StateStore(base / settings.storage.state_dir)
         self.sqlite = SQLiteStore(base / settings.storage.sqlite_path)
+        self.persistence = PersistenceService(self.logs, self.sqlite, self.state)
 
         self._ws_tasks: list[asyncio.Task] = []
         self._market_ws_task: asyncio.Task | None = None

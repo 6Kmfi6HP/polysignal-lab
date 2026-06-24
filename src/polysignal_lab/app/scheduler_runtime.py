@@ -35,7 +35,7 @@ async def stop(scheduler: PolySignalScheduler) -> None:
     scheduler._persist_state()
 
     try:
-        scheduler.sqlite.close()
+        scheduler.persistence.close()
     except Exception:
         pass
 

@@ -65,8 +65,8 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
                             decision.rejected.candidate, decision.rejected
                         )
                         try:
-                            scheduler.logs.append("rejected_signals", decision.rejected)
-                            scheduler.sqlite.insert_rejected_signal(decision.rejected)
+                            scheduler.persistence.append_log("rejected_signals", decision.rejected)
+                            scheduler.persistence.insert_rejected_signal(decision.rejected)
                         except Exception:
                             scheduler.logger.exception(
                                 "Failed to persist rejected signal for market %s strategy %s reason %s",
@@ -96,8 +96,8 @@ async def process_signal(
     )
 
     try:
-        scheduler.logs.append("signals", signal)
-        scheduler.sqlite.insert_signal(signal)
+        scheduler.persistence.append_log("signals", signal)
+        scheduler.persistence.insert_signal(signal)
         result["stored"] = True
     except Exception as exc:
         scheduler.logger.error("Failed to store signal %s: %s", signal.signal_id, exc)
@@ -108,8 +108,8 @@ async def process_signal(
                 signal, scheduler.settings.paper_trading.fixed_stake_usdc
             )
             publish = await scheduler.publisher.send(message, "signal", signal.signal_id)
-            scheduler.logs.append("telegram_publishes", publish.as_dict())
-            scheduler.sqlite.insert_telegram_publish(publish.as_dict())
+            scheduler.persistence.append_log("telegram_publishes", publish.as_dict())
+            scheduler.persistence.insert_telegram_publish(publish.as_dict())
             result["published"] = True
             result["publish_status"] = publish.status
         except Exception as exc:
@@ -141,17 +141,17 @@ def _store_simulation_result(
     sim: SimulationResult,
     result: ProcessSignalResult,
 ) -> None:
-    scheduler.logs.append("paper_orders", sim.order)
-    scheduler.sqlite.insert_paper_order(sim.order)
+    scheduler.persistence.append_log("paper_orders", sim.order)
+    scheduler.persistence.insert_paper_order(sim.order)
     wallet_snapshot = scheduler.wallet.snapshot()
-    scheduler.logs.append("paper_wallet_snapshots", wallet_snapshot)
-    scheduler.sqlite.insert_wallet_snapshot(wallet_snapshot)
+    scheduler.persistence.append_log("paper_wallet_snapshots", wallet_snapshot)
+    scheduler.persistence.insert_wallet_snapshot(wallet_snapshot)
     result["paper_order"] = sim.order
     if sim.fill and sim.position:
-        scheduler.logs.append("paper_fills", sim.fill)
-        scheduler.logs.append("paper_positions", sim.position)
-        scheduler.sqlite.insert_paper_fill(sim.fill)
-        scheduler.sqlite.upsert_paper_position(sim.position)
+        scheduler.persistence.append_log("paper_fills", sim.fill)
+        scheduler.persistence.append_log("paper_positions", sim.position)
+        scheduler.persistence.insert_paper_fill(sim.fill)
+        scheduler.persistence.upsert_paper_position(sim.position)
         result["paper_fill"] = sim.fill
         result["paper_position"] = sim.position
         scheduler.logger.info(
@@ -208,11 +208,11 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
     for result in results:
         if result.fills:
             for fill in result.fills:
-                scheduler.logs.append("paper_fills", fill)
-                scheduler.sqlite.insert_paper_fill(fill)
+                scheduler.persistence.append_log("paper_fills", fill)
+                scheduler.persistence.insert_paper_fill(fill)
             for position in result.positions:
-                scheduler.logs.append("paper_positions", position)
-                scheduler.sqlite.upsert_paper_position(position)
+                scheduler.persistence.append_log("paper_positions", position)
+                scheduler.persistence.upsert_paper_position(position)
             if scheduler.paper.fill_notifier:
                 scheduler.paper.fill_notifier(result.order, "filled", result.fills[0] if result.fills else None)
         elif result.status == OrderStatus.REJECTED or (
@@ -226,11 +226,11 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
             result.order.metrics["paper_original_reason"] = original_reason
             result.order.metrics["paper_normalized_reason"] = normalized_reason
             result.order.metrics["paper_terminal_at"] = utc_now()
-            scheduler.logs.append("paper_orders", result.order)
-            scheduler.sqlite.upsert_paper_order(result.order)
+            scheduler.persistence.append_log("paper_orders", result.order)
+            scheduler.persistence.upsert_paper_order(result.order)
             wallet_snapshot = scheduler.wallet.snapshot()
-            scheduler.logs.append("paper_wallet_snapshots", wallet_snapshot)
-            scheduler.sqlite.insert_wallet_snapshot(wallet_snapshot)
+            scheduler.persistence.append_log("paper_wallet_snapshots", wallet_snapshot)
+            scheduler.persistence.insert_wallet_snapshot(wallet_snapshot)
             scheduler.logger.info(
                 "Resting paper order %s %s: %s",
                 result.order.paper_order_id,

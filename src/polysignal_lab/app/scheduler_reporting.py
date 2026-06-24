@@ -47,7 +47,7 @@ async def check_settlements(scheduler: PolySignalScheduler) -> list[PaperTradeRe
         market = scheduler.ctx.markets.get(position.market_id)
         if market is None:
             try:
-                market_data = scheduler.sqlite.query_json(
+                market_data = scheduler.persistence.query_json(
                     "markets",
                     where="WHERE market_id = ?",
                     params=(position.market_id,),
@@ -151,16 +151,16 @@ async def _store_paper_result(
                 message, "paper_result", result.signal_id
             )
             publish_payload = publish.as_dict()
-            scheduler.sqlite.insert_telegram_publish(publish_payload)
-        scheduler.sqlite.insert_paper_trade_result(result)
-        scheduler.sqlite.upsert_paper_position(position)
+            scheduler.persistence.insert_telegram_publish(publish_payload)
+        scheduler.persistence.insert_paper_trade_result(result)
+        scheduler.persistence.upsert_paper_position(position)
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         delete_paper_result_rows(scheduler, result, publish_payload)
         raise SchedulerPersistenceError("paper result persistence", str(exc)) from exc
 
-    scheduler.logs.append("paper_trade_results", result)
+    scheduler.persistence.append_log("paper_trade_results", result)
     if publish_payload is not None:
-        scheduler.logs.append("telegram_publishes", publish_payload)
+        scheduler.persistence.append_log("telegram_publishes", publish_payload)
 
 
 def _utc_text_bound(dt: datetime) -> str:
@@ -217,7 +217,7 @@ def _fill_payloads_with_order_intents(
         return fills
 
     placeholders = ",".join("?" for _ in missing_order_ids)
-    fill_orders = scheduler.sqlite.query_json(
+    fill_orders = scheduler.persistence.query_json(
         "paper_orders",
         where=f"WHERE paper_order_id IN ({placeholders})",
         params=missing_order_ids,
@@ -258,27 +258,27 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
     day_created_where = "WHERE created_at >= ? AND created_at < ?"
     day_closed_where = "WHERE closed_at >= ? AND closed_at < ?"
 
-    existing = scheduler.sqlite.query_json(
+    existing = scheduler.persistence.query_json(
         "daily_reports", where="WHERE report_date = ?", params=(today_iso,)
     )
     if existing:
         scheduler.logger.info("Daily report already exists for %s, skipping", today_iso)
         return None
 
-    today_results_raw = scheduler.sqlite.query_json(
+    today_results_raw = scheduler.persistence.query_json(
         "paper_trade_results",
         where=day_closed_where,
         params=day_params,
     )
     trade_results = [PaperTradeResult(**result) for result in today_results_raw]
 
-    today_fills_raw = scheduler.sqlite.query_json(
+    today_fills_raw = scheduler.persistence.query_json(
         "paper_fills",
         where=day_created_where,
         params=day_params,
         limit=10000,
     )
-    today_orders_raw = scheduler.sqlite.query_json(
+    today_orders_raw = scheduler.persistence.query_json(
         "paper_orders",
         where=day_created_where,
         params=day_params,
@@ -289,7 +289,7 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
         for order in today_orders_raw
         if order.get("paper_order_id")
     }
-    terminal_order_candidates = scheduler.sqlite.query_json(
+    terminal_order_candidates = scheduler.persistence.query_json(
         "paper_orders",
         where="WHERE status IN (?, ?)",
         params=("REJECTED", "CANCELLED"),
@@ -307,7 +307,7 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
             continue
         today_terminal_orders_raw.append(order)
     today_reject_orders_raw = [*today_orders_raw, *today_terminal_orders_raw]
-    today_signals_raw = scheduler.sqlite.query_json(
+    today_signals_raw = scheduler.persistence.query_json(
         "signals",
         where=day_created_where,
         params=day_params,
@@ -369,17 +369,17 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
             return None
 
     try:
-        scheduler.sqlite.insert_daily_report(report)
+        scheduler.persistence.insert_daily_report(report)
         if publish_payload is not None:
-            scheduler.sqlite.insert_telegram_publish(publish_payload)
+            scheduler.persistence.insert_telegram_publish(publish_payload)
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         delete_daily_report_rows(scheduler, report, publish_payload)
         scheduler.logger.error("Failed to store daily report: %s", exc)
         return None
 
-    scheduler.logs.append("daily_reports", report)
+    scheduler.persistence.append_log("daily_reports", report)
     if publish_payload is not None:
-        scheduler.logs.append("telegram_publishes", publish_payload)
+        scheduler.persistence.append_log("telegram_publishes", publish_payload)
 
     scheduler.logger.info(
         "Generated daily report for %s: %d closed trades, pnl=%.2f",
