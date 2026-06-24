@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -211,27 +212,27 @@ class TelegramBotService:
     async def _status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
-        await self._reply(update, self._format_status(), self._back_keyboard())
+        await self._reply_rendered(update, self._format_status, self._back_keyboard)
 
     async def _positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
-        await self._reply(update, self._format_positions(), self._back_keyboard())
+        await self._reply_rendered(update, self._format_positions, self._back_keyboard)
 
     async def _signals(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
-        await self._reply(update, self._format_signals(), self._back_keyboard())
+        await self._reply_rendered(update, self._format_signals, self._back_keyboard)
 
     async def _strategies(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
-        await self._reply(update, self._format_strategies(), self._strategies_keyboard())
+        await self._reply_rendered(update, self._format_strategies, self._strategies_keyboard)
 
     async def _daily(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
-        await self._reply(update, self._format_daily(), self._back_keyboard())
+        await self._reply_rendered(update, self._format_daily, self._back_keyboard)
 
     def _render_callback(self, data: str) -> tuple[str, InlineKeyboardMarkup | None]:
         match data:
@@ -257,22 +258,29 @@ class TelegramBotService:
         if not self._authorized(update):
             await query.answer("Unauthorized", show_alert=True)
             return
-        try:
-            if (query.data or "").startswith("tg:"):
-                text, keyboard = self._toggle_strategy(query.data or "")
-            else:
-                text, keyboard = self._render_callback(query.data or "")
-        except ValueError as exc:
-            await query.answer(str(exc), show_alert=True)
-            return
-        except Exception:
-            await query.answer("Action failed", show_alert=True)
-            self.logger.exception("Telegram callback failed")
+        data = query.data or ""
+        known_actions = {"m", "bk", "p", "st", "sg", "dy", "str"}
+        if data.startswith("tg:"):
+            name = data[3:]
+            if name not in set(self._strategy_names()):
+                await query.answer("Unknown strategy", show_alert=True)
+                return
+        elif data not in known_actions:
+            await query.answer("Unknown action", show_alert=True)
             return
         try:
             await query.answer()
         except (TimedOut, NetworkError, TelegramError):
             self._send_failure += 1
+        try:
+            if data.startswith("tg:"):
+                text, keyboard = self._toggle_strategy(data)
+            else:
+                text, keyboard = self._render_callback(data)
+        except Exception:
+            await self._edit_or_reply(update, "Action failed", self._back_keyboard())
+            self.logger.exception("Telegram callback failed")
+            return
         await self._edit_or_reply(update, text, keyboard)
 
     async def _edit_or_reply(
@@ -470,28 +478,58 @@ class TelegramBotService:
     def _back_keyboard(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 返回", callback_data="bk")]])
 
+    async def _reply_rendered(
+        self,
+        update: Update,
+        render: Callable[[], str],
+        keyboard: Callable[[], InlineKeyboardMarkup],
+    ) -> None:
+        sent = None
+        if not self.config.interactive_dry_run:
+            sent = await self._reply(update, "处理中…")
+        text = render()
+        keyboard_markup = keyboard()
+        edit_text = getattr(sent, "edit_text", None)
+        if edit_text is not None:
+            try:
+                await edit_text(
+                    text=self._truncate(text),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard_markup,
+                )
+                self._send_success += 1
+                return
+            except RetryAfter:
+                self._rate_limited += 1
+                self._send_failure += 1
+            except (TimedOut, NetworkError, TelegramError):
+                self._send_failure += 1
+        await self._reply(update, text, keyboard_markup)
+
     async def _reply(
         self, update: Update, text: str, keyboard: InlineKeyboardMarkup | None = None
-    ) -> None:
+    ) -> object | None:
         if self.config.interactive_dry_run:
             self.logger.info("telegram interactive_dry_run reply: %s", text)
-            return
+            return None
         message = update.effective_message
         if message is None:
             self._send_failure += 1
-            return
+            return None
         try:
-            await message.reply_text(
+            sent = await message.reply_text(
                 self._truncate(text),
                 parse_mode=ParseMode.HTML,
                 reply_markup=keyboard,
             )
             self._send_success += 1
+            return sent
         except RetryAfter:
             self._rate_limited += 1
             self._send_failure += 1
         except (TimedOut, NetworkError, TelegramError):
             self._send_failure += 1
+        return None
 
     def _format_status(self) -> str:
         counts = self.persistence.counts()

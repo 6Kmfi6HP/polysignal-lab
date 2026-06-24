@@ -258,6 +258,56 @@ async def test_telegram_bot_callback_always_answers() -> None:
     assert unauthorized.answers[0]["text"] == "Unauthorized"
     assert unauthorized.answers[0]["show_alert"] is True
 
+async def test_telegram_bot_callback_answers_before_rendering() -> None:
+    service = _service()
+    events: list[str] = []
+
+    def format_status() -> str:
+        events.append("render")
+        return "status"
+
+    known = _FakeCallbackQuery("st")
+
+    async def answer(text: str | None = None, **kwargs: object) -> None:
+        events.append("answer")
+        known.answers.append({"text": text, **kwargs})
+
+    service._format_status = format_status
+    known.answer = answer
+
+    await service._callback(_callback_update(known), SimpleNamespace())
+
+    assert events[:2] == ["answer", "render"]
+
+async def test_telegram_bot_status_replies_before_rendering() -> None:
+    service = _service()
+    update = _update(123, 123)
+    events: list[str] = []
+
+    placeholder = SimpleNamespace()
+
+    async def edit_text(text: str, **kwargs: object) -> None:
+        events.append(f"edit:{text}")
+        placeholder.edit = {"text": text, **kwargs}
+
+    async def reply_text(text: str, **kwargs: object) -> object:
+        events.append(f"reply:{text}")
+        update.effective_message.replies.append({"text": text, **kwargs})
+        placeholder.edit_text = edit_text
+        return placeholder
+
+    def format_status() -> str:
+        events.append("render")
+        return "status"
+
+    update.effective_message.reply_text = reply_text
+    service._format_status = format_status
+
+    await service._status(update, SimpleNamespace())
+
+    assert events == ["reply:处理中…", "render", "edit:status"]
+    assert len(update.effective_message.replies) == 1
+
 
 async def test_telegram_bot_interactive_dry_run_logs_no_send(caplog: pytest.LogCaptureFixture) -> None:
     import logging
