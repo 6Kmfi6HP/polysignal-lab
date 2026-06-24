@@ -32,14 +32,15 @@ from polysignal_lab.publish.telegram_publisher import (
     TelegramPublisher,
     invalid_telegram_credential_fields,
 )
+from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.signal_layer.gate import SignalGate
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
+from polysignal_lab.strategies.execution import build_strategy_schedule
 from polysignal_lab.strategies.factory import build_strategies
-
 
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.enums import Side
@@ -116,7 +117,9 @@ class PolySignalScheduler:
     def _initialize_trading_components(self) -> None:
         if self._trading_components_initialized:
             return
-        self.strategies = build_strategies(self.settings.strategies)
+        self.strategy_schedule = build_strategy_schedule(self.settings.strategies)
+        self.strategies = [entry.strategy for entry in self.strategy_schedule]
+        self.arbiter = SignalArbiter()
         self.wallet = PaperWallet(self.settings.paper_trading.starting_balance_usdc)
         self.paper = PaperSimulator(
             self.settings.paper_trading,

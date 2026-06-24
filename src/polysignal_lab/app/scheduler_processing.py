@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict
 
+from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.paper.simulator import SimulationResult
+from polysignal_lab.strategies.execution import StrategyScheduleEntry
 from polysignal_lab.utils import utc_now
 
 if TYPE_CHECKING:
@@ -29,9 +33,22 @@ class AcceptedSignalSummary(TypedDict):
     filled: int
 
 
-async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]:
-    accepted: list[SignalCandidate] = []
-    for market in scheduler.ctx.markets.active():
+@dataclass(frozen=True, slots=True)
+class CandidateEnvelope:
+    candidate: SignalCandidate
+    snapshot: MarketSnapshot
+    strategy_name: str
+    strategy_config_index: int
+    market_config_index: int
+    candidate_index: int
+    strategy: object
+
+
+async def build_snapshots_serial(
+    scheduler: PolySignalScheduler, markets: list[Market]
+) -> list[tuple[int, MarketSnapshot]]:
+    snapshots: list[tuple[int, MarketSnapshot]] = []
+    for market_index, market in enumerate(markets):
         try:
             snapshot = await scheduler.snapshot_builder.build(market)
         except Exception:
@@ -39,47 +56,133 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
                 "Failed to build snapshot for market %s", market.market_slug
             )
             continue
-        scheduler.logger.info(
-            "DIAG ev %-40s asset=%-5s tf=%-3s secs=%-8s up=%-5s down=%-5s spot=%-8s spread=%-5s",
-            market.market_slug,
-            market.asset,
-            market.timeframe,
-            snapshot.seconds_to_close if snapshot.seconds_to_close else "N/A",
-            snapshot.up_ask,
-            snapshot.down_ask,
-            snapshot.spot.price if snapshot.spot else "NONE",
-            snapshot.max_spread,
-        )
-        for strategy in scheduler.strategies:
+        _log_snapshot(scheduler, market, snapshot)
+        snapshots.append((market_index, snapshot))
+    return snapshots
+
+
+def evaluate_candidates_serial(
+    scheduler: PolySignalScheduler,
+    snapshots: list[tuple[int, MarketSnapshot]],
+) -> list[CandidateEnvelope]:
+    envelopes: list[CandidateEnvelope] = []
+    for market_index, snapshot in snapshots:
+        for entry in _strategy_schedule(scheduler):
             try:
-                for candidate in strategy.evaluate(snapshot):
-                    decision = scheduler.gate.evaluate(candidate, snapshot)
-                    if decision.accepted and decision.signal:
-                        strategy.notify_signal_accepted(decision.signal)
-                        accepted.append(decision.signal)
-                        consensus = scheduler.consensus.add(decision.signal)
-                        if consensus:
-                            accepted.append(consensus)
-                    elif decision.rejected:
-                        strategy.notify_signal_rejected(
-                            decision.rejected.candidate, decision.rejected
-                        )
-                        try:
-                            scheduler.logs.append("rejected_signals", decision.rejected)
-                            scheduler.sqlite.insert_rejected_signal(decision.rejected)
-                        except Exception:
-                            scheduler.logger.exception(
-                                "Failed to persist rejected signal for market %s strategy %s reason %s",
-                                market.market_slug,
-                                strategy.name if hasattr(strategy, "name") else "?",
-                                decision.rejected.reason_code,
-                            )
+                candidates = entry.strategy.evaluate(snapshot)
+            except Exception:
+                scheduler.logger.exception("Strategy %s evaluate failed", entry.name)
+                continue
+            for candidate_index, candidate in enumerate(candidates):
+                envelopes.append(
+                    CandidateEnvelope(
+                        candidate=candidate,
+                        snapshot=snapshot,
+                        strategy_name=entry.name,
+                        strategy_config_index=entry.strategy_config_index,
+                        market_config_index=market_index,
+                        candidate_index=candidate_index,
+                        strategy=entry.strategy,
+                    )
+                )
+    return envelopes
+
+
+def commit_candidates_serial(
+    scheduler: PolySignalScheduler, envelopes: list[CandidateEnvelope]
+) -> list[SignalCandidate]:
+    accepted: list[SignalCandidate] = []
+    for envelope in envelopes:
+        decision = scheduler.gate.evaluate(envelope.candidate, envelope.snapshot)
+        if decision.accepted and decision.signal:
+            if hasattr(envelope.strategy, "notify_signal_accepted"):
+                envelope.strategy.notify_signal_accepted(decision.signal)
+            accepted.append(decision.signal)
+            consensus = scheduler.consensus.add(decision.signal)
+            if consensus:
+                accepted.append(consensus)
+        elif decision.rejected:
+            if hasattr(envelope.strategy, "notify_signal_rejected"):
+                envelope.strategy.notify_signal_rejected(
+                    decision.rejected.candidate, decision.rejected
+                )
+            try:
+                scheduler.logs.append("rejected_signals", decision.rejected)
+                scheduler.sqlite.insert_rejected_signal(decision.rejected)
             except Exception:
                 scheduler.logger.exception(
-                    "Strategy %s evaluate failed",
-                    strategy.name if hasattr(strategy, "name") else "?",
+                    "Failed to persist rejected signal for market %s strategy %s reason %s",
+                    envelope.snapshot.market.market_slug,
+                    envelope.strategy_name,
+                    decision.rejected.reason_code,
                 )
     return accepted
+
+
+async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]:
+    markets = scheduler.ctx.markets.active()
+    snapshots = await build_snapshots_serial(scheduler, markets)
+    envelopes = evaluate_candidates_serial(scheduler, snapshots)
+    envelopes = _arbitrate_envelopes(scheduler, envelopes)
+    return commit_candidates_serial(scheduler, envelopes)
+
+
+def _strategy_schedule(scheduler: PolySignalScheduler) -> list[StrategyScheduleEntry]:
+    schedule = getattr(scheduler, "strategy_schedule", None)
+    if schedule is not None:
+        return list(schedule)
+    return [
+        StrategyScheduleEntry(
+            strategy=strategy,
+            name=strategy.name if hasattr(strategy, "name") else f"strategy_{index}",
+            priority=100,
+            depends_on=(),
+            execution_mode="stateful",
+            strategy_config_index=index,
+        )
+        for index, strategy in enumerate(scheduler.strategies)
+    ]
+
+
+def _arbitrate_envelopes(
+    scheduler: PolySignalScheduler, envelopes: list[CandidateEnvelope]
+) -> list[CandidateEnvelope]:
+    arbiter = getattr(scheduler, "arbiter", None)
+    if arbiter is None or not envelopes:
+        return envelopes
+    by_identity = {id(envelope.candidate): envelope for envelope in envelopes}
+    market_config_indexes = {
+        envelope.candidate.market_id: envelope.market_config_index
+        for envelope in envelopes
+    }
+    ordered = arbiter.arbitrate(
+        [envelope.candidate for envelope in envelopes],
+        strategy_priorities={
+            entry.name: entry.priority for entry in _strategy_schedule(scheduler)
+        },
+        strategy_config_indexes={
+            entry.name: entry.strategy_config_index
+            for entry in _strategy_schedule(scheduler)
+        },
+        market_config_indexes=market_config_indexes,
+    )
+    return [by_identity[id(candidate)] for candidate in ordered]
+
+
+def _log_snapshot(
+    scheduler: PolySignalScheduler, market: Market, snapshot: MarketSnapshot
+) -> None:
+    scheduler.logger.info(
+        "DIAG ev %-40s asset=%-5s tf=%-3s secs=%-8s up=%-5s down=%-5s spot=%-8s spread=%-5s",
+        market.market_slug,
+        market.asset,
+        market.timeframe,
+        snapshot.seconds_to_close if snapshot.seconds_to_close else "N/A",
+        snapshot.up_ask,
+        snapshot.down_ask,
+        snapshot.spot.price if snapshot.spot else "NONE",
+        snapshot.max_spread,
+    )
 
 
 async def process_signal(
