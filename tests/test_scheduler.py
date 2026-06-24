@@ -49,6 +49,9 @@ class _FakeMarketData:
     async def get_spread(self, token_id: str):
         return None
 
+    def __len__(self) -> int:
+        return 0
+
 class RecordingPolymarketWs:
     def __init__(self, events: list[str]) -> None:
         self.events = events

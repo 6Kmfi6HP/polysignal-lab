@@ -34,6 +34,15 @@ def test_safety_scan_ignores_deliberate_forbidden_fixture() -> None:
     findings = scan("tests/fixtures")
     assert findings == []
 
+
+def test_safety_scan_only_exempts_deliberate_fixture_path(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    offender = src / "forbidden_polymarket_sdk_import.py"
+    offender.write_text("def make_client():\n    return ClobClient(host='x')\n", encoding="utf-8")
+
+    assert scan(src) == [("forbidden_polymarket_sdk_import.py", "ClobClient(")]
+
 def test_safety_scan_project_source():
     findings = scan("src")
     assert findings == []

@@ -10,7 +10,6 @@ SKIP_FILE_NAMES: Final = {
     ".env",
     "PRD.md",
     "refined_results.json",
-    "forbidden_polymarket_sdk_import.py",
     "safety.py",
     "scan_results.json",
     "test_safety.py",
@@ -60,6 +59,12 @@ def scan(root: str | Path) -> list[tuple[str, str]]:
 
 def skip_path(base: Path, path: Path) -> bool:
     rel = path.relative_to(base)
+    if (
+        path.name == "forbidden_polymarket_sdk_import.py"
+        and len(path.parts) >= 3
+        and path.parts[-3:-1] == ("tests", "fixtures")
+    ):
+        return True
     if path.name in SKIP_FILE_NAMES or path.name.startswith(".env."):
         return True
     if path.suffix in {".sqlite", ".sqlite3", ".pyc"}:

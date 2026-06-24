@@ -89,8 +89,10 @@ class PolySignalScheduler:
         self.settings = settings
         self.ctx = ServiceContext(settings=settings)
         self.discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
-        self.market_data: PublicMarketDataClient = market_data_client or PolymarketCLOBRestClient(
-            settings.data.polymarket
+        self.market_data: PublicMarketDataClient = (
+            market_data_client
+            if market_data_client is not None
+            else PolymarketCLOBRestClient(settings.data.polymarket)
         )
         self.ptb = PriceToBeatProvider(use_crypto_price_api=settings.data.polymarket.use_crypto_price_api)
         self.snapshot_builder = MarketSnapshotBuilder(self.ctx.books, self.ctx.spots, self.ptb)
