@@ -85,6 +85,7 @@ class AnchorPriceService:
         self._latest_by_key[f"{anchor.asset}:{anchor.timeframe}"] = anchor
         return anchor
 
+
     def health_metrics(self) -> dict[str, dict[str, int | float | str | bool | None]]:
         return {
             key: {

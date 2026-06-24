@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from polysignal_lab.data.anchor_price_service import AnchorPriceService, window_for_market
-from polysignal_lab.domain.market import Market
 from polysignal_lab.data.state import SpotPrice, SpotRegistry
+from polysignal_lab.domain.market import Market
 
 
 def _market(slug: str, timeframe: str = "5m") -> Market:
@@ -53,7 +53,15 @@ def test_capture_for_market_persists_verified_spot_anchor() -> None:
     store = _Store()
     spots = SpotRegistry()
     market = _market("btc-updown-5m-1782216000")
-    spots.update(SpotPrice(asset="BTC", symbol="BTCUSDT", price=64250.25, exchange="binance", event_time=market.start_ts))
+    spots.update(
+        SpotPrice(
+            asset="BTC",
+            symbol="BTCUSDT",
+            price=64250.25,
+            source="binance",
+            event_time=market.start_ts,
+        )
+    )
     service = AnchorPriceService(spots=spots, store=store, max_lag_ms=1_000)
 
     anchor = service.capture_for_market(market)
@@ -63,3 +71,26 @@ def test_capture_for_market_persists_verified_spot_anchor() -> None:
     assert anchor.source == "binance"
     assert anchor.price == 64250.25
     assert store.anchors == [anchor]
+
+
+def test_anchor_service_health_reports_latest_lag_and_source() -> None:
+    store = _Store()
+    spots = SpotRegistry()
+    market = _market("btc-updown-5m-1782216000")
+    spots.update(
+        SpotPrice(
+            asset="BTC",
+            symbol="BTCUSDT",
+            price=64250.25,
+            source="binance",
+            event_time=market.start_ts,
+        )
+    )
+    service = AnchorPriceService(spots=spots, store=store, max_lag_ms=1_000)
+    service.capture_for_market(market)
+
+    metrics = service.health_metrics()
+
+    assert metrics["BTC:5m"]["source"] == "binance"
+    assert metrics["BTC:5m"]["verified"] is True
+    assert metrics["BTC:5m"]["lag_ms"] == 0
