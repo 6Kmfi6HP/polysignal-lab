@@ -48,3 +48,26 @@ async def test_scheduler_stops_started_services_when_startup_fails(settings, tmp
         await scheduler.run()
 
     assert started.events == ["start", "stop"]
+
+
+def test_scheduler_does_not_register_telegram_bot_by_default(settings, tmp_path) -> None:
+    settings.telegram.interactive_enabled = False
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+
+    names = [service.name for service in scheduler.services]
+    assert "telegram_bot" not in names
+    assert scheduler.supervisor.services == scheduler.services
+
+
+def test_scheduler_registers_telegram_bot_in_init_when_interactive_enabled(settings, tmp_path) -> None:
+    settings.telegram.interactive_enabled = True
+    settings.telegram.interactive_allowed_chat_ids = (123,)
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+
+    names = [service.name for service in scheduler.services]
+    assert "telegram_bot" in names
+    assert names.index("publish") < names.index("telegram_bot") < names.index("health")
+    assert scheduler.supervisor.services == scheduler.services
+    assert any(service.name == "telegram_bot" for service in scheduler.health_service.services)

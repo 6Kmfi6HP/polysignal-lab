@@ -50,6 +50,7 @@ from polysignal_lab.publish.telegram_publisher import (
     TelegramPublisher,
     invalid_telegram_credential_fields,
 )
+from polysignal_lab.publish.telegram_bot import TelegramBotService
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.formatter import MessageFormatter
@@ -207,6 +208,19 @@ class PolySignalScheduler:
             self.paper_portfolio,
             self.publish_service,
         ]
+        self.telegram_bot = None
+        if settings.telegram.interactive_enabled:
+            self.telegram_bot = TelegramBotService(
+                config=settings.telegram,
+                persistence=self.persistence,
+                signal_pipeline=self.signal_pipeline,
+                books=self.ctx.books,
+                markets=self.ctx.markets,
+                formatter=self.formatter,
+                scheduler=self,
+                logger=self.logger,
+            )
+            core_services.append(self.telegram_bot)
         self.health_service = HealthService(core_services)
         self.services = [*core_services, self.health_service]
         self.supervisor = ServiceSupervisor(self.services)
