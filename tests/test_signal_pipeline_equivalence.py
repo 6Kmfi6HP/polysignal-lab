@@ -91,6 +91,11 @@ class _FakeScheduler:
         self.sqlite = _FakeSQLite()
         self.logger = _FakeLogger()
 
+    async def evaluate_once(self) -> list[SignalCandidate]:
+        from polysignal_lab.app.scheduler_processing import evaluate_once
+
+        return await evaluate_once(self)
+
 
 async def test_stage_split_preserves_serial_accepted_signals() -> None:
     from polysignal_lab.app.scheduler_processing import evaluate_once

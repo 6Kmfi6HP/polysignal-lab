@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict
@@ -59,6 +60,33 @@ async def build_snapshots_serial(
         _log_snapshot(scheduler, market, snapshot)
         snapshots.append((market_index, snapshot))
     return snapshots
+
+async def build_snapshots_bounded(
+    scheduler: PolySignalScheduler, markets: list[Market]
+) -> list[tuple[int, MarketSnapshot]]:
+    max_concurrency = max(1, scheduler.settings.signal.max_snapshot_concurrency)
+    if max_concurrency == 1:
+        return await build_snapshots_serial(scheduler, markets)
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def build_one(
+        market_index: int, market: Market
+    ) -> tuple[int, MarketSnapshot] | None:
+        async with semaphore:
+            try:
+                snapshot = await scheduler.snapshot_builder.build(market)
+            except Exception:
+                scheduler.logger.exception(
+                    "Failed to build snapshot for market %s", market.market_slug
+                )
+                return None
+            _log_snapshot(scheduler, market, snapshot)
+            return market_index, snapshot
+
+    results = await asyncio.gather(
+        *(build_one(index, market) for index, market in enumerate(markets))
+    )
+    return [result for result in results if result is not None]
 
 
 def evaluate_candidates_serial(
@@ -121,7 +149,7 @@ def commit_candidates_serial(
 
 async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]:
     markets = scheduler.ctx.markets.active()
-    snapshots = await build_snapshots_serial(scheduler, markets)
+    snapshots = await build_snapshots_bounded(scheduler, markets)
     envelopes = evaluate_candidates_serial(scheduler, snapshots)
     envelopes = _arbitrate_envelopes(scheduler, envelopes)
     return commit_candidates_serial(scheduler, envelopes)
