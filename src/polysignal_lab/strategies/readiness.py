@@ -9,6 +9,7 @@ CalibrationStatus = Literal["unknown", "insufficient_data", "calibrated"]
 StrategyStatus = Literal[
     "active",
     "disabled",
+    "inactive",
     "unsupported_market",
     "missing_data",
     "uncalibrated",

@@ -221,9 +221,50 @@ async def evaluate_candidates_ordered(
     return envelopes
 
 
+def _manual_strategy_skip_reason(
+    scheduler: PolySignalScheduler, entry: StrategyScheduleEntry
+) -> str | None:
+    pipeline = getattr(scheduler, "signal_pipeline", None)
+    if pipeline is None or not hasattr(pipeline, "skip_reason_for"):
+        return None
+    return pipeline.skip_reason_for(entry.name)
+
+
+def _persist_inactive_strategy(
+    scheduler: PolySignalScheduler,
+    entry: StrategyScheduleEntry,
+    snapshot: MarketSnapshot,
+    reason: str,
+) -> None:
+    from polysignal_lab.strategies.readiness import StrategyMarketStatus
+
+    status = StrategyMarketStatus(
+        strategy=entry.name,
+        asset=snapshot.market.asset.upper(),
+        timeframe=snapshot.market.timeframe,
+        status="inactive",
+        reason=reason,
+    )
+    persistence = getattr(scheduler, "persistence", _LegacyRejectionPersistence(scheduler))
+    try:
+        persistence.append_log("strategy_status", status)
+        persistence.insert_strategy_status(status)
+    except Exception:
+        scheduler.logger.exception(
+            "Failed to persist strategy status for market %s strategy %s status %s",
+            snapshot.market.market_slug,
+            entry.name,
+            status.status,
+        )
+
+
 def _strategy_market_active(
     scheduler: PolySignalScheduler, entry: StrategyScheduleEntry, snapshot: MarketSnapshot
 ) -> bool:
+    manual_reason = _manual_strategy_skip_reason(scheduler, entry)
+    if manual_reason is not None:
+        _persist_inactive_strategy(scheduler, entry, snapshot, manual_reason)
+        return False
     readiness = getattr(entry.strategy, "readiness", None)
     if readiness is None:
         return True
