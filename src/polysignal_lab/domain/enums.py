@@ -35,7 +35,7 @@ class OrderStatus(StrEnum):
 
 class OrderIntent(StrEnum):
     PASSIVE_GTD = "passive_gtd"
-    """Resting limit buy; fills when best bid <= limit price; expires at expiry_seconds."""
+    """Resting limit buy; fills when best ask <= limit price."""
     TAKER_FAK = "taker_fak"
     """Fill-and-kill: immediate execution, partial fill ok, unexecuted portion cancelled."""
     TAKER_FOK = "taker_fok"

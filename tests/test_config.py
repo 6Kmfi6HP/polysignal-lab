@@ -51,6 +51,12 @@ def test_settings_model_validate_has_no_explicit_strategy_names() -> None:
 
 
 
+def test_default_rtds_assets_cover_default_market_assets() -> None:
+    settings = Settings()
+
+    assert set(settings.markets.assets).issubset(settings.data.polymarket.rtds_assets)
+
+
 def test_strategy_factory_builds_default_configured_strategies() -> None:
     from polysignal_lab.strategies.factory import build_strategy
 

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import timedelta
-
 import pytest
 
 from polysignal_lab.config import Settings
@@ -9,7 +7,6 @@ from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
 from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.utils import utc_now
 from factories import (
     BookFactoryConfig,
     MarketFactoryConfig,
@@ -41,7 +38,7 @@ def books(market):
 @pytest.fixture
 def spots():
     reg = SpotRegistry()
-    reg.update(sample_spot(SpotFactoryConfig(asset="BTC", price=100120.0)))
+    reg.update(sample_spot(SpotFactoryConfig(asset="BTC", price=100120.0)).model_copy(update={"source": "polymarket_rtds"}))
     return reg
 
 

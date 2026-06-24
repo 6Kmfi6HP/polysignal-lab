@@ -40,6 +40,24 @@ class RecordingAsyncClient:
         return RecordingResponse()
 
 
+class CloseOnlyResponse:
+    status_code: int = 200
+
+    def json(self) -> dict[str, float]:
+        return {"closePrice": 456.78}
+
+
+class CloseOnlyAsyncClient(RecordingAsyncClient):
+    async def get(
+        self,
+        url: str,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> CloseOnlyResponse:
+        self.calls.append((url, params or {}, headers or {}))
+        return CloseOnlyResponse()
+
+
 
 class _AnchorStore:
     def __init__(self, anchor):
@@ -116,3 +134,12 @@ async def test_enabled_crypto_price_api_uses_market_asset_and_timeframe_variant(
     assert result.source == "crypto_price_api"
     assert client.calls[0][1]["symbol"] == "ETH"
     assert client.calls[0][1]["variant"] == "fifteen"
+
+
+async def test_crypto_price_api_falls_back_to_close_price() -> None:
+    provider = PriceToBeatProvider(client=CloseOnlyAsyncClient(), use_crypto_price_api=True)
+
+    result = await provider.get(_market(asset="BTC", timeframe="5m"))
+
+    assert result.value == 456.78
+    assert result.source == "crypto_price_api"

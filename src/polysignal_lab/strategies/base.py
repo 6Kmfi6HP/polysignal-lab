@@ -93,6 +93,9 @@ class BaseStrategy(ABC):
     def notify_leg_failure(self, pair_id: str, market_id: str, side: Side) -> None:
         pass
 
+    def follow_up_signals(self, order: object, fill: object) -> list[SignalCandidate]:
+        return []
+
 
 class RollingPriceStats:
     def __init__(self, window_size: int = 16):

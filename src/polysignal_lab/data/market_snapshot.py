@@ -17,6 +17,14 @@ class MarketSnapshotBuilder:
     async def build(self, market: Market) -> MarketSnapshot:
         now = utc_now()
         up_book, down_book = self.books.books_for_market(market)
+        up_token = next(
+            (token.token_id for token in market.outcome_tokens if token.side == Side.UP), None
+        )
+        down_token = next(
+            (token.token_id for token in market.outcome_tokens if token.side == Side.DOWN), None
+        )
+        up_trades = self.books.recent_trades(up_token) if up_token else []
+        down_trades = self.books.recent_trades(down_token) if down_token else []
         spot = self.spots.get(market.asset)
         ptb = await self.ptb_provider.get(market)
         freshness = FreshnessState(
@@ -41,6 +49,9 @@ class MarketSnapshotBuilder:
                 "price_to_beat_from_anchor_service": ptb.from_anchor_service,
                 "anchor_price_source": ptb.anchor_source,
                 "anchor_price_lag_ms": ptb.anchor_lag_ms,
+                "spot_source": spot.source if spot else None,
+                "up_trades": up_trades,
+                "down_trades": down_trades,
             },
         )
         snapshot.metrics.update(self._derived_metrics(snapshot))

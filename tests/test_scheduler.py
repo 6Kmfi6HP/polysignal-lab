@@ -88,6 +88,7 @@ def _scheduler(tmp_path: Path) -> PolySignalScheduler:
     settings.telegram.send_daily_report = False
     settings.data.binance.enabled = False
     settings.data.polymarket.use_market_ws = True
+    settings.data.polymarket.use_rtds_ws = False
     settings.markets.refresh_interval_sec = 0
     return PolySignalScheduler(settings, base_dir=tmp_path)
 

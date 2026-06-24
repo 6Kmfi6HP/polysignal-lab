@@ -131,8 +131,8 @@ async def start_websockets(
     if not scheduler._market_refresh_completed:
         token_ids = token_ids_for_markets(list(scheduler.ctx.markets.markets.values()))
     await sync_market_ws_subscription(scheduler, token_ids)
-    scheduler.spot_feed.feed = scheduler.binance_ws
-    scheduler.spot_feed.enabled = scheduler.settings.data.binance.enabled
+    scheduler.spot_feed.feed = scheduler.rtds_ws if scheduler.settings.data.polymarket.use_rtds_ws else scheduler.binance_ws
+    scheduler.spot_feed.enabled = scheduler.settings.data.polymarket.use_rtds_ws or scheduler.settings.data.binance.enabled
     await scheduler.spot_feed.start()
     scheduler._binance_ws_task = scheduler.spot_feed.task
     scheduler._ws_tasks = [

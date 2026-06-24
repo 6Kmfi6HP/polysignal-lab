@@ -22,10 +22,10 @@ class SpotFeedService:
 
     async def start(self) -> None:
         if not self.enabled:
-            self.logger.info("Binance Spot WebSocket disabled in config")
+            self.logger.info("Spot WebSocket feed disabled in config")
             return
         if self.task is None or self.task.done():
-            self.logger.info("Starting Binance Spot WebSocket feed")
+            self.logger.info("Starting Spot WebSocket feed")
             self.task = asyncio.create_task(self.feed.run())
 
     async def stop(self) -> None:

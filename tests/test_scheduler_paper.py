@@ -4,9 +4,12 @@ from datetime import timedelta
 from pathlib import Path
 
 from polysignal_lab.app.scheduler import PolySignalScheduler
+from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
 from polysignal_lab.utils import utc_now
 from factories import BookFactoryConfig, sample_book
+from factories import MarketFactoryConfig, sample_market
 
 
 async def _signal(snapshot, settings):
@@ -169,6 +172,11 @@ def test_scheduler_fill_notifier_dispatches_cancel_to_matching_strategy() -> Non
             self.cancels.append((market_id, side, reason))
 
     strategy = Strategy()
+    class Scheduler:
+        def __init__(self) -> None:
+            self._follow_up_signals = []
+
+    scheduler = Scheduler()
     order = PaperOrder(
         signal_id="sig-1",
         asset="BTC",
@@ -184,7 +192,7 @@ def test_scheduler_fill_notifier_dispatches_cancel_to_matching_strategy() -> Non
         reject_reason="STALE_ORDERBOOK",
     )
 
-    notifier = _make_fill_notifier([strategy])
+    notifier = _make_fill_notifier(scheduler, [strategy])
     notifier(order, "cancelled", None)
 
     assert strategy.cancels == [("mkt-1", Side.UP, "STALE_ORDERBOOK")]
@@ -222,7 +230,7 @@ async def test_rejected_resting_order_is_persisted_logged_and_notified(
     )
     await scheduler.process_signal(signal)
     scheduler.ctx.books.update(
-        sample_book("t-up", BookFactoryConfig(ask=0.55, bid=0.35, size=100)).model_copy(
+        sample_book("t-up", BookFactoryConfig(ask=0.35, bid=0.30, size=100)).model_copy(
             update={
                 "received_at": utc_now()
                 - timedelta(
@@ -362,7 +370,7 @@ async def test_cancelled_resting_no_cash_is_persisted_with_normalized_reason(
     await scheduler.process_signal(signal)
     scheduler.wallet.cash_balance = 0.0
     scheduler.ctx.books.update(
-        sample_book("t-up", BookFactoryConfig(ask=0.55, bid=0.35, size=100))
+        sample_book("t-up", BookFactoryConfig(ask=0.35, bid=0.30, size=100))
     )
     wallet_snapshots_before = len(scheduler.logs.read_all("paper_wallet_snapshots"))
     notifications = []
@@ -443,3 +451,47 @@ async def test_process_signal_marks_sqlite_storage_failure_for_paper_write(
     assert components["sqlite_storage"].status == "down"
     assert components["sqlite_storage"].last_error == "paper sqlite failed"
     assert components["sqlite_storage"].metrics["write_failures"] == 1
+
+
+async def test_vwap_fill_immediately_places_resting_gtd_hedge(
+    tmp_path: Path, settings
+) -> None:
+    settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
+    settings.strategies.vwap_momentum.enabled = True
+    settings.strategies.vwap_momentum.hedge_enabled = True
+    settings.strategies.vwap_momentum.hedge_price = 0.02
+    settings.strategies.vwap_momentum.hedge_expiry_seconds = 300
+    scheduler = _paper_scheduler(tmp_path, settings)
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m", seconds_to_close=120))
+    up_token = market.token_for(Side.UP).token_id
+    down_token = market.token_for(Side.DOWN).token_id
+    scheduler.ctx.books.update(sample_book(up_token, BookFactoryConfig(ask=0.80, bid=0.79, size=500)))
+    scheduler.ctx.books.update(sample_book(down_token, BookFactoryConfig(ask=0.20, bid=0.19, size=500)))
+    signal = SignalCandidate.build(
+        strategy="vwap_momentum",
+        asset="BTC",
+        timeframe="5m",
+        market_id=market.market_id,
+        market_slug=market.market_slug,
+        condition_id=market.condition_id,
+        token_id=up_token,
+        side=Side.UP,
+        confidence=0.7,
+        entry_reference_price=0.80,
+        max_entry_price=0.82,
+        seconds_to_close=120,
+        data_freshness_ms=0,
+        reason_codes=["VWAP_ENTRY"],
+        metrics={"contracts": 10, "opposite_token_id": down_token, "condition_id": market.condition_id},
+    )
+
+    result = await scheduler.process_signal(signal)
+
+    assert result["paper_fill"] is not None
+    assert scheduler.paper.passive.resting_count == 1
+    order_rows = scheduler.sqlite.query_json("paper_orders")
+    assert len(order_rows) == 2
+    hedge_order = next(row for row in order_rows if row["status"] == "RESTING")
+    assert hedge_order["token_id"] == down_token
+    assert hedge_order["order_intent"] == "passive_gtd"
+    assert hedge_order["limit_price"] == 0.02

@@ -306,7 +306,7 @@ class PassiveGtdExecutor:
                         order=resting.order, status=OrderStatus.CANCELLED, reject_reason="GTD_EXPIRED"
                     ))
                     continue
-                if book is not None and book.best_bid is not None and book.best_bid >= resting.limit_price:
+                if book is not None and book.best_ask is not None and book.best_ask <= resting.limit_price:
                     if hasattr(books, "is_fill_eligible") and not books.is_fill_eligible(
                         token_id, self.max_book_staleness_ms, now_dt
                     ):

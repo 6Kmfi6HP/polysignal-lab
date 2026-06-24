@@ -137,6 +137,9 @@ class PolymarketDataConfig(BaseModel):
     market_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     use_market_ws: bool = True
     use_crypto_price_api: bool = False
+    rtds_ws_url: str = "wss://ws-live-data.polymarket.com"
+    use_rtds_ws: bool = True
+    rtds_assets: tuple[str, ...] = ("BTC", "ETH", "SOL", "XRP")
     rest_rate_limit_per_sec: float = 8.0
     max_book_staleness_ms: int = 60000  # 60s — books refetched every ~30-40s via REST
     max_market_metadata_staleness_ms: int = 10000

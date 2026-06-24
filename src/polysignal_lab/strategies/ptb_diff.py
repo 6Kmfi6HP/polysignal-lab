@@ -108,6 +108,9 @@ class PTBDiffStrategy(BaseStrategy):
             "price_to_beat_from_anchor_service"
         ):
             return []
+        spot_source = str(snapshot.metrics.get("spot_source") or snapshot.spot.source)
+        if self.config.require_chainlink_spot_source and spot_source not in self.config.chainlink_spot_sources:
+            return []
 
         seconds = snapshot.seconds_to_close
         if seconds is None or seconds <= 0:
@@ -187,7 +190,10 @@ class PTBDiffStrategy(BaseStrategy):
                 reason_codes=reason_codes,
                 metrics={
                     "spot_price": snapshot.spot.price,
+                    "spot_source": spot_source,
                     "price_to_beat": snapshot.price_to_beat,
+                    "price_to_beat_source": snapshot.metrics.get("price_to_beat_source"),
+                    "price_to_beat_verified": snapshot.metrics.get("price_to_beat_verified"),
                     "diff_usd": diff,
                     "abs_diff_usd": abs(diff),
                     "trigger": trigger.name,

@@ -142,6 +142,8 @@ class PriceToBeatProvider:
                 data = resp.json()
                 # Response format: {"openPrice": 12345.67, "closePrice": ..., "completed": bool}
                 price = data.get("openPrice")
+                if price is None:
+                    price = data.get("closePrice")
                 if price is not None:
                     return safe_float(price)
             return None

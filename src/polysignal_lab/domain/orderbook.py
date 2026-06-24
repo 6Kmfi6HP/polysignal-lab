@@ -20,6 +20,9 @@ class OrderBook(BaseModel):
     bids: list[BookLevel] = Field(default_factory=list)
     asks: list[BookLevel] = Field(default_factory=list)
     last_trade_price: float | None = None
+    last_trade_size: float | None = None
+    last_trade_side: str | None = None
+    last_trade_timestamp: str | None = None
     min_order_size: float | None = None
     tick_size: float | None = None
     source_timestamp: str | None = None
@@ -74,6 +77,9 @@ class OrderBook(BaseModel):
             bids=sorted(bids, key=lambda x: x.price, reverse=True),
             asks=sorted(asks, key=lambda x: x.price),
             last_trade_price=safe_float(payload.get("last_trade_price") or payload.get("lastTradePrice")),
+            last_trade_size=safe_float(payload.get("last_trade_size") or payload.get("lastTradeSize") or payload.get("size")),
+            last_trade_side=str(payload.get("side")) if payload.get("side") is not None else None,
+            last_trade_timestamp=str(payload.get("last_trade_timestamp") or payload.get("timestamp")) if (payload.get("last_trade_timestamp") or payload.get("timestamp")) is not None else None,
             min_order_size=safe_float(payload.get("min_order_size")),
             tick_size=safe_float(payload.get("tick_size")),
             source_timestamp=str(payload.get("timestamp")) if payload.get("timestamp") is not None else None,

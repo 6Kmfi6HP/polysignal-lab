@@ -156,9 +156,16 @@ class PolymarketMarketWebSocket:
         if token_id is None:
             return
         price = safe_float(payload.get("price") or payload.get("last_trade_price"))
+        size = safe_float(payload.get("size") or payload.get("last_trade_size"))
         if price is None:
             return
-        self.registry.update_last_trade(token_id, price)
+        self.registry.update_last_trade(
+            token_id,
+            price,
+            size=size,
+            side=str(payload.get("side")) if payload.get("side") is not None else None,
+            timestamp=str(payload.get("timestamp")) if payload.get("timestamp") is not None else None,
+        )
 
 
 def _token_id(payload: JsonObject) -> str | None:

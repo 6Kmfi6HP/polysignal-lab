@@ -107,6 +107,7 @@ def _snapshot(scenario: PtbScenario) -> MarketSnapshot:
             price=PRICE_TO_BEAT + scenario.diff_usd,
             received_at=book_received_at,
             event_time=book_received_at,
+            source="polymarket_rtds",
         )
     return MarketSnapshot(
         snapshot_id=f"snap_{stable_hash(scenario.asset, scenario.side.value, str(scenario.diff_usd))}",
@@ -122,7 +123,7 @@ def _snapshot(scenario: PtbScenario) -> MarketSnapshot:
             spot_ms=scenario.staleness_ms if scenario.has_spot else None,
             max_ms=scenario.staleness_ms,
         ),
-        metrics={"price_to_beat_verified": scenario.verified_ptb},
+        metrics={"price_to_beat_verified": scenario.verified_ptb, "spot_source": "polymarket_rtds"},
     )
 
 

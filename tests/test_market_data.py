@@ -214,6 +214,21 @@ async def test_market_snapshot_builder_hides_stale_marked_book_from_signal_input
     assert books.get(up_book.token_id) == up_book
 
 
+
+async def test_market_snapshot_builder_handles_missing_side_for_trade_metrics(
+    market,
+) -> None:
+    partial_market = market.model_copy(
+        update={"outcome_tokens": [market.token_for(Side.UP)]}
+    )
+
+    snapshot = await MarketSnapshotBuilder(
+        OrderBookRegistry(), SpotRegistry(), PriceToBeatProvider()
+    ).build(partial_market)
+
+    assert snapshot.metrics["up_trades"] == []
+    assert snapshot.metrics["down_trades"] == []
+
 async def test_failed_websocket_reseed_marks_subscribed_books_stale(
     tmp_path: Path, settings
 ) -> None:
@@ -245,7 +260,6 @@ async def test_scheduler_refresh_captures_anchor_for_snapshot_ptb_flow(
     from polysignal_lab.app.scheduler import PolySignalScheduler
     from polysignal_lab.domain.enums import MarketStatus
     from polysignal_lab.domain.market import Market, OutcomeToken
-    from polysignal_lab.domain.orderbook import OrderBook
     from polysignal_lab.domain.spot import SpotPrice
 
     start = datetime(2026, 6, 23, 12, 0, tzinfo=timezone.utc)

@@ -1,9 +1,7 @@
 from __future__ import annotations
-import time
 import pytest
 from polysignal_lab.paper.order_intent_executor import (
     BestAskTakerExecutor, PassiveGtdExecutor, MultiLegCoordinator,
-    IntentDispatchResult, RestingOrder,
 )
 from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side
 from polysignal_lab.domain.orderbook import BookLevel, OrderBook
@@ -164,7 +162,7 @@ def test_gtd_enqueue_returns_resting():
     assert result.status == OrderStatus.RESTING
     assert executor.resting_count == 1
 
-def test_gtd_tick_fills_when_bid_matches():
+def test_gtd_tick_fills_when_ask_matches_limit():
     executor = PassiveGtdExecutor()
     wallet = PaperWallet(1000)
     order = _make_order(limit=0.35, stake=3.5)
@@ -179,13 +177,13 @@ def test_gtd_tick_fills_when_bid_matches():
     )
     executor.enqueue(order, sig)
     books = OrderBookRegistry()
-    books.update(sample_book("t-up", BookFactoryConfig(ask=0.55, bid=0.35, size=100)))
+    books.update(sample_book("t-up", BookFactoryConfig(ask=0.35, bid=0.30, size=100)))
     results = executor.tick(books, wallet)
     assert len(results) == 1
     assert results[0].status == OrderStatus.FILLED
     assert executor.resting_count == 0
 
-def test_gtd_tick_no_fill_bid_below_limit():
+def test_gtd_tick_no_fill_when_ask_above_limit():
     executor = PassiveGtdExecutor()
     wallet = PaperWallet(1000)
     order = _make_order(limit=0.35, stake=3.5)

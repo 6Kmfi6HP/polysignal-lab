@@ -29,6 +29,7 @@ from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
 from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
 from polysignal_lab.data.public_market_data_client import PublicMarketDataClient
 from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
+from polysignal_lab.data.polymarket_rtds_ws import PolymarketRtdsPriceFeed
 from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry, SpotRegistry
@@ -57,7 +58,7 @@ from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.strategies.base import BaseStrategy
 
 
-def _make_fill_notifier(strategies: list[BaseStrategy]) -> Callable[..., None]:
+def _make_fill_notifier(scheduler: "PolySignalScheduler", strategies: list[BaseStrategy]) -> Callable[..., None]:
     """Create a callback that notifies strategies when paper fills/cancels occur."""
     def notify(order: PaperOrder, event: str, fill: PaperFill | None = None, pair_id: str | None = None) -> None:
         for strat in strategies:
@@ -65,6 +66,7 @@ def _make_fill_notifier(strategies: list[BaseStrategy]) -> Callable[..., None]:
                 continue
             if event == "filled" and fill is not None:
                 strat.notify_fill(order.market_id, order.side, fill.fill_price, fill.shares)
+                scheduler._follow_up_signals.extend(strat.follow_up_signals(order, fill))
             elif event == "cancelled":
                 strat.notify_cancel(order.market_id, order.side, order.reject_reason or "GTD_EXPIRED")
             elif event == "leg_failed" and pair_id is not None:
@@ -113,10 +115,12 @@ class PolySignalScheduler:
         self.logger = logging.getLogger("polysignal_lab.scheduler")
         self.health = HealthRegistry()
         self._trading_components_initialized = False
+        self._follow_up_signals: list[SignalCandidate] = []
 
         self.poly_ws = PolymarketMarketWebSocket(settings.data.polymarket, self.ctx.books)
         self.poly_ws.reseed_hook = self._reseed_ws_books
         self.binance_ws = BinanceSpotFeed(settings.data.binance, self.ctx.spots)
+        self.rtds_ws = PolymarketRtdsPriceFeed(self.ctx.spots, settings.data.polymarket)
         self.book_feed = BookFeedService(
             settings.data.polymarket,
             self.rest,
@@ -124,9 +128,10 @@ class PolySignalScheduler:
             websocket=self.poly_ws,
             logger=self.logger,
         )
+        primary_spot_feed = self.rtds_ws if settings.data.polymarket.use_rtds_ws else self.binance_ws
         self.spot_feed = SpotFeedService(
-            self.binance_ws,
-            enabled=settings.data.binance.enabled,
+            primary_spot_feed,
+            enabled=settings.data.polymarket.use_rtds_ws or settings.data.binance.enabled,
             logger=self.logger,
         )
 
@@ -215,7 +220,7 @@ class PolySignalScheduler:
             self.wallet,
             self.ctx.books,
         )
-        self.paper.fill_notifier = _make_fill_notifier(self.strategies)
+        self.paper.fill_notifier = _make_fill_notifier(self, self.strategies)
         self.exits = PaperExitEngine(self.settings.paper_trading.exit_model, self.wallet)
         self.settlement = PaperSettlementEngine(self.wallet)
         self.paper_portfolio.configure(

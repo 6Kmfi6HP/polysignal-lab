@@ -617,6 +617,11 @@ async def process_signal(
             signal.token_id,
         )
 
+    while getattr(scheduler, "_follow_up_signals", []):
+        follow_ups = list(scheduler._follow_up_signals)
+        scheduler._follow_up_signals.clear()
+        for follow_up in follow_ups:
+            await process_signal(scheduler, follow_up)
     return result
 
 

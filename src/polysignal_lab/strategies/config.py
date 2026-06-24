@@ -39,6 +39,9 @@ class VWAPMomentumConfig(BaseModel):
     max_spread: float = 0.03
     max_orderbook_staleness_ms: int = 60_000
     max_spot_staleness_ms: int = 60_000
+    hedge_enabled: bool = False
+    hedge_price: float = 0.02
+    hedge_expiry_seconds: int = 3600
 
 
 class FixedStopLossConfig(BaseModel):
@@ -116,6 +119,8 @@ class PTBDiffConfig(BaseModel):
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     require_verified_ptb_source: bool = True
     require_anchor_price_source: bool = False
+    require_chainlink_spot_source: bool = True
+    chainlink_spot_sources: tuple[str, ...] = ("polymarket_rtds", "chainlink", "chainlink_rtds")
     max_spread: float = 0.08
     triggers: list[PTBTriggerConfig] = Field(
         default_factory=lambda: [

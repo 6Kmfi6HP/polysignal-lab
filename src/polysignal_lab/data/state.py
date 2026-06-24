@@ -10,6 +10,7 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.orderbook import OrderBook
 from polysignal_lab.domain.spot import SpotPrice
+from polysignal_lab.domain.trade import Trade
 from polysignal_lab.observability.metrics import MetricsRegistry
 
 
@@ -51,6 +52,7 @@ class OrderBookRegistry:
     books: dict[str, OrderBook] = field(default_factory=dict)
     states: dict[str, BookEpochState] = field(default_factory=dict)
     telemetries: dict[str, dict[str, Any]] = field(default_factory=dict)
+    trade_events: dict[str, list[Trade]] = field(default_factory=dict)
     metrics: MetricsRegistry = field(default_factory=MetricsRegistry)
     _lock: Lock = field(default_factory=Lock)
 
@@ -60,6 +62,10 @@ class OrderBookRegistry:
     def get(self, token_id: str) -> OrderBook | None:
         with self._lock:
             return self.books.get(token_id)
+
+    def recent_trades(self, token_id: str) -> list[Trade]:
+        with self._lock:
+            return list(self.trade_events.get(token_id, ()))
 
     def get_state(self, token_id: str) -> BookEpochState | None:
         with self._lock:
@@ -163,13 +169,29 @@ class OrderBookRegistry:
             if best_ask is not None:
                 telemetry["best_ask"] = best_ask
 
-    def update_last_trade(self, token_id: str, price: float) -> None:
+    def update_last_trade(
+        self,
+        token_id: str,
+        price: float,
+        size: float | None = None,
+        side: str | None = None,
+        timestamp: str | None = None,
+    ) -> None:
         with self._lock:
             book = self.books.get(token_id)
             if book is not None:
                 updated = book.model_copy(deep=True)
                 updated.last_trade_price = price
+                updated.last_trade_size = size
+                updated.last_trade_side = side
+                updated.last_trade_timestamp = timestamp
                 self.books[token_id] = updated
+            if size is not None and size > 0:
+                event_time = parse_source_timestamp(timestamp) or datetime.now(timezone.utc)
+                self.trade_events.setdefault(token_id, []).append(
+                    Trade(price=price, size=size, timestamp=event_time.timestamp())
+                )
+                self.trade_events[token_id] = self.trade_events[token_id][-512:]
 
     def telemetry_for(self, token_id: str) -> dict[str, str | int | float | bool | None]:
         with self._lock:

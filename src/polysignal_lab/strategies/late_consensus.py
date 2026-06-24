@@ -38,6 +38,7 @@ class LateConsensusStrategy(BaseStrategy):
         self._last_favorite: dict[str, tuple[Side, datetime]] = {}
         # Track last entry timestamp per market for frequency gating (Step 2)
         self._last_entry_at: dict[str, datetime] = {}
+        self._accepted_counts: dict[str, int] = {}
 
     @property
     def freshness_policy(self) -> FreshnessPolicy:
@@ -197,6 +198,10 @@ class LateConsensusStrategy(BaseStrategy):
             reason_codes=reason_codes,
             metrics=metrics,
         )
+        if signal is not None:
+            sequence = self._accepted_counts.get(market_id, 0)
+            signal.metrics["entry_sequence"] = sequence
+            signal.dedupe_key = f"{signal.dedupe_key}:{sequence}"
 
         return [signal] if signal else []
 
@@ -239,5 +244,6 @@ class LateConsensusStrategy(BaseStrategy):
 
     def notify_signal_accepted(self, signal: SignalCandidate) -> None:
         self._last_entry_at[signal.market_id] = signal.created_at
+        self._accepted_counts[signal.market_id] = self._accepted_counts.get(signal.market_id, 0) + 1
         if self.config.flip_guard_enabled:
             self._last_favorite[signal.market_id] = (signal.side, signal.created_at)

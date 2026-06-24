@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from polysignal_lab.config import VWAPMomentumConfig
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
@@ -148,6 +148,9 @@ class VWAPMomentumStrategy(BaseStrategy):
         self._pending_signal_samples: dict[
             str, list[tuple[str, float, float, float]]
         ] = {}
+        self._last_trade_signatures: dict[str, tuple[float | None, float | None, str | None, float]] = {}
+        self._seen_trade_signatures: dict[str, set[tuple[float, float, float]]] = defaultdict(set)
+        self._pending_hedges: dict[str, tuple[Side, float]] = {}
 
     def reset_entry_guard(self, market_id: str) -> None:
         """Re-allow entry for a market (used by tests or manual reset)."""
@@ -156,6 +159,8 @@ class VWAPMomentumStrategy(BaseStrategy):
     def notify_signal_accepted(self, signal: SignalCandidate) -> None:
         self._can_enter[signal.market_id] = False
         self._pending_signal_samples.pop(signal.signal_id, None)
+        if signal.hedge_leg:
+            self._pending_hedges.pop(signal.market_id, None)
 
     def notify_signal_rejected(
         self, signal: SignalCandidate, rejected: RejectedSignal
@@ -164,6 +169,87 @@ class VWAPMomentumStrategy(BaseStrategy):
             signal.signal_id, []
         ):
             self.trades.remove(key, price, size, timestamp)
+
+    def notify_fill(self, market_id: str, side: Side, fill_price: float, shares: float) -> None:
+        if self.config.hedge_enabled and shares > 0:
+            self._pending_hedges[market_id] = (side.opposite, shares)
+
+    def notify_cancel(self, market_id: str, side: Side, reason: str) -> None:
+        if reason == "GTD_EXPIRED":
+            self._pending_hedges.pop(market_id, None)
+
+    def follow_up_signals(self, order: object, fill: object) -> list[SignalCandidate]:
+        if not self.config.hedge_enabled:
+            return []
+        if getattr(order, "order_intent", None) == OrderIntent.PASSIVE_GTD.value:
+            self._pending_hedges.pop(getattr(order, "market_id"), None)
+            return []
+        pending = self._pending_hedges.pop(getattr(order, "market_id"), None)
+        if pending is None:
+            return []
+        hedge_side, contracts = pending
+        metrics = {}
+        order_metrics = getattr(order, "metrics", None)
+        if isinstance(order_metrics, dict):
+            metrics = order_metrics.get("signal_metrics") or {}
+        opposite_token_id = metrics.get("opposite_token_id")
+        condition_id = metrics.get("condition_id")
+        seconds_to_close = metrics.get("seconds_to_close")
+        if not isinstance(opposite_token_id, str) or not isinstance(condition_id, str):
+            return []
+        signal = SignalCandidate.build(
+            strategy=self.name,
+            asset=str(getattr(order, "asset")),
+            timeframe=str(getattr(order, "timeframe")),
+            market_id=str(getattr(order, "market_id")),
+            market_slug=str(getattr(order, "market_slug")),
+            condition_id=condition_id,
+            token_id=opposite_token_id,
+            side=hedge_side,
+            confidence=float(getattr(order, "signal_confidence", None) or 0.70),
+            entry_reference_price=self.config.hedge_price,
+            max_entry_price=self.config.hedge_price,
+            seconds_to_close=int(seconds_to_close) if isinstance(seconds_to_close, int | float) else None,
+            data_freshness_ms=None,
+            reason_codes=["VWAP_GTD_HEDGE"],
+            metrics={
+                "contracts": contracts,
+                "hedge_price": self.config.hedge_price,
+                "hedge_source": "vwap_entry_fill",
+            },
+            order_intent=OrderIntent.PASSIVE_GTD,
+            expiry_seconds=self.config.hedge_expiry_seconds,
+            pair_id=f"{getattr(order, 'market_id')}:vwap",
+            hedge_leg=True,
+        )
+        signal.dedupe_key = f"{signal.dedupe_key}:hedge"
+        return [signal]
+
+    def _pending_hedge_signal(self, snapshot: MarketSnapshot) -> SignalCandidate | None:
+        pending = self._pending_hedges.get(snapshot.market.market_id)
+        if pending is None:
+            return None
+        hedge_side, contracts = pending
+        signal = self._candidate(
+            snapshot,
+            hedge_side,
+            confidence=0.70,
+            max_entry_price=self.config.hedge_price,
+            reason_codes=["VWAP_GTD_HEDGE"],
+            metrics={
+                "contracts": contracts,
+                "hedge_price": self.config.hedge_price,
+                "hedge_source": "vwap_entry_fill",
+            },
+            order_intent=OrderIntent.PASSIVE_GTD,
+            expiry_seconds=self.config.hedge_expiry_seconds,
+            pair_id=f"{snapshot.market.market_id}:vwap",
+            hedge_leg=True,
+        )
+        if signal is not None:
+            signal.entry_reference_price = self.config.hedge_price
+            signal.dedupe_key = f"{signal.dedupe_key}:hedge"
+        return signal
 
     @property
     def freshness_policy(self) -> FreshnessPolicy:
@@ -204,6 +290,10 @@ class VWAPMomentumStrategy(BaseStrategy):
         if snapshot.market.timeframe not in self.config.timeframes:
             return []
 
+        hedge_signal = self._pending_hedge_signal(snapshot)
+        if hedge_signal is not None:
+            return [hedge_signal]
+
         seconds_to_close = snapshot.seconds_to_close
         if seconds_to_close is None:
             return []
@@ -240,10 +330,28 @@ class VWAPMomentumStrategy(BaseStrategy):
             book = snapshot.book_for(side)
             if book is None:
                 continue
+            key = self._market_key(snapshot.market.market_id, side)
+            trade_events = snapshot.metrics.get("up_trades" if side == Side.UP else "down_trades")
+            if isinstance(trade_events, list) and trade_events:
+                for raw_trade in trade_events:
+                    trade = raw_trade if isinstance(raw_trade, Trade) else None
+                    if trade is None and isinstance(raw_trade, dict):
+                        trade = Trade.model_validate(raw_trade)
+                    if trade is None:
+                        continue
+                    signature = (trade.price, trade.size, trade.timestamp)
+                    if signature in self._seen_trade_signatures[key]:
+                        continue
+                    self._seen_trade_signatures[key].add(signature)
+                    self.trades.push(key, trade.price, trade.size, trade.timestamp)
+                continue
             price = book.last_trade_price if book.last_trade_price is not None else book.best_ask
             if price is not None and price > 0:
-                key = self._market_key(snapshot.market.market_id, side)
-                size = 1.0
+                size = book.last_trade_size if book.last_trade_size and book.last_trade_size > 0 else 1.0
+                signature = (price, size, book.last_trade_timestamp, book.received_at.timestamp())
+                if self._last_trade_signatures.get(key) == signature:
+                    continue
+                self._last_trade_signatures[key] = signature
                 self.trades.push(key, price, size, now_ts)
                 pushed_samples.append((key, price, size, now_ts))
 
@@ -340,6 +448,8 @@ class VWAPMomentumStrategy(BaseStrategy):
                 "seconds_to_close": seconds_to_close,
                 "up_last_price": up_price,
                 "down_last_price": down_price,
+                "opposite_token_id": snapshot.market.token_for(fav_side.opposite).token_id,
+                "condition_id": snapshot.market.condition_id,
             },
         )
         if signal and pushed_samples:
