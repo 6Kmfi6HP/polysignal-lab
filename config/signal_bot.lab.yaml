@@ -1,6 +1,6 @@
 app:
   name: PolySignal Lab
-  environment: production
+  environment: lab
   mode: signal_plus_paper
   timezone: Asia/Bangkok
   log_level: INFO
@@ -174,3 +174,23 @@ strategies:
       take_profit_rr: 3.0
       take_profit_cap: 0.95
       market_data_max_lag_sec: 2
+  binary_momentum:
+    enabled: true
+  cross_market_bot:
+    enabled: true
+  dump_hedge:
+    enabled: true
+  fibonacci_bot:
+    enabled: true
+  low_side_dual_reversion:
+    enabled: true
+  mid_price_sizing:
+    enabled: true
+  ninety_nine_cent_sniper:
+    enabled: true
+  one_cent_buy:
+    enabled: true
+  pre_order_market:
+    enabled: true
+  skew_mean_reversion:
+    enabled: true
