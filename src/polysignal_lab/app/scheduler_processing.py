@@ -117,8 +117,8 @@ async def evaluate_candidates_ordered(
         entry for entry in entries if entry.execution_mode != "cross_market"
     ]
     entry_levels = _strategy_schedule_levels(per_market_entries)
-    for market_index, snapshot in snapshots:
-        for level_entries in entry_levels:
+    for level_entries in entry_levels:
+        for market_index, snapshot in snapshots:
             entry_results: list[list[CandidateEnvelope]] = [
                 [] for _ in level_entries
             ]
