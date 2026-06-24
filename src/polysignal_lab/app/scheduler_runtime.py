@@ -87,6 +87,7 @@ async def run(scheduler: PolySignalScheduler) -> None:
             )
 
             scheduler._persist_state()
+            scheduler_health.persist_health_snapshot(scheduler)
             loop_count += 1
             await sleep(scheduler.settings.markets.refresh_interval_sec)
     except CancelledError:
