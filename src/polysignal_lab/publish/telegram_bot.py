@@ -267,9 +267,9 @@ class TelegramBotService:
                     parse_mode=ParseMode.HTML,
                     reply_markup=keyboard,
                 )
+                self._send_success += 1
             else:
                 await self._reply(update, text, keyboard)
-            self._send_success += 1
         except RetryAfter:
             self._rate_limited += 1
             self._send_failure += 1
