@@ -81,6 +81,13 @@ class AnchorPriceService:
             captured_at=best.received_at,
             lag_ms=lag_ms,
         )
+        if not anchor.verified:
+            existing = self.store.get_verified_anchor_price(
+                anchor.asset, anchor.timeframe, anchor.market_slug
+            )
+            if existing is not None:
+                self._latest_by_key[f"{existing.asset}:{existing.timeframe}"] = existing
+                return existing
         self.store.upsert_anchor_price(anchor)
         self._latest_by_key[f"{anchor.asset}:{anchor.timeframe}"] = anchor
         return anchor

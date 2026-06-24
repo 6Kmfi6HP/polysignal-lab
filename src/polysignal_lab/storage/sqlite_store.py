@@ -83,10 +83,23 @@ class SQLiteStore:
         anchor_id = f"{anchor.asset.upper()}:{anchor.timeframe}:{anchor.market_slug}"
         with self._lock, self._conn:
             self._conn.execute(
-                """INSERT OR REPLACE INTO anchor_prices(
+                """INSERT INTO anchor_prices(
                     anchor_id,asset,timeframe,market_slug,window_start,window_end,
                     price,source,verified,captured_at,lag_ms,payload_json
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(anchor_id) DO UPDATE SET
+                    asset=excluded.asset,
+                    timeframe=excluded.timeframe,
+                    market_slug=excluded.market_slug,
+                    window_start=excluded.window_start,
+                    window_end=excluded.window_end,
+                    price=excluded.price,
+                    source=excluded.source,
+                    verified=excluded.verified,
+                    captured_at=excluded.captured_at,
+                    lag_ms=excluded.lag_ms,
+                    payload_json=excluded.payload_json
+                WHERE NOT (anchor_prices.verified = 1 AND excluded.verified = 0)""",
                 (
                     anchor_id,
                     anchor.asset.upper(),

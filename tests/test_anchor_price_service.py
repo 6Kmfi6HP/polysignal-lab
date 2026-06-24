@@ -48,6 +48,17 @@ class _Store:
     def upsert_anchor_price(self, anchor):
         self.anchors.append(anchor)
 
+    def get_verified_anchor_price(self, asset, timeframe, market_slug):
+        for anchor in reversed(self.anchors):
+            if (
+                anchor.asset == asset.upper()
+                and anchor.timeframe == timeframe
+                and anchor.market_slug == market_slug
+                and anchor.verified
+            ):
+                return anchor
+        return None
+
 
 def test_capture_for_market_persists_verified_spot_anchor() -> None:
     store = _Store()
@@ -71,6 +82,40 @@ def test_capture_for_market_persists_verified_spot_anchor() -> None:
     assert anchor.source == "binance"
     assert anchor.price == 64250.25
     assert store.anchors == [anchor]
+
+
+def test_capture_for_market_keeps_verified_anchor_when_later_sample_is_stale() -> None:
+    store = _Store()
+    spots = SpotRegistry()
+    market = _market("btc-updown-5m-1782216000")
+    spots.update(
+        SpotPrice(
+            asset="BTC",
+            symbol="BTCUSDT",
+            price=64250.25,
+            source="binance",
+            event_time=market.start_ts,
+        )
+    )
+    service = AnchorPriceService(spots=spots, store=store, max_lag_ms=1_000)
+    verified_anchor = service.capture_for_market(market)
+    assert verified_anchor is not None
+
+    spots.history["BTC"] = [
+        SpotPrice(
+            asset="BTC",
+            symbol="BTCUSDT",
+            price=64000.0,
+            source="binance",
+            event_time=datetime(2026, 6, 23, 12, 4, tzinfo=timezone.utc),
+        )
+    ]
+
+    stale_capture = service.capture_for_market(market)
+
+    assert stale_capture == verified_anchor
+    assert store.anchors == [verified_anchor]
+    assert service.health_metrics()["BTC:5m"]["verified"] is True
 
 
 def test_anchor_service_health_reports_latest_lag_and_source() -> None:

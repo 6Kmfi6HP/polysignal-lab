@@ -151,6 +151,41 @@ def test_sqlite_anchor_prices_survive_reopen(tmp_path) -> None:
     assert loaded == anchor
 
 
+def test_sqlite_verified_anchor_survives_later_unverified_upsert(tmp_path) -> None:
+    db_path = tmp_path / "anchors.sqlite3"
+    verified_anchor = AnchorPrice(
+        asset="BTC",
+        timeframe="5m",
+        market_slug="btc-updown-5m-1782216000",
+        window_start=datetime(2026, 6, 23, 12, 0, tzinfo=timezone.utc),
+        window_end=datetime(2026, 6, 23, 12, 5, tzinfo=timezone.utc),
+        price=64250.25,
+        source="binance",
+        verified=True,
+        captured_at=datetime(2026, 6, 23, 12, 0, 1, tzinfo=timezone.utc),
+        lag_ms=750,
+    )
+    stale_anchor = AnchorPrice(
+        asset="BTC",
+        timeframe="5m",
+        market_slug="btc-updown-5m-1782216000",
+        window_start=verified_anchor.window_start,
+        window_end=verified_anchor.window_end,
+        price=None,
+        source="binance",
+        verified=False,
+        captured_at=datetime(2026, 6, 23, 12, 4, tzinfo=timezone.utc),
+        lag_ms=240_000,
+    )
+    store = SQLiteStore(db_path)
+
+    store.upsert_anchor_price(verified_anchor)
+    store.upsert_anchor_price(stale_anchor)
+
+    loaded = store.get_verified_anchor_price("btc", "5m", "btc-updown-5m-1782216000")
+    assert loaded == verified_anchor
+
+
 def test_duplicate_ids_are_idempotent_or_reported(tmp_path, snapshot, settings):
     # Given: a SQLite store with one full PRD audit lifecycle persisted.
     store = SQLiteStore(tmp_path / "db.sqlite3")
