@@ -10,7 +10,7 @@
 
 本规格来自 2026-06-24 对当前代码和官方资料的审查：
 
-- 当前代码：`PaperSettlementEngine` 只根据 `Market.status` 与 `Market.resolved_outcome` 计算 WIN/LOSS/VOID/UNKNOWN；`Market.from_gamma()` 只识别 `resolved=true`、`status=RESOLVED`、`winning_*` 字段；`MarketUniverseService.fetch_resolved()` 只扫 `GET /markets?closed=true&limit=200&offset=0` 后用 `market_id` 过滤；`PolymarketMarketWebSocket` 捕获 `market_resolved` 后只放入 queue，没有生产消费方。
+- 当前代码：`PaperSettlementEngine` 已支持显式 `outcome_value`，但默认路径仍根据 `Market.status` 与 `Market.resolved_outcome` 计算 WIN/LOSS/VOID/UNKNOWN，且不能写入 settlement provenance；`Market.from_gamma()` 能识别 resolved/status/winner/cancelled 等常见字段，但不识别 `umaResolutionStatus` 与 terminal `outcomePrices`；`MarketUniverseService.fetch_resolved()` 的生产 fallback 只扫 `GET /markets?closed=true&limit=200&offset=0` 后用 `market_id` 过滤；`PolymarketMarketWebSocket` 捕获 `market_resolved` 后只放入 queue，没有生产消费方。
 - 真实 Gamma payload 示例：`/markets/2649672` 已 `closed=true`、`umaResolutionStatus="resolved"`、`outcomePrices='["1", "0"]'`，但没有 `resolved=true`、`winning_outcome`、`winning_asset_id`。当前 parser 会把它解析成 `CLOSED + resolved_outcome=None`，导致对应 open position 不会结算。
 - 官方 Polymarket docs：market channel 的 `market_resolved` 包含 `winning_asset_id` 与 `winning_outcome`；Gamma market schema 包含 `outcomes`、`outcomePrices`、`clobTokenIds`、`umaResolutionStatus`；CTF redeem 以 payout vector 决定兑付。
 - Gnosis ConditionalTokens 源码：`payoutDenominator[conditionId] > 0` 表示 condition 已收到 oracle result；`payoutNumerators[conditionId][i] / payoutDenominator[conditionId]` 是第 `i` 个 outcome slot 的最终 payout；`ConditionResolution` event 包含 `conditionId` 与 `payoutNumerators`。
@@ -21,6 +21,7 @@
 - Conditional Tokens contract: `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045`。
 - pUSD collateral: `0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB`，本规格只读，不调用 approve/split/merge/redeem。
 - UMA adapter: `0x6A9D222616C90FcA5754cd1333cFD9b7fb6a4F74`，仅作为 condition resolver 背景，不需要直接调用。
+- 官方 Resolution docs 同时列出 UmaCtfAdapter v3 `0x157Ce2d672854c848c9b79C49a8Cc6cc89176a49` 与 v2 `0x6A9D222616C90FcA5754cd1333cFD9b7fb6a4F74`。本规格不重新计算 condition id、不调用 adapter；adapter 地址只作背景说明，链上查询以 Gamma/本地 market 的 `condition_id` 为输入。
 
 ## 问题
 
@@ -73,9 +74,10 @@
 2. 对每个 open market 同时尝试三源 evidence：
    - Chain CTF payout：读取 `payoutDenominator(condition_id)` 与两个 `payoutNumerators(condition_id, index)`。
    - Gamma exact：优先 `GET /markets/{market_id}`；必要时 fallback `GET /markets?condition_ids=<condition_id>&closed=true`。
-   - WS resolved cache：消费/缓存 public CLOB `market_resolved` payload，按 `condition_id`、`market`、`slug` 或 token id 匹配本地 market。
+   - WS resolved cache：继续用 `custom_feature_enabled=true` 订阅 public CLOB `market_resolved` payload，消费/缓存后按 `condition_id`、`market`、`slug` 或 token id 匹配本地 market。
 3. 合成规则固定、可测试：
    - Chain resolved evidence 是 authoritative。只要 `denominator > 0` 且 outcome vector 可映射 token，就使用链上 payout。
+   - Chain outcome slot vector 必须按本地/Gamma `clobTokenIds` 顺序映射到 token；链上 getter 只返回 slot payout，不返回 token id。
    - Chain unresolved 或 RPC 失败时，Gamma exact resolved evidence 可作为 settlement source。
    - WS evidence 不单独结算，除非后续实现明确批准；第一版只作为低延迟 hint 和 conflict detector，触发本轮 Gamma/chain 精确 recheck。
    - Gamma 与 WS 冲突时，如果 chain unavailable，则不结算，返回 UNKNOWN/retry 并记录 conflict。
@@ -179,12 +181,21 @@ class CtfResolutionClient:
 
 实现方式：使用 `httpx.AsyncClient.post(rpc_url, json=rpc_payload)` 调 Polygon JSON-RPC `eth_call`。
 
-需要读取的 Solidity public mapping getters：
+需要读取的 Solidity public getters：
 
 ```solidity
 payoutDenominator(bytes32 conditionId) returns (uint256)
 payoutNumerators(bytes32 conditionId, uint256 index) returns (uint256)
+getOutcomeSlotCount(bytes32 conditionId) returns (uint256)
 ```
+
+为避免未 prepared / unresolved condition 读取 `payoutNumerators(conditionId, index)` 时因数组越界 revert，查询顺序必须是：
+
+1. 校验 `condition_id` 格式。
+2. 先查 `payoutDenominator(condition_id)`。
+3. `denominator == 0` 直接返回 unresolved evidence，不再查 numerators。
+4. `denominator > 0` 后查 `getOutcomeSlotCount(condition_id)`，第一版只接受 `2`。
+5. 再查 `payoutNumerators(condition_id, 0)` 与 `payoutNumerators(condition_id, 1)`。
 
 实现不引入 ABI dependency。用常量 function selector + ABI encoding：
 
@@ -239,9 +250,10 @@ Parsing rules:
 
 - Use `clobTokenIds` + `outcomes` arrays as index-aligned truth for token mapping.
 - Winner parser priority:
-  1. `winning_asset_id` / `winningAssetId` / `winning_token_id` / `winningTokenId` maps directly to token => value 1 for that token, 0 for others.
-  2. `winning_outcome` / `resolved_outcome` maps by normalized outcome label => value 1 for corresponding token, 0 for others.
-  3. `outcomePrices` terminal vector maps by index. Only accept as resolved if `umaResolutionStatus == "resolved"` or `closed=true && acceptingOrders=false && automaticallyResolved=true`. Values must be near `[1,0]`, `[0,1]`, or `[0.5,0.5]`; use tolerance `1e-9` for parsed floats.
+  1. `outcomePrices` terminal vector maps by index. Only accept as resolved if `umaResolutionStatus == "resolved"` or `closed=true && acceptingOrders=false && automaticallyResolved=true`. Values must be near `[1,0]`, `[0,1]`, or `[0.5,0.5]`; use tolerance `1e-9` for parsed floats.
+  2. `winning_asset_id` / `winningAssetId` / `winning_token_id` / `winningTokenId` maps directly to token => value 1 for that token, 0 for others.
+  3. `winning_outcome` / `resolved_outcome` maps by normalized outcome label => value 1 for corresponding token, 0 for others.
+  These `winning_*` fields are permissive fallbacks, not guaranteed by the current public Gamma OpenAPI schema.
 - `cancelled/canceled` or void-like outcome => `status="cancelled"` with values equal to entry refund handled later by settlement engine, not represented as token payout unless Gamma explicitly reports 50/50 prices.
 - `closed=true` alone is not enough to settle.
 
@@ -252,6 +264,7 @@ Important: current `Market.from_gamma()` may still be updated for normalized mar
 Modify `PolymarketMarketWebSocket` minimally:
 
 - Keep current `resolved_events` queue for tests/backward compatibility.
+- Preserve the existing market subscription `custom_feature_enabled=true`; official docs require it for `market_resolved`.
 - Add a scheduler-owned `WsResolutionCache`; `PolymarketMarketWebSocket.handle_message()` calls `cache.remember(payload)` when the cache is attached.
 
 Class:
@@ -333,6 +346,7 @@ Target behavior:
 2. Ask `scheduler.settlement_resolver.resolve_market(market)`.
 3. If decision `unknown`, continue/retry.
 4. If decision `cancelled`, call current void/refund path.
+   - 实现时必须让 current refund branch 明确生效：要么传入 `market.model_copy(update={"status": MarketStatus.CANCELLED})` 调用 `settle()`，要么给 `settle()` 增加显式 cancelled 参数；不要用 stale ACTIVE/CLOSED market 直接调用导致按 UNKNOWN 或错误 payout 处理。
 5. If decision `resolved`, compute `outcome_value = decision.outcome_value_for(position.token_id)`.
 6. Call `PaperSettlementEngine.settle(position, market, outcome_value=outcome_value)` even if `market.resolved_outcome` is absent.
 7. Add decision details to result details before persistence.
@@ -355,7 +369,7 @@ Status mapping for explicit `outcome_value`:
 - `1.0` => WIN
 - `0.0` => LOSS
 - `0.0 < value < 1.0` => VOID, preserving current public result states
-- invalid `<0` or `>1` => VOID only if source says cancelled; otherwise raise/UNKNOWN at resolver layer before calling settle
+- invalid `<0` or `>1` => resolver must reject before calling `settle()`; engine should raise/UNKNOWN instead of silently VOID-closing.
 
 ### Persistence and health
 
