@@ -1,6 +1,5 @@
 from __future__ import annotations
-from collections.abc import Sequence
-from typing import Protocol, cast
+import inspect
 
 
 import pytest
@@ -10,20 +9,28 @@ from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
 from polysignal_lab.domain.orderbook import OrderBook
 
 
-class TokenParam(Protocol):
-    token_id: str
+def test_clob_rest_constructor_does_not_expose_sdk_client() -> None:
+    params = inspect.signature(PolymarketCLOBRestClient).parameters
+    assert "sdk_client" not in params
+    assert "key" not in params
+    assert "private_key" not in params
+    assert "creds" not in params
 
 
-class FakeBatchClient:
-    def __init__(self) -> None:
-        self.params: Sequence[TokenParam] = ()
+def test_clob_rest_instance_does_not_expose_sdk_client() -> None:
+    client = PolymarketCLOBRestClient(PolymarketDataConfig())
+    assert "sdk_client" not in vars(client)
 
-    def get_order_books(self, params: Sequence[object]) -> list[dict[str, object]]:
-        self.params = [
-            cast(TokenParam, param)
-            for param in params
-            if isinstance(getattr(param, "token_id", None), str)
-        ]
+
+
+
+@pytest.mark.asyncio
+async def test_get_books_uses_batch_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = PolymarketCLOBRestClient(PolymarketDataConfig())
+    requested_token_ids: list[str] = []
+
+    def fake_batch(token_ids: list[str]) -> list[object]:
+        requested_token_ids.extend(token_ids)
         return [
             {
                 "market": "market-1",
@@ -47,20 +54,11 @@ class FakeBatchClient:
             },
         ]
 
-
-class FailingBatchClient:
-    def get_order_books(self, params: Sequence[object]) -> list[dict[str, object]]:
-        raise RuntimeError("batch unavailable")
-
-
-@pytest.mark.asyncio
-async def test_get_books_uses_sdk_batch_request() -> None:
-    sdk_client = FakeBatchClient()
-    client = PolymarketCLOBRestClient(PolymarketDataConfig(), sdk_client=sdk_client)
+    monkeypatch.setattr(client, "_get_order_books_batch_sync", fake_batch)
 
     books = await client.get_books(["token-1", "token-2"])
 
-    assert [param.token_id for param in sdk_client.params] == ["token-1", "token-2"]
+    assert requested_token_ids == ["token-1", "token-2"]
     assert [book.token_id for book in books] == ["token-1", "token-2"]
     assert books[0].best_bid == 0.42
     assert books[1].best_ask == 0.58
@@ -70,8 +68,11 @@ async def test_get_books_uses_sdk_batch_request() -> None:
 async def test_get_books_falls_back_to_single_book_requests_when_batch_fails() -> None:
     class FallbackRestClient(PolymarketCLOBRestClient):
         def __init__(self) -> None:
-            super().__init__(PolymarketDataConfig(), sdk_client=FailingBatchClient())
+            super().__init__(PolymarketDataConfig())
             self.single_requests: list[str] = []
+
+        def _get_order_books_batch_sync(self, token_ids: list[str]) -> list[object]:
+            raise RuntimeError("batch unavailable")
 
         async def get_book(self, token_id: str) -> OrderBook:
             self.single_requests.append(token_id)
