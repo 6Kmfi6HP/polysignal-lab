@@ -41,6 +41,11 @@ from polysignal_lab.paper.exit_engine import PaperExitEngine
 from polysignal_lab.paper.settlement import PaperSettlementEngine
 from polysignal_lab.paper.simulator import PaperSimulator
 from polysignal_lab.paper.wallet import PaperWallet
+from polysignal_lab.data.ctf_resolution_client import CtfResolutionClient
+from polysignal_lab.data.gamma_resolution_client import GammaResolutionClient
+from polysignal_lab.paper.settlement_resolver import SettlementResolver
+from polysignal_lab.paper.settlement_sources import WsResolutionCache
+
 from polysignal_lab.publish.telegram_publisher import (
     TelegramPublisher,
     invalid_telegram_credential_fields,
@@ -117,7 +122,9 @@ class PolySignalScheduler:
         self._trading_components_initialized = False
         self._follow_up_signals: list[SignalCandidate] = []
 
-        self.poly_ws = PolymarketMarketWebSocket(settings.data.polymarket, self.ctx.books)
+        self.ws_resolution_cache = WsResolutionCache()
+
+        self.poly_ws = PolymarketMarketWebSocket(settings.data.polymarket, self.ctx.books, resolution_cache=self.ws_resolution_cache)
         self.poly_ws.reseed_hook = self._reseed_ws_books
         self.binance_ws = BinanceSpotFeed(settings.data.binance, self.ctx.spots)
         self.rtds_ws = PolymarketRtdsPriceFeed(self.ctx.spots, settings.data.polymarket)
@@ -151,6 +158,21 @@ class PolySignalScheduler:
             self.ctx.markets,
             self.persistence,
             settings=settings,
+            logger=self.logger,
+        )
+        settlement_config = settings.data.polymarket.settlement
+        chain_source = None
+        if settlement_config.chain_enabled and settlement_config.polygon_rpc_url:
+            chain_source = CtfResolutionClient(
+                settlement_config.polygon_rpc_url,
+                timeout_sec=settlement_config.chain_timeout_sec,
+                contract="0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
+            )
+        gamma_source = GammaResolutionClient(settings.data.polymarket.gamma_base_url) if settlement_config.gamma_enabled else None
+        self.settlement_resolver = SettlementResolver(
+            chain_source,
+            gamma_source,
+            self.ws_resolution_cache if settlement_config.ws_enabled else None,
             logger=self.logger,
         )
         self.snapshot_service = SnapshotService(self.snapshot_builder)

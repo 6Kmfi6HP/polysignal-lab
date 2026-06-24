@@ -12,7 +12,7 @@ class PaperSettlementEngine:
     def __init__(self, wallet: PaperWallet):
         self.wallet = wallet
 
-    def settle(self, position: PaperPosition, market: Market, outcome_value: float | None = None) -> PaperTradeResult:
+    def settle(self, position: PaperPosition, market: Market, outcome_value: float | None = None, details: dict[str, object] | None = None) -> PaperTradeResult:
         if outcome_value is None:
             if market.status == MarketStatus.CANCELLED:
                 status = TradeResultStatus.VOID
@@ -34,7 +34,8 @@ class PaperSettlementEngine:
             elif 0.0 < outcome_value < 1.0:
                 status = TradeResultStatus.VOID
             else:
-                status = TradeResultStatus.VOID
+                status = TradeResultStatus.UNKNOWN
+                outcome_value = 0.0
         settlement_value = position.shares * outcome_value
         pnl = settlement_value - position.stake_usdc
         closed_at = utc_now()
@@ -61,6 +62,7 @@ class PaperSettlementEngine:
             details={
                 "resolved_outcome": market.resolved_outcome.value if market.resolved_outcome else None,
                 "confidence": position.signal_confidence,
+                **(details or {}),
             },
         )
         if status != TradeResultStatus.UNKNOWN:

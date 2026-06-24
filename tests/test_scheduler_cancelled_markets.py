@@ -39,7 +39,7 @@ class FakeGammaClient:
     ) -> None:
         return None
 
-    async def get(self, url: str, params: dict[str, str]) -> FakeGammaResponse:
+    async def get(self, url: str, params: dict[str, str] | None = None) -> FakeGammaResponse:
         payload = {
             "id": "gamma-cancelled-1",
             "conditionId": "0xcondition",
