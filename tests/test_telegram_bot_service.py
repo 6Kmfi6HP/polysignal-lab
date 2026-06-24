@@ -32,6 +32,7 @@ class _FakeApplication:
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.handlers: list[object] = []
         self.updater = _FakeUpdater(self.calls)
+        self.bot = SimpleNamespace()
         self.running = False
 
     def add_handler(self, handler: object) -> None:

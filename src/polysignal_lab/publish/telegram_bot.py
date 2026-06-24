@@ -63,6 +63,23 @@ class TelegramBotService:
         self._rate_limited = 0
         self._unauthorized_updates = 0
 
+    async def _set_bot_commands(self) -> None:
+        if self.application is None or self.application.bot is None:
+            return
+        from telegram import BotCommand
+        commands = [
+            BotCommand("start", "主菜单 / 选择操作"),
+            BotCommand("positions", "查看 open paper 持仓"),
+            BotCommand("status", "系统运行状态"),
+            BotCommand("signals", "最近信号"),
+            BotCommand("strategies", "策略启停"),
+            BotCommand("daily", "每日报告"),
+        ]
+        try:
+            await self.application.bot.set_my_commands(commands)
+        except Exception:
+            self.logger.warning("Failed to set bot commands")
+
     def configure_handlers(self) -> None:
         if self.application is None:
             raise RuntimeError("telegram application is not configured")
@@ -95,11 +112,13 @@ class TelegramBotService:
             ApplicationBuilder()
             .token(self.config.resolved_bot_token)
             .rate_limiter(AIORateLimiter(max_retries=self.config.retry_attempts))
+            .concurrent_updates(True)
             .build()
         )
         self.configure_handlers()
         try:
             await self.application.initialize()
+            await self._set_bot_commands()
             await self.application.start()
             if self.application.updater is None:
                 raise RuntimeError("telegram application updater is not available")
@@ -250,7 +269,10 @@ class TelegramBotService:
             await query.answer("Action failed", show_alert=True)
             self.logger.exception("Telegram callback failed")
             return
-        await query.answer()
+        try:
+            await query.answer()
+        except (TimedOut, NetworkError, TelegramError):
+            self._send_failure += 1
         await self._edit_or_reply(update, text, keyboard)
 
     async def _edit_or_reply(

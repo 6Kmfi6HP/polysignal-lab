@@ -143,14 +143,14 @@ async def run(scheduler: PolySignalScheduler) -> None:
 
             accepted = await _evaluate_iteration(scheduler, active_markets)
             await _process_iteration_signals(scheduler, accepted)
-            _tick_resting_orders(scheduler)
+            await asyncio.to_thread(_tick_resting_orders, scheduler)
             await _check_iteration_settlements(scheduler)
             last_report_date = await _generate_iteration_report(
                 scheduler, last_report_date
             )
 
-            scheduler._persist_state()
-            scheduler_health.persist_health_snapshot(scheduler)
+            await asyncio.to_thread(scheduler._persist_state)
+            await asyncio.to_thread(scheduler_health.persist_health_snapshot, scheduler)
             loop_count += 1
             await sleep(scheduler.settings.markets.refresh_interval_sec)
     except CancelledError:
