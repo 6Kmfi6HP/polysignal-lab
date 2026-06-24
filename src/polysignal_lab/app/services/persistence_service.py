@@ -84,6 +84,12 @@ class PersistenceService:
     def restore_open_positions(self) -> list[dict[str, Any]]:
         return self.sqlite.restore_open_positions()
 
+    def restore_daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self.sqlite.restore_daily_reports(limit=limit)
+
+    def restore_latest_system_event(self, event_type: str) -> dict[str, Any] | None:
+        return self.sqlite.restore_latest_system_event(event_type)
+
     def read_state(self, name: str, default: Any = None) -> Any:
         return self.state.read(name, default=default)
 

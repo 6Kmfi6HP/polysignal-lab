@@ -106,6 +106,12 @@ class TelegramConfig(BaseModel):
     retry_attempts: int = 3
     publish_timeout_sec: float = 20.0
     dry_run: bool = True
+    interactive_enabled: bool = False
+    interactive_dry_run: bool = False
+    interactive_allowed_chat_ids: tuple[int, ...] = ()
+    interactive_poll_interval_sec: float = 0.0
+    interactive_poll_timeout_sec: int = 30
+    interactive_drop_pending_updates_on_start: bool = True
 
     @property
     def resolved_bot_token(self) -> str | None:

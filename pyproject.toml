@@ -19,7 +19,8 @@ dependencies = [
   "anyio>=4.0",
   "fastapi>=0.111",
   "uvicorn>=0.30",
-  "py-clob-client-v2>=0.1.0"
+  "py-clob-client-v2>=0.1.0",
+  "python-telegram-bot[rate-limiter]>=22.5"
 ]
 
 [project.optional-dependencies]

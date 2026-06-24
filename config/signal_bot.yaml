@@ -25,6 +25,12 @@ telegram:
   retry_attempts: 3
   publish_timeout_sec: 20
   dry_run: true
+  interactive_enabled: false
+  interactive_dry_run: false
+  interactive_allowed_chat_ids: []
+  interactive_poll_interval_sec: 0.0
+  interactive_poll_timeout_sec: 30
+  interactive_drop_pending_updates_on_start: true
 
 markets:
   assets: [BTC, ETH, SOL, XRP]
