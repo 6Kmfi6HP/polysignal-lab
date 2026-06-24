@@ -115,3 +115,33 @@ async def test_normalized_snapshot_carries_ptb_resolution_and_token_metadata() -
     assert snapshot.metrics["down_token_id"] == "token-down"
     assert snapshot.metrics["market_start_ts"] == "2026-06-22T12:00:00Z"
     assert snapshot.metrics["market_end_ts"] == "2026-06-22T12:05:00Z"
+
+
+def test_gamma_uma_resolved_outcome_prices_sets_resolved_outcome() -> None:
+    payload = _gamma_payload()
+    payload.pop("resolved")
+    payload.pop("winning_outcome")
+    payload["closed"] = True
+    payload["active"] = False
+    payload["umaResolutionStatus"] = "resolved"
+    payload["outcomePrices"] = '["1", "0"]'
+
+    market = Market.from_gamma(payload, asset="BTC", timeframe="5m")
+
+    assert market.status == MarketStatus.RESOLVED
+    assert market.resolved_outcome == Side.UP
+
+
+def test_gamma_half_half_outcome_prices_resolved_without_side_winner() -> None:
+    payload = _gamma_payload()
+    payload.pop("resolved")
+    payload.pop("winning_outcome")
+    payload["closed"] = True
+    payload["active"] = False
+    payload["umaResolutionStatus"] = "resolved"
+    payload["outcomePrices"] = '["0.5", "0.5"]'
+
+    market = Market.from_gamma(payload, asset="BTC", timeframe="5m")
+
+    assert market.status == MarketStatus.RESOLVED
+    assert market.resolved_outcome is None

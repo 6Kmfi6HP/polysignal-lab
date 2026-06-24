@@ -190,9 +190,25 @@ def _has_void_resolution(payload: JsonObject) -> bool:
     return outcome is not None and outcome.strip().upper() in VOID_OUTCOMES
 
 
+
+def _outcome_prices_from_gamma(payload: JsonObject) -> list[float]:
+    prices = _json_list(payload.get("outcomePrices") or payload.get("outcome_prices"))
+    parsed: list[float] = []
+    for price in prices:
+        value = safe_float(price)
+        if value is None:
+            return []
+        parsed.append(value)
+    return parsed
+
 def _status_from_gamma(payload: JsonObject) -> MarketStatus:
     if _bool_value(payload.get("cancelled")) or _bool_value(payload.get("canceled")) or _has_void_resolution(payload):
         return MarketStatus.CANCELLED
+    uma_status = payload.get("umaResolutionStatus")
+    if isinstance(uma_status, str) and uma_status.strip().lower() == "resolved":
+        prices = _outcome_prices_from_gamma(payload)
+        if prices or _first_text(payload, WINNING_TOKEN_KEYS) or _first_text(payload, OUTCOME_KEYS):
+            return MarketStatus.RESOLVED
     raw_status = _first_text(payload, ("status", "marketStatus"))
     if raw_status is not None:
         match raw_status.strip().upper():
@@ -219,6 +235,14 @@ def _status_from_gamma(payload: JsonObject) -> MarketStatus:
 
 def _resolved_outcome_from_gamma(payload: JsonObject, tokens: list[OutcomeToken]) -> Side | None:
     winning_token = _first_text(payload, WINNING_TOKEN_KEYS)
+    prices = _outcome_prices_from_gamma(payload)
+    if len(prices) == 2:
+        if abs(prices[0] - 1.0) <= 1e-9 and abs(prices[1]) <= 1e-9:
+            return Side.UP
+        if abs(prices[0]) <= 1e-9 and abs(prices[1] - 1.0) <= 1e-9:
+            return Side.DOWN
+        if abs(prices[0] - 0.5) <= 1e-9 and abs(prices[1] - 0.5) <= 1e-9:
+            return None
     if winning_token is not None:
         for token in tokens:
             if token.token_id == winning_token:
