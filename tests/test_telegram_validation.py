@@ -27,6 +27,13 @@ def _live_telegram_config() -> TelegramConfig:
     )
 
 
+def test_scheduler_uses_configured_telegram_publish_timeout(tmp_path) -> None:
+    settings = Settings(telegram=TelegramConfig(publish_timeout_sec=20.0))
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+
+    assert scheduler.publish_service.timeout_sec == 20.0
+
+
 def test_telegram_qa_default_message_is_compact() -> None:
     assert DEFAULT_MESSAGE == "<b>PolySignal Lab</b>\nTelegram QA send · Mode: Paper"
     assert parse_args([]).message == DEFAULT_MESSAGE

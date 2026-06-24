@@ -78,6 +78,25 @@ async def test_process_signal_writes_prd_named_telegram_jsonl_stream(
     assert not (scheduler.logs.base_dir / "telegram_publish.jsonl").exists()
 
 
+
+
+class _TimeoutPublishService:
+    async def publish_signal(self, signal, stake_usdc):
+        raise TimeoutError()
+
+
+async def test_process_signal_logs_publish_exception_type(
+    tmp_path: Path, snapshot, settings, caplog
+) -> None:
+    sig = await _signal(snapshot, settings)
+    scheduler = _publishing_scheduler(tmp_path, settings)
+    scheduler.publish_service = _TimeoutPublishService()
+    caplog.set_level("ERROR", logger="polysignal_lab.scheduler")
+
+    result = await scheduler.process_signal(sig)
+
+    assert result["published"] is False
+    assert f"Failed to publish signal {sig.signal_id}: TimeoutError" in caplog.text
 async def test_process_signal_updates_paper_and_telegram_health(
     tmp_path: Path, snapshot, settings
 ) -> None:

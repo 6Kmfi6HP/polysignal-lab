@@ -601,7 +601,12 @@ async def process_signal(
         except Exception as exc:
             scheduler.health.inc_metric("telegram", "failed")
             scheduler.health.mark_degraded("telegram", str(exc))
-            scheduler.logger.error("Failed to publish signal %s: %s", signal.signal_id, exc)
+            scheduler.logger.error(
+                "Failed to publish signal %s: %s: %s",
+                signal.signal_id,
+                type(exc).__name__,
+                exc,
+            )
 
     try:
         scheduler.paper_portfolio.process_signal(signal, result)

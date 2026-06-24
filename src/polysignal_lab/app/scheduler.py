@@ -9,7 +9,6 @@ from pathlib import Path
 from polysignal_lab.app import (
     scheduler_market_data,
     scheduler_processing,
-    scheduler_reporting,
     scheduler_runtime,
     scheduler_state,
 )
@@ -55,7 +54,6 @@ from polysignal_lab.storage.state_store import StateStore
 from polysignal_lab.strategies.execution import build_strategy_schedule
 
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
-from polysignal_lab.domain.enums import Side
 from polysignal_lab.strategies.base import BaseStrategy
 
 
@@ -158,7 +156,12 @@ class PolySignalScheduler:
             self.persistence,
             logger=self.logger,
         )
-        self.publish_service = PublishService(self.formatter, self.publisher, self.persistence)
+        self.publish_service = PublishService(
+            self.formatter,
+            self.publisher,
+            self.persistence,
+            timeout_sec=settings.telegram.publish_timeout_sec,
+        )
         self.paper_portfolio = PaperPortfolioService(
             settings=settings,
             markets=self.ctx.markets,

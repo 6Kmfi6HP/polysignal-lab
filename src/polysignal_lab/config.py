@@ -104,6 +104,7 @@ class TelegramConfig(BaseModel):
     send_daily_report: bool = True
     max_message_chars: int = 4096
     retry_attempts: int = 3
+    publish_timeout_sec: float = 20.0
     dry_run: bool = True
 
     @property

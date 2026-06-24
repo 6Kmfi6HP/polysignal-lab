@@ -23,6 +23,7 @@ telegram:
   send_daily_report: true
   max_message_chars: 4096
   retry_attempts: 3
+  publish_timeout_sec: 20
   dry_run: true
 
 markets:
