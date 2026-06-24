@@ -224,7 +224,7 @@ async def test_failed_websocket_reseed_marks_subscribed_books_stale(
             raise RuntimeError("reseed failed")
 
     scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
-    scheduler.rest = FailingRestClient()
+    scheduler.market_data = FailingRestClient()
     scheduler.ctx.books.update_from_snapshot(OrderBook(token_id="token-up"))
     scheduler.ctx.books.update_from_snapshot(OrderBook(token_id="token-down"))
 

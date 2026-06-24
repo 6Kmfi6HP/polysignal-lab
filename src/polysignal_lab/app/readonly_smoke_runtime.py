@@ -119,5 +119,7 @@ def failure_count(
 
 async def close_scheduler_clients(scheduler: PolySignalScheduler) -> None:
     await scheduler.discovery.client.aclose()
-    await scheduler.rest.client.aclose()
+    market_data_client = getattr(scheduler.market_data, "client", None)
+    if market_data_client is not None:
+        await market_data_client.aclose()
     await scheduler.ptb.client.aclose()
