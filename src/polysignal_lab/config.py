@@ -130,6 +130,15 @@ class MarketConfig(BaseModel):
         return [x.upper() for x in value]
 
 
+
+class PolymarketSettlementConfig(BaseModel):
+    chain_enabled: bool = True
+    polygon_rpc_url: str = ""
+    chain_timeout_sec: float = 3.0
+    gamma_enabled: bool = True
+    ws_enabled: bool = True
+    prefer_chain: bool = True
+
 class PolymarketDataConfig(BaseModel):
     gamma_base_url: str = "https://gamma-api.polymarket.com"
     clob_base_url: str = "https://clob.polymarket.com"
@@ -143,6 +152,7 @@ class PolymarketDataConfig(BaseModel):
     rest_rate_limit_per_sec: float = 8.0
     max_book_staleness_ms: int = 60000  # 60s — books refetched every ~30-40s via REST
     max_market_metadata_staleness_ms: int = 10000
+    settlement: PolymarketSettlementConfig = Field(default_factory=PolymarketSettlementConfig)
 
 
 class BinanceDataConfig(BaseModel):

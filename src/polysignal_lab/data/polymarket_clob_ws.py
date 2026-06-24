@@ -4,7 +4,10 @@ from collections.abc import Callable, Coroutine
 
 import json
 from queue import Queue
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from polysignal_lab.paper.settlement_sources import WsResolutionCache
 
 import anyio
 import websockets
@@ -19,10 +22,11 @@ JsonObject = dict[str, JsonValue]
 
 
 class PolymarketMarketWebSocket:
-    def __init__(self, config: PolymarketDataConfig, registry: OrderBookRegistry):
+    def __init__(self, config: PolymarketDataConfig, registry: OrderBookRegistry, resolution_cache: "WsResolutionCache | None" = None):
         self.config = config
         self.registry = registry
         self.resolved_events: Queue[JsonObject] = Queue()
+        self.resolution_cache = resolution_cache
         self.running = False
         self.reseed_hook: Callable[[list[str]], Coroutine[Any, Any, None]] | None = None
         self.connected = False
@@ -100,7 +104,10 @@ class PolymarketMarketWebSocket:
                     self.registry.mark_stale(token_id, "TICK_SIZE_CHANGE_RESEED_REQUIRED")
             case "market_resolved":
                 self.registry.metrics.inc("ws_event_market_resolved")
-                self.resolved_events.put_nowait({"event_id": new_id("resolved"), **payload})
+                event = {"event_id": new_id("resolved"), **payload}
+                self.resolved_events.put_nowait(event)
+                if self.resolution_cache is not None:
+                    self.resolution_cache.remember(dict(event))
             case "new_market" | None:
                 return
             case _:

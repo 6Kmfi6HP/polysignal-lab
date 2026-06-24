@@ -205,3 +205,28 @@ def test_polymarket_public_payload_text_is_not_executed() -> None:
     )
 
     assert not Path("/tmp/polysignal_prompt_injection").exists()
+
+
+def test_market_resolved_message_updates_resolution_cache() -> None:
+    from polysignal_lab.domain.enums import Side
+    from polysignal_lab.domain.market import Market, OutcomeToken
+    from polysignal_lab.paper.settlement_sources import WsResolutionCache
+
+    cache = WsResolutionCache()
+    ws = PolymarketMarketWebSocket(PolymarketDataConfig(), OrderBookRegistry(), resolution_cache=cache)
+    ws.handle_message({"event_type": "market_resolved", "condition_id": "0x" + "1" * 64, "winning_asset_id": "token-up"})
+
+    market = Market(
+        market_id="market-1",
+        market_slug="slug",
+        condition_id="0x" + "1" * 64,
+        asset="BTC",
+        timeframe="5m",
+        outcome_tokens=[
+            OutcomeToken(token_id="token-up", side=Side.UP, outcome_name="Up", market_id="market-1"),
+            OutcomeToken(token_id="token-down", side=Side.DOWN, outcome_name="Down", market_id="market-1"),
+        ],
+    )
+
+    assert ws.resolved_events.qsize() == 1
+    assert cache.evidence_for(market).outcome_values_by_token == {"token-up": 1.0, "token-down": 0.0}
