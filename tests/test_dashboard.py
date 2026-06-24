@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from polysignal_lab.dashboard.app import create_dashboard_app
@@ -10,6 +12,7 @@ from polysignal_lab.domain.paper_order import PaperOrder
 from polysignal_lab.domain.paper_result import DailyReport
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
+from polysignal_lab.strategies.readiness import StrategyMarketStatus
 from factories import sample_storage_lifecycle
 
 
@@ -214,6 +217,155 @@ async def test_leaderboard_uses_sqlite_report_data(tmp_path, snapshot, settings)
     ] == 2
 
 
+async def test_leaderboard_aggregates_calibration_rows_across_reports(tmp_path) -> None:
+    # Given: two stored daily reports for the same strategy/asset/timeframe/confidence bucket.
+    store = SQLiteStore(tmp_path / "db.sqlite3")
+    first_report = DailyReport(
+        report_id="dr-calibration-1",
+        report_date=date(2026, 6, 22),
+        starting_equity=1000.0,
+        ending_equity=1002.0,
+        paper_pnl=2.0,
+        paper_roi=0.002,
+        total_signals=3,
+        paper_orders=3,
+        paper_fills=3,
+        rejected_paper_orders=0,
+        open_positions=0,
+        closed_positions=3,
+        win_count=2,
+        loss_count=1,
+        void_count=0,
+        win_rate=2 / 3,
+        total_pnl_usdc=2.0,
+        average_roi=0.02,
+        max_drawdown=0.0,
+        profit_factor=2.0,
+        calibration_breakdown={
+            "ptb_diff|BTC|5m|high": {
+                "strategy": "ptb_diff",
+                "asset": "BTC",
+                "timeframe": "5m",
+                "confidence_bucket": "high",
+                "sample_size": 3,
+                "wins": 2,
+                "losses": 1,
+                "average_entry_price": 0.51,
+                "average_return": 0.02,
+                "calibration_status": "insufficient_data",
+            }
+        },
+    )
+    second_report = DailyReport(
+        report_id="dr-calibration-2",
+        report_date=date(2026, 6, 23),
+        starting_equity=1002.0,
+        ending_equity=1006.0,
+        paper_pnl=4.0,
+        paper_roi=0.004,
+        total_signals=2,
+        paper_orders=2,
+        paper_fills=2,
+        rejected_paper_orders=0,
+        open_positions=0,
+        closed_positions=2,
+        win_count=1,
+        loss_count=1,
+        void_count=0,
+        win_rate=0.5,
+        total_pnl_usdc=4.0,
+        average_roi=0.04,
+        max_drawdown=0.0,
+        profit_factor=1.0,
+        calibration_breakdown={
+            "ptb_diff|BTC|5m|high": {
+                "strategy": "ptb_diff",
+                "asset": "BTC",
+                "timeframe": "5m",
+                "confidence_bucket": "high",
+                "sample_size": 2,
+                "wins": 1,
+                "losses": 1,
+                "average_entry_price": 0.54,
+                "average_return": 0.04,
+                "calibration_status": "insufficient_data",
+            }
+        },
+    )
+    store.insert_daily_report(first_report)
+    store.insert_daily_report(second_report)
+    client = TestClient(create_dashboard_app(store))
+
+    # When: calibration rows are read through the leaderboard API.
+    response = client.get("/api/leaderboard")
+
+    # Then: rows for the same bucket are aggregated instead of overwritten.
+    assert response.status_code == 200
+    row = response.json()["calibration_breakdown"]["ptb_diff|BTC|5m|high"]
+    assert row["sample_size"] == 5
+    assert row["wins"] == 3
+    assert row["losses"] == 2
+    assert row["average_entry_price"] == pytest.approx(0.522)
+    assert row["average_return"] == pytest.approx(0.028)
+
+
+def test_dashboard_exposes_bounded_strategy_status_rows(tmp_path) -> None:
+    # Given: persisted readiness rows for strategies that cannot produce signals.
+    store = SQLiteStore(tmp_path / "db.sqlite3")
+    statuses = (
+        StrategyMarketStatus(
+            strategy="ptb_diff",
+            asset="ETH",
+            timeframe="5m",
+            status="unsupported_market",
+            reason="UNSUPPORTED_ASSET",
+        ),
+        StrategyMarketStatus(
+            strategy="late_consensus",
+            asset="BTC",
+            timeframe="15m",
+            status="uncalibrated",
+            reason="CALIBRATION_REQUIRED",
+        ),
+    )
+    for status in statuses:
+        store.insert_strategy_status(status)
+    client = TestClient(create_dashboard_app(store))
+
+    # When: clients request the bounded dashboard API surfaces.
+    response = client.get("/api/strategy-status", params={"limit": 1})
+    overview = client.get("/api/overview")
+
+    # Then: the API exposes status rows by strategy/asset/timeframe/reason.
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "strategy": "ptb_diff",
+            "asset": "ETH",
+            "timeframe": "5m",
+            "status": "unsupported_market",
+            "reason": "UNSUPPORTED_ASSET",
+        }
+    ]
+    assert overview.status_code == 200
+    assert overview.json()["strategy_status"] == [
+        {
+            "strategy": "ptb_diff",
+            "asset": "ETH",
+            "timeframe": "5m",
+            "status": "unsupported_market",
+            "reason": "UNSUPPORTED_ASSET",
+        },
+        {
+            "strategy": "late_consensus",
+            "asset": "BTC",
+            "timeframe": "15m",
+            "status": "uncalibrated",
+            "reason": "CALIBRATION_REQUIRED",
+        },
+    ]
+
+
 async def test_dashboard_rejects_write_methods(tmp_path, snapshot, settings) -> None:
     # Given: the dashboard app exposes only read routes.
     client, _store = _client_with_store(tmp_path, snapshot, settings)
@@ -227,6 +379,7 @@ async def test_dashboard_rejects_write_methods(tmp_path, snapshot, settings) -> 
         "/api/positions",
         "/api/trades",
         "/api/leaderboard",
+        "/api/strategy-status",
     )
 
     # When / Then: write methods are not supported on the dashboard surface.

@@ -35,17 +35,71 @@ def _fmt_rate(value: JsonValue) -> str:
     return f"{rate * 100:.1f}%"
 
 
+def _as_int(value: JsonValue) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_float(value: JsonValue) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _calibration_from_reports(reports: list[dict[str, JsonValue]]) -> dict[str, JsonValue]:
     merged: dict[str, JsonValue] = {}
+    average_weighted_sum: dict[str, dict[str, float]] = {}
+    average_sample_size: dict[str, dict[str, int]] = {}
+    count_keys = ("sample_size", "wins", "losses")
     for report in reports:
         rows = report.get("calibration_breakdown", {})
-        if isinstance(rows, dict):
-            merged.update(rows)
+        if not isinstance(rows, dict):
+            continue
+        for bucket, raw_row in rows.items():
+            if not isinstance(raw_row, dict):
+                merged[bucket] = raw_row
+                continue
+            row = raw_row
+            entry = merged.get(bucket)
+            if not isinstance(entry, dict):
+                entry = {
+                    key: value
+                    for key, value in row.items()
+                    if key not in count_keys and not key.startswith("average_")
+                }
+                merged[bucket] = entry
+            sample_size = _as_int(row.get("sample_size"))
+            for key in count_keys:
+                entry[key] = _as_int(entry.get(key)) + _as_int(row.get(key))
+            for key, value in row.items():
+                if key.startswith("average_"):
+                    weighted_sum = average_weighted_sum.setdefault(bucket, {})
+                    weighted_count = average_sample_size.setdefault(bucket, {})
+                    weighted_sum[key] = weighted_sum.get(key, 0.0) + (
+                        _as_float(value) * sample_size
+                    )
+                    weighted_count[key] = weighted_count.get(key, 0) + sample_size
+    for bucket, entry in merged.items():
+        if isinstance(entry, dict):
+            for key, weighted_sum in average_weighted_sum.get(bucket, {}).items():
+                divisor = average_sample_size.get(bucket, {}).get(key, 0)
+                entry[key] = weighted_sum / divisor if divisor else 0.0
     return merged
 
 
 def create_dashboard_app(store: SQLiteStore) -> FastAPI:
     app = FastAPI(title="PolySignal Lab Dashboard", version="1.0.0")
+
+    def strategy_status_rows(limit: int = 100) -> list[dict[str, JsonValue]]:
+        return store.query_json(
+            "strategy_status",
+            where="ORDER BY created_at ASC",
+            limit=_bounded_limit(limit),
+        )
+
 
     @app.get("/health", response_model=None)
     def health() -> dict[str, JsonValue]:
@@ -62,6 +116,7 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
             "calibration_breakdown": (
                 report.get("calibration_breakdown", {}) if report else {}
             ),
+            "strategy_status": strategy_status_rows(),
         }
 
     @app.get("/api/signals", response_model=None)
@@ -71,6 +126,10 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
     @app.get("/api/rejected-signals", response_model=None)
     def rejected_signals(limit: int = 100) -> list[dict[str, JsonValue]]:
         return store.query_json("rejected_signals", limit=_bounded_limit(limit))
+
+    @app.get("/api/strategy-status", response_model=None)
+    def strategy_status(limit: int = 100) -> list[dict[str, JsonValue]]:
+        return strategy_status_rows(limit)
 
     @app.get("/api/paper-orders", response_model=None)
     def paper_orders(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
@@ -270,6 +329,7 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
                 <li><a href="/api/positions">Positions JSON</a></li>
                 <li><a href="/api/trades">Trades JSON</a></li>
                 <li><a href="/api/leaderboard">Leaderboard JSON</a></li>
+                <li><a href="/api/strategy-status">Strategy Status JSON</a></li>
               </ul>
             </nav>
             <div class="status" role="status"><span class="badge">Read-only</span><span>Storage health is served from <code>/health</code>.</span></div>
