@@ -123,6 +123,29 @@ async def test_scheduler_records_market_data_health(tmp_path, settings, market) 
 
 
 
+async def test_scheduler_records_gate_rejections_and_persists_health_snapshot(
+    tmp_path, snapshot, settings
+) -> None:
+    from polysignal_lab.app import scheduler_health
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+    from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler._initialize_trading_components()
+    signal = PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0]
+    signal = signal.model_copy(update={"confidence": 0.01})
+
+    decision = scheduler.gate.evaluate(signal, snapshot)
+    assert decision.rejected is not None
+    scheduler.health.inc_metric("signal_gate", f"rejected_{decision.rejected.reason_code}")
+    scheduler_health.persist_health_snapshot(scheduler)
+
+    latest = scheduler.sqlite.restore_latest_system_event("health_snapshot")
+    assert latest is not None
+    components = {component["name"]: component for component in latest["components"]}
+    assert components["signal_gate"]["metrics"]["rejected_CONFIDENCE_TOO_LOW"] == 1
+
+
 
 async def test_refresh_markets_marks_jsonl_failure_without_sqlite_down(
     tmp_path, settings, market, monkeypatch

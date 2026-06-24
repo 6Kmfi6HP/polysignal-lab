@@ -6,6 +6,8 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, assert_never
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+
+from polysignal_lab.app import scheduler_health
 from polysignal_lab.app.scheduler_reporting_storage import (
     delete_daily_report_rows,
     delete_paper_result_rows,
@@ -151,6 +153,7 @@ async def _store_paper_result(
                 message, "paper_result", result.signal_id
             )
             publish_payload = publish.as_dict()
+            scheduler_health.note_publish_result(scheduler, publish_payload)
             scheduler.sqlite.insert_telegram_publish(publish_payload)
         scheduler.sqlite.insert_paper_trade_result(result)
         scheduler.sqlite.upsert_paper_position(position)
@@ -364,6 +367,7 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
             message = scheduler.formatter.daily_report_message(report)
             publish = await scheduler.publisher.send(message, "daily_report", None)
             publish_payload = publish.as_dict()
+            scheduler_health.note_publish_result(scheduler, publish_payload)
         except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
             scheduler.logger.error("Failed to publish daily report: %s", exc)
             return None

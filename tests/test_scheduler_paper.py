@@ -75,6 +75,22 @@ async def test_process_signal_writes_prd_named_telegram_jsonl_stream(
     assert not (scheduler.logs.base_dir / "telegram_publish.jsonl").exists()
 
 
+async def test_process_signal_updates_paper_and_telegram_health(
+    tmp_path: Path, snapshot, settings
+) -> None:
+    sig = await _signal(snapshot, settings)
+    scheduler = _publishing_scheduler(tmp_path, settings)
+
+    result = await scheduler.process_signal(sig)
+    components = {component.name: component for component in scheduler.health.snapshot().components}
+
+    assert result["published"] is True
+    assert components["telegram"].status == "ok"
+    assert components["telegram"].metrics["dry_run"] == 1
+    assert components["paper_simulator"].metrics["rejects_PAPER_MISSING_ORDERBOOK"] == 1
+    assert components["paper_simulator"].metrics["wallet_snapshot_count"] == 1
+
+
 async def test_stale_paper_fill_count_is_zero(tmp_path: Path, snapshot, settings) -> None:
     sig = await _signal(snapshot, settings)
     scheduler = _paper_scheduler(tmp_path, settings)

@@ -5,6 +5,8 @@ from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+
+from polysignal_lab.app import scheduler_health
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.signal import SignalCandidate
 
@@ -33,6 +35,7 @@ async def stop(scheduler: PolySignalScheduler) -> None:
     scheduler._streams_started = False
 
     scheduler._persist_state()
+    scheduler_health.persist_health_snapshot(scheduler)
 
     try:
         scheduler.sqlite.close()
@@ -93,6 +96,7 @@ async def run(scheduler: PolySignalScheduler) -> None:
             )
 
             scheduler._persist_state()
+            scheduler_health.persist_health_snapshot(scheduler)
             loop_count += 1
             await sleep(scheduler.settings.markets.refresh_interval_sec)
     except CancelledError:

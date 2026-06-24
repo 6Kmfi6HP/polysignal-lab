@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
+from polysignal_lab.app import scheduler_health
+
 from polysignal_lab.domain.paper_position import PaperPosition
 
 if TYPE_CHECKING:
@@ -84,5 +86,8 @@ def persist_state(scheduler: PolySignalScheduler) -> None:
             ],
         )
         scheduler.state.write("signal_dedupe", scheduler.gate.deduper.snapshot())
+        scheduler_health.note_storage_success(scheduler, "jsonl")
+        scheduler_health.note_storage_success(scheduler, "sqlite")
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         scheduler.logger.warning("Failed to persist state: %s", exc)
+        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
