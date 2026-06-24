@@ -25,11 +25,10 @@ class PolymarketCLOBRestClient:
         self,
         config: PolymarketDataConfig,
         client: httpx.AsyncClient | None = None,
-        sdk_client: _CLOBSDKClient | None = None,
     ):
         self.config = config
         self.client = client or httpx.AsyncClient(timeout=10.0)
-        self.sdk_client = sdk_client
+        self._sdk_client_instance: _CLOBSDKClient | None = None
         self.rate_limiter = AsyncRateLimiter(config.rest_rate_limit_per_sec)
 
     async def get_book(self, token_id: str) -> OrderBook:
@@ -73,13 +72,14 @@ class PolymarketCLOBRestClient:
         return result if isinstance(result, list) else []
 
     def _sdk_client(self) -> _CLOBSDKClient:
-        if self.sdk_client is None:
+        if self._sdk_client_instance is None:
             from py_clob_client_v2 import ClobClient as PublicCLOBClient
 
-            self.sdk_client = PublicCLOBClient(
-                host=self.config.clob_base_url, chain_id=self.config.chain_id
+            self._sdk_client_instance = PublicCLOBClient(
+                host=self.config.clob_base_url,
+                chain_id=self.config.chain_id,
             )
-        return cast(_CLOBSDKClient, self.sdk_client)
+        return cast(_CLOBSDKClient, self._sdk_client_instance)
 
     async def _get_public_json(self, path: str, token_id: str) -> JsonObject:
         await self.rate_limiter.wait()

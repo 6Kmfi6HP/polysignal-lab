@@ -45,7 +45,7 @@ async def refresh_markets_once(scheduler: PolySignalScheduler) -> None:
 
     if token_ids:
         try:
-            books = await scheduler.rest.get_books(list(token_ids))
+            books = await scheduler.market_data.get_books(list(token_ids))
             for book in books:
                 scheduler.ctx.books.update(book)
         except (httpx.HTTPError, TypeError, ValueError):

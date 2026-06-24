@@ -60,7 +60,7 @@ async def test_reseed_marks_requested_tokens_missing_from_successful_response_st
         assert scheduler.ctx.books.is_fill_eligible(token_id, max_staleness_ms, utc_now())
 
     rest = _FakeReseedRest(returned_token_ids)
-    scheduler.rest = rest
+    scheduler.market_data = rest
 
     await scheduler._reseed_ws_books(requested_token_ids)
 

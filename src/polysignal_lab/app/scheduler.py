@@ -18,6 +18,7 @@ from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
 from polysignal_lab.data.anchor_price_service import AnchorPriceService
 from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
 from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
+from polysignal_lab.data.public_market_data_client import PublicMarketDataClient
 from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
 from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
@@ -80,11 +81,20 @@ class TelegramStartupConfigError(RuntimeError):
 
 
 class PolySignalScheduler:
-    def __init__(self, settings: Settings, base_dir: str | Path = "."):
+    def __init__(
+        self,
+        settings: Settings,
+        base_dir: str | Path = ".",
+        market_data_client: PublicMarketDataClient | None = None,
+    ):
         self.settings = settings
         self.ctx = ServiceContext(settings=settings)
         self.discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
-        self.rest = PolymarketCLOBRestClient(settings.data.polymarket)
+        self.market_data: PublicMarketDataClient = (
+            market_data_client
+            if market_data_client is not None
+            else PolymarketCLOBRestClient(settings.data.polymarket)
+        )
         self.gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
         self.consensus = ConsensusEngine(
             settings.signal.consensus_window_sec, settings.signal.consensus_enabled
@@ -117,6 +127,14 @@ class PolySignalScheduler:
         self._market_refresh_completed = False
         self._streams_started = False
         self._running = False
+
+    @property
+    def rest(self) -> PublicMarketDataClient:
+        return self.market_data
+
+    @rest.setter
+    def rest(self, client: PublicMarketDataClient) -> None:
+        self.market_data = client
 
     def _initialize_trading_components(self) -> None:
         if self._trading_components_initialized:
@@ -184,7 +202,7 @@ class PolySignalScheduler:
     async def _reseed_ws_books(self, token_ids: list[str]) -> None:
         refreshed_token_ids: set[str] = set()
         try:
-            books = await self.rest.get_books(token_ids)
+            books = await self.market_data.get_books(token_ids)
             for book in books:
                 self.ctx.books.update_from_snapshot(book)
                 refreshed_token_ids.add(book.token_id)

@@ -35,6 +35,23 @@ class FakeRest:
         return []
 
 
+
+class _FakeMarketData:
+    async def get_book(self, token_id: str):
+        raise AssertionError("not used")
+
+    async def get_books(self, token_ids: list[str]):
+        return []
+
+    async def get_mid(self, token_id: str):
+        return None
+
+    async def get_spread(self, token_id: str):
+        return None
+
+    def __len__(self) -> int:
+        return 0
+
 class RecordingPolymarketWs:
     def __init__(self, events: list[str]) -> None:
         self.events = events
@@ -74,6 +91,12 @@ def _scheduler(tmp_path: Path) -> PolySignalScheduler:
     settings.data.polymarket.use_market_ws = True
     settings.markets.refresh_interval_sec = 0
     return PolySignalScheduler(settings, base_dir=tmp_path)
+
+
+def test_scheduler_accepts_public_market_data_protocol(settings: Settings) -> None:
+    fake = _FakeMarketData()
+    scheduler = PolySignalScheduler(settings, market_data_client=fake)
+    assert scheduler.market_data is fake
 
 
 async def test_refresh_markets_before_starting_streams(tmp_path: Path) -> None:
@@ -216,7 +239,7 @@ async def test_market_ws_subscribes_after_token_discovery(tmp_path: Path) -> Non
     events: list[str] = []
     poly_ws = RecordingPolymarketWs(events)
     scheduler.discovery = FakeDiscovery([[market]], events)
-    scheduler.rest = FakeRest()
+    scheduler.market_data = FakeRest()
     scheduler.poly_ws = poly_ws
 
     async def evaluate_once() -> list[object]:
@@ -246,7 +269,7 @@ async def test_empty_market_refresh_does_not_subscribe_market_ws(tmp_path: Path)
     events: list[str] = []
     poly_ws = RecordingPolymarketWs(events)
     scheduler.discovery = FakeDiscovery([[market], []], events)
-    scheduler.rest = FakeRest()
+    scheduler.market_data = FakeRest()
     scheduler.poly_ws = poly_ws
     await scheduler.refresh_markets_once()
     tasks = await scheduler.start_websockets()
@@ -270,7 +293,7 @@ async def test_market_ws_resubscribes_when_token_set_changes(tmp_path: Path) -> 
     events: list[str] = []
     poly_ws = RecordingPolymarketWs(events)
     scheduler.discovery = FakeDiscovery([[first_market], [second_market]], events)
-    scheduler.rest = FakeRest()
+    scheduler.market_data = FakeRest()
     scheduler.poly_ws = poly_ws
     await scheduler.refresh_markets_once()
     tasks = await scheduler.start_websockets()
