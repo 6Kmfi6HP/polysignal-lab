@@ -277,13 +277,97 @@ class TelegramBotService:
             self._send_failure += 1
 
     def _format_positions(self) -> str:
-        return "暂无 open paper positions。"
+        rows = self.persistence.restore_open_positions()
+        if not rows:
+            return "暂无 open paper positions。"
+        blocks: list[str] = []
+        for row in rows:
+            position = PaperPosition.model_validate(row)
+            book = self.books.get(position.token_id)
+            mark = book.best_bid if book is not None else None
+            lines = [
+                f"📈 {self._safe(position.asset)} {self._safe(position.timeframe)} · {self._safe(position.side.value)}",
+                f"Strategy  {self._safe(position.strategy)}",
+                f"Entry     {position.entry_price:.4f}",
+            ]
+            if mark is None:
+                lines.extend(["Mark      n/a (live book unavailable)", "PnL       n/a"])
+            else:
+                pnl = (mark - position.entry_price) * position.shares
+                roi = pnl / position.stake_usdc if position.stake_usdc else 0.0
+                sign = "+" if pnl >= 0 else ""
+                lines.extend(
+                    [
+                        f"Mark      {mark:.4f}",
+                        f"Shares    {position.shares:.4f}",
+                        f"PnL       {sign}{pnl:.2f} USDC ({sign}{roi:.2%})",
+                    ]
+                )
+            lines.extend(
+                [
+                    f"Opened    {self._format_age(position.opened_at)}",
+                    f"ID        {self._safe(position.paper_position_id)}",
+                ]
+            )
+            blocks.append("\n".join(lines))
+        return "\n\n".join(blocks)
 
     def _format_signals(self) -> str:
-        return "暂无 recent signals。"
+        accepted = self.persistence.query_json(
+            "signals", where="ORDER BY created_at DESC", limit=5
+        )
+        rejected = self.persistence.query_json(
+            "rejected_signals", where="ORDER BY rejected_at DESC", limit=5
+        )
+        items: list[tuple[datetime, str]] = []
+        for row in accepted:
+            ts = self._parse_time(row.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)
+            items.append((ts, self._format_accepted_signal(row)))
+        for row in rejected:
+            ts = self._parse_time(row.get("rejected_at")) or datetime.min.replace(tzinfo=timezone.utc)
+            items.append((ts, self._format_rejected_signal(row)))
+        if not items:
+            return "暂无 recent signals。"
+        return "\n\n".join(text for _, text in sorted(items, key=lambda item: item[0], reverse=True)[:5])
+
+    def _format_accepted_signal(self, row: dict[str, Any]) -> str:
+        return "\n".join(
+            [
+                f"🟢 accepted · {self._safe(row.get('asset', '?'))} {self._safe(row.get('timeframe', '?'))} {self._safe(row.get('action', '?'))} {self._safe(row.get('side', '?'))}",
+                f"{self._format_age(row.get('created_at'))} · {self._safe(row.get('strategy', '?'))} · {self._safe(row.get('signal_id', '?'))}",
+            ]
+        )
+
+    def _format_rejected_signal(self, row: dict[str, Any]) -> str:
+        candidate = row.get("candidate") if isinstance(row.get("candidate"), dict) else {}
+        return "\n".join(
+            [
+                f"🔴 rejected · {self._safe(candidate.get('asset', '?'))} {self._safe(candidate.get('timeframe', '?'))} {self._safe(candidate.get('action', '?'))} {self._safe(candidate.get('side', '?'))}",
+                f"{self._format_age(row.get('rejected_at'))} · {self._safe(candidate.get('strategy', '?'))} · {self._safe(row.get('reason_code', '?'))}",
+                f"ID        {self._safe(candidate.get('signal_id', '?'))}",
+            ]
+        )
 
     def _format_daily(self) -> str:
-        return "暂无 daily report。"
+        reports = self.persistence.restore_daily_reports(limit=1)
+        if not reports:
+            return "暂无 daily report。"
+        payload = reports[0]
+        try:
+            report = DailyReport.model_validate(payload)
+            return self.formatter.daily_report_message(report)
+        except Exception:
+            self.logger.exception("Invalid daily report payload")
+            return "\n".join(
+                [
+                    "<b>📊 Daily Paper Report</b>",
+                    self._safe(payload.get("report_date", "unknown")),
+                    f"Signals {self._safe(payload.get('total_signals', 'unknown'))}",
+                    f"PnL     {self._safe(payload.get('total_pnl_usdc', payload.get('paper_pnl', 'unknown')))} USDC",
+                    f"WR      {self._safe(payload.get('win_rate', 'unknown'))}",
+                    f"ID      {self._safe(payload.get('report_id', 'unknown'))}",
+                ]
+            )
 
     def _format_strategies(self) -> str:
         return "⚙️ Strategies"
@@ -337,13 +421,52 @@ class TelegramBotService:
 
     def _format_status(self) -> str:
         counts = self.persistence.counts()
+        positions = self.persistence.restore_open_positions()
+        wallet = self.persistence.restore_latest_wallet_snapshot() or {}
+        health = self.persistence.restore_latest_system_event("health_snapshot") or {}
+        status = str(health.get("status") or "unknown")
+        emoji = "🟢" if status == "ok" else "🟡" if status == "degraded" else "🔴"
+        strategies = [getattr(strategy, "name", "?") for strategy in self.signal_pipeline.strategies]
+        enabled_count = sum(1 for name in strategies if self.signal_pipeline.is_strategy_enabled(name))
+        total_count = len(strategies)
+        equity = float(wallet.get("equity", 0.0) or 0.0)
+        health_age = self._format_age(health.get("created_at")) if health else "n/a"
         return "\n".join(
             [
-                "🟢 PolySignal Lab: ok",
+                f"{emoji} PolySignal Lab: {self._safe(status)}",
+                f"Health age  {health_age}",
                 f"Markets     {len(self.markets.markets)} tracked",
+                f"Positions   {len(positions)} open",
+                f"Wallet      {equity:.2f} USDC equity",
                 f"Signals     {counts.get('signals', 0)} accepted / {counts.get('rejected_signals', 0)} rejected",
+                f"Strategies  {enabled_count}/{total_count} enabled",
+                f"Telegram    {'polling ok' if self._running else 'not polling'}",
             ]
         )
+
+    def _safe(self, value: object) -> str:
+        return html.escape(str(value))
+
+    def _parse_time(self, value: object) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    def _format_age(self, value: object) -> str:
+        dt = self._parse_time(value)
+        if dt is None:
+            return "unknown"
+        seconds = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+        if seconds < 60:
+            return f"{seconds}s ago"
+        if seconds < 3600:
+            return f"{seconds // 60}m ago"
+        return f"{seconds // 3600}h{(seconds % 3600) // 60}m ago"
 
     def _truncate(self, text: str) -> str:
         if len(text) <= self.config.max_message_chars:
