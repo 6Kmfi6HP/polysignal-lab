@@ -10,6 +10,7 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
 from polysignal_lab.signal_layer.gate import GateDecision
+from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.strategies.base import BaseStrategy
 from polysignal_lab.strategies.execution import StrategyScheduleEntry
 
@@ -68,6 +69,14 @@ class _FakeSQLite:
     def counts(self) -> dict[str, int]:
         return {}
 
+class _FakeWallet:
+    def __init__(self) -> None:
+        self.cash_balance = 1000.0
+
+    def snapshot(self):
+        return SimpleNamespace(cash_balance=self.cash_balance)
+
+
 
 @dataclass
 class _FakeStrategy(BaseStrategy):
@@ -89,6 +98,7 @@ class _FakeScheduler:
         self.consensus = _FakeConsensus()
         self.logs = _FakeLogs()
         self.sqlite = _FakeSQLite()
+        self.wallet = _FakeWallet()
         self.logger = _FakeLogger()
 
     async def evaluate_once(self) -> list[SignalCandidate]:
@@ -122,6 +132,63 @@ async def test_stage_split_preserves_serial_accepted_signals() -> None:
     assert [signal.strategy for signal in accepted] == ["fake_strategy"]
     assert scheduler.gate.evaluated_count == 1
     assert scheduler.consensus.added_count == 1
+
+
+async def test_parallel_generation_ordered_commit_matches_serial_state() -> None:
+    snapshots = [_snapshot("BTC", "5m"), _snapshot("ETH", "5m")]
+    candidates = [_candidate("first", snapshots[0]), _candidate("second", snapshots[1])]
+    serial_scheduler = _scheduler_pair_member(
+        snapshots, candidates, execution_mode="stateful"
+    )
+    parallel_scheduler = _scheduler_pair_member(
+        snapshots, candidates, execution_mode="stateless"
+    )
+    serial_scheduler.arbiter = SignalArbiter()
+    parallel_scheduler.arbiter = SignalArbiter()
+    for scheduler in (serial_scheduler, parallel_scheduler):
+        scheduler.settings.signal.max_snapshot_concurrency = 2
+
+    serial = await serial_scheduler.evaluate_once()
+    parallel = await parallel_scheduler.evaluate_once()
+
+    assert [signal.signal_id for signal in parallel] == [
+        signal.signal_id for signal in serial
+    ]
+    assert (
+        parallel_scheduler.wallet.snapshot().cash_balance
+        == serial_scheduler.wallet.snapshot().cash_balance
+    )
+    assert parallel_scheduler.sqlite.counts() == serial_scheduler.sqlite.counts()
+    assert parallel_scheduler.gate.evaluated_count == serial_scheduler.gate.evaluated_count
+    assert parallel_scheduler.consensus.added_count == serial_scheduler.consensus.added_count
+
+
+def _scheduler_pair_member(
+    snapshots: list[MarketSnapshot],
+    candidates: list[SignalCandidate],
+    *,
+    execution_mode: str,
+) -> _FakeScheduler:
+    first, second = candidates
+    strategies = [
+        _FakeStrategy("first", {snapshots[0].market.market_id: [first]}),
+        _FakeStrategy("second", {snapshots[1].market.market_id: [second]}),
+    ]
+    scheduler = _FakeScheduler(
+        snapshots,
+        [
+            StrategyScheduleEntry(
+                strategy=strategy,
+                name=strategy.name,
+                priority=10 + index,
+                depends_on=(),
+                execution_mode=execution_mode,
+                strategy_config_index=index,
+            )
+            for index, strategy in enumerate(strategies)
+        ],
+    )
+    return scheduler
 
 
 def _snapshot(asset: str, timeframe: str) -> MarketSnapshot:
