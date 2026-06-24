@@ -91,6 +91,10 @@ class PTBDiffStrategy(BaseStrategy):
             return []
         if self.config.require_verified_ptb_source and snapshot.metrics.get("price_to_beat_verified") is not True:
             return []
+        if self.config.require_anchor_price_source and not snapshot.metrics.get(
+            "price_to_beat_from_anchor_service"
+        ):
+            return []
 
         seconds = snapshot.seconds_to_close
         if seconds is None or seconds <= 0:

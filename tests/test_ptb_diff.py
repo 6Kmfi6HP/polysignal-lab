@@ -149,6 +149,22 @@ def test_ptb_diff_emits_buy_up_and_down_from_trigger_rows() -> None:
     assert up_signal.max_entry_price == 0.78
 
 
+
+def test_ptb_diff_strict_anchor_mode_rejects_verified_metadata() -> None:
+    snapshot = _snapshot(PtbScenario(side=Side.UP, diff_usd=100.0, side_ask=0.70))
+    snapshot.metrics.update(
+        {
+            "price_to_beat_verified": True,
+            "price_to_beat_source": "market_metadata",
+            "price_to_beat_from_anchor_service": False,
+        }
+    )
+    strategy = PTBDiffStrategy(
+        _config().model_copy(update={"require_anchor_price_source": True})
+    )
+
+    assert strategy.evaluate(snapshot) == []
+
 def test_ptb_diff_rejects_above_max_token_price() -> None:
     # Given: a valid UP scenario except the token ask exceeds the trigger ceiling.
     strategy = PTBDiffStrategy(_config())

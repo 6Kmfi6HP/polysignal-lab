@@ -106,6 +106,7 @@ class PTBDiffConfig(BaseModel):
     assets: list[str] = Field(default_factory=lambda: ["BTC"])
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     require_verified_ptb_source: bool = True
+    require_anchor_price_source: bool = False
     max_spread: float = 0.08
     triggers: list[PTBTriggerConfig] = Field(
         default_factory=lambda: [

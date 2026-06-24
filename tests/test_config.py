@@ -190,6 +190,23 @@ strategies:
     assert strategies[0].freshness_policy.max_spot_staleness_ms == 1_000
 
 
+def test_ptb_diff_anchor_required_mode_loads_from_yaml(tmp_path: Path) -> None:
+    config_path = tmp_path / "signal_bot.yaml"
+    config_path.write_text(
+        """
+strategies:
+  ptb_diff:
+    enabled: true
+    require_anchor_price_source: true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(config_path)
+
+    assert settings.strategies.ptb_diff.require_anchor_price_source is True
+
+
 def test_prd_result_states_exclude_partial_settlement() -> None:
     result_states = {result.value for result in TradeResultStatus}
 
