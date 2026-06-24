@@ -10,6 +10,7 @@ SKIP_FILE_NAMES: Final = {
     ".env",
     "PRD.md",
     "refined_results.json",
+    "forbidden_polymarket_sdk_import.py",
     "safety.py",
     "scan_results.json",
     "test_safety.py",
