@@ -179,7 +179,7 @@ class VWAPMomentumStrategy(BaseStrategy):
             production_enabled=bool(self.config.enabled),
             supported_assets=tuple(asset.upper() for asset in self.config.assets),
             supported_timeframes=tuple(self.config.timeframes),
-            required_fields=("up_book", "down_book", "spot", "spot_history", "market_end_ts"),
+            required_fields=("up_book", "down_book", "spot", "market_end_ts"),
             calibration_required=False,
             calibration_status="calibrated",
         )

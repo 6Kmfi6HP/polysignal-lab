@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from polysignal_lab.domain.enums import ExitMode, MarketStatus, PositionStatus, Side, TradeResultStatus
+from polysignal_lab.domain.enums import ExitMode, MarketStatus, PositionStatus, TradeResultStatus
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperTradeResult
@@ -58,7 +58,10 @@ class PaperSettlementEngine:
             result=status,
             opened_at=position.opened_at,
             closed_at=closed_at,
-            details={"resolved_outcome": market.resolved_outcome.value if market.resolved_outcome else None},
+            details={
+                "resolved_outcome": market.resolved_outcome.value if market.resolved_outcome else None,
+                "confidence": position.signal_confidence,
+            },
         )
         if status != TradeResultStatus.UNKNOWN:
             position.status = PositionStatus.CLOSED

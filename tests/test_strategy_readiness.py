@@ -20,6 +20,21 @@ class _Snapshot:
     metrics: dict[str, object] = {}
 
 
+
+class _VwapMarket:
+    asset = "ETH"
+    timeframe = "5m"
+    end_ts = object()
+
+
+class _VwapSnapshot:
+    market = _VwapMarket()
+    up_book = object()
+    down_book = object()
+    spot = object()
+    price_to_beat = None
+    metrics: dict[str, object] = {}
+
 def test_readiness_rejects_unsupported_asset_before_evaluate() -> None:
     readiness = StrategyReadiness(
         name="ptb_diff",
@@ -66,3 +81,17 @@ def test_all_loaded_strategies_expose_readiness() -> None:
     assert readiness["one_cent_buy"].supported_timeframes == ("5m", "15m")
     assert readiness["ninety_nine_cent_sniper"].calibration_required is True
     assert readiness["one_cent_buy"].required_fields == ("up_book", "down_book", "market_end_ts")
+
+
+def test_production_vwap_readiness_does_not_require_snapshot_spot_history_metric() -> None:
+    settings = Settings.from_yaml("config/signal_bot.lab.yaml")
+    strategies = build_strategies(settings.strategies)
+    readiness = {strategy.name: strategy.readiness for strategy in strategies}
+
+    _VwapMarket.asset = readiness["vwap_momentum"].supported_assets[0]
+    _VwapMarket.timeframe = readiness["vwap_momentum"].supported_timeframes[0]
+
+    status = check_strategy_market(readiness["vwap_momentum"], _VwapSnapshot())
+
+    assert status.status == "active"
+    assert status.reason is None

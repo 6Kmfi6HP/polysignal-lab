@@ -73,6 +73,7 @@ class PaperSimulator:
             limit_price=signal.max_entry_price,
             reference_price=signal.entry_reference_price,
             stake_usdc=self.config.fixed_stake_usdc,
+            signal_confidence=signal.confidence,
         )
 
     def process_signal(self, signal: SignalCandidate, orderbook: OrderBook | None) -> SimulationResult:
@@ -130,6 +131,7 @@ class PaperSimulator:
             entry_price=fill.fill_price,
             shares=fill.shares,
             stake_usdc=fill.stake_usdc,
+            signal_confidence=signal.confidence,
         )
         self.wallet.apply_fill(position)
         order.status = OrderStatus.FILLED

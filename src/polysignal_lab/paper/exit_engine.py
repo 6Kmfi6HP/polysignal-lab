@@ -55,7 +55,10 @@ class PaperExitEngine:
             result=result,
             opened_at=position.opened_at,
             closed_at=current,
-            details={"paper_exit_price": bid},
+            details={
+                "paper_exit_price": bid,
+                "confidence": position.signal_confidence,
+            },
         )
         self.wallet.close_position(position.paper_position_id, settlement_value, pnl)
         return trade
