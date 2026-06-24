@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from factories import BookFactoryConfig, MarketFactoryConfig, sample_book, sample_market
+from polysignal_lab.strategies.config import LateConsensusConfig
+from polysignal_lab.strategies.late_consensus import LateConsensusStrategy
 from polysignal_lab.app import scheduler_processing
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
@@ -95,3 +97,25 @@ async def test_unsupported_strategy_is_skipped_before_evaluate() -> None:
     assert accepted == []
     assert scheduler.sqlite.strategy_statuses[-1].status == "unsupported_market"
     assert scheduler.logs.rows[-1][0] == "strategy_status"
+
+
+async def test_late_consensus_missing_market_end_ts_persists_missing_data() -> None:
+    snapshot = _snapshot(asset="BTC", timeframe="5m")
+    snapshot = snapshot.model_copy(
+        update={"market": snapshot.market.model_copy(update={"end_ts": None})}
+    )
+    scheduler = SimpleNamespace(
+        ctx=SimpleNamespace(markets=_Markets(snapshot.market)),
+        snapshot_builder=_SnapshotBuilder(snapshot),
+        logger=_Logger(),
+        strategies=[LateConsensusStrategy(LateConsensusConfig())],
+        logs=_Logs(),
+        sqlite=_SQLite(),
+    )
+
+    accepted = await scheduler_processing.evaluate_once(scheduler)
+
+    assert accepted == []
+    assert scheduler.sqlite.strategy_statuses[-1].strategy == "late_consensus"
+    assert scheduler.sqlite.strategy_statuses[-1].status == "missing_data"
+    assert scheduler.sqlite.strategy_statuses[-1].reason == "MISSING_MARKET_END_TS"

@@ -217,8 +217,8 @@ async def test_leaderboard_uses_sqlite_report_data(tmp_path, snapshot, settings)
     ] == 2
 
 
-async def test_leaderboard_aggregates_calibration_rows_across_reports(tmp_path) -> None:
-    # Given: two stored daily reports for the same strategy/asset/timeframe/confidence bucket.
+async def test_leaderboard_recomputes_calibration_status_after_aggregation(tmp_path) -> None:
+    # Given: two insufficient daily rows for one bucket that cross calibration threshold when merged.
     store = SQLiteStore(tmp_path / "db.sqlite3")
     first_report = DailyReport(
         report_id="dr-calibration-1",
@@ -227,16 +227,16 @@ async def test_leaderboard_aggregates_calibration_rows_across_reports(tmp_path) 
         ending_equity=1002.0,
         paper_pnl=2.0,
         paper_roi=0.002,
-        total_signals=3,
-        paper_orders=3,
-        paper_fills=3,
+        total_signals=15,
+        paper_orders=15,
+        paper_fills=15,
         rejected_paper_orders=0,
         open_positions=0,
-        closed_positions=3,
-        win_count=2,
-        loss_count=1,
+        closed_positions=15,
+        win_count=8,
+        loss_count=7,
         void_count=0,
-        win_rate=2 / 3,
+        win_rate=8 / 15,
         total_pnl_usdc=2.0,
         average_roi=0.02,
         max_drawdown=0.0,
@@ -247,10 +247,10 @@ async def test_leaderboard_aggregates_calibration_rows_across_reports(tmp_path) 
                 "asset": "BTC",
                 "timeframe": "5m",
                 "confidence_bucket": "high",
-                "sample_size": 3,
-                "wins": 2,
-                "losses": 1,
-                "average_entry_price": 0.51,
+                "sample_size": 15,
+                "wins": 8,
+                "losses": 7,
+                "average_entry_price": 0.50,
                 "average_return": 0.02,
                 "calibration_status": "insufficient_data",
             }
@@ -263,16 +263,16 @@ async def test_leaderboard_aggregates_calibration_rows_across_reports(tmp_path) 
         ending_equity=1006.0,
         paper_pnl=4.0,
         paper_roi=0.004,
-        total_signals=2,
-        paper_orders=2,
-        paper_fills=2,
+        total_signals=15,
+        paper_orders=15,
+        paper_fills=15,
         rejected_paper_orders=0,
         open_positions=0,
-        closed_positions=2,
-        win_count=1,
-        loss_count=1,
+        closed_positions=15,
+        win_count=7,
+        loss_count=8,
         void_count=0,
-        win_rate=0.5,
+        win_rate=7 / 15,
         total_pnl_usdc=4.0,
         average_roi=0.04,
         max_drawdown=0.0,
@@ -283,10 +283,10 @@ async def test_leaderboard_aggregates_calibration_rows_across_reports(tmp_path) 
                 "asset": "BTC",
                 "timeframe": "5m",
                 "confidence_bucket": "high",
-                "sample_size": 2,
-                "wins": 1,
-                "losses": 1,
-                "average_entry_price": 0.54,
+                "sample_size": 15,
+                "wins": 7,
+                "losses": 8,
+                "average_entry_price": 0.70,
                 "average_return": 0.04,
                 "calibration_status": "insufficient_data",
             }
@@ -299,14 +299,15 @@ async def test_leaderboard_aggregates_calibration_rows_across_reports(tmp_path) 
     # When: calibration rows are read through the leaderboard API.
     response = client.get("/api/leaderboard")
 
-    # Then: rows for the same bucket are aggregated instead of overwritten.
+    # Then: merged sample size, weighted averages, and status are recomputed from merged data.
     assert response.status_code == 200
     row = response.json()["calibration_breakdown"]["ptb_diff|BTC|5m|high"]
-    assert row["sample_size"] == 5
-    assert row["wins"] == 3
-    assert row["losses"] == 2
-    assert row["average_entry_price"] == pytest.approx(0.522)
-    assert row["average_return"] == pytest.approx(0.028)
+    assert row["sample_size"] == 30
+    assert row["wins"] == 15
+    assert row["losses"] == 15
+    assert row["average_entry_price"] == pytest.approx(0.60)
+    assert row["average_return"] == pytest.approx(0.03)
+    assert row["calibration_status"] == "calibrated"
 
 
 def test_dashboard_exposes_bounded_strategy_status_rows(tmp_path) -> None:

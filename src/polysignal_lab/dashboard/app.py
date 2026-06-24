@@ -10,6 +10,8 @@ from polysignal_lab.storage.sqlite_store import SQLiteStore
 
 JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 
+CALIBRATION_MIN_SAMPLE_SIZE = 30
+
 
 def _bounded_limit(limit: int) -> int:
     return max(1, min(limit, 500))
@@ -84,6 +86,12 @@ def _calibration_from_reports(reports: list[dict[str, JsonValue]]) -> dict[str, 
                     weighted_count[key] = weighted_count.get(key, 0) + sample_size
     for bucket, entry in merged.items():
         if isinstance(entry, dict):
+            sample_size = _as_int(entry.get("sample_size"))
+            entry["calibration_status"] = (
+                "calibrated"
+                if sample_size >= CALIBRATION_MIN_SAMPLE_SIZE
+                else "insufficient_data"
+            )
             for key, weighted_sum in average_weighted_sum.get(bucket, {}).items():
                 divisor = average_sample_size.get(bucket, {}).get(key, 0)
                 entry[key] = weighted_sum / divisor if divisor else 0.0

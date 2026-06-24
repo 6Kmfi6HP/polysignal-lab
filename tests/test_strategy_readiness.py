@@ -81,6 +81,7 @@ def test_all_loaded_strategies_expose_readiness() -> None:
     assert readiness["one_cent_buy"].supported_timeframes == ("5m", "15m")
     assert readiness["ninety_nine_cent_sniper"].calibration_required is True
     assert readiness["one_cent_buy"].required_fields == ("up_book", "down_book", "market_end_ts")
+    assert readiness["late_consensus"].required_fields == ("up_book", "down_book", "market_end_ts")
 
 
 def test_production_vwap_readiness_does_not_require_snapshot_spot_history_metric() -> None:
