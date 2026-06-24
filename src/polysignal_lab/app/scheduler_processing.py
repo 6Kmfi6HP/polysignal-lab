@@ -7,14 +7,17 @@ from typing import TYPE_CHECKING, TypedDict
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
-from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.domain.snapshot_batch import (
     CrossMarketEvaluationContext,
     SnapshotBatch,
 )
 from polysignal_lab.paper.simulator import SimulationResult
-from polysignal_lab.strategies.execution import StrategyScheduleEntry
+from polysignal_lab.strategies.execution import (
+    StrategyScheduleEntry,
+    order_strategy_schedule,
+)
 from polysignal_lab.utils import utc_now
 
 if TYPE_CHECKING:
@@ -239,19 +242,22 @@ def _cross_market_contexts(
         ]
     contexts: list[CrossMarketEvaluationContext] = []
     for relation in relations:
+        if not all(
+            condition_id in snapshots_by_condition_id
+            for condition_id in relation.condition_ids
+        ):
+            continue
         relation_snapshots = {
             condition_id: snapshots_by_condition_id[condition_id]
             for condition_id in relation.condition_ids
-            if condition_id in snapshots_by_condition_id
         }
-        if relation_snapshots:
-            contexts.append(
-                CrossMarketEvaluationContext(
-                    relation_id=relation.relation_id,
-                    snapshots_by_condition_id=relation_snapshots,
-                    batch=batch,
-                )
+        contexts.append(
+            CrossMarketEvaluationContext(
+                relation_id=relation.relation_id,
+                snapshots_by_condition_id=relation_snapshots,
+                batch=batch,
             )
+        )
     return contexts
 
 
@@ -317,7 +323,7 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
 def _strategy_schedule(scheduler: PolySignalScheduler) -> list[StrategyScheduleEntry]:
     schedule = getattr(scheduler, "strategy_schedule", None)
     if schedule is not None:
-        return list(schedule)
+        return order_strategy_schedule(schedule)
     return [
         StrategyScheduleEntry(
             strategy=strategy,
@@ -342,18 +348,37 @@ def _arbitrate_envelopes(
         envelope.candidate.market_id: envelope.market_config_index
         for envelope in envelopes
     }
+    schedule = _strategy_schedule(scheduler)
+    strategy_order_indexes = {
+        entry.name: index for index, entry in enumerate(schedule)
+    }
     ordered = arbiter.arbitrate(
         [envelope.candidate for envelope in envelopes],
-        strategy_priorities={
-            entry.name: entry.priority for entry in _strategy_schedule(scheduler)
-        },
-        strategy_config_indexes={
-            entry.name: entry.strategy_config_index
-            for entry in _strategy_schedule(scheduler)
-        },
+        strategy_priorities={entry.name: entry.priority for entry in schedule},
+        strategy_config_indexes=strategy_order_indexes,
         market_config_indexes=market_config_indexes,
     )
+    kept_ids = {id(candidate) for candidate in ordered}
+    for envelope in envelopes:
+        if id(envelope.candidate) not in kept_ids:
+            _notify_arbitration_rejected(scheduler, envelope)
     return [by_identity[id(candidate)] for candidate in ordered]
+
+
+def _notify_arbitration_rejected(
+    scheduler: PolySignalScheduler, envelope: CandidateEnvelope
+) -> None:
+    rejected = RejectedSignal(
+        candidate=envelope.candidate,
+        gate_name="signal_arbiter",
+        reason_code="ARBITRATION_SUPPRESSED",
+        details={
+            "strategy": envelope.strategy_name,
+            "conflict_policy": getattr(scheduler.arbiter, "conflict_policy", None),
+        },
+    )
+    if hasattr(envelope.strategy, "notify_signal_rejected"):
+        envelope.strategy.notify_signal_rejected(envelope.candidate, rejected)
 
 
 def _log_snapshot(

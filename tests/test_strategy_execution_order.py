@@ -4,11 +4,46 @@ import asyncio
 import time
 
 import pytest
+from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.signal_layer.arbiter import SignalArbiter
 
 from polysignal_lab.config import Settings
 from polysignal_lab.strategies.execution import build_strategy_schedule, validate_strategy_dag
 from polysignal_lab.strategies.execution import StrategyScheduleEntry
-from test_signal_pipeline_equivalence import _FakeScheduler, _FakeStrategy, _snapshot
+from test_signal_pipeline_equivalence import _FakeScheduler, _FakeStrategy, _candidate, _snapshot
+
+
+class _RecordingStrategy(_FakeStrategy):
+    def __init__(self, name: str, candidates_by_market: dict[str, list[SignalCandidate]]) -> None:
+        super().__init__(name, candidates_by_market)
+        self.accepted_signal_ids: list[str] = []
+        self.rejected_signal_ids: list[tuple[str, str]] = []
+
+    def notify_signal_accepted(self, signal: SignalCandidate) -> None:
+        self.accepted_signal_ids.append(signal.signal_id)
+
+    def notify_signal_rejected(self, signal: SignalCandidate, rejected) -> None:
+        self.rejected_signal_ids.append((signal.signal_id, rejected.reason_code))
+
+
+class _OrderingStrategy(_RecordingStrategy):
+    def __init__(
+        self,
+        name: str,
+        candidates_by_market: dict[str, list[SignalCandidate]],
+        events: list[str],
+    ) -> None:
+        super().__init__(name, candidates_by_market)
+        self.events = events
+
+    def evaluate(self, snapshot):
+        self.events.append(f"evaluate:{self.name}")
+        return super().evaluate(snapshot)
+
+    def notify_signal_accepted(self, signal: SignalCandidate) -> None:
+        self.events.append(f"commit:{self.name}")
+        super().notify_signal_accepted(signal)
 
 
 def test_strategy_execution_defaults_preserve_yaml_order() -> None:
@@ -98,3 +133,96 @@ async def test_stateless_strategies_run_in_parallel_ready_set() -> None:
 
     assert set(started) == {entry.name for entry in scheduler.strategy_schedule}
     assert elapsed < 0.11
+
+
+async def test_arbitration_suppressed_candidates_notify_rejection_without_gate_commit() -> None:
+    snapshot = _snapshot("BTC", "5m")
+    market_id = snapshot.market.market_id
+    up_candidate = _candidate("up_strategy", snapshot, Side.UP)
+    down_candidate = _candidate("down_strategy", snapshot, Side.DOWN)
+    up_strategy = _RecordingStrategy("up_strategy", {market_id: [up_candidate]})
+    down_strategy = _RecordingStrategy("down_strategy", {market_id: [down_candidate]})
+    scheduler = _FakeScheduler(
+        [snapshot],
+        [
+            StrategyScheduleEntry(
+                strategy=up_strategy,
+                name=up_strategy.name,
+                priority=100,
+                depends_on=(),
+                execution_mode="stateful",
+                strategy_config_index=0,
+            ),
+            StrategyScheduleEntry(
+                strategy=down_strategy,
+                name=down_strategy.name,
+                priority=100,
+                depends_on=(),
+                execution_mode="stateful",
+                strategy_config_index=1,
+            ),
+        ],
+    )
+    scheduler.arbiter = SignalArbiter(conflict_policy="suppress_ambiguous")
+
+    accepted = await scheduler.evaluate_once()
+
+    assert accepted == []
+    assert scheduler.gate.evaluated_count == 0
+    assert scheduler.consensus.added_count == 0
+    assert up_strategy.accepted_signal_ids == []
+    assert down_strategy.accepted_signal_ids == []
+    assert up_strategy.rejected_signal_ids == [
+        (up_candidate.signal_id, "ARBITRATION_SUPPRESSED")
+    ]
+    assert down_strategy.rejected_signal_ids == [
+        (down_candidate.signal_id, "ARBITRATION_SUPPRESSED")
+    ]
+
+
+async def test_dependencies_order_evaluation_and_commit_before_dependents() -> None:
+    snapshot = _snapshot("BTC", "5m")
+    market_id = snapshot.market.market_id
+    events: list[str] = []
+    dependency = _OrderingStrategy(
+        "dependency",
+        {market_id: [_candidate("dependency", snapshot)]},
+        events,
+    )
+    dependent = _OrderingStrategy(
+        "dependent",
+        {market_id: [_candidate("dependent", snapshot)]},
+        events,
+    )
+    scheduler = _FakeScheduler(
+        [snapshot],
+        [
+            StrategyScheduleEntry(
+                strategy=dependent,
+                name=dependent.name,
+                priority=100,
+                depends_on=("dependency",),
+                execution_mode="stateful",
+                strategy_config_index=0,
+            ),
+            StrategyScheduleEntry(
+                strategy=dependency,
+                name=dependency.name,
+                priority=100,
+                depends_on=(),
+                execution_mode="stateful",
+                strategy_config_index=1,
+            ),
+        ],
+    )
+    scheduler.arbiter = SignalArbiter()
+
+    accepted = await scheduler.evaluate_once()
+
+    assert [signal.strategy for signal in accepted] == ["dependency", "dependent"]
+    assert events == [
+        "evaluate:dependency",
+        "evaluate:dependent",
+        "commit:dependency",
+        "commit:dependent",
+    ]

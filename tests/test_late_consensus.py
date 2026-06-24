@@ -358,6 +358,7 @@ async def test_late_consensus_gate_rejection_does_not_consume_entry_state() -> N
         LateConsensusScenario(spot=SpotState(price=101.0, price_to_beat=100.0))
     )
     scheduler = SimpleNamespace(
+        settings=SimpleNamespace(signal=SignalConfig()),
         ctx=SimpleNamespace(markets=_Markets(stale_snapshot.market)),
         snapshot_builder=_SnapshotBuilder(stale_snapshot),
         logger=_Logger(),

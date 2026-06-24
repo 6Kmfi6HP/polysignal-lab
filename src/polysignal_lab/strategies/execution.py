@@ -21,6 +21,17 @@ class StrategyScheduleEntry:
     strategy_config_index: int
 
 
+def order_strategy_schedule(
+    entries: Iterable[StrategyScheduleEntry],
+) -> list[StrategyScheduleEntry]:
+    entries_list = list(entries)
+    order = validate_strategy_dag(
+        (entry.name, entry.depends_on) for entry in entries_list
+    )
+    rank = {name: index for index, name in enumerate(order)}
+    return sorted(entries_list, key=lambda entry: rank[entry.name])
+
+
 def validate_strategy_dag(items: Iterable[tuple[str, Iterable[str]]]) -> tuple[str, ...]:
     pairs = [(name, tuple(depends_on)) for name, depends_on in items]
     names = {name for name, _ in pairs}
@@ -54,5 +65,4 @@ def build_strategy_schedule(config: StrategyConfig) -> list[StrategyScheduleEntr
                 strategy_config_index=index,
             )
         )
-    validate_strategy_dag((entry.name, entry.depends_on) for entry in entries)
-    return entries
+    return order_strategy_schedule(entries)

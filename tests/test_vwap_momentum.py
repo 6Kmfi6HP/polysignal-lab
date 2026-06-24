@@ -450,6 +450,7 @@ async def test_scheduler_notifies_strategy_when_gate_rejects_vwap_signal() -> No
     strategy.evaluate(snapshots[1])
 
     scheduler = SimpleNamespace(
+        settings=SimpleNamespace(signal=SignalConfig()),
         ctx=SimpleNamespace(markets=_Markets(snapshots[2].market)),
         snapshot_builder=_SnapshotBuilder(snapshots[2]),
         logger=_Logger(),

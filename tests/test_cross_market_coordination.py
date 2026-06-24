@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from dataclasses import dataclass
 
 from polysignal_lab.domain.snapshot_batch import SnapshotBatch, CrossMarketEvaluationContext
@@ -86,3 +87,38 @@ async def test_cross_market_strategy_receives_snapshot_batch_once() -> None:
         snapshot_btc.market.condition_id,
         snapshot_eth.market.condition_id,
     }
+
+
+async def test_cross_market_partial_relation_skips_group_evaluation() -> None:
+    snapshot_btc = _snapshot("BTC", "5m")
+    missing_condition_id = "missing-condition"
+    strategy = _GroupStrategy(
+        name="cross",
+        emitted=_candidate("cross", snapshot_btc),
+        seen_contexts=[],
+    )
+    strategy._relations = [
+        SimpleNamespace(
+            relation_id="btc-missing",
+            condition_ids=[snapshot_btc.market.condition_id, missing_condition_id],
+        )
+    ]
+    scheduler = _FakeScheduler(
+        [snapshot_btc],
+        [
+            StrategyScheduleEntry(
+                strategy=strategy,
+                name=strategy.name,
+                priority=100,
+                depends_on=(),
+                execution_mode="cross_market",
+                strategy_config_index=0,
+            )
+        ],
+    )
+
+    accepted = await scheduler.evaluate_once()
+
+    assert accepted == []
+    assert strategy.seen_contexts == []
+    assert scheduler.gate.evaluated_count == 0
