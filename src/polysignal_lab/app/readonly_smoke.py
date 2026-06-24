@@ -16,6 +16,7 @@ from polysignal_lab.app.readonly_smoke_public import (
 )
 from polysignal_lab.app.readonly_smoke_runtime import (
     check_dashboard_reads,
+    check_health_snapshot,
     check_safety_scan,
     check_scheduler_snapshot,
     failure_count,
@@ -46,6 +47,7 @@ async def collect_readonly_smoke(
             clob_book.payload,
             binance.payload,
         )
+        health_snapshot = await check_health_snapshot(request)
         dashboard_reads = await check_dashboard_reads(request)
         safety_scan = check_safety_scan()
         surfaces = {
@@ -54,7 +56,13 @@ async def collect_readonly_smoke(
             "clob_404": clob_404.evidence,
             "binance_spot_rest": binance.evidence,
         }
-        failures = failure_count(surfaces, scheduler_snapshot, dashboard_reads, safety_scan)
+        failures = failure_count(
+            surfaces,
+            scheduler_snapshot,
+            health_snapshot,
+            dashboard_reads,
+            safety_scan,
+        )
         evidence: ReadonlySmokeEvidence = {
             "recorded_at": datetime.now(UTC).isoformat(),
             "mode": "smoke",
@@ -71,6 +79,7 @@ async def collect_readonly_smoke(
             "failure_count": failures,
             "surfaces": surfaces,
             "scheduler_snapshot": scheduler_snapshot,
+            "health_snapshot": health_snapshot,
             "dashboard_reads": dashboard_reads,
             "safety_scan": safety_scan,
         }

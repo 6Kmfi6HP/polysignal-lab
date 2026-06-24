@@ -63,6 +63,12 @@ class SchedulerSnapshotEvidence(TypedDict):
     detail: str | None
 
 
+class HealthSnapshotEvidence(TypedDict):
+    status: Literal["ok", "degraded", "down"]
+    generated_at: str | None
+    components: list[JsonObject]
+
+
 class DashboardEvidence(TypedDict):
     ok: bool
     endpoint_count: int
@@ -85,5 +91,6 @@ class ReadonlySmokeEvidence(TypedDict):
     failure_count: int
     surfaces: dict[str, SurfaceEvidence]
     scheduler_snapshot: SchedulerSnapshotEvidence
+    health_snapshot: HealthSnapshotEvidence
     dashboard_reads: DashboardEvidence
     safety_scan: SafetyEvidence

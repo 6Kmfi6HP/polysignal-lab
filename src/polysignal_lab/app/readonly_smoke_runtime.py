@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from pydantic import JsonValue
 
+from polysignal_lab.app import scheduler_health
+
 from polysignal_lab.app.readonly_smoke_public import book_from_payload, spot_from_payload
 from polysignal_lab.app.readonly_smoke_types import (
     DashboardEvidence,
+    HealthSnapshotEvidence,
     ReadonlySmokeRequest,
     SafetyEvidence,
     SchedulerSnapshotEvidence,
@@ -14,6 +17,7 @@ from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.dashboard.app import create_dashboard_app
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatResult, PriceToBeatProvider
 from polysignal_lab.domain.market import Market
+from polysignal_lab.domain.spot import SpotPrice
 from polysignal_lab.observability.safety import scan
 
 import httpx
@@ -73,6 +77,26 @@ async def check_scheduler_snapshot(
         scheduler.sqlite.close()
 
 
+async def check_health_snapshot(request: ReadonlySmokeRequest) -> HealthSnapshotEvidence:
+    scheduler = PolySignalScheduler(request.settings, base_dir=request.base_dir)
+    try:
+        scheduler.health.mark_ok("gamma", discovered_market_count=0)
+        scheduler.health.mark_degraded("binance_ws", "bounded smoke uses REST fallback")
+        for asset, symbol in request.settings.data.binance.symbols.items():
+            scheduler.ctx.spots.update(SpotPrice(asset=asset, symbol=symbol, price=1.0))
+        snapshot = scheduler_health.sync_runtime_health(scheduler)
+        return {
+            "status": snapshot.status,
+            "generated_at": snapshot.generated_at,
+            "components": [component.as_dict() for component in snapshot.components],
+        }
+    finally:
+        try:
+            await close_scheduler_clients(scheduler)
+        finally:
+            scheduler.sqlite.close()
+
+
 async def check_dashboard_reads(request: ReadonlySmokeRequest) -> DashboardEvidence:
     scheduler = PolySignalScheduler(request.settings, base_dir=request.base_dir)
     await close_scheduler_clients(scheduler)
@@ -104,11 +128,14 @@ def check_safety_scan() -> SafetyEvidence:
 def failure_count(
     surfaces: dict[str, SurfaceEvidence],
     scheduler_snapshot: SchedulerSnapshotEvidence,
+    health_snapshot: HealthSnapshotEvidence,
     dashboard_reads: DashboardEvidence,
     safety_scan: SafetyEvidence,
 ) -> int:
     count = sum(1 for surface in surfaces.values() if not surface["ok"])
     if not scheduler_snapshot["created"]:
+        count += 1
+    if health_snapshot["status"] == "down":
         count += 1
     if not dashboard_reads["ok"]:
         count += 1
