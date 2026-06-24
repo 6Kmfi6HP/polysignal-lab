@@ -34,18 +34,30 @@ def test_forbidden_sdk_import_fixture_is_detected() -> None:
 
 
 
-def test_safety_scan_ignores_deliberate_forbidden_fixture() -> None:
+def test_safety_scan_reports_deliberate_forbidden_fixture_directory() -> None:
     findings = scan("tests/fixtures")
-    assert findings == []
+    assert ("forbidden_polymarket_sdk_import.py", "ClobClient(") in findings
 
 
-def test_safety_scan_only_exempts_deliberate_fixture_path(tmp_path: Path) -> None:
+def test_safety_scan_reports_deliberate_forbidden_fixture_file() -> None:
+    fixture = Path("tests/fixtures/forbidden_polymarket_sdk_import.py")
+    assert scan(fixture) == [(fixture.name, "ClobClient(")]
+
+
+def test_safety_scan_repo_root_exempts_only_deliberate_fixture_path(tmp_path: Path) -> None:
+    fixture_dir = tmp_path / "tests" / "fixtures"
+    fixture_dir.mkdir(parents=True)
+    deliberate_fixture = fixture_dir / "forbidden_polymarket_sdk_import.py"
+    deliberate_fixture.write_text(
+        "def make_client():\n    return ClobClient(host='fixture')\n",
+        encoding="utf-8",
+    )
     src = tmp_path / "src"
     src.mkdir()
     offender = src / "forbidden_polymarket_sdk_import.py"
     offender.write_text("def make_client():\n    return ClobClient(host='x')\n", encoding="utf-8")
 
-    assert scan(src) == [("forbidden_polymarket_sdk_import.py", "ClobClient(")]
+    assert scan(tmp_path) == [("src/forbidden_polymarket_sdk_import.py", "ClobClient(")]
 
 def test_safety_scan_project_source():
     findings = scan("src")

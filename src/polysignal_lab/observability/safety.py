@@ -44,26 +44,25 @@ def blocked_symbols() -> list[str]:
 
 def scan(root: str | Path) -> list[tuple[str, str]]:
     base = Path(root)
+    base_is_file = base.is_file()
+    paths = (base,) if base_is_file else base.rglob("*")
     findings: list[tuple[str, str]] = []
-    for path in base.rglob("*"):
+    for path in paths:
         if path.is_dir() or skip_path(base, path):
             continue
         if path.suffix not in SCANNED_SUFFIXES:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
+        report_path = path.name if base_is_file else str(path.relative_to(base))
         for symbol in blocked_symbols():
             if symbol in text:
-                findings.append((str(path.relative_to(base)), symbol))
+                findings.append((report_path, symbol))
     return findings
 
 
 def skip_path(base: Path, path: Path) -> bool:
     rel = path.relative_to(base)
-    if (
-        path.name == "forbidden_polymarket_sdk_import.py"
-        and len(path.parts) >= 3
-        and path.parts[-3:-1] == ("tests", "fixtures")
-    ):
+    if rel.parts == ("tests", "fixtures", "forbidden_polymarket_sdk_import.py"):
         return True
     if path.name in SKIP_FILE_NAMES or path.name.startswith(".env."):
         return True
