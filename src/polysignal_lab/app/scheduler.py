@@ -15,6 +15,7 @@ from polysignal_lab.app import (
 )
 from polysignal_lab.config import Settings
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
+from polysignal_lab.data.anchor_price_service import AnchorPriceService
 from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
 from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
 from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
@@ -84,8 +85,6 @@ class PolySignalScheduler:
         self.ctx = ServiceContext(settings=settings)
         self.discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
         self.rest = PolymarketCLOBRestClient(settings.data.polymarket)
-        self.ptb = PriceToBeatProvider(use_crypto_price_api=settings.data.polymarket.use_crypto_price_api)
-        self.snapshot_builder = MarketSnapshotBuilder(self.ctx.books, self.ctx.spots, self.ptb)
         self.gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
         self.consensus = ConsensusEngine(
             settings.signal.consensus_window_sec, settings.signal.consensus_enabled
@@ -103,6 +102,11 @@ class PolySignalScheduler:
         self.logs = JSONLStore(base / settings.storage.jsonl_dir)
         self.state = StateStore(base / settings.storage.state_dir)
         self.sqlite = SQLiteStore(base / settings.storage.sqlite_path)
+        self.anchor_prices = AnchorPriceService(self.ctx.spots, self.sqlite)
+        self.ptb = PriceToBeatProvider(
+            use_crypto_price_api=settings.data.polymarket.use_crypto_price_api
+        )
+        self.snapshot_builder = MarketSnapshotBuilder(self.ctx.books, self.ctx.spots, self.ptb)
 
         self._ws_tasks: list[asyncio.Task] = []
         self._market_ws_task: asyncio.Task | None = None

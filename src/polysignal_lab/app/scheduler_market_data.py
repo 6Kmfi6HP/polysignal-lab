@@ -33,6 +33,12 @@ async def refresh_markets_once(scheduler: PolySignalScheduler) -> None:
         except (OSError, sqlite3.Error, TypeError, ValueError):
             pass
 
+    for market in scheduler.ctx.markets.active():
+        try:
+            scheduler.anchor_prices.capture_for_market(market)
+        except (OSError, sqlite3.Error, TypeError, ValueError):
+            pass
+
     token_ids = token_ids_for_markets(markets)
     scheduler._latest_market_token_ids = token_ids
     scheduler._market_refresh_completed = True
