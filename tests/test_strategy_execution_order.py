@@ -55,7 +55,14 @@ def test_strategy_execution_defaults_preserve_yaml_order() -> None:
 
     assert [entry.strategy_config_index for entry in schedule] == list(range(len(schedule)))
     assert all(entry.priority == 100 for entry in schedule)
-    assert all(entry.execution_mode == "stateful" for entry in schedule)
+    assert all(
+        entry.execution_mode == "stateful"
+        for entry in schedule
+        if entry.name != "cross_market_bot"
+    )
+    assert next(
+        entry for entry in schedule if entry.name == "cross_market_bot"
+    ).execution_mode == "cross_market"
 
 
 def test_strategy_dependency_cycle_is_rejected() -> None:

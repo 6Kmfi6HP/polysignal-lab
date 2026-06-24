@@ -188,7 +188,9 @@ class BinaryMomentumConfig(BaseModel):
 class CrossMarketBotConfig(BaseModel):
     name: Literal["cross_market_bot"] = "cross_market_bot"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
+    execution: StrategyExecutionConfig = Field(
+        default_factory=lambda: StrategyExecutionConfig(execution_mode="cross_market")
+    )
     assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     min_edge: float = 0.01
