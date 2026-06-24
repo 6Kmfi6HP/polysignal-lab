@@ -41,7 +41,7 @@
 **Interfaces:**
 - Produces: `PublicMarketDataClient` protocol with `get_book`, `get_books`, `get_mid`, `get_spread`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `tests/test_market_data.py`:
 
@@ -71,13 +71,13 @@ def test_fake_market_data_client_matches_protocol() -> None:
     assert_type(client, PublicMarketDataClient)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_market_data.py::test_fake_market_data_client_matches_protocol -v`
 
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Implement protocol**
+- [x] **Step 3: Implement protocol**
 
 Create `src/polysignal_lab/data/public_market_data_client.py`:
 
@@ -96,13 +96,13 @@ class PublicMarketDataClient(Protocol):
     async def get_spread(self, token_id: str) -> float | None: ...
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_market_data.py::test_fake_market_data_client_matches_protocol -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/polysignal_lab/data/public_market_data_client.py tests/test_market_data.py
@@ -121,7 +121,7 @@ git commit -m "feat: define public market data protocol"
 - Consumes: existing read methods.
 - Produces: `PolymarketCLOBRestClient` with no public `sdk_client` parameter or attribute.
 
-- [ ] **Step 1: Write failing public-surface tests**
+- [x] **Step 1: Write failing public-surface tests**
 
 Add to `tests/test_polymarket_clob_rest.py`:
 
@@ -144,13 +144,13 @@ def test_clob_rest_instance_does_not_expose_sdk_client(polymarket_config) -> Non
     assert "sdk_client" not in vars(client)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_polymarket_clob_rest.py::test_clob_rest_constructor_does_not_expose_sdk_client -v`
 
 Expected: FAIL because constructor currently accepts `sdk_client`.
 
-- [ ] **Step 3: Implement private SDK storage**
+- [x] **Step 3: Implement private SDK storage**
 
 Change `PolymarketCLOBRestClient.__init__` to:
 
@@ -190,13 +190,13 @@ async def test_get_books_uses_batch_path(polymarket_config, monkeypatch) -> None
     assert [book.token_id for book in books] == ["token-up"]
 ```
 
-- [ ] **Step 4: Run adapter tests**
+- [x] **Step 4: Run adapter tests**
 
 Run: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_polymarket_clob_rest.py tests/test_market_data.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/polysignal_lab/data/polymarket_clob_rest.py tests/test_polymarket_clob_rest.py tests/test_market_data.py
@@ -217,7 +217,7 @@ git commit -m "fix: hide clob sdk client boundary"
 - Consumes: `PublicMarketDataClient`
 - Produces: `PolySignalScheduler(..., market_data_client: PublicMarketDataClient | None = None)` and internal `scheduler.market_data`.
 
-- [ ] **Step 1: Write failing scheduler injection test**
+- [x] **Step 1: Write failing scheduler injection test**
 
 Add to `tests/test_scheduler.py`:
 
@@ -245,13 +245,13 @@ def test_scheduler_accepts_public_market_data_protocol(settings) -> None:
     assert scheduler.market_data is fake
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler.py::test_scheduler_accepts_public_market_data_protocol -v`
 
 Expected: FAIL because `market_data_client` is not accepted.
 
-- [ ] **Step 3: Implement scheduler protocol injection**
+- [x] **Step 3: Implement scheduler protocol injection**
 
 In `src/polysignal_lab/app/scheduler.py`, import protocol:
 
@@ -285,13 +285,13 @@ def rest(self) -> PublicMarketDataClient:
 
 Prefer updating tests to assign `scheduler.market_data` rather than `scheduler.rest`.
 
-- [ ] **Step 4: Run scheduler tests**
+- [x] **Step 4: Run scheduler tests**
 
 Run: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_scheduler.py tests/test_websocket_contracts.py tests/test_market_data.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/polysignal_lab/app/scheduler.py src/polysignal_lab/app/scheduler_market_data.py tests/test_scheduler.py tests/test_websocket_contracts.py tests/test_market_data.py
@@ -311,7 +311,7 @@ git commit -m "feat: inject public market data client"
 **Interfaces:**
 - Produces: test helper `find_forbidden_sdk_imports(paths: list[Path]) -> list[Path]`.
 
-- [ ] **Step 1: Add deliberate violating fixture**
+- [x] **Step 1: Add deliberate violating fixture**
 
 Create `tests/fixtures/forbidden_polymarket_sdk_import.py`:
 
@@ -323,7 +323,7 @@ def make_client():
     return ClobClient(host="https://clob.polymarket.com", chain_id=137)
 ```
 
-- [ ] **Step 2: Write policy tests**
+- [x] **Step 2: Write policy tests**
 
 Add to `tests/test_safety.py`:
 
@@ -356,13 +356,13 @@ def test_forbidden_sdk_import_fixture_is_detected() -> None:
     assert offenders == [Path("tests/fixtures/forbidden_polymarket_sdk_import.py")]
 ```
 
-- [ ] **Step 3: Run tests to verify fixture is detected and source is clean**
+- [x] **Step 3: Run tests to verify fixture is detected and source is clean**
 
 Run: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_safety.py tests/test_config_security.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/test_safety.py tests/fixtures/forbidden_polymarket_sdk_import.py
@@ -379,7 +379,7 @@ git commit -m "test: enforce market data import boundary"
 **Interfaces:**
 - Confirms existing CLOB read paths still work and safety remains locked down.
 
-- [ ] **Step 1: Run targeted regression suite**
+- [x] **Step 1: Run targeted regression suite**
 
 Run:
 
@@ -389,7 +389,7 @@ UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_po
 
 Expected: PASS.
 
-- [ ] **Step 2: Run Docker verification after merge to runtime branch**
+- [x] **Step 2: Docker verification deferred until merge to runtime branch**
 
 Run after merging this worktree into the formal runtime branch:
 
@@ -400,7 +400,7 @@ docker compose ps
 
 Expected: compose services are recreated and no safety failure appears in startup logs.
 
-- [ ] **Step 3: Commit verification adjustments**
+- [x] **Step 3: Commit verification adjustments**
 
 ```bash
 git add src tests docs/superpowers/plans/2026-06-23-06-public-market-data-boundary.md
