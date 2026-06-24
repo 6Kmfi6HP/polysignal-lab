@@ -197,26 +197,102 @@ class TelegramBotService:
     async def _positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
-        await self._reply(update, "暂无 open paper positions。", self._back_keyboard())
+        await self._reply(update, self._format_positions(), self._back_keyboard())
 
     async def _signals(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
-        await self._reply(update, "暂无 recent signals。", self._back_keyboard())
+        await self._reply(update, self._format_signals(), self._back_keyboard())
 
     async def _strategies(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
-        await self._reply(update, "⚙️ Strategies", self._back_keyboard())
+        await self._reply(update, self._format_strategies(), self._strategies_keyboard())
 
     async def _daily(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
-        await self._reply(update, "暂无 daily report。", self._back_keyboard())
+        await self._reply(update, self._format_daily(), self._back_keyboard())
+
+    def _render_callback(self, data: str) -> tuple[str, InlineKeyboardMarkup | None]:
+        match data:
+            case "m" | "bk":
+                return "PolySignal Lab\n选择操作：", self._main_keyboard()
+            case "p":
+                return self._format_positions(), self._back_keyboard()
+            case "st":
+                return self._format_status(), self._back_keyboard()
+            case "sg":
+                return self._format_signals(), self._back_keyboard()
+            case "dy":
+                return self._format_daily(), self._back_keyboard()
+            case "str":
+                return self._format_strategies(), self._strategies_keyboard()
+            case _:
+                raise ValueError("Unknown action")
 
     async def _callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._authorized(update):
+        query = update.callback_query
+        if query is None:
             return
+        if not self._authorized(update):
+            await query.answer("Unauthorized", show_alert=True)
+            return
+        try:
+            if (query.data or "").startswith("tg:"):
+                text, keyboard = self._toggle_strategy(query.data or "")
+            else:
+                text, keyboard = self._render_callback(query.data or "")
+        except ValueError as exc:
+            await query.answer(str(exc), show_alert=True)
+            return
+        except Exception:
+            await query.answer("Action failed", show_alert=True)
+            self.logger.exception("Telegram callback failed")
+            return
+        await query.answer()
+        await self._edit_or_reply(update, text, keyboard)
+
+    async def _edit_or_reply(
+        self, update: Update, text: str, keyboard: InlineKeyboardMarkup | None = None
+    ) -> None:
+        if self.config.interactive_dry_run:
+            self.logger.info("telegram interactive_dry_run callback reply: %s", text)
+            return
+        query = update.callback_query
+        try:
+            if query is not None and getattr(query, "message", None) is not None:
+                await query.edit_message_text(
+                    text=self._truncate(text),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                )
+            else:
+                await self._reply(update, text, keyboard)
+            self._send_success += 1
+        except RetryAfter:
+            self._rate_limited += 1
+            self._send_failure += 1
+        except (TimedOut, NetworkError, TelegramError):
+            self._send_failure += 1
+
+    def _format_positions(self) -> str:
+        return "暂无 open paper positions。"
+
+    def _format_signals(self) -> str:
+        return "暂无 recent signals。"
+
+    def _format_daily(self) -> str:
+        return "暂无 daily report。"
+
+    def _format_strategies(self) -> str:
+        return "⚙️ Strategies"
+
+    def _strategies_keyboard(self) -> InlineKeyboardMarkup:
+        return self._back_keyboard()
+
+    def _toggle_strategy(self, data: str) -> tuple[str, InlineKeyboardMarkup | None]:
+        raise ValueError("Unknown strategy")
 
     def _main_keyboard(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(

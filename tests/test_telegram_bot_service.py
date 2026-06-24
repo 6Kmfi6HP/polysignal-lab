@@ -10,6 +10,7 @@ from polysignal_lab.config import TelegramConfig
 from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry
 from polysignal_lab.publish.telegram_bot import TelegramBotService
 from polysignal_lab.signal_layer.formatter import MessageFormatter
+from telegram import InlineKeyboardMarkup
 
 
 class _FakeUpdater:
@@ -199,3 +200,73 @@ async def test_telegram_bot_rejects_private_chat_not_in_allowlist() -> None:
 
     assert update.effective_message.replies == []
     assert service.health()["metrics"]["unauthorized_updates"] == 1
+
+
+class _FakeCallbackQuery:
+    def __init__(self, data: str, chat_id: int = 123, user_id: int = 123) -> None:
+        self.data = data
+        self.answers: list[dict[str, object]] = []
+        self.edits: list[dict[str, object]] = []
+        self.message = _FakeMessage()
+        self.from_user = SimpleNamespace(id=user_id)
+        self.chat_id = chat_id
+
+    async def answer(self, text: str | None = None, **kwargs: object) -> None:
+        self.answers.append({"text": text, **kwargs})
+
+    async def edit_message_text(self, text: str, **kwargs: object) -> None:
+        self.edits.append({"text": text, **kwargs})
+
+
+def _callback_update(query: _FakeCallbackQuery, *, chat_id: int = 123, user_id: int = 123, chat_type: str = "private") -> SimpleNamespace:
+    return SimpleNamespace(
+        update_id=42,
+        effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
+        effective_user=SimpleNamespace(id=user_id),
+        effective_message=query.message,
+        callback_query=query,
+    )
+
+
+def test_telegram_bot_uses_ptb_inline_keyboard_markup() -> None:
+    service = _service()
+
+    keyboard = service._main_keyboard()
+
+    assert isinstance(keyboard, InlineKeyboardMarkup)
+    callback_values = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert callback_values == ["p", "st", "sg", "str", "dy"]
+    assert all(1 <= len(value.encode("utf-8")) <= 64 for value in callback_values)
+
+
+async def test_telegram_bot_callback_always_answers() -> None:
+    service = _service()
+
+    known = _FakeCallbackQuery("st")
+    await service._callback(_callback_update(known), SimpleNamespace())
+    unknown = _FakeCallbackQuery("unknown")
+    await service._callback(_callback_update(unknown), SimpleNamespace())
+    unauthorized = _FakeCallbackQuery("st", user_id=999)
+    await service._callback(_callback_update(unauthorized, user_id=999), SimpleNamespace())
+
+    assert len(known.answers) == 1
+    assert known.answers[0]["text"] is None
+    assert len(unknown.answers) == 1
+    assert unknown.answers[0]["text"] == "Unknown action"
+    assert unknown.answers[0]["show_alert"] is True
+    assert unauthorized.answers[0]["text"] == "Unauthorized"
+    assert unauthorized.answers[0]["show_alert"] is True
+
+
+async def test_telegram_bot_interactive_dry_run_logs_no_send(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    caplog.set_level(logging.INFO)
+    service = _service(dry_run=True)
+    update = _update(123, 123)
+
+    await service._status(update, SimpleNamespace())
+
+    assert update.effective_message.replies == []
+    assert "telegram interactive_dry_run reply" in caplog.text
+    assert service.health()["metrics"]["send_success"] == 0
