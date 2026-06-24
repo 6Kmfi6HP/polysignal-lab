@@ -116,5 +116,8 @@ class MarketUniverseService:
     def _store_resolved(self, markets: list[Market]) -> list[Market]:
         for market in markets:
             self.markets.upsert_many([market])
-            self.persistence.upsert_market(market)
+            try:
+                self.persistence.upsert_market(market)
+            except (OSError, sqlite3.Error, TypeError, ValueError):
+                pass
         return markets
