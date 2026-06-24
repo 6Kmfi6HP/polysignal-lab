@@ -183,6 +183,19 @@ async def test_leaderboard_uses_sqlite_report_data(tmp_path, snapshot, settings)
                 "average_roi": 0.12,
             }
         },
+        calibration_breakdown={
+            "late_consensus|BTC|5m|high": {
+                "strategy": "late_consensus",
+                "asset": "BTC",
+                "timeframe": "5m",
+                "confidence_bucket": "high",
+                "sample_size": 2,
+                "wins": 1,
+                "losses": 0,
+                "average_return": 0.12,
+                "calibration_status": "insufficient_data",
+            }
+        },
     )
     store.insert_daily_report(report)
 
@@ -196,6 +209,9 @@ async def test_leaderboard_uses_sqlite_report_data(tmp_path, snapshot, settings)
     assert rows["late_consensus"]["win_count"] == 1
     assert rows["late_consensus"]["void_count"] == 1
     assert rows["late_consensus"]["win_rate"] == 0.5
+    assert response.json()["calibration_breakdown"]["late_consensus|BTC|5m|high"][
+        "sample_size"
+    ] == 2
 
 
 async def test_dashboard_rejects_write_methods(tmp_path, snapshot, settings) -> None:

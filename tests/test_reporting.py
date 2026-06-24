@@ -108,6 +108,36 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
     assert {state.value for state in TradeResultStatus} == {"WIN", "LOSS", "VOID", "UNKNOWN"}
 
 
+def test_daily_report_includes_strategy_asset_timeframe_calibration() -> None:
+    result = _result(
+        ResultSpec("calibrated-win", TradeResultStatus.WIN, 4.0, 0.40)
+    ).model_copy(update={"details": {"confidence": 0.80}})
+
+    report = PaperReportService().build_daily_report(
+        report_date=date(2026, 6, 22),
+        starting_equity=1000.0,
+        ending_equity=1004.0,
+        total_signals=1,
+        paper_orders=1,
+        paper_fills=1,
+        rejected_paper_orders=0,
+        open_positions=0,
+        results=[result],
+    )
+
+    row = report.calibration_breakdown["ptb_diff|BTC|5m|high"]
+    assert row["strategy"] == "ptb_diff"
+    assert row["asset"] == "BTC"
+    assert row["timeframe"] == "5m"
+    assert row["confidence_bucket"] == "high"
+    assert row["sample_size"] == 1
+    assert row["wins"] == 1
+    assert row["losses"] == 0
+    assert row["calibration_status"] == "insufficient_data"
+    assert row["average_entry_price"] == 0.50
+    assert row["average_return"] == 0.40
+
+
 def test_daily_report_aggregates_paper_execution_quality() -> None:
     order_payloads = [
         {

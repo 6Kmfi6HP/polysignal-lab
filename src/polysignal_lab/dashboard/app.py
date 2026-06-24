@@ -35,6 +35,15 @@ def _fmt_rate(value: JsonValue) -> str:
     return f"{rate * 100:.1f}%"
 
 
+def _calibration_from_reports(reports: list[dict[str, JsonValue]]) -> dict[str, JsonValue]:
+    merged: dict[str, JsonValue] = {}
+    for report in reports:
+        rows = report.get("calibration_breakdown", {})
+        if isinstance(rows, dict):
+            merged.update(rows)
+    return merged
+
+
 def create_dashboard_app(store: SQLiteStore) -> FastAPI:
     app = FastAPI(title="PolySignal Lab Dashboard", version="1.0.0")
 
@@ -46,7 +55,14 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
     def overview() -> dict[str, JsonValue]:
         counts = store.counts()
         latest_report = store.restore_daily_reports(limit=1)
-        return {"counts": counts, "latest_report": latest_report[0] if latest_report else None}
+        report = latest_report[0] if latest_report else None
+        return {
+            "counts": counts,
+            "latest_report": report,
+            "calibration_breakdown": (
+                report.get("calibration_breakdown", {}) if report else {}
+            ),
+        }
 
     @app.get("/api/signals", response_model=None)
     def signals(limit: int = 100) -> list[dict[str, JsonValue]]:
@@ -84,7 +100,12 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
 
     @app.get("/api/leaderboard", response_model=None)
     def leaderboard(limit: int = 100) -> dict[str, JsonValue]:
-        return {"leaderboard": store.restore_strategy_leaderboard(limit=_bounded_limit(limit))}
+        report_limit = _bounded_limit(limit)
+        reports = store.restore_daily_reports(limit=report_limit)
+        return {
+            "leaderboard": store.restore_strategy_leaderboard(limit=report_limit),
+            "calibration_breakdown": _calibration_from_reports(reports),
+        }
 
     @app.get("/", response_class=HTMLResponse)
     def home() -> str:
