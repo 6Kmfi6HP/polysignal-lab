@@ -76,28 +76,16 @@ async def process_signal(
 
     if scheduler.settings.telegram.send_signals:
         try:
-            message = scheduler.formatter.signal_message(
+            publish = await scheduler.publish_service.publish_signal(
                 signal, scheduler.settings.paper_trading.fixed_stake_usdc
             )
-            publish = await scheduler.publisher.send(message, "signal", signal.signal_id)
-            scheduler.persistence.append_log("telegram_publishes", publish.as_dict())
-            scheduler.persistence.insert_telegram_publish(publish.as_dict())
             result["published"] = True
             result["publish_status"] = publish.status
         except Exception as exc:
             scheduler.logger.error("Failed to publish signal %s: %s", signal.signal_id, exc)
 
     try:
-        book = scheduler.ctx.books.get(signal.token_id)
-        if scheduler.settings.paper_trading.enabled:
-            if book is None:
-                scheduler.logger.warning(
-                    "No order book for token %s (signal %s)",
-                    signal.token_id,
-                    signal.signal_id,
-                )
-            sim = scheduler.paper.process_signal(signal, book)
-            _store_simulation_result(scheduler, sim, result)
+        scheduler.paper_portfolio.process_signal(signal, result)
     except Exception:
         scheduler.logger.exception(
             "Failed to paper-trade signal %s token %s",

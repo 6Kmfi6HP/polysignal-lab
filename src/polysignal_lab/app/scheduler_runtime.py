@@ -140,8 +140,7 @@ async def _process_iteration_signals(
 def _tick_resting_orders(scheduler: PolySignalScheduler) -> None:
     """Poll resting GTD orders for fills/expiry."""
     try:
-        from polysignal_lab.app.scheduler_processing import tick_resting_orders
-        results = tick_resting_orders(scheduler)
+        results = scheduler.paper_portfolio.tick_resting_orders()
         if results:
             filled = sum(1 for r in results if r.fills)
             cancelled = sum(1 for r in results if not r.fills)

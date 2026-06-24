@@ -146,12 +146,8 @@ async def _store_paper_result(
     publish_payload: dict[str, str | None] | None = None
     try:
         if scheduler.settings.telegram.send_paper_results:
-            message = scheduler.formatter.result_message(result)
-            publish = await scheduler.publisher.send(
-                message, "paper_result", result.signal_id
-            )
+            publish = await scheduler.publish_service.publish_paper_result(result)
             publish_payload = publish.as_dict()
-            scheduler.persistence.insert_telegram_publish(publish_payload)
         scheduler.persistence.insert_paper_trade_result(result)
         scheduler.persistence.upsert_paper_position(position)
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
@@ -159,8 +155,6 @@ async def _store_paper_result(
         raise SchedulerPersistenceError("paper result persistence", str(exc)) from exc
 
     scheduler.persistence.append_log("paper_trade_results", result)
-    if publish_payload is not None:
-        scheduler.persistence.append_log("telegram_publishes", publish_payload)
 
 
 def _utc_text_bound(dt: datetime) -> str:
@@ -361,8 +355,7 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
     publish_payload: dict[str, str | None] | None = None
     if scheduler.settings.telegram.send_daily_report:
         try:
-            message = scheduler.formatter.daily_report_message(report)
-            publish = await scheduler.publisher.send(message, "daily_report", None)
+            publish = await scheduler.publish_service.publish_daily_report(report)
             publish_payload = publish.as_dict()
         except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
             scheduler.logger.error("Failed to publish daily report: %s", exc)
@@ -370,16 +363,12 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
 
     try:
         scheduler.persistence.insert_daily_report(report)
-        if publish_payload is not None:
-            scheduler.persistence.insert_telegram_publish(publish_payload)
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         delete_daily_report_rows(scheduler, report, publish_payload)
         scheduler.logger.error("Failed to store daily report: %s", exc)
         return None
 
     scheduler.persistence.append_log("daily_reports", report)
-    if publish_payload is not None:
-        scheduler.persistence.append_log("telegram_publishes", publish_payload)
 
     scheduler.logger.info(
         "Generated daily report for %s: %d closed trades, pnl=%.2f",

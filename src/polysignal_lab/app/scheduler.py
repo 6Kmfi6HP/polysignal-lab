@@ -16,7 +16,9 @@ from polysignal_lab.app import (
 from polysignal_lab.app.services.book_feed_service import BookFeedService
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.app.services.market_universe_service import MarketUniverseService
+from polysignal_lab.app.services.paper_portfolio_service import PaperPortfolioService
 from polysignal_lab.app.services.spot_feed_service import SpotFeedService
+from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.app.services.signal_pipeline import SignalPipeline
 from polysignal_lab.app.services.snapshot_service import SnapshotService
 from polysignal_lab.config import Settings
@@ -137,6 +139,15 @@ class PolySignalScheduler:
             self.persistence,
             logger=self.logger,
         )
+        self.publish_service = PublishService(self.formatter, self.publisher, self.persistence)
+        self.paper_portfolio = PaperPortfolioService(
+            settings=settings,
+            markets=self.ctx.markets,
+            books=self.ctx.books,
+            persistence=self.persistence,
+            scheduler=self,
+            logger=self.logger,
+        )
 
         self._ws_tasks: list[asyncio.Task] = []
         self._market_ws_task: asyncio.Task | None = None
@@ -162,6 +173,15 @@ class PolySignalScheduler:
         self.paper.fill_notifier = _make_fill_notifier(self.strategies)
         self.exits = PaperExitEngine(self.settings.paper_trading.exit_model, self.wallet)
         self.settlement = PaperSettlementEngine(self.wallet)
+        self.paper_portfolio.configure(
+            wallet=self.wallet,
+            paper=self.paper,
+            exits=self.exits,
+            settlement=self.settlement,
+            markets=self.ctx.markets,
+            books=self.ctx.books,
+            persistence=self.persistence,
+        )
         self._trading_components_initialized = True
 
     def _validate_telegram_startup(self) -> None:
@@ -241,10 +261,10 @@ class PolySignalScheduler:
         return await scheduler_processing.process_accepted_signals(self, signals)
 
     async def check_settlements(self) -> list[PaperTradeResult]:
-        return await scheduler_reporting.check_settlements(self)
+        return await self.paper_portfolio.check_settlements()
 
     async def generate_daily_report(self) -> DailyReport | None:
-        return await scheduler_reporting.generate_daily_report(self)
+        return await self.paper_portfolio.generate_daily_report()
 
     async def run(self) -> None:
         await scheduler_runtime.run(self)
