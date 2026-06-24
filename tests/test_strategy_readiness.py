@@ -55,7 +55,7 @@ def test_readiness_reports_missing_data() -> None:
 
 
 def test_all_loaded_strategies_expose_readiness() -> None:
-    settings = Settings.from_yaml("config/signal_bot.yaml")
+    settings = Settings.from_yaml("config/signal_bot.lab.yaml")
     strategies = build_strategies(settings.strategies)
 
     names = {strategy.name for strategy in strategies}
