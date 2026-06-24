@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
 from polysignal_lab.dashboard.app import create_dashboard_app
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
+from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
 from polysignal_lab.paper.report import PaperReportService
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
@@ -125,6 +126,29 @@ def test_schema_rejects_missing_required_columns(tmp_path):
     # When / Then: startup migration validates the schema and refuses the corrupt DB.
     with pytest.raises(SchemaValidationError, match="signals"):
         SQLiteStore(db_path)
+
+def test_sqlite_anchor_prices_survive_reopen(tmp_path) -> None:
+    db_path = tmp_path / "anchors.sqlite3"
+    captured_at = datetime(2026, 6, 23, 12, 0, 1, tzinfo=timezone.utc)
+    anchor = AnchorPrice(
+        asset="BTC",
+        timeframe="5m",
+        market_slug="btc-updown-5m-1782216000",
+        window_start=datetime(2026, 6, 23, 12, 0, tzinfo=timezone.utc),
+        window_end=datetime(2026, 6, 23, 12, 5, tzinfo=timezone.utc),
+        price=64250.25,
+        source="binance",
+        verified=True,
+        captured_at=captured_at,
+        lag_ms=750,
+    )
+    store = SQLiteStore(db_path)
+    store.upsert_anchor_price(anchor)
+    store.close()
+
+    reopened = SQLiteStore(db_path)
+    loaded = reopened.get_verified_anchor_price("btc", "5m", "btc-updown-5m-1782216000")
+    assert loaded == anchor
 
 
 def test_duplicate_ids_are_idempotent_or_reported(tmp_path, snapshot, settings):

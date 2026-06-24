@@ -137,6 +137,22 @@ TABLE_DDL_STATEMENTS: Final = [
         payload_json TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS anchor_prices (
+        anchor_id TEXT PRIMARY KEY,
+        asset TEXT NOT NULL,
+        timeframe TEXT NOT NULL,
+        market_slug TEXT NOT NULL,
+        window_start TEXT NOT NULL,
+        window_end TEXT NOT NULL,
+        price REAL,
+        source TEXT NOT NULL,
+        verified INTEGER NOT NULL,
+        captured_at TEXT NOT NULL,
+        lag_ms INTEGER,
+        payload_json TEXT NOT NULL
+    )
+    """,
 ]
 
 INDEX_DDL_STATEMENTS: Final = [
@@ -144,6 +160,7 @@ INDEX_DDL_STATEMENTS: Final = [
     "CREATE INDEX IF NOT EXISTS idx_signals_strategy_asset ON signals(strategy,asset,timeframe,created_at)",
     "CREATE INDEX IF NOT EXISTS idx_positions_status ON paper_positions(status,market_id)",
     "CREATE INDEX IF NOT EXISTS idx_results_strategy_asset ON paper_trade_results(strategy,asset,timeframe,closed_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_anchor_prices_market ON anchor_prices(asset,timeframe,market_slug)",
 ]
 
 REQUIRED_COLUMNS: Final[dict[str, frozenset[str]]] = {
@@ -158,6 +175,20 @@ REQUIRED_COLUMNS: Final[dict[str, frozenset[str]]] = {
     "daily_reports": frozenset({"report_id", "report_date", "total_signals", "total_pnl_usdc", "win_rate", "created_at", "payload_json"}),
     "telegram_publishes": frozenset({"publish_id", "message_type", "status", "payload_json"}),
     "system_events": frozenset({"event_id", "event_type", "severity", "created_at", "payload_json"}),
+    "anchor_prices": frozenset(
+        {
+            "anchor_id",
+            "asset",
+            "timeframe",
+            "market_slug",
+            "window_start",
+            "window_end",
+            "source",
+            "verified",
+            "captured_at",
+            "payload_json",
+        }
+    ),
 }
 
 ALLOWED_TABLES: Final = frozenset(REQUIRED_COLUMNS)
@@ -172,6 +203,7 @@ COUNT_TABLES: Final = (
     "daily_reports",
     "telegram_publishes",
     "system_events",
+    "anchor_prices",
 )
 
 

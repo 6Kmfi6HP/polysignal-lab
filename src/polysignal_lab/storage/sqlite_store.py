@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import Any, Iterable
 
+from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.enums import PositionStatus
 from polysignal_lab.storage.sqlite_schema import (
     ALLOWED_TABLES,
@@ -63,6 +65,69 @@ class SQLiteStore:
                 VALUES(?,?,?,?,?,?,?,?)""",
                 (payload["market_id"], payload["asset"], payload["timeframe"], payload["market_slug"], payload.get("status"), payload.get("end_ts"), self._json(payload), utc_iso()),
             )
+
+
+    def upsert_anchor_price(self, anchor: AnchorPrice) -> None:
+        payload = {
+            "asset": anchor.asset.upper(),
+            "timeframe": anchor.timeframe,
+            "market_slug": anchor.market_slug,
+            "window_start": utc_iso(anchor.window_start),
+            "window_end": utc_iso(anchor.window_end),
+            "price": anchor.price,
+            "source": anchor.source,
+            "verified": anchor.verified,
+            "captured_at": utc_iso(anchor.captured_at),
+            "lag_ms": anchor.lag_ms,
+        }
+        anchor_id = f"{anchor.asset.upper()}:{anchor.timeframe}:{anchor.market_slug}"
+        with self._lock, self._conn:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO anchor_prices(
+                    anchor_id,asset,timeframe,market_slug,window_start,window_end,
+                    price,source,verified,captured_at,lag_ms,payload_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    anchor_id,
+                    anchor.asset.upper(),
+                    anchor.timeframe,
+                    anchor.market_slug,
+                    utc_iso(anchor.window_start),
+                    utc_iso(anchor.window_end),
+                    anchor.price,
+                    anchor.source,
+                    1 if anchor.verified else 0,
+                    utc_iso(anchor.captured_at),
+                    anchor.lag_ms,
+                    self._json(payload),
+                ),
+            )
+
+    def get_verified_anchor_price(
+        self, asset: str, timeframe: str, market_slug: str
+    ) -> AnchorPrice | None:
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT payload_json FROM anchor_prices
+                WHERE asset=? AND timeframe=? AND market_slug=? AND verified=1
+                LIMIT 1""",
+                (asset.upper(), timeframe, market_slug),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"])
+        return AnchorPrice(
+            asset=str(payload["asset"]),
+            timeframe=str(payload["timeframe"]),
+            market_slug=str(payload["market_slug"]),
+            window_start=datetime.fromisoformat(str(payload["window_start"])),
+            window_end=datetime.fromisoformat(str(payload["window_end"])),
+            price=float(payload["price"]) if payload.get("price") is not None else None,
+            source=str(payload["source"]),
+            verified=bool(payload["verified"]),
+            captured_at=datetime.fromisoformat(str(payload["captured_at"])),
+            lag_ms=int(payload["lag_ms"]) if payload.get("lag_ms") is not None else None,
+        )
 
     def insert_signal(self, signal: Any) -> None:
         p = to_jsonable(signal)
