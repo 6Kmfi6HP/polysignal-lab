@@ -179,6 +179,52 @@ async def test_refresh_markets_marks_jsonl_failure_without_sqlite_down(
     assert components["jsonl_storage"].metrics["write_failures"] == 1
 
 
+def test_persist_state_marks_jsonl_failure_without_sqlite_down(
+    tmp_path, settings, monkeypatch
+) -> None:
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler._initialize_trading_components()
+
+    def fail_append(stream: str, record: object) -> None:
+        raise OSError("jsonl append failed")
+
+    monkeypatch.setattr(scheduler.logs, "append", fail_append)
+
+    scheduler._persist_state()
+
+    components = {component.name: component for component in scheduler.health.snapshot().components}
+
+    assert components["jsonl_storage"].status == "down"
+    assert components["jsonl_storage"].last_error == "jsonl append failed"
+    assert components["jsonl_storage"].metrics["write_failures"] == 1
+    assert components["sqlite_storage"].status == "ok"
+
+
+def test_persist_state_marks_state_failure_without_sqlite_down(
+    tmp_path, settings, monkeypatch
+) -> None:
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler._initialize_trading_components()
+
+    def fail_write(name: str, value: object) -> None:
+        raise OSError(f"state write failed: {name}")
+
+    monkeypatch.setattr(scheduler.state, "write", fail_write)
+
+    scheduler._persist_state()
+
+    components = {component.name: component for component in scheduler.health.snapshot().components}
+
+    assert components["state_storage"].status == "down"
+    assert components["state_storage"].last_error == "state write failed: paper_wallet"
+    assert components["state_storage"].metrics["write_failures"] == 1
+    assert components["sqlite_storage"].status == "ok"
+
+
 async def test_clob_ws_idle_after_empty_market_refresh_is_ok(tmp_path, settings) -> None:
     from polysignal_lab.app.scheduler import PolySignalScheduler
     from polysignal_lab.app.scheduler_health import sync_runtime_health

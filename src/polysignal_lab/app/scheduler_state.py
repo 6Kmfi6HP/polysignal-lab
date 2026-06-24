@@ -66,10 +66,22 @@ async def restore_wallet_state(scheduler: PolySignalScheduler) -> None:
 
 
 def persist_state(scheduler: PolySignalScheduler) -> None:
+    wallet_snapshot = scheduler.wallet.snapshot()
     try:
-        wallet_snapshot = scheduler.wallet.snapshot()
         scheduler.logs.append("paper_wallet_snapshots", wallet_snapshot)
+        scheduler_health.note_storage_success(scheduler, "jsonl")
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler.logger.warning("Failed to persist JSONL state: %s", exc)
+        scheduler_health.note_storage_failure(scheduler, "jsonl", exc)
+
+    try:
         scheduler.sqlite.insert_wallet_snapshot(wallet_snapshot)
+        scheduler_health.note_storage_success(scheduler, "sqlite")
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler.logger.warning("Failed to persist SQLite state: %s", exc)
+        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
+
+    try:
         scheduler.state.write("paper_wallet", wallet_snapshot)
         scheduler.state.write(
             "open_positions",
@@ -86,8 +98,7 @@ def persist_state(scheduler: PolySignalScheduler) -> None:
             ],
         )
         scheduler.state.write("signal_dedupe", scheduler.gate.deduper.snapshot())
-        scheduler_health.note_storage_success(scheduler, "jsonl")
-        scheduler_health.note_storage_success(scheduler, "sqlite")
+        scheduler_health.note_storage_success(scheduler, "state")
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
-        scheduler.logger.warning("Failed to persist state: %s", exc)
-        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
+        scheduler.logger.warning("Failed to persist state files: %s", exc)
+        scheduler_health.note_storage_failure(scheduler, "state", exc)
