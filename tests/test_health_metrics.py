@@ -81,6 +81,7 @@ async def test_scheduler_records_market_data_health(tmp_path, settings, market) 
     from polysignal_lab.domain.orderbook import OrderBook
     from polysignal_lab.domain.spot import SpotPrice
 
+    settings.data.polymarket.use_rtds_ws = False
     scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
     scheduler.ctx.markets.upsert_many([market])
     scheduler._latest_market_token_ids = tuple(
@@ -270,6 +271,7 @@ async def test_binance_ws_requires_every_configured_spot(tmp_path, settings) -> 
     from polysignal_lab.app.scheduler_health import sync_runtime_health
     from polysignal_lab.domain.spot import SpotPrice
 
+    settings.data.polymarket.use_rtds_ws = False
     scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
     scheduler.ctx.spots.update(SpotPrice(asset="BTC", symbol="BTCUSDT", price=100.0))
     scheduler.binance_ws.note_connected()
@@ -287,6 +289,32 @@ async def test_binance_ws_requires_every_configured_spot(tmp_path, settings) -> 
     components = {component.name: component for component in snapshot.components}
 
     assert components["binance_ws"].status == "ok"
+
+
+async def test_rtds_health_reports_active_spot_feed(tmp_path, settings) -> None:
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+    from polysignal_lab.app.scheduler_health import sync_runtime_health
+    from polysignal_lab.domain.spot import SpotPrice
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler.rtds_ws.connected = True
+    for asset in settings.data.polymarket.rtds_assets:
+        scheduler.ctx.spots.update(
+            SpotPrice(
+                asset=asset,
+                symbol=f"{asset}USD",
+                price=100.0,
+                source="polymarket_rtds",
+            )
+        )
+
+    snapshot = sync_runtime_health(scheduler)
+    components = {component.name: component for component in snapshot.components}
+
+    assert "binance_ws" not in components
+    assert components["polymarket_rtds_ws"].status == "ok"
+    assert components["polymarket_rtds_ws"].metrics["connected"] is True
+    assert components["polymarket_rtds_ws"].metrics["btc_spot_lag_ms"] is not None
 
 
 async def test_sync_runtime_health_preserves_clob_rest_down_after_complete_failure(

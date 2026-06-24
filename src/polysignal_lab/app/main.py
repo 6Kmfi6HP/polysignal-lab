@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import signal
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -104,8 +105,19 @@ def parse_cli(argv: Sequence[str] | None = None) -> CliOptions:
     )
 
 
+def _sigterm_handler(_signum: int, _frame: object) -> None:
+    """Convert Docker SIGTERM into KeyboardInterrupt so anyio/finally runs."""
+    raise KeyboardInterrupt()
+
+
 def run_scheduler_cli(settings: Settings) -> None:
     configure_logging(settings.app.log_level)
+
+    # Docker sends SIGTERM to PID 1. Python PID 1 exits immediately without
+    # running cleanup handlers. Override to raise KeyboardInterrupt, which
+    # asyncio translates into task cancellation → finally block executes.
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
     scheduler = PolySignalScheduler(settings)
     anyio.run(scheduler.run)
 

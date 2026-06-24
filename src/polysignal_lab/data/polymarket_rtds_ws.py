@@ -23,6 +23,8 @@ class PolymarketRtdsPriceFeed:
         self.connected = False
         self.reconnect_count = 0
         self.last_error: str | None = None
+        self.message_count = 0
+        self.ignored_message_count = 0
 
     async def run(self) -> None:
         self.running = True
@@ -55,9 +57,8 @@ class PolymarketRtdsPriceFeed:
                 {
                     "topic": "crypto_prices_chainlink",
                     "type": "*",
-                    "filters": json.dumps({"symbol": f"{asset.lower()}/usd"}),
+                    "filters": "",
                 }
-                for asset in self.config.rtds_assets
             ],
         }
 
@@ -77,8 +78,13 @@ class PolymarketRtdsPriceFeed:
         symbol = _symbol(body)
         price = _price(body)
         if symbol is None or price is None:
+            self.ignored_message_count += 1
             return
         asset = symbol.split("/", 1)[0].upper()
+        if asset not in {item.upper() for item in self.config.rtds_assets}:
+            self.ignored_message_count += 1
+            return
+        self.message_count += 1
         self.registry.update(
             SpotPrice(
                 asset=asset,

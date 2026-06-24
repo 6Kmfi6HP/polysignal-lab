@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from asyncio import CancelledError, Task, create_task, sleep
+import asyncio
+from asyncio import CancelledError, sleep
 from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -13,12 +14,72 @@ if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
 
 
+async def _notify_startup(scheduler: PolySignalScheduler) -> None:
+    """Send a startup notification via Telegram (respects dry_run)."""
+    telegram = scheduler.settings.telegram
+    if not telegram.enabled:
+        return
+    if not scheduler.strategies:
+        scheduler.logger.info("Skipping startup notification: no strategies loaded")
+        return
+    strategy_names = ", ".join(
+        s.name for s in scheduler.strategies if hasattr(s, "name")
+    )
+    msg = (
+        f"<b>PolySignal Lab</b> started\n"
+        f"Mode: {scheduler.settings.app.mode}\n"
+        f"Strategies: {strategy_names}"
+    )
+    result = await scheduler.publisher.send(msg, "startup")
+    if result.status == "DRY_RUN":
+        scheduler.logger.info(
+            "Startup notification: dry_run mode, would send: %s", msg
+        )
+    elif result.status == "SENT":
+        scheduler.logger.info(
+            "Startup notification sent to Telegram (msg_id=%s)",
+            result.telegram_message_id,
+        )
+    else:
+        scheduler.logger.warning(
+            "Startup notification failed: %s", result.error or result.status
+        )
+
+async def _notify_shutdown(scheduler: PolySignalScheduler) -> None:
+    """Send a shutdown notification via Telegram (respects dry_run)."""
+    telegram = scheduler.settings.telegram
+    if not telegram.enabled:
+        return
+    msg = "<b>PolySignal Lab</b> stopped"
+    result = await scheduler.publisher.send(msg, "shutdown")
+    if result.status == "DRY_RUN":
+        scheduler.logger.info(
+            "Shutdown notification: dry_run mode, would send: %s", msg
+        )
+    elif result.status == "SENT":
+        scheduler.logger.info(
+            "Shutdown notification sent to Telegram (msg_id=%s)",
+            result.telegram_message_id,
+        )
+    else:
+        scheduler.logger.warning(
+            "Shutdown notification failed: %s", result.error or result.status
+        )
+
+
+
 async def stop(scheduler: PolySignalScheduler) -> None:
     scheduler.logger.info("Shutting down scheduler")
     scheduler._running = False
 
     scheduler._persist_state()
     scheduler_health.persist_health_snapshot(scheduler)
+
+    # Fire shutdown notification with 3s timeout — don't block shutdown if Telegram is slow
+    try:
+        await asyncio.wait_for(_notify_shutdown(scheduler), timeout=3)
+    except (asyncio.TimeoutError, Exception):
+        pass
 
     try:
         await scheduler.supervisor.stop_all()
@@ -46,6 +107,8 @@ async def run(scheduler: PolySignalScheduler) -> None:
 
     try:
         await scheduler.supervisor.start_all()
+        await _notify_startup(scheduler)
+
         await scheduler._restore_wallet_state()
         await scheduler.refresh_markets_once()
         await scheduler._fetch_resolved_markets()

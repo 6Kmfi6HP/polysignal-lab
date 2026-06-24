@@ -428,6 +428,37 @@ def test_rtds_chainlink_message_updates_spot_registry() -> None:
     assert spot.source == "polymarket_rtds"
 
 
+def test_rtds_subscription_uses_unfiltered_chainlink_updates() -> None:
+    from polysignal_lab.data.polymarket_rtds_ws import PolymarketRtdsPriceFeed
+
+    feed = PolymarketRtdsPriceFeed(SpotRegistry(), PolymarketDataConfig(rtds_assets=("BTC", "ETH")))
+
+    assert feed._subscribe_message() == {
+        "action": "subscribe",
+        "subscriptions": [
+            {
+                "topic": "crypto_prices_chainlink",
+                "type": "*",
+                "filters": "",
+            }
+        ],
+    }
+
+    feed.handle_message(
+        {
+            "topic": "crypto_prices_chainlink",
+            "type": "update",
+            "payload": {
+                "symbol": "btc/usd",
+                "value": 100_456.78,
+                "timestamp": 1_782_309_401_000,
+            },
+        }
+    )
+
+    assert feed.registry.get("BTC") is not None
+
+
 async def test_vwap_strategy_ingests_all_recent_trade_events_from_snapshot_builder() -> None:
     market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m", seconds_to_close=120))
     up_token = market.token_for(Side.UP).token_id

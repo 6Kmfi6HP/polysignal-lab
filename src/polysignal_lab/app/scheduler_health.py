@@ -43,7 +43,7 @@ def note_publish_result(
 def sync_runtime_health(scheduler: PolySignalScheduler) -> HealthSnapshot:
     _sync_clob_ws(scheduler)
     _sync_clob_rest(scheduler)
-    _sync_binance_ws(scheduler)
+    _sync_spot_feed(scheduler)
     _sync_book_staleness(scheduler)
     return scheduler.health.snapshot()
 
@@ -147,11 +147,24 @@ def _sync_clob_rest(scheduler: PolySignalScheduler) -> None:
         scheduler.health.mark_ok("clob_rest", **payload)
 
 
-def _sync_binance_ws(scheduler: PolySignalScheduler) -> None:
+def _sync_spot_feed(scheduler: PolySignalScheduler) -> None:
     now = utc_now()
+    if scheduler.settings.data.polymarket.use_rtds_ws:
+        name = "polymarket_rtds_ws"
+        feed = scheduler.rtds_ws
+        assets = tuple(scheduler.settings.data.polymarket.rtds_assets)
+        source = "polymarket_rtds"
+        enabled = True
+    else:
+        name = "binance_ws"
+        feed = scheduler.binance_ws
+        assets = tuple(scheduler.settings.data.binance.symbols)
+        source = "binance"
+        enabled = scheduler.settings.data.binance.enabled
+
     lags: dict[str, int | None] = {}
     missing_symbols = 0
-    for asset in scheduler.settings.data.binance.symbols:
+    for asset in assets:
         spot = scheduler.ctx.spots.get(asset)
         if spot is None:
             missing_symbols += 1
@@ -160,29 +173,37 @@ def _sync_binance_ws(scheduler: PolySignalScheduler) -> None:
             lags[f"{asset.lower()}_spot_lag_ms"] = spot.freshness_ms(now)
     worst_lag = max((lag for lag in lags.values() if lag is not None), default=None)
     metrics: dict[str, JsonValue] = {
-        "connected": scheduler.binance_ws.connected,
-        "reconnect_count": scheduler.binance_ws.reconnect_count,
+        "connected": bool(getattr(feed, "connected", False)),
+        "reconnect_count": int(getattr(feed, "reconnect_count", 0)),
         "missing_symbol_count": missing_symbols,
+        "source": source,
         **lags,
     }
-    if not scheduler.settings.data.binance.enabled:
-        scheduler.health.mark_ok("binance_ws", enabled=False, **metrics)
+    message_count = getattr(feed, "message_count", None)
+    ignored_message_count = getattr(feed, "ignored_message_count", None)
+    if message_count is not None:
+        metrics["message_count"] = int(message_count)
+    if ignored_message_count is not None:
+        metrics["ignored_message_count"] = int(ignored_message_count)
+
+    if not enabled:
+        scheduler.health.mark_ok(name, enabled=False, **metrics)
     elif worst_lag is None:
         scheduler.health.mark_down(
-            "binance_ws", scheduler.binance_ws.last_error or "no spot prices", **metrics
+            name, getattr(feed, "last_error", None) or "no spot prices", **metrics
         )
     elif missing_symbols:
-        scheduler.health.mark_degraded("binance_ws", "missing spot prices", **metrics)
-    elif not scheduler.binance_ws.connected:
+        scheduler.health.mark_degraded(name, "missing spot prices", **metrics)
+    elif not metrics["connected"]:
         scheduler.health.mark_degraded(
-            "binance_ws",
-            scheduler.binance_ws.last_error or "binance websocket disconnected",
+            name,
+            getattr(feed, "last_error", None) or f"{name} disconnected",
             **metrics,
         )
     elif worst_lag > scheduler.settings.data.binance.max_price_staleness_ms:
-        scheduler.health.mark_degraded("binance_ws", "spot prices stale", **metrics)
+        scheduler.health.mark_degraded(name, "spot prices stale", **metrics)
     else:
-        scheduler.health.mark_ok("binance_ws", **metrics)
+        scheduler.health.mark_ok(name, **metrics)
 
 
 def _sync_book_staleness(scheduler: PolySignalScheduler) -> None:
