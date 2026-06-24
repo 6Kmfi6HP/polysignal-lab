@@ -13,6 +13,16 @@ from polysignal_lab.app import (
     scheduler_runtime,
     scheduler_state,
 )
+from polysignal_lab.app.services.book_feed_service import BookFeedService
+from polysignal_lab.app.services.health_service import HealthService
+from polysignal_lab.app.services.persistence_service import PersistenceService
+from polysignal_lab.app.services.market_universe_service import MarketUniverseService
+from polysignal_lab.app.services.paper_portfolio_service import PaperPortfolioService
+from polysignal_lab.app.services.spot_feed_service import SpotFeedService
+from polysignal_lab.app.services.publish_service import PublishService
+from polysignal_lab.app.services.signal_pipeline import SignalPipeline
+from polysignal_lab.app.services.runtime_service import ServiceSupervisor
+from polysignal_lab.app.services.snapshot_service import SnapshotService
 from polysignal_lab.config import Settings
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
 from polysignal_lab.data.anchor_price_service import AnchorPriceService
@@ -107,6 +117,18 @@ class PolySignalScheduler:
         self.poly_ws = PolymarketMarketWebSocket(settings.data.polymarket, self.ctx.books)
         self.poly_ws.reseed_hook = self._reseed_ws_books
         self.binance_ws = BinanceSpotFeed(settings.data.binance, self.ctx.spots)
+        self.book_feed = BookFeedService(
+            settings.data.polymarket,
+            self.rest,
+            self.ctx.books,
+            websocket=self.poly_ws,
+            logger=self.logger,
+        )
+        self.spot_feed = SpotFeedService(
+            self.binance_ws,
+            enabled=settings.data.binance.enabled,
+            logger=self.logger,
+        )
 
         base = Path(base_dir)
         self.logs = JSONLStore(base / settings.storage.jsonl_dir)
@@ -118,6 +140,44 @@ class PolySignalScheduler:
             use_crypto_price_api=settings.data.polymarket.use_crypto_price_api,
         )
         self.snapshot_builder = MarketSnapshotBuilder(self.ctx.books, self.ctx.spots, self.ptb)
+        self.persistence = PersistenceService(self.logs, self.sqlite, self.state)
+        self.market_universe = MarketUniverseService(
+            self.discovery,
+            self.ctx.markets,
+            self.persistence,
+            settings=settings,
+            logger=self.logger,
+        )
+        self.snapshot_service = SnapshotService(self.snapshot_builder)
+        self.signal_pipeline = SignalPipeline(
+            [],
+            self.gate,
+            self.consensus,
+            self.persistence,
+            logger=self.logger,
+        )
+        self.publish_service = PublishService(self.formatter, self.publisher, self.persistence)
+        self.paper_portfolio = PaperPortfolioService(
+            settings=settings,
+            markets=self.ctx.markets,
+            books=self.ctx.books,
+            persistence=self.persistence,
+            scheduler=self,
+            logger=self.logger,
+        )
+        core_services = [
+            self.persistence,
+            self.market_universe,
+            self.book_feed,
+            self.spot_feed,
+            self.snapshot_service,
+            self.signal_pipeline,
+            self.paper_portfolio,
+            self.publish_service,
+        ]
+        self.health_service = HealthService(core_services)
+        self.services = [*core_services, self.health_service]
+        self.supervisor = ServiceSupervisor(self.services)
 
         self._ws_tasks: list[asyncio.Task] = []
         self._market_ws_task: asyncio.Task | None = None
@@ -140,6 +200,7 @@ class PolySignalScheduler:
         if self._trading_components_initialized:
             return
         self.strategies = build_strategies(self.settings.strategies)
+        self.signal_pipeline.strategies = self.strategies
         self.wallet = PaperWallet(self.settings.paper_trading.starting_balance_usdc)
         self.paper = PaperSimulator(
             self.settings.paper_trading,
@@ -150,6 +211,15 @@ class PolySignalScheduler:
         self.paper.fill_notifier = _make_fill_notifier(self.strategies)
         self.exits = PaperExitEngine(self.settings.paper_trading.exit_model, self.wallet)
         self.settlement = PaperSettlementEngine(self.wallet)
+        self.paper_portfolio.configure(
+            wallet=self.wallet,
+            paper=self.paper,
+            exits=self.exits,
+            settlement=self.settlement,
+            markets=self.ctx.markets,
+            books=self.ctx.books,
+            persistence=self.persistence,
+        )
         self._trading_components_initialized = True
 
     def _validate_telegram_startup(self) -> None:
@@ -200,20 +270,8 @@ class PolySignalScheduler:
         return await scheduler_processing.evaluate_once(self)
 
     async def _reseed_ws_books(self, token_ids: list[str]) -> None:
-        refreshed_token_ids: set[str] = set()
-        try:
-            books = await self.market_data.get_books(token_ids)
-            for book in books:
-                self.ctx.books.update_from_snapshot(book)
-                refreshed_token_ids.add(book.token_id)
-            for token_id in set(token_ids) - refreshed_token_ids:
-                self.ctx.books.mark_stale(token_id, "RECONNECT_RESEED_FAILED")
-        except Exception as exc:
-            self.logger.exception(
-                "Failed to reseed order books on WebSocket reconnect: %s", exc
-            )
-            for token_id in token_ids:
-                self.ctx.books.mark_stale(token_id, "RECONNECT_RESEED_FAILED")
+        self.book_feed.market_data = self.market_data
+        await self.book_feed.reseed(token_ids)
 
     async def _stop_market_ws_subscription(self) -> None:
         await scheduler_market_data.stop_market_ws_subscription(self)
@@ -241,10 +299,10 @@ class PolySignalScheduler:
         return await scheduler_processing.process_accepted_signals(self, signals)
 
     async def check_settlements(self) -> list[PaperTradeResult]:
-        return await scheduler_reporting.check_settlements(self)
+        return await self.paper_portfolio.check_settlements()
 
     async def generate_daily_report(self) -> DailyReport | None:
-        return await scheduler_reporting.generate_daily_report(self)
+        return await self.paper_portfolio.generate_daily_report()
 
     async def run(self) -> None:
         await scheduler_runtime.run(self)

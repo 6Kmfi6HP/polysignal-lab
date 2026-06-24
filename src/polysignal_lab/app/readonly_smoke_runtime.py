@@ -50,7 +50,7 @@ async def check_scheduler_snapshot(
     try:
         market = markets[0]
         scheduler.ctx.markets.upsert_many([market])
-        scheduler.sqlite.upsert_market(market)
+        scheduler.persistence.upsert_market(market)
         book = book_from_payload(book_payload)
         if book is not None:
             scheduler.ctx.books.update(book)
@@ -70,7 +70,7 @@ async def check_scheduler_snapshot(
             "detail": "Public active Gamma fallback market" if market.asset == "PUBLIC" else None,
         }
     finally:
-        scheduler.sqlite.close()
+        scheduler.persistence.close()
 
 
 async def check_dashboard_reads(request: ReadonlySmokeRequest) -> DashboardEvidence:
@@ -89,7 +89,7 @@ async def check_dashboard_reads(request: ReadonlySmokeRequest) -> DashboardEvide
             "detail": None if ok else "At least one dashboard read endpoint failed",
         }
     finally:
-        scheduler.sqlite.close()
+        scheduler.persistence.close()
 
 
 def check_safety_scan() -> SafetyEvidence:

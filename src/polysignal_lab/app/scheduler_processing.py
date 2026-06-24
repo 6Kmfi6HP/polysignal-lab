@@ -8,6 +8,22 @@ from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.paper.simulator import SimulationResult
 from polysignal_lab.strategies.readiness import check_strategy_market
 from polysignal_lab.utils import utc_now
+from polysignal_lab.app.services.signal_pipeline import SignalPipeline
+
+
+class _LegacyRejectionPersistence:
+    def __init__(self, scheduler: object) -> None:
+        self.scheduler = scheduler
+
+    def append_log(self, stream: str, payload: object) -> None:
+        self.scheduler.logs.append(stream, payload)
+
+    def insert_rejected_signal(self, rejected: object) -> None:
+        self.scheduler.sqlite.insert_rejected_signal(rejected)
+
+    def insert_strategy_status(self, status: object) -> None:
+        self.scheduler.sqlite.insert_strategy_status(status)
+
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
@@ -34,7 +50,8 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
     accepted: list[SignalCandidate] = []
     for market in scheduler.ctx.markets.active():
         try:
-            snapshot = await scheduler.snapshot_builder.build(market)
+            snapshot_service = getattr(scheduler, "snapshot_service", scheduler.snapshot_builder)
+            snapshot = await snapshot_service.build(market)
         except Exception:
             scheduler.logger.exception(
                 "Failed to build snapshot for market %s", market.market_slug
@@ -51,48 +68,17 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
             snapshot.spot.price if snapshot.spot else "NONE",
             snapshot.max_spread,
         )
-        for strategy in scheduler.strategies:
-            status = check_strategy_market(strategy.readiness, snapshot)
-            if status.status != "active":
-                try:
-                    scheduler.logs.append("strategy_status", status)
-                    scheduler.sqlite.insert_strategy_status(status)
-                except Exception:
-                    scheduler.logger.exception(
-                        "Failed to persist strategy status for market %s strategy %s status %s",
-                        market.market_slug,
-                        strategy.name if hasattr(strategy, "name") else "?",
-                        status.status,
-                    )
-                continue
-            try:
-                for candidate in strategy.evaluate(snapshot):
-                    decision = scheduler.gate.evaluate(candidate, snapshot)
-                    if decision.accepted and decision.signal:
-                        strategy.notify_signal_accepted(decision.signal)
-                        accepted.append(decision.signal)
-                        consensus = scheduler.consensus.add(decision.signal)
-                        if consensus:
-                            accepted.append(consensus)
-                    elif decision.rejected:
-                        strategy.notify_signal_rejected(
-                            decision.rejected.candidate, decision.rejected
-                        )
-                        try:
-                            scheduler.logs.append("rejected_signals", decision.rejected)
-                            scheduler.sqlite.insert_rejected_signal(decision.rejected)
-                        except Exception:
-                            scheduler.logger.exception(
-                                "Failed to persist rejected signal for market %s strategy %s reason %s",
-                                market.market_slug,
-                                strategy.name if hasattr(strategy, "name") else "?",
-                                decision.rejected.reason_code,
-                            )
-            except Exception:
-                scheduler.logger.exception(
-                    "Strategy %s evaluate failed",
-                    strategy.name if hasattr(strategy, "name") else "?",
-                )
+        pipeline = getattr(scheduler, "signal_pipeline", None)
+        if pipeline is None:
+            persistence = getattr(scheduler, "persistence", _LegacyRejectionPersistence(scheduler))
+            pipeline = SignalPipeline(
+                scheduler.strategies,
+                getattr(scheduler, "gate", None),
+                getattr(scheduler, "consensus", None),
+                persistence,
+                logger=scheduler.logger,
+            )
+        accepted.extend(pipeline.evaluate_snapshot(snapshot))
     return accepted
 
 
@@ -110,36 +96,24 @@ async def process_signal(
     )
 
     try:
-        scheduler.logs.append("signals", signal)
-        scheduler.sqlite.insert_signal(signal)
+        scheduler.persistence.append_log("signals", signal)
+        scheduler.persistence.insert_signal(signal)
         result["stored"] = True
     except Exception as exc:
         scheduler.logger.error("Failed to store signal %s: %s", signal.signal_id, exc)
 
     if scheduler.settings.telegram.send_signals:
         try:
-            message = scheduler.formatter.signal_message(
+            publish = await scheduler.publish_service.publish_signal(
                 signal, scheduler.settings.paper_trading.fixed_stake_usdc
             )
-            publish = await scheduler.publisher.send(message, "signal", signal.signal_id)
-            scheduler.logs.append("telegram_publishes", publish.as_dict())
-            scheduler.sqlite.insert_telegram_publish(publish.as_dict())
             result["published"] = True
             result["publish_status"] = publish.status
         except Exception as exc:
             scheduler.logger.error("Failed to publish signal %s: %s", signal.signal_id, exc)
 
     try:
-        book = scheduler.ctx.books.get(signal.token_id)
-        if scheduler.settings.paper_trading.enabled:
-            if book is None:
-                scheduler.logger.warning(
-                    "No order book for token %s (signal %s)",
-                    signal.token_id,
-                    signal.signal_id,
-                )
-            sim = scheduler.paper.process_signal(signal, book)
-            _store_simulation_result(scheduler, sim, result)
+        scheduler.paper_portfolio.process_signal(signal, result)
     except Exception:
         scheduler.logger.exception(
             "Failed to paper-trade signal %s token %s",
@@ -155,17 +129,17 @@ def _store_simulation_result(
     sim: SimulationResult,
     result: ProcessSignalResult,
 ) -> None:
-    scheduler.logs.append("paper_orders", sim.order)
-    scheduler.sqlite.insert_paper_order(sim.order)
+    scheduler.persistence.append_log("paper_orders", sim.order)
+    scheduler.persistence.insert_paper_order(sim.order)
     wallet_snapshot = scheduler.wallet.snapshot()
-    scheduler.logs.append("paper_wallet_snapshots", wallet_snapshot)
-    scheduler.sqlite.insert_wallet_snapshot(wallet_snapshot)
+    scheduler.persistence.append_log("paper_wallet_snapshots", wallet_snapshot)
+    scheduler.persistence.insert_wallet_snapshot(wallet_snapshot)
     result["paper_order"] = sim.order
     if sim.fill and sim.position:
-        scheduler.logs.append("paper_fills", sim.fill)
-        scheduler.logs.append("paper_positions", sim.position)
-        scheduler.sqlite.insert_paper_fill(sim.fill)
-        scheduler.sqlite.upsert_paper_position(sim.position)
+        scheduler.persistence.append_log("paper_fills", sim.fill)
+        scheduler.persistence.append_log("paper_positions", sim.position)
+        scheduler.persistence.insert_paper_fill(sim.fill)
+        scheduler.persistence.upsert_paper_position(sim.position)
         result["paper_fill"] = sim.fill
         result["paper_position"] = sim.position
         scheduler.logger.info(
@@ -222,11 +196,11 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
     for result in results:
         if result.fills:
             for fill in result.fills:
-                scheduler.logs.append("paper_fills", fill)
-                scheduler.sqlite.insert_paper_fill(fill)
+                scheduler.persistence.append_log("paper_fills", fill)
+                scheduler.persistence.insert_paper_fill(fill)
             for position in result.positions:
-                scheduler.logs.append("paper_positions", position)
-                scheduler.sqlite.upsert_paper_position(position)
+                scheduler.persistence.append_log("paper_positions", position)
+                scheduler.persistence.upsert_paper_position(position)
             if scheduler.paper.fill_notifier:
                 scheduler.paper.fill_notifier(result.order, "filled", result.fills[0] if result.fills else None)
         elif result.status == OrderStatus.REJECTED or (
@@ -240,11 +214,11 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
             result.order.metrics["paper_original_reason"] = original_reason
             result.order.metrics["paper_normalized_reason"] = normalized_reason
             result.order.metrics["paper_terminal_at"] = utc_now()
-            scheduler.logs.append("paper_orders", result.order)
-            scheduler.sqlite.upsert_paper_order(result.order)
+            scheduler.persistence.append_log("paper_orders", result.order)
+            scheduler.persistence.upsert_paper_order(result.order)
             wallet_snapshot = scheduler.wallet.snapshot()
-            scheduler.logs.append("paper_wallet_snapshots", wallet_snapshot)
-            scheduler.sqlite.insert_wallet_snapshot(wallet_snapshot)
+            scheduler.persistence.append_log("paper_wallet_snapshots", wallet_snapshot)
+            scheduler.persistence.insert_wallet_snapshot(wallet_snapshot)
             scheduler.logger.info(
                 "Resting paper order %s %s: %s",
                 result.order.paper_order_id,

@@ -16,28 +16,18 @@ async def stop(scheduler: PolySignalScheduler) -> None:
     scheduler.logger.info("Shutting down scheduler")
     scheduler._running = False
 
-    scheduler.poly_ws.stop()
-    scheduler.binance_ws.stop()
+    scheduler._persist_state()
 
-    for task in scheduler._ws_tasks:
-        if not task.done():
-            task.cancel()
-            try:
-                await task
-            except (CancelledError, Exception):
-                pass
+    try:
+        await scheduler.supervisor.stop_all()
+    except Exception:
+        scheduler.logger.exception("Service supervisor shutdown failed")
+
     scheduler._ws_tasks.clear()
     scheduler._market_ws_task = None
     scheduler._binance_ws_task = None
     scheduler._market_ws_token_ids = ()
     scheduler._streams_started = False
-
-    scheduler._persist_state()
-
-    try:
-        scheduler.sqlite.close()
-    except Exception:
-        pass
 
     scheduler.logger.info("Scheduler shutdown complete")
 
@@ -48,15 +38,17 @@ async def run(scheduler: PolySignalScheduler) -> None:
 
     scheduler._validate_telegram_startup()
     scheduler._initialize_trading_components()
-    await scheduler._restore_wallet_state()
-    await scheduler.refresh_markets_once()
-    await scheduler._fetch_resolved_markets()
-    await scheduler.start_websockets()
 
     loop_count = 1
     last_report_date: date | None = None
 
     try:
+        await scheduler.supervisor.start_all()
+        await scheduler._restore_wallet_state()
+        await scheduler.refresh_markets_once()
+        await scheduler._fetch_resolved_markets()
+        await scheduler.start_websockets()
+
         while scheduler._running:
             scheduler.logger.info("=== Run %d ===", loop_count)
 
@@ -148,8 +140,7 @@ async def _process_iteration_signals(
 def _tick_resting_orders(scheduler: PolySignalScheduler) -> None:
     """Poll resting GTD orders for fills/expiry."""
     try:
-        from polysignal_lab.app.scheduler_processing import tick_resting_orders
-        results = tick_resting_orders(scheduler)
+        results = scheduler.paper_portfolio.tick_resting_orders()
         if results:
             filled = sum(1 for r in results if r.fills)
             cancelled = sum(1 for r in results if not r.fills)
