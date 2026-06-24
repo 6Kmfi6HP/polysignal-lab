@@ -75,7 +75,7 @@ class PTBDiffStrategy(BaseStrategy):
 
     @property
     def freshness_policy(self) -> FreshnessPolicy:
-        max_lag_ms = self.config.exit_config.market_data_max_lag_sec * 1000
+        max_lag_ms = round(self.config.exit_config.market_data_max_lag_sec * 1000)
         return FreshnessPolicy(
             max_orderbook_staleness_ms=max_lag_ms,
             max_spot_staleness_ms=max_lag_ms,

@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pre-commit>=4.6.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pre-commit>=4.6.0", "httpx2>=2.4"]
 
 [project.scripts]
 polysignal-lab = "polysignal_lab.app.main:main"
