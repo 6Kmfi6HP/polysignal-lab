@@ -9,6 +9,10 @@ from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
+from polysignal_lab.domain.snapshot_batch import (
+    CrossMarketEvaluationContext,
+    SnapshotBatch,
+)
 from polysignal_lab.paper.simulator import SimulationResult
 from polysignal_lab.strategies.execution import StrategyScheduleEntry
 from polysignal_lab.utils import utc_now
@@ -105,11 +109,16 @@ async def evaluate_candidates_ordered(
     snapshots: list[tuple[int, MarketSnapshot]],
 ) -> list[CandidateEnvelope]:
     envelopes: list[CandidateEnvelope] = []
+    entries = _strategy_schedule(scheduler)
+    per_market_entries = [
+        entry for entry in entries if entry.execution_mode != "cross_market"
+    ]
     for market_index, snapshot in snapshots:
-        entries = _strategy_schedule(scheduler)
-        entry_results: list[list[CandidateEnvelope]] = [[] for _ in entries]
+        entry_results: list[list[CandidateEnvelope]] = [
+            [] for _ in per_market_entries
+        ]
         stateless_tasks: list[tuple[int, asyncio.Task[list[CandidateEnvelope]]]] = []
-        for entry_index, entry in enumerate(entries):
+        for entry_index, entry in enumerate(per_market_entries):
             if entry.execution_mode == "stateless":
                 stateless_tasks.append(
                     (
@@ -129,6 +138,7 @@ async def evaluate_candidates_ordered(
             entry_results[entry_index] = await task
         for result in entry_results:
             envelopes.extend(result)
+    envelopes.extend(_evaluate_cross_market_entries(scheduler, entries, snapshots))
     return envelopes
 
 
@@ -158,6 +168,91 @@ async def _evaluate_stateless_entry(
         scheduler.logger.exception("Strategy %s evaluate failed", entry.name)
         return []
     return _candidate_envelopes(entry, snapshot, market_index, candidates)
+
+def _evaluate_cross_market_entries(
+    scheduler: PolySignalScheduler,
+    entries: list[StrategyScheduleEntry],
+    snapshots: list[tuple[int, MarketSnapshot]],
+) -> list[CandidateEnvelope]:
+    if not snapshots:
+        return []
+    batch = _snapshot_batch(snapshots)
+    snapshots_by_market_id = {
+        snapshot.market.market_id: (market_index, snapshot)
+        for market_index, snapshot in snapshots
+    }
+    envelopes: list[CandidateEnvelope] = []
+    for entry in entries:
+        if entry.execution_mode != "cross_market":
+            continue
+        for context in _cross_market_contexts(entry, batch):
+            try:
+                evaluate_group = getattr(entry.strategy, "evaluate_group")
+                candidates = evaluate_group(context)
+            except Exception:
+                scheduler.logger.exception("Strategy %s evaluate_group failed", entry.name)
+                continue
+            for candidate_index, candidate in enumerate(candidates):
+                market_index, snapshot = snapshots_by_market_id[candidate.market_id]
+                envelopes.append(
+                    CandidateEnvelope(
+                        candidate=candidate,
+                        snapshot=snapshot,
+                        strategy_name=entry.name,
+                        strategy_config_index=entry.strategy_config_index,
+                        market_config_index=market_index,
+                        candidate_index=candidate_index,
+                        strategy=entry.strategy,
+                    )
+                )
+    return envelopes
+
+
+def _snapshot_batch(snapshots: list[tuple[int, MarketSnapshot]]) -> SnapshotBatch:
+    ordered = sorted(snapshots, key=lambda item: item[0])
+    return SnapshotBatch(
+        batch_id=f"batch_{utc_now().strftime('%Y%m%d%H%M%S%f')}",
+        as_of=utc_now(),
+        market_order=tuple(snapshot.market.market_id for _, snapshot in ordered),
+        snapshots={snapshot.market.market_id: snapshot for _, snapshot in ordered},
+        max_source_skew_ms=max(
+            (snapshot.freshness.max_ms or 0 for _, snapshot in ordered),
+            default=0,
+        ),
+    )
+
+
+def _cross_market_contexts(
+    entry: StrategyScheduleEntry, batch: SnapshotBatch
+) -> list[CrossMarketEvaluationContext]:
+    snapshots_by_condition_id = {
+        snapshot.market.condition_id: snapshot for snapshot in batch.snapshots.values()
+    }
+    relations = getattr(entry.strategy, "_relations", ())
+    if not relations:
+        return [
+            CrossMarketEvaluationContext(
+                relation_id="all_markets",
+                snapshots_by_condition_id=snapshots_by_condition_id,
+                batch=batch,
+            )
+        ]
+    contexts: list[CrossMarketEvaluationContext] = []
+    for relation in relations:
+        relation_snapshots = {
+            condition_id: snapshots_by_condition_id[condition_id]
+            for condition_id in relation.condition_ids
+            if condition_id in snapshots_by_condition_id
+        }
+        if relation_snapshots:
+            contexts.append(
+                CrossMarketEvaluationContext(
+                    relation_id=relation.relation_id,
+                    snapshots_by_condition_id=relation_snapshots,
+                    batch=batch,
+                )
+            )
+    return contexts
 
 
 def _candidate_envelopes(

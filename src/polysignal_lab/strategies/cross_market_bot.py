@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.snapshot import MarketSnapshot
+from polysignal_lab.domain.snapshot_batch import CrossMarketEvaluationContext
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.strategies.base import BaseStrategy
 
@@ -199,6 +200,14 @@ class CrossMarketBotStrategy(BaseStrategy):
                 signals.extend(result)
 
         return signals
+
+    def evaluate_group(
+        self, context: CrossMarketEvaluationContext
+    ) -> list[SignalCandidate]:
+        candidates: list[SignalCandidate] = []
+        for snapshot in context.snapshots_by_condition_id.values():
+            candidates.extend(self.evaluate(snapshot))
+        return candidates
 
     # ------------------------------------------------------------------
     # 关系评估
