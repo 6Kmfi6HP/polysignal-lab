@@ -75,6 +75,13 @@ class PaperExecutionPreflight:
         self.fixed_stake_usdc = fixed_stake_usdc
         self.registry = registry
 
+    def _stake_usdc_for_signal(self, signal: SignalCandidate) -> float:
+        contracts = signal.metrics.get("contracts")
+        if isinstance(contracts, int | float) and contracts > 0:
+            return float(contracts) * signal.entry_reference_price
+        return self.fixed_stake_usdc
+
+
     def evaluate(
         self,
         signal: SignalCandidate,
@@ -83,6 +90,8 @@ class PaperExecutionPreflight:
         intent: OrderIntent | None = None,
     ) -> PaperExecutionDecision:
         metrics = self._base_metrics(signal, orderbook, now, intent)
+        stake_usdc = self._stake_usdc_for_signal(signal)
+        metrics["paper_stake_usdc"] = stake_usdc
         if orderbook is None:
             return self._reject("MISSING_ORDERBOOK", metrics)
         malformed = self._malformed_book_reason(signal, orderbook)
@@ -111,7 +120,7 @@ class PaperExecutionPreflight:
             return self._reject("SLIPPAGE_EXCEEDS_MAX_ENTRY", metrics)
         if intent == OrderIntent.TAKER_FOK:
             metrics["paper_depth_revalidated"] = True
-            if float(metrics["paper_available_depth_usdc"] or 0.0) < self.fixed_stake_usdc:
+            if float(metrics["paper_available_depth_usdc"] or 0.0) < stake_usdc:
                 return self._reject("FOK_INSUFFICIENT_DEPTH", metrics)
         elif intent == OrderIntent.TAKER_FAK:
             metrics["paper_depth_revalidated"] = True
@@ -125,7 +134,7 @@ class PaperExecutionPreflight:
         elif self.fill_model.require_depth_check:
             metrics["paper_depth_revalidated"] = True
             available = float(metrics["paper_available_depth_usdc"] or 0.0)
-            fill_ratio = min(1.0, available / self.fixed_stake_usdc) if self.fixed_stake_usdc else 0.0
+            fill_ratio = min(1.0, available / stake_usdc) if stake_usdc else 0.0
             metrics["paper_depth_fill_ratio"] = fill_ratio
             if fill_ratio < self.fill_model.min_fill_ratio and self.fill_model.reject_if_partial:
                 return self._reject("INSUFFICIENT_DEPTH", metrics)
@@ -152,7 +161,7 @@ class PaperExecutionPreflight:
             "paper_orderbook_token_id": orderbook.token_id if orderbook is not None else None,
             "paper_signal_token_id": signal.token_id,
             "paper_limit_price": signal.max_entry_price,
-            "paper_stake_usdc": self.fixed_stake_usdc,
+            "paper_stake_usdc": self._stake_usdc_for_signal(signal),
         }
 
     def _reject(

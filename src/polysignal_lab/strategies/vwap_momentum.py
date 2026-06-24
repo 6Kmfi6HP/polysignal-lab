@@ -229,8 +229,10 @@ class VWAPMomentumStrategy(BaseStrategy):
             elapsed_sec = dt_duration - seconds_to_close
 
         # ------------------------------------------------------------------
-        # Feed prices from this snapshot (使用 ask 价格而非 ltp)
-        # 原版用 WS trade stream 的 last_price, 我们 REST 环境改用 ask
+        # Feed prices from this snapshot.
+        # Reference bot uses CLOB last_trade_price for VWAP/momentum inputs;
+        # best_ask remains execution data and must not decide indicator state
+        # when a last trade is available.
         # ------------------------------------------------------------------
         now_ts = snapshot.created_at.timestamp()
         pushed_samples: list[tuple[str, float, float, float]] = []
@@ -238,9 +240,7 @@ class VWAPMomentumStrategy(BaseStrategy):
             book = snapshot.book_for(side)
             if book is None:
                 continue
-            # 用 best_ask 作为 "当前价格" (PolyBullLabs VWAP 用 last_trade_price,
-            # 但 REST 模式下 best_ask 是更可靠的实时价格源)
-            price = book.best_ask if book.best_ask is not None else book.last_trade_price
+            price = book.last_trade_price if book.last_trade_price is not None else book.best_ask
             if price is not None and price > 0:
                 key = self._market_key(snapshot.market.market_id, side)
                 size = 1.0

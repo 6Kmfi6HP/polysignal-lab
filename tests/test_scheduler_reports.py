@@ -72,7 +72,7 @@ async def test_paper_exit_publish_record_written(tmp_path: Path, snapshot, setti
     processed = await scheduler.process_signal(signal)
     assert processed["paper_position"] is not None
     scheduler.ctx.books.update(
-        sample_book(signal.token_id, BookFactoryConfig(ask=0.94, bid=0.91, size=500))
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.97, bid=0.95, size=500))
     )
 
     # When: scheduler reporting checks settlements/exits.
@@ -117,7 +117,7 @@ async def test_paper_exit_storage_failure_rolls_back_and_returns_no_success(
     cash_before = scheduler.wallet.cash_balance
     realized_before = scheduler.wallet.realized_pnl
     scheduler.ctx.books.update(
-        sample_book(signal.token_id, BookFactoryConfig(ask=0.94, bid=0.91, size=500))
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.97, bid=0.95, size=500))
     )
 
     def fail_insert_trade_result(result: PaperTradeResult) -> None:
@@ -157,7 +157,7 @@ async def test_paper_exit_publish_timeout_keeps_durable_closed_result(
     assert processed["paper_position"] is not None
     position = processed["paper_position"]
     scheduler.ctx.books.update(
-        sample_book(signal.token_id, BookFactoryConfig(ask=0.94, bid=0.91, size=500))
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.97, bid=0.95, size=500))
     )
 
     async def timeout_publish(result: PaperTradeResult) -> None:
@@ -235,7 +235,7 @@ async def test_paper_exit_publish_row_failure_keeps_durable_closed_result(
     assert processed["paper_position"] is not None
     position = processed["paper_position"]
     scheduler.ctx.books.update(
-        sample_book(signal.token_id, BookFactoryConfig(ask=0.94, bid=0.91, size=500))
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.97, bid=0.95, size=500))
     )
 
     def fail_insert_publish(publish: dict[str, str | None]) -> None:

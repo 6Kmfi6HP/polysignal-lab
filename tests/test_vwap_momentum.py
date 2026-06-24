@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from statistics import mean
 from types import SimpleNamespace
 
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
@@ -71,11 +70,11 @@ def _snapshot_for(scenario: VwapScenario, price: float, previous_snapshots: list
     up_book = sample_book(
         market.token_for(Side.UP).token_id,
         BookFactoryConfig(ask=up_ask, bid=up_ask - scenario.spread, size=500),
-    ).model_copy(update={"received_at": received_at})
+    ).model_copy(update={"received_at": received_at, "last_trade_price": up_ask})
     down_book = sample_book(
         market.token_for(Side.DOWN).token_id,
         BookFactoryConfig(ask=down_ask, bid=down_ask - scenario.spread, size=500),
-    ).model_copy(update={"received_at": received_at})
+    ).model_copy(update={"received_at": received_at, "last_trade_price": down_ask})
     snapshot_id = stable_hash(market.market_id, scenario.side.value, str(price), str(created_at.timestamp()))
     return MarketSnapshot(
         snapshot_id=f"snap_{snapshot_id}",

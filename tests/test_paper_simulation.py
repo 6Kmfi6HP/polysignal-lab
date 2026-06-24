@@ -234,7 +234,7 @@ async def test_exit_engine_take_profit(snapshot, books, settings):
     wallet = PaperWallet(starting_balance=1000)
     sim = PaperSimulator(settings.paper_trading, settings.data.polymarket, wallet)
     sim_result = sim.process_signal(sig, books.get(sig.token_id))
-    high_bid_book = sample_book(sig.token_id, BookFactoryConfig(ask=0.95, bid=0.91, size=100))
+    high_bid_book = sample_book(sig.token_id, BookFactoryConfig(ask=0.97, bid=0.95, size=100))
     result = PaperExitEngine(settings.paper_trading.exit_model, wallet).evaluate(sim_result.position, high_bid_book)
     assert result is not None
     assert result.result == TradeResultStatus.WIN

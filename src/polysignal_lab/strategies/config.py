@@ -105,7 +105,7 @@ class PTBExitConfig(BaseModel):
     stop_loss_prob_pct: float = 0.15
     take_profit_rr: float = 1.0
     take_profit_cap: float = 0.99
-    market_data_max_lag_sec: int = 1
+    market_data_max_lag_sec: float = 1.0
 
 
 class PTBDiffConfig(BaseModel):

@@ -115,4 +115,4 @@ async def test_enabled_crypto_price_api_uses_market_asset_and_timeframe_variant(
     assert result.value == 123.45
     assert result.source == "crypto_price_api"
     assert client.calls[0][1]["symbol"] == "ETH"
-    assert client.calls[0][1]["variant"] == "fiveminute"
+    assert client.calls[0][1]["variant"] == "fifteen"

@@ -60,6 +60,12 @@ class PaperSimulator:
         self.pair_coordinator = MultiLegCoordinator()
         self.fill_notifier: Callable[[PaperOrder, str, PaperFill | None], None] | None = None
 
+    def _stake_usdc_for_signal(self, signal: SignalCandidate) -> float:
+        contracts = signal.metrics.get("contracts")
+        if isinstance(contracts, int | float) and contracts > 0:
+            return float(contracts) * signal.entry_reference_price
+        return self.config.fixed_stake_usdc
+
     def build_paper_order(self, signal: SignalCandidate) -> PaperOrder:
         return PaperOrder(
             signal_id=signal.signal_id,
@@ -72,8 +78,9 @@ class PaperSimulator:
             side=signal.side,
             limit_price=signal.max_entry_price,
             reference_price=signal.entry_reference_price,
-            stake_usdc=self.config.fixed_stake_usdc,
+            stake_usdc=self._stake_usdc_for_signal(signal),
             signal_confidence=signal.confidence,
+            metrics={**signal.metrics, "signal_metrics": dict(signal.metrics)},
         )
 
     def process_signal(self, signal: SignalCandidate, orderbook: OrderBook | None) -> SimulationResult:
@@ -132,6 +139,7 @@ class PaperSimulator:
             shares=fill.shares,
             stake_usdc=fill.stake_usdc,
             signal_confidence=signal.confidence,
+            signal_metrics=dict(signal.metrics),
         )
         self.wallet.apply_fill(position)
         order.status = OrderStatus.FILLED

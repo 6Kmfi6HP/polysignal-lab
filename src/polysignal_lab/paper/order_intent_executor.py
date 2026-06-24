@@ -127,6 +127,7 @@ class BestAskTakerExecutor:
             shares=shares,
             stake_usdc=order.stake_usdc,
             signal_confidence=order.signal_confidence,
+            signal_metrics=dict(order.metrics.get("signal_metrics") or {}),
         )
         order.status = OrderStatus.FILLED
         return IntentDispatchResult(order=order, fills=[fill], positions=[position], status=OrderStatus.FILLED)
@@ -177,6 +178,7 @@ class BestAskTakerExecutor:
             token_id=order.token_id, side=order.side,
             entry_price=fill_price_with_slippage, shares=shares, stake_usdc=filled_usdc,
             signal_confidence=order.signal_confidence,
+            signal_metrics=dict(order.metrics.get("signal_metrics") or {}),
         )
         status = OrderStatus.FILLED if fill_ratio >= 0.999 else OrderStatus.PARTIAL
         order.status = status
@@ -212,6 +214,7 @@ class BestAskTakerExecutor:
             token_id=order.token_id, side=order.side,
             entry_price=fill_price, shares=shares, stake_usdc=order.stake_usdc,
             signal_confidence=order.signal_confidence,
+            signal_metrics=dict(order.metrics.get("signal_metrics") or {}),
         )
         order.status = OrderStatus.FILLED
         return IntentDispatchResult(order=order, fills=[fill], positions=[position], status=OrderStatus.FILLED)
@@ -351,6 +354,7 @@ class PassiveGtdExecutor:
                             shares=resting.order.stake_usdc / resting.limit_price,
                             stake_usdc=resting.order.stake_usdc,
                             signal_confidence=resting.order.signal_confidence,
+                            signal_metrics=dict(resting.order.metrics.get("signal_metrics") or {}),
                         )
                         wallet.apply_fill(position)
                         resting.order.status = OrderStatus.FILLED

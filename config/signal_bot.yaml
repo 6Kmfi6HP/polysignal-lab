@@ -156,22 +156,36 @@ strategies:
     require_verified_ptb_source: true
     max_spread: 0.08
     triggers:
-      - name: strong_up_late
+      - name: r1_up
         side: UP
-        min_diff_usd: 80
-        max_token_price: 0.78
-        min_probability_edge: 0.08
-        min_seconds_to_close: 30
-        max_seconds_to_close: 180
-      - name: strong_down_late
+        min_diff_usd: 30
+        max_token_price: 0.92
+        min_token_price: 0.80
+        min_seconds_to_close: 0
+        max_seconds_to_close: 120
+      - name: r2_down
         side: DOWN
-        min_diff_usd: 80
-        max_token_price: 0.78
-        min_probability_edge: 0.08
-        min_seconds_to_close: 30
-        max_seconds_to_close: 180
+        min_diff_usd: 30
+        max_token_price: 0.92
+        min_token_price: 0.80
+        min_seconds_to_close: 0
+        max_seconds_to_close: 120
+      - name: r3_up
+        side: UP
+        min_diff_usd: 50
+        max_token_price: 0.92
+        min_token_price: 0.80
+        min_seconds_to_close: 0
+        max_seconds_to_close: 60
+      - name: r4_down
+        side: DOWN
+        min_diff_usd: 50
+        max_token_price: 0.92
+        min_token_price: 0.80
+        min_seconds_to_close: 0
+        max_seconds_to_close: 60
     exit_config:
-      stop_loss_prob_pct: 0.20
-      take_profit_rr: 3.0
-      take_profit_cap: 0.95
-      market_data_max_lag_sec: 2
+      stop_loss_prob_pct: 0.15
+      take_profit_rr: 1.0
+      take_profit_cap: 0.99
+      market_data_max_lag_sec: 1.2

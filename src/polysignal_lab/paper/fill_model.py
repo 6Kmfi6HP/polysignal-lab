@@ -60,13 +60,16 @@ class BestAskTakerFillModel:
             return FillDecision(False, reason_code="MALFORMED_ORDERBOOK")
         if fill_price > order.limit_price:
             return FillDecision(False, reason_code="SLIPPAGE_EXCEEDS_MAX_ENTRY")
+        target_contracts = order.metrics.get("contracts")
+        shares = float(target_contracts) if isinstance(target_contracts, int | float) and target_contracts > 0 else None
+        stake_usdc = shares * fill_price if shares is not None else order.stake_usdc
         available = None
         if self.config.require_depth_check:
             available = orderbook.depth_until(order.limit_price)
-            ratio = min(1.0, available / order.stake_usdc) if order.stake_usdc else 0.0
+            ratio = min(1.0, available / stake_usdc) if stake_usdc else 0.0
             if ratio < self.config.min_fill_ratio and self.config.reject_if_partial:
                 return FillDecision(False, reason_code="INSUFFICIENT_DEPTH", available_depth_usdc=available)
-        shares = order.stake_usdc / fill_price
+        shares = shares if shares is not None else stake_usdc / fill_price
         fill = PaperFill(
             paper_order_id=order.paper_order_id,
             signal_id=order.signal_id,
@@ -75,7 +78,7 @@ class BestAskTakerFillModel:
             raw_best_ask=raw,
             slippage_bps=self.config.slippage_bps,
             fill_price=fill_price,
-            stake_usdc=order.stake_usdc,
+            stake_usdc=stake_usdc,
             shares=shares,
             depth_checked=self.config.require_depth_check,
             available_depth_usdc=available,

@@ -104,7 +104,8 @@ class PriceToBeatProvider:
         """Fetch PTB from Polymarket's web crypto-price API.
 
         GET https://polymarket.com/api/crypto/crypto-price
-          ?symbol={asset}&eventStartTime={ISO}&variant={fiveminute|fifteen}&endDate={ISO}
+          ?symbol={asset}&eventStartTime={ISO}&variant={fifteen}&endDate={ISO}
+        Reference PTB bot uses "fifteen" for both 5m and 15m windows.
         """
         event_start_time = market.raw.get("eventStartTime") or market.raw.get("event_start_time")
         end_date = market.raw.get("endDate") or market.raw.get("end_date")
@@ -148,7 +149,7 @@ class PriceToBeatProvider:
             return None
 
     def _variant_for(self, timeframe: str) -> str:
-        return "fiveminute" if timeframe == "5m" else "fifteen"
+        return "fifteen"
 
     def _extract_from_raw(self, raw: dict[str, Any]) -> float | None:
         for key in ["priceToBeat", "price_to_beat", "priceToBeatValue", "strikePrice", "targetPrice"]:
