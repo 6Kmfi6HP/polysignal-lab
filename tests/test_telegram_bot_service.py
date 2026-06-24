@@ -486,3 +486,50 @@ def test_telegram_bot_status_includes_health_wallet_counts_and_disabled_strategi
     assert "Wallet      987.50 USDC equity" in text
     assert "Signals     142 accepted / 91 rejected" in text
     assert "Strategies  1/2 enabled" in text
+
+def test_telegram_bot_strategies_menu_uses_short_callback_data() -> None:
+    persistence = _FormattingPersistence()
+    service = _formatting_service(persistence)
+    service.signal_pipeline.strategies = [
+        SimpleNamespace(name="vwap_momentum"),
+        SimpleNamespace(name="late_consensus"),
+        SimpleNamespace(name="x" * 70),
+    ]
+
+    text = service._format_strategies()
+    keyboard = service._strategies_keyboard()
+
+    assert "✅ vwap_momentum" in text
+    assert "✅ late_consensus" in text
+    assert "cannot be toggled from Telegram" in text
+    values = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert "tg:vwap_momentum" in values
+    assert "tg:late_consensus" in values
+    assert all(len(value.encode("utf-8")) <= 64 for value in values)
+    assert "tg:" + "x" * 70 not in values
+
+
+def test_telegram_bot_strategy_toggle_persists_state_and_event() -> None:
+    persistence = _FormattingPersistence()
+    service = _formatting_service(persistence)
+    service.signal_pipeline.strategies = [SimpleNamespace(name="vwap_momentum")]
+
+    text, keyboard = service._toggle_strategy("tg:vwap_momentum")
+
+    assert "⏸ vwap_momentum" in text
+    assert "vwap_momentum" in service.signal_pipeline.disabled_strategies
+    assert persistence.state["telegram_disabled_strategies"] == ["vwap_momentum"]
+    event = persistence.state["last_event"]
+    assert event["event_type"] == "strategy_toggle"
+    assert event["strategy"] == "vwap_momentum"
+    assert event["enabled"] is False
+    assert isinstance(keyboard, InlineKeyboardMarkup)
+
+
+def test_telegram_bot_strategy_toggle_rejects_unknown_strategy() -> None:
+    persistence = _FormattingPersistence()
+    service = _formatting_service(persistence)
+    service.signal_pipeline.strategies = [SimpleNamespace(name="vwap_momentum")]
+
+    with pytest.raises(ValueError, match="Unknown strategy"):
+        service._toggle_strategy("tg:not_real")

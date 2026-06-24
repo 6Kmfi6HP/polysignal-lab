@@ -369,14 +369,66 @@ class TelegramBotService:
                 ]
             )
 
+    def _strategy_names(self) -> list[str]:
+        return [
+            str(getattr(strategy, "name", ""))
+            for strategy in self.signal_pipeline.strategies
+            if getattr(strategy, "name", "")
+        ]
+
+    def _toggle_callback_for(self, name: str) -> str | None:
+        data = f"tg:{name}"
+        return data if len(data.encode("utf-8")) <= 64 else None
+
     def _format_strategies(self) -> str:
-        return "⚙️ Strategies"
+        lines = ["⚙️ Strategies"]
+        for name in self._strategy_names():
+            enabled = self.signal_pipeline.is_strategy_enabled(name)
+            prefix = "✅" if enabled else "⏸"
+            suffix = ""
+            if self._toggle_callback_for(name) is None:
+                suffix = " (cannot be toggled from Telegram)"
+            reason = self.signal_pipeline.skip_reason_for(name)
+            if reason and reason.startswith("dependency_disabled:"):
+                suffix = f" ({reason})"
+            lines.append(f"{prefix} {self._safe(name)}{suffix}")
+        return "\n".join(lines)
 
     def _strategies_keyboard(self) -> InlineKeyboardMarkup:
-        return self._back_keyboard()
+        rows: list[list[InlineKeyboardButton]] = []
+        for name in self._strategy_names():
+            callback_data = self._toggle_callback_for(name)
+            if callback_data is None:
+                continue
+            enabled = self.signal_pipeline.is_strategy_enabled(name)
+            label = f"{'⏸' if enabled else '▶️'} {name}"
+            rows.append([InlineKeyboardButton(label, callback_data=callback_data)])
+        rows.append([InlineKeyboardButton("⬅️ 返回", callback_data="bk")])
+        return InlineKeyboardMarkup(rows)
 
     def _toggle_strategy(self, data: str) -> tuple[str, InlineKeyboardMarkup | None]:
-        raise ValueError("Unknown strategy")
+        if not data.startswith("tg:"):
+            raise ValueError("Unknown strategy")
+        name = data[3:]
+        names = set(self._strategy_names())
+        if name not in names:
+            raise ValueError("Unknown strategy")
+        enabled = not self.signal_pipeline.is_strategy_enabled(name)
+        self.signal_pipeline.set_strategy_enabled(name, enabled)
+        disabled = sorted(self.signal_pipeline.disabled_strategies)
+        self.persistence.write_state("telegram_disabled_strategies", disabled)
+        self.persistence.insert_system_event(
+            {
+                "event_id": new_id("strategy_toggle"),
+                "event_type": "strategy_toggle",
+                "severity": "INFO",
+                "created_at": utc_iso(),
+                "strategy": name,
+                "enabled": enabled,
+                "disabled_strategies": disabled,
+            }
+        )
+        return self._format_strategies(), self._strategies_keyboard()
 
     def _main_keyboard(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(

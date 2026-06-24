@@ -233,7 +233,14 @@ class PolySignalScheduler:
             return
         self.strategy_schedule = build_strategy_schedule(self.settings.strategies)
         self.strategies = [entry.strategy for entry in self.strategy_schedule]
-        self.signal_pipeline.strategies = self.strategies
+        self.signal_pipeline.set_strategy_dependencies(
+            {entry.name: tuple(entry.depends_on) for entry in self.strategy_schedule}
+        )
+        known_strategy_names = {entry.name for entry in self.strategy_schedule}
+        disabled = self.persistence.read_state("telegram_disabled_strategies", default=[])
+        for name in disabled if isinstance(disabled, list) else []:
+            if name in known_strategy_names:
+                self.signal_pipeline.set_strategy_enabled(str(name), False)
         self.arbiter = SignalArbiter()
         self.wallet = PaperWallet(self.settings.paper_trading.starting_balance_usdc)
         self.paper = PaperSimulator(
