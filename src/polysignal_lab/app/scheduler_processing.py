@@ -96,24 +96,88 @@ def evaluate_candidates_serial(
     envelopes: list[CandidateEnvelope] = []
     for market_index, snapshot in snapshots:
         for entry in _strategy_schedule(scheduler):
-            try:
-                candidates = entry.strategy.evaluate(snapshot)
-            except Exception:
-                scheduler.logger.exception("Strategy %s evaluate failed", entry.name)
-                continue
-            for candidate_index, candidate in enumerate(candidates):
-                envelopes.append(
-                    CandidateEnvelope(
-                        candidate=candidate,
-                        snapshot=snapshot,
-                        strategy_name=entry.name,
-                        strategy_config_index=entry.strategy_config_index,
-                        market_config_index=market_index,
-                        candidate_index=candidate_index,
-                        strategy=entry.strategy,
+            envelopes.extend(_evaluate_entry_serial(scheduler, entry, snapshot, market_index))
+    return envelopes
+
+
+async def evaluate_candidates_ordered(
+    scheduler: PolySignalScheduler,
+    snapshots: list[tuple[int, MarketSnapshot]],
+) -> list[CandidateEnvelope]:
+    envelopes: list[CandidateEnvelope] = []
+    for market_index, snapshot in snapshots:
+        entries = _strategy_schedule(scheduler)
+        entry_results: list[list[CandidateEnvelope]] = [[] for _ in entries]
+        stateless_tasks: list[tuple[int, asyncio.Task[list[CandidateEnvelope]]]] = []
+        for entry_index, entry in enumerate(entries):
+            if entry.execution_mode == "stateless":
+                stateless_tasks.append(
+                    (
+                        entry_index,
+                        asyncio.create_task(
+                            _evaluate_stateless_entry(
+                                scheduler, entry, snapshot, market_index
+                            )
+                        ),
                     )
                 )
+            elif entry.execution_mode == "stateful":
+                entry_results[entry_index] = _evaluate_entry_serial(
+                    scheduler, entry, snapshot, market_index
+                )
+        for entry_index, task in stateless_tasks:
+            entry_results[entry_index] = await task
+        for result in entry_results:
+            envelopes.extend(result)
     return envelopes
+
+
+def _evaluate_entry_serial(
+    scheduler: PolySignalScheduler,
+    entry: StrategyScheduleEntry,
+    snapshot: MarketSnapshot,
+    market_index: int,
+) -> list[CandidateEnvelope]:
+    try:
+        candidates = entry.strategy.evaluate(snapshot)
+    except Exception:
+        scheduler.logger.exception("Strategy %s evaluate failed", entry.name)
+        return []
+    return _candidate_envelopes(entry, snapshot, market_index, candidates)
+
+
+async def _evaluate_stateless_entry(
+    scheduler: PolySignalScheduler,
+    entry: StrategyScheduleEntry,
+    snapshot: MarketSnapshot,
+    market_index: int,
+) -> list[CandidateEnvelope]:
+    try:
+        candidates = await asyncio.to_thread(entry.strategy.evaluate, snapshot)
+    except Exception:
+        scheduler.logger.exception("Strategy %s evaluate failed", entry.name)
+        return []
+    return _candidate_envelopes(entry, snapshot, market_index, candidates)
+
+
+def _candidate_envelopes(
+    entry: StrategyScheduleEntry,
+    snapshot: MarketSnapshot,
+    market_index: int,
+    candidates: list[SignalCandidate],
+) -> list[CandidateEnvelope]:
+    return [
+        CandidateEnvelope(
+            candidate=candidate,
+            snapshot=snapshot,
+            strategy_name=entry.name,
+            strategy_config_index=entry.strategy_config_index,
+            market_config_index=market_index,
+            candidate_index=candidate_index,
+            strategy=entry.strategy,
+        )
+        for candidate_index, candidate in enumerate(candidates)
+    ]
 
 
 def commit_candidates_serial(
@@ -150,7 +214,7 @@ def commit_candidates_serial(
 async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]:
     markets = scheduler.ctx.markets.active()
     snapshots = await build_snapshots_bounded(scheduler, markets)
-    envelopes = evaluate_candidates_serial(scheduler, snapshots)
+    envelopes = await evaluate_candidates_ordered(scheduler, snapshots)
     envelopes = _arbitrate_envelopes(scheduler, envelopes)
     return commit_candidates_serial(scheduler, envelopes)
 

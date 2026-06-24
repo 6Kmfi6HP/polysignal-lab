@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -62,3 +63,38 @@ async def test_snapshot_building_uses_bounded_concurrency() -> None:
     await scheduler.evaluate_once()
 
     assert peak == 2
+
+
+async def test_stateless_strategies_run_in_parallel_ready_set() -> None:
+    snapshot = _snapshot("BTC", "5m")
+    strategies = [_FakeStrategy(name, {}) for name in ("fast_a", "fast_b", "fast_c")]
+    scheduler = _FakeScheduler(
+        [snapshot],
+        [
+            StrategyScheduleEntry(
+                strategy=strategy,
+                name=strategy.name,
+                priority=100,
+                depends_on=(),
+                execution_mode="stateless",
+                strategy_config_index=index,
+            )
+            for index, strategy in enumerate(strategies)
+        ],
+    )
+    started: list[str] = []
+
+    def slow_evaluate(name: str):
+        started.append(name)
+        time.sleep(0.05)
+        return []
+
+    for entry in scheduler.strategy_schedule:
+        entry.strategy.evaluate = lambda snapshot, name=entry.name: slow_evaluate(name)
+
+    start = time.perf_counter()
+    await scheduler.evaluate_once()
+    elapsed = time.perf_counter() - start
+
+    assert set(started) == {entry.name for entry in scheduler.strategy_schedule}
+    assert elapsed < 0.11
