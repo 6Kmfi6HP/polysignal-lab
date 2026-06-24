@@ -65,16 +65,6 @@ def test_strategy_factory_builds_default_configured_strategies() -> None:
         "vwap_momentum",
         "late_consensus",
         "ptb_diff",
-        "binary_momentum",
-        "cross_market_bot",
-        "dump_hedge",
-        "fibonacci_bot",
-        "low_side_dual_reversion",
-        "mid_price_sizing",
-        "ninety_nine_cent_sniper",
-        "one_cent_buy",
-        "pre_order_market",
-        "skew_mean_reversion",
     ]
     assert single_strategy_names == strategy_names
 
@@ -211,3 +201,31 @@ def test_prd_result_states_exclude_partial_settlement() -> None:
     result_states = {result.value for result in TradeResultStatus}
 
     assert result_states == {"WIN", "LOSS", "VOID", "UNKNOWN"}
+
+
+def test_production_config_uses_reviewed_strategy_subset() -> None:
+    settings = Settings.from_yaml("config/signal_bot.yaml")
+    names = [strategy.name for strategy in build_strategies(settings.strategies)]
+
+    assert names == ["vwap_momentum", "late_consensus", "ptb_diff"]
+
+
+def test_lab_config_preserves_experimental_strategy_breadth() -> None:
+    settings = Settings.from_yaml("config/signal_bot.lab.yaml")
+    names = {strategy.name for strategy in build_strategies(settings.strategies)}
+
+    assert names == {
+        "vwap_momentum",
+        "late_consensus",
+        "ptb_diff",
+        "binary_momentum",
+        "cross_market_bot",
+        "dump_hedge",
+        "fibonacci_bot",
+        "low_side_dual_reversion",
+        "mid_price_sizing",
+        "ninety_nine_cent_sniper",
+        "one_cent_buy",
+        "pre_order_market",
+        "skew_mean_reversion",
+    }

@@ -17,6 +17,7 @@ from polysignal_lab.storage.sqlite_store import DuplicateRecordError, SQLiteStor
 from polysignal_lab.storage.sqlite_schema import SchemaValidationError
 from polysignal_lab.storage.state_store import StateStore
 from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
+from polysignal_lab.strategies.readiness import StrategyMarketStatus
 from factories import sample_storage_lifecycle
 
 
@@ -184,6 +185,30 @@ def test_sqlite_verified_anchor_survives_later_unverified_upsert(tmp_path) -> No
 
     loaded = store.get_verified_anchor_price("btc", "5m", "btc-updown-5m-1782216000")
     assert loaded == verified_anchor
+
+
+def test_sqlite_store_persists_strategy_status_rows(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "db.sqlite3")
+    status = StrategyMarketStatus(
+        strategy="ptb_diff",
+        asset="ETH",
+        timeframe="5m",
+        status="unsupported_market",
+        reason="UNSUPPORTED_ASSET",
+    )
+
+    store.insert_strategy_status(status)
+
+    rows = store.query_json("strategy_status", limit=10)
+    assert rows == [
+        {
+            "strategy": "ptb_diff",
+            "asset": "ETH",
+            "timeframe": "5m",
+            "status": "unsupported_market",
+            "reason": "UNSUPPORTED_ASSET",
+        }
+    ]
 
 
 def test_duplicate_ids_are_idempotent_or_reported(tmp_path, snapshot, settings):

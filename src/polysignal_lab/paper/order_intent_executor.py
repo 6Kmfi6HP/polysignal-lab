@@ -9,7 +9,7 @@ from math import isfinite
 
 from polysignal_lab.config import FillModelConfig
 from polysignal_lab.data.state import OrderBookRegistry
-from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side
+from polysignal_lab.domain.enums import OrderIntent, OrderStatus
 from polysignal_lab.domain.orderbook import OrderBook
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
@@ -126,6 +126,7 @@ class BestAskTakerExecutor:
             entry_price=fill_price,
             shares=shares,
             stake_usdc=order.stake_usdc,
+            signal_confidence=order.signal_confidence,
         )
         order.status = OrderStatus.FILLED
         return IntentDispatchResult(order=order, fills=[fill], positions=[position], status=OrderStatus.FILLED)
@@ -175,6 +176,7 @@ class BestAskTakerExecutor:
             market_id=order.market_id, market_slug=order.market_slug,
             token_id=order.token_id, side=order.side,
             entry_price=fill_price_with_slippage, shares=shares, stake_usdc=filled_usdc,
+            signal_confidence=order.signal_confidence,
         )
         status = OrderStatus.FILLED if fill_ratio >= 0.999 else OrderStatus.PARTIAL
         order.status = status
@@ -209,6 +211,7 @@ class BestAskTakerExecutor:
             market_id=order.market_id, market_slug=order.market_slug,
             token_id=order.token_id, side=order.side,
             entry_price=fill_price, shares=shares, stake_usdc=order.stake_usdc,
+            signal_confidence=order.signal_confidence,
         )
         order.status = OrderStatus.FILLED
         return IntentDispatchResult(order=order, fills=[fill], positions=[position], status=OrderStatus.FILLED)
@@ -347,6 +350,7 @@ class PassiveGtdExecutor:
                             entry_price=resting.limit_price,
                             shares=resting.order.stake_usdc / resting.limit_price,
                             stake_usdc=resting.order.stake_usdc,
+                            signal_confidence=resting.order.signal_confidence,
                         )
                         wallet.apply_fill(position)
                         resting.order.status = OrderStatus.FILLED

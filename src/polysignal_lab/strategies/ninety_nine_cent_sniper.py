@@ -17,6 +17,7 @@ from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy
+from polysignal_lab.strategies.readiness import StrategyReadiness
 
 
 @dataclass
@@ -66,6 +67,18 @@ class NinetyNineCentSniperStrategy(BaseStrategy):
     def reset(self) -> None:
         """重置状态（测试用）"""
         self._sniped_markets.clear()
+
+    @property
+    def readiness(self) -> StrategyReadiness:
+        return StrategyReadiness(
+            name=self.name,
+            production_enabled=bool(self.config.enabled),
+            supported_assets=("BTC", "ETH", "SOL", "XRP"),
+            supported_timeframes=("5m", "15m"),
+            required_fields=("up_book", "down_book", "market_end_ts"),
+            calibration_required=True,
+            calibration_status="unknown",
+        )
 
     def _get_external_probability(
         self, snapshot: MarketSnapshot, side: Side

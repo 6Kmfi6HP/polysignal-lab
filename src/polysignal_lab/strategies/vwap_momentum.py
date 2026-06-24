@@ -9,6 +9,7 @@ from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.domain.trade import Trade
 from polysignal_lab.strategies.base import BaseStrategy
+from polysignal_lab.strategies.readiness import StrategyReadiness
 
 
 class TradeHistory:
@@ -169,6 +170,18 @@ class VWAPMomentumStrategy(BaseStrategy):
         return FreshnessPolicy(
             max_orderbook_staleness_ms=self.config.max_orderbook_staleness_ms,
             max_spot_staleness_ms=self.config.max_spot_staleness_ms,
+        )
+
+    @property
+    def readiness(self) -> StrategyReadiness:
+        return StrategyReadiness(
+            name=self.name,
+            production_enabled=bool(self.config.enabled),
+            supported_assets=tuple(asset.upper() for asset in self.config.assets),
+            supported_timeframes=tuple(self.config.timeframes),
+            required_fields=("up_book", "down_book", "spot", "market_end_ts"),
+            calibration_required=False,
+            calibration_status="calibrated",
         )
 
     # ------------------------------------------------------------------

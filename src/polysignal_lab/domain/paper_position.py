@@ -24,6 +24,7 @@ class PaperPosition(BaseModel):
     entry_price: float
     shares: float
     stake_usdc: float
+    signal_confidence: float | None = None
     opened_at: datetime = Field(default_factory=utc_now)
     status: PositionStatus = PositionStatus.OPEN
     closed_at: datetime | None = None

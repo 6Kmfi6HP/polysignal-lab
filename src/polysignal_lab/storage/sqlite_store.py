@@ -17,7 +17,7 @@ from polysignal_lab.storage.sqlite_schema import (
     TABLE_DDL_STATEMENTS,
     validate_sqlite_schema,
 )
-from polysignal_lab.utils import to_jsonable, utc_iso
+from polysignal_lab.utils import stable_hash, to_jsonable, utc_iso
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +162,33 @@ class SQLiteStore:
                 p["rejected_id"],
                 ("rejected_id", "signal_id", "reason_code", "gate_name", "rejected_at", "payload_json"),
                 (p["rejected_id"], p["candidate"]["signal_id"], p["reason_code"], p["gate_name"], p["rejected_at"], self._json(p)),
+            )
+
+    def insert_strategy_status(self, status: Any) -> None:
+        p = to_jsonable(status)
+        created_at = utc_iso()
+        status_id = stable_hash(
+            p["strategy"],
+            p["asset"],
+            p["timeframe"],
+            p["status"],
+            p.get("reason"),
+            created_at,
+        )
+        with self._lock, self._conn:
+            self._conn.execute(
+                """INSERT INTO strategy_status(status_id,strategy,asset,timeframe,status,reason,created_at,payload_json)
+                VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    status_id,
+                    p["strategy"],
+                    p["asset"],
+                    p["timeframe"],
+                    p["status"],
+                    p.get("reason"),
+                    created_at,
+                    self._json(p),
+                ),
             )
 
     def insert_paper_order(self, order: Any) -> None:

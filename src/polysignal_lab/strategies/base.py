@@ -8,6 +8,7 @@ from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
+from polysignal_lab.strategies.readiness import StrategyReadiness
 
 
 class BaseStrategy(ABC):
@@ -16,6 +17,18 @@ class BaseStrategy(ABC):
     @property
     def freshness_policy(self) -> FreshnessPolicy | None:
         return None
+
+    @property
+    def readiness(self) -> StrategyReadiness:
+        return StrategyReadiness(
+            name=self.name,
+            production_enabled=True,
+            supported_assets=tuple(getattr(self.config, "assets", ("BTC", "ETH", "SOL", "XRP"))),
+            supported_timeframes=tuple(getattr(self.config, "timeframes", ("5m", "15m"))),
+            required_fields=("up_book", "down_book"),
+            calibration_required=False,
+            calibration_status="calibrated",
+        )
 
     @abstractmethod
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalCandidate]:

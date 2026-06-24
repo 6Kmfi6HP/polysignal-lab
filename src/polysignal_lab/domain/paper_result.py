@@ -82,4 +82,5 @@ class DailyReport(BaseModel):
     strategy_breakdown: dict[str, Any] = Field(default_factory=dict)
     asset_breakdown: dict[str, Any] = Field(default_factory=dict)
     timeframe_breakdown: dict[str, Any] = Field(default_factory=dict)
+    calibration_breakdown: dict[str, dict[str, Any]] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)

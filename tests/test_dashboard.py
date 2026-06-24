@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from polysignal_lab.dashboard.app import create_dashboard_app
@@ -10,6 +12,7 @@ from polysignal_lab.domain.paper_order import PaperOrder
 from polysignal_lab.domain.paper_result import DailyReport
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
+from polysignal_lab.strategies.readiness import StrategyMarketStatus
 from factories import sample_storage_lifecycle
 
 
@@ -183,6 +186,19 @@ async def test_leaderboard_uses_sqlite_report_data(tmp_path, snapshot, settings)
                 "average_roi": 0.12,
             }
         },
+        calibration_breakdown={
+            "late_consensus|BTC|5m|high": {
+                "strategy": "late_consensus",
+                "asset": "BTC",
+                "timeframe": "5m",
+                "confidence_bucket": "high",
+                "sample_size": 2,
+                "wins": 1,
+                "losses": 0,
+                "average_return": 0.12,
+                "calibration_status": "insufficient_data",
+            }
+        },
     )
     store.insert_daily_report(report)
 
@@ -196,6 +212,159 @@ async def test_leaderboard_uses_sqlite_report_data(tmp_path, snapshot, settings)
     assert rows["late_consensus"]["win_count"] == 1
     assert rows["late_consensus"]["void_count"] == 1
     assert rows["late_consensus"]["win_rate"] == 0.5
+    assert response.json()["calibration_breakdown"]["late_consensus|BTC|5m|high"][
+        "sample_size"
+    ] == 2
+
+
+async def test_leaderboard_recomputes_calibration_status_after_aggregation(tmp_path) -> None:
+    # Given: two insufficient daily rows for one bucket that cross calibration threshold when merged.
+    store = SQLiteStore(tmp_path / "db.sqlite3")
+    first_report = DailyReport(
+        report_id="dr-calibration-1",
+        report_date=date(2026, 6, 22),
+        starting_equity=1000.0,
+        ending_equity=1002.0,
+        paper_pnl=2.0,
+        paper_roi=0.002,
+        total_signals=15,
+        paper_orders=15,
+        paper_fills=15,
+        rejected_paper_orders=0,
+        open_positions=0,
+        closed_positions=15,
+        win_count=8,
+        loss_count=7,
+        void_count=0,
+        win_rate=8 / 15,
+        total_pnl_usdc=2.0,
+        average_roi=0.02,
+        max_drawdown=0.0,
+        profit_factor=2.0,
+        calibration_breakdown={
+            "ptb_diff|BTC|5m|high": {
+                "strategy": "ptb_diff",
+                "asset": "BTC",
+                "timeframe": "5m",
+                "confidence_bucket": "high",
+                "sample_size": 15,
+                "wins": 8,
+                "losses": 7,
+                "average_entry_price": 0.50,
+                "average_return": 0.02,
+                "calibration_status": "insufficient_data",
+            }
+        },
+    )
+    second_report = DailyReport(
+        report_id="dr-calibration-2",
+        report_date=date(2026, 6, 23),
+        starting_equity=1002.0,
+        ending_equity=1006.0,
+        paper_pnl=4.0,
+        paper_roi=0.004,
+        total_signals=15,
+        paper_orders=15,
+        paper_fills=15,
+        rejected_paper_orders=0,
+        open_positions=0,
+        closed_positions=15,
+        win_count=7,
+        loss_count=8,
+        void_count=0,
+        win_rate=7 / 15,
+        total_pnl_usdc=4.0,
+        average_roi=0.04,
+        max_drawdown=0.0,
+        profit_factor=1.0,
+        calibration_breakdown={
+            "ptb_diff|BTC|5m|high": {
+                "strategy": "ptb_diff",
+                "asset": "BTC",
+                "timeframe": "5m",
+                "confidence_bucket": "high",
+                "sample_size": 15,
+                "wins": 7,
+                "losses": 8,
+                "average_entry_price": 0.70,
+                "average_return": 0.04,
+                "calibration_status": "insufficient_data",
+            }
+        },
+    )
+    store.insert_daily_report(first_report)
+    store.insert_daily_report(second_report)
+    client = TestClient(create_dashboard_app(store))
+
+    # When: calibration rows are read through the leaderboard API.
+    response = client.get("/api/leaderboard")
+
+    # Then: merged sample size, weighted averages, and status are recomputed from merged data.
+    assert response.status_code == 200
+    row = response.json()["calibration_breakdown"]["ptb_diff|BTC|5m|high"]
+    assert row["sample_size"] == 30
+    assert row["wins"] == 15
+    assert row["losses"] == 15
+    assert row["average_entry_price"] == pytest.approx(0.60)
+    assert row["average_return"] == pytest.approx(0.03)
+    assert row["calibration_status"] == "calibrated"
+
+
+def test_dashboard_exposes_bounded_strategy_status_rows(tmp_path) -> None:
+    # Given: persisted readiness rows for strategies that cannot produce signals.
+    store = SQLiteStore(tmp_path / "db.sqlite3")
+    statuses = (
+        StrategyMarketStatus(
+            strategy="ptb_diff",
+            asset="ETH",
+            timeframe="5m",
+            status="unsupported_market",
+            reason="UNSUPPORTED_ASSET",
+        ),
+        StrategyMarketStatus(
+            strategy="late_consensus",
+            asset="BTC",
+            timeframe="15m",
+            status="uncalibrated",
+            reason="CALIBRATION_REQUIRED",
+        ),
+    )
+    for status in statuses:
+        store.insert_strategy_status(status)
+    client = TestClient(create_dashboard_app(store))
+
+    # When: clients request the bounded dashboard API surfaces.
+    response = client.get("/api/strategy-status", params={"limit": 1})
+    overview = client.get("/api/overview")
+
+    # Then: the API exposes status rows by strategy/asset/timeframe/reason.
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "strategy": "ptb_diff",
+            "asset": "ETH",
+            "timeframe": "5m",
+            "status": "unsupported_market",
+            "reason": "UNSUPPORTED_ASSET",
+        }
+    ]
+    assert overview.status_code == 200
+    assert overview.json()["strategy_status"] == [
+        {
+            "strategy": "ptb_diff",
+            "asset": "ETH",
+            "timeframe": "5m",
+            "status": "unsupported_market",
+            "reason": "UNSUPPORTED_ASSET",
+        },
+        {
+            "strategy": "late_consensus",
+            "asset": "BTC",
+            "timeframe": "15m",
+            "status": "uncalibrated",
+            "reason": "CALIBRATION_REQUIRED",
+        },
+    ]
 
 
 async def test_dashboard_rejects_write_methods(tmp_path, snapshot, settings) -> None:
@@ -211,6 +380,7 @@ async def test_dashboard_rejects_write_methods(tmp_path, snapshot, settings) -> 
         "/api/positions",
         "/api/trades",
         "/api/leaderboard",
+        "/api/strategy-status",
     )
 
     # When / Then: write methods are not supported on the dashboard surface.

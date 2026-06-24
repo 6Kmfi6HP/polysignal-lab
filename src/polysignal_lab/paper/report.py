@@ -91,6 +91,7 @@ class PaperReportService:
             strategy_breakdown=self._breakdown(closed, "strategy"),
             asset_breakdown=self._breakdown(closed, "asset"),
             timeframe_breakdown=self._breakdown(closed, "timeframe"),
+            calibration_breakdown=self._calibration_breakdown(closed),
         )
 
     def _paper_execution_aggregates(
@@ -192,6 +193,48 @@ class PaperReportService:
             row["win_rate"] = wins / count if count else 0.0
         return dict(rows)
 
+    def _calibration_breakdown(
+        self, results: list[PaperTradeResult]
+    ) -> dict[str, dict[str, object]]:
+        rows: dict[str, dict[str, object]] = {}
+        entry_price_sum: dict[str, float] = defaultdict(float)
+        return_sum: dict[str, float] = defaultdict(float)
+        for result in results:
+            bucket = _confidence_bucket(result.details.get("confidence"))
+            key = f"{result.strategy}|{result.asset}|{result.timeframe}|{bucket}"
+            row = rows.setdefault(
+                key,
+                {
+                    "strategy": result.strategy,
+                    "asset": result.asset,
+                    "timeframe": result.timeframe,
+                    "confidence_bucket": bucket,
+                    "sample_size": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "average_entry_price": 0.0,
+                    "average_return": 0.0,
+                    "calibration_status": "insufficient_data",
+                },
+            )
+            row["sample_size"] = int(row["sample_size"]) + 1
+            row["wins"] = int(row["wins"]) + (
+                1 if result.result == TradeResultStatus.WIN else 0
+            )
+            row["losses"] = int(row["losses"]) + (
+                1 if result.result == TradeResultStatus.LOSS else 0
+            )
+            entry_price_sum[key] += result.entry_price
+            return_sum[key] += result.roi
+        for key, row in rows.items():
+            sample_size = int(row["sample_size"])
+            row["average_entry_price"] = entry_price_sum[key] / sample_size
+            row["average_return"] = return_sum[key] / sample_size
+            row["calibration_status"] = (
+                "calibrated" if sample_size >= 30 else "insufficient_data"
+            )
+        return rows
+
     def _max_drawdown(self, curve: list[float]) -> float:
         if not curve:
             return 0.0
@@ -229,6 +272,15 @@ def _optional_float(value: Any) -> float | None:
 
 def _average(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
+
+
+def _confidence_bucket(confidence: float | None) -> str:
+    value = float(confidence or 0.0)
+    if value >= 0.75:
+        return "high"
+    if value >= 0.55:
+        return "medium"
+    return "low"
 
 
 def _is_closed_result(result: PaperTradeResult) -> bool:

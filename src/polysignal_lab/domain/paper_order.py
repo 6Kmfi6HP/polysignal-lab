@@ -26,6 +26,7 @@ class PaperOrder(BaseModel):
     limit_price: float
     reference_price: float
     stake_usdc: float
+    signal_confidence: float | None = None
     status: OrderStatus = OrderStatus.PENDING
     reject_reason: str | None = None
     metrics: dict[str, Any] = Field(default_factory=dict)

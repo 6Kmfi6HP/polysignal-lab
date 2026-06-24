@@ -17,6 +17,7 @@ from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy
+from polysignal_lab.strategies.readiness import StrategyReadiness
 
 
 @dataclass
@@ -64,6 +65,18 @@ class OneCentBuyStrategy(BaseStrategy):
     def reset(self) -> None:
         """重置状态（测试／重载用）"""
         self._submitted_levels.clear()
+
+    @property
+    def readiness(self) -> StrategyReadiness:
+        return StrategyReadiness(
+            name=self.name,
+            production_enabled=bool(self.config.enabled),
+            supported_assets=("BTC", "ETH", "SOL", "XRP"),
+            supported_timeframes=("5m", "15m"),
+            required_fields=("up_book", "down_book", "market_end_ts"),
+            calibration_required=True,
+            calibration_status="unknown",
+        )
 
     def _elapsed_seconds(self, snapshot: MarketSnapshot) -> float | None:
         """计算自市场开始以来的秒数

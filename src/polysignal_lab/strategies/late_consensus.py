@@ -7,6 +7,7 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
+from polysignal_lab.strategies.readiness import StrategyReadiness
 from polysignal_lab.strategies.base import BaseStrategy
 from polysignal_lab.utils import utc_now
 
@@ -43,6 +44,18 @@ class LateConsensusStrategy(BaseStrategy):
         return FreshnessPolicy(
             max_orderbook_staleness_ms=self.config.max_orderbook_staleness_ms,
             max_spot_staleness_ms=self.config.max_spot_staleness_ms,
+        )
+
+    @property
+    def readiness(self) -> StrategyReadiness:
+        return StrategyReadiness(
+            name=self.name,
+            production_enabled=self.config.enabled,
+            supported_assets=tuple(self.config.assets),
+            supported_timeframes=tuple(self.config.timeframes),
+            required_fields=("up_book", "down_book", "market_end_ts"),
+            calibration_required=False,
+            calibration_status="calibrated",
         )
 
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalCandidate]:
@@ -151,8 +164,6 @@ class LateConsensusStrategy(BaseStrategy):
             "LATE_CONSENSUS_SIDE_CHANGE_OK",
         ]
 
-        # Standard confidence is the raw |up-down| confidence clamped 0..1
-        signal_confidence = max(0.0, min(1.0, confidence_value))
 
         # Compute a synthetic "price" for confidence (matching original pattern)
         effective_confidence = min(0.95, confidence_value + 0.35)
