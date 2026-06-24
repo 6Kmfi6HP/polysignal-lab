@@ -157,3 +157,50 @@ Committed after targeted checks; final SHA is reported in the completion result.
 
 ### Concerns
 None. Only targeted Task 2 checks were run; Docker and project-wide gates were intentionally skipped per constraints.
+
+## Fix report: CLOB REST outage preservation
+
+### Status
+COMPLETED.
+
+### Files changed
+- `src/polysignal_lab/app/scheduler_health.py`
+- `tests/test_health_metrics.py`
+
+### Red command/output
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_health_metrics.py::test_sync_runtime_health_preserves_clob_rest_down_after_complete_failure -q
+```
+
+Initial output:
+
+```text
+FAILED tests/test_health_metrics.py::test_sync_runtime_health_preserves_clob_rest_down_after_complete_failure - AssertionError: assert 'degraded' == 'down'
+```
+
+### Green command/output
+Commands:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_health_metrics.py::test_sync_runtime_health_preserves_clob_rest_down_after_complete_failure -q
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_market_data.py::test_clob_ws_exposes_connection_and_invalid_event_metrics tests/test_market_data.py::test_binance_feed_exposes_connection_metrics tests/test_health_metrics.py -q
+```
+
+Final output:
+
+```text
+.                                                                        [100%]
+...........                                                              [100%]
+```
+
+### Summary
+- `sync_runtime_health()` now preserves an existing `clob_rest` down state while merging CLOB REST counter/gauge metrics, so cumulative batch fallback counters cannot downgrade a complete outage to degraded.
+- A later successful market refresh can still mark `clob_rest` ok before runtime sync, allowing batch-fallback success to remain degraded rather than down.
+
+### Commit
+Committed after targeted checks; final SHA is reported in the completion result.
+
+### Concerns
+None. Only targeted Task 2 checks were run; Docker and project-wide gates were intentionally skipped per constraints.

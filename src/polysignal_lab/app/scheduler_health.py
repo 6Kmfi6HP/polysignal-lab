@@ -95,7 +95,12 @@ def _sync_clob_rest(scheduler: PolySignalScheduler) -> None:
         "fallback_count": int(counters.get("clob_rest_fallback_count", 0)),
         "latency_ms": gauges.get("clob_rest_latency_ms"),
     }
-    if payload["batch_failure"]:
+    current = scheduler.health.components.get("clob_rest")
+    if current is not None and current.status == "down":
+        scheduler.health.mark_down(
+            "clob_rest", current.last_error or "clob rest down", **payload
+        )
+    elif payload["batch_failure"]:
         scheduler.health.mark_degraded("clob_rest", "batch fallback used", **payload)
     else:
         scheduler.health.mark_ok("clob_rest", **payload)

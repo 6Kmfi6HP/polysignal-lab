@@ -198,3 +198,36 @@ async def test_binance_ws_requires_every_configured_spot(tmp_path, settings) -> 
     components = {component.name: component for component in snapshot.components}
 
     assert components["binance_ws"].status == "ok"
+
+
+async def test_sync_runtime_health_preserves_clob_rest_down_after_complete_failure(
+    tmp_path, settings, market
+) -> None:
+    import httpx
+
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+    from polysignal_lab.app.scheduler_health import sync_runtime_health
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+
+    async def discover() -> list[object]:
+        return [market]
+
+    async def fail_get_books(token_ids: list[str]) -> list[object]:
+        scheduler.rest.metrics.inc("clob_rest_batch_failure")
+        scheduler.rest.metrics.inc("clob_rest_fallback_count")
+        raise httpx.ConnectError("clob rest unavailable")
+
+    scheduler.discovery.discover = discover
+    scheduler.rest.get_books = fail_get_books
+
+    await scheduler.refresh_markets_once()
+    before_sync = {component.name: component for component in scheduler.health.snapshot().components}
+
+    snapshot = sync_runtime_health(scheduler)
+    components = {component.name: component for component in snapshot.components}
+
+    assert before_sync["clob_rest"].status == "down"
+    assert components["clob_rest"].status == "down"
+    assert components["clob_rest"].metrics["batch_failure"] == 1
+    assert components["clob_rest"].metrics["fallback_count"] == 1
