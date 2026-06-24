@@ -1,5 +1,8 @@
 # Telegram Notification Template Redesign
 
+**Status:** Approved
+**Date:** 2026-06-24
+
 ## Goal
 
 Make Telegram notifications easier to scan and less noisy while staying compatible with the current Telegram publishing pipeline.

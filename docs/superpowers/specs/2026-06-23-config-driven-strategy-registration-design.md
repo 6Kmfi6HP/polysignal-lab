@@ -1,5 +1,8 @@
 # Config-Driven Strategy Registration Design
 
+**Status:** Approved
+**Date:** 2026-06-24
+
 ## Goal
 
 Replace the hard-coded PRD strategy whitelist with config-driven automatic strategy registration, while keeping production defaults safe: only strategies explicitly present in `config/signal_bot.yaml` and set `enabled: true` are started.

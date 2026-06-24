@@ -1,5 +1,8 @@
 # Order Intent Alignment — Design Spec
 
+**Status:** Approved
+**Date:** 2026-06-24
+
 > **Goal:** Bring all 9 additional strategies into code-document alignment by adding
 > `OrderIntent` semantics to the signal pipeline and extending the paper simulator
 > to support passive GTD bids, FAK, FOK, and multi-leg coordination.
