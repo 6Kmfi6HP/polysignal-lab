@@ -27,6 +27,7 @@ def order_strategy_schedule(
 ) -> list[StrategyScheduleEntry]:
     entries_list = list(entries)
     validate_strategy_dag((entry.name, entry.depends_on) for entry in entries_list)
+    _validate_execution_mode_dependencies(entries_list)
     entries_by_name = {entry.name: entry for entry in entries_list}
     children_by_name: dict[str, list[str]] = {
         entry.name: [] for entry in entries_list
@@ -58,6 +59,29 @@ def order_strategy_schedule(
 
 def _strategy_sort_key(entry: StrategyScheduleEntry) -> tuple[int, int, str]:
     return (entry.priority, entry.strategy_config_index, entry.name)
+
+
+def _validate_execution_mode_dependencies(
+    entries: list[StrategyScheduleEntry],
+) -> None:
+    modes_by_name = {entry.name: entry.execution_mode for entry in entries}
+    unsupported = [
+        (entry.name, dependency_name)
+        for entry in entries
+        if entry.execution_mode != "cross_market"
+        for dependency_name in entry.depends_on
+        if modes_by_name[dependency_name] == "cross_market"
+    ]
+    if unsupported:
+        details = ", ".join(
+            f"cross_market dependency {dependency_name} cannot be required by "
+            f"per-market strategy {entry_name}"
+            for entry_name, dependency_name in unsupported
+        )
+        raise ValueError(
+            "cross_market dependencies cannot be required by per-market strategies: "
+            f"{details}"
+        )
 
 
 def validate_strategy_dag(items: Iterable[tuple[str, Iterable[str]]]) -> tuple[str, ...]:

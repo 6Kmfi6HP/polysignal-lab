@@ -9,8 +9,11 @@ from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 
 from polysignal_lab.config import Settings
-from polysignal_lab.strategies.execution import build_strategy_schedule, validate_strategy_dag
-from polysignal_lab.strategies.execution import StrategyScheduleEntry
+from polysignal_lab.strategies.execution import (
+    StrategyScheduleEntry,
+    build_strategy_schedule,
+    validate_strategy_dag,
+)
 from test_signal_pipeline_equivalence import _FakeScheduler, _FakeStrategy, _candidate, _snapshot
 
 
@@ -281,3 +284,39 @@ async def test_stateless_dependencies_complete_before_dependent_evaluation() -> 
         "commit:dependency",
         "commit:dependent",
     ]
+
+
+async def test_per_market_strategy_cannot_depend_on_cross_market_strategy() -> None:
+    snapshot = _snapshot("BTC", "5m")
+    events: list[str] = []
+    cross_market = _FakeStrategy("cross_market", {})
+    dependent = _OrderingStrategy(
+        "dependent",
+        {snapshot.market.market_id: [_candidate("dependent", snapshot)]},
+        events,
+    )
+    scheduler = _FakeScheduler(
+        [snapshot],
+        [
+            StrategyScheduleEntry(
+                strategy=dependent,
+                name=dependent.name,
+                priority=10,
+                depends_on=(cross_market.name,),
+                execution_mode="stateful",
+                strategy_config_index=0,
+            ),
+            StrategyScheduleEntry(
+                strategy=cross_market,
+                name=cross_market.name,
+                priority=100,
+                depends_on=(),
+                execution_mode="cross_market",
+                strategy_config_index=1,
+            ),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="cross_market dependency.*dependent"):
+        await scheduler.evaluate_once()
+    assert events == []
