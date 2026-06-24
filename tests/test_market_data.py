@@ -5,17 +5,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
+from typing import assert_type
 
 from polysignal_lab.config import BinanceDataConfig, MarketConfig, PolymarketDataConfig
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
 from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
 from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
+from polysignal_lab.data.public_market_data_client import PublicMarketDataClient
 from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
 from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
 from polysignal_lab.domain.enums import Side
 from factories import BookFactoryConfig, SpotFactoryConfig, sample_book, sample_spot
+from polysignal_lab.domain.orderbook import OrderBook
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "public_market_payloads.json"
 FIXTURE_ADAPTER = TypeAdapter(dict[str, JsonValue])
@@ -58,6 +61,24 @@ class FakeAsyncClient:
         payload = self.payloads[len(self.calls) - 1] if len(self.calls) <= len(self.payloads) else []
         return FakeResponse(payload)
 
+
+class _FakePublicMarketData:
+    async def get_book(self, token_id: str) -> OrderBook:
+        raise NotImplementedError
+
+    async def get_books(self, token_ids: list[str]) -> list[OrderBook]:
+        return []
+
+    async def get_mid(self, token_id: str) -> float | None:
+        return None
+
+    async def get_spread(self, token_id: str) -> float | None:
+        return None
+
+
+def test_fake_market_data_client_matches_protocol() -> None:
+    client: PublicMarketDataClient = _FakePublicMarketData()
+    assert_type(client, PublicMarketDataClient)
 
 def _gamma_market_payload(
     *,
