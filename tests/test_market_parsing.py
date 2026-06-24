@@ -105,6 +105,9 @@ async def test_normalized_snapshot_carries_ptb_resolution_and_token_metadata() -
     assert snapshot.price_to_beat == 105150.25
     assert snapshot.metrics["price_to_beat_source"] == "market_metadata"
     assert snapshot.metrics["price_to_beat_verified"] is True
+    assert snapshot.metrics["price_to_beat_from_anchor_service"] is False
+    assert snapshot.metrics["anchor_price_source"] is None
+    assert snapshot.metrics["anchor_price_lag_ms"] is None
     assert snapshot.metrics["market_status"] == "RESOLVED"
     assert snapshot.metrics["resolved_outcome"] == "UP"
     assert snapshot.metrics["resolution_source"] == "gamma"

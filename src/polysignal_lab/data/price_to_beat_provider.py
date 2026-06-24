@@ -31,6 +31,9 @@ class PriceToBeatResult:
     source: str
     verified: bool
     reason: str | None = None
+    anchor_source: str | None = None
+    anchor_lag_ms: int | None = None
+    from_anchor_service: bool = False
 
 
 class PriceToBeatProvider:
@@ -54,11 +57,27 @@ class PriceToBeatProvider:
         client: _CryptoPriceClient | None = None,
         *,
         use_crypto_price_api: bool = False,
+        anchor_store: Any | None = None,
     ):
         self.client = client or httpx.AsyncClient(timeout=10.0)
         self.use_crypto_price_api = use_crypto_price_api
+        self.anchor_store = anchor_store
 
     async def get(self, market: Market) -> PriceToBeatResult:
+        if self.anchor_store is not None:
+            anchor = self.anchor_store.get_verified_anchor_price(
+                market.asset, market.timeframe, market.market_slug
+            )
+            if anchor is not None and anchor.price is not None:
+                return PriceToBeatResult(
+                    value=anchor.price,
+                    source=f"anchor_service:{anchor.source}",
+                    verified=True,
+                    anchor_source=anchor.source,
+                    anchor_lag_ms=anchor.lag_ms,
+                    from_anchor_service=True,
+                )
+
         # Source 1: Direct metadata field
         if market.price_to_beat is not None:
             return PriceToBeatResult(value=market.price_to_beat, source="market_metadata", verified=True)

@@ -35,7 +35,13 @@ class MarketSnapshotBuilder:
             spot=spot,
             price_to_beat=ptb.value,
             freshness=freshness,
-            metrics={"price_to_beat_source": ptb.source, "price_to_beat_verified": ptb.verified},
+            metrics={
+                "price_to_beat_source": ptb.source,
+                "price_to_beat_verified": ptb.verified,
+                "price_to_beat_from_anchor_service": ptb.from_anchor_service,
+                "anchor_price_source": ptb.anchor_source,
+                "anchor_price_lag_ms": ptb.anchor_lag_ms,
+            },
         )
         snapshot.metrics.update(self._derived_metrics(snapshot))
         return snapshot

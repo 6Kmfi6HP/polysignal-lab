@@ -104,7 +104,8 @@ class PolySignalScheduler:
         self.sqlite = SQLiteStore(base / settings.storage.sqlite_path)
         self.anchor_prices = AnchorPriceService(self.ctx.spots, self.sqlite)
         self.ptb = PriceToBeatProvider(
-            use_crypto_price_api=settings.data.polymarket.use_crypto_price_api
+            anchor_store=self.sqlite,
+            use_crypto_price_api=settings.data.polymarket.use_crypto_price_api,
         )
         self.snapshot_builder = MarketSnapshotBuilder(self.ctx.books, self.ctx.spots, self.ptb)
 
