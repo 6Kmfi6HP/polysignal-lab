@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, assert_never
 
 import httpx
 
-from polysignal_lab.app import scheduler_runtime
+from polysignal_lab.app import scheduler_health, scheduler_runtime
 from polysignal_lab.domain.enums import MarketStatus
 from polysignal_lab.domain.market import Market
 
@@ -24,14 +24,21 @@ def token_ids_for_markets(markets: list[Market]) -> tuple[str, ...]:
 
 
 async def refresh_markets_once(scheduler: PolySignalScheduler) -> None:
-    markets = await scheduler.discovery.discover()
+    try:
+        markets = await scheduler.discovery.discover()
+        scheduler.health.mark_ok("gamma", discovered_market_count=len(markets))
+    except Exception as exc:
+        scheduler.health.mark_down("gamma", str(exc))
+        raise
     scheduler.ctx.markets.upsert_many(markets)
     for market in markets:
         try:
             scheduler.sqlite.upsert_market(market)
             scheduler.logs.append("markets", market)
-        except (OSError, sqlite3.Error, TypeError, ValueError):
-            pass
+            scheduler_health.note_storage_success(scheduler, "sqlite")
+            scheduler_health.note_storage_success(scheduler, "jsonl")
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
 
     token_ids = token_ids_for_markets(markets)
     scheduler._latest_market_token_ids = token_ids
@@ -40,9 +47,11 @@ async def refresh_markets_once(scheduler: PolySignalScheduler) -> None:
     if token_ids:
         try:
             books = await scheduler.rest.get_books(list(token_ids))
+            scheduler.health.mark_ok("clob_rest", requested_token_count=len(token_ids), returned_book_count=len(books))
             for book in books:
                 scheduler.ctx.books.update(book)
-        except (httpx.HTTPError, TypeError, ValueError):
+        except (httpx.HTTPError, TypeError, ValueError) as exc:
+            scheduler.health.mark_down("clob_rest", str(exc), requested_token_count=len(token_ids))
             scheduler.logger.exception(
                 "Failed to fetch order books for %d tokens", len(token_ids)
             )

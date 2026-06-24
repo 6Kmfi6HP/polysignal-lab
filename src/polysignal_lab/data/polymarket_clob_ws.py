@@ -25,6 +25,21 @@ class PolymarketMarketWebSocket:
         self.resolved_events: Queue[JsonObject] = Queue()
         self.running = False
         self.reseed_hook: Callable[[list[str]], Coroutine[Any, Any, None]] | None = None
+        self.connected = False
+        self.reconnect_count = 0
+        self.subscribed_token_count = 0
+        self.last_error: str | None = None
+
+    def note_connected(self, token_ids: list[str]) -> None:
+        self.connected = True
+        self.subscribed_token_count = len(token_ids)
+        self.last_error = None
+
+    def note_reconnect(self, exc: BaseException) -> None:
+        self.connected = False
+        self.reconnect_count += 1
+        self.last_error = str(exc)
+        self.registry.metrics.inc("clob_ws_reconnect_count")
 
     async def subscribe(self, token_ids: list[str]) -> None:
         self.running = True
@@ -37,14 +52,20 @@ class PolymarketMarketWebSocket:
                     except Exception:
                         pass
                 async with websockets.connect(self.config.market_ws_url, ping_interval=20, ping_timeout=20) as ws:
+                    self.note_connected(token_ids)
                     await ws.send(json.dumps(payload))
                     async for message in ws:
                         self.handle_message(message)
-            except (OSError, TimeoutError, websockets.exceptions.WebSocketException):
+                    if self.running:
+                        self.note_reconnect(RuntimeError("websocket closed"))
+                        await anyio.sleep(2.0)
+            except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as exc:
+                self.note_reconnect(exc)
                 await anyio.sleep(2.0)
 
     def stop(self) -> None:
         self.running = False
+        self.connected = False
 
     def handle_message(self, message: str | bytes | JsonObject | list[JsonValue]) -> None:
         if isinstance(message, (str, bytes)):

@@ -73,3 +73,50 @@ def test_sqlite_restores_latest_system_event_payload(tmp_path) -> None:
     store.insert_system_event(newer)
 
     assert store.restore_latest_system_event("health_snapshot") == newer
+
+
+async def test_scheduler_records_market_data_health(tmp_path, settings, market) -> None:
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+    from polysignal_lab.app.scheduler_health import sync_runtime_health
+    from polysignal_lab.domain.orderbook import OrderBook
+    from polysignal_lab.domain.spot import SpotPrice
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler.ctx.markets.upsert_many([market])
+    scheduler._latest_market_token_ids = tuple(token.token_id for token in market.outcome_tokens)
+    scheduler.ctx.books.update_from_snapshot(OrderBook(token_id=market.outcome_tokens[0].token_id))
+    scheduler.ctx.books.mark_stale(market.outcome_tokens[1].token_id, "RECONNECT_RESEED_FAILED")
+    scheduler.ctx.books.mark_stale("obsolete-token", "OLD_SUBSCRIPTION")
+    scheduler.poly_ws.note_connected(token_ids=list(scheduler._latest_market_token_ids))
+    scheduler.poly_ws.note_reconnect(RuntimeError("reconnect"))
+
+    snapshot = sync_runtime_health(scheduler)
+    components = {component.name: component for component in snapshot.components}
+
+    assert components["clob_ws"].status == "degraded"
+    assert components["clob_ws"].metrics["subscribed_token_count"] == 2
+    assert components["clob_ws"].metrics["stale_token_count"] == 1
+    assert components["clob_ws"].metrics["reconnect_count"] == 1
+
+    scheduler._latest_market_token_ids = (*scheduler._latest_market_token_ids, "missing-active-token")
+    scheduler.poly_ws.note_connected(token_ids=list(scheduler._latest_market_token_ids))
+    scheduler.ctx.spots.update(SpotPrice(asset="BTC", symbol="BTCUSDT", price=100.0))
+    scheduler.binance_ws.note_connected()
+    scheduler.binance_ws.note_reconnect(RuntimeError("binance reconnect"))
+
+    snapshot = sync_runtime_health(scheduler)
+    components = {component.name: component for component in snapshot.components}
+
+    assert components["clob_ws"].metrics["subscribed_token_count"] == 3
+    assert components["clob_ws"].metrics["stale_token_count"] == 2
+    assert components["binance_ws"].status == "degraded"
+    assert components["binance_ws"].metrics["connected"] is False
+
+    scheduler._latest_market_token_ids = ()
+    scheduler._market_ws_token_ids = ()
+    scheduler._market_refresh_completed = True
+
+    snapshot = sync_runtime_health(scheduler)
+    components = {component.name: component for component in snapshot.components}
+
+    assert components["clob_ws"].metrics["stale_token_count"] == 0

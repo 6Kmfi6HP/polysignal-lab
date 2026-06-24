@@ -21,6 +21,7 @@ from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
 from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry, SpotRegistry
+from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
 from polysignal_lab.domain.signal import SignalCandidate
@@ -93,6 +94,7 @@ class PolySignalScheduler:
         self.formatter = MessageFormatter(settings.telegram.max_message_chars)
         self.publisher = TelegramPublisher(settings.telegram)
         self.logger = logging.getLogger("polysignal_lab.scheduler")
+        self.health = HealthRegistry()
         self._trading_components_initialized = False
 
         self.poly_ws = PolymarketMarketWebSocket(settings.data.polymarket, self.ctx.books)
