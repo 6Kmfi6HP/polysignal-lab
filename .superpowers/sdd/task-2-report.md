@@ -110,3 +110,50 @@ Committed with message `fix: correct market data health states`; final SHA is re
 
 ### Concerns
 None. Only targeted Task 2 checks were run; Docker and project-wide gates were intentionally skipped per constraints.
+
+## Fix report: storage-health attribution
+
+### Status
+COMPLETED.
+
+### Files changed
+- `src/polysignal_lab/app/scheduler_market_data.py`
+- `tests/test_health_metrics.py`
+
+### Red command/output
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_health_metrics.py::test_refresh_markets_marks_jsonl_failure_without_sqlite_down -q
+```
+
+Initial output:
+
+```text
+FAILED tests/test_health_metrics.py::test_refresh_markets_marks_jsonl_failure_without_sqlite_down - AssertionError: assert 'down' == 'ok'
+```
+
+### Green command/output
+Commands:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_health_metrics.py::test_refresh_markets_marks_jsonl_failure_without_sqlite_down -q
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_market_data.py::test_clob_ws_exposes_connection_and_invalid_event_metrics tests/test_market_data.py::test_binance_feed_exposes_connection_metrics tests/test_health_metrics.py -q
+```
+
+Final output:
+
+```text
+.                                                                        [100%]
+..........                                                               [100%]
+```
+
+### Summary
+- Split market refresh SQLite and JSONL persistence handling so a JSONL append failure marks `jsonl_storage` down without falsely marking `sqlite_storage` down after a successful SQLite upsert.
+- Added a regression test that persists the market to SQLite, forces JSONL append failure, and asserts `sqlite_storage` remains ok while `jsonl_storage` records one write failure.
+
+### Commit
+Committed after targeted checks; final SHA is reported in the completion result.
+
+### Concerns
+None. Only targeted Task 2 checks were run; Docker and project-wide gates were intentionally skipped per constraints.

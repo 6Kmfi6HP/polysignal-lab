@@ -34,11 +34,14 @@ async def refresh_markets_once(scheduler: PolySignalScheduler) -> None:
     for market in markets:
         try:
             scheduler.sqlite.upsert_market(market)
-            scheduler.logs.append("markets", market)
             scheduler_health.note_storage_success(scheduler, "sqlite")
-            scheduler_health.note_storage_success(scheduler, "jsonl")
         except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
             scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
+        try:
+            scheduler.logs.append("markets", market)
+            scheduler_health.note_storage_success(scheduler, "jsonl")
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            scheduler_health.note_storage_failure(scheduler, "jsonl", exc)
 
     token_ids = token_ids_for_markets(markets)
     scheduler._latest_market_token_ids = token_ids
