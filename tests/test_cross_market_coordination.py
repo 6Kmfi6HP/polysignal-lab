@@ -234,3 +234,45 @@ async def test_cross_market_stale_snapshot_group_skips_evaluation() -> None:
     assert accepted == []
     assert strategy.seen_contexts == []
     assert scheduler.gate.evaluated_count == 0
+
+
+async def test_cross_market_unrelated_stale_market_does_not_skip_fresh_relation() -> None:
+    snapshot_btc = _snapshot("BTC", "5m")
+    snapshot_eth = _snapshot("ETH", "5m")
+    unrelated_stale = _stale(_snapshot("SOL", "5m"), 60_001)
+    strategy = _GroupStrategy(
+        name="cross",
+        emitted=_candidate("cross", snapshot_btc),
+        seen_contexts=[],
+    )
+    strategy._relations = [
+        SimpleNamespace(
+            relation_id="btc-eth",
+            condition_ids=[
+                snapshot_btc.market.condition_id,
+                snapshot_eth.market.condition_id,
+            ],
+        )
+    ]
+    scheduler = _FakeScheduler(
+        [snapshot_btc, snapshot_eth, unrelated_stale],
+        [
+            StrategyScheduleEntry(
+                strategy=strategy,
+                name=strategy.name,
+                priority=100,
+                depends_on=(),
+                execution_mode="cross_market",
+                strategy_config_index=0,
+            )
+        ],
+    )
+
+    accepted = await scheduler.evaluate_once()
+
+    assert [signal.strategy for signal in accepted] == ["cross"]
+    assert len(strategy.seen_contexts) == 1
+    assert set(strategy.seen_contexts[0].snapshots_by_condition_id) == {
+        snapshot_btc.market.condition_id,
+        snapshot_eth.market.condition_id,
+    }

@@ -191,17 +191,25 @@ def _evaluate_cross_market_entries(
     for entry in entries:
         if entry.execution_mode != "cross_market":
             continue
-        if batch.max_source_skew_ms > skew_threshold_ms:
-            scheduler.logger.info(
-                "Skipping cross-market strategy %s for stale snapshot batch %s: "
-                "max_source_skew_ms=%d threshold_ms=%d",
-                entry.name,
-                batch.batch_id,
-                batch.max_source_skew_ms,
-                skew_threshold_ms,
-            )
-            continue
         for context in _cross_market_contexts(entry, batch):
+            context_max_source_skew_ms = max(
+                (
+                    snapshot.freshness.max_ms or 0
+                    for snapshot in context.snapshots_by_condition_id.values()
+                ),
+                default=0,
+            )
+            if context_max_source_skew_ms > skew_threshold_ms:
+                scheduler.logger.info(
+                    "Skipping cross-market strategy %s relation %s for stale relation context %s: "
+                    "max_source_skew_ms=%d threshold_ms=%d",
+                    entry.name,
+                    context.relation_id,
+                    batch.batch_id,
+                    context_max_source_skew_ms,
+                    skew_threshold_ms,
+                )
+                continue
             try:
                 evaluate_group = getattr(entry.strategy, "evaluate_group")
                 candidates = evaluate_group(context)
