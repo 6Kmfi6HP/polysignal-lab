@@ -14,6 +14,7 @@ from polysignal_lab.app import (
     scheduler_state,
 )
 from polysignal_lab.app.services.persistence_service import PersistenceService
+from polysignal_lab.app.services.market_universe_service import MarketUniverseService
 from polysignal_lab.config import Settings
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
 from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
@@ -105,6 +106,13 @@ class PolySignalScheduler:
         self.state = StateStore(base / settings.storage.state_dir)
         self.sqlite = SQLiteStore(base / settings.storage.sqlite_path)
         self.persistence = PersistenceService(self.logs, self.sqlite, self.state)
+        self.market_universe = MarketUniverseService(
+            self.discovery,
+            self.ctx.markets,
+            self.persistence,
+            settings=settings,
+            logger=self.logger,
+        )
 
         self._ws_tasks: list[asyncio.Task] = []
         self._market_ws_task: asyncio.Task | None = None

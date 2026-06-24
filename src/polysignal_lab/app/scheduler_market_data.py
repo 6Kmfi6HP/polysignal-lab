@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import sqlite3
-from typing import TYPE_CHECKING, assert_never
+from typing import TYPE_CHECKING
 
 import httpx
 
 from polysignal_lab.app import scheduler_runtime
-from polysignal_lab.domain.enums import MarketStatus
 from polysignal_lab.domain.market import Market
 
 if TYPE_CHECKING:
@@ -24,18 +22,10 @@ def token_ids_for_markets(markets: list[Market]) -> tuple[str, ...]:
 
 
 async def refresh_markets_once(scheduler: PolySignalScheduler) -> None:
-    markets = await scheduler.discovery.discover()
-    scheduler.ctx.markets.upsert_many(markets)
-    for market in markets:
-        try:
-            scheduler.persistence.upsert_market(market)
-            scheduler.persistence.append_log("markets", market)
-        except (OSError, sqlite3.Error, TypeError, ValueError):
-            pass
-
-    token_ids = token_ids_for_markets(markets)
+    await scheduler.market_universe.refresh_once()
+    token_ids = scheduler.market_universe.latest_token_ids
     scheduler._latest_market_token_ids = token_ids
-    scheduler._market_refresh_completed = True
+    scheduler._market_refresh_completed = scheduler.market_universe.refresh_completed
 
     if token_ids:
         try:
@@ -58,56 +48,9 @@ async def fetch_resolved_markets(scheduler: PolySignalScheduler) -> None:
     }
     if not open_market_ids:
         return
-
-    params = {"closed": "true", "limit": "200", "offset": "0"}
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(
-                f"{scheduler.settings.data.polymarket.gamma_base_url}/markets",
-                params=params,
-            )
-            if response.status_code != 200:
-                return
-            data = response.json()
-            if not isinstance(data, list):
-                return
-
-            payloads = scheduler.discovery._flatten_markets(data)
-            updated = 0
-            for payload in payloads:
-                market_id = str(
-                    payload.get("id")
-                    or payload.get("market")
-                    or payload.get("conditionId")
-                    or payload.get("slug")
-                    or ""
-                )
-                if market_id not in open_market_ids:
-                    continue
-
-                try:
-                    match = scheduler.discovery._match_crypto_updown(payload)
-                    asset, timeframe = match if match else ("UNKNOWN", "UNKNOWN")
-                    market = Market.from_gamma(payload, asset=asset, timeframe=timeframe)
-                    match market.status:
-                        case MarketStatus.RESOLVED | MarketStatus.CANCELLED:
-                            scheduler.ctx.markets.upsert_many([market])
-                            scheduler.persistence.upsert_market(market)
-                            updated += 1
-                        case (
-                            MarketStatus.ACTIVE
-                            | MarketStatus.CLOSED
-                            | MarketStatus.UNKNOWN
-                        ):
-                            continue
-                        case unreachable:
-                            assert_never(unreachable)
-                except (KeyError, OSError, sqlite3.Error, TypeError, ValueError):
-                    pass
-
-            if updated > 0:
-                scheduler.logger.info("Fetched %d resolved markets from Gamma API", updated)
-    except (httpx.HTTPError, TypeError, ValueError) as exc:
+        await scheduler.market_universe.fetch_resolved(open_market_ids)
+    except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
         scheduler.logger.warning("Failed to fetch resolved markets: %s", exc)
 
 
