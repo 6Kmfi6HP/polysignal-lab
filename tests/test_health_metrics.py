@@ -120,3 +120,48 @@ async def test_scheduler_records_market_data_health(tmp_path, settings, market) 
     components = {component.name: component for component in snapshot.components}
 
     assert components["clob_ws"].metrics["stale_token_count"] == 0
+
+
+
+async def test_clob_ws_idle_after_empty_market_refresh_is_ok(tmp_path, settings) -> None:
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+    from polysignal_lab.app.scheduler_health import sync_runtime_health
+    from polysignal_lab.domain.orderbook import OrderBook
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler._market_refresh_completed = True
+    scheduler._latest_market_token_ids = ()
+    scheduler._market_ws_token_ids = ("obsolete-token",)
+    scheduler.ctx.books.update_from_snapshot(OrderBook(token_id="obsolete-token"))
+    scheduler.ctx.books.mark_stale("obsolete-token", "OLD_SUBSCRIPTION")
+    scheduler.poly_ws.note_connected(token_ids=["obsolete-token"])
+
+    snapshot = sync_runtime_health(scheduler)
+    components = {component.name: component for component in snapshot.components}
+
+    assert components["clob_ws"].status == "ok"
+    assert components["clob_ws"].metrics["stale_token_count"] == 0
+
+
+async def test_binance_ws_requires_every_configured_spot(tmp_path, settings) -> None:
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+    from polysignal_lab.app.scheduler_health import sync_runtime_health
+    from polysignal_lab.domain.spot import SpotPrice
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler.ctx.spots.update(SpotPrice(asset="BTC", symbol="BTCUSDT", price=100.0))
+    scheduler.binance_ws.note_connected()
+
+    snapshot = sync_runtime_health(scheduler)
+    components = {component.name: component for component in snapshot.components}
+
+    assert components["binance_ws"].status == "degraded"
+    assert components["binance_ws"].metrics["eth_spot_lag_ms"] is None
+
+    for asset, symbol in settings.data.binance.symbols.items():
+        scheduler.ctx.spots.update(SpotPrice(asset=asset, symbol=symbol, price=100.0))
+
+    snapshot = sync_runtime_health(scheduler)
+    components = {component.name: component for component in snapshot.components}
+
+    assert components["binance_ws"].status == "ok"
