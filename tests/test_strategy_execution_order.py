@@ -200,7 +200,7 @@ async def test_dependencies_order_evaluation_and_commit_before_dependents() -> N
             StrategyScheduleEntry(
                 strategy=dependent,
                 name=dependent.name,
-                priority=100,
+                priority=10,
                 depends_on=("dependency",),
                 execution_mode="stateful",
                 strategy_config_index=0,
@@ -211,6 +211,61 @@ async def test_dependencies_order_evaluation_and_commit_before_dependents() -> N
                 priority=100,
                 depends_on=(),
                 execution_mode="stateful",
+                strategy_config_index=1,
+            ),
+        ],
+    )
+    scheduler.arbiter = SignalArbiter()
+
+    accepted = await scheduler.evaluate_once()
+
+    assert [signal.strategy for signal in accepted] == ["dependency", "dependent"]
+    assert events == [
+        "evaluate:dependency",
+        "evaluate:dependent",
+        "commit:dependency",
+        "commit:dependent",
+    ]
+
+
+async def test_stateless_dependencies_complete_before_dependent_evaluation() -> None:
+    snapshot = _snapshot("BTC", "5m")
+    market_id = snapshot.market.market_id
+    events: list[str] = []
+    dependency = _OrderingStrategy(
+        "dependency",
+        {market_id: [_candidate("dependency", snapshot)]},
+        events,
+    )
+    dependent = _OrderingStrategy(
+        "dependent",
+        {market_id: [_candidate("dependent", snapshot)]},
+        events,
+    )
+
+    def slow_dependency_evaluate(snapshot):
+        time.sleep(0.05)
+        events.append("evaluate:dependency")
+        return _FakeStrategy.evaluate(dependency, snapshot)
+
+    dependency.evaluate = slow_dependency_evaluate
+    scheduler = _FakeScheduler(
+        [snapshot],
+        [
+            StrategyScheduleEntry(
+                strategy=dependent,
+                name=dependent.name,
+                priority=10,
+                depends_on=("dependency",),
+                execution_mode="stateful",
+                strategy_config_index=0,
+            ),
+            StrategyScheduleEntry(
+                strategy=dependency,
+                name=dependency.name,
+                priority=100,
+                depends_on=(),
+                execution_mode="stateless",
                 strategy_config_index=1,
             ),
         ],

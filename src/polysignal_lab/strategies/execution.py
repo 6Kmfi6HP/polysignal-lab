@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from heapq import heappop, heappush
 from graphlib import CycleError, TopologicalSorter
 from typing import Iterable, Literal
 
@@ -25,11 +26,38 @@ def order_strategy_schedule(
     entries: Iterable[StrategyScheduleEntry],
 ) -> list[StrategyScheduleEntry]:
     entries_list = list(entries)
-    order = validate_strategy_dag(
-        (entry.name, entry.depends_on) for entry in entries_list
-    )
-    rank = {name: index for index, name in enumerate(order)}
-    return sorted(entries_list, key=lambda entry: rank[entry.name])
+    validate_strategy_dag((entry.name, entry.depends_on) for entry in entries_list)
+    entries_by_name = {entry.name: entry for entry in entries_list}
+    children_by_name: dict[str, list[str]] = {
+        entry.name: [] for entry in entries_list
+    }
+    remaining_deps = {
+        entry.name: set(entry.depends_on) for entry in entries_list
+    }
+    for entry in entries_list:
+        for dependency_name in entry.depends_on:
+            children_by_name[dependency_name].append(entry.name)
+
+    ready: list[tuple[int, int, str]] = []
+    for entry in entries_list:
+        if not remaining_deps[entry.name]:
+            heappush(ready, _strategy_sort_key(entry))
+
+    ordered: list[StrategyScheduleEntry] = []
+    while ready:
+        _, _, name = heappop(ready)
+        entry = entries_by_name[name]
+        ordered.append(entry)
+        for child_name in children_by_name[name]:
+            child_deps = remaining_deps[child_name]
+            child_deps.remove(name)
+            if not child_deps:
+                heappush(ready, _strategy_sort_key(entries_by_name[child_name]))
+    return ordered
+
+
+def _strategy_sort_key(entry: StrategyScheduleEntry) -> tuple[int, int, str]:
+    return (entry.priority, entry.strategy_config_index, entry.name)
 
 
 def validate_strategy_dag(items: Iterable[tuple[str, Iterable[str]]]) -> tuple[str, ...]:

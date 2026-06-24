@@ -116,31 +116,33 @@ async def evaluate_candidates_ordered(
     per_market_entries = [
         entry for entry in entries if entry.execution_mode != "cross_market"
     ]
+    entry_levels = _strategy_schedule_levels(per_market_entries)
     for market_index, snapshot in snapshots:
-        entry_results: list[list[CandidateEnvelope]] = [
-            [] for _ in per_market_entries
-        ]
-        stateless_tasks: list[tuple[int, asyncio.Task[list[CandidateEnvelope]]]] = []
-        for entry_index, entry in enumerate(per_market_entries):
-            if entry.execution_mode == "stateless":
-                stateless_tasks.append(
-                    (
-                        entry_index,
-                        asyncio.create_task(
-                            _evaluate_stateless_entry(
-                                scheduler, entry, snapshot, market_index
-                            )
-                        ),
+        for level_entries in entry_levels:
+            entry_results: list[list[CandidateEnvelope]] = [
+                [] for _ in level_entries
+            ]
+            stateless_tasks: list[tuple[int, asyncio.Task[list[CandidateEnvelope]]]] = []
+            for entry_index, entry in enumerate(level_entries):
+                if entry.execution_mode == "stateless":
+                    stateless_tasks.append(
+                        (
+                            entry_index,
+                            asyncio.create_task(
+                                _evaluate_stateless_entry(
+                                    scheduler, entry, snapshot, market_index
+                                )
+                            ),
+                        )
                     )
-                )
-            elif entry.execution_mode == "stateful":
-                entry_results[entry_index] = _evaluate_entry_serial(
-                    scheduler, entry, snapshot, market_index
-                )
-        for entry_index, task in stateless_tasks:
-            entry_results[entry_index] = await task
-        for result in entry_results:
-            envelopes.extend(result)
+                elif entry.execution_mode == "stateful":
+                    entry_results[entry_index] = _evaluate_entry_serial(
+                        scheduler, entry, snapshot, market_index
+                    )
+            for entry_index, task in stateless_tasks:
+                entry_results[entry_index] = await task
+            for result in entry_results:
+                envelopes.extend(result)
     envelopes.extend(_evaluate_cross_market_entries(scheduler, entries, snapshots))
     return envelopes
 
@@ -337,6 +339,27 @@ def _strategy_schedule(scheduler: PolySignalScheduler) -> list[StrategyScheduleE
     ]
 
 
+def _strategy_schedule_levels(
+    entries: list[StrategyScheduleEntry],
+) -> list[list[StrategyScheduleEntry]]:
+    levels: list[list[StrategyScheduleEntry]] = []
+    levels_by_name: dict[str, int] = {}
+    for entry in entries:
+        level = max(
+            (
+                levels_by_name[dependency_name] + 1
+                for dependency_name in entry.depends_on
+                if dependency_name in levels_by_name
+            ),
+            default=0,
+        )
+        while len(levels) <= level:
+            levels.append([])
+        levels[level].append(entry)
+        levels_by_name[entry.name] = level
+    return levels
+
+
 def _arbitrate_envelopes(
     scheduler: PolySignalScheduler, envelopes: list[CandidateEnvelope]
 ) -> list[CandidateEnvelope]:
@@ -354,7 +377,7 @@ def _arbitrate_envelopes(
     }
     ordered = arbiter.arbitrate(
         [envelope.candidate for envelope in envelopes],
-        strategy_priorities={entry.name: entry.priority for entry in schedule},
+        strategy_priorities=strategy_order_indexes,
         strategy_config_indexes=strategy_order_indexes,
         market_config_indexes=market_config_indexes,
     )
