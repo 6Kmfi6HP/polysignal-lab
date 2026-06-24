@@ -33,22 +33,25 @@ class AcceptedSignalSummary(TypedDict):
 
 async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]:
     accepted: list[SignalCandidate] = []
+    health = getattr(scheduler, "health", None)
     for market in scheduler.ctx.markets.active():
         try:
             snapshot = await scheduler.snapshot_builder.build(market)
-            scheduler.health.inc_metric("snapshot_builder", "build_count")
-            if snapshot.freshness.max_ms is not None:
-                scheduler.health.set_metric(
-                    "snapshot_builder",
-                    "max_freshness_lag_ms",
-                    snapshot.freshness.max_ms,
-                )
-            scheduler.health.mark_ok("snapshot_builder")
+            if health is not None:
+                health.inc_metric("snapshot_builder", "build_count")
+                if snapshot.freshness.max_ms is not None:
+                    health.set_metric(
+                        "snapshot_builder",
+                        "max_freshness_lag_ms",
+                        snapshot.freshness.max_ms,
+                    )
+                health.mark_ok("snapshot_builder")
         except Exception:
-            scheduler.health.inc_metric("snapshot_builder", "failure_count")
-            scheduler.health.mark_degraded(
-                "snapshot_builder", f"snapshot failed for {market.market_slug}"
-            )
+            if health is not None:
+                health.inc_metric("snapshot_builder", "failure_count")
+                health.mark_degraded(
+                    "snapshot_builder", f"snapshot failed for {market.market_slug}"
+                )
             scheduler.logger.exception(
                 "Failed to build snapshot for market %s", market.market_slug
             )
@@ -70,8 +73,9 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
                     decision = scheduler.gate.evaluate(candidate, snapshot)
                     if decision.accepted and decision.signal:
                         strategy.notify_signal_accepted(decision.signal)
-                        scheduler.health.inc_metric("signal_gate", "accepted_count")
-                        scheduler.health.mark_ok("signal_gate")
+                        if health is not None:
+                            health.inc_metric("signal_gate", "accepted_count")
+                            health.mark_ok("signal_gate")
                         accepted.append(decision.signal)
                         consensus = scheduler.consensus.add(decision.signal)
                         if consensus:
@@ -80,12 +84,13 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
                         strategy.notify_signal_rejected(
                             decision.rejected.candidate, decision.rejected
                         )
-                        scheduler.health.inc_metric(
-                            "signal_gate", f"rejected_{decision.rejected.reason_code}"
-                        )
-                        scheduler.health.mark_degraded(
-                            "signal_gate", "gate rejections observed"
-                        )
+                        if health is not None:
+                            health.inc_metric(
+                                "signal_gate", f"rejected_{decision.rejected.reason_code}"
+                            )
+                            health.mark_degraded(
+                                "signal_gate", "gate rejections observed"
+                            )
                         try:
                             scheduler.logs.append("rejected_signals", decision.rejected)
                             scheduler.sqlite.insert_rejected_signal(decision.rejected)

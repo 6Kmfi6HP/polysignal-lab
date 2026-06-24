@@ -65,11 +65,16 @@ def _sync_clob_ws(scheduler: PolySignalScheduler) -> None:
     idle_without_active_tokens = (
         scheduler._market_refresh_completed and not scheduler._latest_market_token_ids
     )
+    poly_ws = scheduler.poly_ws
+    connected = bool(getattr(poly_ws, "connected", False))
+    reconnect_count = int(getattr(poly_ws, "reconnect_count", 0))
+    subscribed_token_count = int(getattr(poly_ws, "subscribed_token_count", 0))
+    last_error = getattr(poly_ws, "last_error", None)
     component_metrics: dict[str, JsonValue] = {
-        "connected": scheduler.poly_ws.connected,
-        "reconnect_count": scheduler.poly_ws.reconnect_count,
+        "connected": connected,
+        "reconnect_count": reconnect_count,
         "subscribed_token_count": (
-            0 if idle_without_active_tokens else scheduler.poly_ws.subscribed_token_count
+            0 if idle_without_active_tokens else subscribed_token_count
         ),
         "stale_token_count": stale_count,
         "invalid_event_count": int(metrics.get("ws_decode_errors", 0))
@@ -79,14 +84,27 @@ def _sync_clob_ws(scheduler: PolySignalScheduler) -> None:
         scheduler.health.mark_ok("clob_ws", enabled=False, **component_metrics)
     elif idle_without_active_tokens:
         scheduler.health.mark_ok("clob_ws", idle=True, **component_metrics)
-    elif scheduler.poly_ws.connected and stale_count == 0:
+    elif connected and stale_count == 0:
         scheduler.health.mark_ok("clob_ws", **component_metrics)
     else:
-        scheduler.health.mark_degraded("clob_ws", scheduler.poly_ws.last_error or "clob websocket not fully healthy", **component_metrics)
+        scheduler.health.mark_degraded(
+            "clob_ws", last_error or "clob websocket not fully healthy", **component_metrics
+        )
 
 
 def _sync_clob_rest(scheduler: PolySignalScheduler) -> None:
-    metrics = scheduler.rest.metrics.snapshot()
+    rest_metrics = getattr(scheduler.rest, "metrics", None)
+    if rest_metrics is None:
+        scheduler.health.mark_degraded(
+            "clob_rest",
+            "clob rest metrics unavailable",
+            batch_success=0,
+            batch_failure=0,
+            fallback_count=0,
+            latency_ms=None,
+        )
+        return
+    metrics = rest_metrics.snapshot()
     counters = metrics["counters"]
     gauges = metrics["gauges"]
     payload: dict[str, JsonValue] = {
