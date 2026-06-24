@@ -329,3 +329,72 @@ async def test_per_market_strategy_cannot_depend_on_cross_market_strategy() -> N
     with pytest.raises(ValueError, match="cross_market dependency.*dependent"):
         await scheduler.evaluate_once()
     assert events == []
+
+
+async def test_dependencies_complete_for_all_markets_before_dependent_level() -> None:
+    snapshots = [_snapshot("BTC", "5m"), _snapshot("ETH", "5m")]
+    events: list[str] = []
+    dependency = _OrderingStrategy(
+        "dependency",
+        {
+            snapshot.market.market_id: [_candidate("dependency", snapshot)]
+            for snapshot in snapshots
+        },
+        events,
+    )
+    dependent = _OrderingStrategy(
+        "dependent",
+        {
+            snapshot.market.market_id: [_candidate("dependent", snapshot)]
+            for snapshot in snapshots
+        },
+        events,
+    )
+
+    def evaluate_dependency(snapshot):
+        events.append(f"evaluate:dependency:{snapshot.market.asset}")
+        return _FakeStrategy.evaluate(dependency, snapshot)
+
+    def evaluate_dependent(snapshot):
+        events.append(f"evaluate:dependent:{snapshot.market.asset}")
+        return _FakeStrategy.evaluate(dependent, snapshot)
+
+    dependency.evaluate = evaluate_dependency
+    dependent.evaluate = evaluate_dependent
+    scheduler = _FakeScheduler(
+        snapshots,
+        [
+            StrategyScheduleEntry(
+                strategy=dependent,
+                name=dependent.name,
+                priority=10,
+                depends_on=("dependency",),
+                execution_mode="stateful",
+                strategy_config_index=0,
+            ),
+            StrategyScheduleEntry(
+                strategy=dependency,
+                name=dependency.name,
+                priority=100,
+                depends_on=(),
+                execution_mode="stateful",
+                strategy_config_index=1,
+            ),
+        ],
+    )
+    scheduler.arbiter = SignalArbiter()
+
+    accepted = await scheduler.evaluate_once()
+
+    assert [signal.strategy for signal in accepted] == [
+        "dependency",
+        "dependency",
+        "dependent",
+        "dependent",
+    ]
+    assert events[:4] == [
+        "evaluate:dependency:BTC",
+        "evaluate:dependency:ETH",
+        "evaluate:dependent:BTC",
+        "evaluate:dependent:ETH",
+    ]
