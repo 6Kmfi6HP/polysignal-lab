@@ -8,6 +8,7 @@ from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.base import BaseStrategy
+from polysignal_lab.strategies.readiness import StrategyReadiness
 
 
 class TpSlThresholds(TypedDict):
@@ -78,6 +79,18 @@ class PTBDiffStrategy(BaseStrategy):
         return FreshnessPolicy(
             max_orderbook_staleness_ms=max_lag_ms,
             max_spot_staleness_ms=max_lag_ms,
+        )
+
+    @property
+    def readiness(self) -> StrategyReadiness:
+        return StrategyReadiness(
+            name=self.name,
+            production_enabled=bool(self.config.enabled),
+            supported_assets=tuple(asset.upper() for asset in self.config.assets),
+            supported_timeframes=tuple(self.config.timeframes),
+            required_fields=("up_book", "down_book", "spot", "price_to_beat", "market_end_ts"),
+            calibration_required=False,
+            calibration_status="calibrated",
         )
 
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalCandidate]:

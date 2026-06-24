@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from polysignal_lab.strategies.readiness import StrategyReadiness, check_strategy_market
+from polysignal_lab.config import Settings
+from polysignal_lab.strategies.factory import build_strategies
 
 
 class _Market:
@@ -50,3 +52,17 @@ def test_readiness_reports_missing_data() -> None:
 
     assert status.status == "missing_data"
     assert status.reason == "MISSING_PRICE_TO_BEAT"
+
+
+def test_all_loaded_strategies_expose_readiness() -> None:
+    settings = Settings.from_yaml("config/signal_bot.yaml")
+    strategies = build_strategies(settings.strategies)
+
+    names = {strategy.name for strategy in strategies}
+    readiness = {strategy.name: strategy.readiness for strategy in strategies}
+
+    assert names == set(readiness)
+    assert readiness["ninety_nine_cent_sniper"].supported_assets == ("BTC", "ETH", "SOL", "XRP")
+    assert readiness["one_cent_buy"].supported_timeframes == ("5m", "15m")
+    assert readiness["ninety_nine_cent_sniper"].calibration_required is True
+    assert readiness["one_cent_buy"].required_fields == ("up_book", "down_book", "market_end_ts")
