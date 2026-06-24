@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import sqlite3
 
 from pydantic import JsonValue, TypeAdapter
 from typing import assert_type
@@ -307,6 +308,50 @@ async def test_scheduler_refresh_captures_anchor_for_snapshot_ptb_flow(
     assert snapshot.metrics["price_to_beat_source"] == "anchor_service:binance"
     assert snapshot.metrics["price_to_beat_from_anchor_service"] is True
     assert snapshot.metrics["anchor_price_lag_ms"] == 0
+
+async def test_scheduler_refresh_ignores_anchor_sqlite_failure(
+    tmp_path: Path, settings
+) -> None:
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+    from polysignal_lab.domain.market import Market, MarketStatus, OutcomeToken
+
+    market = Market(
+        market_id="anchor-failure-market",
+        condition_id="anchor-failure-condition",
+        question="BTC Up or Down",
+        market_slug="btc-updown-5m-1782216000",
+        asset="BTC",
+        timeframe="5m",
+        status=MarketStatus.ACTIVE,
+        outcome_tokens=[
+            OutcomeToken(
+                token_id="failure-up",
+                side=Side.UP,
+                outcome_name="Up",
+                market_id="anchor-failure-market",
+            )
+        ],
+    )
+
+    class FakeDiscovery:
+        async def discover(self) -> list[Market]:
+            return [market]
+
+    class FakeRestClient:
+        async def get_books(self, token_ids: list[str]) -> list[OrderBook]:
+            return [sample_book(token_ids[0], BookFactoryConfig(ask=0.55, bid=0.54))]
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path, market_data_client=FakeRestClient())
+    scheduler.discovery = FakeDiscovery()
+
+    def raise_sqlite(_: Market) -> None:
+        raise sqlite3.OperationalError("anchor db unavailable")
+
+    scheduler.anchor_prices.capture_for_market = raise_sqlite
+
+    await scheduler.refresh_markets_once()
+
+    assert scheduler._latest_market_token_ids == ("failure-up",)
 
 def test_websocket_event_types_reconciliation() -> None:
     from polysignal_lab.domain.orderbook import OrderBook
