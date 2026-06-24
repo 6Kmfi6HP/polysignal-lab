@@ -1,4 +1,5 @@
 from __future__ import annotations
+import sqlite3
 
 from typing import TYPE_CHECKING, TypedDict
 
@@ -86,11 +87,10 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
                         )
                         if health is not None:
                             health.inc_metric(
-                                "signal_gate", f"rejected_{decision.rejected.reason_code}"
+                                "signal_gate",
+                                f"rejected_{decision.rejected.reason_code}",
                             )
-                            health.mark_degraded(
-                                "signal_gate", "gate rejections observed"
-                            )
+                            health.mark_ok("signal_gate")
                         try:
                             scheduler.logs.append("rejected_signals", decision.rejected)
                             scheduler.sqlite.insert_rejected_signal(decision.rejected)
@@ -107,6 +107,26 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
                     strategy.name if hasattr(strategy, "name") else "?",
                 )
     return accepted
+
+
+def _append_paper_log(
+    scheduler: PolySignalScheduler, stream: str, payload: object
+) -> None:
+    try:
+        scheduler.logs.append(stream, payload)
+        scheduler_health.note_storage_success(scheduler, "jsonl")
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "jsonl", exc)
+        raise
+
+
+def _write_paper_sqlite(scheduler: PolySignalScheduler, write, payload: object) -> None:
+    try:
+        write(payload)
+        scheduler_health.note_storage_success(scheduler, "sqlite")
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
+        raise
 
 
 async def process_signal(
@@ -134,14 +154,18 @@ async def process_signal(
             message = scheduler.formatter.signal_message(
                 signal, scheduler.settings.paper_trading.fixed_stake_usdc
             )
-            publish = await scheduler.publisher.send(message, "signal", signal.signal_id)
+            publish = await scheduler.publisher.send(
+                message, "signal", signal.signal_id
+            )
             scheduler_health.note_publish_result(scheduler, publish.as_dict())
             scheduler.logs.append("telegram_publishes", publish.as_dict())
             scheduler.sqlite.insert_telegram_publish(publish.as_dict())
             result["published"] = True
             result["publish_status"] = publish.status
         except Exception as exc:
-            scheduler.logger.error("Failed to publish signal %s: %s", signal.signal_id, exc)
+            scheduler.logger.error(
+                "Failed to publish signal %s: %s", signal.signal_id, exc
+            )
 
     try:
         book = scheduler.ctx.books.get(signal.token_id)
@@ -169,18 +193,22 @@ def _store_simulation_result(
     sim: SimulationResult,
     result: ProcessSignalResult,
 ) -> None:
-    scheduler.logs.append("paper_orders", sim.order)
-    scheduler.sqlite.insert_paper_order(sim.order)
+    _append_paper_log(scheduler, "paper_orders", sim.order)
+    _write_paper_sqlite(scheduler, scheduler.sqlite.insert_paper_order, sim.order)
     wallet_snapshot = scheduler.wallet.snapshot()
-    scheduler.logs.append("paper_wallet_snapshots", wallet_snapshot)
-    scheduler.sqlite.insert_wallet_snapshot(wallet_snapshot)
+    _append_paper_log(scheduler, "paper_wallet_snapshots", wallet_snapshot)
+    _write_paper_sqlite(
+        scheduler, scheduler.sqlite.insert_wallet_snapshot, wallet_snapshot
+    )
     scheduler.health.inc_metric("paper_simulator", "wallet_snapshot_count")
     result["paper_order"] = sim.order
     if sim.fill and sim.position:
-        scheduler.logs.append("paper_fills", sim.fill)
-        scheduler.logs.append("paper_positions", sim.position)
-        scheduler.sqlite.insert_paper_fill(sim.fill)
-        scheduler.sqlite.upsert_paper_position(sim.position)
+        _append_paper_log(scheduler, "paper_fills", sim.fill)
+        _append_paper_log(scheduler, "paper_positions", sim.position)
+        _write_paper_sqlite(scheduler, scheduler.sqlite.insert_paper_fill, sim.fill)
+        _write_paper_sqlite(
+            scheduler, scheduler.sqlite.upsert_paper_position, sim.position
+        )
         result["paper_fill"] = sim.fill
         result["paper_position"] = sim.position
         scheduler.health.inc_metric("paper_simulator", "fills")
@@ -229,31 +257,43 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
     """Poll resting GTD orders for fills/expiry each scheduler cycle."""
     from polysignal_lab.domain.enums import OrderStatus
     from polysignal_lab.paper.preflight import normalize_paper_reject_reason
+
     def _risk_check(order):
         """Check paper trading risk limits before filling a resting order."""
         cfg = scheduler.settings.paper_trading
         if scheduler.wallet.open_position_count >= cfg.max_open_positions:
             return False
-        if scheduler.wallet.exposure_by_market(order.market_id) + order.stake_usdc > cfg.max_market_exposure_usdc:
+        if (
+            scheduler.wallet.exposure_by_market(order.market_id) + order.stake_usdc
+            > cfg.max_market_exposure_usdc
+        ):
             return False
-        if scheduler.wallet.exposure_by_strategy(order.strategy) + order.stake_usdc > cfg.max_strategy_exposure_usdc:
+        if (
+            scheduler.wallet.exposure_by_strategy(order.strategy) + order.stake_usdc
+            > cfg.max_strategy_exposure_usdc
+        ):
             return False
         return True
-    results = scheduler.paper.passive.tick(scheduler.ctx.books, scheduler.wallet, risk_check=_risk_check)
+
+    results = scheduler.paper.passive.tick(
+        scheduler.ctx.books, scheduler.wallet, risk_check=_risk_check
+    )
     for result in results:
         if result.fills:
             for fill in result.fills:
-                scheduler.logs.append("paper_fills", fill)
-                scheduler.sqlite.insert_paper_fill(fill)
+                _append_paper_log(scheduler, "paper_fills", fill)
+                _write_paper_sqlite(scheduler, scheduler.sqlite.insert_paper_fill, fill)
             for position in result.positions:
-                scheduler.logs.append("paper_positions", position)
-                scheduler.sqlite.upsert_paper_position(position)
-            scheduler.health.inc_metric(
-                "paper_simulator", "fills", len(result.fills)
-            )
+                _append_paper_log(scheduler, "paper_positions", position)
+                _write_paper_sqlite(
+                    scheduler, scheduler.sqlite.upsert_paper_position, position
+                )
+            scheduler.health.inc_metric("paper_simulator", "fills", len(result.fills))
             scheduler.health.mark_ok("paper_simulator")
             if scheduler.paper.fill_notifier:
-                scheduler.paper.fill_notifier(result.order, "filled", result.fills[0] if result.fills else None)
+                scheduler.paper.fill_notifier(
+                    result.order, "filled", result.fills[0] if result.fills else None
+                )
         elif result.status == OrderStatus.REJECTED or (
             result.status == OrderStatus.CANCELLED
             and (result.reject_reason or result.order.reject_reason)
@@ -265,11 +305,15 @@ def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
             result.order.metrics["paper_original_reason"] = original_reason
             result.order.metrics["paper_normalized_reason"] = normalized_reason
             result.order.metrics["paper_terminal_at"] = utc_now()
-            scheduler.logs.append("paper_orders", result.order)
-            scheduler.sqlite.upsert_paper_order(result.order)
+            _append_paper_log(scheduler, "paper_orders", result.order)
+            _write_paper_sqlite(
+                scheduler, scheduler.sqlite.upsert_paper_order, result.order
+            )
             wallet_snapshot = scheduler.wallet.snapshot()
-            scheduler.logs.append("paper_wallet_snapshots", wallet_snapshot)
-            scheduler.sqlite.insert_wallet_snapshot(wallet_snapshot)
+            _append_paper_log(scheduler, "paper_wallet_snapshots", wallet_snapshot)
+            _write_paper_sqlite(
+                scheduler, scheduler.sqlite.insert_wallet_snapshot, wallet_snapshot
+            )
             scheduler.health.inc_metric(
                 "paper_simulator", f"rejects_{normalized_reason}"
             )

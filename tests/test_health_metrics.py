@@ -83,9 +83,15 @@ async def test_scheduler_records_market_data_health(tmp_path, settings, market) 
 
     scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
     scheduler.ctx.markets.upsert_many([market])
-    scheduler._latest_market_token_ids = tuple(token.token_id for token in market.outcome_tokens)
-    scheduler.ctx.books.update_from_snapshot(OrderBook(token_id=market.outcome_tokens[0].token_id))
-    scheduler.ctx.books.mark_stale(market.outcome_tokens[1].token_id, "RECONNECT_RESEED_FAILED")
+    scheduler._latest_market_token_ids = tuple(
+        token.token_id for token in market.outcome_tokens
+    )
+    scheduler.ctx.books.update_from_snapshot(
+        OrderBook(token_id=market.outcome_tokens[0].token_id)
+    )
+    scheduler.ctx.books.mark_stale(
+        market.outcome_tokens[1].token_id, "RECONNECT_RESEED_FAILED"
+    )
     scheduler.ctx.books.mark_stale("obsolete-token", "OLD_SUBSCRIPTION")
     scheduler.poly_ws.note_connected(token_ids=list(scheduler._latest_market_token_ids))
     scheduler.poly_ws.note_reconnect(RuntimeError("reconnect"))
@@ -98,7 +104,10 @@ async def test_scheduler_records_market_data_health(tmp_path, settings, market) 
     assert components["clob_ws"].metrics["stale_token_count"] == 1
     assert components["clob_ws"].metrics["reconnect_count"] == 1
 
-    scheduler._latest_market_token_ids = (*scheduler._latest_market_token_ids, "missing-active-token")
+    scheduler._latest_market_token_ids = (
+        *scheduler._latest_market_token_ids,
+        "missing-active-token",
+    )
     scheduler.poly_ws.note_connected(token_ids=list(scheduler._latest_market_token_ids))
     scheduler.ctx.spots.update(SpotPrice(asset="BTC", symbol="BTCUSDT", price=100.0))
     scheduler.binance_ws.note_connected()
@@ -122,7 +131,6 @@ async def test_scheduler_records_market_data_health(tmp_path, settings, market) 
     assert components["clob_ws"].metrics["stale_token_count"] == 0
 
 
-
 async def test_scheduler_records_gate_rejections_and_persists_health_snapshot(
     tmp_path, snapshot, settings
 ) -> None:
@@ -137,14 +145,15 @@ async def test_scheduler_records_gate_rejections_and_persists_health_snapshot(
 
     decision = scheduler.gate.evaluate(signal, snapshot)
     assert decision.rejected is not None
-    scheduler.health.inc_metric("signal_gate", f"rejected_{decision.rejected.reason_code}")
+    scheduler.health.inc_metric(
+        "signal_gate", f"rejected_{decision.rejected.reason_code}"
+    )
     scheduler_health.persist_health_snapshot(scheduler)
 
     latest = scheduler.sqlite.restore_latest_system_event("health_snapshot")
     assert latest is not None
     components = {component["name"]: component for component in latest["components"]}
     assert components["signal_gate"]["metrics"]["rejected_CONFIDENCE_TOO_LOW"] == 1
-
 
 
 async def test_refresh_markets_marks_jsonl_failure_without_sqlite_down(
@@ -170,7 +179,10 @@ async def test_refresh_markets_marks_jsonl_failure_without_sqlite_down(
     await scheduler.refresh_markets_once()
 
     stored_markets = scheduler.sqlite.query_json("markets")
-    components = {component.name: component for component in scheduler.health.snapshot().components}
+    components = {
+        component.name: component
+        for component in scheduler.health.snapshot().components
+    }
 
     assert stored_markets[0]["market_id"] == market.market_id
     assert components["sqlite_storage"].status == "ok"
@@ -194,7 +206,10 @@ def test_persist_state_marks_jsonl_failure_without_sqlite_down(
 
     scheduler._persist_state()
 
-    components = {component.name: component for component in scheduler.health.snapshot().components}
+    components = {
+        component.name: component
+        for component in scheduler.health.snapshot().components
+    }
 
     assert components["jsonl_storage"].status == "down"
     assert components["jsonl_storage"].last_error == "jsonl append failed"
@@ -217,7 +232,10 @@ def test_persist_state_marks_state_failure_without_sqlite_down(
 
     scheduler._persist_state()
 
-    components = {component.name: component for component in scheduler.health.snapshot().components}
+    components = {
+        component.name: component
+        for component in scheduler.health.snapshot().components
+    }
 
     assert components["state_storage"].status == "down"
     assert components["state_storage"].last_error == "state write failed: paper_wallet"
@@ -225,7 +243,9 @@ def test_persist_state_marks_state_failure_without_sqlite_down(
     assert components["sqlite_storage"].status == "ok"
 
 
-async def test_clob_ws_idle_after_empty_market_refresh_is_ok(tmp_path, settings) -> None:
+async def test_clob_ws_idle_after_empty_market_refresh_is_ok(
+    tmp_path, settings
+) -> None:
     from polysignal_lab.app.scheduler import PolySignalScheduler
     from polysignal_lab.app.scheduler_health import sync_runtime_health
     from polysignal_lab.domain.orderbook import OrderBook
@@ -291,7 +311,10 @@ async def test_sync_runtime_health_preserves_clob_rest_down_after_complete_failu
     scheduler.rest.get_books = fail_get_books
 
     await scheduler.refresh_markets_once()
-    before_sync = {component.name: component for component in scheduler.health.snapshot().components}
+    before_sync = {
+        component.name: component
+        for component in scheduler.health.snapshot().components
+    }
 
     snapshot = sync_runtime_health(scheduler)
     components = {component.name: component for component in snapshot.components}
@@ -300,3 +323,64 @@ async def test_sync_runtime_health_preserves_clob_rest_down_after_complete_failu
     assert components["clob_rest"].status == "down"
     assert components["clob_rest"].metrics["batch_failure"] == 1
     assert components["clob_rest"].metrics["fallback_count"] == 1
+
+
+async def test_sync_runtime_health_recovers_clob_rest_after_successful_batch(
+    tmp_path, settings
+) -> None:
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+    from polysignal_lab.app.scheduler_health import sync_runtime_health
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler.rest.metrics.inc("clob_rest_batch_failure")
+    scheduler.rest.metrics.inc("clob_rest_fallback_count")
+    sync_runtime_health(scheduler)
+
+    scheduler.rest.metrics.inc("clob_rest_batch_success")
+    snapshot = sync_runtime_health(scheduler)
+    components = {component.name: component for component in snapshot.components}
+
+    assert components["clob_rest"].status == "ok"
+    assert components["clob_rest"].metrics["batch_failure"] == 1
+    assert components["clob_rest"].metrics["fallback_count"] == 1
+
+
+async def test_scheduler_rejected_signal_gate_candidate_keeps_gate_healthy(
+    tmp_path, snapshot, settings
+) -> None:
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+    from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
+
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler._initialize_trading_components()
+    scheduler.ctx.markets.upsert_many([snapshot.market])
+    signal = PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0]
+    rejected_signal = signal.model_copy(update={"confidence": 0.01})
+
+    class RejectingStrategy:
+        name = "rejecting"
+
+        def evaluate(self, _snapshot):
+            return [rejected_signal]
+
+        def notify_signal_accepted(self, _signal):
+            raise AssertionError("signal should be rejected")
+
+        def notify_signal_rejected(self, _candidate, _rejected):
+            return None
+
+    async def build_snapshot(_market):
+        return snapshot
+
+    scheduler.strategies = [RejectingStrategy()]
+    scheduler.snapshot_builder.build = build_snapshot
+
+    accepted = await scheduler.evaluate_once()
+    components = {
+        component.name: component
+        for component in scheduler.health.snapshot().components
+    }
+
+    assert accepted == []
+    assert components["signal_gate"].status == "ok"
+    assert components["signal_gate"].metrics["rejected_CONFIDENCE_TOO_LOW"] == 1

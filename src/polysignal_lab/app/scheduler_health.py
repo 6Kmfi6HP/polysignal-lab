@@ -16,12 +16,16 @@ def note_storage_success(scheduler: PolySignalScheduler, store_name: str) -> Non
     scheduler.health.mark_ok(f"{store_name}_storage", last_successful_write=utc_iso())
 
 
-def note_storage_failure(scheduler: PolySignalScheduler, store_name: str, exc: BaseException) -> None:
+def note_storage_failure(
+    scheduler: PolySignalScheduler, store_name: str, exc: BaseException
+) -> None:
     scheduler.health.inc_metric(f"{store_name}_storage", "write_failures")
     scheduler.health.mark_down(f"{store_name}_storage", str(exc))
 
 
-def note_publish_result(scheduler: PolySignalScheduler, publish: dict[str, str | None]) -> None:
+def note_publish_result(
+    scheduler: PolySignalScheduler, publish: dict[str, str | None]
+) -> None:
     status = str(publish.get("status") or "")
     if status == "SENT":
         scheduler.health.inc_metric("telegram", "sent")
@@ -31,7 +35,9 @@ def note_publish_result(scheduler: PolySignalScheduler, publish: dict[str, str |
         scheduler.health.mark_ok("telegram", dry_run=True)
     else:
         scheduler.health.inc_metric("telegram", "failed")
-        scheduler.health.mark_degraded("telegram", publish.get("error") or "telegram publish failed")
+        scheduler.health.mark_degraded(
+            "telegram", publish.get("error") or "telegram publish failed"
+        )
 
 
 def sync_runtime_health(scheduler: PolySignalScheduler) -> HealthSnapshot:
@@ -47,7 +53,11 @@ def persist_health_snapshot(scheduler: PolySignalScheduler) -> None:
     payload = {
         "event_id": new_id("health_snapshot"),
         "event_type": "health_snapshot",
-        "severity": "ERROR" if snapshot.status == "down" else "WARNING" if snapshot.status == "degraded" else "INFO",
+        "severity": "ERROR"
+        if snapshot.status == "down"
+        else "WARNING"
+        if snapshot.status == "degraded"
+        else "INFO",
         "created_at": snapshot.generated_at,
         **snapshot.as_dict(),
     }
@@ -78,7 +88,11 @@ def _sync_clob_ws(scheduler: PolySignalScheduler) -> None:
         ),
         "stale_token_count": stale_count,
         "invalid_event_count": int(metrics.get("ws_decode_errors", 0))
-        + sum(int(value) for key, value in metrics.items() if key.startswith("ws_event_unknown_")),
+        + sum(
+            int(value)
+            for key, value in metrics.items()
+            if key.startswith("ws_event_unknown_")
+        ),
     }
     if not scheduler.settings.data.polymarket.use_market_ws:
         scheduler.health.mark_ok("clob_ws", enabled=False, **component_metrics)
@@ -88,7 +102,9 @@ def _sync_clob_ws(scheduler: PolySignalScheduler) -> None:
         scheduler.health.mark_ok("clob_ws", **component_metrics)
     else:
         scheduler.health.mark_degraded(
-            "clob_ws", last_error or "clob websocket not fully healthy", **component_metrics
+            "clob_ws",
+            last_error or "clob websocket not fully healthy",
+            **component_metrics,
         )
 
 
@@ -114,11 +130,18 @@ def _sync_clob_rest(scheduler: PolySignalScheduler) -> None:
         "latency_ms": gauges.get("clob_rest_latency_ms"),
     }
     current = scheduler.health.components.get("clob_rest")
-    if current is not None and current.status == "down":
+    previous_metrics = current.metrics if current is not None else {}
+    previous_success = int(previous_metrics.get("batch_success") or 0)
+    previous_failure = int(previous_metrics.get("batch_failure") or 0)
+    new_success = payload["batch_success"] > previous_success
+    new_failure = payload["batch_failure"] > previous_failure
+    if current is not None and current.status == "down" and not new_success:
         scheduler.health.mark_down(
             "clob_rest", current.last_error or "clob rest down", **payload
         )
-    elif payload["batch_failure"]:
+    elif new_failure and not new_success:
+        scheduler.health.mark_degraded("clob_rest", "batch fallback used", **payload)
+    elif payload["batch_failure"] and not payload["batch_success"]:
         scheduler.health.mark_degraded("clob_rest", "batch fallback used", **payload)
     else:
         scheduler.health.mark_ok("clob_rest", **payload)
@@ -145,11 +168,17 @@ def _sync_binance_ws(scheduler: PolySignalScheduler) -> None:
     if not scheduler.settings.data.binance.enabled:
         scheduler.health.mark_ok("binance_ws", enabled=False, **metrics)
     elif worst_lag is None:
-        scheduler.health.mark_down("binance_ws", scheduler.binance_ws.last_error or "no spot prices", **metrics)
+        scheduler.health.mark_down(
+            "binance_ws", scheduler.binance_ws.last_error or "no spot prices", **metrics
+        )
     elif missing_symbols:
         scheduler.health.mark_degraded("binance_ws", "missing spot prices", **metrics)
     elif not scheduler.binance_ws.connected:
-        scheduler.health.mark_degraded("binance_ws", scheduler.binance_ws.last_error or "binance websocket disconnected", **metrics)
+        scheduler.health.mark_degraded(
+            "binance_ws",
+            scheduler.binance_ws.last_error or "binance websocket disconnected",
+            **metrics,
+        )
     elif worst_lag > scheduler.settings.data.binance.max_price_staleness_ms:
         scheduler.health.mark_degraded("binance_ws", "spot prices stale", **metrics)
     else:
@@ -174,6 +203,9 @@ def _stale_clob_token_count(scheduler: PolySignalScheduler) -> int:
         return sum(
             1
             for token_id in active_token_ids
-            if (state := scheduler.ctx.books.states.get(token_id)) is None or not state.has_snapshot
+            if (state := scheduler.ctx.books.states.get(token_id)) is None
+            or not state.has_snapshot
         )
-    return sum(1 for state in scheduler.ctx.books.states.values() if not state.has_snapshot)
+    return sum(
+        1 for state in scheduler.ctx.books.states.values() if not state.has_snapshot
+    )
