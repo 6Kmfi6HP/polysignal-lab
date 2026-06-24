@@ -42,6 +42,18 @@ TABLE_DDL_STATEMENTS: Final = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS strategy_status (
+        status_id TEXT PRIMARY KEY,
+        strategy TEXT NOT NULL,
+        asset TEXT NOT NULL,
+        timeframe TEXT NOT NULL,
+        status TEXT NOT NULL,
+        reason TEXT,
+        created_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS paper_orders (
         paper_order_id TEXT PRIMARY KEY,
         signal_id TEXT NOT NULL,
@@ -142,6 +154,7 @@ TABLE_DDL_STATEMENTS: Final = [
 INDEX_DDL_STATEMENTS: Final = [
     "CREATE INDEX IF NOT EXISTS idx_markets_asset_tf_end ON markets(asset,timeframe,end_ts)",
     "CREATE INDEX IF NOT EXISTS idx_signals_strategy_asset ON signals(strategy,asset,timeframe,created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_strategy_status_strategy_asset ON strategy_status(strategy,asset,timeframe,created_at)",
     "CREATE INDEX IF NOT EXISTS idx_positions_status ON paper_positions(status,market_id)",
     "CREATE INDEX IF NOT EXISTS idx_results_strategy_asset ON paper_trade_results(strategy,asset,timeframe,closed_at)",
 ]
@@ -150,6 +163,7 @@ REQUIRED_COLUMNS: Final[dict[str, frozenset[str]]] = {
     "markets": frozenset({"market_id", "asset", "timeframe", "market_slug", "payload_json", "updated_at"}),
     "signals": frozenset({"signal_id", "strategy", "asset", "timeframe", "market_id", "side", "confidence", "created_at", "payload_json"}),
     "rejected_signals": frozenset({"rejected_id", "signal_id", "reason_code", "gate_name", "rejected_at", "payload_json"}),
+    "strategy_status": frozenset({"status_id", "strategy", "asset", "timeframe", "status", "created_at", "payload_json"}),
     "paper_orders": frozenset({"paper_order_id", "signal_id", "strategy", "asset", "timeframe", "market_id", "status", "created_at", "payload_json"}),
     "paper_fills": frozenset({"paper_fill_id", "paper_order_id", "signal_id", "fill_price", "stake_usdc", "shares", "created_at", "payload_json"}),
     "paper_positions": frozenset({"paper_position_id", "signal_id", "strategy", "asset", "timeframe", "market_id", "status", "opened_at", "payload_json"}),
@@ -164,6 +178,7 @@ ALLOWED_TABLES: Final = frozenset(REQUIRED_COLUMNS)
 COUNT_TABLES: Final = (
     "signals",
     "rejected_signals",
+    "strategy_status",
     "paper_orders",
     "paper_fills",
     "paper_positions",

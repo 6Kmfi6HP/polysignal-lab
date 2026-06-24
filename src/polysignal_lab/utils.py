@@ -58,9 +58,19 @@ def as_decimal(value: Any, default: str = "0") -> Decimal:
         return Decimal(default)
 
 
+def _is_dataclass_instance(value: Any) -> bool:
+    from dataclasses import is_dataclass
+
+    return is_dataclass(value) and not isinstance(value, type)
+
+
 def to_jsonable(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
+    if _is_dataclass_instance(value):
+        from dataclasses import asdict
+
+        return to_jsonable(asdict(value))
     if isinstance(value, datetime):
         return utc_iso(value)
     if isinstance(value, Decimal):

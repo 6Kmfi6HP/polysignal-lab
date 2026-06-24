@@ -6,6 +6,7 @@ from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.paper.simulator import SimulationResult
+from polysignal_lab.strategies.readiness import check_strategy_market
 from polysignal_lab.utils import utc_now
 
 if TYPE_CHECKING:
@@ -51,6 +52,19 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
             snapshot.max_spread,
         )
         for strategy in scheduler.strategies:
+            status = check_strategy_market(strategy.readiness, snapshot)
+            if status.status != "active":
+                try:
+                    scheduler.logs.append("strategy_status", status)
+                    scheduler.sqlite.insert_strategy_status(status)
+                except Exception:
+                    scheduler.logger.exception(
+                        "Failed to persist strategy status for market %s strategy %s status %s",
+                        market.market_slug,
+                        strategy.name if hasattr(strategy, "name") else "?",
+                        status.status,
+                    )
+                continue
             try:
                 for candidate in strategy.evaluate(snapshot):
                     decision = scheduler.gate.evaluate(candidate, snapshot)
