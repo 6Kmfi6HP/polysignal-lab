@@ -65,43 +65,27 @@ class MarketUniverseService:
         if callable(resolved_markets):
             markets = await resolved_markets()
             return self._store_resolved(markets)
-        if not open_market_ids or self.settings is None:
-            return []
-
-        params = {"closed": "true", "limit": "200", "offset": "0"}
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(
-                f"{self.settings.data.polymarket.gamma_base_url}/markets",
-                params=params,
-            )
-            if response.status_code != 200:
-                return []
-            data = response.json()
-            if not isinstance(data, list):
-                return []
-
-        payloads = self.discovery._flatten_markets(data)
         resolved: list[Market] = []
-        for payload in payloads:
-            market_id = str(
-                payload.get("id")
-                or payload.get("market")
-                or payload.get("conditionId")
-                or payload.get("slug")
-                or ""
-            )
-            if market_id not in open_market_ids:
-                continue
-            match = self.discovery._match_crypto_updown(payload)
-            asset, timeframe = match if match else ("UNKNOWN", "UNKNOWN")
-            market = Market.from_gamma(payload, asset=asset, timeframe=timeframe)
-            match market.status:
-                case MarketStatus.RESOLVED | MarketStatus.CANCELLED:
-                    resolved.append(market)
-                case MarketStatus.ACTIVE | MarketStatus.CLOSED | MarketStatus.UNKNOWN:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for market_id in sorted(open_market_ids):
+                local_market = self.markets.get(market_id)
+                response = await client.get(f"{self.settings.data.polymarket.gamma_base_url}/markets/{market_id}")
+                if response.status_code == 404 and local_market is not None and local_market.condition_id:
+                    response = await client.get(
+                        f"{self.settings.data.polymarket.gamma_base_url}/markets",
+                        params={"condition_ids": local_market.condition_id, "closed": "true"},
+                    )
+                if response.status_code != 200:
                     continue
-                case unreachable:
-                    assert_never(unreachable)
+                data = response.json()
+                payload = data[0] if isinstance(data, list) and data else data
+                if not isinstance(payload, dict):
+                    continue
+                match = self.discovery._match_crypto_updown(payload) if hasattr(self.discovery, "_match_crypto_updown") else None
+                asset, timeframe = match if match else ((local_market.asset, local_market.timeframe) if local_market else ("UNKNOWN", "UNKNOWN"))
+                market = Market.from_gamma(payload, asset=asset, timeframe=timeframe)
+                if market.status in {MarketStatus.RESOLVED, MarketStatus.CANCELLED}:
+                    resolved.append(market)
         stored = self._store_resolved(resolved)
         if stored:
             self.logger.info("Fetched %d resolved markets from Gamma API", len(stored))

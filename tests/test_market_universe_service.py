@@ -1,3 +1,4 @@
+import pytest
 import sqlite3
 
 from polysignal_lab.app.services.market_universe_service import MarketUniverseService
@@ -120,3 +121,47 @@ async def test_market_universe_resolved_refresh_continues_after_sqlite_failure(s
     assert service.markets.get(failed_market.market_id) == failed_market
     assert service.markets.get(next_market.market_id) == next_market
     assert persistence.persisted == [next_market]
+
+
+@pytest.mark.anyio
+async def test_fetch_resolved_uses_exact_market_lookup_for_open_ids(monkeypatch) -> None:
+    from polysignal_lab.config import Settings
+
+    calls: list[str] = []
+
+    class _Response:
+        status_code = 200
+        def json(self) -> dict[str, object]:
+            return {
+                "id": "market-1",
+                "conditionId": "condition-1",
+                "slug": "slug-1",
+                "umaResolutionStatus": "resolved",
+                "outcomePrices": '["1", "0"]',
+                "clobTokenIds": '["token-up", "token-down"]',
+                "outcomes": '["Up", "Down"]',
+            }
+        def raise_for_status(self) -> None:
+            return None
+
+    class _Client:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return None
+        async def get(self, url: str, params: dict[str, str] | None = None):
+            calls.append(url)
+            return _Response()
+
+    monkeypatch.setattr("polysignal_lab.app.services.market_universe_service.httpx.AsyncClient", _Client)
+    registry = MarketRegistry()
+    registry.upsert_many([sample_market().model_copy(update={"market_id": "market-1", "condition_id": "condition-1"})])
+    service = MarketUniverseService(discovery=object(), markets=registry, persistence=_Persistence(), settings=Settings())
+
+    resolved = await service.fetch_resolved({"market-1"})
+
+    assert resolved[0].market_id == "market-1"
+    assert resolved[0].status == MarketStatus.RESOLVED
+    assert calls == ["https://gamma-api.polymarket.com/markets/market-1"]
