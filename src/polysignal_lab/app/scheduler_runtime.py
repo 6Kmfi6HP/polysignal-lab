@@ -16,20 +16,18 @@ async def stop(scheduler: PolySignalScheduler) -> None:
     scheduler.logger.info("Shutting down scheduler")
     scheduler._running = False
 
-    await scheduler.book_feed.stop()
-    await scheduler.spot_feed.stop()
+    scheduler._persist_state()
+
+    try:
+        await scheduler.supervisor.stop_all()
+    except Exception:
+        scheduler.logger.exception("Service supervisor shutdown failed")
+
     scheduler._ws_tasks.clear()
     scheduler._market_ws_task = None
     scheduler._binance_ws_task = None
     scheduler._market_ws_token_ids = ()
     scheduler._streams_started = False
-
-    scheduler._persist_state()
-
-    try:
-        scheduler.persistence.close()
-    except Exception:
-        pass
 
     scheduler.logger.info("Scheduler shutdown complete")
 
@@ -40,15 +38,17 @@ async def run(scheduler: PolySignalScheduler) -> None:
 
     scheduler._validate_telegram_startup()
     scheduler._initialize_trading_components()
-    await scheduler._restore_wallet_state()
-    await scheduler.refresh_markets_once()
-    await scheduler._fetch_resolved_markets()
-    await scheduler.start_websockets()
 
     loop_count = 1
     last_report_date: date | None = None
 
     try:
+        await scheduler.supervisor.start_all()
+        await scheduler._restore_wallet_state()
+        await scheduler.refresh_markets_once()
+        await scheduler._fetch_resolved_markets()
+        await scheduler.start_websockets()
+
         while scheduler._running:
             scheduler.logger.info("=== Run %d ===", loop_count)
 

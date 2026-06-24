@@ -7,6 +7,19 @@ from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.paper.simulator import SimulationResult
 from polysignal_lab.utils import utc_now
+from polysignal_lab.app.services.signal_pipeline import SignalPipeline
+
+
+class _LegacyRejectionPersistence:
+    def __init__(self, scheduler: object) -> None:
+        self.scheduler = scheduler
+
+    def append_log(self, stream: str, payload: object) -> None:
+        self.scheduler.logs.append(stream, payload)
+
+    def insert_rejected_signal(self, rejected: object) -> None:
+        self.scheduler.sqlite.insert_rejected_signal(rejected)
+
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
@@ -33,7 +46,8 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
     accepted: list[SignalCandidate] = []
     for market in scheduler.ctx.markets.active():
         try:
-            snapshot = await scheduler.snapshot_service.build(market)
+            snapshot_service = getattr(scheduler, "snapshot_service", scheduler.snapshot_builder)
+            snapshot = await snapshot_service.build(market)
         except Exception:
             scheduler.logger.exception(
                 "Failed to build snapshot for market %s", market.market_slug
@@ -50,7 +64,17 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
             snapshot.spot.price if snapshot.spot else "NONE",
             snapshot.max_spread,
         )
-        accepted.extend(scheduler.signal_pipeline.evaluate_snapshot(snapshot))
+        pipeline = getattr(scheduler, "signal_pipeline", None)
+        if pipeline is None:
+            persistence = getattr(scheduler, "persistence", _LegacyRejectionPersistence(scheduler))
+            pipeline = SignalPipeline(
+                scheduler.strategies,
+                scheduler.gate,
+                scheduler.consensus,
+                persistence,
+                logger=scheduler.logger,
+            )
+        accepted.extend(pipeline.evaluate_snapshot(snapshot))
     return accepted
 
 

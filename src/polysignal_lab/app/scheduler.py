@@ -14,12 +14,14 @@ from polysignal_lab.app import (
     scheduler_state,
 )
 from polysignal_lab.app.services.book_feed_service import BookFeedService
+from polysignal_lab.app.services.health_service import HealthService
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.app.services.market_universe_service import MarketUniverseService
 from polysignal_lab.app.services.paper_portfolio_service import PaperPortfolioService
 from polysignal_lab.app.services.spot_feed_service import SpotFeedService
 from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.app.services.signal_pipeline import SignalPipeline
+from polysignal_lab.app.services.runtime_service import ServiceSupervisor
 from polysignal_lab.app.services.snapshot_service import SnapshotService
 from polysignal_lab.config import Settings
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
@@ -148,6 +150,19 @@ class PolySignalScheduler:
             scheduler=self,
             logger=self.logger,
         )
+        core_services = [
+            self.persistence,
+            self.market_universe,
+            self.book_feed,
+            self.spot_feed,
+            self.snapshot_service,
+            self.signal_pipeline,
+            self.paper_portfolio,
+            self.publish_service,
+        ]
+        self.health_service = HealthService(core_services)
+        self.services = [*core_services, self.health_service]
+        self.supervisor = ServiceSupervisor(self.services)
 
         self._ws_tasks: list[asyncio.Task] = []
         self._market_ws_task: asyncio.Task | None = None

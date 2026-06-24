@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import Any, assert_never
 
 import httpx
@@ -50,8 +51,11 @@ class MarketUniverseService:
         markets = await (discover_active() if callable(discover_active) else self.discovery.discover())
         self.markets.upsert_many(markets)
         for market in markets:
-            self.persistence.upsert_market(market)
-            self.persistence.append_log("markets", market)
+            try:
+                self.persistence.upsert_market(market)
+                self.persistence.append_log("markets", market)
+            except (OSError, sqlite3.Error, TypeError, ValueError):
+                pass
         self.latest_token_ids = token_ids_for_markets(markets)
         self.refresh_completed = True
         return markets

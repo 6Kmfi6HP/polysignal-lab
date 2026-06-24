@@ -142,6 +142,47 @@ async def test_paper_exit_storage_failure_rolls_back_and_returns_no_success(
     assert scheduler.wallet.realized_pnl == realized_before
 
 
+async def test_paper_exit_publish_timeout_rolls_back_without_closed_rows(
+    tmp_path: Path, snapshot, settings
+) -> None:
+    # Given: an open paper position and a TP-triggering bid, but publish times out.
+    signal = await _signal(snapshot, settings)
+    scheduler = _scheduler(tmp_path, settings)
+    scheduler.ctx.markets.upsert_many([snapshot.market])
+    scheduler.ctx.books.update(
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500))
+    )
+    processed = await scheduler.process_signal(signal)
+    assert processed["paper_position"] is not None
+    position = processed["paper_position"]
+    cash_before = scheduler.wallet.cash_balance
+    realized_before = scheduler.wallet.realized_pnl
+    scheduler.ctx.books.update(
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.94, bid=0.91, size=500))
+    )
+
+    async def timeout_publish(result: PaperTradeResult) -> None:
+        raise TimeoutError("paper publish timed out")
+
+    scheduler.publish_service.publish_paper_result = timeout_publish
+
+    # When: scheduler reporting checks paper exits.
+    results = await scheduler.check_settlements()
+
+    # Then: publish timeout is treated as failed persistence and rolls back paper state.
+    assert results == []
+    assert scheduler.sqlite.query_json("paper_trade_results") == []
+    assert scheduler.sqlite.query_json("telegram_publishes") == []
+    assert [row["status"] for row in scheduler.sqlite.query_json("paper_positions")] == [
+        "OPEN"
+    ]
+    assert position.status == PositionStatus.OPEN
+    assert position.closed_at is None
+    assert scheduler.wallet.open_position_count == 1
+    assert scheduler.wallet.cash_balance == cash_before
+    assert scheduler.wallet.realized_pnl == realized_before
+
+
 async def test_paper_exit_publish_row_failure_rolls_back_without_closed_rows(
     tmp_path: Path, snapshot, settings
 ) -> None:
