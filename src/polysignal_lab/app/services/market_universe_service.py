@@ -52,7 +52,7 @@ class MarketUniverseService:
         for market in markets:
             self.persistence.upsert_market(market)
             self.persistence.append_log("markets", market)
-        self.latest_token_ids = self.token_ids()
+        self.latest_token_ids = token_ids_for_markets(markets)
         self.refresh_completed = True
         return markets
 

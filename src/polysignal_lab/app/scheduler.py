@@ -17,6 +17,8 @@ from polysignal_lab.app.services.book_feed_service import BookFeedService
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.app.services.market_universe_service import MarketUniverseService
 from polysignal_lab.app.services.spot_feed_service import SpotFeedService
+from polysignal_lab.app.services.signal_pipeline import SignalPipeline
+from polysignal_lab.app.services.snapshot_service import SnapshotService
 from polysignal_lab.config import Settings
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
 from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
@@ -127,6 +129,14 @@ class PolySignalScheduler:
             settings=settings,
             logger=self.logger,
         )
+        self.snapshot_service = SnapshotService(self.snapshot_builder)
+        self.signal_pipeline = SignalPipeline(
+            [],
+            self.gate,
+            self.consensus,
+            self.persistence,
+            logger=self.logger,
+        )
 
         self._ws_tasks: list[asyncio.Task] = []
         self._market_ws_task: asyncio.Task | None = None
@@ -141,6 +151,7 @@ class PolySignalScheduler:
         if self._trading_components_initialized:
             return
         self.strategies = build_strategies(self.settings.strategies)
+        self.signal_pipeline.strategies = self.strategies
         self.wallet = PaperWallet(self.settings.paper_trading.starting_balance_usdc)
         self.paper = PaperSimulator(
             self.settings.paper_trading,

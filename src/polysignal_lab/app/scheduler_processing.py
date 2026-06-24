@@ -33,7 +33,7 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
     accepted: list[SignalCandidate] = []
     for market in scheduler.ctx.markets.active():
         try:
-            snapshot = await scheduler.snapshot_builder.build(market)
+            snapshot = await scheduler.snapshot_service.build(market)
         except Exception:
             scheduler.logger.exception(
                 "Failed to build snapshot for market %s", market.market_slug
@@ -50,35 +50,7 @@ async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]
             snapshot.spot.price if snapshot.spot else "NONE",
             snapshot.max_spread,
         )
-        for strategy in scheduler.strategies:
-            try:
-                for candidate in strategy.evaluate(snapshot):
-                    decision = scheduler.gate.evaluate(candidate, snapshot)
-                    if decision.accepted and decision.signal:
-                        strategy.notify_signal_accepted(decision.signal)
-                        accepted.append(decision.signal)
-                        consensus = scheduler.consensus.add(decision.signal)
-                        if consensus:
-                            accepted.append(consensus)
-                    elif decision.rejected:
-                        strategy.notify_signal_rejected(
-                            decision.rejected.candidate, decision.rejected
-                        )
-                        try:
-                            scheduler.persistence.append_log("rejected_signals", decision.rejected)
-                            scheduler.persistence.insert_rejected_signal(decision.rejected)
-                        except Exception:
-                            scheduler.logger.exception(
-                                "Failed to persist rejected signal for market %s strategy %s reason %s",
-                                market.market_slug,
-                                strategy.name if hasattr(strategy, "name") else "?",
-                                decision.rejected.reason_code,
-                            )
-            except Exception:
-                scheduler.logger.exception(
-                    "Strategy %s evaluate failed",
-                    strategy.name if hasattr(strategy, "name") else "?",
-                )
+        accepted.extend(scheduler.signal_pipeline.evaluate_snapshot(snapshot))
     return accepted
 
 
