@@ -173,6 +173,7 @@ class SignalConfig(BaseModel):
     max_signals_per_market: int = 3
     max_signals_per_hour: int = 60
 
+    max_snapshot_concurrency: int = 4
 
 class FillModelConfig(BaseModel):
     type: str = "best_ask_taker"

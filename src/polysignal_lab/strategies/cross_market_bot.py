@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.snapshot import MarketSnapshot
+from polysignal_lab.domain.snapshot_batch import CrossMarketEvaluationContext
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.strategies.base import BaseStrategy
 
@@ -199,6 +200,95 @@ class CrossMarketBotStrategy(BaseStrategy):
                 signals.extend(result)
 
         return signals
+
+    def evaluate_group(
+        self, context: CrossMarketEvaluationContext
+    ) -> list[SignalCandidate]:
+        if not self.config.enabled:
+            return []
+
+        candidates: list[SignalCandidate] = []
+        for rel in self._relations:
+            if context.relation_id != "all_markets" and rel.relation_id != context.relation_id:
+                continue
+            if not all(
+                condition_id in context.snapshots_by_condition_id
+                for condition_id in rel.condition_ids
+            ):
+                continue
+            candidates.extend(self._evaluate_relation_group(context, rel))
+        return candidates
+
+    def _evaluate_relation_group(
+        self, context: CrossMarketEvaluationContext, rel: MarketRelation
+    ) -> list[SignalCandidate]:
+        snapshots: list[MarketSnapshot] = [
+            context.snapshots_by_condition_id[condition_id]
+            for condition_id in rel.condition_ids
+        ]
+        enabled_assets = {asset.upper() for asset in self.config.assets}
+        if any(snapshot.market.asset not in enabled_assets for snapshot in snapshots):
+            return []
+        if any(snapshot.market.timeframe not in self.config.timeframes for snapshot in snapshots):
+            return []
+
+        leg_exec_prices: list[float] = []
+        for leg_index, snapshot in enumerate(snapshots):
+            book = snapshot.book_for(rel.sides[leg_index])
+            exec_price = self._executable_buy_price(book, self.config.min_depth_shares)
+            if exec_price is None:
+                return []
+            leg_exec_prices.append(exec_price)
+
+        cost = self._pair_effective_cost(*leg_exec_prices)
+        if cost >= 1.0 - self.config.min_edge:
+            return []
+
+        n_legs = len(snapshots)
+        relation_code = (
+            "EXHAUSTIVE_MUTUALLY_EXCLUSIVE"
+            if rel.rel_type == RelationType.EXHAUSTIVE_MUTUALLY_EXCLUSIVE
+            else "INCLUSION"
+        )
+        confidence = min(0.90, 0.60 + (1.0 - cost) * 2.0)
+        basket = self._active_baskets.setdefault(
+            rel.relation_id,
+            {"fills": {}, "markets": set(), "failed": False},
+        )
+        basket["markets"].update(snapshot.market.market_id for snapshot in snapshots)
+
+        candidates: list[SignalCandidate] = []
+        for leg_index, snapshot in enumerate(snapshots):
+            metrics = {
+                "relation_id": rel.relation_id,
+                "relation_type": rel.rel_type.value,
+                "leg_index": leg_index,
+                "n_legs": n_legs,
+                "estimated_pair_cost": round(cost, 4),
+                "min_edge": self.config.min_edge,
+                "leg_exec_price": leg_exec_prices[leg_index],
+                "leg_exec_prices": {
+                    condition_id: round(price, 4)
+                    for condition_id, price in zip(rel.condition_ids, leg_exec_prices, strict=True)
+                },
+            }
+            signal = self._candidate(
+                snapshot=snapshot,
+                side=rel.sides[leg_index],
+                confidence=confidence,
+                max_entry_price=leg_exec_prices[leg_index],
+                reason_codes=[
+                    relation_code,
+                    f"COST_{cost:.4f}",
+                    f"LEG_{leg_index}_OF_{n_legs}",
+                ],
+                metrics=metrics,
+                order_intent=OrderIntent.TAKER_FOK,
+                pair_id=rel.relation_id,
+            )
+            if signal:
+                candidates.append(signal)
+        return candidates
 
     # ------------------------------------------------------------------
     # 关系评估
