@@ -18,7 +18,7 @@ from polysignal_lab.paper.report import (
     PaperReportService,
     is_rejected_paper_order_payload,
 )
-from polysignal_lab.utils import parse_dt
+from polysignal_lab.utils import new_id, parse_dt, redact_text, utc_iso
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
@@ -143,18 +143,49 @@ async def check_settlements(scheduler: PolySignalScheduler) -> list[PaperTradeRe
 async def _store_paper_result(
     scheduler: PolySignalScheduler, result: PaperTradeResult, position: PaperPosition
 ) -> None:
-    publish_payload: dict[str, str | None] | None = None
     try:
-        if scheduler.settings.telegram.send_paper_results:
-            publish = await scheduler.publish_service.publish_paper_result(result)
-            publish_payload = publish.as_dict()
         scheduler.persistence.insert_paper_trade_result(result)
         scheduler.persistence.upsert_paper_position(position)
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
-        delete_paper_result_rows(scheduler, result, publish_payload)
+        delete_paper_result_rows(scheduler, result, None)
         raise SchedulerPersistenceError("paper result persistence", str(exc)) from exc
 
     scheduler.persistence.append_log("paper_trade_results", result)
+    await _publish_paper_result_best_effort(scheduler, result)
+
+
+async def _publish_paper_result_best_effort(
+    scheduler: PolySignalScheduler, result: PaperTradeResult
+) -> None:
+    if not scheduler.settings.telegram.send_paper_results:
+        return
+    try:
+        await scheduler.publish_service.publish_paper_result(result)
+    except Exception as exc:
+        scheduler.logger.warning(
+            "Paper result publish failed after durable persistence for %s: %s",
+            result.paper_trade_id,
+            exc,
+        )
+        event = {
+            "event_id": new_id("evt", "paper_result_publish_failed", result.paper_trade_id),
+            "event_type": "paper_result_publish_failed",
+            "severity": "WARNING",
+            "created_at": utc_iso(),
+            "paper_trade_id": result.paper_trade_id,
+            "paper_position_id": result.paper_position_id,
+            "signal_id": result.signal_id,
+            "error_type": type(exc).__name__,
+            "error": redact_text(str(exc)),
+        }
+        try:
+            scheduler.persistence.insert_system_event(event)
+            scheduler.persistence.append_log("system_events", event)
+        except (OSError, sqlite3.Error, TypeError, ValueError):
+            scheduler.logger.exception(
+                "Failed to audit paper result publish failure for %s",
+                result.paper_trade_id,
+            )
 
 
 def _utc_text_bound(dt: datetime) -> str:

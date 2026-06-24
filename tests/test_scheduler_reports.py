@@ -8,6 +8,7 @@ from polysignal_lab.app import scheduler_reporting, scheduler_runtime
 from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.domain.enums import (
     ExitMode,
+    MarketStatus,
     OrderIntent,
     OrderStatus,
     PositionStatus,
@@ -142,7 +143,7 @@ async def test_paper_exit_storage_failure_rolls_back_and_returns_no_success(
     assert scheduler.wallet.realized_pnl == realized_before
 
 
-async def test_paper_exit_publish_timeout_rolls_back_without_closed_rows(
+async def test_paper_exit_publish_timeout_keeps_durable_closed_result(
     tmp_path: Path, snapshot, settings
 ) -> None:
     # Given: an open paper position and a TP-triggering bid, but publish times out.
@@ -155,8 +156,6 @@ async def test_paper_exit_publish_timeout_rolls_back_without_closed_rows(
     processed = await scheduler.process_signal(signal)
     assert processed["paper_position"] is not None
     position = processed["paper_position"]
-    cash_before = scheduler.wallet.cash_balance
-    realized_before = scheduler.wallet.realized_pnl
     scheduler.ctx.books.update(
         sample_book(signal.token_id, BookFactoryConfig(ask=0.94, bid=0.91, size=500))
     )
@@ -169,21 +168,60 @@ async def test_paper_exit_publish_timeout_rolls_back_without_closed_rows(
     # When: scheduler reporting checks paper exits.
     results = await scheduler.check_settlements()
 
-    # Then: publish timeout is treated as failed persistence and rolls back paper state.
-    assert results == []
-    assert scheduler.sqlite.query_json("paper_trade_results") == []
-    assert scheduler.sqlite.query_json("telegram_publishes") == []
-    assert [row["status"] for row in scheduler.sqlite.query_json("paper_positions")] == [
-        "OPEN"
-    ]
-    assert position.status == PositionStatus.OPEN
-    assert position.closed_at is None
-    assert scheduler.wallet.open_position_count == 1
-    assert scheduler.wallet.cash_balance == cash_before
-    assert scheduler.wallet.realized_pnl == realized_before
+    # Then: publish failure is best-effort; durable paper close/result stays stored.
+    result_rows = scheduler.sqlite.query_json("paper_trade_results")
+    position_rows = scheduler.sqlite.query_json("paper_positions")
+    publish_rows = scheduler.sqlite.query_json("telegram_publishes")
+    event_rows = scheduler.sqlite.query_json("system_events")
+    assert [result.result for result in results] == [TradeResultStatus.WIN]
+    assert [row["result"] for row in result_rows] == ["WIN"]
+    assert [row["status"] for row in position_rows] == ["CLOSED"]
+    assert publish_rows == []
+    assert position.status == PositionStatus.CLOSED
+    assert position.closed_at is not None
+    assert scheduler.wallet.open_position_count == 0
+    assert [row["event_type"] for row in event_rows] == ["paper_result_publish_failed"]
+    assert event_rows[0]["paper_trade_id"] == result_rows[0]["paper_trade_id"]
+
+async def test_paper_settlement_publish_timeout_keeps_durable_closed_result(
+    tmp_path: Path, snapshot, settings
+) -> None:
+    # Given: an open paper position on a resolved market, but publish times out.
+    signal = await _signal(snapshot, settings)
+    scheduler = _scheduler(tmp_path, settings)
+    resolved_market = snapshot.market.model_copy(
+        update={"status": MarketStatus.RESOLVED, "resolved_outcome": signal.side}
+    )
+    scheduler.ctx.markets.upsert_many([snapshot.market])
+    scheduler.ctx.books.update(
+        sample_book(signal.token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500))
+    )
+    processed = await scheduler.process_signal(signal)
+    assert processed["paper_position"] is not None
+    position = processed["paper_position"]
+    scheduler.ctx.markets.upsert_many([resolved_market])
+
+    async def timeout_publish(result: PaperTradeResult) -> None:
+        raise TimeoutError("paper publish timed out")
+
+    scheduler.publish_service.publish_paper_result = timeout_publish
+
+    # When: scheduler reporting checks market settlements.
+    results = await scheduler.check_settlements()
+
+    # Then: publish failure is best-effort for settlement closes too.
+    result_rows = scheduler.sqlite.query_json("paper_trade_results")
+    position_rows = scheduler.sqlite.query_json("paper_positions")
+    event_rows = scheduler.sqlite.query_json("system_events")
+    assert [result.result for result in results] == [TradeResultStatus.WIN]
+    assert [row["result"] for row in result_rows] == ["WIN"]
+    assert [row["status"] for row in position_rows] == ["CLOSED"]
+    assert position.status == PositionStatus.CLOSED
+    assert scheduler.wallet.open_position_count == 0
+    assert [row["event_type"] for row in event_rows] == ["paper_result_publish_failed"]
 
 
-async def test_paper_exit_publish_row_failure_rolls_back_without_closed_rows(
+async def test_paper_exit_publish_row_failure_keeps_durable_closed_result(
     tmp_path: Path, snapshot, settings
 ) -> None:
     # Given: an open paper position and a TP-triggering bid, but publish-row storage fails.
@@ -208,15 +246,17 @@ async def test_paper_exit_publish_row_failure_rolls_back_without_closed_rows(
     # When: scheduler reporting checks paper exits with paper-result publishing enabled.
     results = await scheduler.check_settlements()
 
-    # Then: no success is returned and no closed durable rows remain.
-    assert results == []
-    assert scheduler.sqlite.query_json("paper_trade_results") == []
-    assert [row["status"] for row in scheduler.sqlite.query_json("paper_positions")] == [
-        "OPEN"
-    ]
+    # Then: publish audit storage is best-effort and cannot reopen the paper close.
+    result_rows = scheduler.sqlite.query_json("paper_trade_results")
+    position_rows = scheduler.sqlite.query_json("paper_positions")
+    event_rows = scheduler.sqlite.query_json("system_events")
+    assert [result.result for result in results] == [TradeResultStatus.WIN]
+    assert [row["result"] for row in result_rows] == ["WIN"]
+    assert [row["status"] for row in position_rows] == ["CLOSED"]
     assert scheduler.sqlite.query_json("telegram_publishes") == []
-    assert position.status == PositionStatus.OPEN
-    assert scheduler.wallet.open_position_count == 1
+    assert position.status == PositionStatus.CLOSED
+    assert scheduler.wallet.open_position_count == 0
+    assert [row["event_type"] for row in event_rows] == ["paper_result_publish_failed"]
 
 
 async def test_daily_report_uses_next_local_midnight_for_dst_day(
