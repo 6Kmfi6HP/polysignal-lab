@@ -163,8 +163,8 @@ def test_binary_momentum_emits_fak_intent():
         )
     )
     snapshot = _strategy_snapshot(up_ask=0.50, up_bid=0.48, down_ask=0.45, down_bid=0.43, spot_price=105.0)
-    strategy._spot_prices.extend([100.0, 101.0, 102.0, 103.0])
-    strategy._vwap_stats.push(f"{snapshot.market.market_id}:{Side.UP.value}", 0.40)
+    strategy.core._spot_prices.extend([100.0, 101.0, 102.0, 103.0])
+    strategy.core._vwap_stats.push(f"{snapshot.market.market_id}:{Side.UP.value}", 0.40)
 
     signals = strategy.evaluate(snapshot)
 
@@ -177,7 +177,7 @@ def test_fibonacci_bot_emits_passive_gtd_intent():
     detector = ZigZagDetector(threshold_pct=strategy.config.zigzag_pct)
     detector._swing_highs.append(110.0)
     detector._swing_lows.append(100.0)
-    strategy._zigzag["BTCUSDT"] = detector
+    strategy.core._zigzag["BTCUSDT"] = detector
     snapshot = _strategy_snapshot(up_ask=0.50, up_bid=0.48, down_ask=0.50, down_bid=0.48, spot_price=106.18)
 
     signals = strategy.evaluate(snapshot)
