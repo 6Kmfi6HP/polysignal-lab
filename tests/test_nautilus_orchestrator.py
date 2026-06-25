@@ -98,3 +98,16 @@ async def test_stop_event_ends_run_without_full_interval() -> None:
     await asyncio.wait_for(task, timeout=1.0)
 
     assert orch.observability.shutdowns == 1
+
+
+async def test_orchestrator_never_submits_specs_outside_strategy_submitter() -> None:
+    class PaperClient:
+        wallet = SimpleNamespace(open_positions={})
+        def submit_spec(self, spec):
+            raise AssertionError("orchestrator must not submit specs")
+
+    orch = _orchestrator(paper_client=PaperClient())
+
+    await orch.run_once()
+
+    assert orch.registered_strategies[0].seen == [("c1",)]
