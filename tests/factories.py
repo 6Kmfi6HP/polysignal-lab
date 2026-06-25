@@ -142,9 +142,11 @@ def sample_snapshot(
     down_book = sample_book(
         market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=down_ask)
     ).model_copy(update={"received_at": created_at})
-    spot_cfg = SpotFactoryConfig(asset=asset)
-    if spot_price is not None:
-        spot_cfg = spot_cfg.model_copy(update={"price": spot_price})
+    spot_cfg = (
+        SpotFactoryConfig(asset=asset, price=spot_price)
+        if spot_price is not None
+        else SpotFactoryConfig(asset=asset)
+    )
     spot = sample_spot(spot_cfg).model_copy(
         update={"source": "polymarket_rtds", "received_at": created_at}
     )

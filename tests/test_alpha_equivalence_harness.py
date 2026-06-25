@@ -60,3 +60,14 @@ def test_sample_snapshot_assembles_valid_market_view() -> None:
         sample_snapshot(up_ask=0.82, down_ask=0.18, seconds_to_close=60)
     )
     assert view is not None
+
+
+def test_sample_snapshot_spot_price_override_assembles_market_view() -> None:
+    # Regression for review finding: passing spot_price previously raised
+    # AttributeError because SpotFactoryConfig (a frozen dataclass) has no
+    # model_copy. The override must now assemble a valid MarketView whose
+    # spot price matches the requested value.
+    view = market_view_from_snapshot(sample_snapshot(spot_price=100500.0))
+    assert view is not None
+    assert view.spot is not None
+    assert view.spot.price == 100500.0
