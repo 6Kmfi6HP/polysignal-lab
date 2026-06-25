@@ -73,7 +73,7 @@ class PolySignalNautilusStrategy:
             if isinstance(policy_result, ApprovedDecision):
                 submitted.append(self.submit_approved(policy_result, view=view))
             else:
-                self.rejected_decisions.append(policy_result)
+                self._record_rejected_decision(policy_result, decision=decision, view=view)
         return submitted
 
     def submit_approved(self, approved: ApprovedDecision, *, view: MarketView) -> NautilusOrderSpec:
@@ -108,6 +108,9 @@ class PolySignalNautilusStrategy:
 
     def on_order_filled(self, event: Any) -> list[NautilusOrderSpec]:
         alpha_event = self._fill_event(event)
+        notify = getattr(self.core, "on_notify_fill", None)
+        if callable(notify):
+            notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
         handler = getattr(self.core, "on_order_filled", None)
         hedge_decisions = handler(alpha_event) if callable(handler) else []
         submitted: list[NautilusOrderSpec] = []
@@ -119,8 +122,39 @@ class PolySignalNautilusStrategy:
             if isinstance(policy_result, ApprovedDecision):
                 submitted.append(self.submit_approved(policy_result, view=view))
             else:
-                self.rejected_decisions.append(policy_result)
+                self._record_rejected_decision(policy_result, decision=decision, view=view)
         return submitted
+
+    def _record_rejected_decision(
+        self,
+        policy_result: RejectedDecision,
+        *,
+        decision: AlphaDecision,
+        view: MarketView,
+    ) -> None:
+        self.rejected_decisions.append(policy_result)
+        candidate = policy_result.candidate
+        if candidate is None:
+            return
+        binder = getattr(self.core, "bind_signal", None)
+        if callable(binder):
+            binder(decision.market_id, candidate.signal_id)
+        rejecter = getattr(self.core, "on_order_rejected", None)
+        if callable(rejecter):
+            rejecter(
+                AlphaOrderEvent(
+                    strategy=self.strategy_name,
+                    market_id=decision.market_id,
+                    condition_id=view.condition_id,
+                    token_id=decision.token_id,
+                    side=decision.side,
+                    order_id=candidate.signal_id,
+                    client_order_id=None,
+                    reason=policy_result.reason_code,
+                    ts_event=view.created_at,
+                    metrics=dict(policy_result.detail),
+                )
+            )
 
     def on_save(self) -> dict[str, bytes]:
         saver = getattr(self.core, "save_state", None)

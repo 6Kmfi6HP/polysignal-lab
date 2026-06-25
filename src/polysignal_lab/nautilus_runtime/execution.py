@@ -36,11 +36,11 @@ def order_spec_from_decision(
         price = max_price
 
     quantity = _positive_float(fixed_stake_usdc, "fixed_stake_usdc") / price
-    if available_shares is not None:
-        if available_shares <= 0:
-            raise ValueError("insufficient depth for taker order")
-        if intent == OrderIntent.TAKER_FOK and available_shares < quantity:
+    if intent == OrderIntent.TAKER_FOK:
+        if available_shares is None or available_shares < quantity:
             raise ValueError("insufficient depth for full fill")
+    elif available_shares is not None and available_shares <= 0:
+        raise ValueError("insufficient depth for taker order")
 
     tags: dict[str, str] = {
         "strategy": str(source.strategy),
@@ -90,13 +90,17 @@ def _intent(source: AlphaDecision | SignalCandidate) -> OrderIntent | None:
 
 def _expiry_seconds(source: AlphaDecision | SignalCandidate) -> int | None:
     raw = getattr(source, "order_intent", None)
-    value = getattr(raw, "expiry_seconds", None) if raw is not None else getattr(source, "expiry_seconds", None)
+    value = getattr(raw, "expiry_seconds", None)
+    if value is None and (raw is None or isinstance(raw, OrderIntent)):
+        value = getattr(source, "expiry_seconds", None)
     return int(value) if value is not None else None
 
 
 def _pair_id(source: AlphaDecision | SignalCandidate) -> str | None:
     raw = getattr(source, "order_intent", None)
-    value = getattr(raw, "pair_id", None) if raw is not None else getattr(source, "pair_id", None)
+    value = getattr(raw, "pair_id", None)
+    if value is None and (raw is None or isinstance(raw, OrderIntent)):
+        value = getattr(source, "pair_id", None)
     return str(value) if value is not None else None
 
 

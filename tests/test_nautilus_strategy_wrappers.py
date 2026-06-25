@@ -77,7 +77,10 @@ class FakeCore:
         self.decisions = decisions
         self.views: list[MarketView] = []
         self.rejections = 0
+        self.rejected_events = []
         self.fills: list[AlphaFillEvent] = []
+        self.fill_notifications = []
+        self.fill_lifecycle: list[str] = []
         self.state = {"seen": ["before"]}
         self.fill_returns: list[AlphaDecision] = []
 
@@ -88,7 +91,12 @@ class FakeCore:
     def on_order_rejected(self, _event) -> None:
         self.rejections += 1
 
+    def on_notify_fill(self, market_id: str, side: Side, shares: float) -> None:
+        self.fill_lifecycle.append("notify")
+        self.fill_notifications.append((market_id, side, shares))
+
     def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
+        self.fill_lifecycle.append("filled")
         self.fills.append(event)
         return self.fill_returns
 
@@ -97,6 +105,26 @@ class FakeCore:
 
     def load_state(self, payload):
         self.state = dict(payload)
+
+
+class RollbackCore(FakeCore):
+    def __init__(self, decisions: list[AlphaDecision]):
+        super().__init__(decisions)
+        self.transient_markers: dict[str, str] = {}
+        self.bind_calls: list[tuple[str, str]] = []
+
+    def evaluate(self, view: MarketView) -> list[AlphaDecision]:
+        decisions = super().evaluate(view)
+        for decision in decisions:
+            self.transient_markers[decision.market_id] = "pending"
+        return decisions
+
+    def bind_signal(self, market_id: str, signal_id: str) -> None:
+        self.bind_calls.append((market_id, signal_id))
+
+    def on_order_rejected(self, event) -> None:
+        self.rejected_events.append(event)
+        self.transient_markers.pop(event.market_id, None)
 
 
 class FakePolicy:
@@ -238,8 +266,40 @@ def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved
     assert len(submitter.specs) == 1
     assert submitter.specs[0].instrument_id == "up-token"
     assert result == [submitter.specs[0]]
-    assert core.rejections == 0
+    assert core.rejections == 1
 
+
+def test_policy_rejected_decision_rolls_back_bound_transient_state() -> None:
+    view = _view()
+    decision = _decision()
+    core = RollbackCore([decision])
+    policy = FakePolicy([False])
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=policy,
+        submitter=FakeSubmitter(),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    result = strategy.evaluate_condition("condition-btc-5m")
+
+    rejected = strategy.rejected_decisions[0]
+    assert result == []
+    assert rejected.candidate is not None
+    assert core.bind_calls == [(decision.market_id, rejected.candidate.signal_id)]
+    assert core.transient_markers == {}
+    assert len(core.rejected_events) == 1
+    event = core.rejected_events[0]
+    assert event.market_id == decision.market_id
+    assert event.condition_id == view.condition_id
+    assert event.token_id == decision.token_id
+    assert event.side == decision.side
+    assert event.order_id == rejected.candidate.signal_id
+    assert event.reason == "TEST_REJECTED"
+    assert event.ts_event == view.created_at
 
 def test_stateful_core_round_trips_through_shared_state_codec() -> None:
     core = FakeCore([])
@@ -285,6 +345,8 @@ def test_fill_callback_routes_vwap_hedge_decisions_through_policy_and_submitter(
 
     strategy.on_order_filled(FakeFill())
 
+    assert core.fill_lifecycle == ["notify", "filled"]
+    assert core.fill_notifications == [("btc-5m", Side.UP, 3.0)]
     assert len(core.fills) == 1
     assert len(policy.calls) == 1
     assert len(submitter.specs) == 1

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.execution import order_spec_from_decision
 
 
@@ -81,6 +85,16 @@ def test_taker_fok_maps_to_fok_and_requires_full_visible_depth() -> None:
         raise AssertionError("expected FOK depth rejection")
 
 
+def test_taker_fok_rejects_unknown_visible_depth() -> None:
+    with pytest.raises(ValueError, match="insufficient depth for full fill"):
+        order_spec_from_decision(
+            _decision(intent=OrderIntent.TAKER_FOK),
+            fixed_stake_usdc=10.0,
+            best_ask=0.50,
+            available_shares=None,
+        )
+
+
 def test_passive_gtd_maps_expiry_seconds_to_gtd_tags() -> None:
     spec = order_spec_from_decision(
         _decision(intent=OrderIntent.PASSIVE_GTD, expiry_seconds=45),
@@ -91,6 +105,36 @@ def test_passive_gtd_maps_expiry_seconds_to_gtd_tags() -> None:
     assert spec.quantity == 20.0
     assert spec.expiry_seconds == 45
     assert spec.tags["time_in_force"] == "GTD"
+    assert spec.tags["expire_seconds"] == "45"
+
+
+def test_approved_signal_candidate_preserves_gtd_expiry_and_pair_metadata() -> None:
+    signal = SignalCandidate.build(
+        strategy="ptb_diff",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        condition_id="condition-btc-5m",
+        token_id="up-token",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.48,
+        max_entry_price=0.50,
+        seconds_to_close=60,
+        data_freshness_ms=20,
+        reason_codes=["TEST"],
+        metrics={},
+        order_intent=OrderIntent.PASSIVE_GTD,
+        expiry_seconds=45,
+        pair_id="pair-1",
+    )
+
+    spec = order_spec_from_decision(ApprovedDecision(signal=signal), fixed_stake_usdc=10.0)
+
+    assert spec.intent == OrderIntent.PASSIVE_GTD
+    assert spec.expiry_seconds == 45
+    assert spec.pair_id == "pair-1"
     assert spec.tags["expire_seconds"] == "45"
 
 
