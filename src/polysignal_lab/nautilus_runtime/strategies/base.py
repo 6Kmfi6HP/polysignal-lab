@@ -71,12 +71,19 @@ class PolySignalNautilusStrategy:
         for decision in self.core.evaluate(view):
             policy_result = self.policy.evaluate(decision, view)
             if isinstance(policy_result, ApprovedDecision):
-                submitted.append(self.submit_approved(policy_result, view=view))
+                submitted.append(self.submit_approved(policy_result, decision=decision, view=view))
             else:
                 self._record_rejected_decision(policy_result, decision=decision, view=view)
         return submitted
 
-    def submit_approved(self, approved: ApprovedDecision, *, view: MarketView) -> NautilusOrderSpec:
+    def submit_approved(
+        self,
+        approved: ApprovedDecision,
+        *,
+        decision: AlphaDecision,
+        view: MarketView,
+    ) -> NautilusOrderSpec:
+        self._record_approved_decision(approved, decision=decision, view=view)
         side = approved.signal.side
         book = view.book_for(side)
         best_ask = book.best_ask
@@ -120,7 +127,7 @@ class PolySignalNautilusStrategy:
                 continue
             policy_result = self.policy.evaluate(decision, view)
             if isinstance(policy_result, ApprovedDecision):
-                submitted.append(self.submit_approved(policy_result, view=view))
+                submitted.append(self.submit_approved(policy_result, decision=decision, view=view))
             else:
                 self._record_rejected_decision(policy_result, decision=decision, view=view)
         return submitted
@@ -132,29 +139,77 @@ class PolySignalNautilusStrategy:
         decision: AlphaDecision,
         view: MarketView,
     ) -> None:
-        self.rejected_decisions.append(policy_result)
         candidate = policy_result.candidate
-        if candidate is None:
-            return
+        rollback_id = (
+            candidate.signal_id
+            if candidate is not None
+            else f"policy_rejected:{decision.strategy}:{decision.market_id}:{len(self.rejected_decisions)}"
+        )
+        self.rejected_decisions.append(policy_result)
+        self._bind_core_signal(decision.market_id, rollback_id)
+        self._call_core(
+            "on_order_rejected",
+            self._decision_order_event(
+                decision,
+                view=view,
+                signal=candidate,
+                order_id=rollback_id,
+                client_order_id=rollback_id,
+                reason=policy_result.reason_code,
+                metrics=dict(policy_result.detail),
+            ),
+        )
+
+    def _record_approved_decision(
+        self,
+        approved: ApprovedDecision,
+        *,
+        decision: AlphaDecision,
+        view: MarketView,
+    ) -> None:
+        signal_id = approved.signal.signal_id
+        self._bind_core_signal(decision.market_id, signal_id)
+        self._call_core(
+            "on_order_accepted",
+            self._decision_order_event(
+                decision,
+                view=view,
+                signal=approved.signal,
+                order_id=signal_id,
+                client_order_id=signal_id,
+                reason=None,
+                metrics=dict(approved.signal.metrics),
+            ),
+        )
+
+    def _bind_core_signal(self, market_id: str, signal_id: str) -> None:
         binder = getattr(self.core, "bind_signal", None)
         if callable(binder):
-            binder(decision.market_id, candidate.signal_id)
-        rejecter = getattr(self.core, "on_order_rejected", None)
-        if callable(rejecter):
-            rejecter(
-                AlphaOrderEvent(
-                    strategy=self.strategy_name,
-                    market_id=decision.market_id,
-                    condition_id=view.condition_id,
-                    token_id=decision.token_id,
-                    side=decision.side,
-                    order_id=candidate.signal_id,
-                    client_order_id=None,
-                    reason=policy_result.reason_code,
-                    ts_event=view.created_at,
-                    metrics=dict(policy_result.detail),
-                )
-            )
+            binder(market_id, signal_id)
+
+    def _decision_order_event(
+        self,
+        decision: AlphaDecision,
+        *,
+        view: MarketView,
+        signal: Any,
+        order_id: str,
+        client_order_id: str | None,
+        reason: str | None,
+        metrics: Mapping[str, Any],
+    ) -> AlphaOrderEvent:
+        return AlphaOrderEvent(
+            strategy=decision.strategy,
+            market_id=decision.market_id,
+            condition_id=view.condition_id,
+            token_id=str(getattr(signal, "token_id", decision.token_id)),
+            side=_side(getattr(signal, "side", decision.side)),
+            order_id=order_id,
+            client_order_id=client_order_id,
+            reason=reason,
+            ts_event=view.created_at,
+            metrics=metrics,
+        )
 
     def on_save(self) -> dict[str, bytes]:
         saver = getattr(self.core, "save_state", None)

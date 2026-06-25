@@ -112,6 +112,8 @@ class RollbackCore(FakeCore):
         super().__init__(decisions)
         self.transient_markers: dict[str, str] = {}
         self.bind_calls: list[tuple[str, str]] = []
+        self.accepted_events = []
+        self.lifecycle: list[tuple[str, str]] = []
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         decisions = super().evaluate(view)
@@ -121,9 +123,16 @@ class RollbackCore(FakeCore):
 
     def bind_signal(self, market_id: str, signal_id: str) -> None:
         self.bind_calls.append((market_id, signal_id))
+        self.lifecycle.append(("bind", signal_id))
+
+    def on_order_accepted(self, event) -> None:
+        self.accepted_events.append(event)
+        self.lifecycle.append(("accepted", event.order_id))
+        self.transient_markers.pop(event.market_id, None)
 
     def on_order_rejected(self, event) -> None:
         self.rejected_events.append(event)
+        self.lifecycle.append(("rejected", event.order_id))
         self.transient_markers.pop(event.market_id, None)
 
 
@@ -269,6 +278,45 @@ def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved
     assert core.rejections == 1
 
 
+def test_approved_decision_binds_and_accepts_before_submit() -> None:
+    view = _view()
+    decision = _decision()
+    core = RollbackCore([decision])
+    policy = FakePolicy([True])
+    submitted = []
+
+    def submitter(spec):
+        core.lifecycle.append(("submit", spec.instrument_id))
+        submitted.append(spec)
+
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=policy,
+        submitter=submitter,
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    result = strategy.evaluate_condition("condition-btc-5m")
+
+    assert len(core.accepted_events) == 1
+    accepted = core.accepted_events[0]
+    signal_id = accepted.order_id
+    assert core.bind_calls == [(decision.market_id, signal_id)]
+    assert core.lifecycle == [("bind", signal_id), ("accepted", signal_id), ("submit", "up-token")]
+    assert accepted.market_id == decision.market_id
+    assert accepted.condition_id == view.condition_id
+    assert accepted.token_id == decision.token_id
+    assert accepted.side == decision.side
+    assert accepted.client_order_id == signal_id
+    assert accepted.reason is None
+    assert accepted.ts_event == view.created_at
+    assert core.transient_markers == {}
+    assert result == submitted
+
+
 def test_policy_rejected_decision_rolls_back_bound_transient_state() -> None:
     view = _view()
     decision = _decision()
@@ -299,6 +347,43 @@ def test_policy_rejected_decision_rolls_back_bound_transient_state() -> None:
     assert event.side == decision.side
     assert event.order_id == rejected.candidate.signal_id
     assert event.reason == "TEST_REJECTED"
+    assert event.ts_event == view.created_at
+
+
+def test_candidate_less_policy_rejection_rolls_back_transient_state() -> None:
+    view = _view()
+    decision = _decision()
+    core = RollbackCore([decision])
+
+    class CandidateLessRejectPolicy:
+        def evaluate(self, decision: AlphaDecision, view: MarketView):
+            return RejectedDecision(reason_code="manual_disabled", detail={}, candidate=None)
+
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=CandidateLessRejectPolicy(),
+        submitter=FakeSubmitter(),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    result = strategy.evaluate_condition("condition-btc-5m")
+
+    rollback_id = f"policy_rejected:{decision.strategy}:{decision.market_id}:0"
+    assert result == []
+    assert strategy.rejected_decisions == [RejectedDecision(reason_code="manual_disabled", detail={}, candidate=None)]
+    assert core.bind_calls == [(decision.market_id, rollback_id)]
+    assert core.transient_markers == {}
+    assert len(core.rejected_events) == 1
+    event = core.rejected_events[0]
+    assert event.market_id == decision.market_id
+    assert event.condition_id == view.condition_id
+    assert event.token_id == decision.token_id
+    assert event.side == decision.side
+    assert event.order_id == rollback_id
+    assert event.reason == "manual_disabled"
     assert event.ts_event == view.created_at
 
 def test_stateful_core_round_trips_through_shared_state_codec() -> None:
