@@ -12,9 +12,11 @@ plus semantic equivalence to the legacy adapter and state round-trip.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
 from polysignal_lab.alpha.state import restore_utc_datetime
-from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent
+from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, TradeView
 from polysignal_lab.alpha.vwap_momentum_core import TradeHistory, VWAPMomentumAlphaCore
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.strategies.config import VWAPMomentumConfig
@@ -111,6 +113,41 @@ def test_vwap_entry_guard_not_consumed_until_acceptance() -> None:
     assert core._can_enter[market_id] is False
     assert core.evaluate_view_from_snapshot_for_test(snapshot) == []
 
+
+
+def test_vwap_core_accepts_trade_view_events() -> None:
+    config = _fast_config()
+    core = VWAPMomentumAlphaCore(config)
+    snapshot = _snapshot()
+    trade_ts = snapshot.created_at
+    snapshot = snapshot.model_copy(
+        update={
+            "metrics": {
+                "up_trades": (TradeView(price=0.60, size=2.0, side=Side.UP.value, ts=trade_ts),),
+                "down_trades": (TradeView(price=0.42, size=1.0, side=Side.DOWN.value, ts=trade_ts),),
+            }
+        }
+    )
+    now_ts = snapshot.created_at.timestamp()
+    _seed_band(core, snapshot.market.market_id, now_ts)
+
+    decisions = core.evaluate_view_from_snapshot_for_test(snapshot)
+
+    assert len(decisions) == 1
+    assert decisions[0].side == Side.UP
+    assert core.trades.latest_price(f"{snapshot.market.market_id}:{Side.UP.value}") == 0.60
+
+
+def test_vwap_core_skips_entry_when_favorite_ask_missing() -> None:
+    config = _fast_config()
+    core = VWAPMomentumAlphaCore(config)
+    snapshot = _snapshot()
+    _seed_band(core, snapshot.market.market_id, snapshot.created_at.timestamp())
+    view = market_view_from_snapshot(snapshot)
+    assert view is not None
+    view = replace(view, up=replace(view.up, best_ask=None))
+
+    assert core.evaluate(view) == []
 
 # ---------------------------------------------------------------------------
 # Rejection reverts the pending trade samples staged during evaluate

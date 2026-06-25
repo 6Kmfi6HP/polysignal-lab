@@ -34,6 +34,7 @@ from polysignal_lab.alpha.types import (
     AlphaOrderEvent,
     MarketView,
     OrderIntentSpec,
+    TradeView,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.trade import Trade
@@ -313,16 +314,26 @@ class VWAPMomentumAlphaCore:
             trade_events = view.up_trades if side == Side.UP else view.down_trades
             if trade_events:
                 for raw_trade in trade_events:
-                    trade = raw_trade if isinstance(raw_trade, Trade) else None
-                    if trade is None and isinstance(raw_trade, dict):
+                    if isinstance(raw_trade, Trade):
+                        price = raw_trade.price
+                        size = raw_trade.size
+                        timestamp = raw_trade.timestamp
+                    elif isinstance(raw_trade, TradeView):
+                        price = raw_trade.price
+                        size = raw_trade.size
+                        timestamp = raw_trade.ts.timestamp() if raw_trade.ts else now_ts
+                    elif isinstance(raw_trade, dict):
                         trade = Trade.model_validate(raw_trade)
-                    if trade is None:
+                        price = trade.price
+                        size = trade.size
+                        timestamp = trade.timestamp
+                    else:
                         continue
-                    signature = (trade.price, trade.size, trade.timestamp)
+                    signature = (price, size, timestamp)
                     if signature in self._seen_trade_signatures[key]:
                         continue
                     self._seen_trade_signatures[key].add(signature)
-                    self.trades.push(key, trade.price, trade.size, trade.timestamp)
+                    self.trades.push(key, price, size, timestamp)
                 continue
             price = book.last_trade_price if book.last_trade_price is not None else book.best_ask
             if price is not None and price > 0:
@@ -387,6 +398,10 @@ class VWAPMomentumAlphaCore:
         if not self._can_enter[view.market_id]:
             return []
 
+        entry_reference_price = view.ask_for(fav_side)
+        if entry_reference_price is None:
+            return []
+
         confidence = self._compute_confidence(deviation_pct, momentum)
 
         opposite_book = view.book_for(fav_side.opposite)
@@ -417,7 +432,7 @@ class VWAPMomentumAlphaCore:
             token_id=view.book_for(fav_side).token_id,
             side=fav_side,
             confidence=confidence,
-            entry_reference_price=view.ask_for(fav_side),
+            entry_reference_price=entry_reference_price,
             max_entry_price=min(cfg.max_price, fav_price + 0.05),
             seconds_to_close=seconds_to_close,
             data_freshness_ms=view.freshness.max_ms,
