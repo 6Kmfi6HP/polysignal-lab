@@ -13,6 +13,7 @@ from typing import Any, Iterable, Mapping
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, SideBookView, SpotView
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
@@ -76,8 +77,16 @@ class _GateSnapshotAdapter:
     def spot(self) -> _SpotAdapter | None:
         return _SpotAdapter(self.view.spot) if self.view.spot is not None else None
 
-    def book_for(self, side: Side) -> _BookAdapter:
-        return _BookAdapter(self.view.book_for(side))
+    def book_for(self, side: Side) -> _BookAdapter | None:
+        book = self.view.book_for(side)
+        if (
+            book.best_bid is None
+            and book.best_ask is None
+            and book.spread is None
+            and book.freshness_ms is None
+        ):
+            return None
+        return _BookAdapter(book)
 
     def ask_for(self, side: Side) -> float | None:
         return self.view.ask_for(side)
@@ -92,6 +101,7 @@ class DecisionPolicyActor:
         consensus: ConsensusEngine | None = None,
         disabled_strategies: Iterable[str] = (),
         dependencies: Mapping[str, Iterable[str]] | None = None,
+        strategy_freshness_policies: Mapping[str, FreshnessPolicy] | None = None,
     ) -> None:
         signal_config = SignalConfig()
         self.gate = gate or SignalGate(signal_config, PolymarketDataConfig(), BinanceDataConfig())
@@ -104,6 +114,7 @@ class DecisionPolicyActor:
         self.strategy_dependencies = {
             name: tuple(deps) for name, deps in (dependencies or {}).items()
         }
+        self.strategy_freshness_policies = dict(strategy_freshness_policies or {})
 
     def set_strategy_enabled(self, name: str, enabled: bool) -> None:
         if enabled:
@@ -177,9 +188,8 @@ class DecisionPolicyActor:
         )
         return any(id(item) == id(candidate) for item in kept)
 
-    @staticmethod
     def _candidate_from_decision(
-        decision: AlphaDecision, view: MarketView
+        self, decision: AlphaDecision, view: MarketView
     ) -> SignalCandidate:
         return SignalCandidate.build(
             strategy=decision.strategy,
@@ -197,6 +207,7 @@ class DecisionPolicyActor:
             data_freshness_ms=decision.data_freshness_ms,
             reason_codes=list(decision.reason_codes),
             metrics=dict(decision.metrics),
+            freshness_policy=self.strategy_freshness_policies.get(decision.strategy),
             snapshot_id=view.view_id,
             order_intent=decision.order_intent.intent if decision.order_intent else None,
             expiry_seconds=decision.order_intent.expiry_seconds if decision.order_intent else None,

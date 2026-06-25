@@ -14,6 +14,7 @@ from polysignal_lab.alpha.types import (
 )
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     DecisionPolicyActor,
@@ -138,6 +139,9 @@ def test_state_round_trips_disabled_strategies_and_dependencies() -> None:
     actor = DecisionPolicyActor(
         disabled_strategies={"base", "manual"},
         dependencies={"dependent": ("base", "other")},
+        strategy_freshness_policies={
+            "dependent": FreshnessPolicy(max_orderbook_staleness_ms=1000)
+        },
     )
     restored = DecisionPolicyActor()
 
@@ -150,6 +154,61 @@ def test_state_round_trips_disabled_strategies_and_dependencies() -> None:
     assert restored.evaluate(_decision(strategy="dependent"), _view()).reason_code == (
         "dependency_disabled:base"
     )
+
+
+@pytest.mark.parametrize(
+    ("policy", "view_kwargs", "expected_reason"),
+    [
+        (
+            FreshnessPolicy(max_orderbook_staleness_ms=1000),
+            {"book_freshness_ms": 2000},
+            "STALE_ORDERBOOK",
+        ),
+        (
+            FreshnessPolicy(max_spot_staleness_ms=1000),
+            {"spot_freshness_ms": 2000},
+            "STALE_SPOT_PRICE",
+        ),
+    ],
+)
+def test_decision_policy_preserves_strategy_freshness_policy(
+    policy: FreshnessPolicy, view_kwargs: dict[str, int], expected_reason: str
+) -> None:
+    actor = DecisionPolicyActor(
+        gate=_gate(dedupe_enabled=False),
+        strategy_freshness_policies={"alpha": policy},
+    )
+
+    result = actor.evaluate(_decision(), _view(**view_kwargs))
+
+    assert isinstance(result, RejectedDecision)
+    assert result.reason_code == expected_reason
+    assert result.detail["policy_source"] == "strategy_and_global"
+
+
+def test_missing_side_book_rejects_as_missing_orderbook() -> None:
+    actor = _actor_for("accepted")
+    view = _view()
+    missing_up_book = replace(
+        view.up,
+        best_bid=None,
+        best_ask=None,
+        spread=None,
+        freshness_ms=None,
+        min_order_size=None,
+        tick_size=None,
+        last_trade_price=None,
+        last_trade_size=None,
+        last_trade_timestamp=None,
+        received_at=None,
+        ask_levels=(),
+    )
+
+    result = actor.evaluate(_decision(), replace(view, up=missing_up_book))
+
+    assert isinstance(result, RejectedDecision)
+    assert result.reason_code == "MISSING_ORDERBOOK"
+    assert result.detail["lag_ms"] is None
 
 
 def _actor_for(case: str) -> DecisionPolicyActor:
