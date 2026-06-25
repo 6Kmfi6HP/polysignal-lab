@@ -12,9 +12,11 @@ from polysignal_lab.nautilus_runtime.strategies.ptb_diff import PTBDiffNautilusS
 from polysignal_lab.nautilus_runtime.strategies.skew_mean_reversion import SkewMeanReversionNautilusStrategy
 from polysignal_lab.nautilus_runtime.strategies.vwap_momentum import VWAPMomentumNautilusStrategy
 
+from polysignal_lab.nautilus_runtime.strategies.cross_market_bot import CrossMarketNautilusStrategy
 __all__ = [
     "DEFAULT_DATA_NAMES",
     "BinaryMomentumNautilusStrategy",
+    "CrossMarketNautilusStrategy",
     "DumpHedgeNautilusStrategy",
     "FibonacciBotNautilusStrategy",
     "LateConsensusNautilusStrategy",
@@ -27,4 +29,5 @@ __all__ = [
     "PreOrderMarketNautilusStrategy",
     "SkewMeanReversionNautilusStrategy",
     "VWAPMomentumNautilusStrategy",
+    "CrossMarketNautilusStrategy",
 ]

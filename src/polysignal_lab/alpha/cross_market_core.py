@@ -245,3 +245,15 @@ class CrossMarketAlphaCore:
 
         view = market_view_from_snapshot(snapshot)
         return [] if view is None else self.evaluate(view)
+
+    def save_state(self) -> dict[str, object]:
+        from polysignal_lab.alpha.state import json_safe_state
+
+        return json_safe_state({
+            "_active_baskets": self._active_baskets,
+        })
+
+    def load_state(self, payload: dict[str, object]) -> None:
+        baskets = payload.get("_active_baskets", {})
+        if isinstance(baskets, dict):
+            self._active_baskets = baskets
