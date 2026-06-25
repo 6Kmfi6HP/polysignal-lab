@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 
 from polysignal_lab.nautilus_runtime.node import build_trading_node, build_control, run_nautilus_cli
 
@@ -40,7 +39,14 @@ def test_build_control_adapts_policy() -> None:
     assert not ctrl.is_strategy_enabled("vwap_momentum")
 
 
-def test_run_nautilus_cli_prints_ready() -> None:
-    """run_nautilus_cli completes without error."""
+def test_run_nautilus_cli_prints_ready(monkeypatch, capsys) -> None:
+    """run_nautilus_cli prints ready and exits on interrupt."""
+    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.signal.signal", lambda *_args: None)
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.time.sleep",
+        lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
     run_nautilus_cli()
-    # If we reach here, no exception was raised
+
+    assert "Nautilus runtime ready" in capsys.readouterr().out
