@@ -53,3 +53,36 @@ Default code must not import, instantiate, or register live execution classes or
 - `POLYMARKET_PASSPHRASE`
 
 Default code must not invoke allowance or API-key scripts from the adapter.
+
+
+## Verification Log
+
+Record the exact command output in the pull request or commit notes when executing this plan:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -c "import polysignal_lab"
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_dependency_boundary.py tests/test_alpha_types.py tests/test_alpha_ptb_diff.py tests/test_nautilus_market_registry.py tests/test_nautilus_external_data.py tests/test_nautilus_market_view_assembler.py tests/test_nautilus_state.py tests/test_nautilus_strategy_base.py tests/test_nautilus_safety_boundary.py tests/test_ptb_diff.py -v
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run polysignal-safety-scan .
+ldd --version
+uv sync --extra nautilus --python 3.12
+uv run python -c "import nautilus_trader.adapters.polymarket"
+docker compose up -d --build --force-recreate
+docker compose ps
+```
+
+### Actual Results (2026-06-25)
+
+- `import polysignal_lab`: exit 0, no output (default 3.11 runtime, no Nautilus).
+- `pytest` bridge tests: **35 passed** in 0.17s across 10 test files.
+- `polysignal-safety-scan`: `Safety scan passed`.
+- `ldd --version`: glibc 2.35 (aarch64).
+- `uv sync --extra nautilus --python 3.12`: not run (Nautilus not required for default verification).
+- `import nautilus_trader.adapters.polymarket`: not run (Python 3.12 env not active).
+- `docker compose up -d --build --force-recreate`: not run (verification is source-level only).
+- `docker compose ps`: not run.
+
+After Docker rebuild, verify dashboard health with a cache-busted URL:
+
+```text
+http://127.0.0.1:8081/health?fresh=nautilus_bridge
+```
