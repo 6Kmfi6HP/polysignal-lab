@@ -334,6 +334,7 @@ class VWAPMomentumAlphaCore:
                         continue
                     self._seen_trade_signatures[key].add(signature)
                     self.trades.push(key, price, size, timestamp)
+                    pushed_samples.append((key, price, size, timestamp))
                 continue
             price = book.last_trade_price if book.last_trade_price is not None else book.best_ask
             if price is not None and price > 0:

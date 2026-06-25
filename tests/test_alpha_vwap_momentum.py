@@ -188,6 +188,32 @@ def test_vwap_on_order_rejected_reverts_pending_samples() -> None:
     assert core.trades.latest_price(up_key) == 0.50
 
 
+
+def test_vwap_on_order_rejected_reverts_trade_view_samples() -> None:
+    config = _fast_config()
+    core = VWAPMomentumAlphaCore(config)
+    snapshot = _snapshot()
+    market_id = snapshot.market.market_id
+    trade_ts = snapshot.created_at
+    snapshot = snapshot.model_copy(
+        update={
+            "metrics": {
+                "up_trades": (TradeView(price=0.60, size=2.0, side=Side.UP.value, ts=trade_ts),),
+                "down_trades": (TradeView(price=0.42, size=1.0, side=Side.DOWN.value, ts=trade_ts),),
+            }
+        }
+    )
+    _seed_band(core, market_id, snapshot.created_at.timestamp())
+
+    decision = core.evaluate_view_from_snapshot_for_test(snapshot)[0]
+    core.bind_signal(market_id, "sig-tradeview-rejected")
+
+    up_key = f"{market_id}:{Side.UP.value}"
+    assert core.trades.latest_price(up_key) == 0.60
+
+    core.on_order_rejected(_accept_event(decision, order_id="sig-tradeview-rejected"))
+
+    assert core.trades.latest_price(up_key) == 0.50
 # ---------------------------------------------------------------------------
 # Hedge flow: taker fill creates a hedge decision; GTD fill clears it
 # ---------------------------------------------------------------------------
