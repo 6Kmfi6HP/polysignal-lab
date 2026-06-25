@@ -1,0 +1,292 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+import pytest
+
+from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, FreshnessView, MarketView, SideBookView, SpotView
+from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision, RejectedDecision
+from polysignal_lab.nautilus_runtime.strategies.base import PolySignalNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.binary_momentum import BinaryMomentumNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.dump_hedge import DumpHedgeNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.fibonacci_bot import FibonacciBotNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.late_consensus import LateConsensusNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.low_side_dual_reversion import LowSideDualReversionNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.mid_price_sizing import MidPriceSizingNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.ninety_nine_cent_sniper import NinetyNineCentSniperNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.one_cent_buy import OneCentBuyNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.pre_order_market import PreOrderMarketNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.ptb_diff import PTBDiffNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.skew_mean_reversion import SkewMeanReversionNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.vwap_momentum import VWAPMomentumNautilusStrategy
+from polysignal_lab.strategies.config import (
+    BinaryMomentumConfig,
+    DumpHedgeConfig,
+    FibonacciBotConfig,
+    LateConsensusConfig,
+    LowSideDualReversionConfig,
+    MidPriceSizingConfig,
+    NinetyNineCentSniperConfig,
+    OneCentBuyConfig,
+    PTBDiffConfig,
+    PreOrderMarketConfig,
+    SkewMeanReversionConfig,
+    VWAPMomentumConfig,
+)
+
+
+REQUIRED_DATA_NAMES = {
+    "order_book_deltas",
+    "order_book_depth",
+    "spot_prices",
+    "price_to_beat",
+}
+
+
+WRAPPERS = [
+    (PTBDiffNautilusStrategy, PTBDiffConfig),
+    (SkewMeanReversionNautilusStrategy, SkewMeanReversionConfig),
+    (BinaryMomentumNautilusStrategy, BinaryMomentumConfig),
+    (FibonacciBotNautilusStrategy, FibonacciBotConfig),
+    (OneCentBuyNautilusStrategy, OneCentBuyConfig),
+    (NinetyNineCentSniperNautilusStrategy, NinetyNineCentSniperConfig),
+    (LateConsensusNautilusStrategy, LateConsensusConfig),
+    (VWAPMomentumNautilusStrategy, VWAPMomentumConfig),
+    (DumpHedgeNautilusStrategy, DumpHedgeConfig),
+    (MidPriceSizingNautilusStrategy, MidPriceSizingConfig),
+    (PreOrderMarketNautilusStrategy, PreOrderMarketConfig),
+    (LowSideDualReversionNautilusStrategy, LowSideDualReversionConfig),
+]
+
+
+class FakeAssembler:
+    def __init__(self, view: MarketView | None):
+        self.view = view
+        self.condition_ids: list[str] = []
+
+    def build(self, condition_id: str) -> MarketView | None:
+        self.condition_ids.append(condition_id)
+        return self.view
+
+
+class FakeCore:
+    def __init__(self, decisions: list[AlphaDecision]):
+        self.decisions = decisions
+        self.views: list[MarketView] = []
+        self.rejections = 0
+        self.fills: list[AlphaFillEvent] = []
+        self.state = {"seen": ["before"]}
+        self.fill_returns: list[AlphaDecision] = []
+
+    def evaluate(self, view: MarketView) -> list[AlphaDecision]:
+        self.views.append(view)
+        return self.decisions
+
+    def on_order_rejected(self, _event) -> None:
+        self.rejections += 1
+
+    def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
+        self.fills.append(event)
+        return self.fill_returns
+
+    def save_state(self):
+        return self.state
+
+    def load_state(self, payload):
+        self.state = dict(payload)
+
+
+class FakePolicy:
+    def __init__(self, approvals: list[bool] | None = None):
+        self.approvals = approvals or [True]
+        self.calls: list[tuple[AlphaDecision, MarketView]] = []
+
+    def evaluate(self, decision: AlphaDecision, view: MarketView):
+        self.calls.append((decision, view))
+        approve = self.approvals[min(len(self.calls) - 1, len(self.approvals) - 1)]
+        if approve:
+            return ApprovedDecision(signal=_signal_from_decision(decision))
+        return RejectedDecision(reason_code="TEST_REJECTED", detail={}, candidate=_signal_from_decision(decision))
+
+
+class FakeSubmitter:
+    def __init__(self):
+        self.specs = []
+
+    def __call__(self, spec):
+        self.specs.append(spec)
+        return "submitted"
+
+
+@dataclass(frozen=True)
+class FakeFill:
+    order_id: str = "order-1"
+    client_order_id: str = "client-1"
+    market_id: str = "btc-5m"
+    condition_id: str = "condition-btc-5m"
+    token_id: str = "up-token"
+    side: Side = Side.UP
+    reason: str | None = None
+    price: float = 0.49
+    quantity: float = 3.0
+    liquidity_side: str = "TAKER"
+    ts_event: datetime = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _view() -> MarketView:
+    return MarketView(
+        view_id="view-1",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        condition_id="condition-btc-5m",
+        asset="BTC",
+        timeframe="5m",
+        start_ts=None,
+        end_ts=None,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        seconds_to_close=60,
+        up=SideBookView(token_id="up-token", best_bid=0.48, best_ask=0.50, spread=0.02, freshness_ms=10),
+        down=SideBookView(token_id="down-token", best_bid=0.49, best_ask=0.51, spread=0.02, freshness_ms=10),
+        spot=SpotView(asset="BTC", symbol="BTC/USD", price=100_000.0, source="test", freshness_ms=10),
+        price_to_beat=100_100.0,
+        up_trades=(),
+        down_trades=(),
+        metrics={},
+        freshness=FreshnessView(up_book_ms=10, down_book_ms=10, spot_ms=10, max_ms=10),
+    )
+
+
+def _decision(*, side: Side = Side.UP, hedge_leg: bool = False) -> AlphaDecision:
+    return AlphaDecision(
+        strategy="ptb_diff",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        condition_id="condition-btc-5m",
+        token_id="up-token" if side == Side.UP else "down-token",
+        side=side,
+        confidence=0.8,
+        entry_reference_price=0.48,
+        max_entry_price=0.50,
+        seconds_to_close=60,
+        data_freshness_ms=20,
+        reason_codes=("TEST",),
+        metrics={},
+        order_intent=None,
+        hedge_leg=hedge_leg,
+    )
+
+
+def _signal_from_decision(decision: AlphaDecision) -> SignalCandidate:
+    return SignalCandidate.build(
+        strategy=decision.strategy,
+        asset=decision.asset,
+        timeframe=decision.timeframe,
+        market_id=decision.market_id,
+        market_slug=decision.market_slug,
+        condition_id=decision.condition_id,
+        token_id=decision.token_id,
+        side=decision.side,
+        confidence=decision.confidence,
+        entry_reference_price=decision.entry_reference_price,
+        max_entry_price=decision.max_entry_price,
+        seconds_to_close=decision.seconds_to_close,
+        data_freshness_ms=decision.data_freshness_ms,
+        reason_codes=list(decision.reason_codes),
+        metrics=dict(decision.metrics),
+        order_intent=decision.order_intent.intent if decision.order_intent else None,
+        expiry_seconds=decision.order_intent.expiry_seconds if decision.order_intent else None,
+        pair_id=decision.order_intent.pair_id if decision.order_intent else None,
+        hedge_leg=decision.hedge_leg,
+    )
+
+
+@pytest.mark.parametrize(("strategy_cls", "config_cls"), WRAPPERS)
+def test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data(strategy_cls, config_cls) -> None:
+    strategy = strategy_cls(config=config_cls(), assembler=FakeAssembler(None), condition_ids=("condition-btc-5m",))
+
+    strategy.on_start()
+
+    assert REQUIRED_DATA_NAMES.issubset(set(strategy.subscribed_data_names))
+
+
+def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved() -> None:
+    view = _view()
+    approved = _decision(side=Side.UP)
+    rejected = _decision(side=Side.DOWN)
+    core = FakeCore([approved, rejected])
+    policy = FakePolicy([True, False])
+    submitter = FakeSubmitter()
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=policy,
+        submitter=submitter,
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        fixed_stake_usdc=10.0,
+    )
+
+    result = strategy.evaluate_condition("condition-btc-5m")
+
+    assert core.views == [view]
+    assert [call[0] for call in policy.calls] == [approved, rejected]
+    assert len(submitter.specs) == 1
+    assert submitter.specs[0].instrument_id == "up-token"
+    assert result == [submitter.specs[0]]
+    assert core.rejections == 0
+
+
+def test_stateful_core_round_trips_through_shared_state_codec() -> None:
+    core = FakeCore([])
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(None),
+        policy=FakePolicy(),
+        submitter=FakeSubmitter(),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+    )
+    state = strategy.on_save()
+    restored_core = FakeCore([])
+    restored = PolySignalNautilusStrategy(
+        core=restored_core,
+        assembler=FakeAssembler(None),
+        policy=FakePolicy(),
+        submitter=FakeSubmitter(),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+    )
+
+    restored.on_load(state)
+
+    assert restored_core.state == {"seen": ["before"]}
+
+
+def test_fill_callback_routes_vwap_hedge_decisions_through_policy_and_submitter() -> None:
+    view = _view()
+    core = FakeCore([])
+    core.fill_returns = [_decision(side=Side.DOWN, hedge_leg=True)]
+    policy = FakePolicy([True])
+    submitter = FakeSubmitter()
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=policy,
+        submitter=submitter,
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    strategy.on_order_filled(FakeFill())
+
+    assert len(core.fills) == 1
+    assert len(policy.calls) == 1
+    assert len(submitter.specs) == 1
+    assert submitter.specs[0].hedge_leg is True
+    assert not hasattr(strategy, "_follow_up_signals")
