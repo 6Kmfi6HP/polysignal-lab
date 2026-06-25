@@ -130,14 +130,15 @@ class ObservabilityActor:
         if self.store is None:
             return
         self.store.insert_json("fills", {
-            "ts": utc_iso(),
-            "fill_id": fill.paper_fill_id,
-            "order_id": fill.paper_order_id,
+            "paper_fill_id": fill.paper_fill_id,
+            "paper_order_id": fill.paper_order_id,
+            "signal_id": fill.signal_id or "",
+            "fill_price": fill.fill_price,
+            "stake_usdc": fill.stake_usdc,
+            "shares": fill.shares,
             "token_id": fill.token_id,
             "side": fill.side.value,
-            "fill_price": fill.fill_price,
-            "shares": fill.shares,
-            "stake_usdc": fill.stake_usdc,
+            "created_at": utc_iso(),
         })
 
     def record_position(self, position: PaperPosition) -> None:
@@ -145,14 +146,18 @@ class ObservabilityActor:
         if self.store is None:
             return
         self.store.insert_json("positions", {
-            "ts": utc_iso(),
-            "position_id": position.paper_position_id,
-            "market_id": position.market_id,
+            "paper_position_id": position.paper_position_id,
+            "signal_id": "",
+            "strategy": position.strategy or "",
+            "asset": "",
+            "timeframe": "",
+            "market_id": position.market_id or "",
             "side": position.side.value,
             "entry_price": position.entry_price,
             "shares": position.shares,
             "stake_usdc": position.stake_usdc,
-            "strategy": position.strategy,
+            "status": "OPEN",
+            "opened_at": utc_iso(),
         })
 
     def record_settlement(self, result: PaperTradeResult) -> None:
@@ -160,15 +165,24 @@ class ObservabilityActor:
         if self.store is None:
             return
         self.store.insert_json("settlements", {
-            "ts": utc_iso(),
-            "position_id": result.paper_position_id,
-            "strategy": result.strategy,
+            "paper_trade_id": result.paper_trade_id,
+            "signal_id": result.signal_id or "",
+            "strategy": result.strategy or "",
+            "asset": result.asset or "",
+            "timeframe": result.timeframe or "",
+            "market_id": result.market_id or "",
+            "paper_position_id": result.paper_position_id,
             "side": result.side.value,
+            "entry_price": result.entry_price,
+            "shares": result.shares,
+            "stake_usdc": result.stake_usdc,
             "outcome_value": result.outcome_value,
-            "settlement_value": result.settlement_value,
-            "pnl_usdc": result.pnl_usdc,
-            "result": result.result.value,
+            "settlement_value": getattr(result, "settlement_value", 0.0),
+            "pnl_usdc": getattr(result, "pnl_usdc", 0.0),
+            "roi": getattr(result, "roi", 0.0),
+            "result": getattr(result, "result", "").value if hasattr(getattr(result, "result", ""), "value") else str(getattr(result, "result", "")),
             "exit_mode": result.exit_mode.value,
+            "closed_at": utc_iso(),
         })
 
     def record_health_snapshot(self) -> None:
