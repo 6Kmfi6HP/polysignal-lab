@@ -231,11 +231,15 @@ class PolySignalNautilusStrategy:
         return metrics
 
     def _alias_approved_signal_metrics(self, event: Any, order: AlphaOrderEvent) -> None:
+        lookup_ids = self._event_lookup_ids(event, order)
         metrics = self._approved_metrics_for_event(event, order)
         if not metrics:
             return
-        for key in self._event_lookup_ids(event, order):
+        aliases_locally_accepted = any(key in self._locally_accepted_order_ids for key in lookup_ids)
+        for key in lookup_ids:
             self._approved_signal_metrics.setdefault(key, dict(metrics))
+        if aliases_locally_accepted:
+            self._locally_accepted_order_ids.update(lookup_ids)
 
     def _approved_metrics_for_event(self, event: Any, order: AlphaOrderEvent) -> Mapping[str, Any]:
         for key in self._event_lookup_ids(event, order):

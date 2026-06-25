@@ -394,6 +394,36 @@ def test_locally_accepted_order_event_does_not_double_apply_core_acceptance() ->
 
     assert [event.order_id for event in core.accepted_events] == [accepted_id]
 
+def test_submitted_exchange_alias_prevents_duplicate_core_acceptance() -> None:
+    view = _view()
+    decision = _decision()
+    core = RollbackCore([decision])
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=FakePolicy([True]),
+        submitter=FakeSubmitter(),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    strategy.evaluate_condition("condition-btc-5m")
+    signal_id = core.accepted_events[0].order_id
+    strategy.on_order_submitted(
+        replace(
+            FakeFill(),
+            order_id="exchange-order",
+            client_order_id="exchange-client",
+            tags={"signal_id": signal_id},
+        )
+    )
+    strategy.on_order_accepted(
+        replace(FakeFill(), order_id="exchange-order", client_order_id="exchange-client", tags=None)
+    )
+
+    assert [event.order_id for event in core.accepted_events] == [signal_id]
+
 def test_policy_rejected_decision_rolls_back_bound_transient_state() -> None:
     view = _view()
     decision = _decision()
