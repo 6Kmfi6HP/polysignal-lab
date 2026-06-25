@@ -21,12 +21,18 @@ def order_spec_from_decision(
     pair_id = _pair_id(source)
     metrics = dict(getattr(source, "metrics", {}) or {})
     if available_shares is None:
-        available_shares = _metric_float(metrics, "available_ask_shares", "ask_available_shares", "depth_shares")
+        available_shares = _metric_float(
+            metrics, "available_ask_shares", "ask_available_shares", "depth_shares"
+        )
 
     explicit_intent = _intent(source)
     if explicit_intent is None:
         price = max_price
-    elif intent in {OrderIntent.TAKER_FAK, OrderIntent.TAKER_FOK, OrderIntent.TAKER_IOC}:
+    elif intent in {
+        OrderIntent.TAKER_FAK,
+        OrderIntent.TAKER_FOK,
+        OrderIntent.TAKER_IOC,
+    }:
         if best_ask is None:
             raise ValueError(f"{intent.value} requires best ask depth")
         price = _positive_float(best_ask, "best_ask")
@@ -35,7 +41,12 @@ def order_spec_from_decision(
     else:
         price = max_price
 
-    quantity = _positive_float(fixed_stake_usdc, "fixed_stake_usdc") / price
+    contracts = _metric_float(metrics, "contracts")
+    quantity = (
+        _positive_float(contracts, "contracts")
+        if contracts is not None
+        else _positive_float(fixed_stake_usdc, "fixed_stake_usdc") / price
+    )
     if intent == OrderIntent.TAKER_FOK:
         if available_shares is None or available_shares < quantity:
             raise ValueError("insufficient depth for full fill")
@@ -49,6 +60,8 @@ def order_spec_from_decision(
     signal_id = getattr(source, "signal_id", None)
     if signal_id is not None:
         tags["signal_id"] = str(signal_id)
+    if bool(getattr(source, "hedge_leg", False)):
+        tags["hedge_leg"] = "true"
     if intent == OrderIntent.PASSIVE_GTD:
         tags["time_in_force"] = "GTD"
         if expiry_seconds is not None:
@@ -75,7 +88,9 @@ def order_spec_from_decision(
     )
 
 
-def _decision_source(decision: ApprovedDecision | AlphaDecision | SignalCandidate) -> AlphaDecision | SignalCandidate:
+def _decision_source(
+    decision: ApprovedDecision | AlphaDecision | SignalCandidate,
+) -> AlphaDecision | SignalCandidate:
     if isinstance(decision, ApprovedDecision):
         return decision.signal
     return decision

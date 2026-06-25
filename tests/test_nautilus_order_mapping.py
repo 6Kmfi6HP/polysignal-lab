@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec
@@ -9,7 +11,12 @@ from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.execution import order_spec_from_decision
 
 
-def _decision(*, intent: OrderIntent | None = None, expiry_seconds: int | None = None, max_price: float = 0.50) -> AlphaDecision:
+def _decision(
+    *,
+    intent: OrderIntent | None = None,
+    expiry_seconds: int | None = None,
+    max_price: float = 0.50,
+) -> AlphaDecision:
     return AlphaDecision(
         strategy="ptb_diff",
         asset="BTC",
@@ -26,7 +33,11 @@ def _decision(*, intent: OrderIntent | None = None, expiry_seconds: int | None =
         data_freshness_ms=20,
         reason_codes=("TEST",),
         metrics={},
-        order_intent=OrderIntentSpec(intent=intent, expiry_seconds=expiry_seconds, pair_id="pair-1") if intent else None,
+        order_intent=OrderIntentSpec(
+            intent=intent, expiry_seconds=expiry_seconds, pair_id="pair-1"
+        )
+        if intent
+        else None,
         hedge_leg=False,
     )
 
@@ -108,6 +119,22 @@ def test_passive_gtd_maps_expiry_seconds_to_gtd_tags() -> None:
     assert spec.tags["expire_seconds"] == "45"
 
 
+def test_contracts_metric_overrides_fixed_stake_quantity_for_hedge() -> None:
+    spec = order_spec_from_decision(
+        replace(
+            _decision(
+                intent=OrderIntent.PASSIVE_GTD, expiry_seconds=45, max_price=0.40
+            ),
+            metrics={"contracts": 3.5},
+            hedge_leg=True,
+        ),
+        fixed_stake_usdc=10.0,
+    )
+
+    assert spec.quantity == 3.5
+    assert spec.hedge_leg is True
+
+
 def test_approved_signal_candidate_preserves_gtd_expiry_and_pair_metadata() -> None:
     signal = SignalCandidate.build(
         strategy="ptb_diff",
@@ -130,7 +157,9 @@ def test_approved_signal_candidate_preserves_gtd_expiry_and_pair_metadata() -> N
         pair_id="pair-1",
     )
 
-    spec = order_spec_from_decision(ApprovedDecision(signal=signal), fixed_stake_usdc=10.0)
+    spec = order_spec_from_decision(
+        ApprovedDecision(signal=signal), fixed_stake_usdc=10.0
+    )
 
     assert spec.intent == OrderIntent.PASSIVE_GTD
     assert spec.expiry_seconds == 45
@@ -139,7 +168,9 @@ def test_approved_signal_candidate_preserves_gtd_expiry_and_pair_metadata() -> N
 
 
 def test_missing_order_intent_uses_paper_safe_taker_at_max_entry_price() -> None:
-    spec = order_spec_from_decision(_decision(intent=None, max_price=0.40), fixed_stake_usdc=10.0)
+    spec = order_spec_from_decision(
+        _decision(intent=None, max_price=0.40), fixed_stake_usdc=10.0
+    )
 
     assert spec.price == 0.40
     assert spec.quantity == 25.0

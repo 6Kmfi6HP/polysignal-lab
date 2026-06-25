@@ -5,24 +5,57 @@ from datetime import UTC, datetime
 
 import pytest
 
-from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, FreshnessView, MarketView, OrderIntentSpec, SideBookView, SpotView
+from polysignal_lab.alpha.types import (
+    AlphaDecision,
+    AlphaFillEvent,
+    FreshnessView,
+    MarketView,
+    OrderIntentSpec,
+    SideBookView,
+    SpotView,
+)
 from polysignal_lab.alpha.vwap_momentum_core import VWAPMomentumAlphaCore
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision, RejectedDecision
+from polysignal_lab.nautilus_runtime.decision_policy import (
+    ApprovedDecision,
+    RejectedDecision,
+)
 from polysignal_lab.nautilus_runtime.strategies.base import PolySignalNautilusStrategy
-from polysignal_lab.nautilus_runtime.strategies.binary_momentum import BinaryMomentumNautilusStrategy
-from polysignal_lab.nautilus_runtime.strategies.dump_hedge import DumpHedgeNautilusStrategy
-from polysignal_lab.nautilus_runtime.strategies.fibonacci_bot import FibonacciBotNautilusStrategy
-from polysignal_lab.nautilus_runtime.strategies.late_consensus import LateConsensusNautilusStrategy
-from polysignal_lab.nautilus_runtime.strategies.low_side_dual_reversion import LowSideDualReversionNautilusStrategy
-from polysignal_lab.nautilus_runtime.strategies.mid_price_sizing import MidPriceSizingNautilusStrategy
-from polysignal_lab.nautilus_runtime.strategies.ninety_nine_cent_sniper import NinetyNineCentSniperNautilusStrategy
-from polysignal_lab.nautilus_runtime.strategies.one_cent_buy import OneCentBuyNautilusStrategy
-from polysignal_lab.nautilus_runtime.strategies.pre_order_market import PreOrderMarketNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.binary_momentum import (
+    BinaryMomentumNautilusStrategy,
+)
+from polysignal_lab.nautilus_runtime.strategies.dump_hedge import (
+    DumpHedgeNautilusStrategy,
+)
+from polysignal_lab.nautilus_runtime.strategies.fibonacci_bot import (
+    FibonacciBotNautilusStrategy,
+)
+from polysignal_lab.nautilus_runtime.strategies.late_consensus import (
+    LateConsensusNautilusStrategy,
+)
+from polysignal_lab.nautilus_runtime.strategies.low_side_dual_reversion import (
+    LowSideDualReversionNautilusStrategy,
+)
+from polysignal_lab.nautilus_runtime.strategies.mid_price_sizing import (
+    MidPriceSizingNautilusStrategy,
+)
+from polysignal_lab.nautilus_runtime.strategies.ninety_nine_cent_sniper import (
+    NinetyNineCentSniperNautilusStrategy,
+)
+from polysignal_lab.nautilus_runtime.strategies.one_cent_buy import (
+    OneCentBuyNautilusStrategy,
+)
+from polysignal_lab.nautilus_runtime.strategies.pre_order_market import (
+    PreOrderMarketNautilusStrategy,
+)
 from polysignal_lab.nautilus_runtime.strategies.ptb_diff import PTBDiffNautilusStrategy
-from polysignal_lab.nautilus_runtime.strategies.skew_mean_reversion import SkewMeanReversionNautilusStrategy
-from polysignal_lab.nautilus_runtime.strategies.vwap_momentum import VWAPMomentumNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.skew_mean_reversion import (
+    SkewMeanReversionNautilusStrategy,
+)
+from polysignal_lab.nautilus_runtime.strategies.vwap_momentum import (
+    VWAPMomentumNautilusStrategy,
+)
 from polysignal_lab.strategies.config import (
     BinaryMomentumConfig,
     DumpHedgeConfig,
@@ -114,10 +147,15 @@ class ControlledVWAPCore(VWAPMomentumAlphaCore):
         self.decisions = decisions
         self.views: list[MarketView] = []
         self.fills: list[AlphaFillEvent] = []
+        self.fill_notifications: list[tuple[str, Side, float]] = []
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         self.views.append(view)
         return self.decisions
+
+    def on_notify_fill(self, market_id: str, side: Side, shares: float) -> None:
+        self.fill_notifications.append((market_id, side, shares))
+        super().on_notify_fill(market_id, side, shares)
 
     def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
         self.fills.append(event)
@@ -163,7 +201,11 @@ class FakePolicy:
         approve = self.approvals[min(len(self.calls) - 1, len(self.approvals) - 1)]
         if approve:
             return ApprovedDecision(signal=_signal_from_decision(decision))
-        return RejectedDecision(reason_code="TEST_REJECTED", detail={}, candidate=_signal_from_decision(decision))
+        return RejectedDecision(
+            reason_code="TEST_REJECTED",
+            detail={},
+            candidate=_signal_from_decision(decision),
+        )
 
 
 class FakeSubmitter:
@@ -204,9 +246,27 @@ def _view() -> MarketView:
         end_ts=None,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         seconds_to_close=60,
-        up=SideBookView(token_id="up-token", best_bid=0.48, best_ask=0.50, spread=0.02, freshness_ms=10),
-        down=SideBookView(token_id="down-token", best_bid=0.49, best_ask=0.51, spread=0.02, freshness_ms=10),
-        spot=SpotView(asset="BTC", symbol="BTC/USD", price=100_000.0, source="test", freshness_ms=10),
+        up=SideBookView(
+            token_id="up-token",
+            best_bid=0.48,
+            best_ask=0.50,
+            spread=0.02,
+            freshness_ms=10,
+        ),
+        down=SideBookView(
+            token_id="down-token",
+            best_bid=0.49,
+            best_ask=0.51,
+            spread=0.02,
+            freshness_ms=10,
+        ),
+        spot=SpotView(
+            asset="BTC",
+            symbol="BTC/USD",
+            price=100_000.0,
+            source="test",
+            freshness_ms=10,
+        ),
         price_to_beat=100_100.0,
         up_trades=(),
         down_trades=(),
@@ -215,7 +275,12 @@ def _view() -> MarketView:
     )
 
 
-def _decision(*, side: Side = Side.UP, hedge_leg: bool = False, order_intent: OrderIntentSpec | None = None) -> AlphaDecision:
+def _decision(
+    *,
+    side: Side = Side.UP,
+    hedge_leg: bool = False,
+    order_intent: OrderIntentSpec | None = None,
+) -> AlphaDecision:
     return AlphaDecision(
         strategy="ptb_diff",
         asset="BTC",
@@ -255,22 +320,32 @@ def _signal_from_decision(decision: AlphaDecision) -> SignalCandidate:
         reason_codes=list(decision.reason_codes),
         metrics=dict(decision.metrics),
         order_intent=decision.order_intent.intent if decision.order_intent else None,
-        expiry_seconds=decision.order_intent.expiry_seconds if decision.order_intent else None,
+        expiry_seconds=decision.order_intent.expiry_seconds
+        if decision.order_intent
+        else None,
         pair_id=decision.order_intent.pair_id if decision.order_intent else None,
         hedge_leg=decision.hedge_leg,
     )
 
 
 @pytest.mark.parametrize(("strategy_cls", "config_cls"), WRAPPERS)
-def test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data(strategy_cls, config_cls) -> None:
-    strategy = strategy_cls(config=config_cls(), assembler=FakeAssembler(None), condition_ids=("condition-btc-5m",))
+def test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data(
+    strategy_cls, config_cls
+) -> None:
+    strategy = strategy_cls(
+        config=config_cls(),
+        assembler=FakeAssembler(None),
+        condition_ids=("condition-btc-5m",),
+    )
 
     strategy.on_start()
 
     assert REQUIRED_DATA_NAMES.issubset(set(strategy.subscribed_data_names))
 
 
-def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved() -> None:
+def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved() -> (
+    None
+):
     view = _view()
     approved = _decision(side=Side.UP)
     rejected = _decision(side=Side.DOWN)
@@ -324,7 +399,11 @@ def test_approved_decision_binds_and_accepts_before_submit() -> None:
     accepted = core.accepted_events[0]
     signal_id = accepted.order_id
     assert core.bind_calls == [(decision.market_id, signal_id)]
-    assert core.lifecycle == [("bind", signal_id), ("accepted", signal_id), ("submit", "up-token")]
+    assert core.lifecycle == [
+        ("bind", signal_id),
+        ("accepted", signal_id),
+        ("submit", "up-token"),
+    ]
     assert accepted.market_id == decision.market_id
     assert accepted.condition_id == view.condition_id
     assert accepted.token_id == decision.token_id
@@ -381,8 +460,12 @@ def test_locally_accepted_order_event_does_not_double_apply_core_acceptance() ->
 
     strategy.evaluate_condition("condition-btc-5m")
     accepted_id = core.accepted_events[0].order_id
-    strategy.on_order_accepted(replace(FakeFill(), order_id=accepted_id, client_order_id="exchange-client"))
-    strategy.on_order_accepted(replace(FakeFill(), order_id="exchange-order", client_order_id=accepted_id))
+    strategy.on_order_accepted(
+        replace(FakeFill(), order_id=accepted_id, client_order_id="exchange-client")
+    )
+    strategy.on_order_accepted(
+        replace(FakeFill(), order_id="exchange-order", client_order_id=accepted_id)
+    )
     strategy.on_order_accepted(
         replace(
             FakeFill(),
@@ -393,6 +476,7 @@ def test_locally_accepted_order_event_does_not_double_apply_core_acceptance() ->
     )
 
     assert [event.order_id for event in core.accepted_events] == [accepted_id]
+
 
 def test_submitted_exchange_alias_prevents_duplicate_core_acceptance() -> None:
     view = _view()
@@ -419,10 +503,16 @@ def test_submitted_exchange_alias_prevents_duplicate_core_acceptance() -> None:
         )
     )
     strategy.on_order_accepted(
-        replace(FakeFill(), order_id="exchange-order", client_order_id="exchange-client", tags=None)
+        replace(
+            FakeFill(),
+            order_id="exchange-order",
+            client_order_id="exchange-client",
+            tags=None,
+        )
     )
 
     assert [event.order_id for event in core.accepted_events] == [signal_id]
+
 
 def test_policy_rejected_decision_rolls_back_bound_transient_state() -> None:
     view = _view()
@@ -464,7 +554,9 @@ def test_candidate_less_policy_rejection_rolls_back_transient_state() -> None:
 
     class CandidateLessRejectPolicy:
         def evaluate(self, decision: AlphaDecision, view: MarketView):
-            return RejectedDecision(reason_code="manual_disabled", detail={}, candidate=None)
+            return RejectedDecision(
+                reason_code="manual_disabled", detail={}, candidate=None
+            )
 
     strategy = PolySignalNautilusStrategy(
         core=core,
@@ -480,7 +572,9 @@ def test_candidate_less_policy_rejection_rolls_back_transient_state() -> None:
 
     rollback_id = f"policy_rejected:{decision.strategy}:{decision.market_id}:0"
     assert result == []
-    assert strategy.rejected_decisions == [RejectedDecision(reason_code="manual_disabled", detail={}, candidate=None)]
+    assert strategy.rejected_decisions == [
+        RejectedDecision(reason_code="manual_disabled", detail={}, candidate=None)
+    ]
     assert core.bind_calls == [(decision.market_id, rollback_id)]
     assert core.transient_markers == {}
     assert len(core.rejected_events) == 1
@@ -492,6 +586,7 @@ def test_candidate_less_policy_rejection_rolls_back_transient_state() -> None:
     assert event.order_id == rollback_id
     assert event.reason == "manual_disabled"
     assert event.ts_event == view.created_at
+
 
 def test_stateful_core_round_trips_through_shared_state_codec() -> None:
     core = FakeCore([])
@@ -519,7 +614,9 @@ def test_stateful_core_round_trips_through_shared_state_codec() -> None:
     assert restored_core.state == {"seen": ["before"]}
 
 
-def test_fill_callback_routes_vwap_hedge_decisions_through_policy_and_submitter() -> None:
+def test_fill_callback_routes_vwap_hedge_decisions_through_policy_and_submitter() -> (
+    None
+):
     view = _view()
     core = FakeCore([])
     core.fill_returns = [_decision(side=Side.DOWN, hedge_leg=True)]
@@ -575,7 +672,9 @@ def test_fill_callback_reattaches_approved_vwap_metrics_for_hedges() -> None:
     signal_id = next(iter(strategy._locally_accepted_order_ids))
     assert submitter.specs[0].tags["signal_id"] == signal_id
 
-    strategy.on_order_filled(replace(FakeFill(), order_id=signal_id, client_order_id="exchange-client"))
+    strategy.on_order_filled(
+        replace(FakeFill(), order_id=signal_id, client_order_id="exchange-client")
+    )
 
     assert len(submitter.specs) == 2
     hedge_decision = policy.calls[-1][0]
@@ -589,7 +688,9 @@ def test_fill_callback_reattaches_approved_vwap_metrics_for_hedges() -> None:
     core.decisions = [replace(vwap_decision, confidence=0.31)]
     accepted_before = set(strategy._locally_accepted_order_ids)
     strategy.evaluate_condition("condition-btc-5m")
-    override_signal_id = next(iter(set(strategy._locally_accepted_order_ids) - accepted_before))
+    override_signal_id = next(
+        iter(set(strategy._locally_accepted_order_ids) - accepted_before)
+    )
 
     strategy.on_order_filled(
         replace(
@@ -602,3 +703,94 @@ def test_fill_callback_reattaches_approved_vwap_metrics_for_hedges() -> None:
 
     assert policy.calls[-1][0].confidence == 0.93
     assert core.fills[-1].metrics["signal_confidence"] == 0.93
+
+
+def test_stored_vwap_hedge_fill_does_not_stage_reverse_hedge() -> None:
+    view = _view()
+    vwap_decision = replace(
+        _decision(),
+        strategy="vwap_momentum",
+        metrics={
+            "opposite_token_id": "down-token",
+            "condition_id": "condition-btc-5m",
+            "seconds_to_close": 60,
+        },
+    )
+    core = ControlledVWAPCore([vwap_decision])
+    policy = FakePolicy([True])
+    submitter = FakeSubmitter()
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=policy,
+        submitter=submitter,
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    strategy.evaluate_condition("condition-btc-5m")
+    entry_signal_id = submitter.specs[0].tags["signal_id"]
+    strategy.on_order_filled(
+        replace(FakeFill(), order_id=entry_signal_id, client_order_id="exchange-client")
+    )
+    hedge_signal_id = submitter.specs[1].tags["signal_id"]
+
+    submitted = strategy.on_order_filled(
+        replace(
+            FakeFill(),
+            order_id=hedge_signal_id,
+            client_order_id="hedge-client",
+            side=Side.DOWN,
+            token_id="down-token",
+            quantity=3.0,
+        )
+    )
+
+    assert submitted == []
+    assert len(submitter.specs) == 2
+    assert core.fill_notifications == [("btc-5m", Side.UP, 3.0)]
+
+
+def test_approved_decision_with_consensus_submits_without_second_core_acceptance() -> (
+    None
+):
+    view = _view()
+    decision = _decision()
+    consensus = _signal_from_decision(
+        replace(decision, side=Side.DOWN, token_id="down-token")
+    )
+    core = RollbackCore([decision])
+    submitter = FakeSubmitter()
+
+    class ConsensusPolicy:
+        def evaluate(self, policy_decision: AlphaDecision, policy_view: MarketView):
+            return ApprovedDecision(
+                signal=_signal_from_decision(policy_decision), consensus=consensus
+            )
+
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=ConsensusPolicy(),
+        submitter=submitter,
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    result = strategy.evaluate_condition("condition-btc-5m")
+
+    assert result == submitter.specs
+    assert [spec.instrument_id for spec in submitter.specs] == [
+        "up-token",
+        "down-token",
+    ]
+    assert len(core.accepted_events) == 1
+    assert core.bind_calls == [
+        (decision.market_id, submitter.specs[0].tags["signal_id"])
+    ]
+    assert core.lifecycle == [
+        ("bind", submitter.specs[0].tags["signal_id"]),
+        ("accepted", submitter.specs[0].tags["signal_id"]),
+    ]
