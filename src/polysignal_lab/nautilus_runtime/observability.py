@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import asyncio
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from polysignal_lab.alpha.types import AlphaDecision
@@ -25,6 +26,47 @@ class Notifier(Protocol):
     """Protocol for sending notifications."""
 
     async def send(self, message: str, msg_type: str = "") -> None: ...
+
+
+class NautilusEventStoreAdapter:
+    """Adapts a PersistenceService-like object to the EventStore protocol."""
+
+    def __init__(self, persistence: object) -> None:
+        self.persistence = persistence
+        self._routes: dict[str, Callable[[object], None]] = {
+            "orders": persistence.insert_paper_order,
+            "fills": persistence.insert_paper_fill,
+            "positions": persistence.upsert_paper_position,
+            "settlements": persistence.insert_paper_trade_result,
+            "health_snapshot": persistence.insert_system_event,
+            "system_events": persistence.insert_system_event,
+        }
+
+    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+        route = self._routes.get(table)
+        if route is None:
+            raise ValueError(f"Unknown Nautilus event table: {table}")
+        payload = dict(data)
+        if table == "health_snapshot":
+            payload.setdefault("event_type", "health_snapshot")
+            payload.setdefault("severity", "info")
+            payload.setdefault("created_at", payload.get("ts", utc_iso()))
+            payload.setdefault("event_id", f"nautilus_health:{payload['created_at']}")
+        route(payload)
+
+    def insert_many_json(self, table: str, rows: Sequence[Mapping[str, object]]) -> None:
+        for row in rows:
+            self.insert_json(table, row)
+
+
+class NautilusNotifierAdapter:
+    """Adapts a publisher (e.g. TelegramPublisher) to the Notifier protocol."""
+
+    def __init__(self, publisher: object) -> None:
+        self.publisher = publisher
+
+    async def send(self, message: str, msg_type: str = "") -> None:
+        await asyncio.to_thread(self.publisher.send, message, msg_type)
 
 
 class ObservabilityActor:

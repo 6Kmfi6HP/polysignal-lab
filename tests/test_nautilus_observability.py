@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 
+import pytest
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.enums import ExitMode, Side, OrderStatus, TradeResultStatus
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_result import PaperTradeResult
 from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
 from polysignal_lab.nautilus_runtime.observability import (
-    ObservabilityActor,
     DecisionPolicyControl,
+    NautilusEventStoreAdapter,
+    NautilusNotifierAdapter,
+    ObservabilityActor,
 )
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.utils import utc_now
@@ -144,3 +148,52 @@ def test_decision_policy_control_returns_status_payload() -> None:
     disabled = payload["disabled_strategies"]
     assert isinstance(disabled, list)
     assert "test_strat" in disabled
+
+
+class FakePersistence:
+    def __init__(self):
+        self.calls = []
+
+    def insert_paper_order(self, payload): self.calls.append(("insert_paper_order", payload))
+    def insert_paper_fill(self, payload): self.calls.append(("insert_paper_fill", payload))
+    def upsert_paper_position(self, payload): self.calls.append(("upsert_paper_position", payload))
+    def insert_paper_trade_result(self, payload): self.calls.append(("insert_paper_trade_result", payload))
+    def insert_system_event(self, payload): self.calls.append(("insert_system_event", payload))
+
+
+class FakePublisher:
+    def __init__(self):
+        self.calls = []
+
+    def send(self, message: str, msg_type: str = "") -> None:
+        self.calls.append((message, msg_type))
+
+
+def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
+    persistence = FakePersistence()
+    adapter = NautilusEventStoreAdapter(persistence)
+
+    adapter.insert_json("orders", {"paper_order_id": "o1"})
+    adapter.insert_json("fills", {"paper_fill_id": "f1"})
+    adapter.insert_json("positions", {"paper_position_id": "p1"})
+    adapter.insert_json("settlements", {"paper_trade_id": "t1"})
+    adapter.insert_json("health_snapshot", {"event_id": "h1", "event_type": "health_snapshot", "severity": "info", "created_at": "now"})
+
+    assert [name for name, _ in persistence.calls] == [
+        "insert_paper_order",
+        "insert_paper_fill",
+        "upsert_paper_position",
+        "insert_paper_trade_result",
+        "insert_system_event",
+    ]
+    with pytest.raises(ValueError, match="Unknown Nautilus event table"):
+        adapter.insert_json("unknown", {})
+
+
+def test_notifier_adapter_sends_in_thread() -> None:
+    publisher = FakePublisher()
+    adapter = NautilusNotifierAdapter(publisher)
+
+    asyncio.run(adapter.send("started", "startup"))
+
+    assert publisher.calls == [("started", "startup")]
