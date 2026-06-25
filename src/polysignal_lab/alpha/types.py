@@ -16,6 +16,10 @@ class SideBookView:
     freshness_ms: int | None
     min_order_size: float | None = None
     tick_size: float | None = None
+    last_trade_price: float | None = None
+    last_trade_size: float | None = None
+    last_trade_timestamp: str | None = None
+    received_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

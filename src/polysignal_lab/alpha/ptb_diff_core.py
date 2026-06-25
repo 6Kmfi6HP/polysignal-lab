@@ -224,6 +224,10 @@ def market_view_from_snapshot(snapshot: MarketSnapshot) -> MarketView | None:
             freshness_ms=book.freshness_ms(snapshot.created_at) if book else None,
             min_order_size=book.min_order_size if book else None,
             tick_size=book.tick_size if book else None,
+            last_trade_price=book.last_trade_price if book else None,
+            last_trade_size=book.last_trade_size if book else None,
+            last_trade_timestamp=book.last_trade_timestamp if book else None,
+            received_at=book.received_at if book else None,
         )
 
     spot = None
