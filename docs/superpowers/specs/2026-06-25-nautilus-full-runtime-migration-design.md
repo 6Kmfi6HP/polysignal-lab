@@ -1,8 +1,8 @@
 # Nautilus Full Runtime Migration Design
 
-**Status:** Draft for review
+**Status:** Approved
 **Scope:** 全量一步到位迁移规格：把 13 个 PolySignal 策略的执行从 `PolySignalScheduler` / `scheduler_processing.py` / `PaperSimulator` 迁到 NautilusTrader `TradingNode`，并规划旧 runtime 退役。
-**Supersedes / extends:** `docs/superpowers/specs/2026-06-24-15-nautilus-strategy-bridge-design.md`。Spec 15 已完成 Wave 0-1 的 bridge 基础，本 spec 接管后续全量 runtime 切换。
+**Supersedes / extends:** `docs/superpowers/specs/2026-06-24-15-nautilus-strategy-bridge-design.md`。Spec 15 已落地 source-level bridge foundation；Python 3.12+ / ARM64 / glibc / Nautilus import proof 仍作为本 spec Wave 0 的硬门槛。
 **Goal:** NautilusTrader 成为唯一策略执行内核；PolySignal 保留 alpha 逻辑、Polymarket 业务语义、sidecar 数据、只读安全边界、观测与报表输出。
 
 ## Decision
@@ -25,7 +25,7 @@ This is not “Nautilus inside the old scheduler”. It is “PolySignal alpha i
 
 ### What already exists
 
-Spec 15 Wave 0-1 is partially implemented:
+Spec 15 source-level bridge foundation is partially implemented:
 
 - `pyproject.toml` has optional extra `nautilus = ["nautilus_trader[polymarket]"]`.
 - Default package import does not require Nautilus.
@@ -214,14 +214,14 @@ These events replace legacy scheduler callbacks.
 | `ptb_diff` | none | none | `PTBDiffAlphaCore` exists | done | Keep as baseline equivalence suite. |
 | `skew_mean_reversion` | none | none | `SkewMeanReversionAlphaCore` | simple | Pure evaluate extraction. |
 | `binary_momentum` | `_spot_prices`, `_vwap_stats`, `_entered_markets` | none | `BinaryMomentumAlphaCore` | medium | State save/load required; current code pre-commits `_entered_markets` during evaluate, so migrated core must move irreversible entry marking to order accepted/fill event. |
-| `fibonacci_bot` | ZigZagBot `_prices`, `_swing_highs`, `_swing_lows`, `_current_trend`, `_extreme_price` | none | `FibonacciAlphaCore` | medium | Serialize deques and trend state. |
+| `fibonacci_bot` | strategy-level `_candles`, `_zigzag`, `_fib_calc`, `_momentum`; nested `ZigZagDetector` `_prices`, `_swing_highs`, `_swing_lows`, `_current_trend`, `_extreme_price` | none | `FibonacciAlphaCore` | medium | Serialize per-symbol candles, detector state, calculator ratios, and momentum windows. |
 | `one_cent_buy` | `_submitted_levels` | none | `OneCentBuyAlphaCore` | medium | Mark submitted levels on order accepted, not candidate creation. |
 | `ninety_nine_cent_sniper` | `_sniped_markets` | none | `NinetyNineCentSniperAlphaCore` | medium | Mark sniped side on accepted/fill, not candidate creation. |
 | `late_consensus` | `_last_favorite`, `_last_entry_at`, `_accepted_counts` | `notify_signal_accepted` | `LateConsensusAlphaCore` | hard | Map accepted callback to `on_order_submitted` or `on_order_accepted` exactly; frequency gate must not mutate on rejected candidates. |
 | `vwap_momentum` | `TradeHistory`, `_can_enter`, `_pending_signal_samples`, `_last_trade_signatures`, `_seen_trade_signatures`, `_pending_hedges` | accepted, rejected, fill, cancel, follow-up | `VWAPMomentumAlphaCore` | hard | Follow-up hedge becomes direct order submission from `on_order_filled`; GTD expiry clears pending hedge via `on_order_expired`. |
-| `dump_hedge` | `_price_stats`, `_entered_markets`, `_positions`, `_dump_detected`, `_last_price` | fill, leg_failure | `DumpHedgeAlphaCore` | hard | Multi-leg failure maps to order/position event plus pair_id state. |
+| `dump_hedge` | `_price_stats`, `_entered_markets`, `_positions`, `_dump_detected`, `_last_price` | fill, leg_failure | `DumpHedgeAlphaCore` | hard | Multi-leg failure maps to order/position event plus pair_id state; `_dump_detected` candidate-time mutation must move to accepted/order event or become explicitly reversible on rejection. |
 | `mid_price_sizing` | `_layer_count`, `_entry_prices` | fill | `MidPriceSizingAlphaCore` | hard | Layer count increments on actual fill only. |
-| `pre_order_market` | `_pre_ordered`, `_entered_markets`, `_positions`, `_reconciled` | fill | `PreOrderMarketAlphaCore` | hard | Pre-open orders must map to GTD expiry/cancel semantics. |
+| `pre_order_market` | `_pre_ordered`, `_entered_markets`, `_positions`, `_reconciled` | fill | `PreOrderMarketAlphaCore` | hard | Pre-open orders must map to GTD expiry/cancel semantics; `_pre_ordered` candidate-time mutation must move to order accepted/submitted or be reverted on rejection. |
 | `low_side_dual_reversion` | `_entered_markets`, `_positions` | fill | `LowSideDualReversionAlphaCore` | hard | Hedge/stop decisions consume actual position state. |
 | `cross_market_bot` | `_relations`, `_market_to_relations`, `_active_baskets` | fill, leg_failure, `evaluate_group` | `CrossMarketAlphaCore` | hard | Requires `MarketGroupView` and multi-order/basket coordination. |
 
@@ -286,6 +286,13 @@ Use the Nautilus Polymarket data adapter for:
 - Polymarket WebSocket connection management.
 
 The default runtime may register `PolymarketLiveDataClientFactory` because it is public market data. It must not register the live execution factory.
+
+Important safety caveat: Nautilus API docs for `PolymarketDataClientConfig` list `private_key`, `funder`, `api_key`, `api_secret`, and `passphrase` fields that source `POLYMARKET_*` environment variables when omitted. Therefore Wave 0 must prove one of:
+
+1. `PolymarketLiveDataClientFactory` can be configured for public market data without reading credential environment variables, or
+2. the default Nautilus runtime uses a PolySignal-owned public market-data client/adapter until Nautilus exposes a credential-free data path.
+
+Do not assume “data client” means credential-free.
 
 #### PolySignal custom data types
 
@@ -545,6 +552,7 @@ Acceptance:
 - Dependency boundary tests pass.
 - Safety boundary tests pass.
 - A small `TradingNode` can be constructed in a test-only process without Polymarket live execution config.
+- A Polymarket data-client construction proof shows no `POLYMARKET_*` environment fallback is read in the default paper runtime, or the runtime selects a credential-free public data adapter instead.
 
 ### Wave 1 — Core data model and custom data bus
 
@@ -839,14 +847,24 @@ Mitigation: Wave 0 validates `nautilus_trader[polymarket]` in a Python 3.12+ env
 
 ## References
 
-- `docs/superpowers/specs/2026-06-24-15-nautilus-strategy-bridge-design.md` — existing bridge design and Wave 0-1 foundation.
-- `src/polysignal_lab/app/scheduler.py` — current component wiring and legacy trading component initialization.
-- `src/polysignal_lab/app/scheduler_processing.py` — current evaluate/gate/process/fill callback flow.
-- `src/polysignal_lab/alpha/types.py` — current `MarketView`, `AlphaDecision`, `OrderIntentSpec`, `AlphaCore` seam.
-- `src/polysignal_lab/nautilus_bridge/` — current bridge utilities.
-- `src/polysignal_lab/strategies/factory.py` — 13 registered strategy implementations.
-- NautilusTrader nightly docs: custom `Data` / `DataType` publish-subscribe, `TradingNodeConfig`, Polymarket data and execution clients.
-- NautilusTrader Polymarket docs: `PolymarketDataClient`, `PolymarketExecutionClient`, `PolymarketLiveDataClientFactory`, `PolymarketLiveExecClientFactory`, `BinaryOption` instruments, and credential-sensitive execution config.
+- Prior PolySignal specs/docs:
+  - `docs/superpowers/specs/2026-06-24-15-nautilus-strategy-bridge-design.md` — existing bridge design and Wave 0-1 source foundation.
+  - `docs/NAUTILUS_BRIDGE_BOUNDARY.md` — current boundary record: default import without Nautilus, bridge test set, glibc/Python/Nautilus verification commands, and not-yet-run Nautilus import proof.
+- Current PolySignal source evidence:
+  - `pyproject.toml` lines 26-28 — optional `nautilus = ["nautilus_trader[polymarket]"]` extra.
+  - `Dockerfile` lines 6-8 — default image installs `.[dev]`, not the Nautilus extra.
+  - `src/polysignal_lab/app/scheduler.py` lines 245-279 — legacy runtime builds strategy schedule, `PaperWallet`, `PaperSimulator`, `PaperExitEngine`, and `PaperSettlementEngine`.
+  - `src/polysignal_lab/app/scheduler_processing.py` lines 470-511 and 614-666 — current gate/consensus/evaluate/process/follow-up flow.
+  - `src/polysignal_lab/strategies/base.py` lines 37-97 — legacy accepted/rejected/fill/cancel/leg-failure/follow-up callback seam.
+  - `src/polysignal_lab/alpha/types.py` lines 47-104 — current `MarketView`, `AlphaDecision`, `OrderIntentSpec`, `AlphaCore` seam.
+  - `src/polysignal_lab/strategies/factory.py` lines 52-66 — 13 registered strategies.
+  - `src/polysignal_lab/nautilus_bridge/` and tests `tests/test_nautilus_*.py`, `tests/test_alpha_types.py`, `tests/test_alpha_ptb_diff.py` — current bridge utility and boundary coverage.
+- NautilusTrader official docs/source:
+  - Installation docs: <https://github.com/nautechsystems/nautilus_trader/blob/develop/docs/getting_started/installation.md> — Python 3.12-3.14, supported Linux ARM64/x86_64 platforms, Ubuntu 22.04/glibc 2.35 baseline, extras.
+  - Polymarket integration docs: <https://github.com/nautechsystems/nautilus_trader/blob/develop/docs/integrations/polymarket.md> — `nautilus_trader[polymarket]`, `BinaryOption`, `PolymarketDataClient`, `PolymarketExecutionClient`, live data/execution factories, credential helpers, API env vars, TIF mapping (`IOC` -> Polymarket `FAK`, `FOK`, `GTD`).
+  - Python API docs: <https://nautilustrader.io/docs/python-api-latest/adapters/polymarket.html> — `PolymarketDataClientConfig` credential/environment fallback fields; this is the source for the Wave 0 credential-free data-client proof.
+  - Custom data docs: <https://github.com/nautechsystems/nautilus_trader/blob/develop/docs/concepts/data.md> and MessageBus docs <https://github.com/nautechsystems/nautilus_trader/blob/develop/docs/concepts/message_bus.md> — `Data`, `DataType`, `@customdataclass`, `publish_data`, `subscribe_data`.
+  - Execution/API docs: <https://github.com/nautechsystems/nautilus_trader/blob/develop/docs/api_reference/execution.md> — `on_save() -> dict[str, bytes]`, `on_load(state: dict[str, bytes])`, order lifecycle callbacks.
 
 ## Final Recommendation
 
