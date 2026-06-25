@@ -110,15 +110,20 @@ class ObservabilityActor:
         self._event_count += 1
         if self.store is None or result.order is None:
             return
+        # Pass PaperOrder directly so sqlite_store.to_jsonable() extracts all fields
         self.store.insert_json("orders", {
-            "ts": utc_iso(),
-            "order_id": result.order.paper_order_id,
+            "paper_order_id": result.order.paper_order_id,
+            "signal_id": result.order.signal_id or "",
+            "strategy": result.order.strategy or "",
+            "asset": result.order.asset or "",
+            "timeframe": result.order.timeframe or "",
+            "market_id": result.order.market_id or "",
             "token_id": result.order.token_id,
             "side": result.order.side.value,
             "price": result.order.limit_price,
             "quantity": result.order.stake_usdc,
             "status": result.status.value if result.status else "UNKNOWN",
-            "strategy": result.order.strategy,
+            "created_at": result.order.created_at.isoformat() if hasattr(result.order.created_at, 'isoformat') else str(result.order.created_at),
         })
 
     def record_fill(self, fill: PaperFill) -> None:

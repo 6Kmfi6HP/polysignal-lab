@@ -73,7 +73,7 @@ def test_record_order_writes_to_orders_table() -> None:
     rows = store.tables.get("orders", [])
     assert len(rows) == 1
     assert rows[0]["status"] == "FILLED"
-    assert rows[0]["order_id"] == "order-1"
+    assert rows[0]["paper_order_id"] == "order-1"
 
 
 def test_record_fill_writes_to_fills_table() -> None:
