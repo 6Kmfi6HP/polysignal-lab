@@ -46,6 +46,9 @@ def order_spec_from_decision(
         "strategy": str(source.strategy),
         "order_intent": intent.value,
     }
+    signal_id = getattr(source, "signal_id", None)
+    if signal_id is not None:
+        tags["signal_id"] = str(signal_id)
     if intent == OrderIntent.PASSIVE_GTD:
         tags["time_in_force"] = "GTD"
         if expiry_seconds is not None:

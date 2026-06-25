@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, FreshnessView, MarketView, OrderIntentSpec, SideBookView, SpotView
+from polysignal_lab.alpha.vwap_momentum_core import VWAPMomentumAlphaCore
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision, RejectedDecision
@@ -107,6 +108,22 @@ class FakeCore:
         self.state = dict(payload)
 
 
+class ControlledVWAPCore(VWAPMomentumAlphaCore):
+    def __init__(self, decisions: list[AlphaDecision]):
+        super().__init__(VWAPMomentumConfig(hedge_enabled=True))
+        self.decisions = decisions
+        self.views: list[MarketView] = []
+        self.fills: list[AlphaFillEvent] = []
+
+    def evaluate(self, view: MarketView) -> list[AlphaDecision]:
+        self.views.append(view)
+        return self.decisions
+
+    def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
+        self.fills.append(event)
+        return super().on_order_filled(event)
+
+
 class RollbackCore(FakeCore):
     def __init__(self, decisions: list[AlphaDecision]):
         super().__init__(decisions)
@@ -171,6 +188,8 @@ class FakeFill:
     quantity: float = 3.0
     liquidity_side: str = "TAKER"
     ts_event: datetime = datetime(2026, 1, 1, tzinfo=UTC)
+    metrics: dict[str, object] | None = None
+    tags: dict[str, str] | None = None
 
 
 def _view() -> MarketView:
@@ -364,6 +383,14 @@ def test_locally_accepted_order_event_does_not_double_apply_core_acceptance() ->
     accepted_id = core.accepted_events[0].order_id
     strategy.on_order_accepted(replace(FakeFill(), order_id=accepted_id, client_order_id="exchange-client"))
     strategy.on_order_accepted(replace(FakeFill(), order_id="exchange-order", client_order_id=accepted_id))
+    strategy.on_order_accepted(
+        replace(
+            FakeFill(),
+            order_id="exchange-order-2",
+            client_order_id="exchange-client-2",
+            tags={"signal_id": accepted_id},
+        )
+    )
 
     assert [event.order_id for event in core.accepted_events] == [accepted_id]
 
@@ -487,3 +514,61 @@ def test_fill_callback_routes_vwap_hedge_decisions_through_policy_and_submitter(
     assert len(submitter.specs) == 1
     assert submitter.specs[0].hedge_leg is True
     assert not hasattr(strategy, "_follow_up_signals")
+
+
+def test_fill_callback_reattaches_approved_vwap_metrics_for_hedges() -> None:
+    view = _view()
+    vwap_decision = replace(
+        _decision(),
+        strategy="vwap_momentum",
+        confidence=0.25,
+        metrics={
+            "opposite_token_id": "down-token",
+            "condition_id": "condition-btc-5m",
+            "seconds_to_close": 60,
+        },
+    )
+    core = ControlledVWAPCore([vwap_decision])
+    policy = FakePolicy([True])
+    submitter = FakeSubmitter()
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=policy,
+        submitter=submitter,
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    strategy.evaluate_condition("condition-btc-5m")
+    signal_id = next(iter(strategy._locally_accepted_order_ids))
+    assert submitter.specs[0].tags["signal_id"] == signal_id
+
+    strategy.on_order_filled(replace(FakeFill(), order_id=signal_id, client_order_id="exchange-client"))
+
+    assert len(submitter.specs) == 2
+    hedge_decision = policy.calls[-1][0]
+    assert hedge_decision.hedge_leg is True
+    assert hedge_decision.token_id == "down-token"
+    assert hedge_decision.condition_id == "condition-btc-5m"
+    assert core.fills[-1].metrics["asset"] == "BTC"
+    assert core.fills[-1].metrics["market_slug"] == "btc-updown-5m"
+    assert core.fills[-1].metrics["signal_confidence"] == 0.25
+
+    core.decisions = [replace(vwap_decision, confidence=0.31)]
+    accepted_before = set(strategy._locally_accepted_order_ids)
+    strategy.evaluate_condition("condition-btc-5m")
+    override_signal_id = next(iter(set(strategy._locally_accepted_order_ids) - accepted_before))
+
+    strategy.on_order_filled(
+        replace(
+            FakeFill(),
+            order_id=override_signal_id,
+            client_order_id="exchange-client-2",
+            metrics={"signal_confidence": 0.93},
+        )
+    )
+
+    assert policy.calls[-1][0].confidence == 0.93
+    assert core.fills[-1].metrics["signal_confidence"] == 0.93

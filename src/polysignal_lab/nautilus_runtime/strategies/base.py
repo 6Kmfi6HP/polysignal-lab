@@ -46,6 +46,7 @@ class PolySignalNautilusStrategy:
         self.rejected_decisions: list[RejectedDecision] = []
         self._last_views: dict[str, MarketView] = {}
         self._locally_accepted_order_ids: set[str] = set()
+        self._approved_signal_metrics: dict[str, dict[str, Any]] = {}
 
     def on_start(self) -> None:
         for name in self.data_names:
@@ -114,13 +115,17 @@ class PolySignalNautilusStrategy:
         return spec
 
     def on_order_submitted(self, event: Any) -> None:
-        self._call_core("on_order_submitted", self._order_event(event))
+        alpha_event = self._order_event(event)
+        self._alias_approved_signal_metrics(event, alpha_event)
+        self._call_core("on_order_submitted", alpha_event)
 
     def on_order_accepted(self, event: Any) -> None:
         alpha_event = self._order_event(event)
-        if alpha_event.order_id in self._locally_accepted_order_ids:
-            return
-        if alpha_event.client_order_id in self._locally_accepted_order_ids:
+        self._alias_approved_signal_metrics(event, alpha_event)
+        if any(
+            order_id in self._locally_accepted_order_ids
+            for order_id in self._event_lookup_ids(event, alpha_event)
+        ):
             return
         self._call_core("on_order_accepted", alpha_event)
 
@@ -190,6 +195,8 @@ class PolySignalNautilusStrategy:
         view: MarketView,
     ) -> None:
         signal_id = approved.signal.signal_id
+        approved_metrics = self._approved_metrics(approved, decision=decision, view=view)
+        self._approved_signal_metrics[signal_id] = approved_metrics
         self._locally_accepted_order_ids.add(signal_id)
         self._bind_core_signal(decision.market_id, signal_id)
         self._call_core(
@@ -201,9 +208,48 @@ class PolySignalNautilusStrategy:
                 order_id=signal_id,
                 client_order_id=signal_id,
                 reason=None,
-                metrics=dict(approved.signal.metrics),
+                metrics=approved_metrics,
             ),
         )
+
+
+    def _approved_metrics(
+        self,
+        approved: ApprovedDecision,
+        *,
+        decision: AlphaDecision,
+        view: MarketView,
+    ) -> dict[str, Any]:
+        signal = approved.signal
+        metrics = dict(signal.metrics)
+        metrics.setdefault("asset", signal.asset)
+        metrics.setdefault("timeframe", signal.timeframe)
+        metrics.setdefault("market_slug", signal.market_slug)
+        metrics.setdefault("condition_id", signal.condition_id or view.condition_id or decision.condition_id)
+        metrics.setdefault("seconds_to_close", signal.seconds_to_close)
+        metrics.setdefault("signal_confidence", signal.confidence)
+        return metrics
+
+    def _alias_approved_signal_metrics(self, event: Any, order: AlphaOrderEvent) -> None:
+        metrics = self._approved_metrics_for_event(event, order)
+        if not metrics:
+            return
+        for key in self._event_lookup_ids(event, order):
+            self._approved_signal_metrics.setdefault(key, dict(metrics))
+
+    def _approved_metrics_for_event(self, event: Any, order: AlphaOrderEvent) -> Mapping[str, Any]:
+        for key in self._event_lookup_ids(event, order):
+            metrics = self._approved_signal_metrics.get(key)
+            if metrics is not None:
+                return metrics
+        return {}
+
+    def _event_lookup_ids(self, event: Any, order: AlphaOrderEvent) -> tuple[str, ...]:
+        values = [order.order_id, order.client_order_id, _first_attr(event, "id", default=None)]
+        tags = _first_attr(event, "tags", default=None)
+        if isinstance(tags, Mapping):
+            values.extend(tags.get(key) for key in ("signal_id", "order_id", "client_order_id"))
+        return tuple(str(value) for value in values if value not in (None, ""))
 
     def _bind_core_signal(self, market_id: str, signal_id: str) -> None:
         binder = getattr(self.core, "bind_signal", None)
@@ -282,6 +328,8 @@ class PolySignalNautilusStrategy:
 
     def _fill_event(self, event: Any) -> AlphaFillEvent:
         order = self._order_event(event)
+        metrics = dict(self._approved_metrics_for_event(event, order))
+        metrics.update(order.metrics)
         return AlphaFillEvent(
             strategy=order.strategy,
             market_id=order.market_id,
@@ -292,7 +340,7 @@ class PolySignalNautilusStrategy:
             client_order_id=order.client_order_id,
             reason=order.reason,
             ts_event=order.ts_event,
-            metrics=order.metrics,
+            metrics=metrics,
             fill_price=float(_first_attr(event, "fill_price", "price", default=0.0) or 0.0),
             shares=float(_first_attr(event, "shares", "quantity", "filled_qty", default=0.0) or 0.0),
             liquidity_side=_optional_str(_first_attr(event, "liquidity_side", default=None)),
