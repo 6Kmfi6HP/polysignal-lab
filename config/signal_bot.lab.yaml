@@ -203,7 +203,7 @@ strategies:
     enabled: true
 
 runtime:
-  engine: legacy
+  engine: nautilus
   nautilus:
     trader_id: PolySignal-Nautilus-001
     python: "3.12"

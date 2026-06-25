@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: nautilus-runtime
     container_name: polysignal-lab
     restart: unless-stopped
     env_file:
@@ -23,7 +24,7 @@ services:
       - ./logs:/app/logs
       - ./state:/app/state
       - ./config:/app/config:ro
-    command: ["scheduler"]
+    command: ["nautilus"]
     healthcheck:
       test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('data/polysignal_lab.sqlite3').execute('SELECT 1')"]
       interval: 30s

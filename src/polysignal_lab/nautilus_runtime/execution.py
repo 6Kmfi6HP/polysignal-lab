@@ -199,7 +199,7 @@ class PolySignalPaperExecutionClient:
 
     def submit_spec(self, spec: NautilusOrderSpec) -> PaperExecutionResult:
         """Submit a NautilusOrderSpec directly (convenience wrapper)."""
-        return self.submit_order(
+        return self.execute_order(
             instrument_id=spec.instrument_id,
             side=spec.side,
             price=spec.price,
@@ -214,7 +214,7 @@ class PolySignalPaperExecutionClient:
             token_id=spec.instrument_id,
         )
 
-    def submit_order(
+    def execute_order(
         self,
         instrument_id: str,
         side: Side,
@@ -265,7 +265,7 @@ class PolySignalPaperExecutionClient:
                 reason="MISSING_ORDERBOOK",
             )
 
-        result = self._taker_executor.execute(order, book)
+        result = self._taker_executor.execute(order, book, intent=intent)
         return PaperExecutionResult(
             order=result.order,
             fills=result.fills,

@@ -13,6 +13,10 @@ case "${1:-scheduler}" in
     echo "[entrypoint] Starting PolySignal Lab dashboard..."
     exec python -m polysignal_lab.app.main --mode dashboard --config config/signal_bot.yaml
     ;;
+  nautilus)
+    echo "[entrypoint] Starting PolySignal Lab on Nautilus runtime..."
+    exec python -m polysignal_lab.app.main --mode nautilus --config config/signal_bot.yaml
+    ;;
   test)
     echo "[entrypoint] Running test suite..."
     exec python -m pytest tests/ -q
@@ -25,7 +29,7 @@ case "${1:-scheduler}" in
     exec /bin/bash
     ;;
   *)
-    echo "Usage: $0 {scheduler|dashboard|test|shell|smoke}"
+    echo "Usage: $0 {scheduler|nautilus|dashboard|test|shell|smoke}"
     exit 1
     ;;
 esac

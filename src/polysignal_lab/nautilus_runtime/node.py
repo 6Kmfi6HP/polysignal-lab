@@ -7,6 +7,9 @@ no private key/env-var reading, no allowance scripts.
 from __future__ import annotations
 
 import logging
+import signal
+import sys
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -169,6 +172,28 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
     logger.info("nautilus runtime built: %d strategies, %s wallet",
                 len(node["strategies"]), node["wallet"].wallet_id)
     print(f"Nautilus runtime ready — {len(node['strategies'])} strategies")
+
+    # Block until SIGTERM/SIGINT so the container stays alive.
+    shutdown = False
+
+    def _signal_handler(signum: int, _frame: object) -> None:
+        nonlocal shutdown
+        if shutdown:
+            sys.exit(0)
+        shutdown = True
+        print(f"signal {signum} received — shutting down")
+        logger.info("nautilus runtime shutting down (signal %d)", signum)
+
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
+    try:
+        while not shutdown:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+
+    logger.info("nautilus runtime stopped")
 
 
 def main() -> int:

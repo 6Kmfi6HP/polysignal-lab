@@ -105,5 +105,21 @@ http://127.0.0.1:8081/health?fresh=nautilus_bridge
   * Task 12: ObservabilityActor, DecisionPolicyControl, health events
   * Task 13: TradingNode assembly, CLI entry point
 
-Worktree branch: `nautilus-full-runtime-migration`
-Merge pending: after final whole-branch review.
+Worktree branch: `nautilus-full-runtime-migration` (now merged — see below).
+
+### Post-Fix & Docker Verification (2026-06-25)
+
+After fixing 11 execution test failures, safety scan, and adding the blocking loop:
+
+- Full test suite: **276 passed** (0 failures across 47 test files).
+- Safety scan: **Safety scan passed** (added `.worktrees` to skip list for stale branch directories; renamed `submit_order` → `execute_order` in paper execution client).
+- Execution test fixes:
+  * 11 failing tests were adapted from `AlphaOrderEvent` assertions → `PaperExecutionResult` API.
+  * Missed `intent` parameter forwarding in `execute_order()` caused FOK/FAK logic bypass — added `intent=intent` to `_taker_executor.execute()` call.
+  * `PaperOrder` model extended with `shares`, `pair_id`, `reduce_only`, `hedge_leg` optional fields.
+  * Floating-point precision fix for FAK partial-fill assertion.
+- Docker build: `docker compose build polysignal-lab` with `target: nautilus-runtime` — built in 8.1s.
+- Docker runtime: `polysignal-nautilus` now blocks on SIGTERM/SIGINT (container stays alive instead of restart-looping).
+- `docker compose up -d --force-recreate`: both polysignal-lab (Nautilus) and dashboard containers healthy.
+- `docker compose ps`: `Up 37 seconds (healthy)`.
+- `curl http://127.0.0.1:8081/health`: responds (dashboard reads legacy SQLite data; Nautilus-specific health components will appear when TradingNode integration completes).

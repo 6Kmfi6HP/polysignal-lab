@@ -20,6 +20,7 @@ SKIP_DIR_NAMES: Final = {
     ".pytest_cache",
     ".ruff_cache",
     ".venv",
+    ".worktrees",
     "__pycache__",
     "build",
     "dist",
