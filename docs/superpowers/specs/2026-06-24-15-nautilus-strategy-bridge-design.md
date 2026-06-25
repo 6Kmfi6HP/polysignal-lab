@@ -1,6 +1,6 @@
 # 15 Nautilus Strategy Bridge Design
 
-**Status:** Draft
+**Status:** Approved
 **Scope:** 一个架构迁移规格，目标是把 PolySignal 的策略能力迁到 NautilusTrader `Strategy` 运行时，同时避免在 PolySignal 内继续扩张第二套执行层。
 **Goal:** 保留 PolySignal 的策略知识、配置语义与研究资产；把市场数据、订单生命周期、组合状态与执行基础设施迁移到 NautilusTrader 的事件驱动 runtime 与 Polymarket adapter 边界上。
 
@@ -60,17 +60,20 @@ PolySignal Lab 当前已经积累了较成熟的策略与 paper-trading 研究�
   - NautilusTrader 适合作为 Polymarket 语义与事件驱动运行时的参考。
 
 ### NautilusTrader / Polymarket 研究结论
-- Nautilus 的 `Strategy` 是事件驱动：`on_quote_tick`, `on_order_book`, `on_trade_tick`, `on_order_filled`, `on_position_changed`, `on_save/on_load`。
+- Nautilus 的 `Strategy` 是事件驱动：`on_quote_tick`, `on_order_book`, `on_order_book_deltas`, `on_trade_tick`, `on_order_submitted`, `on_order_rejected`, `on_order_accepted`, `on_order_canceled`, `on_order_expired`, `on_order_filled`, `on_position_opened`, `on_position_changed`, `on_position_closed`, `on_save/on_load`。
+- `on_save()` 的签名是 `def on_save(self) -> dict[str, bytes]`，`on_load()` 的签名是 `def on_load(self, state: dict[str, bytes]) -> None`。
+- NautilusTrader 当前官方支持 Python 3.12-3.14；Linux 支持 Ubuntu 22.04+ x86_64 / ARM64，并要求 glibc >= 2.35。
+- Polymarket adapter 应通过 `nautilus_trader[polymarket]` extra 引入；adapter 同时暴露 data 与 live execution 组件。
 - Polymarket adapter 已覆盖：
-  - instrument hydration；
-  - WebSocket market data；
+  - `BinaryOption` instrument hydration；
+  - WebSocket market data（含 500 instruments / connection 限制与多连接管理）；
   - order lifecycle；
   - cache / portfolio / execution state；
   - tick-size change / retry / reconciliation 等运行时问题。
 - 其架构价值在于 **runtime**，不是只在于几个 API 调用。
 
 ### 当前策略迁移难度分层
-从现有源码看，项目共有 12 个策略，迁移难度不等价：
+从现有源码看，项目共有 13 个策略，迁移难度不等价：
 
 #### Tier 0 — stateless，无回调（最适合首批）
 - **PTBDiff**：基本无内部状态，无 `notify_fill` / `follow_up_signals` / `notify_signal_accepted` override。
@@ -98,7 +101,7 @@ PolySignal Lab 当前已经积累了较成熟的策略与 paper-trading 研究�
 这份 spec **不做**：
 
 1. 不在当前 repo 中直接启用真实 Polymarket live trading。
-2. 不把 `PolymarketExecutionClient`、私钥、API keys、allowance scripts 接入现有 Docker/runtime。
+2. 不把 `PolymarketExecutionClient`、`PolymarketLiveExecClientFactory`、私钥、API keys、allowance scripts 接入现有 Docker/runtime。
 3. 不要求一次性迁掉所有 PolySignal 策略。
 4. 不要求保留当前 scheduler 与 Nautilus runtime 的长期双栈并存。
 5. 不在第一阶段实现 Telegram、dashboard、SQLite 报表与 legacy runtime 的完全 parity。
@@ -224,8 +227,10 @@ class AlphaCore(Protocol):
 它继承 Nautilus `Strategy`，只做运行时适配：
 
 - `on_start()`：订阅 market data / custom data
-- `on_quote_tick()` / `on_order_book()` / `on_trade_tick()`：触发 `MarketViewAssembler`
-- `on_order_filled()` / `on_order_canceled()` / `on_order_expired()`：推进策略状态
+- `on_quote_tick()` / `on_order_book()` / `on_order_book_deltas()` / `on_trade_tick()`：触发 `MarketViewAssembler`
+- `on_order_submitted()` / `on_order_accepted()` / `on_order_rejected()`：推进 accepted / rejected 状态
+- `on_order_filled()` / `on_order_canceled()` / `on_order_expired()`：推进 fill / cancel / expiry 状态
+- `on_position_opened()` / `on_position_changed()` / `on_position_closed()`：同步 Nautilus portfolio 状态
 - `on_save()` / `on_load()`：保存和恢复 stateful 策略状态
 
 它不包含策略公式本身。
@@ -266,6 +271,21 @@ Polymarket adapter 不提供 spot 与 PTB，所以当前 repo 的研究侧数据
 | `SignalPipeline` | 拆散到 bridge + optional `DecisionPolicyActor` | 不整体照搬 |
 | `_last_entry_at`, `_pending_hedges` 等实例状态 | `Strategy` 实例状态 + `on_save/on_load` | stateful strategy 原生保存/恢复 |
 
+## Stateful Persistence Contract
+
+Stateful 策略迁移必须使用 Nautilus 原生 save/load hooks，但不能把 Python 对象原样塞进 runtime：
+
+- `on_save()` 必须返回 `dict[str, bytes]`
+- `on_load(state: dict[str, bytes])` 只接受版本化 schema
+- key 格式：`polysignal.<strategy_name>.state.v1`
+- payload：UTF-8 JSON bytes
+- `Side` / enum 存 `.value`
+- `datetime` 存 UTC ISO string
+- `deque` / `set` / `defaultdict` 存普通 `list` / `dict`
+- `TradeHistory` 这类内部容器必须显式展开为可验证字段，不允许 pickle
+- unknown schema version 必须 fail closed，不静默 reset
+- missing optional state 可按空状态迁移，但必须记录 migration reason
+
 ## Migration Units
 
 ### Wave 0 — freeze boundary + 依赖引入
@@ -274,11 +294,16 @@ Polymarket adapter 不提供 spot 与 PTB，所以当前 repo 的研究侧数据
 - `src/polysignal_lab` 继续作为当前实验/legacy runtime
 - `src/polysignal_lab/nautilus_bridge` 为新 runtime 适配层
 - 不再向 legacy scheduler 注入大型新功能，除非是 correctness bugfix
-- **引入 `nautilus_trader` Python 依赖**：
-  - 在 `pyproject.toml` 中添加可选依赖组（如 `[project.optional-dependencies] nautilus = ["nautilus-trader>=1.x"]`）
-  - 验证 ARM64 (rk3588) 编译兼容性——NautilusTrader 有 Rust/Cython 组件，可能需要预编译 wheel 或源码编译环境
-  - 如果当前 Docker base image 不含 Rust toolchain，需在 Dockerfile 中补充或使用多阶段构建
-  - 此步骤完成后才能开始 Wave 1
+- **引入 NautilusTrader 时必须先隔离 Python / 平台边界**：
+  - 当前 PolySignal 默认 runtime 仍是 Python 3.11+，不得因为 bridge optional code 破坏默认安装、测试或 Docker 启动。
+  - NautilusTrader 官方支持 Python 3.12-3.14；Linux 需 glibc >= 2.35；rk3588 ARM64 必须先验证 wheel 或 source build。
+  - Polymarket adapter 依赖应使用 `nautilus_trader[polymarket]`，不是只安装 base `nautilus_trader`。
+  - 若保留在同 repo 中，应使用 optional dependency / 单独 runner / 单独 uv env；默认 Docker 不安装、不 import Nautilus。
+  - Wave 0 验收：
+    - Python 3.11 默认环境：`import polysignal_lab` 不需要 Nautilus。
+    - Python 3.12 bridge 环境：`import nautilus_trader.adapters.polymarket` 成功。
+    - Linux ARM64 / glibc / wheel 或 source build 路径被记录。
+  - 此步骤完成后才能开始 Wave 1。
 
 ### Wave 1 — extract pilot alpha core
 **第一目标策略：`PTBDiffStrategy`**
@@ -387,17 +412,26 @@ sequenceDiagram
 这份 spec 必须遵守当前项目的安全边界：
 
 1. 当前 repo 中的默认实现 **不得启用真实 Polymarket authenticated execution**
-2. 任何需要：
-   - API key
-   - private key
-   - allowance setup
-   - live order submission
-   的路径，都不是本 spec 默认交付物
+2. 默认实现不得 import、instantiate 或注册：
+   - `PolymarketExecutionClient`
+   - `PolymarketLiveExecClientFactory`
+   - `exec_clients`
+3. 默认实现不得读取或传递：
+   - `POLYMARKET_PK`
+   - `POLYMARKET_FUNDER`
+   - `POLYMARKET_API_KEY`
+   - `POLYMARKET_API_SECRET`
+   - `POLYMARKET_PASSPHRASE`
+4. 默认实现不得调用 Nautilus Polymarket 的 allowance / credential helper：
+   - `set_allowances.py`
+   - `create_api_key.py`
+5. 任何需要 API key、private key、allowance setup、live order submission 的路径，都不是本 spec 默认交付物。
 
 因此本 spec 的默认实现边界是：
 
-- **Nautilus runtime + Polymarket market data adapter**
-- **emulated / sandbox-safe execution path**
+- **Nautilus backtest / emulated execution runtime**
+- **Polymarket market data adapter / data loader**
+- **禁止 live execution factory 的 default Docker / default app path**
 - **为未来 live execution 保留宿主兼容性，但不在本 repo 默认运行时启用**
 
 这样做的原因不是保守，而是与当前 PolySignal Lab 的 read-only/paper project contract 一致。
@@ -467,14 +501,22 @@ src/polysignal_lab/
 ### Architecture
 - 存在清晰的 `alpha/` 与 `nautilus_bridge/` 分层
 - 不新增第二套 scheduler / wallet / execution runtime
-- 至少一个策略通过 Nautilus `Strategy` 宿主成功运行
+- 至少一个策略通过 Nautilus `Strategy` 宿主在 backtest / emulated execution 中成功运行
+
+### Platform boundary
+- 默认 Python 3.11 环境中，`import polysignal_lab` 不需要安装 NautilusTrader
+- Python 3.12+ bridge 环境中，`import nautilus_trader.adapters.polymarket` 成功
+- ARM64 / glibc >= 2.35 / wheel 或 source build 路径已验证并记录
 
 ### Pilot migration
 - `PTBDiffStrategy` 被拆成：
-  - 可复用的 `AlphaCore`
+  - 可复用的 `PTBDiffAlphaCore`
   - legacy wrapper
   - Nautilus wrapper
-- 在相同输入下，legacy wrapper 与 Nautilus wrapper 的 alpha 输出一致
+- `PTBDiffStrategy.evaluate(MarketSnapshot)` 与 `PTBDiffAlphaCore.evaluate(MarketView)` 在同一语义输入下输出等价 `AlphaDecision`
+- 等价字段限定为：side、confidence、max_entry_price、reason_codes、metrics、order_intent、expiry_seconds、hedge_leg
+- 不比较 signal_id、snapshot_id、created_at 等宿主生成字段
+- Nautilus wrapper 只测试 callback/cache → `MarketView` → `AlphaCore` → `OrderIntentSpec` 映射
 
 ### Data semantics
 - `MarketViewAssembler` 能正确生成包含 YES/NO、spot、PTB、freshness 的 coherent view
@@ -490,14 +532,17 @@ src/polysignal_lab/
 ### Safety
 - 默认实现不要求 live credentials
 - 当前 Docker / 默认运行入口不引入真实交易能力
+- 默认实现即使环境里存在 `POLYMARKET_*` secrets，也不得构造 execution client
+- 静态边界测试确认默认 runtime 无 `PolymarketExecutionClient` / `PolymarketLiveExecClientFactory` 引用
 - Polymarket live execution 若将来需要，必须走单独审批与单独运行目标
 
 ## Test Strategy
 
 ### 1. Pure alpha equivalence tests
 对每个迁移策略：
-- 同一组 `MarketSnapshot` / `MarketView` 输入
-- legacy strategy 与 `AlphaCore` 输出必须一致
+- 同一组语义等价的 `MarketSnapshot` / `MarketView` 输入
+- legacy strategy 与 `AlphaCore` 输出必须在 alpha 字段上等价
+- 等价检查不覆盖 signal_id、snapshot_id、created_at 等宿主生成字段
 
 ### 2. MarketViewAssembler tests
 验证：
@@ -514,26 +559,27 @@ src/polysignal_lab/
 - `on_save/on_load` state serialization contract
 
 ### 4. Pilot integration tests
-- 使用 Nautilus backtest/sandbox/emulated execution
+- 使用 Nautilus backtest / emulated execution
 - 跑 `PTBDiffNautilusStrategy`
 - 验证 data path、decision path、order lifecycle、position updates
+- 验证默认配置不注册 live execution client
 
 ### 5. Non-regression tests for legacy wrapper
 在迁移期，legacy runtime 不能因为抽 core 而行为漂移。
 
 ## Rollout
 
-1. **引入 `nautilus_trader` 依赖并验证 ARM64 兼容性**
-   当前项目在 rk3588 ARM64 上运行，NautilusTrader 有 Rust/Cython 组件，需先验证编译/安装
+1. **验证 NautilusTrader Python 3.12+ / ARM64 / glibc 边界**
+   当前项目默认 Python 3.11 runtime 不安装 Nautilus；bridge 在单独 Python 3.12+ 环境验证 `nautilus_trader[polymarket]`、rk3588 ARM64、glibc >= 2.35、wheel 或 source build。
 2. **冻结方向**
    明确 legacy scheduler 不再承接大规模新 runtime 能力
 3. **提取 `PTBDiff` AlphaCore**（可同时提取 `SkewMeanReversion`）
 4. **实现最小 `nautilus_bridge`**
-   - `MarketRegistry`
+   - `PolymarketMarketRegistry`
    - `MarketViewAssembler`
    - external spot/PTB sidecar
 5. **实现 `PTBDiffNautilusStrategy`**
-6. **在 emulated/sandbox-safe 模式下验证**
+6. **在 backtest / emulated execution 模式下验证**
 7. **可选：迁移 Tier 1 无回调 stateful 策略**（`FibonacciBot`、`BinaryMomentum`、`OneCentBuy`、`NinetyNineCentSniper`）
 8. **迁移 `LateConsensus`**
 9. **迁移 `VWAPMomentum`**
@@ -545,7 +591,7 @@ src/polysignal_lab/
 
 1. **市场语义映射不足**
    Nautilus `BinaryOption` instrument 不自然携带 PolySignal 需要的 asset/timeframe/slug/start/end 等业务语义。
-   需要 `MarketRegistry` 明确承担这层翻译。
+   需要 `PolymarketMarketRegistry` 明确承担这层翻译。
 
 2. **sidecar 数据成为新耦合点**
    spot/PTB 不在 Polymarket adapter 内，bridge 若设计差，会形成新的隐式依赖。
@@ -559,8 +605,16 @@ src/polysignal_lab/
    迁移期允许双宿主（legacy wrapper + Nautilus wrapper），
    但不允许长期双 runtime（scheduler + Nautilus）并行演化。
 
-5. **ARM64 编译兼容性**
-   当前部署在 rk3588 ARM64 上，NautilusTrader 依赖 Rust/Cython 编译。如果 PyPI 无 ARM64 预编译 wheel，需要本地构建环境（Rust toolchain + Python dev headers），可能延长 Wave 0 周期。应在冻结方向前验证。
+5. **Python / ARM64 编译兼容性**
+   当前部署在 rk3588 ARM64 上，默认项目仍是 Python 3.11；NautilusTrader 需要 Python 3.12-3.14、glibc >= 2.35，并依赖 Rust/Cython 编译或预编译 wheel。如果 PyPI 无 ARM64 预编译 wheel，需要本地构建环境（Rust toolchain + Python dev headers），可能延长 Wave 0 周期。应在冻结方向前验证。
+
+## References
+
+- NautilusTrader installation docs: <https://nautilustrader.io/docs/nightly/getting_started/installation/> — Python 3.12-3.14 support, Linux ARM64 support, glibc >= 2.35, `nautilus_trader` package install, PyPI/package-index/source-build paths.
+- NautilusTrader Polymarket integration docs: <https://nautilustrader.io/docs/nightly/integrations/polymarket/> — `nautilus_trader[polymarket]`, `BinaryOption`, data client, execution client, live data/exec factories, wallet/API credential and allowance paths, WebSocket limits.
+- NautilusTrader strategy docs: <https://nautilustrader.io/docs/nightly/concepts/strategies/> — strategy lifecycle handlers, order/position event handlers, `on_save() -> dict[str, bytes]`, `on_load(state: dict[str, bytes])`.
+- Current repo strategy registry: `src/polysignal_lab/strategies/factory.py` — 13 registered strategy implementations and concrete class names.
+- Current repo scheduler flow: `src/polysignal_lab/app/services/signal_pipeline.py`, `src/polysignal_lab/app/scheduler_processing.py`, `src/polysignal_lab/app/scheduler.py` — legacy evaluate/gate/process/fill-notifier boundaries used for migration mapping.
 
 ## Final Recommendation
 
