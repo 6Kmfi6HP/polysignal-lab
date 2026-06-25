@@ -30,6 +30,7 @@ nautilus = ["nautilus_trader[polymarket]"]
 polysignal-lab = "polysignal_lab.app.main:main"
 polysignal-safety-scan = "polysignal_lab.observability.safety:main"
 polysignal-telegram-qa = "polysignal_lab.publish.telegram_qa:main"
+polysignal-nautilus = "polysignal_lab.nautilus_runtime.node:main"
 
 [tool.pytest.ini_options]
 minversion = "8.0"

@@ -19,7 +19,7 @@ def test_cli_help_lists_supported_runtime_modes_without_removed_alias() -> None:
     result = subprocess.run(command, capture_output=True, check=True, text=True)
 
     # Then: help lists stable supported modes and excludes removed aliases.
-    assert "--mode {scheduler,dashboard,smoke}" in result.stdout
+    assert "--mode {scheduler,dashboard,smoke,nautilus}" in result.stdout
     assert "--once" in result.stdout
     assert "--real-readonly-smoke" in result.stdout
     assert "polysignal-demo" not in result.stdout

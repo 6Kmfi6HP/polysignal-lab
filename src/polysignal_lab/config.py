@@ -240,6 +240,43 @@ class DashboardConfig(BaseModel):
     read_only: bool = True
 
 
+class NautilusSidecarConfig(BaseModel):
+    spot_source: str = "polymarket_rtds"
+    price_to_beat_source: str = "anchor_or_gamma"
+
+
+class NautilusDataClientConfig(BaseModel):
+    enabled: bool = True
+    ws_max_subscriptions_per_connection: int = 200
+
+
+class NautilusDecisionPolicyConfig(BaseModel):
+    preserve_gate_first_failure_order: bool = True
+    consensus_enabled: bool = True
+    arbiter_policy: Literal["suppress_ambiguous"] = "suppress_ambiguous"
+
+
+class NautilusRuntimeConfig(BaseModel):
+    trader_id: str = "PolySignal-Nautilus-001"
+    python: str = "3.12"
+    execution_mode: Literal["paper_sandbox"] = "paper_sandbox"
+    allow_live_polymarket_execution: bool = False
+    polymarket_data: NautilusDataClientConfig = Field(default_factory=NautilusDataClientConfig)
+    sidecar: NautilusSidecarConfig = Field(default_factory=NautilusSidecarConfig)
+    decision_policy: NautilusDecisionPolicyConfig = Field(default_factory=NautilusDecisionPolicyConfig)
+
+    @model_validator(mode="after")
+    def validate_paper_safe(self) -> "NautilusRuntimeConfig":
+        if self.allow_live_polymarket_execution:
+            raise ValueError("live Polymarket execution is invalid in the default runtime")
+        return self
+
+
+class RuntimeConfig(BaseModel):
+    engine: Literal["legacy", "nautilus"] = "legacy"
+    nautilus: NautilusRuntimeConfig = Field(default_factory=NautilusRuntimeConfig)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="forbid")
 
@@ -253,6 +290,7 @@ class Settings(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     strategies: StrategyConfig = Field(default_factory=StrategyConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Settings":

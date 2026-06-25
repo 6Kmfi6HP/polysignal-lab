@@ -28,3 +28,19 @@ RUN mkdir -p data logs state && chmod +x /app/docker-entrypoint.sh
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["scheduler"]
+
+# ── Nautilus runtime image (separate target; default stays paper-safe) ──
+FROM builder AS nautilus-builder
+RUN pip install --ignore-installed --no-cache-dir --prefix=/install-nautilus '.[dev,nautilus]'
+
+FROM python:3.12-slim AS nautilus-runtime
+WORKDIR /app
+COPY --from=nautilus-builder /install-nautilus /usr/local
+COPY pyproject.toml ./
+COPY config/ config/
+COPY src/ src/
+COPY scripts/ scripts/
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN mkdir -p data logs state && chmod +x /app/docker-entrypoint.sh
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["nautilus"]

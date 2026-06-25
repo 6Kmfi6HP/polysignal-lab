@@ -24,6 +24,7 @@ class RuntimeMode(StrEnum):
     SCHEDULER = "scheduler"
     DASHBOARD = "dashboard"
     SMOKE = "smoke"
+    NAUTILUS = "nautilus"
 
 
 MODE_VALUES: Final = tuple(mode.value for mode in RuntimeMode)
@@ -159,6 +160,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         case RuntimeMode.SMOKE:
             run_readonly_smoke(settings, options)
+            return 0
+        case RuntimeMode.NAUTILUS:
+            from polysignal_lab.nautilus_runtime.node import run_nautilus_cli
+
+            run_nautilus_cli(settings)
             return 0
         case unreachable:
             assert_never(unreachable)
