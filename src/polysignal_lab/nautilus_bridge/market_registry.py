@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
@@ -56,6 +56,33 @@ class MarketPairMeta:
                 token_id=down_token.token_id,
                 side=Side.DOWN,
             ),
+        )
+
+    @classmethod
+    def from_metadata(cls, meta: object) -> "MarketPairMeta":
+        """Build a ``MarketPairMeta`` by duck-typing a metadata object.
+
+        Reads ``market_id, market_slug, condition_id, asset, timeframe,
+        start_ts_ns, end_ts_ns, up_token_id, down_token_id`` attributes without
+        importing ``nautilus_runtime`` (avoids a circular import). Nanosecond
+        timestamps (int or None) are converted to UTC datetimes.
+        """
+        start_ts_ns = getattr(meta, "start_ts_ns", None)
+        end_ts_ns = getattr(meta, "end_ts_ns", None)
+        start_ts = datetime.fromtimestamp(start_ts_ns / 1e9, tz=UTC) if start_ts_ns is not None else None
+        end_ts = datetime.fromtimestamp(end_ts_ns / 1e9, tz=UTC) if end_ts_ns is not None else None
+        up_token_id = getattr(meta, "up_token_id")
+        down_token_id = getattr(meta, "down_token_id")
+        return cls(
+            market_id=getattr(meta, "market_id"),
+            market_slug=getattr(meta, "market_slug"),
+            condition_id=getattr(meta, "condition_id"),
+            asset=getattr(meta, "asset").upper(),
+            timeframe=getattr(meta, "timeframe"),
+            start_ts=start_ts,
+            end_ts=end_ts,
+            up=InstrumentTokenMeta(instrument_id=up_token_id, token_id=up_token_id, side=Side.UP),
+            down=InstrumentTokenMeta(instrument_id=down_token_id, token_id=down_token_id, side=Side.DOWN),
         )
 
 
