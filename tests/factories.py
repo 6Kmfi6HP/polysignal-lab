@@ -18,8 +18,9 @@ from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult, PaperWalletSnapshot
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
+from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
 from polysignal_lab.domain.spot import SpotPrice
-from polysignal_lab.utils import utc_now
+from polysignal_lab.utils import new_id, utc_now
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +107,57 @@ def sample_spot(config: SpotFactoryConfig = DEFAULT_SPOT) -> SpotPrice:
         price=config.price,
         received_at=utc_now(),
         event_time=utc_now(),
+    )
+
+
+def sample_snapshot(
+    *,
+    up_ask: float = 0.82,
+    down_ask: float = 0.18,
+    seconds_to_close: int = 120,
+    asset: str = "BTC",
+    timeframe: str = "5m",
+    price_to_beat: float = 100000.0,
+    spot_price: float | None = None,
+    snapshot_id: str | None = None,
+) -> MarketSnapshot:
+    """Build a fully-wired ``MarketSnapshot`` from the existing sample helpers.
+
+    Books are stamped at ``created_at`` and freshness is zeroed so
+    ``market_view_from_snapshot`` always assembles a non-None ``MarketView``
+    for any caller-supplied ask/spot combination.
+    """
+    created_at = utc_now()
+    market = sample_market(
+        MarketFactoryConfig(
+            asset=asset,
+            timeframe=timeframe,
+            seconds_to_close=seconds_to_close,
+            price_to_beat=price_to_beat,
+        )
+    ).model_copy(update={"end_ts": created_at + timedelta(seconds=seconds_to_close)})
+    up_book = sample_book(
+        market.token_for(Side.UP).token_id, BookFactoryConfig(ask=up_ask)
+    ).model_copy(update={"received_at": created_at})
+    down_book = sample_book(
+        market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=down_ask)
+    ).model_copy(update={"received_at": created_at})
+    spot_cfg = SpotFactoryConfig(asset=asset)
+    if spot_price is not None:
+        spot_cfg = spot_cfg.model_copy(update={"price": spot_price})
+    spot = sample_spot(spot_cfg).model_copy(
+        update={"source": "polymarket_rtds", "received_at": created_at}
+    )
+    return MarketSnapshot(
+        snapshot_id=snapshot_id or new_id("snapshot"),
+        created_at=created_at,
+        market=market,
+        up_book=up_book,
+        down_book=down_book,
+        spot=spot,
+        price_to_beat=price_to_beat,
+        freshness=FreshnessState(up_book_ms=0, down_book_ms=0, spot_ms=0, max_ms=0),
+        metrics={},
     )
 
 
