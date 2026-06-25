@@ -101,3 +101,63 @@ class AlphaDecision:
 
 class AlphaCore(Protocol):
     def evaluate(self, view: MarketView) -> list[AlphaDecision]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class MarketGroupView:
+    group_id: str
+    relation_id: str
+    created_at: datetime
+    views_by_condition_id: Mapping[str, MarketView]
+    max_source_skew_ms: int
+    metrics: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class AlphaOrderEvent:
+    strategy: str
+    market_id: str
+    condition_id: str
+    token_id: str
+    side: Side
+    order_id: str
+    client_order_id: str | None
+    reason: str | None
+    ts_event: datetime
+    metrics: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class AlphaFillEvent(AlphaOrderEvent):
+    fill_price: float
+    shares: float
+    liquidity_side: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class NautilusOrderSpec:
+    instrument_id: str
+    side: Side
+    price: float
+    quantity: float
+    intent: OrderIntent
+    expiry_seconds: int | None
+    pair_id: str | None
+    reduce_only: bool
+    hedge_leg: bool
+    tags: Mapping[str, str]
+
+
+class StatefulAlphaCore(AlphaCore, Protocol):
+    def on_order_submitted(self, event: AlphaOrderEvent) -> None: ...
+    def on_order_accepted(self, event: AlphaOrderEvent) -> None: ...
+    def on_order_rejected(self, event: AlphaOrderEvent) -> None: ...
+    def on_order_canceled(self, event: AlphaOrderEvent) -> None: ...
+    def on_order_expired(self, event: AlphaOrderEvent) -> None: ...
+    def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]: ...
+    def save_state(self) -> Mapping[str, object]: ...
+    def load_state(self, payload: Mapping[str, object]) -> None: ...
+
+
+class GroupAlphaCore(Protocol):
+    def evaluate_group(self, view: MarketGroupView) -> list[AlphaDecision]: ...

@@ -79,3 +79,63 @@ def test_alpha_decision_carries_order_intent_spec() -> None:
 
     assert decision.order_intent == intent
     assert decision.reason_codes == ("PTB_DIFF_THRESHOLD_OK",)
+
+
+from polysignal_lab.alpha.types import AlphaFillEvent, AlphaOrderEvent, MarketGroupView, NautilusOrderSpec
+
+
+def test_market_group_view_carries_relation_members() -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    view = _view()
+    group = MarketGroupView(
+        group_id="basket-1",
+        relation_id="all_markets",
+        created_at=now,
+        views_by_condition_id={view.condition_id: view},
+        max_source_skew_ms=25,
+        metrics={"relation_count": 1},
+    )
+
+    assert group.views_by_condition_id[view.condition_id] is view
+    assert group.max_source_skew_ms == 25
+
+
+def test_alpha_order_and_fill_events_are_immutable() -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    event = AlphaFillEvent(
+        strategy="vwap_momentum",
+        market_id="market-1",
+        condition_id="condition-1",
+        token_id="token-up",
+        side=Side.UP,
+        order_id="order-1",
+        client_order_id="client-1",
+        reason=None,
+        ts_event=now,
+        metrics={"source": "test"},
+        fill_price=0.81,
+        shares=12.0,
+        liquidity_side="TAKER",
+    )
+
+    assert event.fill_price == 0.81
+    with pytest.raises(AttributeError):
+        event.shares = 13.0  # type: ignore[misc]
+
+
+def test_nautilus_order_spec_carries_quantity_and_tags() -> None:
+    spec = NautilusOrderSpec(
+        instrument_id="token-up.POLYMARKET",
+        side=Side.UP,
+        price=0.81,
+        quantity=12.0,
+        intent=OrderIntent.PASSIVE_GTD,
+        expiry_seconds=45,
+        pair_id="pair-1",
+        reduce_only=False,
+        hedge_leg=True,
+        tags={"strategy": "vwap_momentum"},
+    )
+
+    assert spec.quantity == 12.0
+    assert spec.tags["strategy"] == "vwap_momentum"
