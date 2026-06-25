@@ -61,6 +61,38 @@ def test_pre_order_candidates_repeat_until_order_submitted() -> None:
     assert core.evaluate_view_from_snapshot_for_test(snapshot) == []
 
 
+def test_pre_order_cancel_or_expire_rolls_back_pre_order_guard() -> None:
+    config = PreOrderMarketConfig()
+    core = PreOrderMarketAlphaCore(config)
+    snapshot = _preopen_snapshot()
+    decisions = core.evaluate_view_from_snapshot_for_test(snapshot)
+    assert decisions
+
+    core.on_order_submitted(_order(decisions[0]))
+    core.on_order_canceled(_order(decisions[0]))
+    assert len(core.evaluate_view_from_snapshot_for_test(snapshot)) == 4
+
+    core.on_order_submitted(_order(decisions[0]))
+    core.on_order_expired(_order(decisions[0]))
+    assert len(core.evaluate_view_from_snapshot_for_test(snapshot)) == 4
+
+
+def test_pre_order_adapter_cancel_or_expire_rolls_back_pre_order_guard() -> None:
+    config = PreOrderMarketConfig()
+    strategy = PreOrderMarketStrategy(config)
+    snapshot = _preopen_snapshot()
+    signals = strategy.evaluate(snapshot)
+    assert signals
+
+    strategy.notify_signal_accepted(signals[0])
+    strategy.notify_cancel(snapshot.market.market_id, signals[0].side, "PAPER_REJECTED")
+    assert len(strategy.evaluate(snapshot)) == 4
+
+    strategy.notify_signal_accepted(signals[0])
+    strategy.notify_cancel(snapshot.market.market_id, signals[0].side, "GTD_EXPIRED")
+    assert len(strategy.evaluate(snapshot)) == 4
+
+
 def test_pre_order_reconcile_uses_fill_event_state() -> None:
     config = PreOrderMarketConfig()
     core = PreOrderMarketAlphaCore(config)

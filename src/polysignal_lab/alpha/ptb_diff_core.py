@@ -228,6 +228,7 @@ def market_view_from_snapshot(snapshot: MarketSnapshot) -> MarketView | None:
             last_trade_size=book.last_trade_size if book else None,
             last_trade_timestamp=book.last_trade_timestamp if book else None,
             received_at=book.received_at if book else None,
+            ask_levels=tuple((level.price, level.size) for level in book.asks) if book else (),
         )
 
     spot = None

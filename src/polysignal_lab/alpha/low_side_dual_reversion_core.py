@@ -19,10 +19,19 @@ class LowSideDualReversionAlphaCore:
         return leg1_price + leg2_price + 2.0 * self.config.fee_rate + self.config.slippage_buffer
 
     def _depth_weighted_ask(self, book: SideBookView, shares: int) -> float | None:
-        # MarketView intentionally exposes best ask, not full depth. The current
-        # factory/runtime snapshots use enough top-level size for these legacy
-        # decisions; adapters preserve legacy semantics through this price.
-        return book.best_ask
+        if shares <= 0 or not book.ask_levels:
+            return None
+        remaining = float(shares)
+        total_cost = 0.0
+        for price, size in sorted(book.ask_levels, key=lambda level: level[0]):
+            take = min(remaining, size)
+            total_cost += take * price
+            remaining -= take
+            if remaining <= 0:
+                break
+        if remaining > 0:
+            return None
+        return total_cost / shares
 
     @staticmethod
     def _utc_now() -> datetime:

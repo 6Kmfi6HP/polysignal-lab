@@ -20,6 +20,7 @@ class SideBookView:
     last_trade_size: float | None = None
     last_trade_timestamp: str | None = None
     received_at: datetime | None = None
+    ask_levels: tuple[tuple[float, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

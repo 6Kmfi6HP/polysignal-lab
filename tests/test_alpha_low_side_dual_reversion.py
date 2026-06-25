@@ -7,6 +7,7 @@ from polysignal_lab.strategies.low_side_dual_reversion import LowSideDualReversi
 from polysignal_lab.utils import utc_now
 from alpha_equivalence import assert_legacy_core_equivalent
 from factories import sample_snapshot
+from polysignal_lab.domain.orderbook import BookLevel
 
 
 def _fill(snapshot, side: Side, price: float) -> AlphaFillEvent:
@@ -26,6 +27,15 @@ def _fill(snapshot, side: Side, price: float) -> AlphaFillEvent:
         liquidity_side=None,
     )
 
+
+
+def _snapshot_with_down_asks(asks: list[BookLevel]):
+    snapshot = sample_snapshot(up_ask=0.50, down_ask=asks[0].price, seconds_to_close=120)
+    return snapshot.model_copy(
+        update={
+            "down_book": snapshot.down_book.model_copy(update={"asks": asks}),
+        }
+    )
 
 def test_low_side_dual_core_matches_legacy_candidate() -> None:
     config = LowSideDualReversionConfig()
@@ -53,3 +63,21 @@ def test_hedge_decisions_use_actual_fill_position_state() -> None:
     assert hedge
     assert hedge[0].side == Side.DOWN
     assert hedge[0].hedge_leg is True
+
+
+def test_hedge_uses_depth_weighted_ask_and_rejects_shallow_depth() -> None:
+    config = LowSideDualReversionConfig()
+    shallow = _snapshot_with_down_asks([BookLevel(price=0.50, size=1)])
+    core = LowSideDualReversionAlphaCore(config)
+    core.on_order_filled(_fill(shallow, Side.UP, 0.35))
+
+    assert core.evaluate_view_from_snapshot_for_test(shallow) == []
+
+    deep = _snapshot_with_down_asks([BookLevel(price=0.50, size=1), BookLevel(price=0.60, size=4)])
+    core = LowSideDualReversionAlphaCore(config)
+    core.on_order_filled(_fill(deep, Side.UP, 0.35))
+    hedge = core.evaluate_view_from_snapshot_for_test(deep)
+
+    assert hedge
+    assert hedge[0].side == Side.DOWN
+    assert hedge[0].max_entry_price == 0.58

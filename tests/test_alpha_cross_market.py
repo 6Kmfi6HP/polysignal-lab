@@ -10,6 +10,7 @@ from polysignal_lab.domain.snapshot_batch import CrossMarketEvaluationContext, S
 from polysignal_lab.strategies.cross_market_bot import CrossMarketBotConfig, CrossMarketBotStrategy
 from alpha_equivalence import normalize_candidate, normalize_decision
 from factories import BookFactoryConfig, sample_book, sample_snapshot
+from polysignal_lab.domain.orderbook import BookLevel
 
 
 def _snapshot(asset: str, ask: float):
@@ -20,6 +21,15 @@ def _snapshot(asset: str, ask: float):
                 snapshot.market.token_for(Side.UP).token_id,
                 BookFactoryConfig(ask=ask, bid=max(0.01, ask - 0.01), size=500),
             )
+        }
+    )
+
+
+def _snapshot_with_up_asks(asset: str, asks: list[BookLevel]):
+    snapshot = _snapshot(asset, asks[0].price)
+    return snapshot.model_copy(
+        update={
+            "up_book": snapshot.up_book.model_copy(update={"asks": asks}),
         }
     )
 
@@ -80,6 +90,35 @@ def test_cross_market_group_core_matches_legacy_group_candidates() -> None:
 
     assert [normalize_candidate(signal) for signal in legacy] == [normalize_candidate(signal) for signal in signals]
     assert [normalize_candidate(signal) for signal in legacy] == [normalize_decision(decision) for decision in decisions]
+
+
+def test_cross_market_group_walks_ask_depth_before_emitting() -> None:
+    relation_id = "btc-eth-depth"
+    config = CrossMarketBotConfig(assets=["BTC", "ETH"], fee_rate=0.0, min_edge=0.01, min_depth_shares=5)
+    core = CrossMarketAlphaCore(config)
+
+    shallow = _snapshot_with_up_asks("BTC", [BookLevel(price=0.20, size=1)])
+    eth = _snapshot_with_up_asks("ETH", [BookLevel(price=0.20, size=5)])
+    core.register_relation(
+        relation_id,
+        RelationType.EXHAUSTIVE_MUTUALLY_EXCLUSIVE,
+        [shallow.market.condition_id, eth.market.condition_id],
+        [Side.UP, Side.UP],
+    )
+    assert core.evaluate_group(_group_view(relation_id, shallow, eth)) == []
+
+    btc = _snapshot_with_up_asks("BTC", [BookLevel(price=0.20, size=1), BookLevel(price=0.22, size=4)])
+    core = CrossMarketAlphaCore(config)
+    core.register_relation(
+        relation_id,
+        RelationType.EXHAUSTIVE_MUTUALLY_EXCLUSIVE,
+        [btc.market.condition_id, eth.market.condition_id],
+        [Side.UP, Side.UP],
+    )
+    decisions = core.evaluate_group(_group_view(relation_id, btc, eth))
+
+    assert decisions
+    assert round(decisions[0].max_entry_price, 3) == 0.216
 
 
 def test_cross_market_leg_failure_marks_basket_failed() -> None:

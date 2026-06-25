@@ -76,6 +76,22 @@ def test_dump_candidate_generation_does_not_consume_dump_guard() -> None:
     assert core.evaluate_view_from_snapshot_for_test(second) == []
 
 
+
+def test_dump_hedge_adapter_cancel_rolls_back_dump_guard() -> None:
+    config = DumpHedgeConfig()
+    first = sample_snapshot(up_ask=0.60, down_ask=0.50)
+    second = sample_snapshot(up_ask=0.10, down_ask=0.50)
+    second = second.model_copy(update={"market": first.market})
+    strategy = DumpHedgeStrategy(config)
+    strategy.evaluate(first)
+    signals = strategy.evaluate(second)
+    assert signals
+
+    strategy.notify_signal_accepted(signals[0])
+    strategy.notify_cancel(first.market.market_id, signals[0].side, "PAPER_REJECTED")
+
+    assert strategy.evaluate(second)
+
 def test_dump_hedge_uses_fill_event_for_position_state() -> None:
     config = DumpHedgeConfig()
     core = DumpHedgeAlphaCore(config)

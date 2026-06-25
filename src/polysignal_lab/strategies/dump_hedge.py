@@ -47,6 +47,24 @@ class DumpHedgeStrategy(BaseStrategy):
             )
         )
 
+    def notify_cancel(self, market_id: str, side: Side, reason: str) -> None:
+        event = AlphaOrderEvent(
+            strategy=self.name,
+            market_id=market_id,
+            condition_id="",
+            token_id="",
+            side=side,
+            order_id=f"{self.name}:{market_id}:{side.value}",
+            client_order_id=None,
+            reason=reason,
+            ts_event=utc_now(),
+            metrics={},
+        )
+        if reason == "GTD_EXPIRED":
+            self.core.on_order_expired(event)
+        else:
+            self.core.on_order_canceled(event)
+
     def notify_fill(self, market_id: str, side: Side, fill_price: float, shares: float) -> None:
         self.core.on_order_filled(
             AlphaFillEvent(

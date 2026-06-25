@@ -62,7 +62,19 @@ class CrossMarketAlphaCore:
         return sum(leg_prices) + len(leg_prices) * self.config.fee_rate
 
     def _executable_buy_price(self, book: SideBookView, shares: int) -> float | None:
-        return book.best_ask
+        if shares <= 0 or not book.ask_levels:
+            return None
+        remaining = float(shares)
+        total_cost = 0.0
+        for price, size in sorted(book.ask_levels, key=lambda level: level[0]):
+            take = min(remaining, size)
+            total_cost += take * price
+            remaining -= take
+            if remaining <= 0:
+                break
+        if remaining > 0:
+            return None
+        return total_cost / shares
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         if not self.config.enabled:
