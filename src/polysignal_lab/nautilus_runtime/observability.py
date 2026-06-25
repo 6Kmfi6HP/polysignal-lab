@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
@@ -66,7 +65,7 @@ class NautilusNotifierAdapter:
         self.publisher = publisher
 
     async def send(self, message: str, msg_type: str = "") -> None:
-        await asyncio.to_thread(self.publisher.send, message, msg_type)
+        await self.publisher.send(message, msg_type)
 
 
 class ObservabilityActor:

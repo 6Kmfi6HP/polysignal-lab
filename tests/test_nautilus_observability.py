@@ -165,7 +165,7 @@ class FakePublisher:
     def __init__(self):
         self.calls = []
 
-    def send(self, message: str, msg_type: str = "") -> None:
+    async def send(self, message: str, msg_type: str = "") -> None:
         self.calls.append((message, msg_type))
 
 
