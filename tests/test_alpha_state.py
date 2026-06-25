@@ -28,3 +28,10 @@ def test_restore_utc_datetime_requires_iso_string() -> None:
 
     assert restored.tzinfo is not None
     assert restored.isoformat() == "2026-01-01T00:00:00+00:00"
+
+
+def test_json_safe_state_normalizes_aware_non_utc_datetime_to_utc() -> None:
+    from datetime import timedelta, timezone
+
+    aware_non_utc = datetime(2026, 1, 1, 8, 0, 0, tzinfo=timezone(timedelta(hours=8)))
+    assert json_safe_state(aware_non_utc) == "2026-01-01T00:00:00+00:00"

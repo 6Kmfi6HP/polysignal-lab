@@ -18,6 +18,8 @@ def json_safe_state(value: Any) -> Any:
     if isinstance(value, datetime):
         if value.tzinfo is None:
             value = value.replace(tzinfo=UTC)
+        else:
+            value = value.astimezone(UTC)
         return value.isoformat()
     if isinstance(value, deque):
         return [json_safe_state(item) for item in value]
