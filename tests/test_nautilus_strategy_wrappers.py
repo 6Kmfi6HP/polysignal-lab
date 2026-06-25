@@ -642,6 +642,53 @@ def test_fill_callback_routes_vwap_hedge_decisions_through_policy_and_submitter(
     assert submitter.specs[0].hedge_leg is True
     assert not hasattr(strategy, "_follow_up_signals")
 
+def test_non_vwap_gtd_hedge_fill_reaches_core_fill_handler() -> None:
+    core = FakeCore([])
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(_view()),
+        policy=FakePolicy([True]),
+        submitter=FakeSubmitter(),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="low_side_dual_reversion",
+        fixed_stake_usdc=10.0,
+    )
+
+    submitted = strategy.on_order_filled(
+        replace(
+            FakeFill(),
+            metrics={"hedge_leg": True, "order_intent": OrderIntent.PASSIVE_GTD.value},
+        )
+    )
+
+    assert "filled" in core.fill_lifecycle
+    assert len(core.fills) == 1
+
+
+def test_vwap_gtd_hedge_fill_skips_notify_but_reaches_fill_handler() -> None:
+    core = FakeCore([])
+    core.fill_returns = [_decision(side=Side.DOWN, hedge_leg=True)]
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(_view()),
+        policy=FakePolicy([True]),
+        submitter=FakeSubmitter(),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    submitted = strategy.on_order_filled(
+        replace(
+            FakeFill(),
+            metrics={"hedge_leg": True, "order_intent": OrderIntent.PASSIVE_GTD.value},
+        )
+    )
+
+    assert submitted == []
+    assert core.fill_lifecycle == ["filled"]
+    assert core.fill_notifications == []
+
 
 def test_fill_callback_reattaches_approved_vwap_metrics_for_hedges() -> None:
     view = _view()
@@ -794,3 +841,56 @@ def test_approved_decision_with_consensus_submits_without_second_core_acceptance
         ("bind", submitter.specs[0].tags["signal_id"]),
         ("accepted", submitter.specs[0].tags["signal_id"]),
     ]
+
+
+def test_consensus_submitted_alias_fill_skips_source_core_lifecycle() -> None:
+    view = _view()
+    decision = _decision()
+    consensus = _signal_from_decision(
+        replace(decision, strategy="consensus", side=Side.DOWN, token_id="down-token")
+    )
+    core = FakeCore([decision])
+    submitter = FakeSubmitter()
+
+    class ConsensusPolicy:
+        def evaluate(self, policy_decision: AlphaDecision, policy_view: MarketView):
+            return ApprovedDecision(
+                signal=_signal_from_decision(policy_decision), consensus=consensus
+            )
+
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=ConsensusPolicy(),
+        submitter=submitter,
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    strategy.evaluate_condition("condition-btc-5m")
+    consensus_signal_id = submitter.specs[1].tags["signal_id"]
+    assert submitter.specs[1].tags["strategy"] == "consensus"
+    strategy.on_order_submitted(
+        replace(
+            FakeFill(),
+            order_id="exchange-consensus",
+            client_order_id="exchange-consensus-client",
+            tags={"signal_id": consensus_signal_id, "strategy": "consensus"},
+        )
+    )
+
+    submitted = strategy.on_order_filled(
+        replace(
+            FakeFill(),
+            order_id="exchange-consensus",
+            client_order_id="exchange-consensus-client",
+            side=Side.DOWN,
+            token_id="down-token",
+        )
+    )
+
+    assert submitted == []
+    assert core.fill_lifecycle == []
+    assert core.fill_notifications == []
+    assert core.fills == []

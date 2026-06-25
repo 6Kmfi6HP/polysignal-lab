@@ -58,6 +58,7 @@ class PolySignalNautilusStrategy:
         self._last_views: dict[str, MarketView] = {}
         self._locally_accepted_order_ids: set[str] = set()
         self._approved_signal_metrics: dict[str, dict[str, Any]] = {}
+        self._consensus_order_ids: set[str] = set()
 
     def on_start(self) -> None:
         for name in self.data_names:
@@ -135,11 +136,15 @@ class PolySignalNautilusStrategy:
 
     def on_order_submitted(self, event: Any) -> None:
         alpha_event = self._order_event(event)
+        if self._alias_consensus_order_ids(event, alpha_event):
+            return
         self._alias_approved_signal_metrics(event, alpha_event)
         self._call_core("on_order_submitted", alpha_event)
 
     def on_order_accepted(self, event: Any) -> None:
         alpha_event = self._order_event(event)
+        if self._alias_consensus_order_ids(event, alpha_event):
+            return
         self._alias_approved_signal_metrics(event, alpha_event)
         if any(
             order_id in self._locally_accepted_order_ids
@@ -149,26 +154,38 @@ class PolySignalNautilusStrategy:
         self._call_core("on_order_accepted", alpha_event)
 
     def on_order_rejected(self, event: Any) -> None:
-        self._call_core("on_order_rejected", self._order_event(event))
+        alpha_event = self._order_event(event)
+        if self._alias_consensus_order_ids(event, alpha_event):
+            return
+        self._call_core("on_order_rejected", alpha_event)
 
     def on_order_canceled(self, event: Any) -> None:
-        self._call_core("on_order_canceled", self._order_event(event))
+        alpha_event = self._order_event(event)
+        if self._alias_consensus_order_ids(event, alpha_event):
+            return
+        self._call_core("on_order_canceled", alpha_event)
 
     def on_order_expired(self, event: Any) -> None:
-        self._call_core("on_order_expired", self._order_event(event))
+        alpha_event = self._order_event(event)
+        if self._alias_consensus_order_ids(event, alpha_event):
+            return
+        self._call_core("on_order_expired", alpha_event)
 
     def on_order_filled(self, event: Any) -> list[NautilusOrderSpec]:
         alpha_event = self._fill_event(event)
-        if _is_hedge_or_gtd_fill(alpha_event):
-            expirer = getattr(self.core, "on_order_expired", None)
-            if callable(expirer):
-                expirer(alpha_event)
+        if self._alias_consensus_order_ids(event, alpha_event):
             return []
-        notify = getattr(self.core, "on_notify_fill", None)
-        if callable(notify):
-            notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
+        skip_notify = self.strategy_name == "vwap_momentum" and _is_hedge_or_gtd_fill(
+            alpha_event
+        )
+        if not skip_notify:
+            notify = getattr(self.core, "on_notify_fill", None)
+            if callable(notify):
+                notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
         handler = getattr(self.core, "on_order_filled", None)
         hedge_decisions = handler(alpha_event) if callable(handler) else []
+        if skip_notify:
+            return []
         submitted: list[NautilusOrderSpec] = []
         for decision in hedge_decisions or []:
             view = self._view_for_decision(decision)
@@ -266,6 +283,7 @@ class PolySignalNautilusStrategy:
                 )
             )
             return
+        self._consensus_order_ids.update(_spec_lookup_ids(spec))
         self._submit_spec(spec, submitted)
 
     def _submit_spec(
@@ -317,6 +335,15 @@ class PolySignalNautilusStrategy:
             self._approved_signal_metrics.setdefault(key, dict(metrics))
         if aliases_locally_accepted:
             self._locally_accepted_order_ids.update(lookup_ids)
+
+    def _alias_consensus_order_ids(self, event: Any, order: AlphaOrderEvent) -> bool:
+        lookup_ids = self._event_lookup_ids(event, order)
+        if _event_strategy(event) == "consensus" or any(
+            key in self._consensus_order_ids for key in lookup_ids
+        ):
+            self._consensus_order_ids.update(lookup_ids)
+            return True
+        return False
 
     def _approved_metrics_for_event(
         self, event: Any, order: AlphaOrderEvent
@@ -460,6 +487,25 @@ def _first_attr(obj: Any, *names: str, default: Any) -> Any:
         if hasattr(obj, name):
             return getattr(obj, name)
     return default
+
+def _event_strategy(event: Any) -> str | None:
+    tags = _first_attr(event, "tags", default=None)
+    if isinstance(tags, Mapping) and tags.get("strategy"):
+        return str(tags["strategy"])
+    strategy = _first_attr(event, "strategy", default=None)
+    return None if strategy is None else str(strategy)
+
+
+def _spec_lookup_ids(spec: NautilusOrderSpec) -> tuple[str, ...]:
+    return tuple(
+        str(value)
+        for value in (
+            spec.tags.get("signal_id"),
+            spec.tags.get("order_id"),
+            spec.tags.get("client_order_id"),
+        )
+        if value not in (None, "")
+    )
 
 
 def _optional_str(value: Any) -> str | None:
