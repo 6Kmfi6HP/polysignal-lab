@@ -7,7 +7,6 @@ ONLY advanced by ``on_order_accepted``.
 
 from __future__ import annotations
 
-from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
 from polysignal_lab.alpha.types import AlphaDecision, AlphaOrderEvent, MarketView, OrderIntentSpec, SideBookView
 from polysignal_lab.domain.enums import OrderIntent, Side
 
@@ -122,5 +121,6 @@ class NinetyNineCentSniperAlphaCore:
     def evaluate_view_from_snapshot_for_test(
         self, snapshot: MarketSnapshot
     ) -> list[AlphaDecision]:
+        from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
         view = market_view_from_snapshot(snapshot)
         return self.evaluate(view) if view is not None else []

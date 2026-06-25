@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import assert_never
+from typing import TYPE_CHECKING, assert_never
 
 from polysignal_lab.alpha.types import AlphaDecision, FreshnessView, MarketView, SideBookView, SpotView
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.domain.snapshot import MarketSnapshot
+if TYPE_CHECKING:
+    from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.strategies.config import PTBDiffConfig
 
 
