@@ -132,3 +132,15 @@ def test_ptb_alpha_core_rejects_missing_market_data() -> None:
     snapshot = _snapshot(CoreScenario()).model_copy(update={"up_book": None})
 
     assert PTBDiffAlphaCore(config).evaluate(market_view_from_snapshot(snapshot)) == []
+
+
+def test_legacy_ptb_strategy_rejects_snapshot_without_outcome_tokens() -> None:
+    config = _config()
+    snapshot = _snapshot(CoreScenario())
+    malformed_market = snapshot.market.model_copy(update={"outcome_tokens": []})
+    malformed_snapshot = snapshot.model_copy(
+        update={"market": malformed_market, "up_book": None, "down_book": None}
+    )
+
+    assert market_view_from_snapshot(malformed_snapshot) is None
+    assert PTBDiffStrategy(config).evaluate(malformed_snapshot) == []

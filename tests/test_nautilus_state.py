@@ -28,3 +28,11 @@ def test_decode_unknown_version_fails_closed() -> None:
 
     with pytest.raises(StateSchemaError, match="Unsupported state schema"):
         decode_state("dump_hedge", state, version=1)
+
+
+def test_decode_mixed_current_and_future_versions_fails_closed() -> None:
+    state = encode_state("ptb_diff", {"accepted_state": {}}, version=1)
+    state.update(encode_state("ptb_diff", {"accepted_state": {"future": "state"}}, version=2))
+
+    with pytest.raises(StateSchemaError, match="Unsupported state schema"):
+        decode_state("ptb_diff", state, version=1)

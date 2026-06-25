@@ -208,10 +208,13 @@ class PTBDiffAlphaCore:
                 assert_never(unreachable)
 
 
-def market_view_from_snapshot(snapshot: MarketSnapshot) -> MarketView:
-    def book_view(side: Side) -> SideBookView:
+def market_view_from_snapshot(snapshot: MarketSnapshot) -> MarketView | None:
+    def book_view(side: Side) -> SideBookView | None:
         book = snapshot.book_for(side)
-        token = snapshot.market.token_for(side)
+        try:
+            token = snapshot.market.token_for(side)
+        except KeyError:
+            return None
         return SideBookView(
             token_id=token.token_id,
             best_bid=book.best_bid if book else None,
@@ -231,6 +234,11 @@ def market_view_from_snapshot(snapshot: MarketSnapshot) -> MarketView:
             source=snapshot.spot.source,
             freshness_ms=snapshot.spot.freshness_ms(snapshot.created_at),
         )
+    up = book_view(Side.UP)
+    down = book_view(Side.DOWN)
+    if up is None or down is None:
+        return None
+
     return MarketView(
         view_id=snapshot.snapshot_id,
         market_id=snapshot.market.market_id,
@@ -242,8 +250,8 @@ def market_view_from_snapshot(snapshot: MarketSnapshot) -> MarketView:
         end_ts=snapshot.market.end_ts,
         created_at=snapshot.created_at,
         seconds_to_close=snapshot.seconds_to_close,
-        up=book_view(Side.UP),
-        down=book_view(Side.DOWN),
+        up=up,
+        down=down,
         spot=spot,
         price_to_beat=snapshot.price_to_beat,
         up_trades=tuple(snapshot.metrics.get("up_trades") or ()),

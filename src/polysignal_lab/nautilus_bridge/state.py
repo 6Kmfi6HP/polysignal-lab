@@ -21,11 +21,11 @@ def encode_state(strategy_name: str, payload: Mapping[str, Any], version: int = 
 
 def decode_state(strategy_name: str, state: Mapping[str, bytes], version: int = 1) -> dict[str, Any]:
     key = state_key(strategy_name, version)
+    same_strategy_prefix = f"polysignal.{strategy_name}.state.v"
+    unknown_keys = sorted(name for name in state if name.startswith(same_strategy_prefix) and name != key)
+    if unknown_keys:
+        raise StateSchemaError(f"Unsupported state schema for {strategy_name}: {unknown_keys[0]}")
     if key not in state:
-        same_strategy_prefix = f"polysignal.{strategy_name}.state.v"
-        unknown_keys = sorted(name for name in state if name.startswith(same_strategy_prefix))
-        if unknown_keys:
-            raise StateSchemaError(f"Unsupported state schema for {strategy_name}: {unknown_keys[0]}")
         return {"migration_reasons": [f"missing {key}"]}
 
     raw = json.loads(state[key].decode("utf-8"))

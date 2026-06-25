@@ -40,8 +40,11 @@ class PTBDiffStrategy(BaseStrategy):
             calibration_required=False,
             calibration_status="calibrated",
         )
+
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalCandidate]:
         view = market_view_from_snapshot(snapshot)
+        if view is None:
+            return []
         return [
             decision_to_signal(decision, snapshot.snapshot_id, self.freshness_policy)
             for decision in self.core.evaluate(view)
