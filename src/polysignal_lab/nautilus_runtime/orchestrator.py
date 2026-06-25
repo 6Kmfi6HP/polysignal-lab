@@ -85,7 +85,7 @@ class NautilusOrchestrator:
         await self._phase_market_refresh()
         condition_ids = self._phase_sync()
         if condition_ids:
-            self._phase_strategy_eval(condition_ids)
+            await self._phase_strategy_eval(condition_ids)
         self._phase_position_policy()
         await self._phase_settlement()
         self._phase_health()
@@ -115,7 +115,7 @@ class NautilusOrchestrator:
             self.health.mark_down("data_sync", reason=str(exc)[:200])
             return ()
 
-    def _phase_strategy_eval(
+    async def _phase_strategy_eval(
         self, condition_ids: Sequence[str]
     ) -> None:
         """Evaluate all registered strategies and record execution results."""
@@ -123,7 +123,7 @@ class NautilusOrchestrator:
             try:
                 batch = strategy.evaluate_all_conditions(condition_ids)
                 for result in batch.execution_results:
-                    self._record_execution_result(result)
+                    await self._record_execution_result(result)
                 self.health.mark_ok(f"strategy_{strategy.strategy_name}")
             except Exception as exc:
                 self.logger.exception(
@@ -175,11 +175,13 @@ class NautilusOrchestrator:
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
-    def _record_execution_result(self, result: PaperExecutionResult) -> None:
+    async def _record_execution_result(self, result: PaperExecutionResult) -> None:
         """Record an execution result's order, fills, and positions."""
         self.observability.record_order(result)
-        # Fire-and-forget the Telegram notification (observe, don't block on it)
-        asyncio.ensure_future(self.observability.notify_order_result(result))
+        try:
+            await self.observability.notify_order_result(result)
+        except Exception:
+            self.logger.exception("Failed to notify order result")
         for fill in result.fills:
             self.observability.record_fill(fill)
         for position in result.positions:

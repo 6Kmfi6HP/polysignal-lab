@@ -135,7 +135,7 @@ class ObservabilityActor:
         price = result.order.limit_price
         status = result.status.value if result.status else "UNKNOWN"
         msg = (
-            f"📊 *{strategy}* — {asset} {side}\n"
+            f"<b>{strategy}</b> — {asset} {side}\n"
             f"Price: {price}\n"
             f"Status: {status}"
         )
