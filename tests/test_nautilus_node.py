@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 
-from polysignal_lab.nautilus_runtime.node import build_trading_node, build_control, run_nautilus_cli
+from polysignal_lab.nautilus_runtime.node import (
+    build_trading_node,
+    build_control,
+    build_nautilus_runtime,
+    run_nautilus_cli,
+    run_nautilus_cli_async,
+)
+from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
 
 
 def test_build_trading_node_returns_component_dict() -> None:
@@ -39,12 +48,71 @@ def test_build_control_adapts_policy() -> None:
     assert not ctrl.is_strategy_enabled("vwap_momentum")
 
 
-def test_run_nautilus_cli_prints_ready(monkeypatch, capsys) -> None:
-    """run_nautilus_cli prints ready and exits on interrupt."""
-    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.signal.signal", lambda *_args: None)
+async def test_build_nautilus_runtime_wires_real_book_provider(monkeypatch) -> None:
+    async def fake_refresh(scheduler):
+        scheduler.ctx.markets.upsert_many([])
+
+    async def fake_start_websockets(scheduler):
+        return []
+
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.time.sleep",
-        lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt),
+        "polysignal_lab.nautilus_runtime.node.scheduler_market_data.refresh_markets_once",
+        fake_refresh,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.scheduler_market_data.start_websockets",
+        fake_start_websockets,
+    )
+
+    bundle = await build_nautilus_runtime()
+
+    assert isinstance(bundle.book_data_provider, NautilusBookDataProvider)
+    assert bundle.components["assembler"].books is bundle.book_data_provider
+    assert bundle.orchestrator is not None
+
+
+async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
+    class FakeOrchestrator:
+        def __init__(self):
+            self.stopped = False
+
+        async def run(self, stop_event=None):
+            assert stop_event is not None
+            stop_event.set()
+
+        def stop(self):
+            self.stopped = True
+
+    async def _noop(*args, **kwargs):
+        pass
+
+    fake_bundle = SimpleNamespace(
+        orchestrator=FakeOrchestrator(),
+        websocket_tasks=[],
+        scheduler=SimpleNamespace(stop=_noop),
+        observability=SimpleNamespace(notify_startup=_noop),
+        components={"strategies": []},
+    )
+
+    async def fake_build(settings=None):
+        return fake_bundle
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.build_nautilus_runtime",
+        fake_build,
+    )
+
+    await run_nautilus_cli_async(stop_event=asyncio.Event())
+
+
+def test_run_nautilus_cli_prints_ready(monkeypatch, capsys) -> None:
+    """run_nautilus_cli returns without hanging."""
+    async def fake_async(settings=None, stop_event=None):
+        print("Nautilus runtime ready — 0 strategies")
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.run_nautilus_cli_async",
+        fake_async,
     )
 
     run_nautilus_cli()

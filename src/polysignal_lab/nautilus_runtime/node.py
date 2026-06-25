@@ -6,23 +6,32 @@ no private key/env-var reading, no allowance scripts.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import signal
 import sys
-import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
+from polysignal_lab.app import scheduler_market_data
+from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.config import Settings, load_settings
+from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
+from polysignal_lab.nautilus_runtime.data_ingestor import NautilusDataIngestor
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.execution import PolySignalPaperExecutionClient
 from polysignal_lab.nautilus_runtime.group_views import MarketGroupViewAssembler
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
+    NautilusEventStoreAdapter,
+    NautilusNotifierAdapter,
     ObservabilityActor,
 )
+from polysignal_lab.nautilus_runtime.orchestrator import NautilusOrchestrator
 from polysignal_lab.nautilus_runtime.position_policy import PositionPolicyActor
 from polysignal_lab.nautilus_runtime.settlement import SettlementActor
 from polysignal_lab.nautilus_runtime.sidecar_data import SidecarDataActor
@@ -45,6 +54,22 @@ from polysignal_lab.paper.settlement import PaperSettlementEngine
 from polysignal_lab.paper.wallet import PaperWallet
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class NautilusRuntimeBundle:
+    """Wired runtime components ready for the orchestrator loop."""
+
+    scheduler: PolySignalScheduler
+    components: dict[str, Any]
+    bridge_registry: PolymarketMarketRegistry
+    sidecar: ExternalDataSidecar
+    book_data_provider: NautilusBookDataProvider
+    data_ingestor: NautilusDataIngestor
+    paper_client: PolySignalPaperExecutionClient
+    observability: ObservabilityActor
+    orchestrator: NautilusOrchestrator
+    websocket_tasks: list[asyncio.Task]
 
 
 def build_trading_node(
@@ -164,36 +189,98 @@ def build_control(policy: DecisionPolicyActor) -> DecisionPolicyControl:
     return DecisionPolicyControl(policy)
 
 
-def run_nautilus_cli(settings: Settings | None = None) -> None:
-    """Entry point for the ``nautilus`` CLI mode."""
+async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRuntimeBundle:
+    """Build and wire the complete Nautilus runtime with a PolySignal-owned scheduler."""
     if settings is None:
         settings = load_settings()
-    node = build_trading_node(settings)
-    logger.info("nautilus runtime built: %d strategies, %s wallet",
-                len(node["strategies"]), node["wallet"].wallet_id)
-    print(f"Nautilus runtime ready — {len(node['strategies'])} strategies")
 
-    # Block until SIGTERM/SIGINT so the container stays alive.
-    shutdown = False
+    scheduler = PolySignalScheduler(settings)
+    await scheduler_market_data.refresh_markets_once(scheduler)
 
-    def _signal_handler(signum: int, _frame: object) -> None:
-        nonlocal shutdown
-        if shutdown:
-            sys.exit(0)
-        shutdown = True
-        print(f"signal {signum} received — shutting down")
-        logger.info("nautilus runtime shutting down (signal %d)", signum)
+    book_data_provider = NautilusBookDataProvider(scheduler.ctx.books)
 
-    signal.signal(signal.SIGTERM, _signal_handler)
-    signal.signal(signal.SIGINT, _signal_handler)
+    condition_ids = tuple(m.condition_id for m in scheduler.ctx.markets.active())
+    components = build_trading_node(settings, condition_ids=condition_ids)
+
+    # Wire real book data provider into the assembler
+    components["assembler"].books = book_data_provider
+
+    data_ingestor = NautilusDataIngestor(
+        markets=scheduler.ctx.markets,
+        books=scheduler.ctx.books,
+        spots=scheduler.ctx.spots,
+        bridge_registry=components["registry"],
+        sidecar=components["sidecar"].sidecar,
+        book_data_provider=book_data_provider,
+        paper_client=components["paper_client"],
+        price_to_beat_provider=scheduler.ptb,
+    )
+
+    observability = ObservabilityActor(
+        health=scheduler.health,
+        store=NautilusEventStoreAdapter(scheduler.persistence),
+        notifier=NautilusNotifierAdapter(scheduler.publisher),
+    )
+
+    websocket_tasks = await scheduler_market_data.start_websockets(scheduler)
+
+    orchestrator = NautilusOrchestrator(
+        scheduler=scheduler,
+        registered_strategies=components["strategies"],
+        data_ingestor=data_ingestor,
+        book_data_provider=book_data_provider,
+        paper_client=components["paper_client"],
+        position_policy=components["position_policy"],
+        settlement_actor=components["settlement_actor"],
+        observability=observability,
+        health=scheduler.health,
+        refresh_interval_sec=settings.markets.refresh_interval_sec,
+    )
+
+    return NautilusRuntimeBundle(
+        scheduler=scheduler,
+        components=components,
+        bridge_registry=components["registry"],
+        sidecar=components["sidecar"].sidecar,
+        book_data_provider=book_data_provider,
+        data_ingestor=data_ingestor,
+        paper_client=components["paper_client"],
+        observability=observability,
+        orchestrator=orchestrator,
+        websocket_tasks=websocket_tasks,
+    )
+
+
+async def run_nautilus_cli_async(settings: Settings | None = None,
+                                 stop_event: asyncio.Event | None = None) -> None:
+    """Run the Nautilus CLI with async orchestrator loop and signal handling."""
+    event = stop_event or asyncio.Event()
+    bundle = await build_nautilus_runtime(settings)
+    loop = asyncio.get_running_loop()
+
+    def request_stop() -> None:
+        bundle.orchestrator.stop()
+        event.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, request_stop)
+        except (NotImplementedError, RuntimeError):
+            signal.signal(sig, lambda _signum, _frame: request_stop())
 
     try:
-        while not shutdown:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        pass
+        await bundle.observability.notify_startup(
+            [s.strategy_name for s in bundle.components["strategies"]],
+        )
+        await bundle.orchestrator.run(event)
+    finally:
+        request_stop()
+        await bundle.scheduler.stop()
 
-    logger.info("nautilus runtime stopped")
+
+def run_nautilus_cli(settings: Settings | None = None) -> None:
+    """Entry point for the ``nautilus`` CLI mode — sync wrapper."""
+    asyncio.run(run_nautilus_cli_async(settings))
 
 
 def main() -> int:
