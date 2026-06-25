@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -34,7 +33,6 @@ from polysignal_lab.nautilus_runtime.observability import (
 from polysignal_lab.nautilus_runtime.orchestrator import NautilusOrchestrator
 from polysignal_lab.nautilus_runtime.position_policy import PositionPolicyActor
 from polysignal_lab.nautilus_runtime.settlement import SettlementActor
-from polysignal_lab.nautilus_runtime.sidecar_data import SidecarDataActor
 from polysignal_lab.nautilus_runtime.strategies import (
     BinaryMomentumNautilusStrategy,
     DumpHedgeNautilusStrategy,
@@ -88,7 +86,7 @@ def build_trading_node(
 
     # -- Data infrastructure --
     registry = PolymarketMarketRegistry()
-    sidecar = SidecarDataActor(publisher=None)
+    sidecar = ExternalDataSidecar()
     assembler = MarketViewAssembler(registry=registry, books=None, sidecar=sidecar)
     group_assembler = MarketGroupViewAssembler()
 
@@ -210,7 +208,7 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
         books=scheduler.ctx.books,
         spots=scheduler.ctx.spots,
         bridge_registry=components["registry"],
-        sidecar=components["sidecar"].sidecar,
+        sidecar=components["sidecar"],
         book_data_provider=book_data_provider,
         paper_client=components["paper_client"],
         price_to_beat_provider=scheduler.ptb,
@@ -241,7 +239,7 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
         scheduler=scheduler,
         components=components,
         bridge_registry=components["registry"],
-        sidecar=components["sidecar"].sidecar,
+        sidecar=components["sidecar"],
         book_data_provider=book_data_provider,
         data_ingestor=data_ingestor,
         paper_client=components["paper_client"],
