@@ -125,6 +125,22 @@ class ObservabilityActor:
             "created_at": result.order.created_at.isoformat() if hasattr(result.order.created_at, 'isoformat') else str(result.order.created_at),
         })
 
+    async def notify_order_result(self, result: PaperExecutionResult) -> None:
+        """Send a Telegram notification for a paper execution result."""
+        if self.notifier is None or result.order is None:
+            return
+        strategy = result.order.strategy or "?"
+        asset = result.order.asset or "?"
+        side = result.order.side.value.upper() if hasattr(result.order.side, 'value') else str(result.order.side)
+        price = result.order.limit_price
+        status = result.status.value if result.status else "UNKNOWN"
+        msg = (
+            f"📊 *{strategy}* — {asset} {side}\n"
+            f"Price: {price}\n"
+            f"Status: {status}"
+        )
+        await self.notifier.send(msg, "paper_order")
+
     def record_fill(self, fill: PaperFill) -> None:
         self._event_count += 1
         if self.store is None:

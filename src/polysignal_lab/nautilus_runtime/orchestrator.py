@@ -178,6 +178,8 @@ class NautilusOrchestrator:
     def _record_execution_result(self, result: PaperExecutionResult) -> None:
         """Record an execution result's order, fills, and positions."""
         self.observability.record_order(result)
+        # Fire-and-forget the Telegram notification (observe, don't block on it)
+        asyncio.ensure_future(self.observability.notify_order_result(result))
         for fill in result.fills:
             self.observability.record_fill(fill)
         for position in result.positions:
