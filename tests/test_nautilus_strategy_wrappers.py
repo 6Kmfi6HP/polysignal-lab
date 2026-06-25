@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 import pytest
 
-from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, FreshnessView, MarketView, SideBookView, SpotView
+from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, FreshnessView, MarketView, OrderIntentSpec, SideBookView, SpotView
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision, RejectedDecision
@@ -196,7 +196,7 @@ def _view() -> MarketView:
     )
 
 
-def _decision(*, side: Side = Side.UP, hedge_leg: bool = False) -> AlphaDecision:
+def _decision(*, side: Side = Side.UP, hedge_leg: bool = False, order_intent: OrderIntentSpec | None = None) -> AlphaDecision:
     return AlphaDecision(
         strategy="ptb_diff",
         asset="BTC",
@@ -213,7 +213,7 @@ def _decision(*, side: Side = Side.UP, hedge_leg: bool = False) -> AlphaDecision
         data_freshness_ms=20,
         reason_codes=("TEST",),
         metrics={},
-        order_intent=None,
+        order_intent=order_intent,
         hedge_leg=hedge_leg,
     )
 
@@ -316,6 +316,56 @@ def test_approved_decision_binds_and_accepts_before_submit() -> None:
     assert core.transient_markers == {}
     assert result == submitted
 
+
+def test_approved_fok_with_unknown_depth_rolls_back_before_accepting() -> None:
+    view = _view()
+    decision = _decision(order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK))
+    core = RollbackCore([decision])
+    policy = FakePolicy([True])
+    submitter = FakeSubmitter()
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=policy,
+        submitter=submitter,
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    result = strategy.evaluate_condition("condition-btc-5m")
+
+    assert result == []
+    assert submitter.specs == []
+    assert core.accepted_events == []
+    assert len(core.rejected_events) == 1
+    rejected = core.rejected_events[0]
+    assert rejected.reason == "ORDER_MAPPING_FAILED"
+    assert rejected.order_id == strategy.rejected_decisions[0].candidate.signal_id
+    assert core.transient_markers == {}
+
+
+def test_locally_accepted_order_event_does_not_double_apply_core_acceptance() -> None:
+    view = _view()
+    decision = _decision()
+    core = RollbackCore([decision])
+    policy = FakePolicy([True])
+    strategy = PolySignalNautilusStrategy(
+        core=core,
+        assembler=FakeAssembler(view),
+        policy=policy,
+        submitter=FakeSubmitter(),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="vwap_momentum",
+        fixed_stake_usdc=10.0,
+    )
+
+    strategy.evaluate_condition("condition-btc-5m")
+    accepted_id = core.accepted_events[0].order_id
+    strategy.on_order_accepted(replace(FakeFill(), order_id=accepted_id, client_order_id="exchange-client"))
+    strategy.on_order_accepted(replace(FakeFill(), order_id="exchange-order", client_order_id=accepted_id))
+
+    assert [event.order_id for event in core.accepted_events] == [accepted_id]
 
 def test_policy_rejected_decision_rolls_back_bound_transient_state() -> None:
     view = _view()

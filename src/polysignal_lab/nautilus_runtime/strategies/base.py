@@ -45,6 +45,7 @@ class PolySignalNautilusStrategy:
         self.submitted_specs: list[NautilusOrderSpec] = []
         self.rejected_decisions: list[RejectedDecision] = []
         self._last_views: dict[str, MarketView] = {}
+        self._locally_accepted_order_ids: set[str] = set()
 
     def on_start(self) -> None:
         for name in self.data_names:
@@ -71,7 +72,9 @@ class PolySignalNautilusStrategy:
         for decision in self.core.evaluate(view):
             policy_result = self.policy.evaluate(decision, view)
             if isinstance(policy_result, ApprovedDecision):
-                submitted.append(self.submit_approved(policy_result, decision=decision, view=view))
+                spec = self.submit_approved(policy_result, decision=decision, view=view)
+                if spec is not None:
+                    submitted.append(spec)
             else:
                 self._record_rejected_decision(policy_result, decision=decision, view=view)
         return submitted
@@ -82,17 +85,29 @@ class PolySignalNautilusStrategy:
         *,
         decision: AlphaDecision,
         view: MarketView,
-    ) -> NautilusOrderSpec:
-        self._record_approved_decision(approved, decision=decision, view=view)
+    ) -> NautilusOrderSpec | None:
         side = approved.signal.side
         book = view.book_for(side)
         best_ask = book.best_ask
-        spec = order_spec_from_decision(
-            approved,
-            fixed_stake_usdc=self.fixed_stake_usdc,
-            best_ask=best_ask,
-            available_shares=_visible_ask_shares(book.ask_levels, best_ask),
-        )
+        try:
+            spec = order_spec_from_decision(
+                approved,
+                fixed_stake_usdc=self.fixed_stake_usdc,
+                best_ask=best_ask,
+                available_shares=_visible_ask_shares(book.ask_levels, best_ask),
+            )
+        except ValueError as exc:
+            self._record_rejected_decision(
+                RejectedDecision(
+                    reason_code="ORDER_MAPPING_FAILED",
+                    detail={"error": str(exc)},
+                    candidate=approved.signal,
+                ),
+                decision=decision,
+                view=view,
+            )
+            return None
+        self._record_approved_decision(approved, decision=decision, view=view)
         self.submitted_specs.append(spec)
         if self.submitter is not None:
             self.submitter(spec)
@@ -102,7 +117,12 @@ class PolySignalNautilusStrategy:
         self._call_core("on_order_submitted", self._order_event(event))
 
     def on_order_accepted(self, event: Any) -> None:
-        self._call_core("on_order_accepted", self._order_event(event))
+        alpha_event = self._order_event(event)
+        if alpha_event.order_id in self._locally_accepted_order_ids:
+            return
+        if alpha_event.client_order_id in self._locally_accepted_order_ids:
+            return
+        self._call_core("on_order_accepted", alpha_event)
 
     def on_order_rejected(self, event: Any) -> None:
         self._call_core("on_order_rejected", self._order_event(event))
@@ -127,7 +147,9 @@ class PolySignalNautilusStrategy:
                 continue
             policy_result = self.policy.evaluate(decision, view)
             if isinstance(policy_result, ApprovedDecision):
-                submitted.append(self.submit_approved(policy_result, decision=decision, view=view))
+                spec = self.submit_approved(policy_result, decision=decision, view=view)
+                if spec is not None:
+                    submitted.append(spec)
             else:
                 self._record_rejected_decision(policy_result, decision=decision, view=view)
         return submitted
@@ -168,6 +190,7 @@ class PolySignalNautilusStrategy:
         view: MarketView,
     ) -> None:
         signal_id = approved.signal.signal_id
+        self._locally_accepted_order_ids.add(signal_id)
         self._bind_core_signal(decision.market_id, signal_id)
         self._call_core(
             "on_order_accepted",
