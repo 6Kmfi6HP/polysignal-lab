@@ -118,3 +118,106 @@ def test_ptb_nautilus_strategy_constructs_with_core_without_nautilus_dependency(
     strategy = PTBDiffNautilusStrategy(config=config, assembler=FakeAssembler(None), condition_ids=("condition-btc-5m",))
 
     assert strategy.strategy_name == "ptb_diff"
+
+
+# ── Batch evaluation tests (nautilus runtime) ─────────────────────────────────
+
+
+from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
+from polysignal_lab.nautilus_runtime.strategies.base import PolySignalNautilusStrategy as RuntimeStrategy
+from polysignal_lab.domain.enums import OrderStatus
+
+
+class _MockBook:
+    best_ask: float | None = None
+    ask_levels: tuple = ()
+
+
+class _MockView:
+    condition_id: str = "condition-btc-5m"
+
+    def book_for(self, side):
+        return _MockBook()
+
+    @property
+    def created_at(self):
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc)
+
+
+class RuntimeFakePolicy:
+    def evaluate(self, decision, view):
+        from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
+        from polysignal_lab.domain.signal import SignalCandidate
+        candidate = SignalCandidate.build(
+            strategy=decision.strategy,
+            asset=decision.asset,
+            timeframe=decision.timeframe,
+            market_id=decision.market_id,
+            market_slug=decision.market_slug,
+            condition_id=decision.condition_id,
+            token_id=decision.token_id,
+            side=decision.side,
+            confidence=decision.confidence,
+            entry_reference_price=decision.entry_reference_price,
+            max_entry_price=decision.max_entry_price,
+            seconds_to_close=decision.seconds_to_close,
+            data_freshness_ms=decision.data_freshness_ms,
+            reason_codes=list(decision.reason_codes),
+            metrics=dict(decision.metrics),
+            order_intent=decision.order_intent.intent if decision.order_intent else None,
+            expiry_seconds=decision.order_intent.expiry_seconds if decision.order_intent else None,
+            pair_id=decision.order_intent.pair_id if decision.order_intent else None,
+            hedge_leg=decision.hedge_leg,
+        )
+        return ApprovedDecision(signal=candidate)
+
+
+def test_runtime_strategy_evaluate_all_conditions_clears_tracking_and_captures_results() -> None:
+    submitted = []
+
+    def submitter(spec):
+        submitted.append(spec)
+        return PaperExecutionResult(status=OrderStatus.FILLED)
+
+    strategy = RuntimeStrategy(
+        core=FakeCore([_decision()]),
+        assembler=FakeAssembler(_MockView()),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
+        submitter=submitter,
+    )
+    strategy.submitted_specs.append(object())
+
+    batch = strategy.evaluate_all_conditions()
+
+    assert batch.strategy == "ptb_diff"
+    assert len(batch.submitted_specs) == 1
+    assert len(batch.execution_results) == 1
+    assert batch.execution_results[0].status == OrderStatus.FILLED
+    assert submitted == list(batch.submitted_specs)
+
+
+def test_runtime_strategy_evaluate_all_conditions_uses_override_condition_ids() -> None:
+    class RecordingAssembler(FakeAssembler):
+        def __init__(self):
+            super().__init__(object())
+            self.seen = []
+
+        def build(self, condition_id: str):
+            self.seen.append(condition_id)
+            return self.view
+
+    assembler = RecordingAssembler()
+    strategy = RuntimeStrategy(
+        core=FakeCore([]),
+        assembler=assembler,
+        condition_ids=("old",),
+        strategy_name="ptb_diff",
+    )
+
+    batch = strategy.evaluate_all_conditions(("new",))
+
+    assert assembler.seen == ["new"]
+    assert batch.submitted_specs == ()
