@@ -279,11 +279,24 @@ class ObservabilityActor:
 
     # -- Notifications --
 
-    async def notify_startup(self, strategy_names: Sequence[str] = ()) -> None:
+    async def notify_startup(
+        self,
+        strategy_names: Sequence[str] = (),
+        *,
+        paper_engine: str = "nautilus_matching",
+        accuracy_mode: str = "depth_l2",
+    ) -> None:
+        msg = (
+            f"Nautilus runtime started — {len(strategy_names)} strategies loaded — "
+            f"paper_engine={paper_engine} accuracy_mode={accuracy_mode}"
+        )
+        self.health.mark_ok(
+            "observability_actor",
+            paper_engine=paper_engine,
+            accuracy_mode=accuracy_mode,
+        )
         if self.notifier is None:
             return
-        msg = f"Nautilus runtime started — {len(strategy_names)} strategies loaded"
-        self.health.mark_ok("observability_actor")
         await self.notifier.send(msg, "startup")
 
     async def notify_shutdown(self) -> None:

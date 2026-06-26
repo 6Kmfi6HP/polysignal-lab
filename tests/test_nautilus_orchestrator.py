@@ -116,6 +116,40 @@ async def test_run_once_syncs_evaluates_and_settles_real_market_registry() -> No
     assert orch.observability.health == 1
 
 
+async def test_phase_health_marks_matching_engine_metadata() -> None:
+    paper_client = SimpleNamespace(
+        wallet=SimpleNamespace(open_positions={}),
+        paper_engine="nautilus_matching",
+        accuracy_mode="depth_l2",
+    )
+    orch = _orchestrator(paper_client=paper_client)
+
+    orch._phase_health()
+
+    assert (
+        "ok",
+        "orchestrator",
+        {"paper_engine": "nautilus_matching", "accuracy_mode": "depth_l2"},
+    ) in orch.health.calls
+
+
+async def test_daily_report_health_marks_matching_engine_metadata() -> None:
+    paper_client = SimpleNamespace(
+        wallet=SimpleNamespace(open_positions={}),
+        paper_engine="nautilus_matching",
+        accuracy_mode="queue_l2",
+    )
+    orch = _orchestrator(paper_client=paper_client)
+
+    await orch._phase_daily_report()
+
+    assert (
+        "ok",
+        "daily_report",
+        {"paper_engine": "nautilus_matching", "accuracy_mode": "queue_l2"},
+    ) in orch.health.calls
+
+
 async def test_run_once_drains_resting_orders_and_position_exits() -> None:
     calls: list[str] = []
     position = SimpleNamespace(paper_position_id="pos-1", token_id="up-token")

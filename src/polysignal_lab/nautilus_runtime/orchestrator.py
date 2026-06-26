@@ -214,17 +214,45 @@ class NautilusOrchestrator:
 
     async def _phase_daily_report(self) -> None:
         """Generate/publish the daily paper report through scheduler reporting."""
+        metadata = {
+            "paper_engine": getattr(
+                self.paper_client,
+                "paper_engine",
+                "nautilus_matching",
+            ),
+            "accuracy_mode": getattr(
+                self.paper_client,
+                "accuracy_mode",
+                "depth_l2",
+            ),
+        }
         try:
             await self.scheduler.generate_daily_report()
-            self.health.mark_ok("daily_report")
+            self.health.mark_ok("daily_report", **metadata)
         except Exception as exc:
             self.logger.exception("Daily report generation failed")
-            self.health.mark_degraded("daily_report", reason=str(exc)[:200])
+            self.health.mark_degraded(
+                "daily_report",
+                reason=str(exc)[:200],
+                **metadata,
+            )
 
     def _phase_health(self) -> None:
         """Record a health snapshot."""
+        metadata = {
+            "paper_engine": getattr(
+                self.paper_client,
+                "paper_engine",
+                "nautilus_matching",
+            ),
+            "accuracy_mode": getattr(
+                self.paper_client,
+                "accuracy_mode",
+                "depth_l2",
+            ),
+        }
         try:
-            self.health.mark_ok("orchestrator")
+            self.health.mark_ok("orchestrator", **metadata)
             self.observability.record_health_snapshot()
         except Exception as exc:
             self.logger.exception("Health recording failed")

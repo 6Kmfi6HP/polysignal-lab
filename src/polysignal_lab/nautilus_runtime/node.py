@@ -313,8 +313,11 @@ async def run_nautilus_cli_async(settings: Settings | None = None,
             signal.signal(sig, lambda _signum, _frame: request_stop())
 
     try:
+        paper_client = bundle.components["paper_client"]
         await bundle.observability.notify_startup(
             [s.strategy_name for s in bundle.components["strategies"]],
+            paper_engine=paper_client.paper_engine,
+            accuracy_mode=paper_client.accuracy_mode,
         )
         await bundle.orchestrator.run(event)
     finally:

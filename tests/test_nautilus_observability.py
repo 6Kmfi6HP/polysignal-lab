@@ -39,6 +39,30 @@ class FakeStore:
 
 # ── ObservabilityActor tests ──────────────────────────────────────────────────
 
+def test_startup_message_includes_matching_engine_metadata() -> None:
+    publisher = FakePublisher()
+    actor = ObservabilityActor(notifier=NautilusNotifierAdapter(publisher))
+
+    asyncio.run(
+        actor.notify_startup(
+            ["ptb_diff"],
+            paper_engine="nautilus_matching",
+            accuracy_mode="depth_l2",
+        )
+    )
+
+    assert publisher.calls == [
+        (
+            "Nautilus runtime started — 1 strategies loaded — "
+            "paper_engine=nautilus_matching accuracy_mode=depth_l2",
+            "startup",
+        )
+    ]
+    component = actor.health.components["observability_actor"]
+    assert component.metrics["paper_engine"] == "nautilus_matching"
+    assert component.metrics["accuracy_mode"] == "depth_l2"
+
+
 
 def test_record_decision_writes_to_signals_table() -> None:
     store = FakeStore()
@@ -83,6 +107,27 @@ def test_record_order_writes_to_orders_table() -> None:
     assert rows[0]["stake_usdc"] == 10.0
 
 
+def test_record_order_preserves_matching_metadata() -> None:
+    store = FakeStore()
+    actor = ObservabilityActor(store=store)
+
+    order = PaperOrder(
+        paper_order_id="order-1", signal_id="sig-1", token_id="t1",
+        side=Side.UP, limit_price=0.82, stake_usdc=10.0,
+        reference_price=0.82, asset="BTC", timeframe="5m", strategy="test",
+        market_id="m1", market_slug="s1",
+        metrics={"paper_engine": "nautilus_matching", "accuracy_mode": "depth_l2"},
+    )
+    result = PaperExecutionResult(order=order, status=OrderStatus.FILLED)
+
+    actor.record_order(result)
+
+    rows = store.tables.get("orders", [])
+    assert len(rows) == 1
+    assert rows[0]["metrics"]["paper_engine"] == "nautilus_matching"
+    assert rows[0]["metrics"]["accuracy_mode"] == "depth_l2"
+
+
 def test_record_fill_writes_to_fills_table() -> None:
     store = FakeStore()
     actor = ObservabilityActor(store=store)
@@ -121,7 +166,11 @@ def test_record_position_preserves_display_metadata() -> None:
         shares=20.0,
         stake_usdc=10.0,
         signal_confidence=0.8,
-        signal_metrics={"condition_id": "condition-btc-5m"},
+        signal_metrics={
+            "condition_id": "condition-btc-5m",
+            "paper_engine": "nautilus_matching",
+            "accuracy_mode": "depth_l2",
+        },
     )
 
     actor.record_position(position)
@@ -134,6 +183,8 @@ def test_record_position_preserves_display_metadata() -> None:
     assert rows[0]["market_id"] == "btc-5m"
     assert rows[0]["market_slug"] == "btc-updown-5m"
     assert rows[0]["signal_confidence"] == 0.8
+    assert rows[0]["signal_metrics"]["paper_engine"] == "nautilus_matching"
+    assert rows[0]["signal_metrics"]["accuracy_mode"] == "depth_l2"
 
 def test_record_settlement_writes_to_settlements_table() -> None:
     store = FakeStore()
