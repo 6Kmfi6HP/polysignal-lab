@@ -12,14 +12,24 @@ def test_default_import_does_not_require_nautilus() -> None:
     assert importlib.import_module("polysignal_lab") is not None
 
 def test_nautilus_node_and_strategies_do_not_import_legacy_execution() -> None:
-    for name in tuple(sys.modules):
-        if name.startswith("polysignal_lab.nautilus_runtime"):
-            sys.modules.pop(name)
+    saved_runtime_modules = {
+        name: module
+        for name, module in tuple(sys.modules.items())
+        if name.startswith("polysignal_lab.nautilus_runtime")
+    }
+    for name in saved_runtime_modules:
+        sys.modules.pop(name, None)
 
-    importlib.import_module("polysignal_lab.nautilus_runtime.node")
-    importlib.import_module("polysignal_lab.nautilus_runtime.strategies.base")
+    try:
+        importlib.import_module("polysignal_lab.nautilus_runtime.node")
+        importlib.import_module("polysignal_lab.nautilus_runtime.strategies.base")
 
-    assert "polysignal_lab.nautilus_runtime.execution" not in sys.modules
+        assert "polysignal_lab.nautilus_runtime.execution" not in sys.modules
+    finally:
+        for name in tuple(sys.modules):
+            if name.startswith("polysignal_lab.nautilus_runtime"):
+                sys.modules.pop(name, None)
+        sys.modules.update(saved_runtime_modules)
 
 
 def test_nautilus_extra_is_optional_and_polymarket_scoped() -> None:
