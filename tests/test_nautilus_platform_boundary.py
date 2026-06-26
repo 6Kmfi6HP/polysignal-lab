@@ -39,8 +39,15 @@ def test_nautilus_extra_is_optional_and_polymarket_scoped() -> None:
     nautilus_extra = data["project"]["optional-dependencies"]["nautilus"]
 
     assert nautilus_extra == [
-        "nautilus_trader[polymarket]>=1.230.0; python_version >= '3.12'",
+        "nautilus_trader[polymarket]==1.229.0; python_version >= '3.12'",
     ]
+
+def test_nautilus_docker_and_lock_avoid_git_source_builds() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    lock_text = Path("uv.lock").read_text(encoding="utf-8")
+
+    assert "git+https://github.com/nautechsystems/nautilus_trader" not in dockerfile
+    assert 'source = { git = "https://github.com/nautechsystems/nautilus_trader' not in lock_text
 
 
 def test_cli_exposes_nautilus_mode_and_script() -> None:

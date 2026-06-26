@@ -26,7 +26,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pre-commit>=4.6.0", "httpx2>=2.4"]
 nautilus = [
-  "nautilus_trader[polymarket]>=1.230.0; python_version >= '3.12'",
+  "nautilus_trader[polymarket]==1.229.0; python_version >= '3.12'",
 ]
 [project.scripts]
 polysignal-lab = "polysignal_lab.app.main:main"
@@ -45,8 +45,6 @@ asyncio_mode = "auto"
 [tool.hatch.metadata]
 allow-direct-references = true
 
-[tool.uv.sources]
-nautilus-trader = { git = "https://github.com/nautechsystems/nautilus_trader", rev = "a3a72b2" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/polysignal_lab"]
