@@ -140,7 +140,10 @@ class PolySignalNautilusStrategy:
                 approved,
                 fixed_stake_usdc=self.fixed_stake_usdc,
                 best_ask=best_ask,
-                available_shares=_visible_ask_shares(book.ask_levels, best_ask),
+                available_shares=_visible_ask_shares(
+                    book.ask_levels,
+                    approved.signal.max_entry_price,
+                ),
             )
         except ValueError as exc:
             self._record_rejected_decision(
@@ -299,7 +302,10 @@ class PolySignalNautilusStrategy:
                 signal,
                 fixed_stake_usdc=self.fixed_stake_usdc,
                 best_ask=best_ask,
-                available_shares=_visible_ask_shares(book.ask_levels, best_ask),
+                available_shares=_visible_ask_shares(
+                    book.ask_levels,
+                    signal.max_entry_price,
+                ),
             )
         except ValueError as exc:
             self.rejected_decisions.append(
@@ -504,11 +510,11 @@ class PolySignalNautilusStrategy:
 
 
 def _visible_ask_shares(
-    levels: Sequence[tuple[float, float]], best_ask: float | None
+    levels: Sequence[tuple[float, float]], limit_price: float | None
 ) -> float | None:
-    if not levels or best_ask is None:
+    if not levels or limit_price is None:
         return None
-    return sum(float(size) for price, size in levels if float(price) <= best_ask)
+    return sum(float(size) for price, size in levels if float(price) <= limit_price)
 
 
 def _first_attr(obj: Any, *names: str, default: Any) -> Any:

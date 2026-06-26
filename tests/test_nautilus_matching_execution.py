@@ -768,6 +768,14 @@ def test_partial_exit_updates_wallet_and_remaining_position() -> None:
     assert wallet.realized_pnl == -0.08
     assert wallet.open_positions["position-1"].shares == 6.0
     assert wallet.open_positions["position-1"].stake_usdc == 4.92
+    assert len(result.trade_results) == 1
+    trade = result.trade_results[0]
+    assert trade.paper_position_id == "position-1"
+    assert trade.shares == 4.0
+    assert trade.stake_usdc == 3.28
+    assert trade.settlement_value == 3.2
+    assert round(trade.pnl_usdc, 10) == -0.08
+    assert trade.result == TradeResultStatus.LOSS
 
 def test_fok_rejects_when_full_depth_unavailable() -> None:
     client = NautilusMatchingPaperExecutionClient(

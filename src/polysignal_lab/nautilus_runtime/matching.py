@@ -905,40 +905,39 @@ class NautilusMatchingPaperExecutionClient:
         exit_shares = min(filled_shares, original_shares)
         cost_basis = original_stake * (exit_shares / original_shares) if original_shares else 0.0
         pnl = settlement_value - cost_basis
-        trade_results: list[PaperTradeResult] = []
+        closed_at = utc_now()
+        trade_results = [
+            PaperTradeResult(
+                signal_id=position.signal_id,
+                paper_position_id=position.paper_position_id,
+                strategy=position.strategy,
+                asset=position.asset,
+                timeframe=position.timeframe,
+                market_id=position.market_id,
+                market_slug=position.market_slug,
+                side=position.side,
+                entry_price=position.entry_price,
+                shares=exit_shares,
+                stake_usdc=cost_basis,
+                exit_mode=_exit_mode(order.metrics.get("exit_reason")),
+                outcome_value=settlement_value / exit_shares if exit_shares else 0.0,
+                settlement_value=settlement_value,
+                pnl_usdc=pnl,
+                roi=pnl / cost_basis if cost_basis else 0.0,
+                result=_trade_result_status(pnl),
+                opened_at=position.opened_at,
+                closed_at=closed_at,
+                details={
+                    "paper_exit_price": settlement_value / exit_shares if exit_shares else 0.0,
+                    "confidence": position.signal_confidence,
+                    "exit_threshold_source": "matching_exit",
+                },
+            )
+        ]
         if exit_shares >= original_shares:
-            closed_at = utc_now()
             position.status = PositionStatus.CLOSED
             position.closed_at = closed_at
             self.wallet.close_position(position.paper_position_id, settlement_value, pnl)
-            trade_results.append(
-                PaperTradeResult(
-                    signal_id=position.signal_id,
-                    paper_position_id=position.paper_position_id,
-                    strategy=position.strategy,
-                    asset=position.asset,
-                    timeframe=position.timeframe,
-                    market_id=position.market_id,
-                    market_slug=position.market_slug,
-                    side=position.side,
-                    entry_price=position.entry_price,
-                    shares=exit_shares,
-                    stake_usdc=cost_basis,
-                    exit_mode=_exit_mode(order.metrics.get("exit_reason")),
-                    outcome_value=settlement_value / exit_shares if exit_shares else 0.0,
-                    settlement_value=settlement_value,
-                    pnl_usdc=pnl,
-                    roi=pnl / cost_basis if cost_basis else 0.0,
-                    result=_trade_result_status(pnl),
-                    opened_at=position.opened_at,
-                    closed_at=closed_at,
-                    details={
-                        "paper_exit_price": settlement_value / exit_shares if exit_shares else 0.0,
-                        "confidence": position.signal_confidence,
-                        "exit_threshold_source": "matching_exit",
-                    },
-                )
-            )
         else:
             self.wallet.cash_balance = round((self.wallet.cash_balance or 0.0) + settlement_value, 10)
             self.wallet.realized_pnl = round(self.wallet.realized_pnl + pnl, 10)

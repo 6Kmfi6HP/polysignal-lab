@@ -10,9 +10,10 @@ from polysignal_lab.alpha.types import (
     FreshnessView,
     MarketGroupView,
     MarketView,
+    OrderIntentSpec,
     SideBookView,
 )
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.group_views import MarketGroupViewAssembler
 from polysignal_lab.nautilus_runtime.strategies.cross_market_bot import (
@@ -265,3 +266,85 @@ def test_cross_market_wrapper_matches_legacy_alpha_output() -> None:
         assert spec.pair_id == decision.metrics.get(
             "pair_id", decision.order_intent.pair_id if decision.order_intent else None
         )
+
+
+
+def test_cross_market_wrapper_fok_depth_counts_asks_through_max_entry() -> None:
+    base_view = _view("cond-btc", ask=0.50)
+    view = replace(
+        base_view,
+        up=replace(
+            base_view.up,
+            ask_levels=((0.50, 10.0), (0.52, 10.0), (0.53, 100.0)),
+        ),
+    )
+    group = replace(_group(), views_by_condition_id={"cond-btc": view})
+
+    class FokCore:
+        def evaluate_group(self, group):
+            return [
+                AlphaDecision(
+                    strategy="cross_market_bot",
+                    asset="BTC",
+                    timeframe="5m",
+                    market_id=view.market_id,
+                    market_slug=view.market_slug,
+                    condition_id=view.condition_id,
+                    token_id=view.up.token_id,
+                    side=Side.UP,
+                    confidence=0.8,
+                    entry_reference_price=0.50,
+                    max_entry_price=0.52,
+                    seconds_to_close=view.seconds_to_close,
+                    data_freshness_ms=view.freshness.max_ms,
+                    reason_codes=("TEST",),
+                    metrics={},
+                    order_intent=OrderIntentSpec(
+                        intent=OrderIntent.TAKER_FOK,
+                        pair_id="pair-1",
+                    ),
+                    hedge_leg=False,
+                )
+            ]
+
+    class PreserveIntentPolicy:
+        def evaluate(self, decision, view):
+            from polysignal_lab.domain.signal import SignalCandidate
+
+            intent = decision.order_intent
+            return ApprovedDecision(
+                signal=SignalCandidate.build(
+                    strategy=decision.strategy,
+                    asset=decision.asset,
+                    timeframe=decision.timeframe,
+                    market_id=decision.market_id,
+                    market_slug=decision.market_slug,
+                    condition_id=decision.condition_id,
+                    token_id=decision.token_id,
+                    side=decision.side,
+                    confidence=decision.confidence,
+                    entry_reference_price=decision.entry_reference_price,
+                    max_entry_price=decision.max_entry_price,
+                    seconds_to_close=decision.seconds_to_close,
+                    data_freshness_ms=decision.data_freshness_ms,
+                    reason_codes=list(decision.reason_codes),
+                    metrics=dict(decision.metrics),
+                    order_intent=intent.intent,
+                    pair_id=intent.pair_id,
+                )
+            )
+
+    strategy = CrossMarketNautilusStrategy(
+        core=FokCore(),
+        assembler=None,
+        condition_ids=["cond-btc"],
+        strategy_name="cross_market_bot",
+        policy=PreserveIntentPolicy(),
+        fixed_stake_usdc=10.0,
+    )
+
+    specs = strategy.evaluate_group(group)
+
+    assert len(specs) == 1
+    assert specs[0].intent == OrderIntent.TAKER_FOK
+    assert specs[0].quantity == 20.0

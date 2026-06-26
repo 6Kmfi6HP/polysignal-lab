@@ -86,9 +86,9 @@ class CrossMarketNautilusStrategy:
                 sum(
                     float(size)
                     for price, size in book.ask_levels
-                    if float(price) <= (best_ask or 0)
+                    if float(price) <= float(approved.signal.max_entry_price)
                 )
-                if book.ask_levels and best_ask is not None
+                if book.ask_levels and approved.signal.max_entry_price is not None
                 else None
             )
             spec = order_spec_from_decision(

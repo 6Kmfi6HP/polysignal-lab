@@ -198,6 +198,51 @@ def test_runtime_strategy_evaluate_all_conditions_clears_tracking_and_captures_r
     assert batch.execution_results[0].status == OrderStatus.FILLED
     assert submitted == list(batch.submitted_specs)
 
+def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
+    decision = AlphaDecision(
+        strategy="ptb_diff",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        condition_id="condition-btc-5m",
+        token_id="up-token",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.50,
+        max_entry_price=0.52,
+        seconds_to_close=60,
+        data_freshness_ms=20,
+        reason_codes=("TEST",),
+        metrics={},
+        order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK, pair_id="pair-1"),
+        hedge_leg=False,
+    )
+
+    class Book:
+        best_ask = 0.50
+        ask_levels = ((0.50, 10.0), (0.52, 10.0), (0.53, 100.0))
+
+    class View(_MockView):
+        def book_for(self, side):
+            return Book()
+
+    strategy = RuntimeStrategy(
+        core=FakeCore([decision]),
+        assembler=FakeAssembler(View()),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
+        fixed_stake_usdc=10.0,
+    )
+
+    specs = strategy.evaluate_condition("condition-btc-5m")
+
+    assert len(specs) == 1
+    assert specs[0].intent == OrderIntent.TAKER_FOK
+    assert specs[0].quantity == 20.0
+    assert strategy.rejected_decisions == []
+
 
 def test_runtime_strategy_evaluate_all_conditions_uses_override_condition_ids() -> None:
     class RecordingAssembler(FakeAssembler):
