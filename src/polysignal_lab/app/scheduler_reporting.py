@@ -384,6 +384,15 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
         "require_depth_check": fill_cfg.require_depth_check,
         "slippage_bps": fill_cfg.slippage_bps,
     }
+    execution_metadata = getattr(scheduler, "paper_execution_metadata", None)
+    if isinstance(execution_metadata, dict):
+        paper_execution_assumptions.update(
+            {
+                key: execution_metadata[key]
+                for key in ("paper_engine", "accuracy_mode")
+                if execution_metadata.get(key)
+            }
+        )
 
     try:
         report = PaperReportService().build_daily_report(

@@ -126,12 +126,16 @@ async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
     async def _noop(*args, **kwargs):
         pass
 
+    paper_client = SimpleNamespace(
+        paper_engine="nautilus_matching",
+        accuracy_mode="depth_l2",
+    )
     fake_bundle = SimpleNamespace(
         orchestrator=FakeOrchestrator(),
         websocket_tasks=[],
         scheduler=SimpleNamespace(stop=_noop),
         observability=SimpleNamespace(notify_startup=_noop),
-        components={"strategies": []},
+        components={"strategies": [], "paper_client": paper_client},
     )
 
     async def fake_build(settings=None):

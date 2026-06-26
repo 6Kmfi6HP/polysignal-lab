@@ -286,6 +286,8 @@ def test_submit_spec_mirrors_nautilus_fill_event_without_local_repricing() -> No
     assert result.fills[0].shares == 7.0
     assert result.positions[0].stake_usdc == 5.67
     assert result.positions[0].paper_position_id in client.wallet.open_positions
+    assert result.fills[0].metrics["paper_engine"] == "nautilus_matching"
+    assert result.fills[0].metrics["accuracy_mode"] == "depth_l2"
 
 
 def test_replayed_fill_id_is_not_returned_or_applied_twice() -> None:

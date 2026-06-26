@@ -137,12 +137,15 @@ def test_record_fill_writes_to_fills_table() -> None:
         side=Side.UP, raw_best_ask=0.82, slippage_bps=0,
         fill_price=0.82, stake_usdc=10.0, shares=12.0,
         depth_checked=False, available_depth_usdc=None, fill_ratio=1.0,
+        metrics={"paper_engine": "nautilus_matching", "accuracy_mode": "depth_l2"},
     )
     actor.record_fill(fill)
 
     rows = store.tables.get("fills", [])
     assert len(rows) == 1
     assert rows[0]["fill_price"] == 0.82
+    assert rows[0]["metrics"]["paper_engine"] == "nautilus_matching"
+    assert rows[0]["metrics"]["accuracy_mode"] == "depth_l2"
 
 
 

@@ -148,6 +148,10 @@ async def test_daily_report_health_marks_matching_engine_metadata() -> None:
         "daily_report",
         {"paper_engine": "nautilus_matching", "accuracy_mode": "queue_l2"},
     ) in orch.health.calls
+    assert orch.scheduler.paper_execution_metadata == {
+        "paper_engine": "nautilus_matching",
+        "accuracy_mode": "queue_l2",
+    }
 
 
 async def test_run_once_drains_resting_orders_and_position_exits() -> None:

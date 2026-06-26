@@ -861,6 +861,7 @@ class NautilusMatchingPaperExecutionClient:
                 depth_checked=True,
                 available_depth_usdc=event.available_depth_usdc,
                 fill_ratio=event.fill_ratio,
+                metrics=dict(order.metrics),
             )
             fills.append(fill)
             self._mirrored_fill_ids.add(fill.paper_fill_id)
@@ -934,6 +935,7 @@ class NautilusMatchingPaperExecutionClient:
                 depth_checked=True,
                 available_depth_usdc=event.available_depth_usdc,
                 fill_ratio=event.fill_ratio,
+                metrics=dict(order.metrics),
             )
             position_fields: dict[str, Any] = {}
             if event.position_id is not None:

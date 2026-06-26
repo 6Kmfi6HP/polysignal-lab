@@ -52,3 +52,4 @@ class PaperFill(BaseModel):
     depth_checked: bool
     available_depth_usdc: float | None = None
     fill_ratio: float = 1.0
+    metrics: dict[str, Any] = Field(default_factory=dict)

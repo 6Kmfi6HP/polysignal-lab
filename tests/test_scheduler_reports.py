@@ -556,6 +556,10 @@ async def test_daily_report_publish_record_written(tmp_path: Path, snapshot, set
     scheduler.wallet.close_position(position.paper_position_id, result.settlement_value, result.pnl_usdc)
     scheduler.sqlite.upsert_paper_position(position)
     scheduler.sqlite.insert_paper_trade_result(result)
+    scheduler.paper_execution_metadata = {
+        "paper_engine": "nautilus_matching",
+        "accuracy_mode": "queue_l2",
+    }
 
     # When: the daily report is generated with Telegram daily reporting enabled.
     report = await scheduler.generate_daily_report()
@@ -581,12 +585,15 @@ async def test_daily_report_publish_record_written(tmp_path: Path, snapshot, set
     assert report.average_execution_staleness_ms is not None
     assert report.average_executable_depth_usdc is not None
     assert report.paper_execution_assumptions == {
+        "accuracy_mode": "queue_l2",
         "max_book_staleness_ms": settings.data.polymarket.max_book_staleness_ms,
         "min_fill_ratio": settings.paper_trading.fill_model.min_fill_ratio,
+        "paper_engine": "nautilus_matching",
         "reject_if_partial": settings.paper_trading.fill_model.reject_if_partial,
         "require_depth_check": settings.paper_trading.fill_model.require_depth_check,
         "slippage_bps": settings.paper_trading.fill_model.slippage_bps,
     }
+    assert report_rows[0]["paper_execution_assumptions"] == report.paper_execution_assumptions
     assert report.strategy_breakdown["ptb_diff"]["win_count"] == 1
     assert report.asset_breakdown["BTC"]["closed_positions"] == 1
     assert report.timeframe_breakdown["5m"]["total_pnl_usdc"] == result.pnl_usdc

@@ -213,6 +213,7 @@ class ObservabilityActor:
             "token_id": fill.token_id,
             "side": fill.side.value,
             "created_at": utc_iso(),
+            "metrics": dict(fill.metrics),
         })
 
     def record_position(self, position: PaperPosition) -> None:
