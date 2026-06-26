@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import sys
 import tomllib
 from pathlib import Path
 
@@ -9,6 +10,16 @@ from polysignal_lab.app import main as app_main
 
 def test_default_import_does_not_require_nautilus() -> None:
     assert importlib.import_module("polysignal_lab") is not None
+
+def test_nautilus_node_and_strategies_do_not_import_legacy_execution() -> None:
+    for name in tuple(sys.modules):
+        if name.startswith("polysignal_lab.nautilus_runtime"):
+            sys.modules.pop(name)
+
+    importlib.import_module("polysignal_lab.nautilus_runtime.node")
+    importlib.import_module("polysignal_lab.nautilus_runtime.strategies.base")
+
+    assert "polysignal_lab.nautilus_runtime.execution" not in sys.modules
 
 
 def test_nautilus_extra_is_optional_and_polymarket_scoped() -> None:

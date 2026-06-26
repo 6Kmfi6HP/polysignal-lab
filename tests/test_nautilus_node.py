@@ -84,6 +84,14 @@ async def test_build_nautilus_runtime_wires_real_book_provider(monkeypatch) -> N
         fake_start_websockets,
     )
 
+    def fail_paper_simulator(*args, **kwargs):
+        raise AssertionError("build_nautilus_runtime must not construct PaperSimulator")
+
+    monkeypatch.setattr(
+        "polysignal_lab.app.scheduler.PaperSimulator",
+        fail_paper_simulator,
+    )
+
     bundle = await build_nautilus_runtime()
 
     assert isinstance(bundle.book_data_provider, NautilusBookDataProvider)
@@ -94,6 +102,14 @@ async def test_build_nautilus_runtime_wires_real_book_provider(monkeypatch) -> N
     assert bundle.paper_client is bundle.components["paper_client"]
     assert bundle.orchestrator.paper_client is bundle.paper_client
     assert "matching_client" not in bundle.components
+    assert bundle.scheduler._trading_components_initialized is True
+    assert bundle.scheduler.wallet is bundle.components["wallet"]
+    assert bundle.scheduler.paper_portfolio.wallet is bundle.scheduler.wallet
+    assert bundle.scheduler.paper_portfolio.paper is None
+    assert bundle.scheduler.paper_portfolio.settlement is bundle.scheduler.settlement
+    assert bundle.scheduler.paper_portfolio.markets is bundle.scheduler.ctx.markets
+    assert bundle.scheduler.paper_portfolio.books is bundle.scheduler.ctx.books
+    assert bundle.scheduler.paper_portfolio.persistence is bundle.scheduler.persistence
 
 async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
     class FakeOrchestrator:

@@ -16,7 +16,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicyActor,
     RejectedDecision,
 )
-from polysignal_lab.nautilus_runtime.execution import order_spec_from_decision
+from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 
 
 class CrossMarketNautilusStrategy:

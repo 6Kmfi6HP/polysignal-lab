@@ -8,7 +8,7 @@ from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
-from polysignal_lab.nautilus_runtime.execution import order_spec_from_decision
+from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 from polysignal_lab.strategies.config import LateConsensusConfig
 from polysignal_lab.strategies.late_consensus import LateConsensusStrategy
 from factories import sample_snapshot

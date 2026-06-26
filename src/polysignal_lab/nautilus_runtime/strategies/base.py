@@ -21,8 +21,8 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicyActor,
     RejectedDecision,
 )
-from polysignal_lab.nautilus_runtime.execution import order_spec_from_decision
-from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
+from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
+from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 from polysignal_lab.utils import utc_now
 
 DEFAULT_DATA_NAMES = (

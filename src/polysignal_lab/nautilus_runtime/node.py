@@ -15,6 +15,7 @@ from typing import Any
 
 from polysignal_lab.app import scheduler_market_data
 from polysignal_lab.app.scheduler import PolySignalScheduler
+from polysignal_lab.paper.exit_engine import PaperExitEngine
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
@@ -33,6 +34,8 @@ from polysignal_lab.nautilus_runtime.observability import (
 from polysignal_lab.nautilus_runtime.orchestrator import NautilusOrchestrator
 from polysignal_lab.nautilus_runtime.position_policy import PositionPolicyActor
 from polysignal_lab.nautilus_runtime.settlement import SettlementActor
+from polysignal_lab.signal_layer.arbiter import SignalArbiter
+from polysignal_lab.strategies.execution import build_strategy_schedule
 from polysignal_lab.nautilus_runtime.strategies import (
     BinaryMomentumNautilusStrategy,
     DumpHedgeNautilusStrategy,
@@ -193,6 +196,37 @@ def build_control(policy: DecisionPolicyActor) -> DecisionPolicyControl:
     """Build a StrategyControl adapter from a DecisionPolicyActor."""
     return DecisionPolicyControl(policy)
 
+def _initialize_nautilus_scheduler_components(scheduler: PolySignalScheduler) -> None:
+    """Initialize scheduler state needed by Nautilus without legacy local paper."""
+    if scheduler._trading_components_initialized:
+        return
+    scheduler.strategy_schedule = build_strategy_schedule(scheduler.settings.strategies)
+    scheduler.strategies = [entry.strategy for entry in scheduler.strategy_schedule]
+    scheduler.signal_pipeline.strategies = scheduler.strategies
+    scheduler.signal_pipeline.set_strategy_dependencies(
+        {entry.name: tuple(entry.depends_on) for entry in scheduler.strategy_schedule}
+    )
+    known_strategy_names = {entry.name for entry in scheduler.strategy_schedule}
+    disabled = scheduler.persistence.read_state("telegram_disabled_strategies", default=[])
+    for name in disabled if isinstance(disabled, list) else []:
+        if name in known_strategy_names:
+            scheduler.signal_pipeline.set_strategy_enabled(str(name), False)
+    scheduler.arbiter = SignalArbiter()
+    scheduler.wallet = PaperWallet(scheduler.settings.paper_trading.starting_balance_usdc)
+    scheduler.paper = None
+    scheduler.exits = PaperExitEngine(scheduler.settings.paper_trading.exit_model, scheduler.wallet)
+    scheduler.settlement = PaperSettlementEngine(scheduler.wallet)
+    scheduler.paper_portfolio.configure(
+        wallet=scheduler.wallet,
+        paper=None,
+        exits=scheduler.exits,
+        settlement=scheduler.settlement,
+        markets=scheduler.ctx.markets,
+        books=scheduler.ctx.books,
+        persistence=scheduler.persistence,
+    )
+    scheduler._trading_components_initialized = True
+
 
 async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRuntimeBundle:
     """Build and wire the complete Nautilus runtime with a PolySignal-owned scheduler."""
@@ -200,7 +234,7 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
         settings = load_settings()
 
     scheduler = PolySignalScheduler(settings)
-    scheduler._initialize_trading_components()
+    _initialize_nautilus_scheduler_components(scheduler)
     await scheduler_market_data.refresh_markets_once(scheduler)
 
     book_data_provider = NautilusBookDataProvider(scheduler.ctx.books)
