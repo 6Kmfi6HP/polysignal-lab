@@ -9,6 +9,9 @@ from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.execution import order_spec_from_decision
+from polysignal_lab.strategies.config import LateConsensusConfig
+from polysignal_lab.strategies.late_consensus import LateConsensusStrategy
+from factories import sample_snapshot
 
 
 def _decision(
@@ -56,6 +59,22 @@ def test_taker_fak_maps_to_ioc_limit_at_best_ask_and_checks_depth() -> None:
     assert spec.intent == OrderIntent.TAKER_FAK
     assert spec.tags["time_in_force"] == "IOC"
     assert spec.tags["fill_policy"] == "FAK"
+
+
+def test_order_spec_tags_include_signal_display_metadata() -> None:
+    spec = order_spec_from_decision(
+        _decision(intent=OrderIntent.TAKER_FAK, max_price=0.55),
+        fixed_stake_usdc=11.0,
+        best_ask=0.50,
+        available_shares=30.0,
+    )
+
+    assert spec.tags["asset"] == "BTC"
+    assert spec.tags["timeframe"] == "5m"
+    assert spec.tags["market_id"] == "btc-5m"
+    assert spec.tags["market_slug"] == "btc-updown-5m"
+    assert spec.tags["condition_id"] == "condition-btc-5m"
+    assert spec.tags["confidence"] == "0.8"
 
 
 def test_taker_fak_rejects_when_visible_depth_cannot_fill_any_shares() -> None:
@@ -165,6 +184,23 @@ def test_approved_signal_candidate_preserves_gtd_expiry_and_pair_metadata() -> N
     assert spec.expiry_seconds == 45
     assert spec.pair_id == "pair-1"
     assert spec.tags["expire_seconds"] == "45"
+
+
+def test_late_consensus_maps_to_current_favorite_ask_not_price_ceiling() -> None:
+    signal = LateConsensusStrategy(
+        LateConsensusConfig(entry_frequency_sec=0)
+    ).evaluate(sample_snapshot(up_ask=0.82, down_ask=0.18, seconds_to_close=100))[0]
+
+    spec = order_spec_from_decision(
+        ApprovedDecision(signal=signal),
+        fixed_stake_usdc=10.0,
+        best_ask=0.82,
+        available_shares=500.0,
+    )
+
+    assert spec.intent == OrderIntent.TAKER_IOC
+    assert spec.price == 0.82
+    assert spec.quantity == signal.metrics["contracts"]
 
 
 def test_missing_order_intent_uses_paper_safe_taker_at_max_entry_price() -> None:

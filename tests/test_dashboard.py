@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from polysignal_lab.dashboard.app import create_dashboard_app
 from polysignal_lab.domain.enums import OrderStatus, Side
 from polysignal_lab.domain.paper_order import PaperOrder
+from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
@@ -90,6 +91,55 @@ async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapsho
     assert "place order" not in html.text.lower()
     assert "create_" + "order" not in html.text
 
+
+
+def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-positions.sqlite3")
+    old = PaperPosition(
+        paper_position_id="old-pos",
+        signal_id="",
+        paper_order_id="old-order",
+        paper_fill_id="old-fill",
+        strategy="late_consensus",
+        asset="",
+        timeframe="",
+        market_id="2676328",
+        market_slug="",
+        token_id="old-token",
+        side=Side.UP,
+        entry_price=0.5,
+        shares=10.0,
+        stake_usdc=5.0,
+        opened_at=datetime(2026, 6, 25, tzinfo=timezone.utc),
+    )
+    latest = PaperPosition(
+        paper_position_id="latest-pos",
+        signal_id="sig-latest",
+        paper_order_id="latest-order",
+        paper_fill_id="latest-fill",
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        market_id="2676527",
+        market_slug="btc-updown-5m",
+        token_id="latest-token",
+        side=Side.UP,
+        entry_price=0.6,
+        shares=12.0,
+        stake_usdc=7.2,
+        opened_at=datetime(2026, 6, 26, tzinfo=timezone.utc),
+    )
+    store.upsert_paper_position(old)
+    store.upsert_paper_position(latest)
+    client = TestClient(create_dashboard_app(store))
+
+    response = client.get("/api/positions")
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert rows[0]["paper_position_id"] == "latest-pos"
+    assert rows[0]["asset"] == "BTC"
+    assert rows[0]["timeframe"] == "5m"
 
 def test_dashboard_health_returns_component_snapshot_from_system_events(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")

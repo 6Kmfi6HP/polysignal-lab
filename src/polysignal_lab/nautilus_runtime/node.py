@@ -75,6 +75,7 @@ def build_trading_node(
     *,
     condition_ids: Sequence[str] = (),
     store: Any = None,
+    wallet: PaperWallet | None = None,
 ) -> dict[str, Any]:
     """Build the Nautilus paper runtime wiring as a component dict.
 
@@ -91,8 +92,14 @@ def build_trading_node(
     group_assembler = MarketGroupViewAssembler()
 
     # -- Wallet & execution --
-    wallet = PaperWallet(starting_balance=settings.paper_trading.starting_balance_usdc)
-    paper_client = PolySignalPaperExecutionClient(wallet=wallet)
+    wallet = wallet or PaperWallet(
+        starting_balance=settings.paper_trading.starting_balance_usdc
+    )
+    paper_client = PolySignalPaperExecutionClient(
+        wallet=wallet,
+        fill_config=settings.paper_trading.fill_model,
+        max_book_staleness_ms=settings.data.polymarket.max_book_staleness_ms,
+    )
 
     # -- Decision policy --
     policy = DecisionPolicyActor()
@@ -193,12 +200,17 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
         settings = load_settings()
 
     scheduler = PolySignalScheduler(settings)
+    scheduler._initialize_trading_components()
     await scheduler_market_data.refresh_markets_once(scheduler)
 
     book_data_provider = NautilusBookDataProvider(scheduler.ctx.books)
 
     condition_ids = tuple(m.condition_id for m in scheduler.ctx.markets.active())
-    components = build_trading_node(settings, condition_ids=condition_ids)
+    components = build_trading_node(
+        settings,
+        condition_ids=condition_ids,
+        wallet=scheduler.wallet,
+    )
 
     # Wire real book data provider into the assembler
     components["assembler"].books = book_data_provider

@@ -292,7 +292,7 @@ def _decision(
         side=side,
         confidence=0.8,
         entry_reference_price=0.48,
-        max_entry_price=0.50,
+        max_entry_price=0.50 if side == Side.UP else 0.51,
         seconds_to_close=60,
         data_freshness_ms=20,
         reason_codes=("TEST",),
@@ -804,9 +804,7 @@ def test_approved_decision_with_consensus_submits_without_second_core_acceptance
 ):
     view = _view()
     decision = _decision()
-    consensus = _signal_from_decision(
-        replace(decision, side=Side.DOWN, token_id="down-token")
-    )
+    consensus = _signal_from_decision(_decision(side=Side.DOWN))
     core = RollbackCore([decision])
     submitter = FakeSubmitter()
 
@@ -847,7 +845,7 @@ def test_consensus_submitted_alias_fill_skips_source_core_lifecycle() -> None:
     view = _view()
     decision = _decision()
     consensus = _signal_from_decision(
-        replace(decision, strategy="consensus", side=Side.DOWN, token_id="down-token")
+        replace(_decision(side=Side.DOWN), strategy="consensus")
     )
     core = FakeCore([decision])
     submitter = FakeSubmitter()

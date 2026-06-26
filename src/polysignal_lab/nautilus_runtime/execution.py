@@ -28,7 +28,12 @@ def order_spec_from_decision(
 
     explicit_intent = _intent(source)
     if explicit_intent is None:
-        price = max_price
+        if best_ask is None:
+            price = max_price
+        else:
+            price = _positive_float(best_ask, "best_ask")
+            if price > max_price:
+                raise ValueError(f"best ask {price} exceeds max entry price {max_price}")
     elif intent in {
         OrderIntent.TAKER_FAK,
         OrderIntent.TAKER_FOK,
@@ -56,11 +61,28 @@ def order_spec_from_decision(
 
     tags: dict[str, str] = {
         "strategy": str(source.strategy),
+        "asset": str(source.asset),
+        "timeframe": str(source.timeframe),
+        "market_id": str(source.market_id),
+        "market_slug": str(source.market_slug),
+        "condition_id": str(source.condition_id),
+        "confidence": str(source.confidence),
+        "entry_reference_price": str(source.entry_reference_price),
+        "max_entry_price": str(source.max_entry_price),
         "order_intent": intent.value,
     }
     signal_id = getattr(source, "signal_id", None)
     if signal_id is not None:
         tags["signal_id"] = str(signal_id)
+    seconds_to_close = getattr(source, "seconds_to_close", None)
+    if seconds_to_close is not None:
+        tags["seconds_to_close"] = str(seconds_to_close)
+    data_freshness_ms = getattr(source, "data_freshness_ms", None)
+    if data_freshness_ms is not None:
+        tags["data_freshness_ms"] = str(data_freshness_ms)
+    reason_codes = getattr(source, "reason_codes", None)
+    if reason_codes:
+        tags["reason_codes"] = "|".join(str(code) for code in reason_codes)
     if bool(getattr(source, "hedge_leg", False)):
         tags["hedge_leg"] = "true"
     if intent == OrderIntent.PASSIVE_GTD:
@@ -177,12 +199,13 @@ class PolySignalPaperExecutionClient:
         registry: OrderBookRegistry | None = None,
         fill_config: FillModelConfig | None = None,
         order_book_data: dict[str, OrderBook] | None = None,
+        max_book_staleness_ms: int = 10_000,
     ) -> None:
         self.wallet = wallet or PaperWallet(starting_balance=10_000.0)
         self.registry = registry
         self._fill_config = fill_config or FillModelConfig()
         self._taker_executor = BestAskTakerExecutor(
-            self._fill_config, max_book_staleness_ms=10_000,
+            self._fill_config, max_book_staleness_ms=max_book_staleness_ms,
             registry=registry,
         )
         self._book_for_token: dict[str, OrderBook] = dict(order_book_data) if order_book_data else {}
@@ -255,6 +278,7 @@ class PolySignalPaperExecutionClient:
             pair_id=pair_id,
             reduce_only=reduce_only,
             hedge_leg=hedge_leg,
+            signal_confidence=_tag_float(tags, "confidence"),
             metrics={**(tags or {}), "strategy": strategy_name},
         )
 
@@ -266,6 +290,9 @@ class PolySignalPaperExecutionClient:
             )
 
         result = self._taker_executor.execute(order, book, intent=intent)
+        for position in result.positions:
+            if self.wallet.can_afford(position.stake_usdc):
+                self.wallet.apply_fill(position)
         return PaperExecutionResult(
             order=result.order,
             fills=result.fills,
@@ -273,3 +300,12 @@ class PolySignalPaperExecutionClient:
             status=result.status,
             reason=result.reject_reason,
         )
+
+
+def _tag_float(tags: dict[str, str] | None, key: str) -> float | None:
+    if not tags or key not in tags:
+        return None
+    try:
+        return float(tags[key])
+    except (TypeError, ValueError):
+        return None

@@ -51,6 +51,41 @@ def client(up_token, down_token):
     )
 
 
+def test_custom_book_staleness_window_allows_runtime_books(up_token) -> None:
+    from datetime import timedelta
+
+    from polysignal_lab.config import FillModelConfig
+    from polysignal_lab.utils import utc_now
+
+    book = sample_book(up_token.token_id, BookFactoryConfig(ask=0.82, size=500))
+    book.received_at = utc_now() - timedelta(seconds=30)
+    spec = NautilusOrderSpec(
+        instrument_id=up_token.token_id,
+        side=Side.UP,
+        price=0.82,
+        quantity=2.0,
+        intent=OrderIntent.TAKER_IOC,
+        expiry_seconds=None,
+        pair_id=None,
+        reduce_only=False,
+        hedge_leg=False,
+        tags={"strategy": "test"},
+    )
+
+    default_client = PolySignalPaperExecutionClient(
+        order_book_data={up_token.token_id: book},
+        fill_config=FillModelConfig(slippage_bps=0, require_depth_check=False),
+    )
+    runtime_client = PolySignalPaperExecutionClient(
+        order_book_data={up_token.token_id: book},
+        fill_config=FillModelConfig(slippage_bps=0, require_depth_check=False),
+        max_book_staleness_ms=60_000,
+    )
+
+    assert default_client.submit_spec(spec).status == OrderStatus.REJECTED
+    assert runtime_client.submit_spec(spec).status == OrderStatus.FILLED
+
+
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
@@ -100,6 +135,61 @@ def test_paper_order_returns_result(client, up_token) -> None:
     assert result.order.token_id == up_token.token_id
     assert result.order.side == Side.UP
 
+
+
+def test_submit_spec_preserves_display_metadata_from_tags(client, up_token) -> None:
+    spec = NautilusOrderSpec(
+        instrument_id=up_token.token_id,
+        side=Side.UP,
+        price=0.82,
+        quantity=100.0,
+        intent=OrderIntent.TAKER_IOC,
+        expiry_seconds=None,
+        pair_id=None,
+        reduce_only=False,
+        hedge_leg=False,
+        tags={
+            "strategy": "ptb_diff",
+            "signal_id": "sig-1",
+            "asset": "BTC",
+            "timeframe": "5m",
+            "market_id": "btc-5m",
+            "market_slug": "btc-updown-5m",
+            "condition_id": "condition-btc-5m",
+            "confidence": "0.8",
+        },
+    )
+
+    result = client.submit_spec(spec)
+
+    assert result.order is not None
+    assert result.order.signal_id == "sig-1"
+    assert result.order.asset == "BTC"
+    assert result.order.timeframe == "5m"
+    assert result.order.market_id == "btc-5m"
+    assert result.order.market_slug == "btc-updown-5m"
+    assert result.order.signal_confidence == 0.8
+    assert result.order.metrics["condition_id"] == "condition-btc-5m"
+
+
+def test_filled_order_updates_shared_wallet(client, up_token) -> None:
+    spec = NautilusOrderSpec(
+        instrument_id=up_token.token_id,
+        side=Side.UP,
+        price=0.82,
+        quantity=2.0,
+        intent=OrderIntent.TAKER_IOC,
+        expiry_seconds=None,
+        pair_id=None,
+        reduce_only=False,
+        hedge_leg=False,
+        tags={"strategy": "test"},
+    )
+
+    result = client.submit_spec(spec)
+
+    assert result.status == OrderStatus.FILLED
+    assert result.positions[0].paper_position_id in client.wallet.open_positions
 
 def test_paper_result_status_matches_submission(client, up_token) -> None:
     """A successfully submitted order has FILLED status."""

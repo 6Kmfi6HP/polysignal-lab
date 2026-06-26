@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 
-from polysignal_lab.app import scheduler_market_data
+from polysignal_lab.app import scheduler_health, scheduler_market_data
 from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
 from polysignal_lab.nautilus_runtime.data_ingestor import NautilusDataIngestor
@@ -12,13 +12,13 @@ from polysignal_lab.nautilus_runtime.execution import (
     PaperExecutionResult,
     PolySignalPaperExecutionClient,
 )
-from polysignal_lab.nautilus_runtime.observability import ObservabilityActor
+from polysignal_lab.nautilus_runtime.observability import (
+    ObservabilityActor,
+    signal_candidate_from_order,
+)
 from polysignal_lab.nautilus_runtime.position_policy import PositionPolicyActor
 from polysignal_lab.nautilus_runtime.settlement import SettlementActor
-from polysignal_lab.nautilus_runtime.strategies.base import (
-    PolySignalNautilusStrategy,
-    StrategyEvaluationBatch,
-)
+from polysignal_lab.nautilus_runtime.strategies.base import PolySignalNautilusStrategy
 from polysignal_lab.observability.health import HealthRegistry
 
 
@@ -86,8 +86,8 @@ class NautilusOrchestrator:
         condition_ids = self._phase_sync()
         if condition_ids:
             await self._phase_strategy_eval(condition_ids)
-        self._phase_position_policy()
         await self._phase_settlement()
+        await self._phase_daily_report()
         self._phase_health()
 
     # ── Phases ─────────────────────────────────────────────────────────────
@@ -122,6 +122,8 @@ class NautilusOrchestrator:
         for strategy in self.registered_strategies:
             try:
                 batch = strategy.evaluate_all_conditions(condition_ids)
+                for rejected in batch.rejected_decisions:
+                    self.observability.record_rejected_decision(rejected)
                 for result in batch.execution_results:
                     await self._record_execution_result(result)
                 self.health.mark_ok(f"strategy_{strategy.strategy_name}")
@@ -134,36 +136,24 @@ class NautilusOrchestrator:
                     reason=str(exc)[:200],
                 )
 
-    def _phase_position_policy(self) -> None:
-        """Evaluate open positions for exit conditions."""
-        try:
-            open_positions = self.paper_client.wallet.open_positions
-            for token_id, position in open_positions.items():
-                snapshot = self.book_data_provider.snapshot_for_token(token_id)
-                current_bid = snapshot.bid if snapshot is not None else None
-                exit_result = self.position_policy.evaluate(
-                    position, current_bid=current_bid,
-                )
-                if exit_result is not None:
-                    self.observability.record_settlement(exit_result)
-            self.health.mark_ok("position_policy")
-        except Exception as exc:
-            self.logger.exception("Position policy evaluation failed")
-            self.health.mark_degraded(
-                "position_policy", reason=str(exc)[:200],
-            )
 
     async def _phase_settlement(self) -> None:
-        """Resolve open positions against their markets."""
+        """Close paper positions through the legacy reporting pipeline."""
         try:
-            markets = self.scheduler.ctx.markets.markets
-            results = await self.settlement_actor.periodic_check(markets)
-            for result in results:
-                self.observability.record_settlement(result)
+            await self.scheduler.check_settlements()
             self.health.mark_ok("settlement")
         except Exception as exc:
             self.logger.exception("Settlement check failed")
             self.health.mark_degraded("settlement", reason=str(exc)[:200])
+
+    async def _phase_daily_report(self) -> None:
+        """Generate/publish the daily paper report through scheduler reporting."""
+        try:
+            await self.scheduler.generate_daily_report()
+            self.health.mark_ok("daily_report")
+        except Exception as exc:
+            self.logger.exception("Daily report generation failed")
+            self.health.mark_degraded("daily_report", reason=str(exc)[:200])
 
     def _phase_health(self) -> None:
         """Record a health snapshot."""
@@ -176,13 +166,23 @@ class NautilusOrchestrator:
     # ── Helpers ────────────────────────────────────────────────────────────
 
     async def _record_execution_result(self, result: PaperExecutionResult) -> None:
-        """Record an execution result's order, fills, and positions."""
+        """Record an execution result's signal, order, fills, and positions."""
+        if result.order is not None:
+            self.observability.record_signal_from_order(result.order)
+            await self._publish_signal_from_order(result.order)
         self.observability.record_order(result)
-        try:
-            await self.observability.notify_order_result(result)
-        except Exception:
-            self.logger.exception("Failed to notify order result")
         for fill in result.fills:
             self.observability.record_fill(fill)
         for position in result.positions:
             self.observability.record_position(position)
+
+    async def _publish_signal_from_order(self, order) -> None:
+        if not getattr(self.scheduler.settings.telegram, "send_signals", False):
+            return
+        try:
+            signal = signal_candidate_from_order(order)
+            stake = getattr(self.scheduler.settings.paper_trading, "fixed_stake_usdc", order.stake_usdc)
+            publish = await self.scheduler.publish_service.publish_signal(signal, stake)
+            scheduler_health.note_publish_result(self.scheduler, publish.as_dict())
+        except Exception:
+            self.logger.exception("Failed to publish accepted signal")

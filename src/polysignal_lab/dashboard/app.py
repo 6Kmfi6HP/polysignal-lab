@@ -163,11 +163,19 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
 
     @app.get("/api/signals", response_model=None)
     def signals(limit: int = 100) -> list[dict[str, JsonValue]]:
-        return store.query_json("signals", limit=_bounded_limit(limit))
+        return store.query_json(
+            "signals",
+            where="ORDER BY created_at DESC",
+            limit=_bounded_limit(limit),
+        )
 
     @app.get("/api/rejected-signals", response_model=None)
     def rejected_signals(limit: int = 100) -> list[dict[str, JsonValue]]:
-        return store.query_json("rejected_signals", limit=_bounded_limit(limit))
+        return store.query_json(
+            "rejected_signals",
+            where="ORDER BY rejected_at DESC",
+            limit=_bounded_limit(limit),
+        )
 
     @app.get("/api/strategy-status", response_model=None)
     def strategy_status(limit: int = 100) -> list[dict[str, JsonValue]]:
@@ -178,22 +186,30 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
         if status:
             return store.query_json(
                 "paper_orders",
-                where="WHERE status=?",
+                where="WHERE status=? ORDER BY created_at DESC",
                 params=(status.upper(),),
                 limit=_bounded_limit(limit),
             )
-        return store.query_json("paper_orders", limit=_bounded_limit(limit))
+        return store.query_json(
+            "paper_orders",
+            where="ORDER BY created_at DESC",
+            limit=_bounded_limit(limit),
+        )
 
     @app.get("/api/positions", response_model=None)
     def positions(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
         if status:
             return store.query_json(
                 "paper_positions",
-                where="WHERE status=?",
+                where="WHERE status=? ORDER BY opened_at DESC",
                 params=(status.upper(),),
                 limit=_bounded_limit(limit),
             )
-        return store.query_json("paper_positions", limit=_bounded_limit(limit))
+        return store.query_json(
+            "paper_positions",
+            where="ORDER BY opened_at DESC",
+            limit=_bounded_limit(limit),
+        )
 
     @app.get("/api/trades", response_model=None)
     def trades(limit: int = 100) -> list[dict[str, JsonValue]]:

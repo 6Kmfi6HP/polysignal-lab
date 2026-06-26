@@ -4,14 +4,75 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from polysignal_lab.alpha.types import AlphaDecision
-from polysignal_lab.domain.paper_order import PaperFill
+from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperTradeResult, PaperWalletSnapshot
-from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.utils import utc_now, utc_iso
+
+
+def signal_candidate_from_order(order: PaperOrder) -> SignalCandidate:
+    """Rebuild the accepted signal payload from the paper order metadata."""
+    metrics = dict(order.metrics)
+    signal = SignalCandidate.build(
+        strategy=order.strategy or str(metrics.get("strategy", "")),
+        asset=order.asset or str(metrics.get("asset", "")),
+        timeframe=order.timeframe or str(metrics.get("timeframe", "")),
+        market_id=order.market_id or str(metrics.get("market_id", "")),
+        market_slug=order.market_slug or str(metrics.get("market_slug", "")),
+        condition_id=str(metrics.get("condition_id", "")),
+        token_id=order.token_id,
+        side=order.side,
+        confidence=_metric_float(metrics, "confidence", order.signal_confidence or 0.0),
+        entry_reference_price=_metric_float(
+            metrics, "entry_reference_price", order.reference_price
+        ),
+        max_entry_price=_metric_float(metrics, "max_entry_price", order.limit_price),
+        seconds_to_close=_metric_int(metrics, "seconds_to_close"),
+        data_freshness_ms=_metric_int(metrics, "data_freshness_ms"),
+        reason_codes=_metric_list(metrics, "reason_codes"),
+        metrics=metrics,
+        order_intent=order.order_intent,
+        expiry_seconds=_metric_int(metrics, "expire_seconds"),
+        pair_id=order.pair_id,
+        hedge_leg=order.hedge_leg,
+    )
+    updates: dict[str, object] = {"created_at": order.created_at}
+    if order.signal_id:
+        updates["signal_id"] = order.signal_id
+    return signal.model_copy(update=updates)
+
+
+def _metric_float(metrics: Mapping[str, object], key: str, default: float) -> float:
+    try:
+        return float(metrics.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _metric_int(metrics: Mapping[str, object], key: str) -> int | None:
+    value = metrics.get(key)
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _metric_list(metrics: Mapping[str, object], key: str) -> list[str]:
+    value = metrics.get(key)
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        return [part for part in value.split("|") if part]
+    if isinstance(value, Sequence):
+        return [str(part) for part in value]
+    return [str(value)]
+
 
 
 class EventStore(Protocol):
@@ -33,6 +94,8 @@ class NautilusEventStoreAdapter:
     def __init__(self, persistence: object) -> None:
         self.persistence = persistence
         self._routes: dict[str, Callable[[object], None]] = {
+            "signals": persistence.insert_signal,
+            "rejected_signals": persistence.insert_rejected_signal,
             "orders": persistence.insert_paper_order,
             "fills": persistence.insert_paper_fill,
             "positions": persistence.upsert_paper_position,
@@ -105,41 +168,36 @@ class ObservabilityActor:
             "reason_codes": list(decision.reason_codes),
         })
 
+    def record_signal_from_order(self, order: PaperOrder) -> None:
+        self._event_count += 1
+        if self.store is None:
+            return
+        signal = signal_candidate_from_order(order)
+        self.store.insert_json("signals", signal.model_dump(mode="json"))
+
+    def record_rejected_decision(self, rejected: object) -> None:
+        self._event_count += 1
+        candidate = getattr(rejected, "candidate", None)
+        if self.store is None or not isinstance(candidate, SignalCandidate):
+            return
+        self.store.insert_json(
+            "rejected_signals",
+            RejectedSignal(
+                candidate=candidate,
+                gate_name="nautilus_decision_policy",
+                reason_code=str(getattr(rejected, "reason_code", "")),
+                details=dict(getattr(rejected, "detail", {}) or {}),
+            ).model_dump(),
+        )
+
     def record_order(self, result: PaperExecutionResult) -> None:
         self._event_count += 1
         if self.store is None or result.order is None:
             return
-        # Pass PaperOrder directly so sqlite_store.to_jsonable() extracts all fields
-        self.store.insert_json("orders", {
-            "paper_order_id": result.order.paper_order_id,
-            "signal_id": result.order.signal_id or "",
-            "strategy": result.order.strategy or "",
-            "asset": result.order.asset or "",
-            "timeframe": result.order.timeframe or "",
-            "market_id": result.order.market_id or "",
-            "token_id": result.order.token_id,
-            "side": result.order.side.value,
-            "price": result.order.limit_price,
-            "quantity": result.order.stake_usdc,
-            "status": result.status.value if result.status else "UNKNOWN",
-            "created_at": result.order.created_at.isoformat() if hasattr(result.order.created_at, 'isoformat') else str(result.order.created_at),
-        })
+        payload = result.order.model_dump(mode="json")
+        payload["status"] = result.status.value if result.status else "UNKNOWN"
+        self.store.insert_json("orders", payload)
 
-    async def notify_order_result(self, result: PaperExecutionResult) -> None:
-        """Send a Telegram notification for a paper execution result."""
-        if self.notifier is None or result.order is None:
-            return
-        strategy = result.order.strategy or "?"
-        asset = result.order.asset or "?"
-        side = result.order.side.value.upper() if hasattr(result.order.side, 'value') else str(result.order.side)
-        price = result.order.limit_price
-        status = result.status.value if result.status else "UNKNOWN"
-        msg = (
-            f"<b>{strategy}</b> — {asset} {side}\n"
-            f"Price: {price}\n"
-            f"Status: {status}"
-        )
-        await self.notifier.send(msg, "paper_order")
 
     def record_fill(self, fill: PaperFill) -> None:
         self._event_count += 1
@@ -163,17 +221,24 @@ class ObservabilityActor:
             return
         self.store.insert_json("positions", {
             "paper_position_id": position.paper_position_id,
-            "signal_id": "",
+            "signal_id": position.signal_id,
+            "paper_order_id": position.paper_order_id,
+            "paper_fill_id": position.paper_fill_id,
             "strategy": position.strategy or "",
-            "asset": "",
-            "timeframe": "",
+            "asset": position.asset or "",
+            "timeframe": position.timeframe or "",
             "market_id": position.market_id or "",
-            "side": position.side.value,
+            "market_slug": position.market_slug or "",
+            "token_id": position.token_id,
+            "side": position.side,
             "entry_price": position.entry_price,
             "shares": position.shares,
             "stake_usdc": position.stake_usdc,
-            "status": "OPEN",
-            "opened_at": utc_iso(),
+            "signal_confidence": position.signal_confidence,
+            "signal_metrics": dict(position.signal_metrics),
+            "status": position.status,
+            "opened_at": position.opened_at,
+            "closed_at": position.closed_at,
         })
 
     def record_settlement(self, result: PaperTradeResult) -> None:

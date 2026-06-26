@@ -8,6 +8,7 @@ import pytest
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.enums import ExitMode, Side, OrderStatus, TradeResultStatus
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
+from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperTradeResult
 from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
 from polysignal_lab.nautilus_runtime.observability import (
@@ -74,6 +75,8 @@ def test_record_order_writes_to_orders_table() -> None:
     assert len(rows) == 1
     assert rows[0]["status"] == "FILLED"
     assert rows[0]["paper_order_id"] == "order-1"
+    assert rows[0]["limit_price"] == 0.82
+    assert rows[0]["stake_usdc"] == 10.0
 
 
 def test_record_fill_writes_to_fills_table() -> None:
@@ -92,6 +95,41 @@ def test_record_fill_writes_to_fills_table() -> None:
     assert len(rows) == 1
     assert rows[0]["fill_price"] == 0.82
 
+
+
+def test_record_position_preserves_display_metadata() -> None:
+    store = FakeStore()
+    actor = ObservabilityActor(store=store)
+
+    position = PaperPosition(
+        paper_position_id="pos-1",
+        signal_id="sig-1",
+        paper_order_id="order-1",
+        paper_fill_id="fill-1",
+        strategy="ptb_diff",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        token_id="t1",
+        side=Side.UP,
+        entry_price=0.5,
+        shares=20.0,
+        stake_usdc=10.0,
+        signal_confidence=0.8,
+        signal_metrics={"condition_id": "condition-btc-5m"},
+    )
+
+    actor.record_position(position)
+
+    rows = store.tables.get("positions", [])
+    assert len(rows) == 1
+    assert rows[0]["signal_id"] == "sig-1"
+    assert rows[0]["asset"] == "BTC"
+    assert rows[0]["timeframe"] == "5m"
+    assert rows[0]["market_id"] == "btc-5m"
+    assert rows[0]["market_slug"] == "btc-updown-5m"
+    assert rows[0]["signal_confidence"] == 0.8
 
 def test_record_settlement_writes_to_settlements_table() -> None:
     store = FakeStore()
@@ -154,6 +192,8 @@ class FakePersistence:
     def __init__(self):
         self.calls = []
 
+    def insert_signal(self, payload): self.calls.append(("insert_signal", payload))
+    def insert_rejected_signal(self, payload): self.calls.append(("insert_rejected_signal", payload))
     def insert_paper_order(self, payload): self.calls.append(("insert_paper_order", payload))
     def insert_paper_fill(self, payload): self.calls.append(("insert_paper_fill", payload))
     def upsert_paper_position(self, payload): self.calls.append(("upsert_paper_position", payload))
@@ -173,6 +213,8 @@ def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
     persistence = FakePersistence()
     adapter = NautilusEventStoreAdapter(persistence)
 
+    adapter.insert_json("signals", {"signal_id": "s1"})
+    adapter.insert_json("rejected_signals", {"rejected_id": "r1"})
     adapter.insert_json("orders", {"paper_order_id": "o1"})
     adapter.insert_json("fills", {"paper_fill_id": "f1"})
     adapter.insert_json("positions", {"paper_position_id": "p1"})
@@ -180,6 +222,8 @@ def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
     adapter.insert_json("health_snapshot", {"event_id": "h1", "event_type": "health_snapshot", "severity": "info", "created_at": "now"})
 
     assert [name for name, _ in persistence.calls] == [
+        "insert_signal",
+        "insert_rejected_signal",
         "insert_paper_order",
         "insert_paper_fill",
         "upsert_paper_position",
