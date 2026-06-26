@@ -101,6 +101,7 @@ def build_trading_node(
     )
     paper_client = create_paper_execution_client(
         wallet=wallet,
+        fill_config=settings.paper_trading.fill_model,
         max_book_staleness_ms=settings.data.polymarket.max_book_staleness_ms,
     )
     matching_client = NautilusMatchingPaperExecutionClient(
@@ -232,6 +233,7 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
         sidecar=components["sidecar"],
         book_data_provider=book_data_provider,
         matching_client=components["matching_client"],
+        execution_book_sink=components["paper_client"],
         price_to_beat_provider=scheduler.ptb,
     )
 

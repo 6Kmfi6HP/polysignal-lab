@@ -58,7 +58,22 @@ class RecordingMatchingClient:
         self.trades.append((token_id, price, size, side, ts_event))
 
 
-def _ingestor() -> tuple[NautilusDataIngestor, PolymarketMarketRegistry, ExternalDataSidecar, NautilusBookDataProvider, RecordingMatchingClient]:
+class RecordingExecutionBookSink:
+    def __init__(self) -> None:
+        self.books: list[tuple[str, OrderBook]] = []
+
+    def update_book(self, token_id: str, book: OrderBook) -> None:
+        self.books.append((token_id, book))
+
+
+def _ingestor() -> tuple[
+    NautilusDataIngestor,
+    PolymarketMarketRegistry,
+    ExternalDataSidecar,
+    NautilusBookDataProvider,
+    RecordingMatchingClient,
+    RecordingExecutionBookSink,
+]:
     markets = MarketRegistry()
     markets.upsert_many([_market()])
     books = OrderBookRegistry()
@@ -70,6 +85,7 @@ def _ingestor() -> tuple[NautilusDataIngestor, PolymarketMarketRegistry, Externa
     sidecar = ExternalDataSidecar()
     provider = NautilusBookDataProvider()
     matching = RecordingMatchingClient()
+    execution = RecordingExecutionBookSink()
     return (
         NautilusDataIngestor(
             markets=markets,
@@ -79,16 +95,18 @@ def _ingestor() -> tuple[NautilusDataIngestor, PolymarketMarketRegistry, Externa
             sidecar=sidecar,
             book_data_provider=provider,
             matching_client=matching,
+            execution_book_sink=execution,
         ),
         bridge_registry,
         sidecar,
         provider,
         matching,
+        execution,
     )
 
 
 def test_sync_all_registers_active_markets_and_returns_condition_ids() -> None:
-    ingestor, bridge_registry, sidecar, _, _ = _ingestor()
+    ingestor, bridge_registry, sidecar, _, _, _ = _ingestor()
 
     condition_ids = ingestor.sync_all()
 
@@ -97,18 +115,19 @@ def test_sync_all_registers_active_markets_and_returns_condition_ids() -> None:
     assert sidecar.ptb_for("c1") is not None
 
 
-def test_sync_orderbooks_updates_provider_and_matching_client() -> None:
-    ingestor, _, _, provider, matching = _ingestor()
+def test_sync_orderbooks_updates_provider_matching_client_and_execution_sink() -> None:
+    ingestor, _, _, provider, matching, execution = _ingestor()
 
     ingestor.sync_orderbooks()
 
     assert provider.book_for_token("up-token") is not None
     assert [token_id for token_id, _ in matching.books] == ["up-token"]
+    assert [token_id for token_id, _ in execution.books] == ["up-token"]
     assert matching.trades == [("up-token", 0.82, 2.0, None, None)]
 
 
 def test_sync_orderbooks_sends_retained_trade_once_across_syncs() -> None:
-    ingestor, _, _, _, matching = _ingestor()
+    ingestor, _, _, _, matching, _ = _ingestor()
 
     ingestor.sync_orderbooks()
     ingestor.sync_orderbooks()
@@ -117,7 +136,7 @@ def test_sync_orderbooks_sends_retained_trade_once_across_syncs() -> None:
 
 
 def test_sync_spots_reads_real_spot_registry() -> None:
-    ingestor, _, sidecar, _, _ = _ingestor()
+    ingestor, _, sidecar, _, _, _ = _ingestor()
 
     ingestor.sync_spots()
 

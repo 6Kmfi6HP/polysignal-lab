@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+from polysignal_lab.config import FillModelConfig, Settings
+
 from polysignal_lab.nautilus_runtime.node import (
     build_trading_node,
     build_control,
@@ -39,6 +41,16 @@ def test_build_trading_node_separates_execution_client_from_matching_sink() -> N
     assert isinstance(node["paper_client"], PolySignalPaperExecutionClient)
     assert isinstance(node["matching_client"], NautilusMatchingPaperExecutionClient)
     assert node["matching_client"] is not node["paper_client"]
+
+
+def test_build_trading_node_preserves_configured_fill_model() -> None:
+    settings = Settings()
+    fill_model = FillModelConfig(slippage_bps=0.0, min_fill_ratio=0.5)
+    settings.paper_trading.fill_model = fill_model
+
+    node = build_trading_node(settings)
+
+    assert node["paper_client"]._fill_config is fill_model
 
 
 def test_build_trading_node_strategies_is_list() -> None:
