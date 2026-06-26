@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from polysignal_lab.alpha.types import NautilusOrderSpec
 from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side
-from polysignal_lab.domain.orderbook import BookLevel, OrderBook
+from polysignal_lab.domain.orderbook import OrderBook
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
@@ -47,6 +47,62 @@ class MatchingTrade:
     ts_event: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class NautilusFillEvent:
+    fill_price: float
+    shares: float
+    stake_usdc: float
+    raw_best_ask: float
+    available_depth_usdc: float | None = None
+    fill_ratio: float = 1.0
+    fill_id: str | None = None
+    position_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NautilusMatchingOutcome:
+    status: OrderStatus
+    fills: tuple[NautilusFillEvent, ...] = ()
+    reason: str | None = None
+
+
+class NautilusMatchingUnavailable(RuntimeError):
+    def __init__(self, reason: str = "MATCHING_NOT_CONNECTED") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class NautilusMatchingBoundary(Protocol):
+    def update_book(self, token_id: str, book: OrderBook) -> None: ...
+    def submit_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome: ...
+
+
+class OwnedNautilusMatchingBoundary:
+    """Lazy boundary for the owned Nautilus SimulatedExchange execution path."""
+
+    def __init__(self, settings: MatchingAccuracySettings) -> None:
+        self.settings = settings
+        self._simulated_exchange_cls: Any | None = None
+        self._backtest_exec_client_cls: Any | None = None
+
+    def update_book(self, token_id: str, book: OrderBook) -> None:
+        return None
+
+    def submit_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome:
+        self._load_nautilus_components()
+        raise NautilusMatchingUnavailable()
+
+    def _load_nautilus_components(self) -> None:
+        if self._simulated_exchange_cls is not None and self._backtest_exec_client_cls is not None:
+            return
+        try:
+            from nautilus_trader.backtest.engine import SimulatedExchange
+            from nautilus_trader.backtest.execution_client import BacktestExecClient
+        except Exception as exc:  # pragma: no cover - depends on optional Nautilus runtime
+            raise NautilusMatchingUnavailable() from exc
+        self._simulated_exchange_cls = SimulatedExchange
+        self._backtest_exec_client_cls = BacktestExecClient
+
 class NautilusMatchingPaperExecutionClient:
     paper_engine = "nautilus_matching"
 
@@ -55,6 +111,7 @@ class NautilusMatchingPaperExecutionClient:
         wallet: PaperWallet | None = None,
         accuracy_mode: str = "depth_l2",
         max_book_staleness_ms: int = 10_000,
+        matching_boundary: NautilusMatchingBoundary | None = None,
     ) -> None:
         self.wallet = wallet or PaperWallet(starting_balance=10_000.0)
         self.settings = MatchingAccuracySettings.from_mode(accuracy_mode)
@@ -63,13 +120,12 @@ class NautilusMatchingPaperExecutionClient:
         self._books: dict[str, OrderBook] = {}
         self._trades: dict[str, list[MatchingTrade]] = {}
         self._pending: list[PaperExecutionResult] = []
-        self._remaining_asks: dict[str, dict[float, float]] = {}
         self._mirrored_fill_ids: set[str] = set()
-        self._exchange: Any | None = None
+        self.matching_boundary = matching_boundary or OwnedNautilusMatchingBoundary(self.settings)
 
     def update_book(self, token_id: str, book: OrderBook) -> None:
         self._books[token_id] = book
-        self._remaining_asks[token_id] = _level_sizes(book.asks)
+        self.matching_boundary.update_book(token_id, book)
 
     def update_trade(
         self,
@@ -100,6 +156,8 @@ class NautilusMatchingPaperExecutionClient:
         return events
 
     def submit_spec(self, spec: NautilusOrderSpec) -> PaperExecutionResult:
+        if spec.side not in {Side.UP, Side.DOWN}:
+            return PaperExecutionResult(status=OrderStatus.REJECTED, reason="UNSUPPORTED_SIDE")
         order = self._paper_order_from_spec(spec)
         book = self._books.get(spec.instrument_id)
         if book is None:
@@ -115,8 +173,6 @@ class NautilusMatchingPaperExecutionClient:
                 status=OrderStatus.REJECTED,
                 reason="STALE_ORDERBOOK",
             )
-        if spec.side not in {Side.UP, Side.DOWN}:
-            return self._reject(order, "UNSUPPORTED_SIDE")
         if spec.intent not in {
             OrderIntent.TAKER_FAK,
             OrderIntent.TAKER_FOK,
@@ -129,7 +185,7 @@ class NautilusMatchingPaperExecutionClient:
             )
             self._pending.append(result)
             return result
-        return self._match_taker(order, book, spec)
+        return self._submit_taker_to_matching_boundary(order, spec)
 
     def _paper_order_from_spec(self, spec: NautilusOrderSpec) -> PaperOrder:
         tags = dict(spec.tags)
@@ -161,88 +217,98 @@ class NautilusMatchingPaperExecutionClient:
             metrics=metrics,
         )
 
-    def _match_taker(
+    def _submit_taker_to_matching_boundary(
         self,
         order: PaperOrder,
-        book: OrderBook,
         spec: NautilusOrderSpec,
     ) -> PaperExecutionResult:
-        best_ask = book.best_ask
-        if best_ask is None:
-            return self._reject(order, "INSUFFICIENT_DEPTH")
-        ceiling = order.limit_price
-        if best_ask > ceiling:
-            return self._reject(order, "PRICE_ABOVE_LIMIT")
+        try:
+            outcome = self.matching_boundary.submit_order(order, spec)
+        except NautilusMatchingUnavailable as exc:
+            result = PaperExecutionResult(
+                order=order,
+                status=OrderStatus.PENDING,
+                reason=exc.reason,
+            )
+            self._pending.append(result)
+            return result
+        return self._mirror_matching_outcome(order, outcome)
 
-        depth = self._remaining_asks.setdefault(order.token_id, _level_sizes(book.asks))
-        available = _available_levels(depth, ceiling)
-        available_shares = sum(size for _, size in available)
-        available_usdc = sum(price * size for price, size in available)
-        if spec.intent == OrderIntent.TAKER_FOK and available_shares + 1e-12 < spec.quantity:
-            return self._reject(order, "INSUFFICIENT_DEPTH")
+    def _mirror_matching_outcome(
+        self,
+        order: PaperOrder,
+        outcome: NautilusMatchingOutcome,
+    ) -> PaperExecutionResult:
+        if outcome.status == OrderStatus.REJECTED:
+            return self._reject(order, outcome.reason or "MATCHING_REJECTED")
+        if outcome.status not in {OrderStatus.FILLED, OrderStatus.PARTIAL}:
+            result = PaperExecutionResult(
+                order=order,
+                status=outcome.status,
+                reason=outcome.reason,
+            )
+            if outcome.status == OrderStatus.PENDING:
+                self._pending.append(result)
+            return result
+        if not outcome.fills:
+            return self._reject(order, outcome.reason or "INSUFFICIENT_DEPTH")
 
-        remaining = spec.quantity
-        filled_shares = 0.0
-        filled_usdc = 0.0
-        consumed: dict[float, float] = {}
-        for price, size in available:
-            take = min(remaining, size)
-            if take <= 0:
-                continue
-            consumed[price] = consumed.get(price, 0.0) + take
-            filled_shares += take
-            filled_usdc += take * price
-            remaining -= take
-            if remaining <= 1e-12:
-                break
+        fills: list[PaperFill] = []
+        positions: list[PaperPosition] = []
+        for event in outcome.fills:
+            fill_fields: dict[str, Any] = {}
+            if event.fill_id is not None:
+                fill_fields["paper_fill_id"] = event.fill_id
+            fill = PaperFill(
+                **fill_fields,
+                paper_order_id=order.paper_order_id,
+                signal_id=order.signal_id,
+                token_id=order.token_id,
+                side=order.side,
+                raw_best_ask=event.raw_best_ask,
+                slippage_bps=0.0,
+                fill_price=event.fill_price,
+                stake_usdc=event.stake_usdc,
+                shares=event.shares,
+                depth_checked=True,
+                available_depth_usdc=event.available_depth_usdc,
+                fill_ratio=event.fill_ratio,
+            )
+            position_fields: dict[str, Any] = {}
+            if event.position_id is not None:
+                position_fields["paper_position_id"] = event.position_id
+            position = PaperPosition(
+                **position_fields,
+                signal_id=order.signal_id,
+                paper_order_id=order.paper_order_id,
+                paper_fill_id=fill.paper_fill_id,
+                strategy=order.strategy,
+                asset=order.asset,
+                timeframe=order.timeframe,
+                market_id=order.market_id,
+                market_slug=order.market_slug,
+                token_id=order.token_id,
+                side=order.side,
+                entry_price=event.fill_price,
+                shares=event.shares,
+                stake_usdc=event.stake_usdc,
+                signal_confidence=order.signal_confidence,
+                signal_metrics=dict(order.metrics),
+            )
+            fills.append(fill)
+            positions.append(position)
 
-        if filled_shares <= 0:
-            return self._reject(order, "INSUFFICIENT_DEPTH")
-
-        fill_price = filled_usdc / filled_shares
-        fill = PaperFill(
-            paper_order_id=order.paper_order_id,
-            signal_id=order.signal_id,
-            token_id=order.token_id,
-            side=order.side,
-            raw_best_ask=best_ask,
-            slippage_bps=0.0,
-            fill_price=fill_price,
-            stake_usdc=filled_usdc,
-            shares=filled_shares,
-            depth_checked=True,
-            available_depth_usdc=available_usdc,
-            fill_ratio=filled_shares / spec.quantity,
-        )
-        position = PaperPosition(
-            signal_id=order.signal_id,
-            paper_order_id=order.paper_order_id,
-            paper_fill_id=fill.paper_fill_id,
-            strategy=order.strategy,
-            asset=order.asset,
-            timeframe=order.timeframe,
-            market_id=order.market_id,
-            market_slug=order.market_slug,
-            token_id=order.token_id,
-            side=order.side,
-            entry_price=fill_price,
-            shares=filled_shares,
-            stake_usdc=filled_usdc,
-            signal_confidence=order.signal_confidence,
-            signal_metrics=dict(order.metrics),
-        )
-        if not self.wallet.can_afford(position.stake_usdc):
+        if not self.wallet.can_afford(sum(position.stake_usdc for position in positions)):
             return self._reject(order, "WALLET_INSUFFICIENT_CASH")
-        if self.settings.liquidity_consumption:
-            for price, size in consumed.items():
-                depth[price] = max(0.0, depth.get(price, 0.0) - size)
-        self._apply_fill_once(position)
-        order.status = OrderStatus.FILLED
+        for position in positions:
+            self._apply_fill_once(position)
+        order.status = outcome.status
         return PaperExecutionResult(
             order=order,
-            fills=[fill],
-            positions=[position],
-            status=OrderStatus.FILLED,
+            fills=fills,
+            positions=positions,
+            status=outcome.status,
+            reason=outcome.reason,
         )
 
     def _apply_fill_once(self, position: PaperPosition) -> None:
@@ -257,21 +323,6 @@ class NautilusMatchingPaperExecutionClient:
         return PaperExecutionResult(order=order, status=OrderStatus.REJECTED, reason=reason)
 
 
-def _level_sizes(levels: list[BookLevel]) -> dict[float, float]:
-    sizes: dict[float, float] = {}
-    for level in levels:
-        if level.price <= 0 or level.size <= 0:
-            continue
-        sizes[level.price] = sizes.get(level.price, 0.0) + level.size
-    return sizes
-
-
-def _available_levels(depth: dict[float, float], ceiling: float) -> list[tuple[float, float]]:
-    return sorted(
-        (price, size)
-        for price, size in depth.items()
-        if price <= ceiling and size > 0
-    )
 
 
 def _freshness_ms(book: OrderBook) -> int | None:
