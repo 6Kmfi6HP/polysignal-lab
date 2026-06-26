@@ -18,6 +18,7 @@ def _spec(
     price: float = 0.82,
     quantity: float = 3.0,
     intent: OrderIntent = OrderIntent.TAKER_IOC,
+    max_entry_price: str = "0.84",
 ) -> NautilusOrderSpec:
     return NautilusOrderSpec(
         instrument_id=token_id,
@@ -37,9 +38,18 @@ def _spec(
             "condition_id": "condition-btc-5m",
             "signal_id": "signal-1",
             "confidence": "0.71",
-            "max_entry_price": "0.84",
+            "max_entry_price": max_entry_price,
             "entry_reference_price": "0.82",
         },
+    )
+
+
+def _book(*, token_id: str = "token-up", ask_price: float = 0.82, ask_size: float = 500.0) -> OrderBook:
+    return OrderBook(
+        token_id=token_id,
+        bids=[BookLevel(price=0.80, size=100.0)],
+        asks=[BookLevel(price=ask_price, size=ask_size)],
+        received_at=datetime.now(UTC),
     )
 
 
@@ -109,3 +119,52 @@ def test_update_trade_records_recent_trade_for_queue_mode() -> None:
     assert trades[0].size == 2.5
     assert trades[0].side == "BUY"
     assert trades[0].ts_event == ts_event
+
+
+def test_taker_fills_at_book_price_not_slippage_model() -> None:
+    client = NautilusMatchingPaperExecutionClient(wallet=PaperWallet())
+    client.update_book("token-up", _book(ask_price=0.82, ask_size=500.0))
+
+    result = client.submit_spec(_spec(quantity=10.0, max_entry_price="0.83"))
+
+    assert result.status == OrderStatus.FILLED
+    assert result.fills[0].fill_price == 0.82
+    assert result.order is not None
+    assert result.order.limit_price == 0.83
+    assert result.order.reference_price == 0.82
+    assert result.positions[0].paper_position_id in client.wallet.open_positions
+
+
+def test_best_ask_above_max_entry_is_rejected() -> None:
+    client = NautilusMatchingPaperExecutionClient(wallet=PaperWallet())
+    client.update_book("token-up", _book(ask_price=0.84, ask_size=500.0))
+
+    result = client.submit_spec(_spec(quantity=10.0, max_entry_price="0.83"))
+
+    assert result.status == OrderStatus.REJECTED
+    assert result.reason == "PRICE_ABOVE_LIMIT"
+
+
+def test_fok_rejects_when_full_depth_unavailable() -> None:
+    client = NautilusMatchingPaperExecutionClient(wallet=PaperWallet())
+    client.update_book("token-up", _book(ask_price=0.82, ask_size=5.0))
+
+    result = client.submit_spec(
+        _spec(quantity=10.0, intent=OrderIntent.TAKER_FOK, max_entry_price="0.83")
+    )
+
+    assert result.status == OrderStatus.REJECTED
+    assert result.reason == "INSUFFICIENT_DEPTH"
+
+
+def test_liquidity_consumption_prevents_reusing_same_level() -> None:
+    client = NautilusMatchingPaperExecutionClient(wallet=PaperWallet())
+    client.update_book("token-up", _book(ask_price=0.82, ask_size=12.0))
+
+    first = client.submit_spec(_spec(quantity=10.0, max_entry_price="0.83"))
+    second = client.submit_spec(_spec(quantity=10.0, max_entry_price="0.83"))
+
+    assert first.status == OrderStatus.FILLED
+    assert first.fills[0].shares == 10.0
+    assert second.status == OrderStatus.FILLED
+    assert second.fills[0].shares == 2.0
