@@ -18,9 +18,7 @@ def test_nautilus_extra_is_optional_and_polymarket_scoped() -> None:
     nautilus_extra = data["project"]["optional-dependencies"]["nautilus"]
 
     assert nautilus_extra == [
-        "nautilus_trader[polymarket] @ https://github.com/nautechsystems/nautilus_trader/releases/download/v1.229.0/nautilus_trader-1.229.0-cp312-cp312-manylinux_2_35_aarch64.whl ; python_version == '3.12' and platform_machine == 'aarch64'",
-        "nautilus_trader[polymarket] @ https://github.com/nautechsystems/nautilus_trader/releases/download/v1.229.0/nautilus_trader-1.229.0-cp313-cp313-manylinux_2_35_aarch64.whl ; python_version == '3.13' and platform_machine == 'aarch64'",
-        "nautilus_trader[polymarket] @ https://github.com/nautechsystems/nautilus_trader/releases/download/v1.229.0/nautilus_trader-1.229.0-cp314-cp314-manylinux_2_35_aarch64.whl ; python_version == '3.14' and platform_machine == 'aarch64'",
+        "nautilus_trader[polymarket]>=1.230.0; python_version >= '3.12'",
     ]
 
 

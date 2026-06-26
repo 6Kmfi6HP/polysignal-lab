@@ -31,7 +31,12 @@ CMD ["scheduler"]
 
 # ── Nautilus runtime image (separate target; default stays paper-safe) ──
 FROM builder AS nautilus-builder
-RUN pip install --ignore-installed --no-cache-dir --prefix=/install-nautilus '.[dev,nautilus]'
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential ca-certificates clang curl git pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN pip install --ignore-installed --no-cache-dir --prefix=/install-nautilus '.[dev]' 'nautilus_trader[polymarket] @ git+https://github.com/nautechsystems/nautilus_trader.git@a3a72b2'
 
 FROM python:3.12-slim AS nautilus-runtime
 WORKDIR /app
