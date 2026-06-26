@@ -117,13 +117,18 @@ class OwnedNautilusMatchingBoundary:
         self.settings = settings
         self._books: dict[str, OrderBook] = {}
         self._instruments: dict[str, Any] = {}
+        self._dirty_books: set[str] = set()
+        self._published_books: set[str] = set()
         self._session: _NautilusSession | None = None
         self._sequence = 0
 
     def update_book(self, token_id: str, book: OrderBook) -> None:
         self._books[token_id] = book
+        self._dirty_books.add(token_id)
         if self._session is not None and token_id in self._instruments:
             self._publish_book_to_nautilus(token_id, book)
+            self._dirty_books.discard(token_id)
+            self._published_books.add(token_id)
 
     def submit_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome:
         book = self._books.get(order.token_id)
@@ -133,7 +138,10 @@ class OwnedNautilusMatchingBoundary:
             return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="PRICE_ABOVE_LIMIT")
         self._ensure_session()
         instrument = self._ensure_instrument(order, spec, book)
-        self._publish_book_to_nautilus(order.token_id, book)
+        if order.token_id in self._dirty_books or order.token_id not in self._published_books:
+            self._publish_book_to_nautilus(order.token_id, book)
+            self._dirty_books.discard(order.token_id)
+            self._published_books.add(order.token_id)
         return self._submit_limit_order_through_nautilus(order, spec, instrument)
 
     def _ensure_session(self) -> None:

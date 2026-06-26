@@ -271,3 +271,35 @@ RuntimeError: You are installing from source which requires the Clang compiler t
 ### Concerns / blockers
 
 - Native Nautilus optional execution still cannot be exercised in this environment until `clang` is installed for the Python 3.12 `nautilus-trader` source build.
+
+
+---
+
+## Approval review dirty-book fix addendum
+
+### Changed files
+
+- `src/polysignal_lab/nautilus_runtime/matching.py`
+- `tests/test_nautilus_matching_execution.py`
+- `.superpowers/sdd/task-06-report.md`
+
+### Command result
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_matching_execution.py -q
+```
+
+Result: PASS (`................ [100%]`, exit code 0).
+
+### Self-review
+
+- Added dirty-book tracking so a stored public book is published to Nautilus once per external `update_book()`.
+- Verified repeated owned-boundary submissions after one book update no longer replay the same book and reset consumed depth.
+- Verified a fresh second `update_book()` republishes for an already-created session/instrument.
+- Did not run project-wide gates, formatters, linters, Docker, safety scan, or unrelated tests per Task 6 constraints.
+
+### Concerns / blockers
+
+- None for the focused Python 3.11 dirty-book fix.

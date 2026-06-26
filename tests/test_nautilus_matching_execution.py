@@ -390,7 +390,7 @@ def test_owned_boundary_rejects_best_ask_above_limit_before_session() -> None:
     assert boundary.submitted is False
 
 
-def test_owned_boundary_does_not_replay_stored_book_after_submit() -> None:
+def test_owned_boundary_republishes_only_after_fresh_book_update() -> None:
     class FakeClock:
         def timestamp_ns(self) -> int:
             return 1
@@ -447,7 +447,9 @@ def test_owned_boundary_does_not_replay_stored_book_after_submit() -> None:
             )
 
         def _ensure_instrument(self, order, spec, book):
-            return SimpleNamespace(id="instrument-1")
+            instrument = SimpleNamespace(id="instrument-1")
+            self._instruments[order.token_id] = instrument
+            return instrument
 
         def _publish_book_to_nautilus(self, token_id: str, book: OrderBook) -> None:
             self.published.append(token_id)
@@ -458,9 +460,15 @@ def test_owned_boundary_does_not_replay_stored_book_after_submit() -> None:
     order = NautilusMatchingPaperExecutionClient()._paper_order_from_spec(spec)
 
     boundary.submit_order(order, spec)
+    boundary.submit_order(order, spec)
 
     assert boundary.submitted
     assert boundary.published == ["token-up"]
+
+    boundary.update_book("token-up", _book(ask_price=0.81, ask_size=500.0))
+    boundary.submit_order(order, spec)
+
+    assert boundary.published == ["token-up", "token-up"]
 
 
 def test_owned_boundary_configures_exchange_with_accuracy_settings() -> None:
