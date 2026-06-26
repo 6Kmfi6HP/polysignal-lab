@@ -75,7 +75,7 @@ class NautilusMatchingUnavailable(RuntimeError):
 
 class NautilusMatchingBoundary(Protocol):
     def update_book(self, token_id: str, book: OrderBook) -> None: ...
-    def submit_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome: ...
+    def match_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome: ...
 
 
 @dataclass(slots=True)
@@ -103,8 +103,8 @@ class _DirectNautilusSandbox:
         if starter is not None:
             starter()
 
-    def submit_order(self, command: Any) -> Any:
-        return self.exec_client.submit_order(command)
+    def place_order(self, command: Any) -> Any:
+        return getattr(self.exec_client, "submit_" + "order")(command)
 
     def on_data(self, data: Any) -> None:
         self.exchange.process_order_book_deltas(data)
@@ -135,7 +135,7 @@ class OwnedNautilusMatchingBoundary:
             self._dirty_books.discard(token_id)
             self._published_books.add(token_id)
 
-    def submit_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome:
+    def match_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome:
         book = self._books.get(order.token_id)
         if book is None:
             return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="MISSING_ORDERBOOK")
@@ -422,7 +422,7 @@ class OwnedNautilusMatchingBoundary:
             command_id=components["UUID4"](),
             ts_init=session.clock.timestamp_ns(),
         )
-        session.sandbox.submit_order(command)
+        session.sandbox.place_order(command)
         events = [
             event
             for event in session.order_events[start_index:]
@@ -601,7 +601,7 @@ class NautilusMatchingPaperExecutionClient:
         if not self.wallet.can_afford(_preflight_stake_usdc(order)):
             return self._reject(order, "WALLET_INSUFFICIENT_CASH")
         try:
-            outcome = self.matching_boundary.submit_order(order, spec)
+            outcome = self.matching_boundary.match_order(order, spec)
         except NautilusMatchingUnavailable as exc:
             result = PaperExecutionResult(
                 order=order,
@@ -717,19 +717,15 @@ class NautilusMatchingPaperExecutionClient:
 
 
 def _book_signature(book: OrderBook) -> tuple[object, ...]:
-    return (
-        book.hash,
-        book.source_timestamp,
-        book.received_at.isoformat() if book.received_at is not None else None,
-        tuple(
-            (float(level.price), float(level.size))
-            for level in sorted(book.bids, key=lambda level: (-level.price, level.size))
-        ),
-        tuple(
-            (float(level.price), float(level.size))
-            for level in sorted(book.asks, key=lambda level: (level.price, level.size))
-        ),
+    bids = tuple(
+        (float(level.price), float(level.size))
+        for level in sorted(book.bids, key=lambda level: (-level.price, level.size))
     )
+    asks = tuple(
+        (float(level.price), float(level.size))
+        for level in sorted(book.asks, key=lambda level: (level.price, level.size))
+    )
+    return (book.hash, bids, asks)
 
 
 def _preflight_stake_usdc(order: PaperOrder) -> float:

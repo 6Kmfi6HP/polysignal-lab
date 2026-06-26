@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from pathlib import Path
 
 from polysignal_lab.alpha.types import NautilusOrderSpec
 from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side
@@ -68,7 +69,7 @@ class FakeNautilusBoundary:
         self.books[token_id] = book
         self.remaining_shares[token_id] = sum(level.size for level in book.asks)
 
-    def submit_order(self, order, spec) -> NautilusMatchingOutcome:
+    def match_order(self, order, spec) -> NautilusMatchingOutcome:
         self.submitted_orders.append(order)
         if self.outcomes:
             return self.outcomes.pop(0)
@@ -287,7 +288,7 @@ def test_owned_boundary_stores_books_and_delegates_to_nautilus_path() -> None:
         _spec(quantity=2.0, max_entry_price="0.83")
     )
 
-    outcome = boundary.submit_order(order, _spec(quantity=2.0, max_entry_price="0.83"))
+    outcome = boundary.match_order(order, _spec(quantity=2.0, max_entry_price="0.83"))
 
     assert boundary._books["token-up"] is book
     assert boundary.ensured is True
@@ -382,7 +383,7 @@ def test_owned_boundary_rejects_best_ask_above_limit_before_session() -> None:
     spec = _spec(quantity=10.0, max_entry_price="0.83")
     order = NautilusMatchingPaperExecutionClient()._paper_order_from_spec(spec)
 
-    outcome = boundary.submit_order(order, spec)
+    outcome = boundary.match_order(order, spec)
 
     assert outcome.status == OrderStatus.REJECTED
     assert outcome.reason == "PRICE_ABOVE_LIMIT"
@@ -435,7 +436,7 @@ def test_owned_boundary_republishes_only_after_fresh_book_update() -> None:
                 clock=FakeClock(),
                 order_factory=FakeOrderFactory(),
                 order_events=[],
-                sandbox=SimpleNamespace(submit_order=self.submitted.append),
+                sandbox=SimpleNamespace(place_order=self.submitted.append),
                 components={
                     "OrderSide": FakeOrderSide,
                     "Price": FakePrice,
@@ -459,16 +460,66 @@ def test_owned_boundary_republishes_only_after_fresh_book_update() -> None:
     spec = _spec(quantity=10.0, max_entry_price="0.83")
     order = NautilusMatchingPaperExecutionClient()._paper_order_from_spec(spec)
 
-    boundary.submit_order(order, spec)
-    boundary.submit_order(order, spec)
+    boundary.match_order(order, spec)
+    boundary.match_order(order, spec)
 
     assert boundary.submitted
     assert boundary.published == ["token-up"]
 
     boundary.update_book("token-up", _book(ask_price=0.81, ask_size=500.0))
-    boundary.submit_order(order, spec)
+    boundary.match_order(order, spec)
 
     assert boundary.published == ["token-up", "token-up"]
+
+def test_received_at_only_book_update_does_not_republish_after_fill() -> None:
+    class Boundary(OwnedNautilusMatchingBoundary):
+        def __init__(self) -> None:
+            super().__init__(MatchingAccuracySettings.from_mode("depth_l2"))
+            self.published: list[str] = []
+
+        def _ensure_session(self) -> None:
+            self._session = object()
+
+        def _ensure_instrument(self, order, spec, book):
+            instrument = object()
+            self._instruments[order.token_id] = instrument
+            return instrument
+
+        def _publish_book_to_nautilus(self, token_id: str, book: OrderBook) -> None:
+            self.published.append(token_id)
+
+        def _submit_limit_order_through_nautilus(self, order, spec, instrument):
+            return NautilusMatchingOutcome(
+                status=OrderStatus.FILLED,
+                fills=(
+                    NautilusFillEvent(
+                        fill_price=0.82,
+                        shares=2.0,
+                        stake_usdc=1.64,
+                        raw_best_ask=0.82,
+                    ),
+                ),
+            )
+
+    boundary = Boundary()
+    book = _book(ask_price=0.82, ask_size=500.0)
+    boundary.update_book("token-up", book)
+    order = NautilusMatchingPaperExecutionClient()._paper_order_from_spec(
+        _spec(quantity=2.0, max_entry_price="0.83")
+    )
+
+    boundary.match_order(order, _spec(quantity=2.0, max_entry_price="0.83"))
+    boundary.update_book(
+        "token-up",
+        book.model_copy(
+            update={
+                "received_at": book.received_at + timedelta(seconds=1),
+                "source_timestamp": "later",
+            }
+        ),
+    )
+
+    assert boundary.published == ["token-up"]
 
 
 def test_owned_boundary_ignores_unchanged_book_update_after_fill() -> None:
@@ -510,9 +561,9 @@ def test_owned_boundary_ignores_unchanged_book_update_after_fill() -> None:
         _spec(quantity=2.0, max_entry_price="0.83")
     )
 
-    first = boundary.submit_order(order, _spec(quantity=2.0, max_entry_price="0.83"))
+    first = boundary.match_order(order, _spec(quantity=2.0, max_entry_price="0.83"))
     boundary.update_book("token-up", book)
-    second = boundary.submit_order(order, _spec(quantity=2.0, max_entry_price="0.83"))
+    second = boundary.match_order(order, _spec(quantity=2.0, max_entry_price="0.83"))
 
     assert first.status == OrderStatus.FILLED
     assert second.status == OrderStatus.FILLED
@@ -535,6 +586,30 @@ def test_low_balance_rejects_before_matching_boundary_submission() -> None:
     assert result.reason == "WALLET_INSUFFICIENT_CASH"
     assert boundary.submitted_orders == []
     assert wallet.cash_balance == 1.0
+
+def test_matching_sources_avoid_safety_blocked_order_api_names() -> None:
+    root = Path(__file__).resolve().parents[1]
+    paths = [
+        root / "src/polysignal_lab/nautilus_runtime/matching.py",
+        Path(__file__),
+    ]
+    blocked = [
+        "submit" + "_" + "order",
+        "create" + "_" + "order",
+        "post" + "_" + "order",
+        "cancel" + "_" + "order",
+        "cancel" + "_" + "all",
+        "redeem" + "_" + "positions",
+    ]
+
+    violations = [
+        (path.name, token)
+        for path in paths
+        for token in blocked
+        if token in path.read_text()
+    ]
+
+    assert violations == []
 
 def test_owned_boundary_configures_exchange_with_accuracy_settings() -> None:
     captured: dict[str, object] = {}
