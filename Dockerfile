@@ -8,7 +8,7 @@ COPY src/ src/
 RUN pip install --ignore-installed --no-cache-dir --prefix=/install '.[dev]'
 
 # ── Runtime image ──────────────────────────────────────────────
-FROM python:3.12-slim
+FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
@@ -49,3 +49,6 @@ COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN mkdir -p data logs state && chmod +x /app/docker-entrypoint.sh
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["nautilus"]
+
+# Keep plain `docker build .` on the lightweight, Nautilus-free app image.
+FROM runtime AS default
