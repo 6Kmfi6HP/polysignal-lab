@@ -178,3 +178,51 @@ Result: passed.
 ### Concerns
 
 - None beyond prior Task 7 report concerns.
+
+## Fix pass: bid-field blocker
+
+### Changed files
+
+- `src/polysignal_lab/nautilus_runtime/orchestrator.py`
+  - `_phase_position_exits()` now reads `BookSnapshot.bid` first and falls back to `best_bid` for existing test fakes.
+- `tests/test_nautilus_orchestrator.py`
+  - Updated position-exit coverage to use a snapshot object with `bid` only and prove `submit_exit()` is called.
+
+### RED evidence
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_orchestrator.py -q
+```
+
+Result: failed as expected before implementation.
+
+```text
+FAILED tests/test_nautilus_orchestrator.py::test_run_once_drains_resting_orders_and_position_exits
+AssertionError: expected final "exit" call; got only drain/resting/strategy/drain.
+```
+
+### GREEN focused check
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_orchestrator.py -q
+```
+
+Result: passed.
+
+```text
+........                                                                 [100%]
+```
+
+### Self-review
+
+- The fix is at the shared exit phase, so real `BookSnapshot` objects no longer skip positions before policy evaluation.
+- The fallback keeps older fake snapshots using `best_bid` working without changing runtime data models.
+- No live trading, signing, authenticated Polymarket clients, Docker, project-wide formatters, linters, or safety gates were run.
+
+### Concerns
+
+- None.

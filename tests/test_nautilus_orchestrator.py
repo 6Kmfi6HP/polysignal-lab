@@ -173,7 +173,7 @@ async def test_run_once_drains_resting_orders_and_position_exits() -> None:
     orch = _orchestrator(
         registered_strategies=[RecordingStrategy()],
         book_data_provider=SimpleNamespace(
-            snapshot_for_token=lambda token_id: SimpleNamespace(best_bid=0.91)
+            snapshot_for_token=lambda token_id: SimpleNamespace(bid=0.91)
         ),
         paper_client=paper_client,
         position_policy=PositionPolicy(),

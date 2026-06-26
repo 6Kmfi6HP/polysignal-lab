@@ -171,7 +171,9 @@ class NautilusOrchestrator:
             if submit_exit is not None:
                 for position in list(positions.values()):
                     book = self.book_data_provider.snapshot_for_token(position.token_id)
-                    bid_price = getattr(book, "best_bid", None) if book is not None else None
+                    bid_price = getattr(book, "bid", None) if book is not None else None
+                    if bid_price is None and book is not None:
+                        bid_price = getattr(book, "best_bid", None)
                     if bid_price is None:
                         continue
                     decision_position = (
