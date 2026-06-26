@@ -50,6 +50,7 @@ class NautilusDataIngestor:
         self.matching_client = matching_client
         self.price_to_beat_provider = price_to_beat_provider
         self.logger = logger or logging.getLogger(__name__)
+        self._seen_matching_trades: set[tuple[str, float, float, str | None, object]] = set()
 
     def active_condition_ids(self) -> tuple[str, ...]:
         return tuple(m.condition_id for m in self.markets.active() if m.condition_id)
@@ -77,13 +78,20 @@ class NautilusDataIngestor:
             self.book_data_provider.update_book(token_id, book)
             self.matching_client.update_book(token_id, book)
             for trade in self.books.recent_trades(token_id):
+                side = getattr(trade, "side", None)
+                trade_ts = _trade_timestamp(trade)
+                key = (token_id, trade.price, trade.size, side, trade_ts)
+                if key in self._seen_matching_trades:
+                    continue
+                self._seen_matching_trades.add(key)
                 self.matching_client.update_trade(
                     token_id,
                     price=trade.price,
                     size=trade.size,
-                    side=getattr(trade, "side", None),
-                    ts_event=getattr(trade, "datetime", None),
+                    side=side,
+                    ts_event=getattr(trade, "datetime", None) or getattr(trade, "ts_event", None),
                 )
+
 
     def sync_spots(self) -> None:
         now = datetime.now(UTC)
@@ -123,3 +131,11 @@ class NautilusDataIngestor:
         if market.price_to_beat is not None:
             return market.price_to_beat, "market_metadata", True, None, None, False
         return None, "unavailable", False, None, None, False
+
+
+def _trade_timestamp(trade: object) -> object:
+    return (
+        getattr(trade, "timestamp", None)
+        or getattr(trade, "datetime", None)
+        or getattr(trade, "ts_event", None)
+    )

@@ -22,6 +22,10 @@ from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssem
 from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
 from polysignal_lab.nautilus_runtime.data_ingestor import NautilusDataIngestor
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.execution import (
+    PolySignalPaperExecutionClient,
+    create_paper_execution_client,
+)
 from polysignal_lab.nautilus_runtime.matching import NautilusMatchingPaperExecutionClient
 from polysignal_lab.nautilus_runtime.group_views import MarketGroupViewAssembler
 from polysignal_lab.nautilus_runtime.observability import (
@@ -95,7 +99,11 @@ def build_trading_node(
     wallet = wallet or PaperWallet(
         starting_balance=settings.paper_trading.starting_balance_usdc
     )
-    paper_client = NautilusMatchingPaperExecutionClient(
+    paper_client = create_paper_execution_client(
+        wallet=wallet,
+        max_book_staleness_ms=settings.data.polymarket.max_book_staleness_ms,
+    )
+    matching_client = NautilusMatchingPaperExecutionClient(
         wallet=wallet,
         accuracy_mode=settings.runtime.nautilus.matching_accuracy_mode,
         max_book_staleness_ms=settings.data.polymarket.max_book_staleness_ms,
@@ -139,6 +147,7 @@ def build_trading_node(
         "group_assembler": group_assembler,
         "wallet": wallet,
         "paper_client": paper_client,
+        "matching_client": matching_client,
         "policy": policy,
         "position_policy": position_policy,
         "settlement_actor": settlement_actor,
@@ -153,7 +162,7 @@ def _build_wrapper(
     cfg: Any,
     assembler: MarketViewAssembler,
     policy: DecisionPolicyActor,
-    paper_client: NautilusMatchingPaperExecutionClient,
+    paper_client: PolySignalPaperExecutionClient,
     condition_ids: Sequence[str],
 ) -> PolySignalNautilusStrategy | None:
     """Build a strategy wrapper by name."""
@@ -222,7 +231,7 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
         bridge_registry=components["registry"],
         sidecar=components["sidecar"],
         book_data_provider=book_data_provider,
-        matching_client=components["paper_client"],
+        matching_client=components["matching_client"],
         price_to_beat_provider=scheduler.ptb,
     )
 

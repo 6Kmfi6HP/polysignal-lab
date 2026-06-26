@@ -11,6 +11,8 @@ from polysignal_lab.nautilus_runtime.node import (
     run_nautilus_cli_async,
 )
 from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
+from polysignal_lab.nautilus_runtime.execution import PolySignalPaperExecutionClient
+from polysignal_lab.nautilus_runtime.matching import NautilusMatchingPaperExecutionClient
 
 
 def test_build_trading_node_returns_component_dict() -> None:
@@ -29,6 +31,14 @@ def test_build_trading_node_returns_component_dict() -> None:
     assert "observability" in node
     assert "strategies" in node
     assert "strategy_names" in node
+
+
+def test_build_trading_node_separates_execution_client_from_matching_sink() -> None:
+    node = build_trading_node()
+
+    assert isinstance(node["paper_client"], PolySignalPaperExecutionClient)
+    assert isinstance(node["matching_client"], NautilusMatchingPaperExecutionClient)
+    assert node["matching_client"] is not node["paper_client"]
 
 
 def test_build_trading_node_strategies_is_list() -> None:

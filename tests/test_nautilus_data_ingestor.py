@@ -107,6 +107,15 @@ def test_sync_orderbooks_updates_provider_and_matching_client() -> None:
     assert matching.trades == [("up-token", 0.82, 2.0, None, None)]
 
 
+def test_sync_orderbooks_sends_retained_trade_once_across_syncs() -> None:
+    ingestor, _, _, _, matching = _ingestor()
+
+    ingestor.sync_orderbooks()
+    ingestor.sync_orderbooks()
+
+    assert matching.trades == [("up-token", 0.82, 2.0, None, None)]
+
+
 def test_sync_spots_reads_real_spot_registry() -> None:
     ingestor, _, sidecar, _, _ = _ingestor()
 
