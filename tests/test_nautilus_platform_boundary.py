@@ -60,7 +60,8 @@ def test_default_nautilus_runtime_source_avoids_local_paper_executors() -> None:
         "BestAskTakerExecutor",
         "PassiveGtdExecutor",
         "PaperSimulator",
-        "PolySignalPaperExecutionClient(",
+        "PolySignalPaperExecutionClient",
+        "create_paper_execution_client",
     )
     allowed_files = {
         Path("src/polysignal_lab/nautilus_runtime/execution.py"),

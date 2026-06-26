@@ -14,11 +14,10 @@ from polysignal_lab.nautilus_bridge.market_registry import MarketPairMeta, Polym
 from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
 
 
-class BookSink(Protocol):
+
+class MatchingBookSink(Protocol):
     def update_book(self, token_id: str, book: OrderBook) -> None: ...
 
-
-class MatchingBookSink(BookSink, Protocol):
     def update_trade(
         self,
         token_id: str,
@@ -40,7 +39,6 @@ class NautilusDataIngestor:
         sidecar: ExternalDataSidecar,
         book_data_provider: NautilusBookDataProvider,
         matching_client: MatchingBookSink,
-        execution_book_sink: BookSink | None = None,
         price_to_beat_provider: PriceToBeatProvider | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -51,7 +49,6 @@ class NautilusDataIngestor:
         self.sidecar = sidecar
         self.book_data_provider = book_data_provider
         self.matching_client = matching_client
-        self.execution_book_sink = execution_book_sink
         self.price_to_beat_provider = price_to_beat_provider
         self.logger = logger or logging.getLogger(__name__)
         self._seen_matching_trades: set[tuple[str, float, float, str | None, object]] = set()
@@ -80,8 +77,6 @@ class NautilusDataIngestor:
     def sync_orderbooks(self) -> None:
         for token_id, book in self.books.books.items():
             self.book_data_provider.update_book(token_id, book)
-            if self.execution_book_sink is not None:
-                self.execution_book_sink.update_book(token_id, book)
             self.matching_client.update_book(token_id, book)
             for trade in self.books.recent_trades(token_id):
                 side = getattr(trade, "side", None)

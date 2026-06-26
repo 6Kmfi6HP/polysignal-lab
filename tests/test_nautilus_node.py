@@ -13,7 +13,6 @@ from polysignal_lab.nautilus_runtime.node import (
     run_nautilus_cli_async,
 )
 from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
-from polysignal_lab.nautilus_runtime.execution import PolySignalPaperExecutionClient
 from polysignal_lab.nautilus_runtime.matching import NautilusMatchingPaperExecutionClient
 
 
@@ -35,23 +34,22 @@ def test_build_trading_node_returns_component_dict() -> None:
     assert "strategy_names" in node
 
 
-def test_build_trading_node_separates_execution_client_from_matching_sink() -> None:
+def test_build_trading_node_wires_matching_client() -> None:
     node = build_trading_node()
+    paper_client = node["paper_client"]
 
-    assert isinstance(node["paper_client"], PolySignalPaperExecutionClient)
-    assert isinstance(node["matching_client"], NautilusMatchingPaperExecutionClient)
-    assert node["matching_client"] is not node["paper_client"]
+    assert isinstance(paper_client, NautilusMatchingPaperExecutionClient)
+    assert paper_client.paper_engine == "nautilus_matching"
+    assert paper_client.accuracy_mode == "depth_l2"
+    assert "matching_client" not in node
 
-
-def test_build_trading_node_preserves_configured_fill_model() -> None:
+def test_build_trading_node_preserves_matching_staleness_setting() -> None:
     settings = Settings()
-    fill_model = FillModelConfig(slippage_bps=0.0, min_fill_ratio=0.5)
-    settings.paper_trading.fill_model = fill_model
+    settings.data.polymarket.max_book_staleness_ms = 42_000
 
     node = build_trading_node(settings)
 
-    assert node["paper_client"]._fill_config is fill_model
-
+    assert node["paper_client"].max_book_staleness_ms == 42_000
 
 def test_build_trading_node_strategies_is_list() -> None:
     """Strategy wrappers are a list."""
@@ -92,10 +90,10 @@ async def test_build_nautilus_runtime_wires_real_book_provider(monkeypatch) -> N
     assert bundle.components["assembler"].books is bundle.book_data_provider
     assert bundle.orchestrator is not None
 
-    assert bundle.paper_client is bundle.components["matching_client"]
-    assert bundle.orchestrator.paper_client is bundle.components["matching_client"]
-    assert isinstance(bundle.components["paper_client"], PolySignalPaperExecutionClient)
-
+    assert isinstance(bundle.paper_client, NautilusMatchingPaperExecutionClient)
+    assert bundle.paper_client is bundle.components["paper_client"]
+    assert bundle.orchestrator.paper_client is bundle.paper_client
+    assert "matching_client" not in bundle.components
 
 async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
     class FakeOrchestrator:
