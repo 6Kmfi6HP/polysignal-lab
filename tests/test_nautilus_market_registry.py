@@ -22,6 +22,18 @@ def test_market_registry_registers_binary_yes_no_pair() -> None:
     assert pair.down.instrument_id == "PM-DOWN"
 
 
+def test_market_registry_token_meta_returns_registered_side_metadata() -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    pair = MarketPairMeta.from_market(market, up_instrument_id="PM-UP", down_instrument_id="PM-DOWN")
+    registry = PolymarketMarketRegistry()
+
+    registry.register(pair)
+
+    assert registry.token_meta(market.token_for(Side.UP).token_id) == pair.up
+    assert registry.token_meta(market.token_for(Side.DOWN).token_id) == pair.down
+    assert registry.token_meta("missing") is None
+
+
 def test_market_registry_rejects_non_binary_market() -> None:
     market = sample_market().model_copy(
         update={

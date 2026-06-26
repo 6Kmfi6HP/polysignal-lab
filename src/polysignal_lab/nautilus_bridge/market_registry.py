@@ -101,3 +101,13 @@ class PolymarketMarketRegistry:
 
     def by_token(self, token_id: str) -> MarketPairMeta | None:
         return self._by_token.get(token_id)
+
+    def token_meta(self, token_id: str) -> InstrumentTokenMeta | None:
+        pair = self.by_token(token_id)
+        if pair is None:
+            return None
+        if pair.up.token_id == token_id:
+            return pair.up
+        if pair.down.token_id == token_id:
+            return pair.down
+        return None
