@@ -6,10 +6,14 @@ from datetime import datetime, timezone
 
 import pytest
 from polysignal_lab.alpha.types import AlphaDecision
+from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.domain.enums import ExitMode, Side, OrderStatus, TradeResultStatus
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperTradeResult
+from polysignal_lab.storage.jsonl_store import JSONLStore
+from polysignal_lab.storage.sqlite_store import SQLiteStore
+from polysignal_lab.storage.state_store import StateStore
 from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
@@ -195,6 +199,7 @@ class FakePersistence:
     def insert_signal(self, payload): self.calls.append(("insert_signal", payload))
     def insert_rejected_signal(self, payload): self.calls.append(("insert_rejected_signal", payload))
     def insert_paper_order(self, payload): self.calls.append(("insert_paper_order", payload))
+    def upsert_paper_order(self, payload): self.calls.append(("upsert_paper_order", payload))
     def insert_paper_fill(self, payload): self.calls.append(("insert_paper_fill", payload))
     def upsert_paper_position(self, payload): self.calls.append(("upsert_paper_position", payload))
     def insert_paper_trade_result(self, payload): self.calls.append(("insert_paper_trade_result", payload))
@@ -224,7 +229,7 @@ def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
     assert [name for name, _ in persistence.calls] == [
         "insert_signal",
         "insert_rejected_signal",
-        "insert_paper_order",
+        "upsert_paper_order",
         "insert_paper_fill",
         "upsert_paper_position",
         "insert_paper_trade_result",
@@ -232,6 +237,33 @@ def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
     ]
     with pytest.raises(ValueError, match="Unknown Nautilus event table"):
         adapter.insert_json("unknown", {})
+
+
+def test_event_store_upserts_terminal_order_update(tmp_path) -> None:
+    persistence = PersistenceService(
+        JSONLStore(tmp_path / "logs"),
+        SQLiteStore(tmp_path / "paper.sqlite"),
+        StateStore(tmp_path / "state"),
+    )
+    adapter = NautilusEventStoreAdapter(persistence)
+    order = PaperOrder(
+        paper_order_id="order-1", signal_id="sig-1", token_id="t1",
+        side=Side.UP, limit_price=0.82, stake_usdc=10.0,
+        reference_price=0.82, asset="BTC", timeframe="5m", strategy="test",
+        market_id="m1", market_slug="s1", status=OrderStatus.RESTING,
+    )
+
+    adapter.insert_json("orders", order.model_dump(mode="json"))
+    adapter.insert_json(
+        "orders",
+        order.model_copy(update={"status": OrderStatus.REJECTED}).model_dump(mode="json"),
+    )
+
+    rows = persistence.query_json("paper_orders")
+    persistence.close()
+    assert len(rows) == 1
+    assert rows[0]["paper_order_id"] == "order-1"
+    assert rows[0]["status"] == "REJECTED"
 
 
 def test_notifier_adapter_sends_in_thread() -> None:

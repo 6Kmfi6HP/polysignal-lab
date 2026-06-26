@@ -562,6 +562,10 @@ class NautilusMatchingPaperExecutionClient:
                 results.append(self._reject(resting.order, "GTD_EXPIRED"))
                 continue
             book = self._books.get(resting.spec.instrument_id)
+            freshness_ms = _freshness_ms(book) if book is not None else None
+            if freshness_ms is not None and freshness_ms > self.max_book_staleness_ms:
+                results.append(self._reject(resting.order, "STALE_ORDERBOOK"))
+                continue
             if book is None or self._should_rest(resting.order, book):
                 keep.append(resting)
                 continue

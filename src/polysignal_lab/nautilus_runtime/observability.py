@@ -96,7 +96,7 @@ class NautilusEventStoreAdapter:
         self._routes: dict[str, Callable[[object], None]] = {
             "signals": persistence.insert_signal,
             "rejected_signals": persistence.insert_rejected_signal,
-            "orders": persistence.insert_paper_order,
+            "orders": persistence.upsert_paper_order,
             "fills": persistence.insert_paper_fill,
             "positions": persistence.upsert_paper_position,
             "settlements": persistence.insert_paper_trade_result,

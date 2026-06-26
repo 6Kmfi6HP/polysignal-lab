@@ -113,3 +113,68 @@ Result: passed.
 ### Concerns
 
 - Task 8 still needs the planned strategy-wrapper cutover from legacy paper execution to matching execution.
+
+
+## Fix pass: persistence and resting freshness blockers
+
+### Changed files
+
+- `src/polysignal_lab/nautilus_runtime/observability.py`
+  - Routed Nautilus `orders` event-store writes through `PersistenceService.upsert_paper_order` so terminal RESTING -> REJECTED/FILLED updates can overwrite the same `paper_order_id`.
+- `src/polysignal_lab/nautilus_runtime/matching.py`
+  - Added stale held-book rejection in `process_resting_orders()` before `_should_rest()` or matching-boundary submission.
+- `tests/test_nautilus_observability.py`
+  - Updated route-name assertion to `upsert_paper_order`.
+  - Added `test_event_store_upserts_terminal_order_update` proving one `paper_order_id` row updates from RESTING to REJECTED through the adapter and SQLite persistence path.
+- `tests/test_nautilus_matching_execution.py`
+  - Added `test_resting_order_stale_book_rejects_before_boundary` proving stale resting books reject with `STALE_ORDERBOOK`, skip the boundary, and remove the resting order.
+
+### RED evidence
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_matching_execution.py::test_resting_order_stale_book_rejects_before_boundary tests/test_nautilus_observability.py::test_event_store_routes_known_tables_and_rejects_unknown tests/test_nautilus_observability.py::test_event_store_upserts_terminal_order_update -q
+```
+
+Result: failed as expected before implementation.
+
+- Resting stale-book test returned `FILLED` instead of `REJECTED`, proving the stale book reached boundary matching.
+- Observability route test still called `insert_paper_order`.
+- Upsert terminal-update test raised `DuplicateRecordError` via `insert_paper_order` on the second payload for `order-1`.
+
+### GREEN focused checks
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_matching_execution.py::test_resting_order_stale_book_rejects_before_boundary tests/test_nautilus_observability.py::test_event_store_routes_known_tables_and_rejects_unknown tests/test_nautilus_observability.py::test_event_store_upserts_terminal_order_update -q
+```
+
+Result: passed.
+
+```text
+...                                                                      [100%]
+```
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_matching_execution.py::test_passive_gtd_rests_then_expires tests/test_nautilus_orchestrator.py tests/test_nautilus_observability.py -q
+```
+
+Result: passed.
+
+```text
+....................                                                     [100%]
+```
+
+### Self-review
+
+- Terminal Nautilus order observations now use the existing paper-order upsert path; no new persistence abstraction or duplicate-order shim was added.
+- Resting-order freshness now matches entry/exit behavior for stale books and exits before boundary matching; missing held books retain the previous keep-resting behavior.
+- No live trading, signing, authenticated Polymarket clients, Docker, project-wide formatters, linters, or safety gates were run.
+
+### Concerns
+
+- None beyond prior Task 7 report concerns.

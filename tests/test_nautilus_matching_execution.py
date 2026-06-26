@@ -420,6 +420,39 @@ def test_passive_gtd_rests_then_expires() -> None:
     assert expired[-1].reason == "GTD_EXPIRED"
     assert boundary.submitted_orders == []
 
+def test_resting_order_stale_book_rejects_before_boundary() -> None:
+    boundary = FakeNautilusBoundary()
+    client = NautilusMatchingPaperExecutionClient(
+        wallet=PaperWallet(),
+        max_book_staleness_ms=1_000,
+        matching_boundary=boundary,
+    )
+    client.update_book("token-up", _book(ask_price=0.84, ask_size=500.0))
+    resting = client.submit_spec(
+        _spec(
+            quantity=10.0,
+            intent=OrderIntent.PASSIVE_GTD,
+            max_entry_price="0.83",
+            expiry_seconds=3600,
+        )
+    )
+    boundary.submitted_orders.clear()
+    client.update_book(
+        "token-up",
+        _book(ask_price=0.82, ask_size=500.0).model_copy(
+            update={"received_at": datetime.now(UTC) - timedelta(seconds=2)}
+        ),
+    )
+
+    rejected = client.process_resting_orders()
+
+    assert resting.status == OrderStatus.RESTING
+    assert rejected[-1].status == OrderStatus.REJECTED
+    assert rejected[-1].reason == "STALE_ORDERBOOK"
+    assert rejected[-1].order is resting.order
+    assert boundary.submitted_orders == []
+    assert client.process_resting_orders() == []
+
 def test_partial_exit_updates_wallet_and_remaining_position() -> None:
     boundary = FakeNautilusBoundary(
         [
