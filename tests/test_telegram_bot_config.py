@@ -22,13 +22,13 @@ def test_telegram_interactive_config_defaults_fail_closed() -> None:
     assert config.interactive_drop_pending_updates_on_start is True
 
 
-def test_telegram_interactive_yaml_defaults_load() -> None:
+def test_telegram_interactive_yaml_overrides_model_defaults() -> None:
     settings = load_settings("config/signal_bot.yaml")
 
     assert isinstance(settings, Settings)
-    assert settings.telegram.interactive_enabled is False
+    assert settings.telegram.interactive_enabled is True
     assert settings.telegram.interactive_dry_run is False
-    assert settings.telegram.interactive_allowed_chat_ids == ()
+    assert settings.telegram.interactive_allowed_chat_ids == (461927973,)
     assert settings.telegram.interactive_poll_interval_sec == 0.0
     assert settings.telegram.interactive_poll_timeout_sec == 30
     assert settings.telegram.interactive_drop_pending_updates_on_start is True
