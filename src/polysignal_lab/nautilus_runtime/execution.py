@@ -258,13 +258,21 @@ class PolySignalPaperExecutionClient:
         book = self._book_for_token.get(token_id)
         order_id = new_id("paper")
         now = utc_now()
+        limit_price = price
+        max_entry_price = _tag_float(tags, "max_entry_price")
+        if max_entry_price is not None and intent in {
+            OrderIntent.TAKER_FAK,
+            OrderIntent.TAKER_FOK,
+            OrderIntent.TAKER_IOC,
+        }:
+            limit_price = max_entry_price
 
         order = PaperOrder(
             paper_order_id=order_id,
             signal_id=tags.get("signal_id", "") if tags else "",
             token_id=token_id,
             side=side,
-            limit_price=price,
+            limit_price=limit_price,
             stake_usdc=quantity * price,
             shares=quantity,
             asset=tags.get("asset", ""),

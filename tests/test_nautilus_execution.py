@@ -86,6 +86,38 @@ def test_custom_book_staleness_window_allows_runtime_books(up_token) -> None:
     assert runtime_client.submit_spec(spec).status == OrderStatus.FILLED
 
 
+def test_taker_order_uses_max_entry_tag_as_slippage_ceiling(up_token) -> None:
+    from polysignal_lab.config import FillModelConfig
+    from polysignal_lab.utils import utc_now
+
+    book = sample_book(up_token.token_id, BookFactoryConfig(ask=0.82, size=500))
+    book.received_at = utc_now()
+    client = PolySignalPaperExecutionClient(
+        order_book_data={up_token.token_id: book},
+        fill_config=FillModelConfig(slippage_bps=25, require_depth_check=False),
+    )
+    spec = NautilusOrderSpec(
+        instrument_id=up_token.token_id,
+        side=Side.UP,
+        price=0.82,
+        quantity=10.0,
+        intent=OrderIntent.TAKER_IOC,
+        expiry_seconds=None,
+        pair_id=None,
+        reduce_only=False,
+        hedge_leg=False,
+        tags={"strategy": "test", "max_entry_price": "0.83"},
+    )
+
+    result = client.submit_spec(spec)
+
+    assert result.status == OrderStatus.FILLED
+    assert result.order is not None
+    assert result.order.reference_price == 0.82
+    assert result.order.limit_price == 0.83
+    assert result.fills[0].fill_price > 0.82
+
+
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
