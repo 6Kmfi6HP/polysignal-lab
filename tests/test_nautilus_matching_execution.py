@@ -471,6 +471,71 @@ def test_owned_boundary_republishes_only_after_fresh_book_update() -> None:
     assert boundary.published == ["token-up", "token-up"]
 
 
+def test_owned_boundary_ignores_unchanged_book_update_after_fill() -> None:
+    class Boundary(OwnedNautilusMatchingBoundary):
+        def __init__(self) -> None:
+            super().__init__(MatchingAccuracySettings.from_mode("depth_l2"))
+            self.published: list[str] = []
+            self.submitted = 0
+
+        def _ensure_session(self) -> None:
+            self._session = object()
+
+        def _ensure_instrument(self, order, spec, book):
+            instrument = object()
+            self._instruments[order.token_id] = instrument
+            return instrument
+
+        def _publish_book_to_nautilus(self, token_id: str, book: OrderBook) -> None:
+            self.published.append(token_id)
+
+        def _submit_limit_order_through_nautilus(self, order, spec, instrument):
+            self.submitted += 1
+            return NautilusMatchingOutcome(
+                status=OrderStatus.FILLED,
+                fills=(
+                    NautilusFillEvent(
+                        fill_price=0.82,
+                        shares=2.0,
+                        stake_usdc=1.64,
+                        raw_best_ask=0.82,
+                    ),
+                ),
+            )
+
+    boundary = Boundary()
+    book = _book(ask_price=0.82, ask_size=500.0)
+    boundary.update_book("token-up", book)
+    order = NautilusMatchingPaperExecutionClient()._paper_order_from_spec(
+        _spec(quantity=2.0, max_entry_price="0.83")
+    )
+
+    first = boundary.submit_order(order, _spec(quantity=2.0, max_entry_price="0.83"))
+    boundary.update_book("token-up", book)
+    second = boundary.submit_order(order, _spec(quantity=2.0, max_entry_price="0.83"))
+
+    assert first.status == OrderStatus.FILLED
+    assert second.status == OrderStatus.FILLED
+    assert boundary.submitted == 2
+    assert boundary.published == ["token-up"]
+
+
+def test_low_balance_rejects_before_matching_boundary_submission() -> None:
+    boundary = FakeNautilusBoundary()
+    wallet = PaperWallet(starting_balance=1.0)
+    client = NautilusMatchingPaperExecutionClient(
+        wallet=wallet,
+        matching_boundary=boundary,
+    )
+    client.update_book("token-up", _book(ask_price=0.82, ask_size=500.0))
+
+    result = client.submit_spec(_spec(quantity=10.0, max_entry_price="0.83"))
+
+    assert result.status == OrderStatus.REJECTED
+    assert result.reason == "WALLET_INSUFFICIENT_CASH"
+    assert boundary.submitted_orders == []
+    assert wallet.cash_balance == 1.0
+
 def test_owned_boundary_configures_exchange_with_accuracy_settings() -> None:
     captured: dict[str, object] = {}
 

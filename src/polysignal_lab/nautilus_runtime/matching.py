@@ -116,6 +116,7 @@ class OwnedNautilusMatchingBoundary:
     def __init__(self, settings: MatchingAccuracySettings) -> None:
         self.settings = settings
         self._books: dict[str, OrderBook] = {}
+        self._book_signatures: dict[str, tuple[object, ...]] = {}
         self._instruments: dict[str, Any] = {}
         self._dirty_books: set[str] = set()
         self._published_books: set[str] = set()
@@ -123,7 +124,11 @@ class OwnedNautilusMatchingBoundary:
         self._sequence = 0
 
     def update_book(self, token_id: str, book: OrderBook) -> None:
+        signature = _book_signature(book)
+        if self._book_signatures.get(token_id) == signature:
+            return
         self._books[token_id] = book
+        self._book_signatures[token_id] = signature
         self._dirty_books.add(token_id)
         if self._session is not None and token_id in self._instruments:
             self._publish_book_to_nautilus(token_id, book)
@@ -593,6 +598,8 @@ class NautilusMatchingPaperExecutionClient:
         order: PaperOrder,
         spec: NautilusOrderSpec,
     ) -> PaperExecutionResult:
+        if not self.wallet.can_afford(_preflight_stake_usdc(order)):
+            return self._reject(order, "WALLET_INSUFFICIENT_CASH")
         try:
             outcome = self.matching_boundary.submit_order(order, spec)
         except NautilusMatchingUnavailable as exc:
@@ -707,6 +714,26 @@ class NautilusMatchingPaperExecutionClient:
         return PaperExecutionResult(order=order, status=OrderStatus.REJECTED, reason=reason)
 
 
+
+
+def _book_signature(book: OrderBook) -> tuple[object, ...]:
+    return (
+        book.hash,
+        book.source_timestamp,
+        book.received_at.isoformat() if book.received_at is not None else None,
+        tuple(
+            (float(level.price), float(level.size))
+            for level in sorted(book.bids, key=lambda level: (-level.price, level.size))
+        ),
+        tuple(
+            (float(level.price), float(level.size))
+            for level in sorted(book.asks, key=lambda level: (level.price, level.size))
+        ),
+    )
+
+
+def _preflight_stake_usdc(order: PaperOrder) -> float:
+    return max(order.stake_usdc, (order.shares or 0.0) * order.limit_price)
 
 
 def _decimal_str(value: float) -> str:
