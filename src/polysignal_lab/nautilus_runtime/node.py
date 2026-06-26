@@ -22,7 +22,7 @@ from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssem
 from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
 from polysignal_lab.nautilus_runtime.data_ingestor import NautilusDataIngestor
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
-from polysignal_lab.nautilus_runtime.execution import create_paper_execution_client
+from polysignal_lab.nautilus_runtime.matching import NautilusMatchingPaperExecutionClient
 from polysignal_lab.nautilus_runtime.group_views import MarketGroupViewAssembler
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
@@ -95,9 +95,9 @@ def build_trading_node(
     wallet = wallet or PaperWallet(
         starting_balance=settings.paper_trading.starting_balance_usdc
     )
-    paper_client = create_paper_execution_client(
+    paper_client = NautilusMatchingPaperExecutionClient(
         wallet=wallet,
-        fill_config=settings.paper_trading.fill_model,
+        accuracy_mode=settings.runtime.nautilus.matching_accuracy_mode,
         max_book_staleness_ms=settings.data.polymarket.max_book_staleness_ms,
     )
 
@@ -153,7 +153,7 @@ def _build_wrapper(
     cfg: Any,
     assembler: MarketViewAssembler,
     policy: DecisionPolicyActor,
-    paper_client: PolySignalPaperExecutionClient,
+    paper_client: NautilusMatchingPaperExecutionClient,
     condition_ids: Sequence[str],
 ) -> PolySignalNautilusStrategy | None:
     """Build a strategy wrapper by name."""
@@ -222,7 +222,7 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
         bridge_registry=components["registry"],
         sidecar=components["sidecar"],
         book_data_provider=book_data_provider,
-        paper_client=components["paper_client"],
+        matching_client=components["paper_client"],
         price_to_beat_provider=scheduler.ptb,
     )
 

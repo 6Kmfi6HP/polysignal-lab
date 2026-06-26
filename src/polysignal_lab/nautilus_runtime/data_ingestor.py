@@ -2,15 +2,29 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Protocol
 
 from polysignal_lab.alpha.types import SpotView
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry, SpotRegistry
 from polysignal_lab.domain.market import Market
+from polysignal_lab.domain.orderbook import OrderBook
 from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import MarketPairMeta, PolymarketMarketRegistry
 from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
-from polysignal_lab.nautilus_runtime.execution import PolySignalPaperExecutionClient
+
+
+class MatchingBookSink(Protocol):
+    def update_book(self, token_id: str, book: OrderBook) -> None: ...
+
+    def update_trade(
+        self,
+        token_id: str,
+        price: float,
+        size: float,
+        side: str | None,
+        ts_event: datetime | None,
+    ) -> None: ...
 
 
 class NautilusDataIngestor:
@@ -23,7 +37,7 @@ class NautilusDataIngestor:
         bridge_registry: PolymarketMarketRegistry,
         sidecar: ExternalDataSidecar,
         book_data_provider: NautilusBookDataProvider,
-        paper_client: PolySignalPaperExecutionClient,
+        matching_client: MatchingBookSink,
         price_to_beat_provider: PriceToBeatProvider | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -33,7 +47,7 @@ class NautilusDataIngestor:
         self.bridge_registry = bridge_registry
         self.sidecar = sidecar
         self.book_data_provider = book_data_provider
-        self.paper_client = paper_client
+        self.matching_client = matching_client
         self.price_to_beat_provider = price_to_beat_provider
         self.logger = logger or logging.getLogger(__name__)
 
@@ -61,7 +75,15 @@ class NautilusDataIngestor:
     def sync_orderbooks(self) -> None:
         for token_id, book in self.books.books.items():
             self.book_data_provider.update_book(token_id, book)
-            self.paper_client.update_book(token_id, book)
+            self.matching_client.update_book(token_id, book)
+            for trade in self.books.recent_trades(token_id):
+                self.matching_client.update_trade(
+                    token_id,
+                    price=trade.price,
+                    size=trade.size,
+                    side=getattr(trade, "side", None),
+                    ts_event=getattr(trade, "datetime", None),
+                )
 
     def sync_spots(self) -> None:
         now = datetime.now(UTC)

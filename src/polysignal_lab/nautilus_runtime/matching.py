@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from polysignal_lab.alpha.types import NautilusOrderSpec
@@ -36,6 +37,15 @@ class MatchingAccuracySettings:
         raise ValueError(f"unknown Nautilus matching accuracy mode: {mode}")
 
 
+@dataclass(frozen=True, slots=True)
+class MatchingTrade:
+    token_id: str
+    price: float
+    size: float
+    side: str | None
+    ts_event: datetime | None
+
+
 class NautilusMatchingPaperExecutionClient:
     paper_engine = "nautilus_matching"
 
@@ -50,11 +60,35 @@ class NautilusMatchingPaperExecutionClient:
         self.accuracy_mode = self.settings.mode
         self.max_book_staleness_ms = max_book_staleness_ms
         self._books: dict[str, OrderBook] = {}
+        self._trades: dict[str, list[MatchingTrade]] = {}
         self._pending: list[PaperExecutionResult] = []
         self._exchange: Any | None = None
 
     def update_book(self, token_id: str, book: OrderBook) -> None:
         self._books[token_id] = book
+
+    def update_trade(
+        self,
+        token_id: str,
+        price: float,
+        size: float,
+        side: str | None = None,
+        ts_event: datetime | None = None,
+    ) -> None:
+        if price <= 0 or size <= 0:
+            return
+        self._trades.setdefault(token_id, []).append(
+            MatchingTrade(
+                token_id=token_id,
+                price=price,
+                size=size,
+                side=side,
+                ts_event=ts_event,
+            )
+        )
+
+    def recent_trades_for(self, token_id: str) -> list[MatchingTrade]:
+        return list(self._trades.get(token_id, ()))
 
     def drain_events(self) -> list[PaperExecutionResult]:
         events = self._pending
@@ -63,13 +97,20 @@ class NautilusMatchingPaperExecutionClient:
 
     def submit_spec(self, spec: NautilusOrderSpec) -> PaperExecutionResult:
         order = self._paper_order_from_spec(spec)
-        if spec.instrument_id not in self._books:
+        book = self._books.get(spec.instrument_id)
+        if book is None:
             return PaperExecutionResult(
                 order=order,
                 status=OrderStatus.REJECTED,
                 reason="MISSING_ORDERBOOK",
             )
-
+        freshness_ms = _freshness_ms(book)
+        if freshness_ms is not None and freshness_ms > self.max_book_staleness_ms:
+            return PaperExecutionResult(
+                order=order,
+                status=OrderStatus.REJECTED,
+                reason="STALE_ORDERBOOK",
+            )
         result = PaperExecutionResult(
             order=order,
             status=OrderStatus.PENDING,
@@ -107,6 +148,12 @@ class NautilusMatchingPaperExecutionClient:
             signal_confidence=_tag_float(tags, "confidence"),
             metrics=metrics,
         )
+
+
+def _freshness_ms(book: OrderBook) -> int | None:
+    if book.received_at is None:
+        return None
+    return max(0, int((datetime.now(UTC) - book.received_at).total_seconds() * 1000))
 
 
 def _tag_float(tags: dict[str, str], key: str, default: float | None = None) -> float | None:
