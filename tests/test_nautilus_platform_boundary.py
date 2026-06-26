@@ -15,7 +15,9 @@ def test_nautilus_extra_is_optional_and_polymarket_scoped() -> None:
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     assert all("nautilus_trader" not in dep for dep in data["project"]["dependencies"])
-    assert data["project"]["optional-dependencies"]["nautilus"] == ["nautilus_trader[polymarket]"]
+    assert data["project"]["optional-dependencies"]["nautilus"] == [
+        "nautilus_trader[polymarket]>=1.230.0; python_version >= '3.12'"
+    ]
 
 
 def test_cli_exposes_nautilus_mode_and_script() -> None:

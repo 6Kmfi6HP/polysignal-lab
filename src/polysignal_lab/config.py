@@ -260,6 +260,8 @@ class NautilusRuntimeConfig(BaseModel):
     trader_id: str = "PolySignal-Nautilus-001"
     python: str = "3.12"
     execution_mode: Literal["paper_sandbox"] = "paper_sandbox"
+    paper_engine: Literal["nautilus_matching"] = "nautilus_matching"
+    matching_accuracy_mode: Literal["fast_l1", "depth_l2", "queue_l2"] = "depth_l2"
     allow_live_polymarket_execution: bool = False
     polymarket_data: NautilusDataClientConfig = Field(default_factory=NautilusDataClientConfig)
     sidecar: NautilusSidecarConfig = Field(default_factory=NautilusSidecarConfig)
