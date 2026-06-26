@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -77,31 +78,339 @@ class NautilusMatchingBoundary(Protocol):
     def submit_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome: ...
 
 
+@dataclass(slots=True)
+class _NautilusSession:
+    loop: Any
+    clock: Any
+    msgbus: Any
+    cache: Any
+    portfolio: Any
+    exec_engine: Any
+    sandbox: Any
+    order_factory: Any
+    order_events: list[Any]
+    components: dict[str, Any]
+
+
 class OwnedNautilusMatchingBoundary:
-    """Lazy boundary for the owned Nautilus SimulatedExchange execution path."""
+    """Lazy boundary for the owned Nautilus sandbox matching path."""
 
     def __init__(self, settings: MatchingAccuracySettings) -> None:
         self.settings = settings
-        self._simulated_exchange_cls: Any | None = None
-        self._backtest_exec_client_cls: Any | None = None
+        self._books: dict[str, OrderBook] = {}
+        self._instruments: dict[str, Any] = {}
+        self._session: _NautilusSession | None = None
+        self._sequence = 0
 
     def update_book(self, token_id: str, book: OrderBook) -> None:
-        return None
+        self._books[token_id] = book
+        if self._session is not None and token_id in self._instruments:
+            self._publish_book_to_nautilus(token_id, book)
 
     def submit_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome:
-        self._load_nautilus_components()
-        raise NautilusMatchingUnavailable()
+        book = self._books.get(order.token_id)
+        if book is None:
+            return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="MISSING_ORDERBOOK")
+        self._ensure_session()
+        instrument = self._ensure_instrument(order, spec, book)
+        self._publish_book_to_nautilus(order.token_id, book)
+        return self._submit_limit_order_through_nautilus(order, spec, instrument)
 
-    def _load_nautilus_components(self) -> None:
-        if self._simulated_exchange_cls is not None and self._backtest_exec_client_cls is not None:
+    def _ensure_session(self) -> None:
+        if self._session is not None:
             return
+        components = self._load_nautilus_components()
+        loop = components["asyncio"].new_event_loop()
+        clock = components["TestClock"]()
+        if hasattr(clock, "set_time"):
+            clock.set_time(0)
+        trader_id = components["TraderId"]("POLYSIGNAL-001")
+        msgbus = components["MessageBus"](trader_id, clock)
+        cache = components["Cache"](database=None)
+        portfolio = components["Portfolio"](msgbus=msgbus, cache=cache, clock=clock)
+        exec_engine = components["ExecutionEngine"](msgbus=msgbus, cache=cache, clock=clock)
+        order_events: list[Any] = []
+        msgbus.subscribe("events.order.*", handler=order_events.append)
+        config = components["SandboxExecutionClientConfig"](
+            venue=components["DEFAULT_VENUE"],
+            starting_balances=["100_000 USDC"],
+            base_currency="USDC",
+            account_type="CASH",
+            book_type=self.settings.book_type,
+            trade_execution=self.settings.trade_execution,
+            bar_execution=self.settings.bar_execution,
+            support_gtd_orders=self.settings.support_gtd_orders,
+            support_contingent_orders=self.settings.support_contingent_orders,
+            use_reduce_only=self.settings.use_reduce_only,
+        )
+        sandbox = components["SandboxExecutionClient"](
+            loop=loop,
+            portfolio=portfolio,
+            msgbus=msgbus,
+            cache=cache,
+            clock=clock,
+            config=config,
+        )
+        exec_engine.register_client(sandbox)
+        order_factory = components["OrderFactory"](
+            trader_id=trader_id,
+            strategy_id=components["StrategyId"]("S-001"),
+            clock=clock,
+            cache=cache,
+        )
+        sandbox.connect()
+        self._session = _NautilusSession(
+            loop=loop,
+            clock=clock,
+            msgbus=msgbus,
+            cache=cache,
+            portfolio=portfolio,
+            exec_engine=exec_engine,
+            sandbox=sandbox,
+            order_factory=order_factory,
+            order_events=order_events,
+            components=components,
+        )
+
+    def _load_nautilus_components(self) -> dict[str, Any]:
         try:
-            from nautilus_trader.backtest.engine import SimulatedExchange
-            from nautilus_trader.backtest.execution_client import BacktestExecClient
+            import asyncio
+
+            from nautilus_trader.adapters.sandbox.config import SandboxExecutionClientConfig
+            from nautilus_trader.adapters.sandbox.execution import SandboxExecutionClient
+            from nautilus_trader.cache.cache import Cache
+            from nautilus_trader.common.component import MessageBus, TestClock
+            from nautilus_trader.common.factories import OrderFactory
+            from nautilus_trader.execution.engine import ExecutionEngine
+            from nautilus_trader.core.uuid import UUID4
+            from nautilus_trader.execution.messages import SubmitOrder
+            from nautilus_trader.model.data import BookOrder, OrderBookDelta, OrderBookDeltas
+            from nautilus_trader.model.enums import BookAction, OrderSide, TimeInForce
+            from nautilus_trader.model.identifiers import StrategyId, TraderId
+            from nautilus_trader.model.objects import Price, Quantity
+            from nautilus_trader.portfolio.portfolio import Portfolio
         except Exception as exc:  # pragma: no cover - depends on optional Nautilus runtime
             raise NautilusMatchingUnavailable() from exc
-        self._simulated_exchange_cls = SimulatedExchange
-        self._backtest_exec_client_cls = BacktestExecClient
+
+        from polysignal_lab.nautilus_runtime.instrument_mapping import DEFAULT_VENUE
+
+        return {
+            "asyncio": asyncio,
+            "BookAction": BookAction,
+            "BookOrder": BookOrder,
+            "Cache": Cache,
+            "DEFAULT_VENUE": DEFAULT_VENUE,
+            "ExecutionEngine": ExecutionEngine,
+            "MessageBus": MessageBus,
+            "OrderBookDelta": OrderBookDelta,
+            "OrderBookDeltas": OrderBookDeltas,
+            "OrderFactory": OrderFactory,
+            "OrderSide": OrderSide,
+            "Portfolio": Portfolio,
+            "Price": Price,
+            "Quantity": Quantity,
+            "SandboxExecutionClient": SandboxExecutionClient,
+            "SandboxExecutionClientConfig": SandboxExecutionClientConfig,
+            "StrategyId": StrategyId,
+            "SubmitOrder": SubmitOrder,
+            "UUID4": UUID4,
+            "TestClock": TestClock,
+            "TimeInForce": TimeInForce,
+            "TraderId": TraderId,
+        }
+
+    def _ensure_instrument(self, order: PaperOrder, spec: NautilusOrderSpec, book: OrderBook) -> Any:
+        if order.token_id in self._instruments:
+            return self._instruments[order.token_id]
+        session = self._require_session()
+        from polysignal_lab.nautilus_bridge.market_registry import (
+            InstrumentTokenMeta,
+            MarketPairMeta,
+        )
+        from polysignal_lab.nautilus_runtime.instrument_mapping import (
+            build_binary_option,
+            instrument_id_for_token,
+        )
+
+        current = InstrumentTokenMeta(
+            instrument_id=instrument_id_for_token(order.token_id),
+            token_id=order.token_id,
+            side=order.side,
+        )
+        other_side = order.side.opposite
+        other = InstrumentTokenMeta(
+            instrument_id=instrument_id_for_token(f"{order.token_id}-{other_side.value.lower()}"),
+            token_id=f"{order.token_id}-{other_side.value.lower()}",
+            side=other_side,
+        )
+        pair = MarketPairMeta(
+            market_id=order.market_id,
+            market_slug=order.market_slug,
+            condition_id=str(order.metrics.get("condition_id", "")),
+            asset=order.asset,
+            timeframe=order.timeframe,
+            start_ts=None,
+            end_ts=None,
+            up=current if order.side == Side.UP else other,
+            down=current if order.side == Side.DOWN else other,
+        )
+        token = pair.up if order.side == Side.UP else pair.down
+        instrument = build_binary_option(
+            pair,
+            token,
+            tick_size=book.tick_size,
+            min_order_size=book.min_order_size,
+            ts_init_ns=session.clock.timestamp_ns(),
+        )
+        session.cache.add_instrument(instrument)
+        if instrument.id not in session.sandbox.exchange.instruments:
+            session.sandbox.exchange.add_instrument(instrument)
+        self._instruments[order.token_id] = instrument
+        return instrument
+
+    def _publish_book_to_nautilus(self, token_id: str, book: OrderBook) -> None:
+        session = self._require_session()
+        instrument = self._instruments[token_id]
+        components = session.components
+        ts = _datetime_to_unix_ns(book.received_at)
+        self._sequence += 1
+        deltas = [
+            components["OrderBookDelta"].clear(instrument.id, self._sequence, ts, ts),
+        ]
+        order_id = 1
+        for level in sorted(book.bids, key=lambda value: value.price, reverse=True):
+            if level.price <= 0 or level.size <= 0:
+                continue
+            self._sequence += 1
+            deltas.append(
+                components["OrderBookDelta"](
+                    instrument_id=instrument.id,
+                    action=components["BookAction"].ADD,
+                    order=components["BookOrder"](
+                        components["OrderSide"].BUY,
+                        components["Price"].from_str(_decimal_str(level.price)),
+                        components["Quantity"].from_str(_decimal_str(level.size)),
+                        order_id,
+                    ),
+                    flags=0,
+                    sequence=self._sequence,
+                    ts_event=ts,
+                    ts_init=ts,
+                )
+            )
+            order_id += 1
+        for level in sorted(book.asks, key=lambda value: value.price):
+            if level.price <= 0 or level.size <= 0:
+                continue
+            self._sequence += 1
+            deltas.append(
+                components["OrderBookDelta"](
+                    instrument_id=instrument.id,
+                    action=components["BookAction"].ADD,
+                    order=components["BookOrder"](
+                        components["OrderSide"].SELL,
+                        components["Price"].from_str(_decimal_str(level.price)),
+                        components["Quantity"].from_str(_decimal_str(level.size)),
+                        order_id,
+                    ),
+                    flags=0,
+                    sequence=self._sequence,
+                    ts_event=ts,
+                    ts_init=ts,
+                )
+            )
+            order_id += 1
+        session.sandbox.on_data(components["OrderBookDeltas"](instrument.id, deltas))
+
+    def _submit_limit_order_through_nautilus(
+        self,
+        order: PaperOrder,
+        spec: NautilusOrderSpec,
+        instrument: Any,
+    ) -> NautilusMatchingOutcome:
+        session = self._require_session()
+        components = session.components
+        time_in_force = (
+            components["TimeInForce"].FOK
+            if spec.intent == OrderIntent.TAKER_FOK
+            else components["TimeInForce"].IOC
+        )
+        nautilus_order = session.order_factory.limit(
+            instrument_id=instrument.id,
+            order_side=components["OrderSide"].BUY,
+            quantity=components["Quantity"].from_str(_decimal_str(spec.quantity)),
+            price=components["Price"].from_str(_decimal_str(order.limit_price)),
+            time_in_force=time_in_force,
+            reduce_only=order.reduce_only,
+            tags=[f"paper_order_id={order.paper_order_id}"],
+        )
+        start_index = len(session.order_events)
+        command = components["SubmitOrder"](
+            trader_id=nautilus_order.trader_id,
+            strategy_id=nautilus_order.strategy_id,
+            order=nautilus_order,
+            command_id=components["UUID4"](),
+            ts_init=session.clock.timestamp_ns(),
+        )
+        session.sandbox.submit_order(command)
+        latest_book = self._books.get(order.token_id)
+        if latest_book is not None:
+            self._publish_book_to_nautilus(order.token_id, latest_book)
+        events = [
+            event
+            for event in session.order_events[start_index:]
+            if _identifier_value(getattr(event, "client_order_id", None))
+            == _identifier_value(nautilus_order.client_order_id)
+        ]
+        return self._outcome_from_nautilus_events(order, events)
+
+    def _outcome_from_nautilus_events(
+        self,
+        order: PaperOrder,
+        events: list[Any],
+    ) -> NautilusMatchingOutcome:
+        rejected = next((event for event in events if type(event).__name__ == "OrderRejected"), None)
+        if rejected is not None:
+            return NautilusMatchingOutcome(
+                status=OrderStatus.REJECTED,
+                reason=str(getattr(rejected, "reason", "MATCHING_REJECTED")),
+            )
+        fills = [event for event in events if type(event).__name__ == "OrderFilled"]
+        if not fills:
+            return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="INSUFFICIENT_DEPTH")
+        book = self._books.get(order.token_id)
+        raw_best_ask = book.best_ask if book is not None and book.best_ask is not None else None
+        available_depth_usdc = (
+            _available_depth_usdc(book, order.limit_price) if book is not None else None
+        )
+        fill_events: list[NautilusFillEvent] = []
+        for fill in fills:
+            fill_price = float(fill.last_px)
+            shares = float(fill.last_qty)
+            fill_events.append(
+                NautilusFillEvent(
+                    fill_price=fill_price,
+                    shares=shares,
+                    stake_usdc=fill_price * shares,
+                    raw_best_ask=raw_best_ask or fill_price,
+                    available_depth_usdc=available_depth_usdc,
+                    fill_ratio=shares / (order.shares or shares),
+                    fill_id=_identifier_value(getattr(fill, "trade_id", None)),
+                    position_id=_identifier_value(getattr(fill, "position_id", None)),
+                )
+            )
+        filled_shares = sum(event.shares for event in fill_events)
+        status = (
+            OrderStatus.FILLED
+            if order.shares is None or filled_shares >= order.shares
+            else OrderStatus.PARTIAL
+        )
+        return NautilusMatchingOutcome(status=status, fills=tuple(fill_events))
+
+    def _require_session(self) -> _NautilusSession:
+        if self._session is None:
+            raise NautilusMatchingUnavailable()
+        return self._session
 
 class NautilusMatchingPaperExecutionClient:
     paper_engine = "nautilus_matching"
@@ -255,7 +564,12 @@ class NautilusMatchingPaperExecutionClient:
 
         fills: list[PaperFill] = []
         positions: list[PaperPosition] = []
+        seen_fill_ids: set[str] = set()
         for event in outcome.fills:
+            if event.fill_id is not None:
+                if event.fill_id in self._mirrored_fill_ids or event.fill_id in seen_fill_ids:
+                    continue
+                seen_fill_ids.add(event.fill_id)
             fill_fields: dict[str, Any] = {}
             if event.fill_id is not None:
                 fill_fields["paper_fill_id"] = event.fill_id
@@ -298,6 +612,14 @@ class NautilusMatchingPaperExecutionClient:
             fills.append(fill)
             positions.append(position)
 
+        if not positions:
+            order.status = outcome.status
+            return PaperExecutionResult(
+                order=order,
+                status=outcome.status,
+                reason=outcome.reason,
+            )
+
         if not self.wallet.can_afford(sum(position.stake_usdc for position in positions)):
             return self._reject(order, "WALLET_INSUFFICIENT_CASH")
         for position in positions:
@@ -323,6 +645,27 @@ class NautilusMatchingPaperExecutionClient:
         return PaperExecutionResult(order=order, status=OrderStatus.REJECTED, reason=reason)
 
 
+
+
+def _decimal_str(value: float) -> str:
+    return format(Decimal(str(value)).normalize(), "f")
+
+
+def _identifier_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    raw = getattr(value, "value", None)
+    return str(raw if raw is not None else value)
+
+
+def _datetime_to_unix_ns(value: datetime) -> int:
+    dt = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    delta = dt.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
+
+
+def _available_depth_usdc(book: OrderBook, limit_price: float) -> float:
+    return sum(level.price * level.size for level in book.asks if level.price <= limit_price)
 
 
 def _freshness_ms(book: OrderBook) -> int | None:

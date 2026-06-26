@@ -129,3 +129,72 @@ RuntimeError: You are installing from source which requires the Clang compiler t
 ### Concerns / blockers
 
 - Native Nautilus optional execution could not be exercised in this environment because the Python 3.12 `nautilus-trader` build fails before tests start due missing `clang`. The production code now routes through the Nautilus boundary and returns `MATCHING_NOT_CONNECTED` if the optional boundary cannot load, while focused Python 3.11 tests use an injectable fake boundary/event source.
+
+---
+
+## Re-review blocker fix addendum
+
+### Changed files
+
+- `src/polysignal_lab/nautilus_runtime/matching.py`
+- `tests/test_nautilus_matching_execution.py`
+- `.superpowers/sdd/task-06-report.md`
+
+### Implementation summary
+
+- Replaced the owned matching boundary stub with a lazy Nautilus sandbox boundary: it stores books, builds a sandbox `BinaryOption`, publishes `OrderBookDeltas`, submits IOC/FOK limit orders through `SandboxExecutionClient`, and mirrors Nautilus `OrderFilled` / `OrderRejected` events into `NautilusMatchingOutcome`.
+- Kept Nautilus imports inside `_load_nautilus_components()` so Python 3.11 core imports remain Nautilus-free when the optional extra is absent.
+- Fixed replay idempotency by skipping already mirrored fill ids before creating returned `PaperFill` / `PaperPosition` records and before wallet apply.
+- Added regressions for replayed fill ids and for the owned boundary submit path delegating past the lazy Nautilus seam without importing Nautilus under Python 3.11.
+
+### RED evidence
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_matching_execution.py::test_replayed_fill_id_is_not_returned_or_applied_twice tests/test_nautilus_matching_execution.py::test_owned_boundary_stores_books_and_delegates_to_nautilus_path -q
+```
+
+Result before implementation: failed as expected (`FF`, exit code 1). The replay test returned a duplicate `PaperFill`; the owned-boundary contract test raised `NautilusMatchingUnavailable` from the stubbed unconditional Nautilus load/raise path.
+
+### GREEN focused checks
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_matching_execution.py -q
+```
+
+Result: PASS (`............. [100%]`, exit code 0).
+
+### Python 3.12 Nautilus optional check
+
+Command:
+
+```bash
+uv run --extra nautilus --python 3.12 python -m pytest tests/test_nautilus_matching_execution.py tests/test_nautilus_instrument_mapping.py -q
+```
+
+Result: environment blocker. `uv` selected CPython 3.12.13 and failed building `nautilus-trader` from source on Linux aarch64 because `clang` is not installed:
+
+```text
+FileNotFoundError: [Errno 2] No such file or directory: 'clang'
+RuntimeError: You are installing from source which requires the Clang compiler to be installed.
+```
+
+### Source boundary checks
+
+- `matching.py` / focused tests contain no `ClobClient(` source token.
+- `matching.py` contains no top-level `nautilus_trader` imports.
+- `matching.py` contains no `BestAskTakerExecutor`, `PassiveGtdExecutor`, or `PaperSimulator` references.
+
+### Self-review
+
+- Verified the required Python 3.11 focused matching suite after the optional Python 3.12 attempt recreated `.venv`.
+- Verified replayed fill ids are absent from the second returned result and do not create a second wallet position.
+- Verified the owned boundary update/submit contract stores the latest book and reaches the overridable Nautilus submit seam instead of unconditionally raising.
+- Did not run project-wide gates, formatters, linters, Docker, safety scan, or unrelated tests per Task 6 constraints.
+
+### Concerns / blockers
+
+- Native Nautilus execution still cannot be exercised in this environment until `clang` is installed for the Python 3.12 `nautilus-trader` source build.
