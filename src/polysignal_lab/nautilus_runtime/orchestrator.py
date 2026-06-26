@@ -81,8 +81,12 @@ class NautilusOrchestrator:
     async def run_once(self) -> None:
         await self._phase_market_refresh()
         condition_ids = self._phase_sync()
+        await self._phase_event_drain()
+        await self._phase_resting_orders()
         if condition_ids:
             await self._phase_strategy_eval(condition_ids)
+        await self._phase_event_drain()
+        await self._phase_position_exits()
         await self._phase_settlement()
         await self._phase_daily_report()
         self._phase_health()
@@ -134,6 +138,68 @@ class NautilusOrchestrator:
                 )
 
 
+    async def _phase_event_drain(self) -> None:
+        """Drain pending execution events from the paper client."""
+        try:
+            drain = getattr(self.paper_client, "drain_events", None)
+            if drain is not None:
+                for result in drain():
+                    await self._record_execution_result(result)
+            self.health.mark_ok("event_drain")
+        except Exception as exc:
+            self.logger.exception("Execution event drain failed")
+            self.health.mark_degraded("event_drain", reason=str(exc)[:200])
+
+    async def _phase_resting_orders(self) -> None:
+        """Process resting GTD orders."""
+        try:
+            process = getattr(self.paper_client, "process_resting_orders", None)
+            if process is not None:
+                for result in process():
+                    await self._record_execution_result(result)
+            self.health.mark_ok("resting_orders")
+        except Exception as exc:
+            self.logger.exception("Resting order processing failed")
+            self.health.mark_degraded("resting_orders", reason=str(exc)[:200])
+
+    async def _phase_position_exits(self) -> None:
+        """Submit reduce-only exits for positions whose exit policy fires."""
+        try:
+            submit_exit = getattr(self.paper_client, "submit_exit", None)
+            wallet = getattr(self.paper_client, "wallet", None)
+            positions = getattr(wallet, "open_positions", {}) if wallet is not None else {}
+            if submit_exit is not None:
+                for position in list(positions.values()):
+                    book = self.book_data_provider.snapshot_for_token(position.token_id)
+                    bid_price = getattr(book, "best_bid", None) if book is not None else None
+                    if bid_price is None:
+                        continue
+                    decision_position = (
+                        position.model_copy(deep=True)
+                        if hasattr(position, "model_copy")
+                        else position
+                    )
+                    policy_wallet = getattr(self.position_policy, "wallet", None)
+                    has_policy_wallet = hasattr(self.position_policy, "wallet")
+                    if has_policy_wallet:
+                        self.position_policy.wallet = None
+                    try:
+                        decision = self.position_policy.evaluate(
+                            decision_position,
+                            current_bid=bid_price,
+                        )
+                    finally:
+                        if has_policy_wallet:
+                            self.position_policy.wallet = policy_wallet
+                    if decision is None:
+                        continue
+                    result = submit_exit(position, bid_price, _exit_reason(decision))
+                    await self._record_execution_result(result)
+            self.health.mark_ok("position_exits")
+        except Exception as exc:
+            self.logger.exception("Position exit processing failed")
+            self.health.mark_degraded("position_exits", reason=str(exc)[:200])
+
     async def _phase_settlement(self) -> None:
         """Close paper positions through the legacy reporting pipeline."""
         try:
@@ -164,7 +230,7 @@ class NautilusOrchestrator:
 
     async def _record_execution_result(self, result: PaperExecutionResult) -> None:
         """Record an execution result's signal, order, fills, and positions."""
-        if result.order is not None:
+        if result.order is not None and not result.order.reduce_only:
             self.observability.record_signal_from_order(result.order)
             await self._publish_signal_from_order(result.order)
         self.observability.record_order(result)
@@ -183,3 +249,12 @@ class NautilusOrchestrator:
             scheduler_health.note_publish_result(self.scheduler, publish.as_dict())
         except Exception:
             self.logger.exception("Failed to publish accepted signal")
+
+
+def _exit_reason(decision: object) -> str:
+    details = getattr(decision, "details", None)
+    if isinstance(details, dict) and details.get("exit_mode") is not None:
+        return str(details["exit_mode"])
+    mode = getattr(decision, "exit_mode", None)
+    value = getattr(mode, "value", mode)
+    return str(value or "POSITION_EXIT")

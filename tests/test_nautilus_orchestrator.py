@@ -116,6 +116,79 @@ async def test_run_once_syncs_evaluates_and_settles_real_market_registry() -> No
     assert orch.observability.health == 1
 
 
+async def test_run_once_drains_resting_orders_and_position_exits() -> None:
+    calls: list[str] = []
+    position = SimpleNamespace(paper_position_id="pos-1", token_id="up-token")
+    drained = PaperExecutionResult(status=OrderStatus.PENDING, reason="DRAINED")
+    resting = PaperExecutionResult(status=OrderStatus.REJECTED, reason="GTD_EXPIRED")
+    exited_order = PaperOrder(
+        paper_order_id="exit-order",
+        signal_id="signal-1",
+        token_id="up-token",
+        side=Side.UP,
+        limit_price=0.91,
+        reference_price=0.91,
+        stake_usdc=9.1,
+        asset="BTC",
+        timeframe="5m",
+        strategy="late_consensus",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        reduce_only=True,
+    )
+    exited = PaperExecutionResult(order=exited_order, status=OrderStatus.FILLED, reason="TAKE_PROFIT")
+
+    class PaperClient:
+        def __init__(self) -> None:
+            self.wallet = SimpleNamespace(open_positions={"pos-1": position})
+            self.exit_args = None
+            self.drains = 0
+
+        def drain_events(self):
+            calls.append("drain")
+            self.drains += 1
+            return [drained] if self.drains == 1 else []
+
+        def process_resting_orders(self):
+            calls.append("resting")
+            return [resting]
+
+        def submit_exit(self, pos, bid_price, reason):
+            calls.append("exit")
+            self.exit_args = (pos, bid_price, reason)
+            return exited
+
+    class RecordingStrategy(FakeStrategy):
+        def evaluate_all_conditions(self, ids):
+            calls.append("strategy")
+            return super().evaluate_all_conditions(ids)
+
+    class PositionPolicy:
+        def evaluate(self, pos, current_bid=None):
+            assert pos is position
+            assert current_bid == 0.91
+            return SimpleNamespace(details={"exit_mode": "TAKE_PROFIT"})
+
+    paper_client = PaperClient()
+    orch = _orchestrator(
+        registered_strategies=[RecordingStrategy()],
+        book_data_provider=SimpleNamespace(
+            snapshot_for_token=lambda token_id: SimpleNamespace(best_bid=0.91)
+        ),
+        paper_client=paper_client,
+        position_policy=PositionPolicy(),
+    )
+
+    await orch.run_once()
+
+    assert calls == ["drain", "resting", "strategy", "drain", "exit"]
+    assert paper_client.exit_args == (position, 0.91, "TAKE_PROFIT")
+    assert orch.observability.orders == [drained, resting, exited]
+    assert orch.observability.signals == []
+    assert orch.scheduler.publish_service.signals == []
+    assert any(call[0] == "ok" and call[1] == "resting_orders" for call in orch.health.calls)
+    assert any(call[0] == "ok" and call[1] == "position_exits" for call in orch.health.calls)
+
 
 async def test_strategy_eval_records_signal_and_rejection_batch_events() -> None:
     signal = SignalCandidate.build(

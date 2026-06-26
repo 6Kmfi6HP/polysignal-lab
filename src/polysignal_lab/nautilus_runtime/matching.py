@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from polysignal_lab.alpha.types import NautilusOrderSpec
-from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side
+from polysignal_lab.domain.enums import OrderIntent, OrderStatus, PositionStatus, Side
 from polysignal_lab.domain.orderbook import OrderBook
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
@@ -47,6 +47,13 @@ class MatchingTrade:
     side: str | None
     ts_event: datetime | None
 
+
+
+@dataclass(frozen=True, slots=True)
+class RestingMatchingOrder:
+    spec: NautilusOrderSpec
+    order: PaperOrder
+    created_at: datetime
 
 @dataclass(frozen=True, slots=True)
 class NautilusFillEvent:
@@ -139,7 +146,12 @@ class OwnedNautilusMatchingBoundary:
         book = self._books.get(order.token_id)
         if book is None:
             return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="MISSING_ORDERBOOK")
-        if book.best_ask is not None and book.best_ask > order.limit_price:
+        if order.reduce_only:
+            if book.best_bid is None:
+                return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="MISSING_BEST_BID")
+            if book.best_bid < order.limit_price:
+                return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="BID_BELOW_LIMIT")
+        elif book.best_ask is not None and book.best_ask > order.limit_price:
             return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="PRICE_ABOVE_LIMIT")
         self._ensure_session()
         instrument = self._ensure_instrument(order, spec, book)
@@ -407,7 +419,11 @@ class OwnedNautilusMatchingBoundary:
         )
         nautilus_order = session.order_factory.limit(
             instrument_id=instrument.id,
-            order_side=components["OrderSide"].BUY,
+            order_side=(
+                components["OrderSide"].SELL
+                if order.reduce_only
+                else components["OrderSide"].BUY
+            ),
             quantity=components["Quantity"].from_str(_decimal_str(spec.quantity)),
             price=components["Price"].from_str(_decimal_str(order.limit_price)),
             time_in_force=time_in_force,
@@ -446,9 +462,13 @@ class OwnedNautilusMatchingBoundary:
         if not fills:
             return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="INSUFFICIENT_DEPTH")
         book = self._books.get(order.token_id)
-        raw_best_ask = book.best_ask if book is not None and book.best_ask is not None else None
+        raw_best = None
+        if book is not None:
+            raw_best = book.best_bid if order.reduce_only else book.best_ask
         available_depth_usdc = (
-            _available_depth_usdc(book, order.limit_price) if book is not None else None
+            _available_bid_depth_usdc(book, order.limit_price)
+            if book is not None and order.reduce_only
+            else _available_depth_usdc(book, order.limit_price) if book is not None else None
         )
         fill_events: list[NautilusFillEvent] = []
         for fill in fills:
@@ -459,7 +479,7 @@ class OwnedNautilusMatchingBoundary:
                     fill_price=fill_price,
                     shares=shares,
                     stake_usdc=fill_price * shares,
-                    raw_best_ask=raw_best_ask or fill_price,
+                    raw_best_ask=raw_best or fill_price,
                     available_depth_usdc=available_depth_usdc,
                     fill_ratio=shares / (order.shares or shares),
                     fill_id=_identifier_value(getattr(fill, "trade_id", None)),
@@ -496,6 +516,7 @@ class NautilusMatchingPaperExecutionClient:
         self._books: dict[str, OrderBook] = {}
         self._trades: dict[str, list[MatchingTrade]] = {}
         self._pending: list[PaperExecutionResult] = []
+        self._resting: list[RestingMatchingOrder] = []
         self._mirrored_fill_ids: set[str] = set()
         self.matching_boundary = matching_boundary or OwnedNautilusMatchingBoundary(self.settings)
 
@@ -531,6 +552,56 @@ class NautilusMatchingPaperExecutionClient:
         self._pending = []
         return events
 
+    def process_resting_orders(self) -> list[PaperExecutionResult]:
+        now = utc_now()
+        results: list[PaperExecutionResult] = []
+        keep: list[RestingMatchingOrder] = []
+        for resting in self._resting:
+            expiry = resting.spec.expiry_seconds
+            if expiry is not None and (now - resting.created_at).total_seconds() >= expiry:
+                results.append(self._reject(resting.order, "GTD_EXPIRED"))
+                continue
+            book = self._books.get(resting.spec.instrument_id)
+            if book is None or self._should_rest(resting.order, book):
+                keep.append(resting)
+                continue
+            result = self._submit_taker_to_matching_boundary(resting.order, resting.spec)
+            results.append(result)
+            if result.status in {OrderStatus.PENDING, OrderStatus.RESTING}:
+                keep.append(resting)
+        self._resting = keep
+        return results
+
+    def submit_exit(
+        self,
+        position: PaperPosition,
+        bid_price: float,
+        reason: str,
+    ) -> PaperExecutionResult:
+        spec = NautilusOrderSpec(
+            instrument_id=position.token_id,
+            side=position.side,
+            price=bid_price,
+            quantity=position.shares,
+            intent=OrderIntent.TAKER_IOC,
+            expiry_seconds=None,
+            pair_id=None,
+            reduce_only=True,
+            hedge_leg=False,
+            tags={
+                "strategy": position.strategy,
+                "asset": position.asset,
+                "timeframe": position.timeframe,
+                "market_id": position.market_id,
+                "market_slug": position.market_slug,
+                "signal_id": position.signal_id,
+                "exit_reason": reason,
+            },
+        )
+        order = self._paper_order_from_spec(spec)
+        return self._submit_exit_to_matching_boundary(order, spec, position)
+
+
     def submit_spec(self, spec: NautilusOrderSpec) -> PaperExecutionResult:
         if spec.side not in {Side.UP, Side.DOWN}:
             return PaperExecutionResult(status=OrderStatus.REJECTED, reason="UNSUPPORTED_SIDE")
@@ -550,6 +621,7 @@ class NautilusMatchingPaperExecutionClient:
                 reason="STALE_ORDERBOOK",
             )
         if spec.intent not in {
+            OrderIntent.PASSIVE_GTD,
             OrderIntent.TAKER_FAK,
             OrderIntent.TAKER_FOK,
             OrderIntent.TAKER_IOC,
@@ -559,8 +631,9 @@ class NautilusMatchingPaperExecutionClient:
                 status=OrderStatus.PENDING,
                 reason="MATCHING_NOT_CONNECTED",
             )
-            self._pending.append(result)
             return result
+        if spec.intent == OrderIntent.PASSIVE_GTD and self._should_rest(order, book):
+            return self._rest(order, spec)
         return self._submit_taker_to_matching_boundary(order, spec)
 
     def _paper_order_from_spec(self, spec: NautilusOrderSpec) -> PaperOrder:
@@ -598,7 +671,7 @@ class NautilusMatchingPaperExecutionClient:
         order: PaperOrder,
         spec: NautilusOrderSpec,
     ) -> PaperExecutionResult:
-        if not self.wallet.can_afford(_preflight_stake_usdc(order)):
+        if not order.reduce_only and not self.wallet.can_afford(_preflight_stake_usdc(order)):
             return self._reject(order, "WALLET_INSUFFICIENT_CASH")
         try:
             outcome = self.matching_boundary.match_order(order, spec)
@@ -608,9 +681,99 @@ class NautilusMatchingPaperExecutionClient:
                 status=OrderStatus.PENDING,
                 reason=exc.reason,
             )
-            self._pending.append(result)
             return result
         return self._mirror_matching_outcome(order, outcome)
+
+    def _submit_exit_to_matching_boundary(
+        self,
+        order: PaperOrder,
+        spec: NautilusOrderSpec,
+        position: PaperPosition,
+    ) -> PaperExecutionResult:
+        try:
+            outcome = self.matching_boundary.match_order(order, spec)
+        except NautilusMatchingUnavailable as exc:
+            result = PaperExecutionResult(
+                order=order,
+                status=OrderStatus.PENDING,
+                reason=exc.reason,
+            )
+            return result
+        return self._mirror_exit_outcome(order, outcome, position)
+
+    def _should_rest(self, order: PaperOrder, book: OrderBook) -> bool:
+        return book.best_ask is None or book.best_ask > order.limit_price
+
+    def _rest(self, order: PaperOrder, spec: NautilusOrderSpec) -> PaperExecutionResult:
+        order.status = OrderStatus.RESTING
+        result = PaperExecutionResult(order=order, status=OrderStatus.RESTING)
+        self._resting.append(RestingMatchingOrder(spec=spec, order=order, created_at=order.created_at))
+        return result
+
+    def _mirror_exit_outcome(
+        self,
+        order: PaperOrder,
+        outcome: NautilusMatchingOutcome,
+        position: PaperPosition,
+    ) -> PaperExecutionResult:
+        if outcome.status == OrderStatus.REJECTED:
+            return self._reject(order, outcome.reason or "MATCHING_REJECTED")
+        if outcome.status not in {OrderStatus.FILLED, OrderStatus.PARTIAL}:
+            return PaperExecutionResult(order=order, status=outcome.status, reason=outcome.reason)
+        fills: list[PaperFill] = []
+        seen_fill_ids: set[str] = set()
+        for event in outcome.fills:
+            if event.fill_id is not None:
+                if event.fill_id in self._mirrored_fill_ids or event.fill_id in seen_fill_ids:
+                    continue
+                seen_fill_ids.add(event.fill_id)
+            fill_fields: dict[str, Any] = {}
+            if event.fill_id is not None:
+                fill_fields["paper_fill_id"] = event.fill_id
+            fill = PaperFill(
+                **fill_fields,
+                paper_order_id=order.paper_order_id,
+                signal_id=order.signal_id,
+                token_id=order.token_id,
+                side=order.side,
+                raw_best_ask=event.raw_best_ask,
+                slippage_bps=0.0,
+                fill_price=event.fill_price,
+                stake_usdc=event.stake_usdc,
+                shares=event.shares,
+                depth_checked=True,
+                available_depth_usdc=event.available_depth_usdc,
+                fill_ratio=event.fill_ratio,
+            )
+            fills.append(fill)
+            self._mirrored_fill_ids.add(fill.paper_fill_id)
+        if not fills:
+            order.status = outcome.status
+            return PaperExecutionResult(order=order, status=outcome.status, reason=outcome.reason)
+        filled_shares = sum(fill.shares for fill in fills)
+        settlement_value = sum(fill.stake_usdc for fill in fills)
+        original_shares = position.shares
+        original_stake = position.stake_usdc
+        exit_shares = min(filled_shares, original_shares)
+        cost_basis = original_stake * (exit_shares / original_shares) if original_shares else 0.0
+        pnl = settlement_value - cost_basis
+        if exit_shares >= original_shares:
+            position.status = PositionStatus.CLOSED
+            position.closed_at = utc_now()
+            self.wallet.close_position(position.paper_position_id, settlement_value, pnl)
+        else:
+            self.wallet.cash_balance = round((self.wallet.cash_balance or 0.0) + settlement_value, 10)
+            self.wallet.realized_pnl = round(self.wallet.realized_pnl + pnl, 10)
+            position.shares = round(original_shares - exit_shares, 10)
+            position.stake_usdc = round(original_stake - cost_basis, 10)
+        order.status = outcome.status
+        return PaperExecutionResult(
+            order=order,
+            fills=fills,
+            positions=[position],
+            status=outcome.status,
+            reason=outcome.reason,
+        )
 
     def _mirror_matching_outcome(
         self,
@@ -625,8 +788,6 @@ class NautilusMatchingPaperExecutionClient:
                 status=outcome.status,
                 reason=outcome.reason,
             )
-            if outcome.status == OrderStatus.PENDING:
-                self._pending.append(result)
             return result
         if not outcome.fills:
             return self._reject(order, outcome.reason or "INSUFFICIENT_DEPTH")
@@ -751,6 +912,10 @@ def _datetime_to_unix_ns(value: datetime) -> int:
 
 def _available_depth_usdc(book: OrderBook, limit_price: float) -> float:
     return sum(level.price * level.size for level in book.asks if level.price <= limit_price)
+
+
+def _available_bid_depth_usdc(book: OrderBook, min_price: float) -> float:
+    return sum(level.price * level.size for level in book.bids if level.price >= min_price)
 
 
 def _freshness_ms(book: OrderBook) -> int | None:
