@@ -92,6 +92,24 @@ class _NautilusSession:
     components: dict[str, Any]
 
 
+
+@dataclass(slots=True)
+class _DirectNautilusSandbox:
+    exchange: Any
+    exec_client: Any
+
+    def connect(self) -> None:
+        starter = getattr(self.exec_client, "_start", None)
+        if starter is not None:
+            starter()
+
+    def submit_order(self, command: Any) -> Any:
+        return self.exec_client.submit_order(command)
+
+    def on_data(self, data: Any) -> None:
+        self.exchange.process_order_book_deltas(data)
+        self.exchange.process(data.ts_init)
+
 class OwnedNautilusMatchingBoundary:
     """Lazy boundary for the owned Nautilus sandbox matching path."""
 
@@ -111,6 +129,8 @@ class OwnedNautilusMatchingBoundary:
         book = self._books.get(order.token_id)
         if book is None:
             return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="MISSING_ORDERBOOK")
+        if book.best_ask is not None and book.best_ask > order.limit_price:
+            return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="PRICE_ABOVE_LIMIT")
         self._ensure_session()
         instrument = self._ensure_instrument(order, spec, book)
         self._publish_book_to_nautilus(order.token_id, book)
@@ -131,27 +151,47 @@ class OwnedNautilusMatchingBoundary:
         exec_engine = components["ExecutionEngine"](msgbus=msgbus, cache=cache, clock=clock)
         order_events: list[Any] = []
         msgbus.subscribe("events.order.*", handler=order_events.append)
-        config = components["SandboxExecutionClientConfig"](
-            venue=components["DEFAULT_VENUE"],
-            starting_balances=["100_000 USDC"],
-            base_currency="USDC",
-            account_type="CASH",
-            book_type=self.settings.book_type,
-            trade_execution=self.settings.trade_execution,
-            bar_execution=self.settings.bar_execution,
-            support_gtd_orders=self.settings.support_gtd_orders,
-            support_contingent_orders=self.settings.support_contingent_orders,
-            use_reduce_only=self.settings.use_reduce_only,
-        )
-        sandbox = components["SandboxExecutionClient"](
-            loop=loop,
+        exchange = components["SimulatedExchange"](
+            venue=components["Venue"](components["DEFAULT_VENUE"]),
+            oms_type=components["oms_type_from_str"]("NETTING"),
+            account_type=components["account_type_from_str"]("CASH"),
+            starting_balances=[components["Money"].from_str("100_000 USDC")],
+            base_currency=components["Currency"].from_str("USDC"),
+            default_leverage=Decimal(1),
+            leverages={},
+            modules=[],
             portfolio=portfolio,
             msgbus=msgbus,
             cache=cache,
             clock=clock,
-            config=config,
+            fill_model=components["FillModel"](),
+            fee_model=components["MakerTakerFeeModel"](),
+            latency_model=components["LatencyModel"](0),
+            book_type=components["book_type_from_str"](self.settings.book_type),
+            frozen_account=False,
+            bar_execution=self.settings.bar_execution,
+            trade_execution=self.settings.trade_execution,
+            reject_stop_orders=True,
+            support_gtd_orders=self.settings.support_gtd_orders,
+            support_contingent_orders=self.settings.support_contingent_orders,
+            use_position_ids=True,
+            use_random_ids=False,
+            use_reduce_only=self.settings.use_reduce_only,
+            use_message_queue=False,
+            liquidity_consumption=self.settings.liquidity_consumption,
+            queue_position=self.settings.queue_position,
+            price_protection_points=self.settings.price_protection_points,
         )
-        exec_engine.register_client(sandbox)
+        exec_client = components["BacktestExecClient"](
+            exchange=exchange,
+            msgbus=msgbus,
+            cache=cache,
+            clock=clock,
+        )
+        exchange.register_client(exec_client)
+        exchange.initialize_account()
+        exec_engine.register_client(exec_client)
+        sandbox = _DirectNautilusSandbox(exchange=exchange, exec_client=exec_client)
         order_factory = components["OrderFactory"](
             trader_id=trader_id,
             strategy_id=components["StrategyId"]("S-001"),
@@ -176,8 +216,9 @@ class OwnedNautilusMatchingBoundary:
         try:
             import asyncio
 
-            from nautilus_trader.adapters.sandbox.config import SandboxExecutionClientConfig
-            from nautilus_trader.adapters.sandbox.execution import SandboxExecutionClient
+            from nautilus_trader.backtest.engine import SimulatedExchange
+            from nautilus_trader.backtest.execution_client import BacktestExecClient
+            from nautilus_trader.backtest.models import FillModel, LatencyModel, MakerTakerFeeModel
             from nautilus_trader.cache.cache import Cache
             from nautilus_trader.common.component import MessageBus, TestClock
             from nautilus_trader.common.factories import OrderFactory
@@ -185,9 +226,16 @@ class OwnedNautilusMatchingBoundary:
             from nautilus_trader.core.uuid import UUID4
             from nautilus_trader.execution.messages import SubmitOrder
             from nautilus_trader.model.data import BookOrder, OrderBookDelta, OrderBookDeltas
-            from nautilus_trader.model.enums import BookAction, OrderSide, TimeInForce
-            from nautilus_trader.model.identifiers import StrategyId, TraderId
-            from nautilus_trader.model.objects import Price, Quantity
+            from nautilus_trader.model.enums import (
+                BookAction,
+                OrderSide,
+                TimeInForce,
+                account_type_from_str,
+                book_type_from_str,
+                oms_type_from_str,
+            )
+            from nautilus_trader.model.identifiers import StrategyId, TraderId, Venue
+            from nautilus_trader.model.objects import Currency, Money, Price, Quantity
             from nautilus_trader.portfolio.portfolio import Portfolio
         except Exception as exc:  # pragma: no cover - depends on optional Nautilus runtime
             raise NautilusMatchingUnavailable() from exc
@@ -195,13 +243,22 @@ class OwnedNautilusMatchingBoundary:
         from polysignal_lab.nautilus_runtime.instrument_mapping import DEFAULT_VENUE
 
         return {
+            "account_type_from_str": account_type_from_str,
             "asyncio": asyncio,
+            "BacktestExecClient": BacktestExecClient,
             "BookAction": BookAction,
             "BookOrder": BookOrder,
+            "book_type_from_str": book_type_from_str,
             "Cache": Cache,
+            "Currency": Currency,
             "DEFAULT_VENUE": DEFAULT_VENUE,
             "ExecutionEngine": ExecutionEngine,
+            "FillModel": FillModel,
+            "LatencyModel": LatencyModel,
+            "MakerTakerFeeModel": MakerTakerFeeModel,
             "MessageBus": MessageBus,
+            "Money": Money,
+            "oms_type_from_str": oms_type_from_str,
             "OrderBookDelta": OrderBookDelta,
             "OrderBookDeltas": OrderBookDeltas,
             "OrderFactory": OrderFactory,
@@ -209,14 +266,14 @@ class OwnedNautilusMatchingBoundary:
             "Portfolio": Portfolio,
             "Price": Price,
             "Quantity": Quantity,
-            "SandboxExecutionClient": SandboxExecutionClient,
-            "SandboxExecutionClientConfig": SandboxExecutionClientConfig,
+            "SimulatedExchange": SimulatedExchange,
             "StrategyId": StrategyId,
             "SubmitOrder": SubmitOrder,
             "UUID4": UUID4,
             "TestClock": TestClock,
             "TimeInForce": TimeInForce,
             "TraderId": TraderId,
+            "Venue": Venue,
         }
 
     def _ensure_instrument(self, order: PaperOrder, spec: NautilusOrderSpec, book: OrderBook) -> Any:
@@ -353,9 +410,6 @@ class OwnedNautilusMatchingBoundary:
             ts_init=session.clock.timestamp_ns(),
         )
         session.sandbox.submit_order(command)
-        latest_book = self._books.get(order.token_id)
-        if latest_book is not None:
-            self._publish_book_to_nautilus(order.token_id, latest_book)
         events = [
             event
             for event in session.order_events[start_index:]

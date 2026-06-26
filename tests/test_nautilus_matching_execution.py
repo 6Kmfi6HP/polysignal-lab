@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from polysignal_lab.alpha.types import NautilusOrderSpec
 from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side
@@ -353,3 +354,225 @@ def test_liquidity_consumption_prevents_reusing_same_level() -> None:
     assert first.fills[0].shares == 10.0
     assert second.status == OrderStatus.FILLED
     assert second.fills[0].shares == 2.0
+
+
+
+def test_owned_boundary_rejects_best_ask_above_limit_before_session() -> None:
+    class Boundary(OwnedNautilusMatchingBoundary):
+        def __init__(self) -> None:
+            super().__init__(MatchingAccuracySettings.from_mode("depth_l2"))
+            self.ensured = False
+            self.submitted = False
+
+        def _ensure_session(self) -> None:
+            self.ensured = True
+
+        def _ensure_instrument(self, order, spec, book):
+            return object()
+
+        def _publish_book_to_nautilus(self, token_id: str, book: OrderBook) -> None:
+            return None
+
+        def _submit_limit_order_through_nautilus(self, order, spec, instrument):
+            self.submitted = True
+            return NautilusMatchingOutcome(status=OrderStatus.FILLED)
+
+    boundary = Boundary()
+    boundary.update_book("token-up", _book(ask_price=0.84, ask_size=500.0))
+    spec = _spec(quantity=10.0, max_entry_price="0.83")
+    order = NautilusMatchingPaperExecutionClient()._paper_order_from_spec(spec)
+
+    outcome = boundary.submit_order(order, spec)
+
+    assert outcome.status == OrderStatus.REJECTED
+    assert outcome.reason == "PRICE_ABOVE_LIMIT"
+    assert boundary.ensured is False
+    assert boundary.submitted is False
+
+
+def test_owned_boundary_does_not_replay_stored_book_after_submit() -> None:
+    class FakeClock:
+        def timestamp_ns(self) -> int:
+            return 1
+
+    class FakeOrderFactory:
+        def limit(self, **kwargs):
+            return SimpleNamespace(
+                trader_id="trader",
+                strategy_id="strategy",
+                client_order_id="client-order-1",
+            )
+
+    class FakeTimeInForce:
+        FOK = "FOK"
+        IOC = "IOC"
+
+    class FakeOrderSide:
+        BUY = "BUY"
+
+    class FakeQuantity:
+        @staticmethod
+        def from_str(value: str) -> str:
+            return value
+
+    class FakePrice:
+        @staticmethod
+        def from_str(value: str) -> str:
+            return value
+
+    class FakeSubmitOrder:
+        def __init__(self, **kwargs) -> None:
+            self.__dict__.update(kwargs)
+
+    class Boundary(OwnedNautilusMatchingBoundary):
+        def __init__(self) -> None:
+            super().__init__(MatchingAccuracySettings.from_mode("depth_l2"))
+            self.published: list[str] = []
+            self.submitted: list[FakeSubmitOrder] = []
+
+        def _ensure_session(self) -> None:
+            self._session = SimpleNamespace(
+                clock=FakeClock(),
+                order_factory=FakeOrderFactory(),
+                order_events=[],
+                sandbox=SimpleNamespace(submit_order=self.submitted.append),
+                components={
+                    "OrderSide": FakeOrderSide,
+                    "Price": FakePrice,
+                    "Quantity": FakeQuantity,
+                    "SubmitOrder": FakeSubmitOrder,
+                    "TimeInForce": FakeTimeInForce,
+                    "UUID4": lambda: "command-1",
+                },
+            )
+
+        def _ensure_instrument(self, order, spec, book):
+            return SimpleNamespace(id="instrument-1")
+
+        def _publish_book_to_nautilus(self, token_id: str, book: OrderBook) -> None:
+            self.published.append(token_id)
+
+    boundary = Boundary()
+    boundary.update_book("token-up", _book(ask_price=0.82, ask_size=500.0))
+    spec = _spec(quantity=10.0, max_entry_price="0.83")
+    order = NautilusMatchingPaperExecutionClient()._paper_order_from_spec(spec)
+
+    boundary.submit_order(order, spec)
+
+    assert boundary.submitted
+    assert boundary.published == ["token-up"]
+
+
+def test_owned_boundary_configures_exchange_with_accuracy_settings() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeClock:
+        def set_time(self, value: int) -> None:
+            captured["clock_time"] = value
+
+        def timestamp_ns(self) -> int:
+            return 1
+
+    class FakeMessageBus:
+        def __init__(self, trader_id, clock) -> None:
+            return None
+
+        def subscribe(self, topic: str, handler) -> None:
+            captured["subscription"] = topic
+
+    class FakeCache:
+        def __init__(self, database=None) -> None:
+            return None
+
+    class FakePortfolio:
+        def __init__(self, **kwargs) -> None:
+            return None
+
+    class FakeExecutionEngine:
+        def __init__(self, **kwargs) -> None:
+            self.clients = []
+
+        def register_client(self, client) -> None:
+            self.clients.append(client)
+
+    class FakeOrderFactory:
+        def __init__(self, **kwargs) -> None:
+            return None
+
+    class FakeModel:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+    class FakeValue:
+        @staticmethod
+        def from_str(value: str) -> str:
+            return value
+
+    class FakeSimulatedExchange:
+        def __init__(self, **kwargs) -> None:
+            captured["exchange_kwargs"] = kwargs
+            self.instruments = {}
+
+        def register_client(self, client) -> None:
+            captured["exchange_client"] = client
+
+        def initialize_account(self) -> None:
+            captured["account_initialized"] = True
+
+    class FakeBacktestExecClient:
+        def __init__(self, **kwargs) -> None:
+            captured["exec_client_kwargs"] = kwargs
+            self.started = False
+
+        def _start(self) -> None:
+            self.started = True
+            captured["exec_client_started"] = True
+
+    class FakeSandboxExecutionClientConfig:
+        def __init__(self, **kwargs) -> None:
+            captured["sandbox_config_kwargs"] = kwargs
+
+    class FakeSandboxExecutionClient:
+        def __init__(self, **kwargs) -> None:
+            self.exchange = SimpleNamespace(instruments={})
+
+        def connect(self) -> None:
+            captured["sandbox_connected"] = True
+
+    class Boundary(OwnedNautilusMatchingBoundary):
+        def _load_nautilus_components(self) -> dict[str, object]:
+            return {
+                "asyncio": SimpleNamespace(new_event_loop=lambda: object()),
+                "account_type_from_str": lambda value: f"account:{value}",
+                "BacktestExecClient": FakeBacktestExecClient,
+                "book_type_from_str": lambda value: f"book:{value}",
+                "Cache": FakeCache,
+                "Currency": FakeValue,
+                "DEFAULT_VENUE": "POLYSIGNAL_PM_PAPER",
+                "ExecutionEngine": FakeExecutionEngine,
+                "FillModel": FakeModel,
+                "LatencyModel": FakeModel,
+                "MakerTakerFeeModel": FakeModel,
+                "MessageBus": FakeMessageBus,
+                "Money": FakeValue,
+                "oms_type_from_str": lambda value: f"oms:{value}",
+                "OrderFactory": FakeOrderFactory,
+                "Portfolio": FakePortfolio,
+                "SandboxExecutionClient": FakeSandboxExecutionClient,
+                "SandboxExecutionClientConfig": FakeSandboxExecutionClientConfig,
+                "SimulatedExchange": FakeSimulatedExchange,
+                "StrategyId": str,
+                "TestClock": FakeClock,
+                "TraderId": str,
+                "Venue": str,
+            }
+
+    settings = MatchingAccuracySettings.from_mode("queue_l2")
+    boundary = Boundary(settings)
+
+    boundary._ensure_session()
+
+    exchange_kwargs = captured["exchange_kwargs"]
+    assert exchange_kwargs["liquidity_consumption"] is True
+    assert exchange_kwargs["queue_position"] is True
+    assert exchange_kwargs["price_protection_points"] == settings.price_protection_points
