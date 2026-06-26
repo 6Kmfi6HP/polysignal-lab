@@ -28,6 +28,14 @@ SKIP_DIR_NAMES: Final = {
 }
 SKIP_TOP_LEVEL_DIRS: Final = {"data", "logs", "refs", "state"}
 
+LOCAL_PAPER_ISOLATION_SYMBOLS: Final = (
+    "BestAskTakerExecutor",
+    "PassiveGtdExecutor",
+    "PaperSimulator",
+    "PolySignalPaperExecutionClient(",
+)
+LOCAL_PAPER_ALLOWED_RUNTIME_FILES: Final = {"execution.py"}
+
 
 def blocked_symbols() -> list[str]:
     return [
@@ -55,7 +63,10 @@ def scan(root: str | Path) -> list[tuple[str, str]]:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         report_path = path.name if base_is_file else str(path.relative_to(base))
-        for symbol in blocked_symbols():
+        symbols = blocked_symbols()
+        if _is_default_nautilus_runtime_source(path):
+            symbols.extend(LOCAL_PAPER_ISOLATION_SYMBOLS)
+        for symbol in symbols:
             if symbol in text:
                 findings.append((report_path, symbol))
     return findings
@@ -72,6 +83,18 @@ def skip_path(base: Path, path: Path) -> bool:
     if rel.parts and rel.parts[0] in SKIP_TOP_LEVEL_DIRS:
         return True
     return any(part in SKIP_DIR_NAMES or part.endswith(".egg-info") for part in rel.parts)
+
+
+def _is_default_nautilus_runtime_source(path: Path) -> bool:
+    if path.suffix != ".py" or path.name in LOCAL_PAPER_ALLOWED_RUNTIME_FILES:
+        return False
+    parts = path.parts
+    for idx, part in enumerate(parts[:-1]):
+        if part != "polysignal_lab":
+            continue
+        if idx + 1 < len(parts) and parts[idx + 1] == "nautilus_runtime":
+            return "tests" not in parts[:idx]
+    return False
 
 
 def main() -> None:
