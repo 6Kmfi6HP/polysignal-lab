@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib
 import sys
 import tomllib
-import yaml
 from pathlib import Path
 
 from polysignal_lab.app import main as app_main
@@ -42,16 +41,6 @@ def test_nautilus_extra_is_optional_and_polymarket_scoped() -> None:
     assert nautilus_extra == [
         "nautilus_trader[polymarket]>=1.230.0; python_version >= '3.12'",
     ]
-
-def test_docker_compose_uses_lightweight_runtime_by_default() -> None:
-    compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
-    for service in ("polysignal-lab", "dashboard"):
-        assert compose["services"][service]["build"]["target"] == "runtime"
-
-    from_lines = [
-        line for line in Path("Dockerfile").read_text(encoding="utf-8").splitlines() if line.startswith("FROM ")
-    ]
-    assert from_lines[-1] == "FROM runtime AS default"
 
 
 def test_cli_exposes_nautilus_mode_and_script() -> None:

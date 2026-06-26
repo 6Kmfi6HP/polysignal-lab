@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
+      target: nautilus-runtime
     container_name: polysignal-lab
     restart: unless-stopped
     env_file:
@@ -36,7 +36,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
     container_name: polysignal-lab-dashboard
     restart: unless-stopped
     env_file:
