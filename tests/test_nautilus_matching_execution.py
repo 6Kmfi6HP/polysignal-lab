@@ -66,12 +66,19 @@ class FakeNautilusBoundary:
         self.outcomes = list(outcomes or [])
         self.submitted_orders = []
         self.remaining_shares: dict[str, float] = {}
+        self.calls: list[tuple[str, str]] = []
 
     def update_book(self, token_id: str, book: OrderBook) -> None:
         self.books[token_id] = book
         self.remaining_shares[token_id] = sum(level.size for level in book.asks)
 
+    def mirror_position_for_exit(self, position: PaperPosition) -> None:
+        self.calls.append(("mirror", position.paper_position_id))
+
     def match_order(self, order, spec) -> NautilusMatchingOutcome:
+        if order.reduce_only:
+            assert self.calls and self.calls[-1][0] == "mirror"
+        self.calls.append(("match", order.paper_order_id))
         self.submitted_orders.append(order)
         if self.outcomes:
             return self.outcomes.pop(0)
@@ -365,6 +372,113 @@ def test_owned_boundary_stores_books_and_delegates_to_nautilus_path() -> None:
     assert boundary.published == ["token-up"]
     assert boundary.submitted == [order.paper_order_id]
     assert outcome.status == OrderStatus.FILLED
+
+
+def test_owned_boundary_mirrors_legacy_position_once_before_reduce_only_exit() -> None:
+    class FakeClock:
+        def timestamp_ns(self) -> int:
+            return 1
+
+    class FakeValue:
+        @staticmethod
+        def from_str(value: str) -> str:
+            return value
+
+    class FakeOrderFilled:
+        def __init__(self, **kwargs) -> None:
+            self.__dict__.update(kwargs)
+
+    class FakePosition:
+        def __init__(self, instrument, fill) -> None:
+            self.instrument = instrument
+            self.fill = fill
+            self.id = fill.position_id
+            self.strategy_id = fill.strategy_id
+            self.opening_order_id = fill.client_order_id
+            self.instrument_id = fill.instrument_id
+            self.account_id = fill.account_id
+
+        def is_closed_c(self) -> bool:
+            return False
+
+    class FakeCache:
+        def __init__(self) -> None:
+            self.positions: dict[str, FakePosition] = {}
+            self.added: list[tuple[FakePosition, str]] = []
+
+        def position(self, position_id: str):
+            return self.positions.get(position_id)
+
+        def add_position(self, position: FakePosition, oms_type: str) -> None:
+            self.positions[position.id] = position
+            self.added.append((position, oms_type))
+
+    class Boundary(OwnedNautilusMatchingBoundary):
+        def __init__(self) -> None:
+            super().__init__(MatchingAccuracySettings.from_mode("depth_l2"))
+            self.cache = FakeCache()
+
+        def _ensure_session(self) -> None:
+            self._session = SimpleNamespace(
+                clock=FakeClock(),
+                cache=self.cache,
+                sandbox=SimpleNamespace(exec_client=SimpleNamespace(account_id="acct-1")),
+                components={
+                    "ClientOrderId": str,
+                    "Currency": FakeValue,
+                    "LiquiditySide": SimpleNamespace(TAKER="TAKER"),
+                    "Money": FakeValue,
+                    "OrderFilled": FakeOrderFilled,
+                    "OrderSide": SimpleNamespace(BUY="BUY"),
+                    "OrderType": SimpleNamespace(LIMIT="LIMIT"),
+                    "Position": FakePosition,
+                    "PositionId": str,
+                    "Price": FakeValue,
+                    "Quantity": FakeValue,
+                    "StrategyId": str,
+                    "TradeId": str,
+                    "TraderId": str,
+                    "UUID4": lambda: "event-1",
+                    "VenueOrderId": str,
+                    "oms_type_from_str": lambda value: f"oms:{value}",
+                },
+            )
+
+        def _ensure_instrument(self, order, spec, book):
+            instrument = SimpleNamespace(id="instrument-1")
+            self._instruments[order.token_id] = instrument
+            return instrument
+
+    boundary = Boundary()
+    boundary.update_book("token-up", _book())
+    position = PaperPosition(
+        paper_position_id="position-1",
+        signal_id="signal-1",
+        paper_order_id="order-1",
+        paper_fill_id="fill-1",
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        token_id="token-up",
+        side=Side.UP,
+        entry_price=0.82,
+        shares=10.0,
+        stake_usdc=8.2,
+    )
+
+    boundary.mirror_position_for_exit(position)
+    boundary.mirror_position_for_exit(position)
+
+    mirrored, oms_type = boundary.cache.added[0]
+    assert len(boundary.cache.added) == 1
+    assert mirrored.id == "instrument-1-S-001"
+    assert mirrored.fill.last_qty == "10"
+    assert mirrored.fill.last_px == "0.82"
+    assert oms_type == "oms:NETTING"
+
+
 def test_taker_fills_at_book_price_not_slippage_model() -> None:
     client = NautilusMatchingPaperExecutionClient(
         wallet=PaperWallet(),
@@ -452,6 +566,53 @@ def test_resting_order_stale_book_rejects_before_boundary() -> None:
     assert rejected[-1].order is resting.order
     assert boundary.submitted_orders == []
     assert client.process_resting_orders() == []
+
+
+def test_submit_exit_mirrors_legacy_position_before_matching_without_wallet_duplicate() -> None:
+    boundary = FakeNautilusBoundary(
+        [
+            NautilusMatchingOutcome(
+                status=OrderStatus.FILLED,
+                fills=(
+                    NautilusFillEvent(
+                        fill_price=0.80,
+                        shares=10.0,
+                        stake_usdc=8.0,
+                        raw_best_ask=0.80,
+                    ),
+                ),
+            )
+        ]
+    )
+    wallet = PaperWallet(starting_balance=100.0)
+    position = PaperPosition(
+        paper_position_id="position-1",
+        signal_id="signal-1",
+        paper_order_id="order-1",
+        paper_fill_id="fill-1",
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        token_id="token-up",
+        side=Side.UP,
+        entry_price=0.82,
+        shares=10.0,
+        stake_usdc=8.2,
+    )
+    wallet.apply_fill(position)
+    client = NautilusMatchingPaperExecutionClient(wallet=wallet, matching_boundary=boundary)
+    client.update_book("token-up", _book(ask_price=0.82, ask_size=500.0))
+
+    result = client.submit_exit(position, bid_price=0.80, reason="TAKE_PROFIT")
+
+    assert result.status == OrderStatus.FILLED
+    assert boundary.calls[0] == ("mirror", "position-1")
+    assert boundary.calls[1][0] == "match"
+    assert wallet.open_positions == {}
+    assert wallet.cash_balance == 99.8
+    assert wallet.realized_pnl == -0.2
 
 def test_partial_exit_updates_wallet_and_remaining_position() -> None:
     boundary = FakeNautilusBoundary(

@@ -82,6 +82,7 @@ class NautilusMatchingUnavailable(RuntimeError):
 
 class NautilusMatchingBoundary(Protocol):
     def update_book(self, token_id: str, book: OrderBook) -> None: ...
+    def mirror_position_for_exit(self, position: PaperPosition) -> None: ...
     def match_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome: ...
 
 
@@ -160,6 +161,88 @@ class OwnedNautilusMatchingBoundary:
             self._dirty_books.discard(order.token_id)
             self._published_books.add(order.token_id)
         return self._submit_limit_order_through_nautilus(order, spec, instrument)
+
+    def mirror_position_for_exit(self, position: PaperPosition) -> None:
+        book = self._books.get(position.token_id)
+        if book is None:
+            return
+        self._ensure_session()
+        session = self._require_session()
+        spec = NautilusOrderSpec(
+            instrument_id=position.token_id,
+            side=position.side,
+            price=position.entry_price,
+            quantity=position.shares,
+            intent=OrderIntent.TAKER_IOC,
+            expiry_seconds=None,
+            pair_id=None,
+            reduce_only=False,
+            hedge_leg=False,
+            tags={
+                "strategy": position.strategy,
+                "asset": position.asset,
+                "timeframe": position.timeframe,
+                "market_id": position.market_id,
+                "market_slug": position.market_slug,
+                "signal_id": position.signal_id,
+            },
+        )
+        mirror_order = PaperOrder(
+            paper_order_id=f"mirror_{position.paper_order_id}",
+            signal_id=position.signal_id,
+            token_id=position.token_id,
+            side=position.side,
+            limit_price=position.entry_price,
+            reference_price=position.entry_price,
+            stake_usdc=position.stake_usdc,
+            shares=position.shares,
+            asset=position.asset,
+            timeframe=position.timeframe,
+            strategy=position.strategy,
+            market_id=position.market_id,
+            market_slug=position.market_slug,
+            created_at=position.opened_at,
+            order_intent=OrderIntent.TAKER_IOC,
+            reduce_only=False,
+            signal_confidence=position.signal_confidence,
+            metrics=dict(position.signal_metrics),
+        )
+        try:
+            instrument = self._ensure_instrument(mirror_order, spec, book)
+            components = session.components
+            strategy_id = components["StrategyId"]("S-001")
+            position_id = components["PositionId"](f"{instrument.id}-{strategy_id}")
+            cached = session.cache.position(position_id)
+            if cached is not None and not cached.is_closed_c():
+                return
+            ts = session.clock.timestamp_ns()
+            fill = components["OrderFilled"](
+                trader_id=components["TraderId"]("POLYSIGNAL-001"),
+                strategy_id=strategy_id,
+                instrument_id=instrument.id,
+                client_order_id=components["ClientOrderId"](f"MIRROR-{position.paper_order_id}"),
+                venue_order_id=components["VenueOrderId"](f"MIRROR-{position.paper_order_id}"),
+                account_id=session.sandbox.exec_client.account_id,
+                trade_id=components["TradeId"](f"MIRROR-{position.paper_fill_id}"),
+                position_id=position_id,
+                order_side=components["OrderSide"].BUY,
+                order_type=components["OrderType"].LIMIT,
+                last_qty=components["Quantity"].from_str(_decimal_str(position.shares)),
+                last_px=components["Price"].from_str(_decimal_str(position.entry_price)),
+                currency=components["Currency"].from_str("USDC"),
+                commission=components["Money"].from_str("0 USDC"),
+                liquidity_side=components["LiquiditySide"].TAKER,
+                event_id=components["UUID4"](),
+                ts_event=ts,
+                ts_init=ts,
+                reconciliation=True,
+            )
+            session.cache.add_position(
+                components["Position"](instrument, fill),
+                components["oms_type_from_str"]("NETTING"),
+            )
+        except Exception as exc:
+            raise NautilusMatchingUnavailable("MATCHING_POSITION_MIRROR_UNAVAILABLE") from exc
 
     def _ensure_session(self) -> None:
         if self._session is not None:
@@ -251,16 +334,28 @@ class OwnedNautilusMatchingBoundary:
             from nautilus_trader.core.uuid import UUID4
             from nautilus_trader.execution.messages import SubmitOrder
             from nautilus_trader.model.data import BookOrder, OrderBookDelta, OrderBookDeltas
+            from nautilus_trader.model.events.order import OrderFilled
             from nautilus_trader.model.enums import (
                 BookAction,
+                LiquiditySide,
                 OrderSide,
+                OrderType,
                 TimeInForce,
                 account_type_from_str,
                 book_type_from_str,
                 oms_type_from_str,
             )
-            from nautilus_trader.model.identifiers import StrategyId, TraderId, Venue
+            from nautilus_trader.model.identifiers import (
+                ClientOrderId,
+                PositionId,
+                StrategyId,
+                TradeId,
+                TraderId,
+                Venue,
+                VenueOrderId,
+            )
             from nautilus_trader.model.objects import Currency, Money, Price, Quantity
+            from nautilus_trader.model.position import Position
             from nautilus_trader.portfolio.portfolio import Portfolio
         except Exception as exc:  # pragma: no cover - depends on optional Nautilus runtime
             raise NautilusMatchingUnavailable() from exc
@@ -275,10 +370,12 @@ class OwnedNautilusMatchingBoundary:
             "BookOrder": BookOrder,
             "book_type_from_str": book_type_from_str,
             "Cache": Cache,
+            "ClientOrderId": ClientOrderId,
             "Currency": Currency,
             "DEFAULT_VENUE": DEFAULT_VENUE,
             "ExecutionEngine": ExecutionEngine,
             "FillModel": FillModel,
+            "LiquiditySide": LiquiditySide,
             "LatencyModel": LatencyModel,
             "MakerTakerFeeModel": MakerTakerFeeModel,
             "MessageBus": MessageBus,
@@ -288,17 +385,23 @@ class OwnedNautilusMatchingBoundary:
             "OrderBookDeltas": OrderBookDeltas,
             "OrderFactory": OrderFactory,
             "OrderSide": OrderSide,
+            "OrderFilled": OrderFilled,
+            "OrderType": OrderType,
             "Portfolio": Portfolio,
+            "Position": Position,
+            "PositionId": PositionId,
             "Price": Price,
             "Quantity": Quantity,
             "SimulatedExchange": SimulatedExchange,
             "StrategyId": StrategyId,
+            "TradeId": TradeId,
             "SubmitOrder": SubmitOrder,
             "UUID4": UUID4,
             "TestClock": TestClock,
             "TimeInForce": TimeInForce,
             "TraderId": TraderId,
             "Venue": Venue,
+            "VenueOrderId": VenueOrderId,
         }
 
     def _ensure_instrument(self, order: PaperOrder, spec: NautilusOrderSpec, book: OrderBook) -> Any:
@@ -701,6 +804,10 @@ class NautilusMatchingPaperExecutionClient:
         position: PaperPosition,
     ) -> PaperExecutionResult:
         try:
+            mirror = getattr(self.matching_boundary, "mirror_position_for_exit", None)
+            if mirror is None:
+                raise NautilusMatchingUnavailable("MATCHING_POSITION_MIRROR_UNAVAILABLE")
+            mirror(position)
             outcome = self.matching_boundary.match_order(order, spec)
         except NautilusMatchingUnavailable as exc:
             result = PaperExecutionResult(

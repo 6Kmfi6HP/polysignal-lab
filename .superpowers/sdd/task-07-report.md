@@ -226,3 +226,65 @@ Result: passed.
 ### Concerns
 
 - None.
+
+## Fix pass: matching position mirror blocker
+
+### Changed files
+
+- `src/polysignal_lab/nautilus_runtime/matching.py`
+  - Added `mirror_position_for_exit()` to the matching boundary protocol and called it from `submit_exit()` before reduce-only matching.
+  - Implemented owned-boundary lazy mirror by creating a Nautilus `Position` from a synthetic `OrderFilled` and inserting it into the owned Nautilus cache with the NETTING position id shape used by Nautilus reduce-only checks.
+  - Kept fallback safe: if the boundary cannot mirror, exit returns `PENDING` with `MATCHING_POSITION_MIRROR_UNAVAILABLE`/runtime unavailable instead of disabling reduce-only or using live/authenticated execution.
+- `tests/test_nautilus_matching_execution.py`
+  - Added fake-boundary sequencing assertions that a legacy `PaperPosition` is mirrored before reduce-only exit matching.
+  - Added owned-boundary cache-mirror coverage and full-exit wallet coverage proving no duplicate wallet position/cash debit is created.
+
+### RED evidence
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_matching_execution.py::test_submit_exit_mirrors_legacy_position_before_matching_without_wallet_duplicate tests/test_nautilus_matching_execution.py::test_owned_boundary_mirrors_legacy_position_once_before_reduce_only_exit -q
+```
+
+Result: failed as expected before implementation.
+
+- Fake-boundary exit test failed because `match_order()` saw no preceding `mirror_position_for_exit()` call.
+- Owned-boundary mirror test failed with `AttributeError: 'Boundary' object has no attribute 'mirror_position_for_exit'`.
+
+### GREEN focused checks
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_matching_execution.py::test_submit_exit_stale_book_rejects_before_boundary tests/test_nautilus_orchestrator.py tests/test_nautilus_matching_execution.py::test_submit_exit_mirrors_legacy_position_before_matching_without_wallet_duplicate tests/test_nautilus_matching_execution.py::test_owned_boundary_mirrors_legacy_position_once_before_reduce_only_exit -q
+```
+
+Result: passed.
+
+```text
+...........                                                              [100%]
+```
+
+Command:
+
+```bash
+UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -m pytest tests/test_nautilus_matching_execution.py tests/test_nautilus_orchestrator.py -q
+```
+
+Result: passed.
+
+```text
+...................................                                      [100%]
+```
+
+### Self-review
+
+- The mirror hook runs only after submit-exit book freshness checks and before matching-boundary reduce-only matching.
+- The owned-boundary mirror follows Nautilus source behavior: reduce-only NETTING checks look up `PositionId(f"{order.instrument_id}-{order.strategy_id}")`, so the mirror seeds that position id into the owned cache without live clients, credentials, or safety-blocked order API literals.
+- Wallet state is not mirrored through `apply_fill()`; legacy-opened wallet positions are closed/partially reduced only from the exit fill, avoiding duplicate cash debits or duplicate open positions.
+- No project-wide tests, formatters, linters, Docker, pre-commit, safety scan, live trading, signing, authenticated Polymarket clients, or `ClobClient(` paths were run/added.
+
+### Concerns
+
+- The real optional Nautilus runtime is not imported under the Python 3.11 focused tests; owned-boundary mirror behavior is covered with source-grounded fake Nautilus components and falls back to `PENDING` if optional runtime position construction is unavailable.
