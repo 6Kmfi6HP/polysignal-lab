@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
 from polysignal_lab.alpha.types import AlphaDecision, NautilusOrderSpec
@@ -167,8 +166,8 @@ from polysignal_lab.config import FillModelConfig  # noqa: E402
 from polysignal_lab.data.state import OrderBookRegistry  # noqa: E402
 from polysignal_lab.domain.enums import OrderStatus, Side  # noqa: E402
 from polysignal_lab.domain.orderbook import OrderBook  # noqa: E402
-from polysignal_lab.domain.paper_order import PaperFill, PaperOrder  # noqa: E402
-from polysignal_lab.domain.paper_position import PaperPosition  # noqa: E402
+from polysignal_lab.domain.paper_order import PaperOrder  # noqa: E402
+from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult  # noqa: E402
 from polysignal_lab.paper.order_intent_executor import (  # noqa: E402
     BestAskTakerExecutor,
     PassiveGtdExecutor,
@@ -177,13 +176,6 @@ from polysignal_lab.paper.wallet import PaperWallet  # noqa: E402
 from polysignal_lab.utils import new_id, utc_now  # noqa: E402
 
 
-@dataclass
-class PaperExecutionResult:
-    order: PaperOrder | None = None
-    fills: list[PaperFill] = field(default_factory=list)
-    positions: list[PaperPosition] = field(default_factory=list)
-    status: OrderStatus = OrderStatus.PENDING
-    reason: str | None = None
 
 
 class PolySignalPaperExecutionClient:
@@ -308,6 +300,23 @@ class PolySignalPaperExecutionClient:
             status=result.status,
             reason=result.reject_reason,
         )
+
+
+def create_paper_execution_client(
+    *,
+    wallet: PaperWallet | None = None,
+    registry: OrderBookRegistry | None = None,
+    fill_config: FillModelConfig | None = None,
+    order_book_data: dict[str, OrderBook] | None = None,
+    max_book_staleness_ms: int = 10_000,
+) -> PolySignalPaperExecutionClient:
+    return PolySignalPaperExecutionClient(
+        wallet=wallet,
+        registry=registry,
+        fill_config=fill_config,
+        order_book_data=order_book_data,
+        max_book_staleness_ms=max_book_staleness_ms,
+    )
 
 
 def _tag_float(tags: dict[str, str] | None, key: str) -> float | None:

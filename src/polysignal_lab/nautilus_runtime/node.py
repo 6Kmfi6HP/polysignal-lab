@@ -22,7 +22,7 @@ from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssem
 from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
 from polysignal_lab.nautilus_runtime.data_ingestor import NautilusDataIngestor
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
-from polysignal_lab.nautilus_runtime.execution import PolySignalPaperExecutionClient
+from polysignal_lab.nautilus_runtime.execution import create_paper_execution_client
 from polysignal_lab.nautilus_runtime.group_views import MarketGroupViewAssembler
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
@@ -64,7 +64,7 @@ class NautilusRuntimeBundle:
     sidecar: ExternalDataSidecar
     book_data_provider: NautilusBookDataProvider
     data_ingestor: NautilusDataIngestor
-    paper_client: PolySignalPaperExecutionClient
+    paper_client: Any
     observability: ObservabilityActor
     orchestrator: NautilusOrchestrator
     websocket_tasks: list[asyncio.Task]
@@ -95,7 +95,7 @@ def build_trading_node(
     wallet = wallet or PaperWallet(
         starting_balance=settings.paper_trading.starting_balance_usdc
     )
-    paper_client = PolySignalPaperExecutionClient(
+    paper_client = create_paper_execution_client(
         wallet=wallet,
         fill_config=settings.paper_trading.fill_model,
         max_book_staleness_ms=settings.data.polymarket.max_book_staleness_ms,

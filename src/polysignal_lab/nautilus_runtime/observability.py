@@ -9,7 +9,7 @@ from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperTradeResult, PaperWalletSnapshot
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
-from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
+from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.utils import utc_now, utc_iso
 

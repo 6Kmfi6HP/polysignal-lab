@@ -52,3 +52,24 @@ def test_default_source_keeps_forbidden_live_symbols_out_of_runtime() -> None:
             findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
+
+
+def test_default_nautilus_runtime_source_avoids_local_paper_executors() -> None:
+    forbidden = (
+        "from polysignal_lab.paper.order_intent_executor import",
+        "BestAskTakerExecutor",
+        "PassiveGtdExecutor",
+        "PaperSimulator",
+        "PolySignalPaperExecutionClient(",
+    )
+    allowed_files = {
+        Path("src/polysignal_lab/nautilus_runtime/execution.py"),
+    }
+    findings: list[str] = []
+    for path in Path("src/polysignal_lab/nautilus_runtime").rglob("*.py"):
+        if path in allowed_files:
+            continue
+        text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []

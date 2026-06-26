@@ -8,10 +8,7 @@ from polysignal_lab.app import scheduler_health, scheduler_market_data
 from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
 from polysignal_lab.nautilus_runtime.data_ingestor import NautilusDataIngestor
-from polysignal_lab.nautilus_runtime.execution import (
-    PaperExecutionResult,
-    PolySignalPaperExecutionClient,
-)
+from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
 from polysignal_lab.nautilus_runtime.observability import (
     ObservabilityActor,
     signal_candidate_from_order,
@@ -30,7 +27,7 @@ class NautilusOrchestrator:
         registered_strategies: Sequence[PolySignalNautilusStrategy],
         data_ingestor: NautilusDataIngestor,
         book_data_provider: NautilusBookDataProvider,
-        paper_client: PolySignalPaperExecutionClient,
+        paper_client: object,
         position_policy: PositionPolicyActor,
         settlement_actor: SettlementActor,
         observability: ObservabilityActor,
