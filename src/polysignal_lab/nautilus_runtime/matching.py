@@ -599,6 +599,12 @@ class NautilusMatchingPaperExecutionClient:
             },
         )
         order = self._paper_order_from_spec(spec)
+        book = self._books.get(position.token_id)
+        if book is None:
+            return self._reject(order, "MISSING_ORDERBOOK")
+        freshness_ms = _freshness_ms(book)
+        if freshness_ms is not None and freshness_ms > self.max_book_staleness_ms:
+            return self._reject(order, "STALE_ORDERBOOK")
         return self._submit_exit_to_matching_boundary(order, spec, position)
 
 

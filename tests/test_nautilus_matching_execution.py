@@ -163,6 +163,73 @@ def test_update_book_rejects_stale_book_before_matching() -> None:
     assert result.reason == "STALE_ORDERBOOK"
 
 
+
+def test_submit_exit_without_book_rejects_before_boundary() -> None:
+    boundary = FakeNautilusBoundary()
+    position = PaperPosition(
+        paper_position_id="position-1",
+        signal_id="signal-1",
+        paper_order_id="order-1",
+        paper_fill_id="fill-1",
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        token_id="token-up",
+        side=Side.UP,
+        entry_price=0.82,
+        shares=10.0,
+        stake_usdc=8.2,
+    )
+    client = NautilusMatchingPaperExecutionClient(
+        wallet=PaperWallet(),
+        matching_boundary=boundary,
+    )
+
+    result = client.submit_exit(position, bid_price=0.80, reason="TAKE_PROFIT")
+
+    assert result.status == OrderStatus.REJECTED
+    assert result.reason == "MISSING_ORDERBOOK"
+    assert boundary.submitted_orders == []
+
+
+def test_submit_exit_stale_book_rejects_before_boundary() -> None:
+    boundary = FakeNautilusBoundary()
+    position = PaperPosition(
+        paper_position_id="position-1",
+        signal_id="signal-1",
+        paper_order_id="order-1",
+        paper_fill_id="fill-1",
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        token_id="token-up",
+        side=Side.UP,
+        entry_price=0.82,
+        shares=10.0,
+        stake_usdc=8.2,
+    )
+    client = NautilusMatchingPaperExecutionClient(
+        wallet=PaperWallet(),
+        max_book_staleness_ms=1_000,
+        matching_boundary=boundary,
+    )
+    client.update_book(
+        "token-up",
+        _book().model_copy(
+            update={"received_at": datetime.now(UTC) - timedelta(seconds=2)}
+        ),
+    )
+
+    result = client.submit_exit(position, bid_price=0.80, reason="TAKE_PROFIT")
+
+    assert result.status == OrderStatus.REJECTED
+    assert result.reason == "STALE_ORDERBOOK"
+    assert boundary.submitted_orders == []
+
 def test_update_trade_records_recent_trade_for_queue_mode() -> None:
     client = NautilusMatchingPaperExecutionClient(
         wallet=PaperWallet(),

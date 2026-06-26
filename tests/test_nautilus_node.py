@@ -92,6 +92,10 @@ async def test_build_nautilus_runtime_wires_real_book_provider(monkeypatch) -> N
     assert bundle.components["assembler"].books is bundle.book_data_provider
     assert bundle.orchestrator is not None
 
+    assert bundle.paper_client is bundle.components["matching_client"]
+    assert bundle.orchestrator.paper_client is bundle.components["matching_client"]
+    assert isinstance(bundle.components["paper_client"], PolySignalPaperExecutionClient)
+
 
 async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
     class FakeOrchestrator:
