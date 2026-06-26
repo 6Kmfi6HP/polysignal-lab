@@ -157,7 +157,7 @@ class NautilusOrchestrator:
             process = getattr(self.paper_client, "process_resting_orders", None)
             if process is not None:
                 for result in process():
-                    await self._record_execution_result(result)
+                    await self._record_execution_result(result, publish_signal=False)
             self.health.mark_ok("resting_orders")
         except Exception as exc:
             self.logger.exception("Resting order processing failed")
@@ -260,9 +260,14 @@ class NautilusOrchestrator:
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
-    async def _record_execution_result(self, result: PaperExecutionResult) -> None:
+    async def _record_execution_result(
+        self,
+        result: PaperExecutionResult,
+        *,
+        publish_signal: bool = True,
+    ) -> None:
         """Record an execution result's signal, order, fills, and positions."""
-        if result.order is not None and not result.order.reduce_only:
+        if publish_signal and result.order is not None and not result.order.reduce_only:
             self.observability.record_signal_from_order(result.order)
             await self._publish_signal_from_order(result.order)
         self.observability.record_order(result)
@@ -270,7 +275,22 @@ class NautilusOrchestrator:
             self.observability.record_fill(fill)
         for position in result.positions:
             self.observability.record_position(position)
+        if result.trade_results:
+            from polysignal_lab.app.scheduler_reporting import _store_paper_result
 
+            positions = {
+                position.paper_position_id: position
+                for position in result.positions
+            }
+            for trade_result in result.trade_results:
+                position = positions.get(trade_result.paper_position_id)
+                if position is None:
+                    self.logger.warning(
+                        "Skipping paper trade result without matching position: %s",
+                        trade_result.paper_trade_id,
+                    )
+                    continue
+                await _store_paper_result(self.scheduler, trade_result, position)
     async def _publish_signal_from_order(self, order) -> None:
         if not getattr(self.scheduler.settings.telegram, "send_signals", False):
             return

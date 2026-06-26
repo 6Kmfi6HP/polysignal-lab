@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from polysignal_lab.domain.enums import OrderStatus, Side
-from polysignal_lab.domain.paper_order import PaperOrder
+from polysignal_lab.domain.enums import ExitMode, OrderIntent, OrderStatus, PositionStatus, Side, TradeResultStatus
+from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
+from polysignal_lab.domain.paper_position import PaperPosition
+from polysignal_lab.domain.paper_result import PaperTradeResult
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
 from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
@@ -16,6 +20,7 @@ class FakeHealth:
     def mark_ok(self, name, **metrics): self.calls.append(("ok", name, metrics))
     def mark_down(self, name, reason, **metrics): self.calls.append(("down", name, reason, metrics))
     def mark_degraded(self, name, reason, **metrics): self.calls.append(("degraded", name, reason, metrics))
+    def inc_metric(self, name, metric, amount=1): self.calls.append(("inc", name, metric, amount))
 
 
 class FakePublishService:
@@ -36,8 +41,9 @@ class FakeScheduler:
     def __init__(self):
         self.ctx = SimpleNamespace(markets=SimpleNamespace(markets={"m1": object()}))
         self.publish_service = FakePublishService()
+        self.health = FakeHealth()
         self.settings = SimpleNamespace(
-            telegram=SimpleNamespace(send_signals=True),
+            telegram=SimpleNamespace(send_signals=True, send_paper_results=True),
             paper_trading=SimpleNamespace(fixed_stake_usdc=10.0),
         )
         self.settlements_checked = 0
@@ -226,6 +232,204 @@ async def test_run_once_drains_resting_orders_and_position_exits() -> None:
     assert orch.scheduler.publish_service.signals == []
     assert any(call[0] == "ok" and call[1] == "resting_orders" for call in orch.health.calls)
     assert any(call[0] == "ok" and call[1] == "position_exits" for call in orch.health.calls)
+
+
+async def test_position_exit_phase_persists_matching_trade_result() -> None:
+    opened_at = datetime(2026, 1, 1, tzinfo=UTC)
+    closed_at = datetime(2026, 1, 1, 0, 5, tzinfo=UTC)
+    position = PaperPosition(
+        paper_position_id="position-1",
+        signal_id="signal-1",
+        paper_order_id="entry-order",
+        paper_fill_id="entry-fill",
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        token_id="up-token",
+        side=Side.UP,
+        entry_price=0.82,
+        shares=10.0,
+        stake_usdc=8.2,
+        opened_at=opened_at,
+    )
+    trade = PaperTradeResult(
+        signal_id=position.signal_id,
+        paper_position_id=position.paper_position_id,
+        strategy=position.strategy,
+        asset=position.asset,
+        timeframe=position.timeframe,
+        market_id=position.market_id,
+        market_slug=position.market_slug,
+        side=position.side,
+        entry_price=position.entry_price,
+        shares=position.shares,
+        stake_usdc=position.stake_usdc,
+        exit_mode=ExitMode.TAKE_PROFIT,
+        outcome_value=0.85,
+        settlement_value=8.5,
+        pnl_usdc=0.3,
+        roi=0.3 / 8.2,
+        result=TradeResultStatus.WIN,
+        opened_at=opened_at,
+        closed_at=closed_at,
+    )
+    exit_order = PaperOrder(
+        paper_order_id="exit-order",
+        signal_id=position.signal_id,
+        token_id=position.token_id,
+        side=position.side,
+        limit_price=0.85,
+        reference_price=0.85,
+        stake_usdc=8.5,
+        asset=position.asset,
+        timeframe=position.timeframe,
+        strategy=position.strategy,
+        market_id=position.market_id,
+        market_slug=position.market_slug,
+        reduce_only=True,
+    )
+    result = PaperExecutionResult(
+        order=exit_order,
+        positions=[position],
+        status=OrderStatus.FILLED,
+        trade_results=[trade],
+    )
+
+    class RecordingPersistence:
+        def __init__(self):
+            self.trade_results = []
+            self.positions = []
+            self.logs = []
+
+        def insert_paper_trade_result(self, value):
+            self.trade_results.append(value)
+
+        def upsert_paper_position(self, value):
+            self.positions.append(value)
+
+        def append_log(self, table, value):
+            self.logs.append((table, value))
+
+    class SchedulerWithPersistence(FakeScheduler):
+        def __init__(self):
+            super().__init__()
+            self.persistence = RecordingPersistence()
+            self.health = FakeHealth()
+            self.logger = logging.getLogger("test")
+
+    class PaperClient:
+        def __init__(self):
+            self.wallet = SimpleNamespace(open_positions={"position-1": position})
+
+        def submit_exit(self, pos, bid_price, reason):
+            assert pos is position
+            assert bid_price == 0.85
+            assert reason == "TAKE_PROFIT"
+            position.status = PositionStatus.CLOSED
+            position.closed_at = closed_at
+            self.wallet.open_positions.clear()
+            return result
+
+    scheduler = SchedulerWithPersistence()
+    orch = _orchestrator(
+        scheduler=scheduler,
+        book_data_provider=SimpleNamespace(snapshot_for_token=lambda token_id: SimpleNamespace(bid=0.85)),
+        paper_client=PaperClient(),
+        position_policy=SimpleNamespace(evaluate=lambda position, current_bid=None: SimpleNamespace(details={"exit_mode": "TAKE_PROFIT"})),
+    )
+
+    await orch._phase_position_exits()
+
+    assert scheduler.persistence.trade_results == [trade]
+    assert scheduler.persistence.positions == [position]
+    assert scheduler.persistence.logs == [("paper_trade_results", trade)]
+    assert scheduler.publish_service.paper_results == [trade]
+    assert position.status == PositionStatus.CLOSED
+
+
+async def test_resting_order_terminal_update_does_not_republish_signal() -> None:
+    order = PaperOrder(
+        paper_order_id="passive-order",
+        signal_id="signal-1",
+        token_id="up-token",
+        side=Side.UP,
+        limit_price=0.83,
+        reference_price=0.84,
+        stake_usdc=8.3,
+        shares=10.0,
+        asset="BTC",
+        timeframe="5m",
+        strategy="late_consensus",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        order_intent=OrderIntent.PASSIVE_GTD,
+        metrics={
+            "condition_id": "condition-btc-5m",
+            "confidence": "0.8",
+            "entry_reference_price": "0.84",
+            "max_entry_price": "0.83",
+        },
+    )
+    fill = PaperFill(
+        paper_fill_id="fill-1",
+        paper_order_id=order.paper_order_id,
+        signal_id=order.signal_id,
+        token_id=order.token_id,
+        side=order.side,
+        raw_best_ask=0.82,
+        slippage_bps=0.0,
+        fill_price=0.82,
+        stake_usdc=8.2,
+        shares=10.0,
+        depth_checked=True,
+    )
+    position = PaperPosition(
+        paper_position_id="position-1",
+        signal_id=order.signal_id,
+        paper_order_id=order.paper_order_id,
+        paper_fill_id=fill.paper_fill_id,
+        strategy=order.strategy,
+        asset=order.asset,
+        timeframe=order.timeframe,
+        market_id=order.market_id,
+        market_slug=order.market_slug,
+        token_id=order.token_id,
+        side=order.side,
+        entry_price=fill.fill_price,
+        shares=fill.shares,
+        stake_usdc=fill.stake_usdc,
+    )
+    terminal = PaperExecutionResult(
+        order=order,
+        fills=[fill],
+        positions=[position],
+        status=OrderStatus.FILLED,
+    )
+
+    class PaperClient:
+        wallet = SimpleNamespace(open_positions={})
+
+        def process_resting_orders(self):
+            return [terminal]
+
+    orch = _orchestrator(
+        registered_strategies=[],
+        paper_client=PaperClient(),
+    )
+
+    await orch._record_execution_result(PaperExecutionResult(order=order, status=OrderStatus.RESTING))
+    await orch._phase_resting_orders()
+
+    assert len(orch.scheduler.publish_service.signals) == 1
+    assert orch.observability.signals == [order]
+    assert orch.observability.orders == [
+        PaperExecutionResult(order=order, status=OrderStatus.RESTING),
+        terminal,
+    ]
+    assert orch.observability.fills == [fill]
+    assert orch.observability.positions == [position]
 
 
 async def test_strategy_eval_records_signal_and_rejection_batch_events() -> None:

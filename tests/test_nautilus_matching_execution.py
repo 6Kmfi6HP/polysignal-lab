@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from pathlib import Path
 
 from polysignal_lab.alpha.types import NautilusOrderSpec
-from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side
+from polysignal_lab.domain.enums import ExitMode, OrderIntent, OrderStatus, Side, TradeResultStatus
 from polysignal_lab.domain.orderbook import BookLevel, OrderBook
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.nautilus_runtime.matching import (
@@ -65,6 +65,7 @@ class FakeNautilusBoundary:
         self.books: dict[str, OrderBook] = {}
         self.outcomes = list(outcomes or [])
         self.submitted_orders = []
+        self.submitted_specs = []
         self.remaining_shares: dict[str, float] = {}
         self.calls: list[tuple[str, str]] = []
 
@@ -80,6 +81,7 @@ class FakeNautilusBoundary:
             assert self.calls and self.calls[-1][0] == "mirror"
         self.calls.append(("match", order.paper_order_id))
         self.submitted_orders.append(order)
+        self.submitted_specs.append(spec)
         if self.outcomes:
             return self.outcomes.pop(0)
         book = self.books[spec.instrument_id]
@@ -536,6 +538,62 @@ def test_passive_gtd_rests_then_expires() -> None:
     assert expired[-1].reason == "GTD_EXPIRED"
     assert boundary.submitted_orders == []
 
+
+def test_passive_gtd_partial_fill_keeps_remaining_until_later_fill() -> None:
+    boundary = FakeNautilusBoundary(
+        [
+            NautilusMatchingOutcome(
+                status=OrderStatus.PARTIAL,
+                fills=(
+                    NautilusFillEvent(
+                        fill_price=0.82,
+                        shares=4.0,
+                        stake_usdc=3.28,
+                        raw_best_ask=0.82,
+                        fill_ratio=0.4,
+                    ),
+                ),
+            ),
+            NautilusMatchingOutcome(
+                status=OrderStatus.FILLED,
+                fills=(
+                    NautilusFillEvent(
+                        fill_price=0.82,
+                        shares=6.0,
+                        stake_usdc=4.92,
+                        raw_best_ask=0.82,
+                        fill_ratio=1.0,
+                    ),
+                ),
+            ),
+        ]
+    )
+    client = NautilusMatchingPaperExecutionClient(
+        wallet=PaperWallet(),
+        matching_boundary=boundary,
+    )
+    client.update_book("token-up", _book(ask_price=0.84, ask_size=500.0))
+    resting = client.submit_spec(
+        _spec(
+            quantity=10.0,
+            intent=OrderIntent.PASSIVE_GTD,
+            max_entry_price="0.83",
+            expiry_seconds=3600,
+        )
+    )
+    client.update_book("token-up", _book(ask_price=0.82, ask_size=500.0))
+
+    first = client.process_resting_orders()
+    second = client.process_resting_orders()
+
+    assert resting.status == OrderStatus.RESTING
+    assert first[-1].status == OrderStatus.PARTIAL
+    assert first[-1].fills[0].shares == 4.0
+    assert second[-1].status == OrderStatus.FILLED
+    assert second[-1].fills[0].shares == 6.0
+    assert [spec.quantity for spec in boundary.submitted_specs] == [10.0, 6.0]
+    assert client.process_resting_orders() == []
+
 def test_resting_order_stale_book_rejects_before_boundary() -> None:
     boundary = FakeNautilusBoundary()
     client = NautilusMatchingPaperExecutionClient(
@@ -616,6 +674,55 @@ def test_submit_exit_mirrors_legacy_position_before_matching_without_wallet_dupl
     assert wallet.cash_balance == 99.8
     assert wallet.realized_pnl == -0.2
 
+
+def test_submit_exit_returns_trade_result_for_filled_matching_exit() -> None:
+    boundary = FakeNautilusBoundary(
+        [
+            NautilusMatchingOutcome(
+                status=OrderStatus.FILLED,
+                fills=(
+                    NautilusFillEvent(
+                        fill_price=0.85,
+                        shares=10.0,
+                        stake_usdc=8.5,
+                        raw_best_ask=0.85,
+                    ),
+                ),
+            )
+        ]
+    )
+    wallet = PaperWallet(starting_balance=100.0)
+    position = PaperPosition(
+        paper_position_id="position-1",
+        signal_id="signal-1",
+        paper_order_id="order-1",
+        paper_fill_id="fill-1",
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        token_id="token-up",
+        side=Side.UP,
+        entry_price=0.82,
+        shares=10.0,
+        stake_usdc=8.2,
+    )
+    wallet.apply_fill(position)
+    client = NautilusMatchingPaperExecutionClient(wallet=wallet, matching_boundary=boundary)
+    client.update_book("token-up", _book(ask_price=0.82, ask_size=500.0))
+
+    result = client.submit_exit(position, bid_price=0.85, reason="TAKE_PROFIT")
+
+    assert result.status == OrderStatus.FILLED
+    assert len(result.trade_results) == 1
+    trade = result.trade_results[0]
+    assert trade.paper_position_id == "position-1"
+    assert trade.exit_mode == ExitMode.TAKE_PROFIT
+    assert trade.result == TradeResultStatus.WIN
+    assert trade.settlement_value == 8.5
+    assert round(trade.pnl_usdc, 10) == 0.3
+    assert wallet.open_positions == {}
 def test_partial_exit_updates_wallet_and_remaining_position() -> None:
     boundary = FakeNautilusBoundary(
         [

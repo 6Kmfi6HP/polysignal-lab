@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from polysignal_lab.alpha.types import NautilusOrderSpec
-from polysignal_lab.domain.enums import OrderIntent, OrderStatus, PositionStatus, Side
+from polysignal_lab.domain.enums import ExitMode, OrderIntent, OrderStatus, PositionStatus, Side, TradeResultStatus
 from polysignal_lab.domain.orderbook import OrderBook
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
+from polysignal_lab.domain.paper_result import PaperTradeResult
 from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
 from polysignal_lab.paper.wallet import PaperWallet
 from polysignal_lab.utils import new_id, utc_now
@@ -674,6 +675,11 @@ class NautilusMatchingPaperExecutionClient:
                 continue
             result = self._submit_taker_to_matching_boundary(resting.order, resting.spec)
             results.append(result)
+            if result.status == OrderStatus.PARTIAL:
+                remainder = self._remaining_resting_order(resting, result)
+                if remainder is not None:
+                    keep.append(remainder)
+                continue
             if result.status in {OrderStatus.PENDING, OrderStatus.RESTING}:
                 keep.append(resting)
         self._resting = keep
@@ -827,6 +833,30 @@ class NautilusMatchingPaperExecutionClient:
         self._resting.append(RestingMatchingOrder(spec=spec, order=order, created_at=order.created_at))
         return result
 
+    def _remaining_resting_order(
+        self,
+        resting: RestingMatchingOrder,
+        result: PaperExecutionResult,
+    ) -> RestingMatchingOrder | None:
+        filled_shares = sum(fill.shares for fill in result.fills)
+        remaining = round(max(0.0, resting.spec.quantity - filled_shares), 10)
+        if remaining <= 0:
+            return None
+        order = resting.order.model_copy(
+            deep=True,
+            update={
+                "shares": remaining,
+                "stake_usdc": remaining * resting.spec.price,
+                "status": OrderStatus.RESTING,
+                "reject_reason": None,
+            },
+        )
+        return RestingMatchingOrder(
+            spec=replace(resting.spec, quantity=remaining),
+            order=order,
+            created_at=resting.created_at,
+        )
+
     def _mirror_exit_outcome(
         self,
         order: PaperOrder,
@@ -875,10 +905,40 @@ class NautilusMatchingPaperExecutionClient:
         exit_shares = min(filled_shares, original_shares)
         cost_basis = original_stake * (exit_shares / original_shares) if original_shares else 0.0
         pnl = settlement_value - cost_basis
+        trade_results: list[PaperTradeResult] = []
         if exit_shares >= original_shares:
+            closed_at = utc_now()
             position.status = PositionStatus.CLOSED
-            position.closed_at = utc_now()
+            position.closed_at = closed_at
             self.wallet.close_position(position.paper_position_id, settlement_value, pnl)
+            trade_results.append(
+                PaperTradeResult(
+                    signal_id=position.signal_id,
+                    paper_position_id=position.paper_position_id,
+                    strategy=position.strategy,
+                    asset=position.asset,
+                    timeframe=position.timeframe,
+                    market_id=position.market_id,
+                    market_slug=position.market_slug,
+                    side=position.side,
+                    entry_price=position.entry_price,
+                    shares=exit_shares,
+                    stake_usdc=cost_basis,
+                    exit_mode=_exit_mode(order.metrics.get("exit_reason")),
+                    outcome_value=settlement_value / exit_shares if exit_shares else 0.0,
+                    settlement_value=settlement_value,
+                    pnl_usdc=pnl,
+                    roi=pnl / cost_basis if cost_basis else 0.0,
+                    result=_trade_result_status(pnl),
+                    opened_at=position.opened_at,
+                    closed_at=closed_at,
+                    details={
+                        "paper_exit_price": settlement_value / exit_shares if exit_shares else 0.0,
+                        "confidence": position.signal_confidence,
+                        "exit_threshold_source": "matching_exit",
+                    },
+                )
+            )
         else:
             self.wallet.cash_balance = round((self.wallet.cash_balance or 0.0) + settlement_value, 10)
             self.wallet.realized_pnl = round(self.wallet.realized_pnl + pnl, 10)
@@ -890,6 +950,7 @@ class NautilusMatchingPaperExecutionClient:
             fills=fills,
             positions=[position],
             status=outcome.status,
+            trade_results=trade_results,
             reason=outcome.reason,
         )
 
@@ -1010,6 +1071,21 @@ def _book_signature(book: OrderBook) -> tuple[object, ...]:
 
 def _preflight_stake_usdc(order: PaperOrder) -> float:
     return max(order.stake_usdc, (order.shares or 0.0) * order.limit_price)
+
+
+def _exit_mode(value: object) -> ExitMode:
+    try:
+        return ExitMode(str(value))
+    except (TypeError, ValueError):
+        return ExitMode.UNKNOWN
+
+
+def _trade_result_status(pnl: float) -> TradeResultStatus:
+    if pnl > 0:
+        return TradeResultStatus.WIN
+    if pnl < 0:
+        return TradeResultStatus.LOSS
+    return TradeResultStatus.VOID
 
 
 def _decimal_str(value: float) -> str:
