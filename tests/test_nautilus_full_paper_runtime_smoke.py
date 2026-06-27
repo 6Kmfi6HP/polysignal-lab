@@ -13,6 +13,8 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch) -> N
     class FakeTrader:
         def __init__(self) -> None:
             self.strategies = []
+            self.cache = SimpleNamespace(orders=lambda: [], fills=lambda: [], positions=lambda: [])
+            self.portfolio = SimpleNamespace(id="PF-SMOKE")
 
         def add_strategy(self, strategy):
             self.strategies.append(strategy)
@@ -55,3 +57,10 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch) -> N
     assert "POLYMARKET" in built["data_factories"]
     assert "POLYMARKET" not in built["exec_factories"]
     assert built["built"] is True
+    assert "cache_reader" in runtime
+    from polysignal_lab.nautilus_runtime.cache_reader import NautilusCacheReader
+    assert isinstance(runtime["cache_reader"], NautilusCacheReader)
+    assert runtime["cache_reader"].read_orders() == []
+    assert runtime["cache_reader"].read_fills() == []
+    assert runtime["cache_reader"].read_positions() == []
+    assert runtime["cache_reader"].snapshot_portfolio() is not None

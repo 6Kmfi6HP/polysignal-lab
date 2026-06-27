@@ -6,8 +6,9 @@ from typing import Any
 class NautilusCacheReader:
     """Read-only projection adapter over a Nautilus cache/portfolio interface."""
 
-    def __init__(self, cache: Any) -> None:
+    def __init__(self, cache: Any, *, portfolio: Any = None) -> None:
         self._cache = cache
+        self._portfolio = portfolio
 
     def read_orders(self) -> list[dict[str, object]]:
         cache_orders = getattr(self._cache, "orders", None)
@@ -34,12 +35,14 @@ class NautilusCacheReader:
         return None
 
     def snapshot_portfolio(self) -> object:
-        portfolio = getattr(self._cache, "portfolio", None)
-        if portfolio is None:
+        source = self._portfolio
+        if source is None:
+            source = getattr(self._cache, "portfolio", None)
+        if source is None:
             return None
-        if callable(portfolio):
-            return portfolio()
-        return portfolio
+        if callable(source):
+            return source()
+        return source
 
     @staticmethod
     def _project_order(order: Any) -> dict[str, object]:

@@ -60,9 +60,7 @@ def test_cache_reader_reads_account_from_cache() -> None:
 
 def test_cache_reader_snapshots_portfolio_from_cache() -> None:
     pf = SimpleNamespace(id="PF-1", equity=500.0)
-    cache = SimpleNamespace(portfolio=lambda: pf)
-
-    reader = NautilusCacheReader(cache)
+    reader = NautilusCacheReader(SimpleNamespace(), portfolio=pf)
     result = reader.snapshot_portfolio()
 
     assert result is not None
@@ -70,11 +68,21 @@ def test_cache_reader_snapshots_portfolio_from_cache() -> None:
     assert result.equity == 500.0
 
 
-def test_cache_reader_snapshots_portfolio_attribute() -> None:
-    pf = SimpleNamespace(id="PF-2", equity=750.0)
-    cache = SimpleNamespace(portfolio=pf)
+def test_cache_reader_snapshots_portfolio_from_cache_fallback() -> None:
+    pf = SimpleNamespace(id="PF-1b", equity=550.0)
+    cache = SimpleNamespace(portfolio=lambda: pf)
 
     reader = NautilusCacheReader(cache)
+    result = reader.snapshot_portfolio()
+
+    assert result is not None
+    assert result.id == "PF-1b"
+    assert result.equity == 550.0
+
+
+def test_cache_reader_snapshots_portfolio_attribute() -> None:
+    pf = SimpleNamespace(id="PF-2", equity=750.0)
+    reader = NautilusCacheReader(SimpleNamespace(), portfolio=pf)
     result = reader.snapshot_portfolio()
 
     assert result is not None
@@ -91,3 +99,15 @@ def test_cache_reader_empty_cache_returns_lists() -> None:
     assert reader.read_positions() == []
     assert reader.read_account() is None
     assert reader.snapshot_portfolio() is None
+
+
+def test_cache_reader_respects_separate_portfolio_arg() -> None:
+    """Portfolio argument overrides any portfolio on cache."""
+    pf_explicit = SimpleNamespace(id="PF-EXPLICIT", equity=999.0)
+    pf_on_cache = SimpleNamespace(id="PF-CACHE", equity=111.0)
+    cache = SimpleNamespace(portfolio=lambda: pf_on_cache)
+
+    reader = NautilusCacheReader(cache, portfolio=pf_explicit)
+    result = reader.snapshot_portfolio()
+
+    assert result.id == "PF-EXPLICIT"

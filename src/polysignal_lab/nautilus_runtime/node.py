@@ -168,6 +168,12 @@ def build_trading_node(
         node.trader.add_strategy(strategy)
     node.build()
 
+    from polysignal_lab.nautilus_runtime.cache_reader import NautilusCacheReader
+    trader = getattr(node, "trader", None)
+    cache = getattr(trader, "cache", None) or getattr(node, "cache", None)
+    portfolio = getattr(trader, "portfolio", None) or getattr(node, "portfolio", None)
+    cache_reader = NautilusCacheReader(cache, portfolio=portfolio)
+
     return {
         "node": node,
         "config": config,
@@ -177,6 +183,7 @@ def build_trading_node(
         "policy": policy,
         "strategies": strategies,
         "strategy_names": [strategy.strategy_name for strategy in strategies],
+        "cache_reader": cache_reader,
     }
 
 
