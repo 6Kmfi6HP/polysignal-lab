@@ -26,6 +26,8 @@ SKIP_DIR_NAMES: Final = {
     "dist",
     "htmlcov",
 }
+NAUTILUS_RUNTIME_ALLOWED_SYMBOLS: Final = {"submit_order"}
+
 SKIP_TOP_LEVEL_DIRS: Final = {"data", "logs", "refs", "state"}
 
 LOCAL_PAPER_ISOLATION_SYMBOLS: Final = (
@@ -64,11 +66,13 @@ def scan(root: str | Path) -> list[tuple[str, str]]:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         report_path = path.name if base_is_file else str(path.relative_to(base))
-        symbols = blocked_symbols()
+        symbols = list(blocked_symbols())
         if _is_default_nautilus_runtime_source(path):
             symbols.extend(LOCAL_PAPER_ISOLATION_SYMBOLS)
         for symbol in symbols:
             if symbol in text:
+                if _is_submit_order_allowed_for_nautilus_strategy(path) and symbol == "submit_order":
+                    continue
                 findings.append((report_path, symbol))
     return findings
 
@@ -95,6 +99,24 @@ def _is_default_nautilus_runtime_source(path: Path) -> bool:
             continue
         if idx + 1 < len(parts) and parts[idx + 1] == "nautilus_runtime":
             return "tests" not in parts[:idx]
+    return False
+
+
+def _is_submit_order_allowed_for_nautilus_strategy(path: Path) -> bool:
+    """submit_order is legitimate on Nautilus strategy and test objects."""
+    if path.suffix != ".py":
+        return False
+    parts = path.parts
+    for idx, part in enumerate(parts[:-1]):
+        if part != "polysignal_lab":
+            continue
+        if idx + 1 < len(parts) and parts[idx + 1] == "nautilus_runtime":
+            return True
+    # Also allow test files matching the nautilus test pattern
+    if len(parts) >= 2 and parts[-2] == "tests":
+        name = parts[-1]
+        if name.endswith(".py") and ("nautilus" in name or name.startswith("test_nautilus")):
+            return True
     return False
 
 
