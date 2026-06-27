@@ -25,6 +25,7 @@ __all__ = [
     "MidPriceSizingNautilusStrategy",
     "NinetyNineCentSniperNautilusStrategy",
     "OneCentBuyNautilusStrategy",
+    "PTBDiffNautilusStrategy",
     "PolySignalNativeStrategy",
     "PolySignalNautilusStrategy",
     "PreOrderMarketNautilusStrategy",
