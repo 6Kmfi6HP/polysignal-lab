@@ -139,6 +139,12 @@ class NautilusEventStoreAdapter:
             payload.setdefault("severity", "info")
             payload.setdefault("created_at", payload.get("ts", utc_iso()))
             payload.setdefault("event_id", f"nautilus_health:{payload['created_at']}")
+        elif table.startswith("nautilus_"):
+            ts = utc_iso()
+            payload.setdefault("event_type", table)
+            payload.setdefault("severity", "info")
+            payload.setdefault("created_at", payload.get("ts", ts))
+            payload.setdefault("event_id", f"{table}:{payload['created_at']}")
         route(payload)
         if self._append_log is not None:
             self._append_log(self._streams[table], payload)
