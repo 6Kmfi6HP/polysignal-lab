@@ -266,3 +266,69 @@ def test_runtime_strategy_evaluate_all_conditions_uses_override_condition_ids() 
 
     assert assembler.seen == ["new"]
     assert batch.submitted_specs == ()
+
+
+def test_native_strategy_generates_signal_from_on_data_callback() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.order_factory = FakeOrderFactoryForNative()
+            self.submitted = []
+            self.subscriptions = []
+
+        def submit_order(self, order):
+            self.submitted.append(order)
+
+        def subscribe_data(self, data_type):
+            self.subscriptions.append(data_type)
+
+    class FakeOrderFactoryForNative:
+        def limit(self, **kwargs):
+            return kwargs
+
+    class DataEvent:
+        condition_id = "condition-btc-5m"
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([_decision()]),
+        assembler=FakeAssembler(_MockView()),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
+        fixed_stake_usdc=10.0,
+        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+    )
+
+    strategy.on_data(DataEvent())
+
+    assert len(strategy.submitted) == 1
+    assert strategy.submitted[0]["instrument_id"] == "up-token.POLYMARKET"
+    assert strategy.submitted[0]["time_in_force"] == "GTD"
+    assert strategy.submitted_specs == []
+    assert strategy.execution_results == []
+
+
+def test_native_strategy_on_start_subscribes_configured_data_names() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.subscriptions = []
+
+        def subscribe_data(self, data_type):
+            self.subscriptions.append(data_type)
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=FakeAssembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        data_names=("quote_ticks", "trade_ticks"),
+    )
+
+    strategy.on_start()
+
+    assert strategy.subscriptions == ["quote_ticks", "trade_ticks"]

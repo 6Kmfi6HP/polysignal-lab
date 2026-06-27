@@ -10,6 +10,7 @@ from polysignal_lab.nautilus_runtime.strategies.one_cent_buy import OneCentBuyNa
 from polysignal_lab.nautilus_runtime.strategies.pre_order_market import PreOrderMarketNautilusStrategy
 from polysignal_lab.nautilus_runtime.strategies.ptb_diff import PTBDiffNautilusStrategy
 from polysignal_lab.nautilus_runtime.strategies.skew_mean_reversion import SkewMeanReversionNautilusStrategy
+from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 from polysignal_lab.nautilus_runtime.strategies.vwap_momentum import VWAPMomentumNautilusStrategy
 
 from polysignal_lab.nautilus_runtime.strategies.cross_market_bot import CrossMarketNautilusStrategy
@@ -24,7 +25,7 @@ __all__ = [
     "MidPriceSizingNautilusStrategy",
     "NinetyNineCentSniperNautilusStrategy",
     "OneCentBuyNautilusStrategy",
-    "PTBDiffNautilusStrategy",
+    "PolySignalNativeStrategy",
     "PolySignalNautilusStrategy",
     "PreOrderMarketNautilusStrategy",
     "SkewMeanReversionNautilusStrategy",
