@@ -10,4 +10,4 @@ Task 7: complete (commit 5953959: smoke test)
 
 Final HEAD: 5953959 — all 37 focused tests PASS (35 pass, 2 skip: nautilus_trader optional dep)
 
-Acceptance gaps: complete (commit <squash>, cache-reader + scheduler_compat isolation)
+Acceptance gaps: complete (commit 49c66cb, cache-reader + scheduler_compat isolation)
