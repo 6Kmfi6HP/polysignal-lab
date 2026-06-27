@@ -24,3 +24,7 @@ htmlcov/
 .worktrees/
 refs/*
 .superpowers/
+# AI coding tool local LSP configs (per-developer)
+.codex/
+.opencode/
+.omo/lsp.json
