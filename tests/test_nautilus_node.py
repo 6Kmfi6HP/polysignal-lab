@@ -209,3 +209,19 @@ def test_run_nautilus_cli_prints_ready(monkeypatch, capsys) -> None:
     run_nautilus_cli()
 
     assert "Nautilus runtime ready" in capsys.readouterr().out
+
+
+def test_noop_matching_sink_satisfies_protocol() -> None:
+    from polysignal_lab.nautilus_runtime.node import _NoopMatchingSink
+    from datetime import datetime, timezone
+
+    sink = _NoopMatchingSink()
+    # Must accept real matching-sink signatures without raising.
+    sink.update_book("token-up", object())
+    sink.update_trade(
+        "token-up",
+        price=0.50,
+        size=100.0,
+        side="BUY",
+        ts_event=datetime.now(timezone.utc),
+    )

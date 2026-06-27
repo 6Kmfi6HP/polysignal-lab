@@ -52,6 +52,30 @@ TradingNode = None
 PolymarketInstrumentProviderConfig = None
 build_paper_trading_node_config = None
 register_paper_factories = None
+
+class _NoopMatchingSink:
+    """No-op matching sink for the data ingestor when running under TradingNode.
+
+    The Nautilus DataEngine handles its own market feeds; the external data
+    ingestor only needs to update the PolySignal book_data_provider for the
+    assembler. This sink satisfies the MatchingBookSink protocol without
+    duplicating book state into a paper matching client.
+    """
+
+    def update_book(self, token_id: str, book: object) -> None:
+        pass
+
+    def update_trade(
+        self,
+        token_id: str,
+        price: float,
+        size: float,
+        side: str | None,
+        ts_event: object | None,
+    ) -> None:
+        pass
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -311,7 +335,7 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
         bridge_registry=components["registry"],
         sidecar=components["sidecar"],
         book_data_provider=book_data_provider,
-        matching_client=None,
+        matching_client=_NoopMatchingSink(),
         price_to_beat_provider=scheduler.ptb,
     )
 
