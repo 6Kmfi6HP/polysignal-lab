@@ -12,6 +12,11 @@ from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.utils import utc_now, utc_iso
+from polysignal_lab.nautilus_runtime.projections import (
+    project_fill_event,
+    project_order_event,
+    project_position,
+)
 
 
 def signal_candidate_from_order(order: PaperOrder) -> SignalCandidate:
@@ -293,6 +298,21 @@ class ObservabilityActor:
             "status": snapshot.status,
             "components": [c.as_dict() for c in snapshot.components],
         })
+
+    def record_event(self, table: str, data: Mapping[str, object]) -> None:
+        self._event_count += 1
+        if self.store is None:
+            return
+        self.store.insert_json(table, data)
+
+    def record_nautilus_order_event(self, event: object) -> None:
+        self.record_event("nautilus_order", project_order_event(event))
+
+    def record_nautilus_fill_event(self, event: object) -> None:
+        self.record_event("nautilus_fill", project_fill_event(event))
+
+    def record_nautilus_position(self, position: object) -> None:
+        self.record_event("nautilus_position", project_position(position))
 
     # -- Notifications --
 

@@ -360,13 +360,32 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
     )
 
 
+async def _data_sync_loop(
+    data_ingestor: Any,
+    *,
+    refresh_interval_sec: float,
+    stop_event: asyncio.Event,
+) -> None:
+    """Periodically sync market data into the bridge registry and assembler."""
+    while not stop_event.is_set():
+        try:
+            data_ingestor.sync_all()
+        except Exception:
+            logger.exception("data sync error")
+        await asyncio.sleep(refresh_interval_sec)
+
+
 async def run_nautilus_cli_async(settings: Settings | None = None,
                                  stop_event: asyncio.Event | None = None) -> None:
     """Run the Nautilus CLI with async orchestrator loop and signal handling."""
     event = stop_event or asyncio.Event()
     bundle = await build_nautilus_runtime(settings)
-    node = bundle.node
+    try:
+        refresh_interval_sec = bundle.scheduler.settings.markets.refresh_interval_sec
+    except AttributeError:
+        refresh_interval_sec = 60
 
+    node = bundle.node
     loop = asyncio.get_running_loop()
 
     def request_stop() -> None:
@@ -378,10 +397,27 @@ async def run_nautilus_cli_async(settings: Settings | None = None,
         except (NotImplementedError, RuntimeError):
             signal.signal(sig, lambda _signum, _frame: request_stop())
 
+    sync_task = asyncio.create_task(
+        _data_sync_loop(bundle.data_ingestor, refresh_interval_sec=refresh_interval_sec, stop_event=event),
+    )
+
     try:
         print(f"Nautilus runtime ready — {len(bundle.components['strategies'])} strategies")
-        await asyncio.to_thread(node.run)
+        run_task = asyncio.create_task(asyncio.to_thread(node.run))
+        stop_waiter = asyncio.create_task(event.wait())
+        done, pending = await asyncio.wait(
+            [run_task, stop_waiter],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
     finally:
+        event.set()
+        sync_task.cancel()
+        try:
+            await sync_task
+        except asyncio.CancelledError:
+            pass
         dispose = getattr(node, "dispose", None)
         if callable(dispose):
             dispose()

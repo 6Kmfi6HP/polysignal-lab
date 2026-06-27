@@ -175,6 +175,7 @@ async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
         node=FakeTradingNode(),
         websocket_tasks=[],
         scheduler=SimpleNamespace(stop=_noop),
+        data_ingestor=SimpleNamespace(sync_all=lambda: None),
         components={"strategies": []},
     )
 
