@@ -32,6 +32,8 @@ DEFAULT_DATA_NAMES = (
     "price_to_beat",
 )
 
+COMPATIBILITY_ONLY = True
+
 
 @dataclass(frozen=True, slots=True)
 class StrategyEvaluationBatch:
@@ -42,6 +44,7 @@ class StrategyEvaluationBatch:
 
 
 class PolySignalNautilusStrategy:
+    """Compatibility wrapper for pre-TradingNode tests; default runtime uses PolySignalNativeStrategy."""
     def __init__(
         self,
         *,

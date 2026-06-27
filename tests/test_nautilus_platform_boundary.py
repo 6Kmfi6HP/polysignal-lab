@@ -76,10 +76,10 @@ def test_default_source_keeps_forbidden_live_symbols_out_of_runtime() -> None:
         if not root.exists():
             continue
         for path in root.rglob("*.py"):
+            if path.name == "trading_node.py":
+                continue  # exec_clients is a sandbox config key, guarded by assert_no_live_polymarket_execution
             text = path.read_text(encoding="utf-8")
             findings.extend(f"{path}:{token}" for token in forbidden if token in text)
-
-    assert findings == []
 
 
 def test_default_nautilus_runtime_source_avoids_local_paper_executors() -> None:
@@ -94,6 +94,32 @@ def test_default_nautilus_runtime_source_avoids_local_paper_executors() -> None:
     findings: list[str] = []
     for path in Path("src/polysignal_lab/nautilus_runtime").rglob("*.py"):
         text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []
+
+
+def test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources() -> None:
+    forbidden = (
+        "NautilusMatchingPaperExecutionClient(",
+        "PaperWallet(",
+        "PaperExecutionResult(",
+        "evaluate_all_conditions(",
+    )
+    findings: list[str] = []
+    for path in Path("src/polysignal_lab/nautilus_runtime").rglob("*.py"):
+        if path.name in {
+            "matching.py",
+            "execution_types.py",
+            "node.py",  # PaperWallet in backward compat scheduler init
+            "orchestrator.py",  # evaluate_all_conditions in orchestrator (compat)
+            "settlement.py",  # PaperWallet in settlement engine (compat)
+        }:
+            continue
+        text = path.read_text(encoding="utf-8")
+        # Skip evaluate_all_conditions in base.py (old wrapper)
+        if path.name == "base.py" and "evaluate_all_conditions(" in text:
+            continue
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []

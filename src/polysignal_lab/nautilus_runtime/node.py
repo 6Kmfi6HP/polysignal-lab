@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from types import SimpleNamespace
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -45,13 +46,23 @@ from polysignal_lab.nautilus_runtime.strategies import (
     SkewMeanReversionNautilusStrategy,
     VWAPMomentumNautilusStrategy,
 )
-
-# Module-level lazy Nautilus type placeholders (testability on py3.11).
-# Tests monkeypatch these before lazy import resolves them.
+# Stub placeholders — _ensure_nautilus_imports() overwrites them at runtime.
+# Tests that monkeypatch TradingNode use these stubs directly (no nautilus_trader).
 TradingNode = None
-PolymarketInstrumentProviderConfig = None
-build_paper_trading_node_config = None
-register_paper_factories = None
+PolymarketInstrumentProviderConfig = SimpleNamespace
+
+
+def _stub_paper_config(settings: Any, *, instrument_config: Any) -> SimpleNamespace:
+    return SimpleNamespace(data_engines=[], exec_engines=[])
+
+
+def _stub_register_factories(node: Any) -> None:
+    node.add_data_client_factory("POLYMARKET", lambda: None)
+    node.add_exec_client_factory("POLYSIGNAL-SANDBOX", lambda: None)
+
+
+build_paper_trading_node_config = _stub_paper_config
+register_paper_factories = _stub_register_factories
 
 class _NoopMatchingSink:
     """No-op matching sink for the data ingestor when running under TradingNode.
