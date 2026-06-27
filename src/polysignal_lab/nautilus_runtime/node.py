@@ -104,15 +104,27 @@ class NautilusRuntimeBundle:
     observability: ObservabilityActor
     websocket_tasks: list[asyncio.Task]
 
+import sys
+
 
 def _ensure_nautilus_imports() -> None:
     """Lazy-import Nautilus TradingNode and Polymarket helpers into module globals.
 
     Uses module-level placeholders so tests on py3.11 can monkeypatch before
-    the first real call triggers the import chain.
+    the first real call triggers the import chain.  Reads the guard from
+    ``sys.modules`` so a ``monkeypatch.setattr`` on the string path always
+    takes effect even if this function's ``__globals__`` references a stale
+    module object.
     """
     global TradingNode, PolymarketInstrumentProviderConfig
     global build_paper_trading_node_config, register_paper_factories
+
+    mod = sys.modules.get(__name__)
+    if mod is not None and getattr(mod, "TradingNode", None) is not None:
+        # Sync our __globals__ from the live module entry so subsequent
+        # calls that reach this function use the patched value.
+        TradingNode = mod.TradingNode
+        return
 
     if TradingNode is not None:
         return  # already resolved (or monkeypatched)
@@ -128,7 +140,6 @@ def _ensure_nautilus_imports() -> None:
     PolymarketInstrumentProviderConfig = _PolymarketInstrumentProviderConfig
     build_paper_trading_node_config = _build_paper_trading_node_config
     register_paper_factories = _register_paper_factories
-
 
 def build_trading_node(
     settings: Settings | None = None,
@@ -286,9 +297,6 @@ def build_control(policy: DecisionPolicyActor) -> DecisionPolicyControl:
 
 def _initialize_nautilus_scheduler_components(scheduler: PolySignalScheduler) -> None:
     """Initialize scheduler state needed by Nautilus without legacy local paper."""
-    from polysignal_lab.paper.exit_engine import PaperExitEngine
-    from polysignal_lab.paper.settlement import PaperSettlementEngine
-    from polysignal_lab.paper.wallet import PaperWallet
     if scheduler._trading_components_initialized:
         return
     scheduler.strategy_schedule = build_strategy_schedule(scheduler.settings.strategies)
@@ -303,10 +311,8 @@ def _initialize_nautilus_scheduler_components(scheduler: PolySignalScheduler) ->
         if name in known_strategy_names:
             scheduler.signal_pipeline.set_strategy_enabled(str(name), False)
     scheduler.arbiter = SignalArbiter()
-    scheduler.wallet = PaperWallet(scheduler.settings.paper_trading.starting_balance_usdc)
-    scheduler.paper = None
-    scheduler.exits = PaperExitEngine(scheduler.settings.paper_trading.exit_model, scheduler.wallet)
-    scheduler.settlement = PaperSettlementEngine(scheduler.wallet)
+    from polysignal_lab.nautilus_runtime.scheduler_compat import init_scheduler_paper_components
+    init_scheduler_paper_components(scheduler)
     scheduler.paper_portfolio.configure(
         wallet=scheduler.wallet,
         paper=None,

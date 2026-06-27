@@ -111,7 +111,7 @@ def test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources() -> N
         if path.name in {
             "matching.py",
             "execution_types.py",
-            "node.py",  # PaperWallet in backward compat scheduler init
+            "scheduler_compat.py",  # COMPATIBILITY_ONLY read-only paper components
             "orchestrator.py",  # evaluate_all_conditions in orchestrator (compat)
             "settlement.py",  # PaperWallet in settlement engine (compat)
         }:
