@@ -228,8 +228,8 @@ class OwnedNautilusMatchingBoundary:
                 position_id=position_id,
                 order_side=components["OrderSide"].BUY,
                 order_type=components["OrderType"].LIMIT,
-                last_qty=components["Quantity"].from_str(_decimal_str(position.shares)),
-                last_px=components["Price"].from_str(_decimal_str(position.entry_price)),
+                last_qty=_quantity_value(components, instrument, position.shares),
+                last_px=_price_value(components, instrument, position.entry_price),
                 currency=components["Currency"].from_str("USDC"),
                 commission=components["Money"].from_str("0 USDC"),
                 liquidity_side=components["LiquiditySide"].TAKER,
@@ -474,8 +474,8 @@ class OwnedNautilusMatchingBoundary:
                     action=components["BookAction"].ADD,
                     order=components["BookOrder"](
                         components["OrderSide"].BUY,
-                        components["Price"].from_str(_decimal_str(level.price)),
-                        components["Quantity"].from_str(_decimal_str(level.size)),
+                        _price_value(components, instrument, level.price),
+                        _quantity_value(components, instrument, level.size),
                         order_id,
                     ),
                     flags=0,
@@ -495,8 +495,8 @@ class OwnedNautilusMatchingBoundary:
                     action=components["BookAction"].ADD,
                     order=components["BookOrder"](
                         components["OrderSide"].SELL,
-                        components["Price"].from_str(_decimal_str(level.price)),
-                        components["Quantity"].from_str(_decimal_str(level.size)),
+                        _price_value(components, instrument, level.price),
+                        _quantity_value(components, instrument, level.size),
                         order_id,
                     ),
                     flags=0,
@@ -528,8 +528,8 @@ class OwnedNautilusMatchingBoundary:
                 if order.reduce_only
                 else components["OrderSide"].BUY
             ),
-            quantity=components["Quantity"].from_str(_decimal_str(spec.quantity)),
-            price=components["Price"].from_str(_decimal_str(order.limit_price)),
+            quantity=_quantity_value(components, instrument, spec.quantity),
+            price=_price_value(components, instrument, order.limit_price),
             time_in_force=time_in_force,
             reduce_only=order.reduce_only,
             tags=[f"paper_order_id={order.paper_order_id}"],
@@ -603,6 +603,9 @@ class OwnedNautilusMatchingBoundary:
             raise NautilusMatchingUnavailable()
         return self._session
 
+_MAX_RECENT_MATCHING_TRADES_PER_TOKEN = 512
+
+
 class NautilusMatchingPaperExecutionClient:
     paper_engine = "nautilus_matching"
 
@@ -638,7 +641,8 @@ class NautilusMatchingPaperExecutionClient:
     ) -> None:
         if price <= 0 or size <= 0:
             return
-        self._trades.setdefault(token_id, []).append(
+        trades = self._trades.setdefault(token_id, [])
+        trades.append(
             MatchingTrade(
                 token_id=token_id,
                 price=price,
@@ -647,6 +651,8 @@ class NautilusMatchingPaperExecutionClient:
                 ts_event=ts_event,
             )
         )
+        if len(trades) > _MAX_RECENT_MATCHING_TRADES_PER_TOKEN:
+            del trades[:-_MAX_RECENT_MATCHING_TRADES_PER_TOKEN]
 
     def recent_trades_for(self, token_id: str) -> list[MatchingTrade]:
         return list(self._trades.get(token_id, ()))
@@ -1087,8 +1093,27 @@ def _trade_result_status(pnl: float) -> TradeResultStatus:
     return TradeResultStatus.VOID
 
 
-def _decimal_str(value: float) -> str:
-    return format(Decimal(str(value)).normalize(), "f")
+def _decimal_str(value: float, precision: int | None = None) -> str:
+    decimal_value = Decimal(str(value))
+    if precision is None:
+        return format(decimal_value.normalize(), "f")
+    return format(decimal_value.quantize(Decimal(1).scaleb(-precision)), f".{precision}f")
+
+
+def _price_value(components: dict[str, Any], instrument: Any, value: float) -> Any:
+    maker = getattr(instrument, "make_price", None)
+    if callable(maker):
+        return maker(value)
+    precision = getattr(instrument, "price_precision", None)
+    return components["Price"].from_str(_decimal_str(value, precision))
+
+
+def _quantity_value(components: dict[str, Any], instrument: Any, value: float) -> Any:
+    maker = getattr(instrument, "make_qty", None)
+    if callable(maker):
+        return maker(value)
+    precision = getattr(instrument, "size_precision", None)
+    return components["Quantity"].from_str(_decimal_str(value, precision))
 
 
 def _identifier_value(value: Any) -> str | None:

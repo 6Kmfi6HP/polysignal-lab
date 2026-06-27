@@ -75,6 +75,7 @@ class NautilusDataIngestor:
         return tuple(condition_ids)
 
     def sync_orderbooks(self) -> None:
+        current_seen: set[tuple[str, float, float, str | None, object]] = set()
         for token_id, book in self.books.books.items():
             self.book_data_provider.update_book(token_id, book)
             self.matching_client.update_book(token_id, book)
@@ -82,9 +83,11 @@ class NautilusDataIngestor:
                 side = getattr(trade, "side", None)
                 trade_ts = _trade_timestamp(trade)
                 key = (token_id, trade.price, trade.size, side, trade_ts)
+                if key in current_seen:
+                    continue
+                current_seen.add(key)
                 if key in self._seen_matching_trades:
                     continue
-                self._seen_matching_trades.add(key)
                 self.matching_client.update_trade(
                     token_id,
                     price=trade.price,
@@ -92,6 +95,7 @@ class NautilusDataIngestor:
                     side=side,
                     ts_event=getattr(trade, "datetime", None) or getattr(trade, "ts_event", None),
                 )
+        self._seen_matching_trades = current_seen
 
 
     def sync_spots(self) -> None:

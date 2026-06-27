@@ -138,6 +138,28 @@ def test_polymarket_price_changes_event_updates_registry() -> None:
     assert telemetry["best_ask"] == 0.53
 
 
+def test_polymarket_price_change_hot_path_avoids_deep_model_copy() -> None:
+    registry = OrderBookRegistry()
+    ws = _seed_polymarket_book(registry)
+    calls: list[bool] = []
+    book = registry.get("token-up")
+    assert book is not None
+    original = book.__class__.model_copy
+
+    def recording_model_copy(self, *, update=None, deep=False):
+        calls.append(deep)
+        return original(self, update=update, deep=deep)
+
+    book.__class__.model_copy = recording_model_copy
+    try:
+        event = _fixtures()["polymarket_price_change"]
+        if isinstance(event, dict):
+            ws.handle_message(event)
+    finally:
+        book.__class__.model_copy = original
+
+    assert True not in calls
+
 def test_polymarket_book_best_bid_ask_last_trade_and_lifecycle_events_are_public_contract_safe() -> None:
     registry = OrderBookRegistry()
     ws = _seed_polymarket_book(registry)

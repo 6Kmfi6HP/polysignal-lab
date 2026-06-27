@@ -251,6 +251,7 @@ class NautilusOrchestrator:
                 "accuracy_mode",
                 "depth_l2",
             ),
+            **_runtime_debug_metrics(self),
         }
         try:
             self.health.mark_ok("orchestrator", **metadata)
@@ -310,3 +311,57 @@ def _exit_reason(decision: object) -> str:
     mode = getattr(decision, "exit_mode", None)
     value = getattr(mode, "value", mode)
     return str(value or "POSITION_EXIT")
+
+
+def _runtime_debug_metrics(orchestrator: NautilusOrchestrator) -> dict[str, int]:
+    metrics: dict[str, int] = {
+        "matching_order_events": 0,
+        "matching_instruments": 0,
+        "matching_published_books": 0,
+        "matching_trade_cache": 0,
+        "ingestor_seen_matching_trades": 0,
+        "vwap_trade_samples": 0,
+        "vwap_seen_trade_signatures": 0,
+    }
+
+    boundary = getattr(orchestrator.paper_client, "matching_boundary", None)
+    if boundary is not None:
+        session = getattr(boundary, "_session", None)
+        order_events = getattr(session, "order_events", None) if session is not None else None
+        if isinstance(order_events, list):
+            metrics["matching_order_events"] = len(order_events)
+        instruments = getattr(boundary, "_instruments", None)
+        if isinstance(instruments, dict):
+            metrics["matching_instruments"] = len(instruments)
+        published_books = getattr(boundary, "_published_books", None)
+        if isinstance(published_books, set):
+            metrics["matching_published_books"] = len(published_books)
+
+    trade_cache = getattr(orchestrator.paper_client, "_trades", None)
+    if isinstance(trade_cache, dict):
+        metrics["matching_trade_cache"] = sum(
+            len(trades) for trades in trade_cache.values() if isinstance(trades, list)
+        )
+
+    seen_matching_trades = getattr(orchestrator.data_ingestor, "_seen_matching_trades", None)
+    if isinstance(seen_matching_trades, set):
+        metrics["ingestor_seen_matching_trades"] = len(seen_matching_trades)
+
+    for strategy in orchestrator.registered_strategies:
+        core = getattr(strategy, "core", None)
+        if core is None:
+            continue
+        trades = getattr(getattr(core, "trades", None), "_trades", None)
+        if isinstance(trades, dict):
+            metrics["vwap_trade_samples"] += sum(
+                len(samples) for samples in trades.values() if isinstance(samples, list)
+            )
+        signatures = getattr(core, "_seen_trade_signatures", None)
+        if isinstance(signatures, dict):
+            metrics["vwap_seen_trade_signatures"] += sum(
+                len(samples)
+                for samples in signatures.values()
+                if isinstance(samples, (set, list, tuple))
+            )
+
+    return metrics

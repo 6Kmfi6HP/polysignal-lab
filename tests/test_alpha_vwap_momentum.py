@@ -306,6 +306,30 @@ def test_vwap_on_order_expired_gtd_clears_pending_hedge() -> None:
     assert decisions == []
 
 
+def test_vwap_evaluate_prunes_old_trade_history_and_dedupe_state() -> None:
+    config = _fast_config(vwap_window_sec=5, momentum_window_sec=5)
+    core = VWAPMomentumAlphaCore(config)
+    snapshot = _snapshot()
+    market_id = snapshot.market.market_id
+    now_ts = snapshot.created_at.timestamp()
+    up_key = f"{market_id}:{Side.UP.value}"
+    down_key = f"{market_id}:{Side.DOWN.value}"
+
+    core.trades.push(up_key, 0.49, 1.0, now_ts - 500.0)
+    core.trades.push(down_key, 0.39, 1.0, now_ts - 500.0)
+    core._seen_trade_signatures[up_key].add((0.49, 1.0, now_ts - 500.0))
+    core._seen_trade_signatures[down_key].add((0.39, 1.0, now_ts - 500.0))
+    _seed_band(core, market_id, now_ts)
+
+    decisions = core.evaluate_view_from_snapshot_for_test(snapshot)
+
+    assert len(decisions) == 1
+    assert min(trade.timestamp for trade in core.trades._trades[up_key]) >= now_ts - 6.5
+    assert min(trade.timestamp for trade in core.trades._trades[down_key]) >= now_ts - 6.5
+    assert (0.49, 1.0, now_ts - 500.0) not in core._seen_trade_signatures[up_key]
+    assert (0.39, 1.0, now_ts - 500.0) not in core._seen_trade_signatures[down_key]
+
+
 # ---------------------------------------------------------------------------
 # State round-trip
 # ---------------------------------------------------------------------------

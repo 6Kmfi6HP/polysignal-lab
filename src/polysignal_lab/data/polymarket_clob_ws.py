@@ -134,13 +134,18 @@ class PolymarketMarketWebSocket:
         size = safe_float(change.get("size"), 0.0)
         if price is None or size is None:
             return
-        updated = book.model_copy(deep=True)
-        target = updated.bids if str(change.get("side") or "").upper() == "BUY" else updated.asks
-        target[:] = [level for level in target if level.price != price]
-        if size > 0:
-            target.append(BookLevel(price=price, size=size))
-        updated.bids = sorted(updated.bids, key=lambda level: level.price, reverse=True)
-        updated.asks = sorted(updated.asks, key=lambda level: level.price)
+        is_buy = str(change.get("side") or "").upper() == "BUY"
+        updated = book.model_copy(deep=False)
+        if is_buy:
+            bids = [level for level in book.bids if level.price != price]
+            if size > 0:
+                bids.append(BookLevel(price=price, size=size))
+            updated.bids = sorted(bids, key=lambda level: level.price, reverse=True)
+        else:
+            asks = [level for level in book.asks if level.price != price]
+            if size > 0:
+                asks.append(BookLevel(price=price, size=size))
+            updated.asks = sorted(asks, key=lambda level: level.price)
         updated.received_at = utc_now()
 
         best_bid = safe_float(change.get("best_bid"))

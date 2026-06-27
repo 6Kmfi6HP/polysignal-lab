@@ -255,6 +255,28 @@ def test_update_trade_records_recent_trade_for_queue_mode() -> None:
     assert trades[0].side == "BUY"
     assert trades[0].ts_event == ts_event
 
+def test_update_trade_caps_recent_trade_cache_per_token() -> None:
+    client = NautilusMatchingPaperExecutionClient(
+        wallet=PaperWallet(),
+        accuracy_mode="queue_l2",
+    )
+    base_ts = datetime.now(UTC)
+
+    for index in range(600):
+        client.update_trade(
+            "token-up",
+            price=0.80 + index * 0.0001,
+            size=1.0,
+            side="BUY",
+            ts_event=base_ts,
+        )
+
+    trades = client.recent_trades_for("token-up")
+
+    assert len(trades) == 512
+    assert trades[0].price == 0.80 + 88 * 0.0001
+    assert trades[-1].price == 0.80 + 599 * 0.0001
+
 
 def test_submit_spec_mirrors_nautilus_fill_event_without_local_repricing() -> None:
     boundary = FakeNautilusBoundary(
@@ -481,6 +503,84 @@ def test_owned_boundary_mirrors_legacy_position_once_before_reduce_only_exit() -
     assert mirrored.fill.last_qty == "10"
     assert mirrored.fill.last_px == "0.82"
     assert oms_type == "oms:NETTING"
+
+def test_publish_book_preserves_instrument_precision_for_nautilus_deltas() -> None:
+    captured: list[object] = []
+
+    class FakeValue:
+        @staticmethod
+        def from_str(value: str) -> str:
+            return value
+
+    class FakeBookOrder:
+        def __init__(self, side: str, price: str, size: str, order_id: int) -> None:
+            self.side = side
+            self.price = price
+            self.size = size
+            self.order_id = order_id
+
+    class FakeOrderBookDelta:
+        @staticmethod
+        def clear(instrument_id: str, sequence: int, ts_event: int, ts_init: int) -> SimpleNamespace:
+            return SimpleNamespace(
+                instrument_id=instrument_id,
+                sequence=sequence,
+                ts_event=ts_event,
+                ts_init=ts_init,
+                action="CLEAR",
+                order=None,
+            )
+
+        def __init__(self, **kwargs) -> None:
+            self.__dict__.update(kwargs)
+
+    class FakeOrderBookDeltas:
+        def __init__(self, instrument_id: str, deltas: list[object]) -> None:
+            self.instrument_id = instrument_id
+            self.deltas = deltas
+
+    boundary = OwnedNautilusMatchingBoundary(MatchingAccuracySettings.from_mode("depth_l2"))
+    boundary._session = SimpleNamespace(
+        components={
+            "BookAction": SimpleNamespace(ADD="ADD"),
+            "BookOrder": FakeBookOrder,
+            "OrderBookDelta": FakeOrderBookDelta,
+            "OrderBookDeltas": FakeOrderBookDeltas,
+            "OrderSide": SimpleNamespace(BUY="BUY", SELL="SELL"),
+            "Price": FakeValue,
+            "Quantity": FakeValue,
+        },
+        sandbox=SimpleNamespace(on_data=captured.append),
+    )
+    boundary._instruments["token-up"] = SimpleNamespace(
+        id="instrument-1",
+        price_precision=2,
+        size_precision=6,
+    )
+
+    boundary._publish_book_to_nautilus(
+        "token-up",
+        OrderBook(
+            token_id="token-up",
+            tick_size=0.01,
+            bids=[
+                BookLevel(price=0.2, size=617272.04),
+            ],
+            asks=[
+                BookLevel(price=0.8, size=500.0),
+            ],
+            received_at=datetime.now(UTC),
+        ),
+    )
+
+    book_deltas = captured[0]
+    bid = book_deltas.deltas[1].order
+    ask = book_deltas.deltas[2].order
+
+    assert bid.price == "0.20"
+    assert bid.size == "617272.040000"
+    assert ask.price == "0.80"
+    assert ask.size == "500.000000"
 
 
 def test_taker_fills_at_book_price_not_slippage_model() -> None:

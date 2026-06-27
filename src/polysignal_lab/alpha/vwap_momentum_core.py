@@ -78,16 +78,12 @@ class TradeHistory:
     def _prune(self, key: str, window_sec: float, now: float) -> None:
         """Trim trades older than ``window_sec`` from storage.
 
-        The momentum() method accesses _trades directly and needs trades
-        at a specific time band (now - momentum_window_sec ± 1.5s), which
-        may be far outside the VWAP window.  Pruning only kicks in when
-        the list grows beyond a safe bound to avoid unbounded memory; it
-        never removes the last trade.
+        Momentum needs the band around ``now - window_sec`` while VWAP needs the
+        recent window itself. We keep only data that could still affect either
+        calculation, plus the newest trade so ``latest_price`` remains available.
         """
         trades = self._trades.get(key)
         if not trades:
-            return
-        if len(trades) < 10_000:
             return
         cutoff = now - window_sec
         idx = 0
@@ -350,6 +346,10 @@ class VWAPMomentumAlphaCore:
                 self._last_trade_signatures[key] = signature
                 self.trades.push(key, price, size, now_ts)
                 pushed_samples.append((key, price, size, now_ts))
+        history_window_sec = max(cfg.vwap_window_sec, cfg.momentum_window_sec + 1.5)
+        for key in (self._market_key(view.market_id, Side.UP), self._market_key(view.market_id, Side.DOWN)):
+            self._prune_trade_state(key, history_window_sec, now_ts)
+
 
         up_key = self._market_key(view.market_id, Side.UP)
         down_key = self._market_key(view.market_id, Side.DOWN)
@@ -514,6 +514,20 @@ class VWAPMomentumAlphaCore:
         view = market_view_from_snapshot(snapshot)
         return self.evaluate(view) if view is not None else []
 
+
+    def _prune_trade_state(self, key: str, window_sec: float, now: float) -> None:
+        self.trades._prune(key, window_sec, now)
+        trades = self.trades._trades.get(key)
+        if not trades:
+            self._seen_trade_signatures.pop(key, None)
+            return
+        retained = {(trade.price, trade.size, trade.timestamp) for trade in trades}
+        seen = self._seen_trade_signatures.get(key)
+        if seen is None:
+            return
+        seen.intersection_update(retained)
+        if not seen:
+            self._seen_trade_signatures.pop(key, None)
     def save_state(self) -> Mapping[str, object]:
         return json_safe_state(
             {

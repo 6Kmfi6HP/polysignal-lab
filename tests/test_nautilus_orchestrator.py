@@ -13,6 +13,7 @@ from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
 from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
 from polysignal_lab.nautilus_runtime.orchestrator import NautilusOrchestrator
+from polysignal_lab.observability.health import HealthRegistry
 
 
 class FakeHealth:
@@ -135,9 +136,115 @@ async def test_phase_health_marks_matching_engine_metadata() -> None:
     assert (
         "ok",
         "orchestrator",
-        {"paper_engine": "nautilus_matching", "accuracy_mode": "depth_l2"},
+        {
+            "paper_engine": "nautilus_matching",
+            "accuracy_mode": "depth_l2",
+            "matching_order_events": 0,
+            "matching_instruments": 0,
+            "matching_published_books": 0,
+            "matching_trade_cache": 0,
+            "ingestor_seen_matching_trades": 0,
+            "vwap_trade_samples": 0,
+            "vwap_seen_trade_signatures": 0,
+        },
     ) in orch.health.calls
 
+
+async def test_phase_health_includes_runtime_memory_debug_metrics() -> None:
+    vwap_strategy = SimpleNamespace(
+        strategy_name="vwap_momentum",
+        core=SimpleNamespace(
+            trades=SimpleNamespace(_trades={"up": [1, 2], "down": [3]}),
+            _seen_trade_signatures={"up": {(1, 1, 1)}, "down": {(2, 2, 2), (3, 3, 3)}},
+        ),
+    )
+    paper_client = SimpleNamespace(
+        wallet=SimpleNamespace(open_positions={}),
+        paper_engine="nautilus_matching",
+        accuracy_mode="depth_l2",
+        _trades={"token-up": [1, 2, 3]},
+        matching_boundary=SimpleNamespace(
+            _session=SimpleNamespace(order_events=[1, 2, 3, 4]),
+            _instruments={"token-up": object(), "token-down": object()},
+            _published_books={"token-up"},
+        ),
+    )
+    data_ingestor = SimpleNamespace(
+        _seen_matching_trades={(1,), (2,), (3,)},
+        sync_all=lambda: (),
+    )
+    orch = _orchestrator(
+        registered_strategies=[vwap_strategy],
+        paper_client=paper_client,
+        data_ingestor=data_ingestor,
+    )
+
+    orch._phase_health()
+
+    assert (
+        "ok",
+        "orchestrator",
+        {
+            "paper_engine": "nautilus_matching",
+            "accuracy_mode": "depth_l2",
+            "matching_order_events": 4,
+            "matching_instruments": 2,
+            "matching_published_books": 1,
+            "matching_trade_cache": 3,
+            "ingestor_seen_matching_trades": 3,
+            "vwap_trade_samples": 3,
+            "vwap_seen_trade_signatures": 3,
+        },
+    ) in orch.health.calls
+
+async def test_phase_health_resets_runtime_debug_metrics_to_zero() -> None:
+    paper_client = SimpleNamespace(
+        wallet=SimpleNamespace(open_positions={}),
+        paper_engine="nautilus_matching",
+        accuracy_mode="depth_l2",
+        _trades={"token-up": [1, 2, 3]},
+        matching_boundary=SimpleNamespace(
+            _session=SimpleNamespace(order_events=[1, 2]),
+            _instruments={"token-up": object()},
+            _published_books={"token-up"},
+        ),
+    )
+    data_ingestor = SimpleNamespace(
+        _seen_matching_trades={(1,), (2,)},
+        sync_all=lambda: (),
+    )
+    strategy = SimpleNamespace(
+        core=SimpleNamespace(
+            trades=SimpleNamespace(_trades={"up": [1]}),
+            _seen_trade_signatures={"up": {(1, 1, 1)}},
+        )
+    )
+    health = HealthRegistry()
+    orch = _orchestrator(
+        registered_strategies=[strategy],
+        paper_client=paper_client,
+        data_ingestor=data_ingestor,
+        health=health,
+    )
+
+    orch._phase_health()
+    paper_client._trades = {}
+    paper_client.matching_boundary._session.order_events = []
+    paper_client.matching_boundary._instruments = {}
+    paper_client.matching_boundary._published_books = set()
+    data_ingestor._seen_matching_trades = set()
+    strategy.core.trades._trades = {}
+    strategy.core._seen_trade_signatures = {}
+
+    orch._phase_health()
+
+    assert health.components["orchestrator"].metrics["matching_order_events"] == 0
+    assert health.components["orchestrator"].metrics["matching_instruments"] == 0
+    assert health.components["orchestrator"].metrics["matching_published_books"] == 0
+    assert health.components["orchestrator"].metrics["matching_trade_cache"] == 0
+    assert health.components["orchestrator"].metrics["ingestor_seen_matching_trades"] == 0
+    assert health.components["orchestrator"].metrics["vwap_trade_samples"] == 0
+    assert health.components["orchestrator"].metrics["vwap_seen_trade_signatures"] == 0
 
 async def test_daily_report_health_marks_matching_engine_metadata() -> None:
     paper_client = SimpleNamespace(

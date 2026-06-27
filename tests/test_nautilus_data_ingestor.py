@@ -122,6 +122,52 @@ def test_sync_orderbooks_sends_retained_trade_once_across_syncs() -> None:
 
     assert matching.trades == [("up-token", 0.82, 2.0, None, None)]
 
+def test_sync_orderbooks_sends_duplicate_retained_trade_once_per_sync() -> None:
+    ingestor, _, _, _, matching = _ingestor()
+    ingestor.books.trade_events["up-token"].append(ingestor.books.trade_events["up-token"][0])
+
+    ingestor.sync_orderbooks()
+
+    assert matching.trades == [("up-token", 0.82, 2.0, None, None)]
+
+
+def test_sync_orderbooks_bounds_seen_trade_keys_to_registry_history() -> None:
+    markets = MarketRegistry()
+    markets.upsert_many([_market()])
+    books = OrderBookRegistry()
+    books.update(_book("up-token"))
+    for index in range(600):
+        books.update_last_trade(
+            "up-token",
+            price=0.82 + index * 0.0001,
+            size=2.0,
+            timestamp=f"2026-06-27T00:00:{index % 60:02d}+00:00",
+        )
+    ingestor = NautilusDataIngestor(
+        markets=markets,
+        books=books,
+        spots=SpotRegistry(),
+        bridge_registry=PolymarketMarketRegistry(),
+        sidecar=ExternalDataSidecar(),
+        book_data_provider=NautilusBookDataProvider(),
+        matching_client=RecordingMatchingClient(),
+    )
+
+    ingestor.sync_orderbooks()
+    first_seen = len(ingestor._seen_matching_trades)
+
+    for index in range(600, 700):
+        books.update_last_trade(
+            "up-token",
+            price=0.82 + index * 0.0001,
+            size=2.0,
+            timestamp=f"2026-06-27T00:01:{index % 60:02d}+00:00",
+        )
+    ingestor.sync_orderbooks()
+
+    assert first_seen == 512
+    assert len(ingestor._seen_matching_trades) == 512
+
 
 def test_sync_spots_reads_real_spot_registry() -> None:
     ingestor, _, sidecar, _, _ = _ingestor()
