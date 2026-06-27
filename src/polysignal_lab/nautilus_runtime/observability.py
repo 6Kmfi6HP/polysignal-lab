@@ -107,6 +107,9 @@ class NautilusEventStoreAdapter:
             "settlements": persistence.insert_paper_trade_result,
             "health_snapshot": persistence.insert_system_event,
             "system_events": persistence.insert_system_event,
+            "nautilus_order": persistence.insert_system_event,
+            "nautilus_fill": persistence.insert_system_event,
+            "nautilus_position": persistence.insert_system_event,
         }
         self._streams = {
             "signals": "signals",
@@ -117,6 +120,9 @@ class NautilusEventStoreAdapter:
             "settlements": "paper_trade_results",
             "health_snapshot": "system_events",
             "system_events": "system_events",
+            "nautilus_order": "nautilus_orders",
+            "nautilus_fill": "nautilus_fills",
+            "nautilus_position": "nautilus_positions",
         }
         append_log = getattr(persistence, "append_log", None)
         self._append_log: Callable[[str, object], None] | None = (
