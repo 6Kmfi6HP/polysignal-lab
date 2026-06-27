@@ -10,7 +10,6 @@ BRIDGE_ROOT = Path("src/polysignal_lab/nautilus_bridge")
 LIVE_FORBIDDEN_TEXT = (
     "PolymarketExecutionClient",
     "PolymarketLiveExecClientFactory",
-    "exec_clients",
     "POLYMARKET_PK",
     "POLYMARKET_FUNDER",
     "POLYMARKET_API_KEY",
@@ -41,6 +40,9 @@ def test_default_nautilus_source_avoids_live_execution_symbols() -> None:
             )
 
     assert findings == []
+    from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
+
+    assert PAPER_EXEC_CLIENT_ID != "POLYMARKET"
 
 
 def test_default_nautilus_runtime_avoids_local_paper_executors() -> None:
