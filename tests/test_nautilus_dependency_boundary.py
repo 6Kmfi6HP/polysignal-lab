@@ -18,4 +18,6 @@ def test_nautilus_is_optional_polymarket_extra_not_default_dependency() -> None:
     optional_deps = data["project"]["optional-dependencies"]
 
     assert all("nautilus_trader" not in dep for dep in default_deps)
-    assert optional_deps["nautilus"] == ["nautilus_trader[polymarket]"]
+    assert optional_deps["nautilus"] == [
+        "nautilus_trader[polymarket]==1.229.0; python_version >= '3.12'"
+    ]

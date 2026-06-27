@@ -91,13 +91,8 @@ def test_default_nautilus_runtime_source_avoids_local_paper_executors() -> None:
         "PolySignalPaperExecutionClient",
         "create_paper_execution_client",
     )
-    allowed_files = {
-        Path("src/polysignal_lab/nautilus_runtime/execution.py"),
-    }
     findings: list[str] = []
     for path in Path("src/polysignal_lab/nautilus_runtime").rglob("*.py"):
-        if path in allowed_files:
-            continue
         text = path.read_text(encoding="utf-8")
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 

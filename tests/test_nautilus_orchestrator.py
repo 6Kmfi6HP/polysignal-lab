@@ -11,7 +11,7 @@ from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperTradeResult
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
-from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
+from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
 from polysignal_lab.nautilus_runtime.orchestrator import NautilusOrchestrator
 from polysignal_lab.observability.health import HealthRegistry
 

@@ -103,6 +103,20 @@ class NautilusEventStoreAdapter:
             "health_snapshot": persistence.insert_system_event,
             "system_events": persistence.insert_system_event,
         }
+        self._streams = {
+            "signals": "signals",
+            "rejected_signals": "rejected_signals",
+            "orders": "paper_orders",
+            "fills": "paper_fills",
+            "positions": "paper_positions",
+            "settlements": "paper_trade_results",
+            "health_snapshot": "system_events",
+            "system_events": "system_events",
+        }
+        append_log = getattr(persistence, "append_log", None)
+        self._append_log: Callable[[str, object], None] | None = (
+            append_log if callable(append_log) else None
+        )
 
     def insert_json(self, table: str, data: Mapping[str, object]) -> None:
         route = self._routes.get(table)
@@ -115,6 +129,8 @@ class NautilusEventStoreAdapter:
             payload.setdefault("created_at", payload.get("ts", utc_iso()))
             payload.setdefault("event_id", f"nautilus_health:{payload['created_at']}")
         route(payload)
+        if self._append_log is not None:
+            self._append_log(self._streams[table], payload)
 
     def insert_many_json(self, table: str, rows: Sequence[Mapping[str, object]]) -> None:
         for row in rows:

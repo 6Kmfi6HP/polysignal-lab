@@ -16,4 +16,3 @@ class PTBDiffNautilusStrategy(PolySignalNautilusStrategy):
             condition_ids=condition_ids,
             strategy_name="ptb_diff",
         )
-        self.config = config

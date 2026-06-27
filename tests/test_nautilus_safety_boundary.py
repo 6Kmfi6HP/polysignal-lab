@@ -20,14 +20,13 @@ LIVE_FORBIDDEN_TEXT = (
     "create_api_key.py",
 )
 LOCAL_PAPER_FORBIDDEN_TEXT = (
+    "from polysignal_lab.paper.order_intent_executor import",
     "BestAskTakerExecutor",
     "PassiveGtdExecutor",
     "PaperSimulator",
-    "PolySignalPaperExecutionClient(",
+    "PolySignalPaperExecutionClient",
+    "create_paper_execution_client",
 )
-LOCAL_PAPER_ALLOWED_FILES = {
-    RUNTIME_ROOT / "execution.py",
-}
 
 
 def test_default_nautilus_source_avoids_live_execution_symbols() -> None:
@@ -47,8 +46,6 @@ def test_default_nautilus_source_avoids_live_execution_symbols() -> None:
 def test_default_nautilus_runtime_avoids_local_paper_executors() -> None:
     findings: list[str] = []
     for path in RUNTIME_ROOT.rglob("*.py"):
-        if path in LOCAL_PAPER_ALLOWED_FILES:
-            continue
         text = path.read_text(encoding="utf-8")
         findings.extend(
             f"{path}:{forbidden}"
@@ -71,9 +68,21 @@ def test_safety_scan_enforces_default_runtime_local_paper_isolation(tmp_path: Pa
         encoding="utf-8",
     )
 
-    assert scan(tmp_path) == [
+    assert sorted(scan(tmp_path)) == [
+        (
+            "src/polysignal_lab/nautilus_runtime/execution.py",
+            "BestAskTakerExecutor",
+        ),
+        (
+            "src/polysignal_lab/nautilus_runtime/execution.py",
+            "from polysignal_lab.paper.order_intent_executor import",
+        ),
         (
             "src/polysignal_lab/nautilus_runtime/node.py",
             "BestAskTakerExecutor",
-        )
+        ),
+        (
+            "src/polysignal_lab/nautilus_runtime/node.py",
+            "from polysignal_lab.paper.order_intent_executor import",
+        ),
     ]

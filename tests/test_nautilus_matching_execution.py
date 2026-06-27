@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from pathlib import Path
+from nautilus_optional import require_nautilus
 
 from polysignal_lab.alpha.types import NautilusOrderSpec
 from polysignal_lab.domain.enums import ExitMode, OrderIntent, OrderStatus, Side, TradeResultStatus
@@ -68,6 +69,24 @@ class FakeNautilusBoundary:
         self.submitted_specs = []
         self.remaining_shares: dict[str, float] = {}
         self.calls: list[tuple[str, str]] = []
+        self.trades: list[tuple[str, float, float, str | None, datetime | None]] = []
+        self.drained: list[tuple[object, NautilusMatchingOutcome]] = []
+
+    def drain_events(self) -> list[tuple[object, NautilusMatchingOutcome]]:
+        drained = self.drained
+        self.drained = []
+        return drained
+
+    def update_trade(
+        self,
+        token_id: str,
+        price: float,
+        size: float,
+        side: str | None = None,
+        ts_event: datetime | None = None,
+    ) -> None:
+        self.trades.append((token_id, price, size, side, ts_event))
+
 
     def update_book(self, token_id: str, book: OrderBook) -> None:
         self.books[token_id] = book
@@ -133,6 +152,20 @@ def test_matching_client_constructs_without_credentials() -> None:
     assert client.paper_engine == "nautilus_matching"
     assert client.accuracy_mode == "depth_l2"
 
+
+def test_owned_boundary_real_nautilus_matches_taker_fill() -> None:
+    require_nautilus()
+    client = NautilusMatchingPaperExecutionClient(
+        wallet=PaperWallet(),
+        accuracy_mode="depth_l2",
+    )
+    client.update_book("token-up", _book(ask_price=0.82, ask_size=500.0))
+
+    result = client.submit_spec(_spec(quantity=10.0, max_entry_price="0.83"))
+
+    assert result.status == OrderStatus.FILLED, result.reason
+    assert result.fills[0].fill_price == 0.82
+    assert result.positions[0].paper_position_id in client.wallet.open_positions
 
 def test_submit_without_book_rejects() -> None:
     client = NautilusMatchingPaperExecutionClient(wallet=PaperWallet())
@@ -239,16 +272,19 @@ def test_submit_exit_stale_book_rejects_before_boundary() -> None:
     assert result.reason == "STALE_ORDERBOOK"
     assert boundary.submitted_orders == []
 
-def test_update_trade_records_recent_trade_for_queue_mode() -> None:
+def test_update_trade_forwards_tick_to_boundary_for_queue_mode() -> None:
+    boundary = FakeNautilusBoundary()
     client = NautilusMatchingPaperExecutionClient(
         wallet=PaperWallet(),
         accuracy_mode="queue_l2",
+        matching_boundary=boundary,
     )
     ts_event = datetime.now(UTC)
 
     client.update_trade("token-up", price=0.84, size=2.5, side="BUY", ts_event=ts_event)
     trades = client.recent_trades_for("token-up")
 
+    assert boundary.trades == [("token-up", 0.84, 2.5, "BUY", ts_event)]
     assert len(trades) == 1
     assert trades[0].price == 0.84
     assert trades[0].size == 2.5
@@ -342,12 +378,34 @@ def test_replayed_fill_id_is_not_returned_or_applied_twice() -> None:
 
     assert first.status == OrderStatus.FILLED
     assert len(first.fills) == 1
+
     assert len(first.positions) == 1
     assert second.status == OrderStatus.FILLED
     assert second.fills == []
     assert second.positions == []
     assert wallet.cash_balance == cash_after_first
     assert list(wallet.open_positions) == ["nautilus-position-1"]
+
+def test_outcome_keeps_partial_fill_when_cancel_event_shares_batch() -> None:
+    class OrderFilled:
+        trade_id = "fill-1"
+        position_id = "position-1"
+        client_order_id = "order-1"
+        last_px = 0.82
+        last_qty = 4.0
+
+    class OrderCanceled:
+        client_order_id = "order-1"
+
+    boundary = OwnedNautilusMatchingBoundary(MatchingAccuracySettings.from_mode("depth_l2"))
+    order = NautilusMatchingPaperExecutionClient()._paper_order_from_spec(
+        _spec(quantity=10.0, max_entry_price="0.83")
+    )
+    outcome = boundary._outcome_from_nautilus_events(order, [OrderFilled(), OrderCanceled()])
+
+    assert outcome.status == OrderStatus.PARTIAL
+    assert len(outcome.fills) == 1
+    assert outcome.fills[0].shares == 4.0
 
 
 def test_owned_boundary_stores_books_and_delegates_to_nautilus_path() -> None:
@@ -613,8 +671,8 @@ def test_best_ask_above_max_entry_is_rejected() -> None:
     assert result.reason == "PRICE_ABOVE_LIMIT"
 
 
-def test_passive_gtd_rests_then_expires() -> None:
-    boundary = FakeNautilusBoundary()
+def test_passive_gtd_submits_to_boundary_immediately_without_local_resting_list() -> None:
+    boundary = FakeNautilusBoundary([NautilusMatchingOutcome(status=OrderStatus.RESTING)])
     client = NautilusMatchingPaperExecutionClient(
         wallet=PaperWallet(),
         matching_boundary=boundary,
@@ -626,48 +684,21 @@ def test_passive_gtd_rests_then_expires() -> None:
             quantity=10.0,
             intent=OrderIntent.PASSIVE_GTD,
             max_entry_price="0.83",
-            expiry_seconds=0,
+            expiry_seconds=3600,
         )
     )
-    expired = client.process_resting_orders()
+    client.update_book("token-up", _book(ask_price=0.82, ask_size=500.0))
 
     assert result.status == OrderStatus.RESTING
     assert result.order is not None
-    assert result.order.status == OrderStatus.REJECTED
-    assert expired[-1].status == OrderStatus.REJECTED
-    assert expired[-1].reason == "GTD_EXPIRED"
-    assert boundary.submitted_orders == []
+    assert not hasattr(client, "_resting")
+    assert boundary.submitted_orders == [result.order]
+    assert boundary.submitted_specs[0].intent == OrderIntent.PASSIVE_GTD
+    assert client.process_resting_orders() == []
+    assert len(boundary.submitted_orders) == 1
 
-
-def test_passive_gtd_partial_fill_keeps_remaining_until_later_fill() -> None:
-    boundary = FakeNautilusBoundary(
-        [
-            NautilusMatchingOutcome(
-                status=OrderStatus.PARTIAL,
-                fills=(
-                    NautilusFillEvent(
-                        fill_price=0.82,
-                        shares=4.0,
-                        stake_usdc=3.28,
-                        raw_best_ask=0.82,
-                        fill_ratio=0.4,
-                    ),
-                ),
-            ),
-            NautilusMatchingOutcome(
-                status=OrderStatus.FILLED,
-                fills=(
-                    NautilusFillEvent(
-                        fill_price=0.82,
-                        shares=6.0,
-                        stake_usdc=4.92,
-                        raw_best_ask=0.82,
-                        fill_ratio=1.0,
-                    ),
-                ),
-            ),
-        ]
-    )
+def test_process_resting_orders_drains_later_nautilus_fill_event() -> None:
+    boundary = FakeNautilusBoundary([NautilusMatchingOutcome(status=OrderStatus.RESTING)])
     client = NautilusMatchingPaperExecutionClient(
         wallet=PaperWallet(),
         matching_boundary=boundary,
@@ -681,28 +712,47 @@ def test_passive_gtd_partial_fill_keeps_remaining_until_later_fill() -> None:
             expiry_seconds=3600,
         )
     )
-    client.update_book("token-up", _book(ask_price=0.82, ask_size=500.0))
+    assert resting.order is not None
+    boundary.drained.append(
+        (
+            resting.order,
+            NautilusMatchingOutcome(
+                status=OrderStatus.FILLED,
+                fills=(
+                    NautilusFillEvent(
+                        fill_price=0.82,
+                        shares=10.0,
+                        stake_usdc=8.2,
+                        raw_best_ask=0.82,
+                        fill_ratio=1.0,
+                    ),
+                ),
+            ),
+        )
+    )
 
-    first = client.process_resting_orders()
-    second = client.process_resting_orders()
+    drained = client.process_resting_orders()
 
-    assert resting.status == OrderStatus.RESTING
-    assert first[-1].status == OrderStatus.PARTIAL
-    assert first[-1].fills[0].shares == 4.0
-    assert second[-1].status == OrderStatus.FILLED
-    assert second[-1].fills[0].shares == 6.0
-    assert [spec.quantity for spec in boundary.submitted_specs] == [10.0, 6.0]
-    assert client.process_resting_orders() == []
+    assert len(drained) == 1
+    assert drained[0].status == OrderStatus.FILLED
+    assert drained[0].positions[0].paper_position_id in client.wallet.open_positions
 
-def test_resting_order_stale_book_rejects_before_boundary() -> None:
+
+def test_passive_gtd_stale_book_rejects_before_boundary_submission() -> None:
     boundary = FakeNautilusBoundary()
     client = NautilusMatchingPaperExecutionClient(
         wallet=PaperWallet(),
         max_book_staleness_ms=1_000,
         matching_boundary=boundary,
     )
-    client.update_book("token-up", _book(ask_price=0.84, ask_size=500.0))
-    resting = client.submit_spec(
+    client.update_book(
+        "token-up",
+        _book(ask_price=0.84, ask_size=500.0).model_copy(
+            update={"received_at": datetime.now(UTC) - timedelta(seconds=2)}
+        ),
+    )
+
+    rejected = client.submit_spec(
         _spec(
             quantity=10.0,
             intent=OrderIntent.PASSIVE_GTD,
@@ -710,22 +760,10 @@ def test_resting_order_stale_book_rejects_before_boundary() -> None:
             expiry_seconds=3600,
         )
     )
-    boundary.submitted_orders.clear()
-    client.update_book(
-        "token-up",
-        _book(ask_price=0.82, ask_size=500.0).model_copy(
-            update={"received_at": datetime.now(UTC) - timedelta(seconds=2)}
-        ),
-    )
 
-    rejected = client.process_resting_orders()
-
-    assert resting.status == OrderStatus.RESTING
-    assert rejected[-1].status == OrderStatus.REJECTED
-    assert rejected[-1].reason == "STALE_ORDERBOOK"
-    assert rejected[-1].order is resting.order
+    assert rejected.status == OrderStatus.REJECTED
+    assert rejected.reason == "STALE_ORDERBOOK"
     assert boundary.submitted_orders == []
-    assert client.process_resting_orders() == []
 
 
 def test_submit_exit_mirrors_legacy_position_before_matching_without_wallet_duplicate() -> None:
@@ -1022,6 +1060,157 @@ def test_owned_boundary_republishes_only_after_fresh_book_update() -> None:
 
     assert boundary.published == ["token-up", "token-up"]
 
+
+def test_owned_boundary_maps_passive_gtd_to_gtd_limit_with_expiry() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeClock:
+        def timestamp_ns(self) -> int:
+            return 1
+
+    class FakeOrderFactory:
+        def limit(self, **kwargs):
+            captured["limit_kwargs"] = kwargs
+            return SimpleNamespace(
+                trader_id="trader",
+                strategy_id="strategy",
+                client_order_id="client-order-1",
+            )
+
+    class FakeTimeInForce:
+        FOK = "FOK"
+        GTD = "GTD"
+        IOC = "IOC"
+
+    class FakeOrderSide:
+        BUY = "BUY"
+        SELL = "SELL"
+
+    class FakeQuantity:
+        @staticmethod
+        def from_str(value: str) -> str:
+            return value
+
+    class FakePrice:
+        @staticmethod
+        def from_str(value: str) -> str:
+            return value
+
+    class FakeSubmitOrder:
+        def __init__(self, **kwargs) -> None:
+            self.__dict__.update(kwargs)
+
+    class Boundary(OwnedNautilusMatchingBoundary):
+        def __init__(self) -> None:
+            super().__init__(MatchingAccuracySettings.from_mode("queue_l2"))
+
+        def _ensure_session(self) -> None:
+            self._session = SimpleNamespace(
+                clock=FakeClock(),
+                order_factory=FakeOrderFactory(),
+                order_events=[],
+                sandbox=SimpleNamespace(place_order=lambda command: None),
+                components={
+                    "OrderSide": FakeOrderSide,
+                    "Price": FakePrice,
+                    "Quantity": FakeQuantity,
+                    "SubmitOrder": FakeSubmitOrder,
+                    "TimeInForce": FakeTimeInForce,
+                    "UUID4": lambda: "command-1",
+                },
+            )
+
+        def _ensure_instrument(self, order, spec, book):
+            instrument = SimpleNamespace(id="instrument-1")
+            self._instruments[order.token_id] = instrument
+            return instrument
+
+        def _publish_book_to_nautilus(self, token_id: str, book: OrderBook) -> None:
+            return None
+
+    boundary = Boundary()
+    boundary.update_book("token-up", _book(ask_price=0.84, ask_size=500.0))
+    spec = _spec(
+        quantity=10.0,
+        intent=OrderIntent.PASSIVE_GTD,
+        max_entry_price="0.83",
+        expiry_seconds=120,
+    )
+    order = NautilusMatchingPaperExecutionClient()._paper_order_from_spec(spec)
+
+    outcome = boundary.match_order(order, spec)
+
+    limit_kwargs = captured["limit_kwargs"]
+    assert limit_kwargs["time_in_force"] == "GTD"
+    assert limit_kwargs["expire_time"] == order.created_at + timedelta(seconds=120)
+    assert outcome.status == OrderStatus.RESTING
+
+
+def test_owned_boundary_update_trade_publishes_trade_tick_to_sandbox() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeClock:
+        def timestamp_ns(self) -> int:
+            return 99
+
+    class FakeAggressorSide:
+        BUYER = "BUYER"
+        NO_AGGRESSOR = "NO_AGGRESSOR"
+        SELLER = "SELLER"
+
+    class FakeValue:
+        @staticmethod
+        def from_str(value: str) -> str:
+            return value
+
+    class FakeTradeTick:
+        def __init__(
+            self,
+            instrument_id,
+            price,
+            size,
+            aggressor_side,
+            trade_id,
+            ts_event,
+            ts_init,
+        ) -> None:
+            self.instrument_id = instrument_id
+            self.price = price
+            self.size = size
+            self.aggressor_side = aggressor_side
+            self.trade_id = trade_id
+            self.ts_event = ts_event
+            self.ts_init = ts_init
+
+    class Boundary(OwnedNautilusMatchingBoundary):
+        def __init__(self) -> None:
+            super().__init__(MatchingAccuracySettings.from_mode("queue_l2"))
+            self._session = SimpleNamespace(
+                clock=FakeClock(),
+                sandbox=SimpleNamespace(on_trade=lambda tick: captured.setdefault("tick", tick)),
+                components={
+                    "AggressorSide": FakeAggressorSide,
+                    "Price": FakeValue,
+                    "Quantity": FakeValue,
+                    "TradeId": str,
+                    "TradeTick": FakeTradeTick,
+                },
+            )
+            self._instruments["token-up"] = SimpleNamespace(id="instrument-1")
+
+    ts_event = datetime(2026, 6, 27, tzinfo=UTC)
+    boundary = Boundary()
+
+    boundary.update_trade("token-up", price=0.83, size=2.5, side="BUY", ts_event=ts_event)
+
+    tick = captured["tick"]
+    assert tick.instrument_id == "instrument-1"
+    assert tick.price == "0.83"
+    assert tick.size == "2.5"
+    assert tick.aggressor_side == "BUYER"
+    assert tick.ts_event == int(ts_event.timestamp() * 1_000_000_000)
+    assert tick.ts_init == 99
+
 def test_received_at_only_book_update_does_not_republish_after_fill() -> None:
     class Boundary(OwnedNautilusMatchingBoundary):
         def __init__(self) -> None:
@@ -1161,6 +1350,14 @@ def test_matching_sources_avoid_safety_blocked_order_api_names() -> None:
     ]
 
     assert violations == []
+
+
+def test_matching_client_source_has_no_local_resting_order_queue() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "src/polysignal_lab/nautilus_runtime/matching.py").read_text()
+
+    assert "class Resting" + "MatchingOrder" not in source
+    assert "self._" + "resting" not in source
 
 def test_owned_boundary_configures_exchange_with_accuracy_settings() -> None:
     captured: dict[str, object] = {}

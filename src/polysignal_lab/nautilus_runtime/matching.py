@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from decimal import Decimal
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from polysignal_lab.alpha.types import NautilusOrderSpec
@@ -50,11 +50,6 @@ class MatchingTrade:
 
 
 
-@dataclass(frozen=True, slots=True)
-class RestingMatchingOrder:
-    spec: NautilusOrderSpec
-    order: PaperOrder
-    created_at: datetime
 
 @dataclass(frozen=True, slots=True)
 class NautilusFillEvent:
@@ -83,6 +78,15 @@ class NautilusMatchingUnavailable(RuntimeError):
 
 class NautilusMatchingBoundary(Protocol):
     def update_book(self, token_id: str, book: OrderBook) -> None: ...
+    def update_trade(
+        self,
+        token_id: str,
+        price: float,
+        size: float,
+        side: str | None = None,
+        ts_event: datetime | None = None,
+    ) -> None: ...
+    def drain_events(self) -> list[tuple[PaperOrder, NautilusMatchingOutcome]]: ...
     def mirror_position_for_exit(self, position: PaperPosition) -> None: ...
     def match_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome: ...
 
@@ -113,10 +117,16 @@ class _DirectNautilusSandbox:
             starter()
 
     def place_order(self, command: Any) -> Any:
-        return getattr(self.exec_client, "submit_" + "order")(command)
+        result = getattr(self.exec_client, "submit_" + "order")(command)
+        self.exchange.process(command.ts_init)
+        return result
 
     def on_data(self, data: Any) -> None:
         self.exchange.process_order_book_deltas(data)
+        self.exchange.process(data.ts_init)
+
+    def on_trade(self, data: Any) -> None:
+        self.exchange.process_trade_tick(data)
         self.exchange.process(data.ts_init)
 
 class OwnedNautilusMatchingBoundary:
@@ -131,6 +141,8 @@ class OwnedNautilusMatchingBoundary:
         self._published_books: set[str] = set()
         self._session: _NautilusSession | None = None
         self._sequence = 0
+        self._event_cursor = 0
+        self._client_orders: dict[str, PaperOrder] = {}
 
     def update_book(self, token_id: str, book: OrderBook) -> None:
         signature = _book_signature(book)
@@ -144,6 +156,19 @@ class OwnedNautilusMatchingBoundary:
             self._dirty_books.discard(token_id)
             self._published_books.add(token_id)
 
+    def update_trade(
+        self,
+        token_id: str,
+        price: float,
+        size: float,
+        side: str | None = None,
+        ts_event: datetime | None = None,
+    ) -> None:
+        if self._session is None or token_id not in self._instruments:
+            return
+        self._publish_trade_to_nautilus(token_id, price, size, side, ts_event)
+
+
     def match_order(self, order: PaperOrder, spec: NautilusOrderSpec) -> NautilusMatchingOutcome:
         book = self._books.get(order.token_id)
         if book is None:
@@ -153,7 +178,11 @@ class OwnedNautilusMatchingBoundary:
                 return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="MISSING_BEST_BID")
             if book.best_bid < order.limit_price:
                 return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="BID_BELOW_LIMIT")
-        elif book.best_ask is not None and book.best_ask > order.limit_price:
+        elif (
+            spec.intent != OrderIntent.PASSIVE_GTD
+            and book.best_ask is not None
+            and book.best_ask > order.limit_price
+        ):
             return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="PRICE_ABOVE_LIMIT")
         self._ensure_session()
         instrument = self._ensure_instrument(order, spec, book)
@@ -162,6 +191,25 @@ class OwnedNautilusMatchingBoundary:
             self._dirty_books.discard(order.token_id)
             self._published_books.add(order.token_id)
         return self._submit_limit_order_through_nautilus(order, spec, instrument)
+
+    def drain_events(self) -> list[tuple[PaperOrder, NautilusMatchingOutcome]]:
+        if self._session is None:
+            return []
+        session = self._session
+        events = session.order_events[self._event_cursor :]
+        self._event_cursor = len(session.order_events)
+        results: list[tuple[PaperOrder, NautilusMatchingOutcome]] = []
+        grouped: dict[str, list[Any]] = {}
+        for event in events:
+            client_order_id = _identifier_value(getattr(event, "client_order_id", None))
+            if client_order_id in self._client_orders:
+                grouped.setdefault(client_order_id, []).append(event)
+        for client_order_id, order_events in grouped.items():
+            order = self._client_orders[client_order_id]
+            outcome = self._outcome_from_nautilus_events(order, order_events)
+            if outcome.status != OrderStatus.RESTING:
+                results.append((order, outcome))
+        return results
 
     def mirror_position_for_exit(self, position: PaperPosition) -> None:
         book = self._books.get(position.token_id)
@@ -259,7 +307,7 @@ class OwnedNautilusMatchingBoundary:
         portfolio = components["Portfolio"](msgbus=msgbus, cache=cache, clock=clock)
         exec_engine = components["ExecutionEngine"](msgbus=msgbus, cache=cache, clock=clock)
         order_events: list[Any] = []
-        msgbus.subscribe("events.order.*", handler=order_events.append)
+        msgbus.subscribe("events.order.S-001", handler=order_events.append)
         exchange = components["SimulatedExchange"](
             venue=components["Venue"](components["DEFAULT_VENUE"]),
             oms_type=components["oms_type_from_str"]("NETTING"),
@@ -307,6 +355,9 @@ class OwnedNautilusMatchingBoundary:
             clock=clock,
             cache=cache,
         )
+        start_engine = getattr(exec_engine, "start", None)
+        if start_engine is not None:
+            start_engine()
         sandbox.connect()
         self._session = _NautilusSession(
             loop=loop,
@@ -334,13 +385,15 @@ class OwnedNautilusMatchingBoundary:
             from nautilus_trader.execution.engine import ExecutionEngine
             from nautilus_trader.core.uuid import UUID4
             from nautilus_trader.execution.messages import SubmitOrder
-            from nautilus_trader.model.data import BookOrder, OrderBookDelta, OrderBookDeltas
+            from nautilus_trader.model.data import BookOrder, OrderBookDelta, OrderBookDeltas, TradeTick
             from nautilus_trader.model.events.order import OrderFilled
             from nautilus_trader.model.enums import (
+                AggressorSide,
                 BookAction,
                 LiquiditySide,
                 OrderSide,
                 OrderType,
+                RecordFlag,
                 TimeInForce,
                 account_type_from_str,
                 book_type_from_str,
@@ -365,6 +418,7 @@ class OwnedNautilusMatchingBoundary:
 
         return {
             "account_type_from_str": account_type_from_str,
+            "AggressorSide": AggressorSide,
             "asyncio": asyncio,
             "BacktestExecClient": BacktestExecClient,
             "BookAction": BookAction,
@@ -399,7 +453,9 @@ class OwnedNautilusMatchingBoundary:
             "SubmitOrder": SubmitOrder,
             "UUID4": UUID4,
             "TestClock": TestClock,
+            "RecordFlag": RecordFlag,
             "TimeInForce": TimeInForce,
+            "TradeTick": TradeTick,
             "TraderId": TraderId,
             "Venue": Venue,
             "VenueOrderId": VenueOrderId,
@@ -458,48 +514,40 @@ class OwnedNautilusMatchingBoundary:
         session = self._require_session()
         instrument = self._instruments[token_id]
         components = session.components
+        record_flag = components.get("RecordFlag")
+        snapshot_flag = getattr(record_flag, "F_SNAPSHOT", 32)
+        last_flag = getattr(record_flag, "F_LAST", 128)
         ts = _datetime_to_unix_ns(book.received_at)
         self._sequence += 1
         deltas = [
             components["OrderBookDelta"].clear(instrument.id, self._sequence, ts, ts),
         ]
+        levels = [
+            (components["OrderSide"].BUY, level)
+            for level in sorted(book.bids, key=lambda value: value.price, reverse=True)
+            if level.price > 0 and level.size > 0
+        ] + [
+            (components["OrderSide"].SELL, level)
+            for level in sorted(book.asks, key=lambda value: value.price)
+            if level.price > 0 and level.size > 0
+        ]
         order_id = 1
-        for level in sorted(book.bids, key=lambda value: value.price, reverse=True):
-            if level.price <= 0 or level.size <= 0:
-                continue
+        for idx, (side, level) in enumerate(levels):
             self._sequence += 1
+            flags = snapshot_flag
+            if idx == len(levels) - 1:
+                flags |= last_flag
             deltas.append(
                 components["OrderBookDelta"](
                     instrument_id=instrument.id,
                     action=components["BookAction"].ADD,
                     order=components["BookOrder"](
-                        components["OrderSide"].BUY,
+                        side,
                         _price_value(components, instrument, level.price),
                         _quantity_value(components, instrument, level.size),
                         order_id,
                     ),
-                    flags=0,
-                    sequence=self._sequence,
-                    ts_event=ts,
-                    ts_init=ts,
-                )
-            )
-            order_id += 1
-        for level in sorted(book.asks, key=lambda value: value.price):
-            if level.price <= 0 or level.size <= 0:
-                continue
-            self._sequence += 1
-            deltas.append(
-                components["OrderBookDelta"](
-                    instrument_id=instrument.id,
-                    action=components["BookAction"].ADD,
-                    order=components["BookOrder"](
-                        components["OrderSide"].SELL,
-                        _price_value(components, instrument, level.price),
-                        _quantity_value(components, instrument, level.size),
-                        order_id,
-                    ),
-                    flags=0,
+                    flags=flags,
                     sequence=self._sequence,
                     ts_event=ts,
                     ts_init=ts,
@@ -507,6 +555,30 @@ class OwnedNautilusMatchingBoundary:
             )
             order_id += 1
         session.sandbox.on_data(components["OrderBookDeltas"](instrument.id, deltas))
+
+    def _publish_trade_to_nautilus(
+        self,
+        token_id: str,
+        price: float,
+        size: float,
+        side: str | None,
+        ts_event: datetime | None,
+    ) -> None:
+        session = self._require_session()
+        instrument = self._instruments[token_id]
+        components = session.components
+        ts = _datetime_to_unix_ns(ts_event or datetime.now(UTC))
+        self._sequence += 1
+        tick = components["TradeTick"](
+            instrument.id,
+            _price_value(components, instrument, price),
+            _quantity_value(components, instrument, size),
+            _aggressor_side(components, side),
+            components["TradeId"](f"PM-TRADE-{self._sequence}"),
+            ts,
+            session.clock.timestamp_ns(),
+        )
+        session.sandbox.on_trade(tick)
 
     def _submit_limit_order_through_nautilus(
         self,
@@ -516,24 +588,43 @@ class OwnedNautilusMatchingBoundary:
     ) -> NautilusMatchingOutcome:
         session = self._require_session()
         components = session.components
-        time_in_force = (
-            components["TimeInForce"].FOK
-            if spec.intent == OrderIntent.TAKER_FOK
-            else components["TimeInForce"].IOC
-        )
-        nautilus_order = session.order_factory.limit(
-            instrument_id=instrument.id,
-            order_side=(
+        if spec.intent == OrderIntent.PASSIVE_GTD:
+            time_in_force = components["TimeInForce"].GTD
+        elif spec.intent == OrderIntent.TAKER_FOK:
+            time_in_force = components["TimeInForce"].FOK
+        else:
+            time_in_force = components["TimeInForce"].IOC
+        order_kwargs = {
+            "instrument_id": instrument.id,
+            "order_side": (
                 components["OrderSide"].SELL
                 if order.reduce_only
                 else components["OrderSide"].BUY
             ),
-            quantity=_quantity_value(components, instrument, spec.quantity),
-            price=_price_value(components, instrument, order.limit_price),
-            time_in_force=time_in_force,
-            reduce_only=order.reduce_only,
-            tags=[f"paper_order_id={order.paper_order_id}"],
-        )
+            "quantity": _quantity_value(components, instrument, spec.quantity),
+            "price": _price_value(components, instrument, order.limit_price),
+            "time_in_force": time_in_force,
+            "reduce_only": order.reduce_only,
+            "tags": [f"paper_order_id={order.paper_order_id}"],
+        }
+        if spec.intent == OrderIntent.PASSIVE_GTD:
+            order_kwargs["expire_time"] = order.created_at + timedelta(
+                seconds=spec.expiry_seconds or 300
+            )
+        nautilus_order = session.order_factory.limit(**order_kwargs)
+        msgbus = getattr(session, "msgbus", None)
+        init_event = getattr(nautilus_order, "init_event", None)
+        if msgbus is not None and init_event is not None:
+            msgbus.publish(
+                topic=f"events.order.{nautilus_order.strategy_id}",
+                msg=init_event,
+            )
+        cache = getattr(session, "cache", None)
+        add_order = getattr(cache, "add_order", None)
+        if add_order is not None:
+            add_order(nautilus_order, None, None)
+        client_order_id = _identifier_value(nautilus_order.client_order_id)
+        self._client_orders[client_order_id] = order
         start_index = len(session.order_events)
         command = components["SubmitOrder"](
             trader_id=nautilus_order.trader_id,
@@ -549,6 +640,7 @@ class OwnedNautilusMatchingBoundary:
             if _identifier_value(getattr(event, "client_order_id", None))
             == _identifier_value(nautilus_order.client_order_id)
         ]
+        self._event_cursor = max(self._event_cursor, len(session.order_events))
         return self._outcome_from_nautilus_events(order, events)
 
     def _outcome_from_nautilus_events(
@@ -563,7 +655,20 @@ class OwnedNautilusMatchingBoundary:
                 reason=str(getattr(rejected, "reason", "MATCHING_REJECTED")),
             )
         fills = [event for event in events if type(event).__name__ == "OrderFilled"]
+        terminal = next(
+            (
+                event
+                for event in events
+                if type(event).__name__ in {"OrderCanceled", "OrderExpired"}
+            ),
+            None,
+        )
+        if terminal is not None and not fills:
+            reason = "GTD_EXPIRED" if type(terminal).__name__ == "OrderExpired" else "MATCHING_CANCELLED"
+            return NautilusMatchingOutcome(status=OrderStatus.CANCELLED, reason=reason)
         if not fills:
+            if order.order_intent == OrderIntent.PASSIVE_GTD:
+                return NautilusMatchingOutcome(status=OrderStatus.RESTING)
             return NautilusMatchingOutcome(status=OrderStatus.REJECTED, reason="INSUFFICIENT_DEPTH")
         book = self._books.get(order.token_id)
         raw_best = None
@@ -623,7 +728,6 @@ class NautilusMatchingPaperExecutionClient:
         self._books: dict[str, OrderBook] = {}
         self._trades: dict[str, list[MatchingTrade]] = {}
         self._pending: list[PaperExecutionResult] = []
-        self._resting: list[RestingMatchingOrder] = []
         self._mirrored_fill_ids: set[str] = set()
         self.matching_boundary = matching_boundary or OwnedNautilusMatchingBoundary(self.settings)
 
@@ -653,6 +757,7 @@ class NautilusMatchingPaperExecutionClient:
         )
         if len(trades) > _MAX_RECENT_MATCHING_TRADES_PER_TOKEN:
             del trades[:-_MAX_RECENT_MATCHING_TRADES_PER_TOKEN]
+        self.matching_boundary.update_trade(token_id, price, size, side, ts_event)
 
     def recent_trades_for(self, token_id: str) -> list[MatchingTrade]:
         return list(self._trades.get(token_id, ()))
@@ -663,32 +768,11 @@ class NautilusMatchingPaperExecutionClient:
         return events
 
     def process_resting_orders(self) -> list[PaperExecutionResult]:
-        now = utc_now()
-        results: list[PaperExecutionResult] = []
-        keep: list[RestingMatchingOrder] = []
-        for resting in self._resting:
-            expiry = resting.spec.expiry_seconds
-            if expiry is not None and (now - resting.created_at).total_seconds() >= expiry:
-                results.append(self._reject(resting.order, "GTD_EXPIRED"))
-                continue
-            book = self._books.get(resting.spec.instrument_id)
-            freshness_ms = _freshness_ms(book) if book is not None else None
-            if freshness_ms is not None and freshness_ms > self.max_book_staleness_ms:
-                results.append(self._reject(resting.order, "STALE_ORDERBOOK"))
-                continue
-            if book is None or self._should_rest(resting.order, book):
-                keep.append(resting)
-                continue
-            result = self._submit_taker_to_matching_boundary(resting.order, resting.spec)
-            results.append(result)
-            if result.status == OrderStatus.PARTIAL:
-                remainder = self._remaining_resting_order(resting, result)
-                if remainder is not None:
-                    keep.append(remainder)
-                continue
-            if result.status in {OrderStatus.PENDING, OrderStatus.RESTING}:
-                keep.append(resting)
-        self._resting = keep
+        results = self.drain_events()
+        drain_boundary = getattr(self.matching_boundary, "drain_events", None)
+        if drain_boundary is not None:
+            for order, outcome in drain_boundary():
+                results.append(self._mirror_matching_outcome(order, outcome))
         return results
 
     def submit_exit(
@@ -757,8 +841,6 @@ class NautilusMatchingPaperExecutionClient:
                 reason="MATCHING_NOT_CONNECTED",
             )
             return result
-        if spec.intent == OrderIntent.PASSIVE_GTD and self._should_rest(order, book):
-            return self._rest(order, spec)
         return self._submit_taker_to_matching_boundary(order, spec)
 
     def _paper_order_from_spec(self, spec: NautilusOrderSpec) -> PaperOrder:
@@ -830,38 +912,6 @@ class NautilusMatchingPaperExecutionClient:
             return result
         return self._mirror_exit_outcome(order, outcome, position)
 
-    def _should_rest(self, order: PaperOrder, book: OrderBook) -> bool:
-        return book.best_ask is None or book.best_ask > order.limit_price
-
-    def _rest(self, order: PaperOrder, spec: NautilusOrderSpec) -> PaperExecutionResult:
-        order.status = OrderStatus.RESTING
-        result = PaperExecutionResult(order=order, status=OrderStatus.RESTING)
-        self._resting.append(RestingMatchingOrder(spec=spec, order=order, created_at=order.created_at))
-        return result
-
-    def _remaining_resting_order(
-        self,
-        resting: RestingMatchingOrder,
-        result: PaperExecutionResult,
-    ) -> RestingMatchingOrder | None:
-        filled_shares = sum(fill.shares for fill in result.fills)
-        remaining = round(max(0.0, resting.spec.quantity - filled_shares), 10)
-        if remaining <= 0:
-            return None
-        order = resting.order.model_copy(
-            deep=True,
-            update={
-                "shares": remaining,
-                "stake_usdc": remaining * resting.spec.price,
-                "status": OrderStatus.RESTING,
-                "reject_reason": None,
-            },
-        )
-        return RestingMatchingOrder(
-            spec=replace(resting.spec, quantity=remaining),
-            order=order,
-            created_at=resting.created_at,
-        )
 
     def _mirror_exit_outcome(
         self,
@@ -967,6 +1017,7 @@ class NautilusMatchingPaperExecutionClient:
         if outcome.status == OrderStatus.REJECTED:
             return self._reject(order, outcome.reason or "MATCHING_REJECTED")
         if outcome.status not in {OrderStatus.FILLED, OrderStatus.PARTIAL}:
+            order.status = outcome.status
             result = PaperExecutionResult(
                 order=order,
                 status=outcome.status,
@@ -1121,6 +1172,16 @@ def _identifier_value(value: Any) -> str | None:
         return None
     raw = getattr(value, "value", None)
     return str(raw if raw is not None else value)
+
+
+def _aggressor_side(components: dict[str, Any], side: str | None) -> Any:
+    normalized = (side or "").strip().upper()
+    aggressor = components["AggressorSide"]
+    if normalized in {"BUY", "BUYER"}:
+        return aggressor.BUYER
+    if normalized in {"SELL", "SELLER"}:
+        return aggressor.SELLER
+    return aggressor.NO_AGGRESSOR
 
 
 def _datetime_to_unix_ns(value: datetime) -> int:

@@ -29,12 +29,13 @@ SKIP_DIR_NAMES: Final = {
 SKIP_TOP_LEVEL_DIRS: Final = {"data", "logs", "refs", "state"}
 
 LOCAL_PAPER_ISOLATION_SYMBOLS: Final = (
+    "from polysignal_lab.paper.order_intent_executor import",
     "BestAskTakerExecutor",
     "PassiveGtdExecutor",
     "PaperSimulator",
-    "PolySignalPaperExecutionClient(",
+    "PolySignalPaperExecutionClient",
+    "create_paper_execution_client",
 )
-LOCAL_PAPER_ALLOWED_RUNTIME_FILES: Final = {"execution.py"}
 
 
 def blocked_symbols() -> list[str]:
@@ -86,7 +87,7 @@ def skip_path(base: Path, path: Path) -> bool:
 
 
 def _is_default_nautilus_runtime_source(path: Path) -> bool:
-    if path.suffix != ".py" or path.name in LOCAL_PAPER_ALLOWED_RUNTIME_FILES:
+    if path.suffix != ".py":
         return False
     parts = path.parts
     for idx, part in enumerate(parts[:-1]):

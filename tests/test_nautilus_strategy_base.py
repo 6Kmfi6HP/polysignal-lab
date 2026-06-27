@@ -123,7 +123,7 @@ def test_ptb_nautilus_strategy_constructs_with_core_without_nautilus_dependency(
 # ── Batch evaluation tests (nautilus runtime) ─────────────────────────────────
 
 
-from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
+from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
 from polysignal_lab.nautilus_runtime.strategies.base import PolySignalNautilusStrategy as RuntimeStrategy
 from polysignal_lab.domain.enums import OrderStatus
 

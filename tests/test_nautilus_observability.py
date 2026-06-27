@@ -14,7 +14,7 @@ from polysignal_lab.domain.paper_result import PaperTradeResult
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
-from polysignal_lab.nautilus_runtime.execution import PaperExecutionResult
+from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
     NautilusEventStoreAdapter,
@@ -249,6 +249,7 @@ def test_decision_policy_control_returns_status_payload() -> None:
 class FakePersistence:
     def __init__(self):
         self.calls = []
+        self.logs = []
 
     def insert_signal(self, payload): self.calls.append(("insert_signal", payload))
     def insert_rejected_signal(self, payload): self.calls.append(("insert_rejected_signal", payload))
@@ -258,6 +259,8 @@ class FakePersistence:
     def upsert_paper_position(self, payload): self.calls.append(("upsert_paper_position", payload))
     def insert_paper_trade_result(self, payload): self.calls.append(("insert_paper_trade_result", payload))
     def insert_system_event(self, payload): self.calls.append(("insert_system_event", payload))
+
+    def append_log(self, stream, payload): self.logs.append((stream, payload))
 
 
 class FakePublisher:
@@ -289,8 +292,61 @@ def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
         "insert_paper_trade_result",
         "insert_system_event",
     ]
+    assert [stream for stream, _ in persistence.logs] == [
+        "signals",
+        "rejected_signals",
+        "paper_orders",
+        "paper_fills",
+        "paper_positions",
+        "paper_trade_results",
+        "system_events",
+    ]
     with pytest.raises(ValueError, match="Unknown Nautilus event table"):
         adapter.insert_json("unknown", {})
+
+
+def test_observability_actor_records_matching_execution_to_sqlite_and_jsonl_streams() -> None:
+    persistence = FakePersistence()
+    actor = ObservabilityActor(store=NautilusEventStoreAdapter(persistence))
+    metadata = {"paper_engine": "nautilus_matching", "accuracy_mode": "depth_l2"}
+    order = PaperOrder(
+        paper_order_id="order-1", signal_id="sig-1", token_id="t1",
+        side=Side.UP, limit_price=0.82, stake_usdc=10.0,
+        reference_price=0.82, asset="BTC", timeframe="5m", strategy="test",
+        market_id="m1", market_slug="s1", metrics=dict(metadata),
+    )
+    fill = PaperFill(
+        paper_fill_id="fill-1", paper_order_id="order-1", signal_id="sig-1",
+        token_id="t1", side=Side.UP, raw_best_ask=0.82, slippage_bps=0,
+        fill_price=0.82, stake_usdc=10.0, shares=12.0,
+        depth_checked=False, available_depth_usdc=None, fill_ratio=1.0,
+        metrics=dict(metadata),
+    )
+    position = PaperPosition(
+        paper_position_id="pos-1", signal_id="sig-1", paper_order_id="order-1",
+        paper_fill_id="fill-1", strategy="test", asset="BTC", timeframe="5m",
+        market_id="m1", market_slug="s1", token_id="t1", side=Side.UP,
+        entry_price=0.82, shares=12.0, stake_usdc=10.0,
+        signal_confidence=0.8, signal_metrics=dict(metadata),
+    )
+
+    actor.record_order(PaperExecutionResult(order=order, status=OrderStatus.FILLED))
+    actor.record_fill(fill)
+    actor.record_position(position)
+
+    assert [name for name, _ in persistence.calls] == [
+        "upsert_paper_order",
+        "insert_paper_fill",
+        "upsert_paper_position",
+    ]
+    assert [stream for stream, _ in persistence.logs] == [
+        "paper_orders",
+        "paper_fills",
+        "paper_positions",
+    ]
+    assert persistence.logs[0][1]["metrics"]["paper_engine"] == "nautilus_matching"
+    assert persistence.logs[1][1]["metrics"]["accuracy_mode"] == "depth_l2"
+    assert persistence.logs[2][1]["signal_metrics"]["paper_engine"] == "nautilus_matching"
 
 
 def test_event_store_upserts_terminal_order_update(tmp_path) -> None:

@@ -8,7 +8,7 @@ from polysignal_lab.domain.enums import OrderStatus, Side
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
-from polysignal_lab.nautilus_runtime.observability import ObservabilityActor
+from polysignal_lab.nautilus_runtime.observability import NautilusEventStoreAdapter, ObservabilityActor
 from polysignal_lab.nautilus_runtime.orchestrator import NautilusOrchestrator
 from polysignal_lab.observability.health import HealthRegistry
 
@@ -16,6 +16,7 @@ from polysignal_lab.observability.health import HealthRegistry
 class RecordingStore:
     def __init__(self) -> None:
         self.rows: dict[str, list[dict[str, object]]] = {}
+        self.logs: list[tuple[str, dict[str, object]]] = []
 
     def insert_json(self, table: str, data: dict[str, object]) -> None:
         self.rows.setdefault(table, []).append(dict(data))
@@ -23,6 +24,30 @@ class RecordingStore:
     def insert_many_json(self, table: str, rows: list[dict[str, object]]) -> None:
         for row in rows:
             self.insert_json(table, row)
+
+    def insert_signal(self, payload: dict[str, object]) -> None:
+        self.insert_json("signals", payload)
+
+    def insert_rejected_signal(self, payload: dict[str, object]) -> None:
+        self.insert_json("rejected_signals", payload)
+
+    def upsert_paper_order(self, payload: dict[str, object]) -> None:
+        self.insert_json("paper_orders", payload)
+
+    def insert_paper_fill(self, payload: dict[str, object]) -> None:
+        self.insert_json("paper_fills", payload)
+
+    def upsert_paper_position(self, payload: dict[str, object]) -> None:
+        self.insert_json("paper_positions", payload)
+
+    def insert_paper_trade_result(self, payload: dict[str, object]) -> None:
+        self.insert_json("paper_trade_results", payload)
+
+    def insert_system_event(self, payload: dict[str, object]) -> None:
+        self.insert_json("system_events", payload)
+
+    def append_log(self, stream: str, payload: dict[str, object]) -> None:
+        self.logs.append((stream, dict(payload)))
 
 
 class FakeMatchingClient:
@@ -147,7 +172,7 @@ async def test_run_once_records_matching_order_fill_and_position_metadata(monkey
         paper_client=FakeMatchingClient(result),  # type: ignore[arg-type]
         position_policy=SimpleNamespace(evaluate=lambda *_args, **_kwargs: None),
         settlement_actor=SimpleNamespace(),
-        observability=ObservabilityActor(store=store, health=health),
+        observability=ObservabilityActor(store=NautilusEventStoreAdapter(store), health=health),
         health=health,
         refresh_interval_sec=0.01,
     )
@@ -160,9 +185,19 @@ async def test_run_once_records_matching_order_fill_and_position_metadata(monkey
         "paper_engine": "nautilus_matching",
         "accuracy_mode": "depth_l2",
     }
-    assert store.rows["orders"][0]["metrics"]["paper_engine"] == "nautilus_matching"
-    assert store.rows["orders"][0]["metrics"]["accuracy_mode"] == "depth_l2"
-    assert store.rows["fills"][0]["metrics"]["paper_engine"] == "nautilus_matching"
-    assert store.rows["fills"][0]["metrics"]["accuracy_mode"] == "depth_l2"
-    assert store.rows["positions"][0]["signal_metrics"]["paper_engine"] == "nautilus_matching"
-    assert store.rows["positions"][0]["signal_metrics"]["accuracy_mode"] == "depth_l2"
+    assert store.rows["paper_orders"][0]["metrics"]["paper_engine"] == "nautilus_matching"
+    assert store.rows["paper_orders"][0]["metrics"]["accuracy_mode"] == "depth_l2"
+    assert store.rows["paper_fills"][0]["metrics"]["paper_engine"] == "nautilus_matching"
+    assert store.rows["paper_fills"][0]["metrics"]["accuracy_mode"] == "depth_l2"
+    assert store.rows["paper_positions"][0]["signal_metrics"]["paper_engine"] == "nautilus_matching"
+    assert store.rows["paper_positions"][0]["signal_metrics"]["accuracy_mode"] == "depth_l2"
+    assert [stream for stream, _ in store.logs] == [
+        "signals",
+        "paper_orders",
+        "paper_fills",
+        "paper_positions",
+        "system_events",
+    ]
+    assert store.logs[1][1]["metrics"]["paper_engine"] == "nautilus_matching"
+    assert store.logs[2][1]["metrics"]["accuracy_mode"] == "depth_l2"
+    assert store.logs[3][1]["signal_metrics"]["paper_engine"] == "nautilus_matching"

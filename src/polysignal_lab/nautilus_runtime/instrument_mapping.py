@@ -86,7 +86,7 @@ def build_binary_option(
         maker_fee=Decimal(0),
         taker_fee=Decimal(0),
         outcome=token.side.value,
-        description=pair.market_slug,
+        description=pair.market_slug or pair.market_id or token.token_id,
         info={
             "condition_id": pair.condition_id,
             "market_slug": pair.market_slug,
