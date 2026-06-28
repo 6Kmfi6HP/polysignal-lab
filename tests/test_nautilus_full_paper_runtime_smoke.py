@@ -12,7 +12,7 @@ from polysignal_lab.config import Settings
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatResult
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.market import Market, OutcomeToken
-from polysignal_lab.nautilus_runtime.instrument_mapping import instrument_id_for_token
+from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
 from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
 
 
@@ -395,6 +395,7 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.market_rotation as rotation_mod
+    import polysignal_lab.nautilus_runtime.node as node_mod
     from polysignal_lab.domain.spot import SpotPrice
     from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import (
@@ -451,19 +452,19 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
     class FakeCache:
         def __init__(self) -> None:
             self.books = {
-                instrument_id_for_token("up-a"): FakeOrderBook(
+                polymarket_instrument_id("condition-a", "up-a"): FakeOrderBook(
                     bids=[FakeLevel(0.49, 20.0)],
                     asks=[FakeLevel(0.50, 20.0), FakeLevel(0.52, 20.0)],
                 ),
-                instrument_id_for_token("down-a"): FakeOrderBook(
+                polymarket_instrument_id("condition-a", "down-a"): FakeOrderBook(
                     bids=[FakeLevel(0.48, 20.0)],
                     asks=[FakeLevel(0.51, 20.0), FakeLevel(0.53, 20.0)],
                 ),
-                instrument_id_for_token("up-b"): FakeOrderBook(
+                polymarket_instrument_id("condition-b", "up-b"): FakeOrderBook(
                     bids=[FakeLevel(0.47, 20.0)],
                     asks=[FakeLevel(0.50, 20.0), FakeLevel(0.52, 20.0)],
                 ),
-                instrument_id_for_token("down-b"): FakeOrderBook(
+                polymarket_instrument_id("condition-b", "down-b"): FakeOrderBook(
                     bids=[FakeLevel(0.46, 20.0)],
                     asks=[FakeLevel(0.51, 20.0), FakeLevel(0.53, 20.0)],
                 ),
@@ -576,6 +577,7 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
     settings.runtime.nautilus.market_rotation.enabled = False
     registry = PolymarketMarketRegistry()
+    node_mod._register_markets(registry, (market_a,))
     sidecar = ExternalDataSidecar()
     books = NautilusBookDataProvider()
     assembler = MarketViewAssembler(registry=registry, books=books, sidecar=sidecar)
@@ -586,7 +588,7 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
         strategy_name="ptb_diff",
         policy=FakePolicy(),
         fixed_stake_usdc=10.0,
-        instrument_id_resolver=instrument_id_for_token,
+        instrument_id_resolver=node_mod._instrument_id_resolver(registry),
         registry=registry,
         sidecar=sidecar,
     )
@@ -632,12 +634,22 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
                 received_at=datetime.now(UTC),
             )
         )
-        strategy.on_order_book_deltas(SimpleNamespace(instrument_id=instrument_id_for_token("down-a")))
-        strategy.on_order_book_deltas(SimpleNamespace(instrument_id=instrument_id_for_token("up-a")))
-        assert [str(order["instrument_id"]) for order in strategy.submitted] == [instrument_id_for_token("up-a")]
+        strategy.on_order_book_deltas(
+            SimpleNamespace(instrument_id=polymarket_instrument_id("condition-a", "down-a"))
+        )
+        strategy.on_order_book_deltas(
+            SimpleNamespace(instrument_id=polymarket_instrument_id("condition-a", "up-a"))
+        )
+        assert [str(order["instrument_id"]) for order in strategy.submitted] == [
+            polymarket_instrument_id("condition-a", "up-a")
+        ]
 
         asyncio.run(actor.refresh_once())
         drain_ptb_tasks()
+        rotated_meta = registry.by_condition("condition-b")
+        assert rotated_meta is not None
+        assert rotated_meta.up.instrument_id == polymarket_instrument_id("condition-b", "up-b")
+        assert rotated_meta.down.instrument_id == polymarket_instrument_id("condition-b", "down-b")
         actor._on_spot(
             SpotPrice(
                 asset="BTC",
@@ -649,14 +661,20 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
             )
         )
         before_late_a = len(strategy.submitted)
-        strategy.on_order_book_deltas(SimpleNamespace(instrument_id=instrument_id_for_token("up-a")))
+        strategy.on_order_book_deltas(
+            SimpleNamespace(instrument_id=polymarket_instrument_id("condition-a", "up-a"))
+        )
         assert len(strategy.submitted) == before_late_a
-        strategy.on_order_book_deltas(SimpleNamespace(instrument_id=instrument_id_for_token("down-b")))
-        strategy.on_order_book_deltas(SimpleNamespace(instrument_id=instrument_id_for_token("up-b")))
+        strategy.on_order_book_deltas(
+            SimpleNamespace(instrument_id=polymarket_instrument_id("condition-b", "down-b"))
+        )
+        strategy.on_order_book_deltas(
+            SimpleNamespace(instrument_id=polymarket_instrument_id("condition-b", "up-b"))
+        )
 
         assert [str(order["instrument_id"]) for order in strategy.submitted] == [
-            instrument_id_for_token("up-a"),
-            instrument_id_for_token("up-b"),
+            polymarket_instrument_id("condition-a", "up-a"),
+            polymarket_instrument_id("condition-b", "up-b"),
         ]
         rotated = [
             item

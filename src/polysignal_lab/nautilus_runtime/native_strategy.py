@@ -390,6 +390,8 @@ class PolySignalNativeStrategy:
             self._handle_decision(decision, view)
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
+        if decision.condition_id not in self._active_condition_ids:
+            return
         policy_result = self.policy.evaluate(decision, view)
         if isinstance(policy_result, ApprovedDecision):
             try:
@@ -960,16 +962,22 @@ def _datetime_ns(value: int | None) -> datetime | None:
 
 
 def _metadata_instrument_id(
+    condition_id: str,
     token_id: str,
     instrument_id_resolver: Callable[[str], object],
 ) -> str:
-    resolved = instrument_id_resolver(token_id)
+    from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
+
+    try:
+        resolved = instrument_id_resolver(token_id)
+    except (KeyError, TypeError, ValueError):
+        return polymarket_instrument_id(condition_id, token_id)
     resolved_text = _identifier_text(resolved)
     if resolved_text is None:
-        return f"{token_id}.POLYMARKET"
+        return polymarket_instrument_id(condition_id, token_id)
     if "." in resolved_text:
         return resolved_text
-    return f"{resolved_text}.POLYMARKET"
+    return polymarket_instrument_id(condition_id, token_id)
 
 
 def _pair_from_metadata(
@@ -982,12 +990,12 @@ def _pair_from_metadata(
     up_instrument_id = (
         existing.up.instrument_id
         if existing is not None
-        else _metadata_instrument_id(meta.up_token_id, instrument_id_resolver)
+        else _metadata_instrument_id(meta.condition_id, meta.up_token_id, instrument_id_resolver)
     )
     down_instrument_id = (
         existing.down.instrument_id
         if existing is not None
-        else _metadata_instrument_id(meta.down_token_id, instrument_id_resolver)
+        else _metadata_instrument_id(meta.condition_id, meta.down_token_id, instrument_id_resolver)
     )
     return MarketPairMeta(
         market_id=meta.market_id,

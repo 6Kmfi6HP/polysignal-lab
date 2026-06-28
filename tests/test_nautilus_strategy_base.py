@@ -665,6 +665,7 @@ def test_native_strategy_universe_update_subscribes_entered_market_once() -> Non
         MarketPairMeta,
         PolymarketMarketRegistry,
     )
+    from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
     from polysignal_lab.nautilus_runtime.market_data import (
         PolySignalMarketMetaData,
         PolySignalMarketUniverseData,
@@ -750,8 +751,12 @@ def test_native_strategy_universe_update_subscribes_entered_market_once() -> Non
         )
     )
 
-    assert strategy.book_subscriptions.count("up-b.POLYMARKET") == 1
-    assert strategy.trade_subscriptions.count("down-b.POLYMARKET") == 1
+    assert strategy.book_subscriptions.count(
+        polymarket_instrument_id("condition-b", "up-b")
+    ) == 1
+    assert strategy.trade_subscriptions.count(
+        polymarket_instrument_id("condition-b", "down-b")
+    ) == 1
 
 
 def test_native_strategy_exited_market_is_gated_even_if_late_tick_arrives() -> None:
@@ -791,6 +796,118 @@ def test_native_strategy_exited_market_is_gated_even_if_late_tick_arrives() -> N
     strategy.evaluate_condition("condition-a")
 
     assert seen == []
+
+def test_native_strategy_exited_market_fill_follow_up_is_gated() -> None:
+    from types import SimpleNamespace
+    from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class Book:
+        best_ask: float | None = 0.50
+        ask_levels: tuple[tuple[float, float], ...] = ((0.50, 20.0),)
+
+    class View(_MockView):
+        condition_id = "condition-a"
+
+        def book_for(self, side: Side) -> _BookViewLike:
+            _ = side
+            return Book()
+
+    class ExitedFollowUpCore:
+        def __init__(self) -> None:
+            self.fill_condition_ids: list[str] = []
+
+        def evaluate(self, view: MarketView) -> list[AlphaDecision]:
+            _ = view
+            return []
+
+        def on_order_filled(self, event: object) -> list[AlphaDecision]:
+            self.fill_condition_ids.append(str(getattr(event, "condition_id")))
+            return [
+                AlphaDecision(
+                    strategy="ptb_diff",
+                    asset="BTC",
+                    timeframe="5m",
+                    market_id="btc-5m-a",
+                    market_slug="btc-updown-5m-a",
+                    condition_id="condition-a",
+                    token_id="up-a",
+                    side=Side.UP,
+                    confidence=0.8,
+                    entry_reference_price=0.50,
+                    max_entry_price=0.52,
+                    seconds_to_close=60,
+                    data_freshness_ms=20,
+                    reason_codes=("FOLLOW_UP",),
+                    metrics={},
+                    order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK, pair_id="pair-condition-a"),
+                    hedge_leg=False,
+                )
+            ]
+
+    class FakeOrderFactory:
+        def limit(self, **kwargs):
+            return kwargs
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.order_factory = FakeOrderFactory()
+            self.submitted = []
+
+        def submit_order(self, order):
+            self.submitted.append(order)
+
+    core = ExitedFollowUpCore()
+    strategy = FakeNativeStrategy(
+        core=core,
+        assembler=_assembler(View()),
+        condition_ids=("condition-a",),
+        strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
+        fixed_stake_usdc=10.0,
+        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+    )
+    strategy.on_data(
+        PolySignalMarketUniverseData(
+            epoch=3,
+            active_condition_ids=("condition-b",),
+            entered_condition_ids=("condition-b",),
+            exited_condition_ids=("condition-a",),
+            condition_to_up_token={"condition-b": "up-b"},
+            condition_to_down_token={"condition-b": "down-b"},
+            condition_to_asset={"condition-b": "BTC"},
+            condition_to_timeframe={"condition-b": "5m"},
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+
+    strategy.on_order_filled(
+        SimpleNamespace(
+            order_id="order-a-1",
+            client_order_id="client-a-1",
+            market_id="btc-5m-a",
+            condition_id="condition-a",
+            token_id="up-a",
+            side=Side.UP,
+            last_qty=10.0,
+            last_px=0.5,
+            trade_id="trade-a-1",
+            liquidity_side="TAKER",
+            tags=[
+                "strategy=ptb_diff",
+                "market_id=btc-5m-a",
+                "condition_id=condition-a",
+                "token_id=up-a",
+            ],
+            ts_event=datetime.now(UTC),
+        )
+    )
+
+    assert core.fill_condition_ids == ["condition-a"]
+    assert strategy.submitted == []
+    assert strategy.submitted_orders == []
 
 def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
     from polysignal_lab.nautilus_bridge.market_registry import (

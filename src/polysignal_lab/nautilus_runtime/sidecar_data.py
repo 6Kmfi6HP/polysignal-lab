@@ -298,9 +298,19 @@ def _pair_from_metadata(
     registry: PolymarketMarketRegistry,
     meta: PolySignalMarketMetaData,
 ) -> MarketPairMeta:
+    from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
+
     existing = registry.by_condition(meta.condition_id)
-    up_instrument_id = existing.up.instrument_id if existing is not None else meta.up_token_id
-    down_instrument_id = existing.down.instrument_id if existing is not None else meta.down_token_id
+    up_instrument_id = (
+        existing.up.instrument_id
+        if existing is not None
+        else polymarket_instrument_id(meta.condition_id, meta.up_token_id)
+    )
+    down_instrument_id = (
+        existing.down.instrument_id
+        if existing is not None
+        else polymarket_instrument_id(meta.condition_id, meta.down_token_id)
+    )
     return MarketPairMeta(
         market_id=meta.market_id,
         market_slug=meta.market_slug,
