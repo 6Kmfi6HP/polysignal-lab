@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib import import_module
 from types import SimpleNamespace, new_class
@@ -17,12 +18,33 @@ from polysignal_lab.alpha.types import (
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.orderbook import BookLevel, OrderBook
 from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
-from polysignal_lab.nautilus_bridge.market_registry import InstrumentTokenMeta, MarketPairMeta, PolymarketMarketRegistry
-from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketMetaData, PolySignalPriceToBeatData, PolySignalSpotData
-from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision, DecisionPolicyActor, RejectedDecision
-from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy, submit_approved_decision
+from polysignal_lab.nautilus_bridge.market_registry import (
+    InstrumentTokenMeta,
+    MarketPairMeta,
+    PolymarketMarketRegistry,
+)
+from polysignal_lab.nautilus_runtime.market_data import (
+    PolySignalMarketMetaData,
+    PolySignalMarketUniverseData,
+    PolySignalPriceToBeatData,
+    PolySignalSpotData,
+)
+from polysignal_lab.nautilus_runtime.decision_policy import (
+    ApprovedDecision,
+    DecisionPolicyActor,
+    RejectedDecision,
+)
+from polysignal_lab.nautilus_runtime.native_order import (
+    OrderSubmittingStrategy,
+    submit_approved_decision,
+)
 
 DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
+
+@dataclass(slots=True)
+class MarketSubscriptionState:
+    subscribed_condition_ids: set[str] = field(default_factory=set)
+    subscribed_instrument_ids: set[str] = field(default_factory=set)
 
 
 class _Assembler(Protocol):
@@ -101,6 +123,7 @@ def runtime_native_strategy_type(
             registry: PolymarketMarketRegistry | None = None,
             sidecar: ExternalDataSidecar | None = None,
             observability: _Observability | None = None,
+            unsubscribe_exited: bool = True,
         ) -> None:
             base_init = cast(Callable[..., None], nautilus_base.__init__)
             if config_factory is None:
@@ -121,6 +144,7 @@ def runtime_native_strategy_type(
                 registry=registry,
                 sidecar=sidecar,
                 observability=observability,
+                unsubscribe_exited=unsubscribe_exited,
             )
 
         namespace["__init__"] = __init__
@@ -151,6 +175,7 @@ class PolySignalNativeStrategy:
         registry: PolymarketMarketRegistry | None = None,
         sidecar: ExternalDataSidecar | None = None,
         observability: _Observability | None = None,
+        unsubscribe_exited: bool = True,
     ) -> None:
         self.core: AlphaCore = core
         self.assembler: _Assembler = assembler
@@ -166,9 +191,14 @@ class PolySignalNativeStrategy:
         self.registry: PolymarketMarketRegistry | None = registry
         self.sidecar: ExternalDataSidecar | None = sidecar
         self.observability: _Observability | None = observability
+        self._startup_condition_ids: tuple[str, ...] = self.condition_ids
+        self._active_condition_ids: set[str] = set(self.condition_ids)
+        self._market_epoch: int | None = None
+        self.unsubscribe_exited: bool = unsubscribe_exited
+        self._subscription_state = MarketSubscriptionState()
         self._asset_condition_ids: dict[str, tuple[str, ...]] = _asset_conditions(
             registry,
-            self.condition_ids,
+            self._startup_condition_ids,
         )
         self._approved_signal_metrics: dict[str, dict[str, object]] = {}
         self.rejected_decisions: list[RejectedDecision] = []
@@ -180,16 +210,17 @@ class PolySignalNativeStrategy:
         if self.registry is None:
             for name in self.data_names:
                 self.subscribe_data(name)
-            return
-        for instrument_id in _instrument_ids(self.registry, self.condition_ids):
-            _ = getattr(self, "subscribe_order_book_deltas")(
-                instrument_id=instrument_id,
-                book_type=_nautilus_book_type(self.book_type),
+            _subscribe_custom_data(
+                self,
+                PolySignalMarketUniverseData,
+                allow_fallback=False,
             )
-            _ = getattr(self, "subscribe_trade_ticks")(instrument_id)
+            return
+        self._subscribe_market_conditions(self._startup_condition_ids)
         _subscribe_custom_data(self, PolySignalSpotData)
         _subscribe_custom_data(self, PolySignalPriceToBeatData)
         _subscribe_custom_data(self, PolySignalMarketMetaData)
+        _subscribe_custom_data(self, PolySignalMarketUniverseData)
 
     def on_data(self, data: object) -> None:
         if self.sidecar is not None and isinstance(data, PolySignalSpotData):
@@ -217,9 +248,31 @@ class PolySignalNativeStrategy:
             )
             self.evaluate_condition(data.condition_id)
             return
-        if self.registry is not None and isinstance(data, PolySignalMarketMetaData):
-            self.registry.register(_pair_from_metadata(self.registry, data))
-            self._asset_condition_ids = _asset_conditions(self.registry, self.condition_ids)
+        if isinstance(data, PolySignalMarketMetaData):
+            if self.registry is None:
+                return
+            self.registry.register(
+                _pair_from_metadata(
+                    self.registry,
+                    data,
+                    instrument_id_resolver=self.instrument_id_resolver,
+                )
+            )
+            self._refresh_asset_conditions()
+            if data.condition_id in self._active_condition_ids:
+                self._subscribe_market_conditions((data.condition_id,))
+            return
+        if isinstance(data, PolySignalMarketUniverseData):
+            if self._market_epoch is not None and data.epoch <= self._market_epoch:
+                return
+            self._market_epoch = data.epoch
+            self._active_condition_ids = set(data.active_condition_ids)
+            self._refresh_asset_conditions()
+            if self.registry is None:
+                return
+            if self.unsubscribe_exited:
+                self._unsubscribe_market_conditions(data.exited_condition_ids)
+            self._subscribe_market_conditions(data.entered_condition_ids)
             return
         updater = getattr(self.assembler, "on_data", None) or getattr(self.assembler, "update", None)
         if callable(updater):
@@ -228,7 +281,7 @@ class PolySignalNativeStrategy:
         if condition_id is not None:
             self.evaluate_condition(str(condition_id))
             return
-        for candidate in self.condition_ids:
+        for candidate in self._active_condition_ids:
             self.evaluate_condition(candidate)
 
     def on_order_book_deltas(self, deltas: object) -> None:
@@ -328,6 +381,8 @@ class PolySignalNativeStrategy:
         self._record_nautilus_position(position)
 
     def evaluate_condition(self, condition_id: str) -> None:
+        if condition_id not in self._active_condition_ids:
+            return
         view = self.assembler.build(condition_id)
         if view is None:
             return
@@ -544,6 +599,73 @@ class PolySignalNativeStrategy:
             keys.add(order.client_order_id)
         for key in keys:
             self._approved_signal_metrics.pop(key, None)
+
+    def _refresh_asset_conditions(self) -> None:
+        tracked_condition_ids = tuple(
+            dict.fromkeys((*self._startup_condition_ids, *self._active_condition_ids))
+        )
+        self._asset_condition_ids = _asset_conditions(self.registry, tracked_condition_ids)
+
+    def _subscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
+        if self.registry is None:
+            return
+        for condition_id in condition_ids:
+            if condition_id in self._subscription_state.subscribed_condition_ids:
+                continue
+            instrument_ids = _instrument_ids(self.registry, (condition_id,))
+            if not instrument_ids:
+                continue
+            for instrument_id in instrument_ids:
+                self._subscribe_market_instrument(instrument_id)
+            self._subscription_state.subscribed_condition_ids.add(condition_id)
+
+    def _subscribe_market_instrument(self, instrument_id: object) -> None:
+        instrument_text = _identifier_text(instrument_id)
+        if (
+            instrument_text is None
+            or instrument_text in self._subscription_state.subscribed_instrument_ids
+        ):
+            return
+        subscribe_order_book_deltas = getattr(self, "subscribe_order_book_deltas", None)
+        subscribe_trade_ticks = getattr(self, "subscribe_trade_ticks", None)
+        if not callable(subscribe_order_book_deltas) and not callable(subscribe_trade_ticks):
+            return
+        if callable(subscribe_order_book_deltas):
+            _ = subscribe_order_book_deltas(
+                instrument_id=instrument_id,
+                book_type=_nautilus_book_type(self.book_type),
+            )
+        if callable(subscribe_trade_ticks):
+            _ = subscribe_trade_ticks(instrument_id)
+        self._subscription_state.subscribed_instrument_ids.add(instrument_text)
+
+    def _unsubscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
+        if self.registry is None:
+            return
+        for condition_id in condition_ids:
+            if condition_id not in self._subscription_state.subscribed_condition_ids:
+                continue
+            for instrument_id in _instrument_ids(self.registry, (condition_id,)):
+                self._unsubscribe_market_instrument(instrument_id)
+            self._subscription_state.subscribed_condition_ids.discard(condition_id)
+
+    def _unsubscribe_market_instrument(self, instrument_id: object) -> None:
+        instrument_text = _identifier_text(instrument_id)
+        if (
+            instrument_text is None
+            or instrument_text not in self._subscription_state.subscribed_instrument_ids
+        ):
+            return
+        unsubscribe_order_book_deltas = getattr(self, "unsubscribe_order_book_deltas", None)
+        if callable(unsubscribe_order_book_deltas):
+            _ = unsubscribe_order_book_deltas(
+                instrument_id=instrument_id,
+                book_type=_nautilus_book_type(self.book_type),
+            )
+        unsubscribe_trade_ticks = getattr(self, "unsubscribe_trade_ticks", None)
+        if callable(unsubscribe_trade_ticks):
+            _ = unsubscribe_trade_ticks(instrument_id)
+        self._subscription_state.subscribed_instrument_ids.discard(instrument_text)
 
     def subscribe_data(self, data_type: object) -> None:
         method = getattr(self, f"subscribe_{data_type}", None)
@@ -780,7 +902,12 @@ def _maybe_float(value: object) -> float | None:
 def _datetime_or_now(value: object) -> datetime:
     return value if isinstance(value, datetime) else datetime.now(UTC)
 
-def _subscribe_custom_data(strategy: object, data_type: object) -> None:
+def _subscribe_custom_data(
+    strategy: object,
+    data_type: object,
+    *,
+    allow_fallback: bool = True,
+) -> None:
     mro = type(strategy).mro()
     try:
         base_index = mro.index(PolySignalNativeStrategy) + 1
@@ -796,6 +923,8 @@ def _subscribe_custom_data(strategy: object, data_type: object) -> None:
     )
     if callable(base_subscribe):
         _ = base_subscribe(strategy, resolved_data_type)
+        return
+    if not allow_fallback:
         return
     fallback = getattr(strategy, "subscribe_data", None)
     if callable(fallback):
@@ -830,13 +959,34 @@ def _datetime_ns(value: int | None) -> datetime | None:
     return datetime.fromtimestamp(value / 1_000_000_000, UTC)
 
 
+def _metadata_instrument_id(
+    token_id: str,
+    instrument_id_resolver: Callable[[str], object],
+) -> object:
+    resolved = instrument_id_resolver(token_id)
+    resolved_text = _identifier_text(resolved)
+    if resolved_text is None or "." in resolved_text:
+        return resolved
+    return _nautilus_instrument_id(f"{resolved_text}.POLYMARKET")
+
+
 def _pair_from_metadata(
     registry: PolymarketMarketRegistry,
     meta: PolySignalMarketMetaData,
+    *,
+    instrument_id_resolver: Callable[[str], object],
 ) -> MarketPairMeta:
     existing = registry.by_condition(meta.condition_id)
-    up_instrument_id = existing.up.instrument_id if existing is not None else meta.up_token_id
-    down_instrument_id = existing.down.instrument_id if existing is not None else meta.down_token_id
+    up_instrument_id = (
+        existing.up.instrument_id
+        if existing is not None
+        else _metadata_instrument_id(meta.up_token_id, instrument_id_resolver)
+    )
+    down_instrument_id = (
+        existing.down.instrument_id
+        if existing is not None
+        else _metadata_instrument_id(meta.down_token_id, instrument_id_resolver)
+    )
     return MarketPairMeta(
         market_id=meta.market_id,
         market_slug=meta.market_slug,

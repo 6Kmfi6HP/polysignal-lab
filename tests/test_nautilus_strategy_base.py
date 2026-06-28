@@ -410,7 +410,12 @@ def test_runtime_native_strategy_type_subscribes_custom_data_on_msgbus() -> None
         MarketPairMeta,
         PolymarketMarketRegistry,
     )
-    from polysignal_lab.nautilus_runtime.market_data import PolySignalSpotData
+    from polysignal_lab.nautilus_runtime.market_data import (
+        PolySignalMarketMetaData,
+        PolySignalMarketUniverseData,
+        PolySignalPriceToBeatData,
+        PolySignalSpotData,
+    )
     from polysignal_lab.nautilus_runtime.native_strategy import runtime_native_strategy_type
 
     class FakeMsgBus:
@@ -475,7 +480,13 @@ def test_runtime_native_strategy_type_subscribes_custom_data_on_msgbus() -> None
 
     assert cast(list[object], getattr(strategy, "custom_subscriptions")) == []
     msgbus_calls = cast(FakeMsgBus, getattr(strategy, "_msgbus")).calls
-    assert len(msgbus_calls) == 3
+    assert len(msgbus_calls) == 4
+    assert {topic for topic, _handler in msgbus_calls} == {
+        PolySignalSpotData,
+        PolySignalPriceToBeatData,
+        PolySignalMarketMetaData,
+        PolySignalMarketUniverseData,
+    }
 
     _topic, handler = msgbus_calls[0]
     handler(
@@ -647,6 +658,344 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
         "down-token.POLYMARKET",
     ]
     assert cast(_CustomDataStrategy, cast(object, strategy)).custom_subscriptions != []
+
+def test_native_strategy_universe_update_subscribes_entered_market_once() -> None:
+    from polysignal_lab.nautilus_bridge.market_registry import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+        PolymarketMarketRegistry,
+    )
+    from polysignal_lab.nautilus_runtime.market_data import (
+        PolySignalMarketMetaData,
+        PolySignalMarketUniverseData,
+    )
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.book_subscriptions = []
+            self.trade_subscriptions = []
+
+        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+            self.book_subscriptions.append(str(instrument_id))
+
+        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+            self.trade_subscriptions.append(str(instrument_id))
+
+    registry = PolymarketMarketRegistry()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-updown-5m-a",
+            market_slug="btc-updown-5m-a",
+            condition_id="condition-a",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+        )
+    )
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-a",),
+        strategy_name="ptb_diff",
+        registry=registry,
+        sidecar=ExternalDataSidecar(),
+    )
+
+    strategy.on_data(
+        PolySignalMarketMetaData(
+            market_id="condition-b",
+            market_slug="btc-updown-5m-b",
+            condition_id="condition-b",
+            asset="BTC",
+            timeframe="5m",
+            start_ts_ns=1,
+            end_ts_ns=2,
+            up_token_id="up-b",
+            down_token_id="down-b",
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+    strategy.on_data(
+        PolySignalMarketUniverseData(
+            epoch=2,
+            active_condition_ids=("condition-a", "condition-b"),
+            entered_condition_ids=("condition-b",),
+            exited_condition_ids=(),
+            condition_to_up_token={"condition-a": "up-a", "condition-b": "up-b"},
+            condition_to_down_token={"condition-a": "down-a", "condition-b": "down-b"},
+            condition_to_asset={"condition-a": "BTC", "condition-b": "BTC"},
+            condition_to_timeframe={"condition-a": "5m", "condition-b": "5m"},
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+    strategy.on_data(
+        PolySignalMarketUniverseData(
+            epoch=2,
+            active_condition_ids=("condition-a", "condition-b"),
+            entered_condition_ids=("condition-b",),
+            exited_condition_ids=(),
+            condition_to_up_token={"condition-a": "up-a", "condition-b": "up-b"},
+            condition_to_down_token={"condition-a": "down-a", "condition-b": "down-b"},
+            condition_to_asset={"condition-a": "BTC", "condition-b": "BTC"},
+            condition_to_timeframe={"condition-a": "5m", "condition-b": "5m"},
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+
+    assert strategy.book_subscriptions.count("up-b.POLYMARKET") == 1
+    assert strategy.trade_subscriptions.count("down-b.POLYMARKET") == 1
+
+
+def test_native_strategy_exited_market_is_gated_even_if_late_tick_arrives() -> None:
+    from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    seen: list[str] = []
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def _handle_decision(self, decision, view):
+            _ = decision
+            seen.append(view.condition_id)
+
+    view = _MockView()
+    view.condition_id = "condition-a"
+    strategy = FakeNativeStrategy(
+        core=FakeCore([_decision()]),
+        assembler=_assembler(view),
+        condition_ids=("condition-a",),
+        strategy_name="ptb_diff",
+    )
+    strategy.on_data(
+        PolySignalMarketUniverseData(
+            epoch=3,
+            active_condition_ids=("condition-b",),
+            entered_condition_ids=("condition-b",),
+            exited_condition_ids=("condition-a",),
+            condition_to_up_token={"condition-b": "up-b"},
+            condition_to_down_token={"condition-b": "down-b"},
+            condition_to_asset={"condition-b": "BTC"},
+            condition_to_timeframe={"condition-b": "5m"},
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+
+    strategy.evaluate_condition("condition-a")
+
+    assert seen == []
+
+def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
+    from polysignal_lab.nautilus_bridge.market_registry import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+        PolymarketMarketRegistry,
+    )
+    from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.book_subscriptions = []
+            self.trade_subscriptions = []
+            self.book_unsubscriptions = []
+            self.trade_unsubscriptions = []
+
+        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+            self.book_subscriptions.append(str(instrument_id))
+
+        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+            self.trade_subscriptions.append(str(instrument_id))
+
+        def unsubscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+            self.book_unsubscriptions.append(str(instrument_id))
+
+        def unsubscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+            self.trade_unsubscriptions.append(str(instrument_id))
+
+    registry = PolymarketMarketRegistry()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-updown-5m-a",
+            market_slug="btc-updown-5m-a",
+            condition_id="condition-a",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+        )
+    )
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-a",),
+        strategy_name="ptb_diff",
+        registry=registry,
+    )
+
+    strategy.on_start()
+    strategy.on_data(
+        PolySignalMarketUniverseData(
+            epoch=3,
+            active_condition_ids=(),
+            entered_condition_ids=(),
+            exited_condition_ids=("condition-a",),
+            condition_to_up_token={},
+            condition_to_down_token={},
+            condition_to_asset={},
+            condition_to_timeframe={},
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+
+    assert strategy.book_subscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
+    assert strategy.trade_subscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
+    assert strategy.book_unsubscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
+    assert strategy.trade_unsubscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
+
+
+def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> None:
+    from polysignal_lab.nautilus_bridge.market_registry import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+        PolymarketMarketRegistry,
+    )
+    from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.book_unsubscriptions = []
+            self.trade_unsubscriptions = []
+
+        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+            _ = instrument_id
+
+        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+            _ = instrument_id
+
+        def unsubscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+            self.book_unsubscriptions.append(str(instrument_id))
+
+        def unsubscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+            self.trade_unsubscriptions.append(str(instrument_id))
+
+    registry = PolymarketMarketRegistry()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-updown-5m-a",
+            market_slug="btc-updown-5m-a",
+            condition_id="condition-a",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+        )
+    )
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-a",),
+        strategy_name="ptb_diff",
+        registry=registry,
+        unsubscribe_exited=False,
+    )
+
+    strategy.on_start()
+    strategy.on_data(
+        PolySignalMarketUniverseData(
+            epoch=3,
+            active_condition_ids=(),
+            entered_condition_ids=(),
+            exited_condition_ids=("condition-a",),
+            condition_to_up_token={},
+            condition_to_down_token={},
+            condition_to_asset={},
+            condition_to_timeframe={},
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+
+    assert strategy.book_unsubscriptions == []
+    assert strategy.trade_unsubscriptions == []
+    assert strategy._subscription_state.subscribed_condition_ids == {"condition-a"}
+    assert strategy._subscription_state.subscribed_instrument_ids == {
+        "down-a.POLYMARKET",
+        "up-a.POLYMARKET",
+    }
+
+
+def test_native_strategy_exited_market_cleans_state_without_unsubscribe_hooks() -> None:
+    from polysignal_lab.nautilus_bridge.market_registry import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+        PolymarketMarketRegistry,
+    )
+    from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+            _ = instrument_id
+
+        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+            _ = instrument_id
+
+    registry = PolymarketMarketRegistry()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-updown-5m-a",
+            market_slug="btc-updown-5m-a",
+            condition_id="condition-a",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+        )
+    )
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-a",),
+        strategy_name="ptb_diff",
+        registry=registry,
+    )
+
+    strategy.on_start()
+    strategy.on_data(
+        PolySignalMarketUniverseData(
+            epoch=3,
+            active_condition_ids=(),
+            entered_condition_ids=(),
+            exited_condition_ids=("condition-a",),
+            condition_to_up_token={},
+            condition_to_down_token={},
+            condition_to_asset={},
+            condition_to_timeframe={},
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+
+    assert strategy._subscription_state.subscribed_condition_ids == set()
+    assert strategy._subscription_state.subscribed_instrument_ids == set()
 
 
 def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_only() -> None:
