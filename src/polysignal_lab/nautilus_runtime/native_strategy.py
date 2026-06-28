@@ -366,6 +366,8 @@ class PolySignalNativeStrategy:
         decisions = handler(alpha_event) if callable(handler) else ()
         if isinstance(decisions, Iterable) and not isinstance(decisions, (str, bytes)):
             for decision in cast(Iterable[AlphaDecision], decisions):
+                if decision.condition_id not in self._active_condition_ids:
+                    continue
                 view = self.assembler.build(decision.condition_id)
                 if view is None:
                     continue
