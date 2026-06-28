@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from polysignal_lab.alpha.types import AlphaDecision
@@ -26,8 +28,8 @@ from polysignal_lab.utils import utc_now
 
 
 class FakeStore:
-    def __init__(self):
-        self.tables: dict[str, list[dict]] = {}
+    def __init__(self) -> None:
+        self.tables: dict[str, list[dict[str, Any]]] = {}
 
     def insert_json(self, table: str, data: Mapping[str, object]) -> None:
         self.tables.setdefault(table, []).append(dict(data))
@@ -189,6 +191,110 @@ def test_record_position_preserves_display_metadata() -> None:
     assert rows[0]["signal_metrics"]["paper_engine"] == "nautilus_matching"
     assert rows[0]["signal_metrics"]["accuracy_mode"] == "depth_l2"
 
+def test_record_nautilus_projection_events_write_projected_rows() -> None:
+    store = FakeStore()
+    actor = ObservabilityActor(store=store)
+
+    actor.record_nautilus_order_event(
+        SimpleNamespace(
+            client_order_id="C-001",
+            instrument_id="up-token.POLYMARKET",
+            order_side="BUY",
+            order_type="LIMIT",
+            time_in_force="GTD",
+            quantity=10.0,
+            price=0.01,
+            status="ACCEPTED",
+            metrics={"level_price": 0.01},
+            tags=["strategy=one_cent_buy", "condition_id=condition-btc-5m"],
+            ts_event=datetime(2026, 6, 27, tzinfo=UTC),
+        )
+    )
+    actor.record_nautilus_fill_event(
+        SimpleNamespace(
+            client_order_id="C-001",
+            instrument_id="up-token.POLYMARKET",
+            trade_id="T-001",
+            last_qty=10.0,
+            last_px=0.01,
+            liquidity_side="TAKER",
+            metrics={"level_price": 0.01},
+        )
+    )
+    actor.record_nautilus_position(
+        SimpleNamespace(
+            id="P-001",
+            instrument_id="up-token.POLYMARKET",
+            signed_qty=10.0,
+            avg_px_open=0.01,
+            realized_pnl=0.0,
+            is_closed=False,
+        )
+    )
+
+    order_rows = store.tables["nautilus_order"]
+    fill_rows = store.tables["nautilus_fill"]
+    position_rows = store.tables["nautilus_position"]
+
+    assert order_rows[0]["client_order_id"] == "C-001"
+    assert order_rows[0]["paper_order_id"] == "C-001"
+    assert order_rows[0]["status"] == "ACCEPTED"
+    assert order_rows[0]["metrics"]["level_price"] == 0.01
+    assert fill_rows[0]["client_order_id"] == "C-001"
+    assert fill_rows[0]["trade_id"] == "T-001"
+    assert fill_rows[0]["paper_order_id"] == "C-001"
+    assert fill_rows[0]["paper_fill_id"] == "T-001"
+    assert position_rows[0]["position_id"] == "P-001"
+    assert position_rows[0]["paper_position_id"] == "P-001"
+    assert position_rows[0]["is_closed"] is False
+
+def test_nautilus_projection_events_with_integer_timestamps_get_unique_event_ids() -> None:
+    persistence = FakePersistence()
+    actor = ObservabilityActor(store=NautilusEventStoreAdapter(persistence))
+
+    actor.record_nautilus_order_event(
+        SimpleNamespace(
+            client_order_id="C-001",
+            instrument_id="up-token.POLYMARKET",
+            order_side="BUY",
+            order_type="LIMIT",
+            time_in_force="GTD",
+            quantity=10.0,
+            price=0.01,
+            status="ACCEPTED",
+            metrics={"level_price": 0.01},
+            tags=["strategy=one_cent_buy", "condition_id=condition-btc-5m"],
+            ts_event=1_717_000_000_000_000_000,
+        )
+    )
+    actor.record_nautilus_order_event(
+        SimpleNamespace(
+            client_order_id="C-002",
+            instrument_id="up-token.POLYMARKET",
+            order_side="BUY",
+            order_type="LIMIT",
+            time_in_force="GTD",
+            quantity=12.0,
+            price=0.02,
+            status="ACCEPTED",
+            metrics={"level_price": 0.02},
+            tags=["strategy=one_cent_buy", "condition_id=condition-btc-5m"],
+            ts_event=1_717_000_000_001_000_000,
+        )
+    )
+
+    system_events = [
+        payload
+        for name, payload in persistence.calls
+        if name == "insert_system_event"
+    ]
+    assert len(system_events) == 2
+    first_event = cast(dict[str, object], system_events[0])
+    second_event = cast(dict[str, object], system_events[1])
+    assert first_event["created_at"] != ""
+    assert second_event["created_at"] != ""
+    assert first_event["event_id"] != second_event["event_id"]
+
 def test_record_settlement_writes_to_settlements_table() -> None:
     store = FakeStore()
     actor = ObservabilityActor(store=store)
@@ -247,28 +353,51 @@ def test_decision_policy_control_returns_status_payload() -> None:
 
 
 class FakePersistence:
-    def __init__(self):
-        self.calls = []
-        self.logs = []
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+        self.logs: list[tuple[str, dict[str, Any]]] = []
 
-    def insert_signal(self, payload): self.calls.append(("insert_signal", payload))
-    def insert_rejected_signal(self, payload): self.calls.append(("insert_rejected_signal", payload))
-    def insert_paper_order(self, payload): self.calls.append(("insert_paper_order", payload))
-    def upsert_paper_order(self, payload): self.calls.append(("upsert_paper_order", payload))
-    def insert_paper_fill(self, payload): self.calls.append(("insert_paper_fill", payload))
-    def upsert_paper_position(self, payload): self.calls.append(("upsert_paper_position", payload))
-    def insert_paper_trade_result(self, payload): self.calls.append(("insert_paper_trade_result", payload))
-    def insert_system_event(self, payload): self.calls.append(("insert_system_event", payload))
+    def insert_signal(self, signal: object) -> None:
+        self.calls.append(("insert_signal", signal))
 
-    def append_log(self, stream, payload): self.logs.append((stream, payload))
+    def insert_rejected_signal(self, rejected: object) -> None:
+        self.calls.append(("insert_rejected_signal", rejected))
+
+    def insert_paper_order(self, order: object) -> None:
+        self.calls.append(("insert_paper_order", order))
+
+    def upsert_paper_order(self, order: object) -> None:
+        self.calls.append(("upsert_paper_order", order))
+
+    def insert_paper_fill(self, fill: object) -> None:
+        self.calls.append(("insert_paper_fill", fill))
+
+    def upsert_paper_position(self, position: object) -> None:
+        self.calls.append(("upsert_paper_position", position))
+
+    def insert_paper_trade_result(self, result: object) -> None:
+        self.calls.append(("insert_paper_trade_result", result))
+
+    def insert_system_event(self, event: object) -> None:
+        self.calls.append(("insert_system_event", event))
+
+    def append_log(self, stream: str, payload: object) -> None:
+        self.logs.append((stream, dict(cast(Mapping[str, Any], payload))))
 
 
 class FakePublisher:
-    def __init__(self):
-        self.calls = []
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
 
-    async def send(self, message: str, msg_type: str = "") -> None:
-        self.calls.append((message, msg_type))
+    async def send(
+        self,
+        message: str,
+        message_type: str,
+        signal_id: str | None = None,
+    ) -> object:
+        del signal_id
+        self.calls.append((message, message_type))
+        return None
 
 
 def test_event_store_routes_known_tables_and_rejects_unknown() -> None:

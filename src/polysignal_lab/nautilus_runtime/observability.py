@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Protocol
+from typing import Protocol, cast
 
 from polysignal_lab.alpha.types import AlphaDecision
+from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
-from polysignal_lab.domain.paper_result import PaperTradeResult, PaperWalletSnapshot
+from polysignal_lab.domain.paper_result import PaperTradeResult
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
-from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
 from polysignal_lab.observability.health import HealthRegistry
-from polysignal_lab.utils import utc_now, utc_iso
+from polysignal_lab.utils import utc_iso
 from polysignal_lab.nautilus_runtime.projections import (
     project_fill_event,
     project_order_event,
@@ -19,15 +19,30 @@ from polysignal_lab.nautilus_runtime.projections import (
 )
 
 
+class PersistenceWriter(Protocol):
+    def insert_signal(self, signal: object) -> None: ...
+    def insert_rejected_signal(self, rejected: object) -> None: ...
+    def upsert_paper_order(self, order: object) -> None: ...
+    def insert_paper_fill(self, fill: object) -> None: ...
+    def upsert_paper_position(self, position: object) -> None: ...
+    def insert_paper_trade_result(self, result: object) -> None: ...
+    def insert_system_event(self, event: dict[str, object]) -> None: ...
+    def append_log(self, stream: str, payload: object) -> None: ...
+
+
+class Publisher(Protocol):
+    async def send(self, message: str, message_type: str, signal_id: str | None = None) -> object: ...
+
+
 def signal_candidate_from_order(order: PaperOrder) -> SignalCandidate:
     """Rebuild the accepted signal payload from the paper order metadata."""
-    metrics = dict(order.metrics)
+    metrics = dict(cast(Mapping[str, object], order.metrics))
     signal = SignalCandidate.build(
-        strategy=order.strategy or str(metrics.get("strategy", "")),
-        asset=order.asset or str(metrics.get("asset", "")),
-        timeframe=order.timeframe or str(metrics.get("timeframe", "")),
-        market_id=order.market_id or str(metrics.get("market_id", "")),
-        market_slug=order.market_slug or str(metrics.get("market_slug", "")),
+        strategy=_text_or_fallback(cast(object, order.strategy), metrics.get("strategy", "")),
+        asset=_text_or_fallback(cast(object, order.asset), metrics.get("asset", "")),
+        timeframe=_text_or_fallback(cast(object, order.timeframe), metrics.get("timeframe", "")),
+        market_id=_text_or_fallback(cast(object, order.market_id), metrics.get("market_id", "")),
+        market_slug=_text_or_fallback(cast(object, order.market_slug), metrics.get("market_slug", "")),
         condition_id=str(metrics.get("condition_id", "")),
         token_id=order.token_id,
         side=order.side,
@@ -40,7 +55,7 @@ def signal_candidate_from_order(order: PaperOrder) -> SignalCandidate:
         data_freshness_ms=_metric_int(metrics, "data_freshness_ms"),
         reason_codes=_metric_list(metrics, "reason_codes"),
         metrics=metrics,
-        order_intent=order.order_intent,
+        order_intent=_order_intent(order.order_intent),
         expiry_seconds=_metric_int(metrics, "expire_seconds"),
         pair_id=order.pair_id,
         hedge_leg=order.hedge_leg,
@@ -51,20 +66,27 @@ def signal_candidate_from_order(order: PaperOrder) -> SignalCandidate:
     return signal.model_copy(update=updates)
 
 
+def _text_or_fallback(value: object, fallback: object) -> str:
+    return str(value or fallback)
+
+
 def _metric_float(metrics: Mapping[str, object], key: str, default: float) -> float:
+    value = metrics.get(key, default)
+    if not isinstance(value, (int, float, str)):
+        return default
     try:
-        return float(metrics.get(key, default))
-    except (TypeError, ValueError):
+        return float(value)
+    except ValueError:
         return default
 
 
 def _metric_int(metrics: Mapping[str, object], key: str) -> int | None:
     value = metrics.get(key)
-    if value in (None, ""):
+    if value in (None, "") or not isinstance(value, (int, float, str)):
         return None
     try:
         return int(float(value))
-    except (TypeError, ValueError):
+    except ValueError:
         return None
 
 
@@ -77,6 +99,15 @@ def _metric_list(metrics: Mapping[str, object], key: str) -> list[str]:
     if isinstance(value, Sequence):
         return [str(part) for part in value]
     return [str(value)]
+
+def _order_intent(value: str | None) -> OrderIntent | None:
+    if value is None:
+        return None
+    try:
+        return OrderIntent(value)
+    except ValueError:
+        return None
+
 
 
 
@@ -93,12 +124,36 @@ class Notifier(Protocol):
     async def send(self, message: str, msg_type: str = "") -> None: ...
 
 
+def _event_identity(payload: Mapping[str, object]) -> str:
+    for key in (
+        "event_id",
+        "trade_id",
+        "paper_fill_id",
+        "client_order_id",
+        "paper_order_id",
+        "position_id",
+        "paper_position_id",
+    ):
+        value = payload.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def _system_event_id(table: str, payload: Mapping[str, object]) -> str:
+    created_at = str(payload.get("created_at", ""))
+    identity = _event_identity(payload)
+    if identity:
+        return f"{table}:{identity}:{created_at}"
+    return f"{table}:{created_at}"
+
+
 class NautilusEventStoreAdapter:
     """Adapts a PersistenceService-like object to the EventStore protocol."""
 
-    def __init__(self, persistence: object) -> None:
-        self.persistence = persistence
-        self._routes: dict[str, Callable[[object], None]] = {
+    def __init__(self, persistence: PersistenceWriter) -> None:
+        self.persistence: PersistenceWriter = persistence
+        self._routes: dict[str, Callable[[dict[str, object]], None]] = {
             "signals": persistence.insert_signal,
             "rejected_signals": persistence.insert_rejected_signal,
             "orders": persistence.upsert_paper_order,
@@ -111,7 +166,7 @@ class NautilusEventStoreAdapter:
             "nautilus_fill": persistence.insert_system_event,
             "nautilus_position": persistence.insert_system_event,
         }
-        self._streams = {
+        self._streams: dict[str, str] = {
             "signals": "signals",
             "rejected_signals": "rejected_signals",
             "orders": "paper_orders",
@@ -124,10 +179,7 @@ class NautilusEventStoreAdapter:
             "nautilus_fill": "nautilus_fills",
             "nautilus_position": "nautilus_positions",
         }
-        append_log = getattr(persistence, "append_log", None)
-        self._append_log: Callable[[str, object], None] | None = (
-            append_log if callable(append_log) else None
-        )
+        self._append_log: Callable[[str, object], None] | None = persistence.append_log
 
     def insert_json(self, table: str, data: Mapping[str, object]) -> None:
         route = self._routes.get(table)
@@ -135,16 +187,17 @@ class NautilusEventStoreAdapter:
             raise ValueError(f"Unknown Nautilus event table: {table}")
         payload = dict(data)
         if table == "health_snapshot":
-            payload.setdefault("event_type", "health_snapshot")
-            payload.setdefault("severity", "info")
-            payload.setdefault("created_at", payload.get("ts", utc_iso()))
-            payload.setdefault("event_id", f"nautilus_health:{payload['created_at']}")
+            _ = payload.setdefault("event_type", "health_snapshot")
+            _ = payload.setdefault("severity", "info")
+            created_at = payload.get("ts") or utc_iso()
+            _ = payload.setdefault("created_at", created_at)
+            _ = payload.setdefault("event_id", _system_event_id("health_snapshot", payload))
         elif table.startswith("nautilus_"):
-            ts = utc_iso()
-            payload.setdefault("event_type", table)
-            payload.setdefault("severity", "info")
-            payload.setdefault("created_at", payload.get("ts", ts))
-            payload.setdefault("event_id", f"{table}:{payload['created_at']}")
+            _ = payload.setdefault("event_type", table)
+            _ = payload.setdefault("severity", "info")
+            created_at = payload.get("ts") or utc_iso()
+            _ = payload.setdefault("created_at", created_at)
+            _ = payload.setdefault("event_id", _system_event_id(table, payload))
         route(payload)
         if self._append_log is not None:
             self._append_log(self._streams[table], payload)
@@ -157,11 +210,11 @@ class NautilusEventStoreAdapter:
 class NautilusNotifierAdapter:
     """Adapts a publisher (e.g. TelegramPublisher) to the Notifier protocol."""
 
-    def __init__(self, publisher: object) -> None:
-        self.publisher = publisher
+    def __init__(self, publisher: Publisher) -> None:
+        self.publisher: Publisher = publisher
 
     async def send(self, message: str, msg_type: str = "") -> None:
-        await self.publisher.send(message, msg_type)
+        _ = await self.publisher.send(message, msg_type)
 
 
 class ObservabilityActor:
@@ -176,10 +229,10 @@ class ObservabilityActor:
         health: HealthRegistry | None = None,
         notifier: Notifier | None = None,
     ) -> None:
-        self.store = store
-        self.health = health or HealthRegistry()
-        self.notifier = notifier
-        self._event_count = 0
+        self.store: EventStore | None = store
+        self.health: HealthRegistry = health or HealthRegistry()
+        self.notifier: Notifier | None = notifier
+        self._event_count: int = 0
 
     @property
     def event_count(self) -> int:
@@ -223,12 +276,18 @@ class ObservabilityActor:
             ).model_dump(),
         )
 
-    def record_order(self, result: PaperExecutionResult) -> None:
+    def record_order(self, result: object) -> None:
         self._event_count += 1
-        if self.store is None or result.order is None:
+        order = getattr(result, "order", None)
+        dump = getattr(order, "model_dump", None)
+        if self.store is None or not callable(dump):
             return
-        payload = result.order.model_dump(mode="json")
-        payload["status"] = result.status.value if result.status else "UNKNOWN"
+        raw_payload = dump(mode="json")
+        if not isinstance(raw_payload, Mapping):
+            return
+        payload = dict(cast(Mapping[str, object], raw_payload))
+        status = cast(object, getattr(result, "status", None))
+        payload["status"] = getattr(status, "value", "UNKNOWN") if status is not None else "UNKNOWN"
         self.store.insert_json("orders", payload)
 
 
@@ -295,7 +354,7 @@ class ObservabilityActor:
             "settlement_value": getattr(result, "settlement_value", 0.0),
             "pnl_usdc": getattr(result, "pnl_usdc", 0.0),
             "roi": getattr(result, "roi", 0.0),
-            "result": getattr(result, "result", "").value if hasattr(getattr(result, "result", ""), "value") else str(getattr(result, "result", "")),
+            "result": result.result.value,
             "exit_mode": result.exit_mode.value,
             "closed_at": utc_iso(),
         })
@@ -369,9 +428,8 @@ class StrategyControl(Protocol):
 
 class DecisionPolicyControl:
     """Adapts DecisionPolicyActor to StrategyControl protocol."""
-
     def __init__(self, policy: DecisionPolicyActor) -> None:
-        self._policy = policy
+        self._policy: DecisionPolicyActor = policy
 
     def set_strategy_enabled(self, name: str, enabled: bool) -> None:
         self._policy.set_strategy_enabled(name, enabled)

@@ -275,7 +275,7 @@ class NautilusRuntimeConfig(BaseModel):
 
 
 class RuntimeConfig(BaseModel):
-    engine: Literal["legacy", "nautilus"] = "legacy"
+    engine: Literal["legacy", "nautilus"] = "nautilus"
     nautilus: NautilusRuntimeConfig = Field(default_factory=NautilusRuntimeConfig)
 
 

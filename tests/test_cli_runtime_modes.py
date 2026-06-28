@@ -4,11 +4,20 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from polysignal_lab.app import main as app_main
 from polysignal_lab.app.readonly_smoke_types import ReadonlySmokeEvidence, ReadonlySmokeRequest
+
+
+class _FakeSettings:
+    def __init__(self, engine: str) -> None:
+        self.runtime = SimpleNamespace(engine=engine)
+
+    def validate_runtime_environment(self) -> None:
+        return None
 
 
 def test_cli_help_lists_supported_runtime_modes_without_removed_alias() -> None:
@@ -35,6 +44,52 @@ def test_dashboard_compatibility_alias_resolves_to_dashboard() -> None:
 
     # Then: the flag resolves to the explicit dashboard mode.
     assert options.mode is app_main.RuntimeMode.DASHBOARD
+
+
+def test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: no explicit runtime selector and the loaded settings default to Nautilus.
+    calls: list[str] = []
+    fake_settings = _FakeSettings("nautilus")
+    fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
+    setattr(
+        fake_module,
+        "run_nautilus_cli",
+        lambda settings: calls.append(f"nautilus:{settings.runtime.engine}"),
+    )
+
+    monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
+    monkeypatch.setattr(app_main, "run_scheduler_cli", lambda settings: calls.append("scheduler"))
+    monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
+
+    # When: the main entry runs without command or --mode.
+    exit_code = app_main.main([])
+
+    # Then: it follows the configured Nautilus default instead of the legacy scheduler default.
+    assert exit_code == 0
+    assert calls == ["nautilus:nautilus"]
+
+
+def test_main_explicit_mode_overrides_nautilus_config_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the loaded settings default to Nautilus but the caller forces scheduler mode.
+    calls: list[str] = []
+    fake_settings = _FakeSettings("nautilus")
+    fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
+    setattr(fake_module, "run_nautilus_cli", lambda settings: calls.append("nautilus"))
+
+    monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
+    monkeypatch.setattr(app_main, "run_scheduler_cli", lambda settings: calls.append(f"scheduler:{settings.runtime.engine}"))
+    monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
+
+    # When: an explicit runtime mode is provided.
+    exit_code = app_main.main(["--mode", "scheduler"])
+
+    # Then: the explicit selector wins over the config default.
+    assert exit_code == 0
+    assert calls == ["scheduler:nautilus"]
 
 
 def test_once_readonly_smoke_writes_bounded_evidence(

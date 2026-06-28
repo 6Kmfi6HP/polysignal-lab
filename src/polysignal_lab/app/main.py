@@ -34,6 +34,7 @@ MODE_VALUES: Final = tuple(mode.value for mode in RuntimeMode)
 class CliOptions:
     config: Path
     mode: RuntimeMode
+    use_config_default_runtime: bool
     once: bool
     real_readonly_smoke: bool
     evidence: Path | None
@@ -84,6 +85,7 @@ def parse_cli(argv: Sequence[str] | None = None) -> CliOptions:
     command = args.command
     mode_arg = args.mode
 
+    runtime_selected = bool(args.dashboard or mode_arg or command)
     if args.dashboard:
         if command or mode_arg:
             parser.error("--dashboard cannot be combined with command or --mode")
@@ -100,6 +102,7 @@ def parse_cli(argv: Sequence[str] | None = None) -> CliOptions:
     return CliOptions(
         config=Path(args.config),
         mode=mode,
+        use_config_default_runtime=not runtime_selected and not args.once and not args.real_readonly_smoke,
         once=bool(args.once or mode is RuntimeMode.SMOKE),
         real_readonly_smoke=bool(args.real_readonly_smoke or mode is RuntimeMode.SMOKE),
         evidence=Path(args.evidence) if args.evidence else None,
@@ -142,13 +145,19 @@ def run_readonly_smoke(settings: Settings, options: CliOptions) -> None:
     status = "passed" if evidence["passed"] else f"completed with {evidence['failure_count']} degraded surface(s)"
     print(f"Bounded read-only smoke {status}")
 
+def _resolve_runtime_mode(settings: Settings, options: CliOptions) -> RuntimeMode:
+    if options.use_config_default_runtime:
+        return RuntimeMode.NAUTILUS if settings.runtime.engine == "nautilus" else RuntimeMode.SCHEDULER
+    return options.mode
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     options = parse_cli(argv)
     settings = load_settings(options.config)
     settings.validate_runtime_environment()
+    mode = _resolve_runtime_mode(settings, options)
 
-    match options.mode:
+    match mode:
         case RuntimeMode.SCHEDULER:
             if options.once or options.real_readonly_smoke:
                 run_readonly_smoke(settings, options)

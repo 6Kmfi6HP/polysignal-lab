@@ -4,6 +4,7 @@ import importlib
 import sys
 import tomllib
 from pathlib import Path
+from typing import cast
 
 from polysignal_lab.app import main as app_main
 
@@ -12,31 +13,50 @@ def test_default_import_does_not_require_nautilus() -> None:
     assert importlib.import_module("polysignal_lab") is not None
 
 def test_nautilus_node_and_strategies_do_not_import_legacy_execution() -> None:
+    root_pkg = importlib.import_module("polysignal_lab")
+    missing_runtime_attr = not hasattr(root_pkg, "nautilus_runtime")
+    saved_runtime_attr = getattr(root_pkg, "nautilus_runtime", None)
     saved_runtime_modules = {
         name: module
         for name, module in tuple(sys.modules.items())
         if name.startswith("polysignal_lab.nautilus_runtime")
     }
     for name in saved_runtime_modules:
-        sys.modules.pop(name, None)
+        _ = sys.modules.pop(name, None)
 
     try:
-        importlib.import_module("polysignal_lab.nautilus_runtime.node")
-        importlib.import_module("polysignal_lab.nautilus_runtime.strategies.base")
+        _ = importlib.import_module("polysignal_lab.nautilus_runtime.node")
+        assert "polysignal_lab.nautilus_runtime.strategies.base" not in sys.modules
+        assert "polysignal_lab.nautilus_runtime.execution_types" not in sys.modules
+        _ = importlib.import_module("polysignal_lab.nautilus_runtime.strategies.base")
 
         assert "polysignal_lab.nautilus_runtime.execution" not in sys.modules
     finally:
         for name in tuple(sys.modules):
             if name.startswith("polysignal_lab.nautilus_runtime"):
-                sys.modules.pop(name, None)
+                _ = sys.modules.pop(name, None)
         sys.modules.update(saved_runtime_modules)
+        package = sys.modules.get("polysignal_lab.nautilus_runtime")
+        if package is not None:
+            for child in ("node", "strategies", "execution", "execution_types"):
+                full_name = f"polysignal_lab.nautilus_runtime.{child}"
+                if full_name in saved_runtime_modules:
+                    setattr(package, child, saved_runtime_modules[full_name])
+                elif hasattr(package, child):
+                    delattr(package, child)
+        if missing_runtime_attr:
+            if hasattr(root_pkg, "nautilus_runtime"):
+                delattr(root_pkg, "nautilus_runtime")
+        else:
+            setattr(root_pkg, "nautilus_runtime", saved_runtime_attr)
 
 
 def test_nautilus_extra_is_optional_and_polymarket_scoped() -> None:
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
-    assert all("nautilus_trader" not in dep for dep in data["project"]["dependencies"])
-    nautilus_extra = data["project"]["optional-dependencies"]["nautilus"]
+    dependencies = cast(list[str], data["project"]["dependencies"])
+    assert all("nautilus_trader" not in dep for dep in dependencies)
+    nautilus_extra = cast(list[str], data["project"]["optional-dependencies"]["nautilus"])
 
     assert nautilus_extra == [
         "nautilus_trader[polymarket]==1.229.0; python_version >= '3.12'",
@@ -80,6 +100,7 @@ def test_default_source_keeps_forbidden_live_symbols_out_of_runtime() -> None:
                 continue  # exec_clients is a sandbox config key, guarded by assert_no_live_polymarket_execution
             text = path.read_text(encoding="utf-8")
             findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+    assert findings == []
 
 
 def test_default_nautilus_runtime_source_avoids_local_paper_executors() -> None:
@@ -106,20 +127,39 @@ def test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources() -> N
         "PaperExecutionResult(",
         "evaluate_all_conditions(",
     )
+    default_paths = (
+        Path("src/polysignal_lab/nautilus_runtime/node.py"),
+        Path("src/polysignal_lab/nautilus_runtime/native_order.py"),
+        Path("src/polysignal_lab/nautilus_runtime/native_strategy.py"),
+        Path("src/polysignal_lab/nautilus_runtime/trading_node.py"),
+        Path("src/polysignal_lab/nautilus_runtime/cache_reader.py"),
+        Path("src/polysignal_lab/nautilus_runtime/projections.py"),
+        Path("src/polysignal_lab/nautilus_runtime/observability.py"),
+    )
     findings: list[str] = []
-    for path in Path("src/polysignal_lab/nautilus_runtime").rglob("*.py"):
-        if path.name in {
-            "matching.py",
-            "execution_types.py",
-            "scheduler_compat.py",  # COMPATIBILITY_ONLY read-only paper components
-            "orchestrator.py",  # evaluate_all_conditions in orchestrator (compat)
-            "settlement.py",  # PaperWallet in settlement engine (compat)
-        }:
-            continue
+    for path in default_paths:
         text = path.read_text(encoding="utf-8")
-        # Skip evaluate_all_conditions in base.py (old wrapper)
-        if path.name == "base.py" and "evaluate_all_conditions(" in text:
-            continue
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []
+
+def test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime_layers() -> None:
+    forbidden = (
+        "polysignal_lab.nautilus_runtime.matching",
+        "polysignal_lab.nautilus_runtime.orchestrator",
+        "polysignal_lab.nautilus_runtime.strategies.base",
+        "polysignal_lab.nautilus_runtime.execution_types",
+        "PaperWallet",
+        "PaperExecutionResult",
+    )
+    default_paths = (
+        Path("src/polysignal_lab/app/main.py"),
+        Path("src/polysignal_lab/nautilus_runtime/node.py"),
+        Path("src/polysignal_lab/app/scheduler_reporting.py"),
+    )
+    findings: list[str] = []
+    for path in default_paths:
+        text = path.read_text(encoding="utf-8")
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []

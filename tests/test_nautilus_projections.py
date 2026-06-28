@@ -23,17 +23,17 @@ def test_project_order_event_uses_nautilus_event_fields() -> None:
 
     row = project_order_event(event)
 
-    assert row == {
-        "client_order_id": "C-001",
-        "instrument_id": "up-token.POLYMARKET",
-        "side": "BUY",
-        "order_type": "LIMIT",
-        "time_in_force": "IOC",
-        "quantity": 20.0,
-        "price": 0.50,
-        "strategy": "ptb_diff",
-        "condition_id": "condition-btc-5m",
-    }
+    assert row["paper_order_id"] == "C-001"
+    assert row["client_order_id"] == "C-001"
+    assert row["instrument_id"] == "up-token.POLYMARKET"
+    assert row["side"] == "BUY"
+    assert row["order_type"] == "LIMIT"
+    assert row["time_in_force"] == "IOC"
+    assert row["order_intent"] == "default"
+    assert row["quantity"] == 20.0
+    assert row["price"] == 0.50
+    assert row["strategy"] == "ptb_diff"
+    assert row["condition_id"] == "condition-btc-5m"
 
 
 def test_project_fill_event_uses_nautilus_fill_fields() -> None:
@@ -48,6 +48,8 @@ def test_project_fill_event_uses_nautilus_fill_fields() -> None:
 
     row = project_fill_event(event)
 
+    assert row["paper_fill_id"] == "T-001"
+    assert row["paper_order_id"] == "C-001"
     assert row["client_order_id"] == "C-001"
     assert row["trade_id"] == "T-001"
     assert row["quantity"] == 12.5
@@ -67,11 +69,11 @@ def test_project_position_uses_nautilus_position_fields() -> None:
 
     row = project_position(position)
 
-    assert row == {
-        "position_id": "P-001",
-        "instrument_id": "up-token.POLYMARKET",
-        "quantity": 20.0,
-        "avg_entry_price": 0.50,
-        "realized_pnl": 1.25,
-        "is_closed": False,
-    }
+    assert row["paper_position_id"] == "P-001"
+    assert row["position_id"] == "P-001"
+    assert row["instrument_id"] == "up-token.POLYMARKET"
+    assert row["quantity"] == 20.0
+    assert row["avg_entry_price"] == 0.50
+    assert row["realized_pnl"] == 1.25
+    assert row["status"] == "OPEN"
+    assert row["is_closed"] is False

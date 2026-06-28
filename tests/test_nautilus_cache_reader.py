@@ -1,5 +1,6 @@
 from __future__ import annotations
 from types import SimpleNamespace
+from typing import cast
 
 from polysignal_lab.nautilus_runtime.cache_reader import NautilusCacheReader
 
@@ -51,7 +52,7 @@ def test_cache_reader_reads_account_from_cache() -> None:
     cache = SimpleNamespace(account=lambda: acct)
 
     reader = NautilusCacheReader(cache)
-    result = reader.read_account()
+    result = cast(SimpleNamespace | None, reader.read_account())
 
     assert result is not None
     assert result.id == "A-1"
@@ -61,7 +62,7 @@ def test_cache_reader_reads_account_from_cache() -> None:
 def test_cache_reader_snapshots_portfolio_from_cache() -> None:
     pf = SimpleNamespace(id="PF-1", equity=500.0)
     reader = NautilusCacheReader(SimpleNamespace(), portfolio=pf)
-    result = reader.snapshot_portfolio()
+    result = cast(SimpleNamespace | None, reader.snapshot_portfolio())
 
     assert result is not None
     assert result.id == "PF-1"
@@ -73,7 +74,7 @@ def test_cache_reader_snapshots_portfolio_from_cache_fallback() -> None:
     cache = SimpleNamespace(portfolio=lambda: pf)
 
     reader = NautilusCacheReader(cache)
-    result = reader.snapshot_portfolio()
+    result = cast(SimpleNamespace | None, reader.snapshot_portfolio())
 
     assert result is not None
     assert result.id == "PF-1b"
@@ -83,7 +84,7 @@ def test_cache_reader_snapshots_portfolio_from_cache_fallback() -> None:
 def test_cache_reader_snapshots_portfolio_attribute() -> None:
     pf = SimpleNamespace(id="PF-2", equity=750.0)
     reader = NautilusCacheReader(SimpleNamespace(), portfolio=pf)
-    result = reader.snapshot_portfolio()
+    result = cast(SimpleNamespace | None, reader.snapshot_portfolio())
 
     assert result is not None
     assert result.id == "PF-2"
@@ -108,6 +109,28 @@ def test_cache_reader_respects_separate_portfolio_arg() -> None:
     cache = SimpleNamespace(portfolio=lambda: pf_on_cache)
 
     reader = NautilusCacheReader(cache, portfolio=pf_explicit)
-    result = reader.snapshot_portfolio()
+    result = cast(SimpleNamespace | None, reader.snapshot_portfolio())
 
+    assert result is not None
     assert result.id == "PF-EXPLICIT"
+
+
+def test_cache_reader_projects_account_and_portfolio_snapshots() -> None:
+    acct = SimpleNamespace(
+        id="A-1",
+        balances=[SimpleNamespace(currency="USDC", total=1000.0)],
+    )
+    portfolio = SimpleNamespace(id="PF-1", equity=1012.5)
+    reader = NautilusCacheReader(SimpleNamespace(account=lambda: acct), portfolio=portfolio)
+
+    account = reader.read_account_projection()
+    snapshot = reader.snapshot_portfolio_projection()
+
+    assert account == {
+        "account_id": "A-1",
+        "balances": [{"currency": "USDC", "total": 1000.0}],
+    }
+    assert snapshot == {
+        "portfolio_id": "PF-1",
+        "equity": 1012.5,
+    }
