@@ -30,6 +30,7 @@ from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import MarketPairMeta, PolymarketMarketRegistry
 from polysignal_lab.nautilus_runtime.market_data import (
     PolySignalMarketMetaData,
+    PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
     PolySignalSpotData,
     register_polysignal_data_types,
@@ -125,6 +126,9 @@ class SidecarDataActor:
         self.publisher.publish_data(_data_type(PolySignalMarketMetaData), meta)
         if self.registry is not None:
             self.registry.register(_pair_from_metadata(self.registry, meta))
+
+    def publish_market_universe(self, data: PolySignalMarketUniverseData) -> None:
+        self.publisher.publish_data(_data_type(PolySignalMarketUniverseData), data)
 
 
 def runtime_sidecar_actor_type(
