@@ -7,52 +7,135 @@ no private key/env-var reading, no allowance scripts.
 from __future__ import annotations
 
 import asyncio
+import inspect
+import importlib
 import logging
 import signal
-from collections.abc import Sequence
+from contextlib import suppress
+import sys
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from types import SimpleNamespace
+from typing import Protocol, cast, runtime_checkable
 
-from polysignal_lab.app import scheduler_market_data
+from polysignal_lab.alpha.types import AlphaCore, TradeView
 from polysignal_lab.app.scheduler import PolySignalScheduler
-from polysignal_lab.paper.exit_engine import PaperExitEngine
+from polysignal_lab.app import scheduler_health
+from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.config import Settings, load_settings
+from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
-from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+from polysignal_lab.nautilus_bridge.market_registry import MarketPairMeta, PolymarketMarketRegistry
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
 from polysignal_lab.nautilus_runtime.data_ingestor import NautilusDataIngestor
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
-from polysignal_lab.nautilus_runtime.matching import NautilusMatchingPaperExecutionClient
-from polysignal_lab.nautilus_runtime.group_views import MarketGroupViewAssembler
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
     NautilusEventStoreAdapter,
     NautilusNotifierAdapter,
     ObservabilityActor,
 )
-from polysignal_lab.nautilus_runtime.orchestrator import NautilusOrchestrator
-from polysignal_lab.nautilus_runtime.position_policy import PositionPolicyActor
-from polysignal_lab.nautilus_runtime.settlement import SettlementActor
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
+from polysignal_lab.signal_layer.consensus import ConsensusEngine
+from polysignal_lab.signal_layer.gate import SignalGate
+from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID, POLYMARKET_CLIENT_ID
 from polysignal_lab.strategies.execution import build_strategy_schedule
-from polysignal_lab.nautilus_runtime.strategies import (
-    BinaryMomentumNautilusStrategy,
-    DumpHedgeNautilusStrategy,
-    FibonacciBotNautilusStrategy,
-    LateConsensusNautilusStrategy,
-    LowSideDualReversionNautilusStrategy,
-    MidPriceSizingNautilusStrategy,
-    NinetyNineCentSniperNautilusStrategy,
-    OneCentBuyNautilusStrategy,
-    PTBDiffNautilusStrategy,
-    PolySignalNautilusStrategy,
-    PreOrderMarketNautilusStrategy,
-    SkewMeanReversionNautilusStrategy,
-    VWAPMomentumNautilusStrategy,
-)
-from polysignal_lab.paper.settlement import PaperSettlementEngine
-from polysignal_lab.paper.wallet import PaperWallet
+
+class _FactoryNode(Protocol):
+    def add_data_client_factory(self, name: str, factory: object) -> None: ...
+    def add_exec_client_factory(self, name: str, factory: object) -> None: ...
+
+
+class _TraderLike(Protocol):
+    def add_actor(self, actor: object) -> None: ...
+    def add_strategy(self, strategy: object) -> None: ...
+
+@runtime_checkable
+class _Disposable(Protocol):
+    def dispose(self) -> None: ...
+
+
+class _TradingNodeLike(_FactoryNode, Protocol):
+    trader: _TraderLike
+
+    def build(self) -> None: ...
+    def run(self) -> None: ...
+
+
+class _TradingNodeFactory(Protocol):
+    def __call__(self, *, config: object) -> _TradingNodeLike: ...
+
+
+class _PaperConfigBuilder(Protocol):
+    def __call__(self, settings: Settings | None = None, *, instrument_config: object) -> object: ...
+
+
+class _FactoryRegistrar(Protocol):
+    def __call__(self, node: _FactoryNode) -> None: ...
+
+
+
+
+class _NativeStrategyLike(Protocol):
+    strategy_name: str
+
+
+class _EmptyBookDataProvider:
+    def book_for_token(self, token_id: str) -> None:
+        _ = token_id
+        return None
+
+    def trades_for_token(self, token_id: str) -> tuple[TradeView, ...]:
+        _ = token_id
+        return ()
+
+
+# Stub placeholders — _ensure_nautilus_imports() overwrites them at runtime.
+# Tests that monkeypatch TradingNode use these stubs directly (no nautilus_trader).
+TradingNode: _TradingNodeFactory | None = None
+PolymarketInstrumentProviderConfig: Callable[..., object] = SimpleNamespace
+NautilusActor: type[object] | None = None
+NautilusActorConfig: Callable[[], object] | None = None
+NautilusStrategy: type[object] | None = None
+NautilusStrategyConfig: Callable[[], object] | None = None
+
+def _stub_paper_config(settings: Settings | None = None, *, instrument_config: object) -> SimpleNamespace:
+    _ = settings, instrument_config
+    return SimpleNamespace(data_clients={})
+
+
+def _stub_register_factories(node: _FactoryNode) -> None:
+    node.add_data_client_factory("POLYMARKET", object())
+    node.add_exec_client_factory(PAPER_EXEC_CLIENT_ID, object())
+
+
+build_paper_trading_node_config: _PaperConfigBuilder = _stub_paper_config
+register_paper_factories: _FactoryRegistrar = _stub_register_factories
+
+class _NoopMatchingSink:
+    """No-op matching sink for the data ingestor when running under TradingNode.
+
+    The Nautilus DataEngine handles its own market feeds; the external data
+    ingestor only needs to update the PolySignal book_data_provider for the
+    assembler. This sink satisfies the MatchingBookSink protocol without
+    duplicating book state into a paper matching client.
+    """
+
+    def update_book(self, token_id: str, book: object) -> None:
+        _ = token_id, book
+
+    def update_trade(
+        self,
+        token_id: str,
+        price: float,
+        size: float,
+        side: str | None,
+        ts_event: object | None,
+    ) -> None:
+        _ = token_id, price, size, side, ts_event
+
 
 logger = logging.getLogger(__name__)
 
@@ -62,134 +145,343 @@ class NautilusRuntimeBundle:
     """Wired runtime components ready for the orchestrator loop."""
 
     scheduler: PolySignalScheduler
-    components: dict[str, Any]
+    components: dict[str, object]
     bridge_registry: PolymarketMarketRegistry
     sidecar: ExternalDataSidecar
-    book_data_provider: NautilusBookDataProvider
-    data_ingestor: NautilusDataIngestor
-    paper_client: NautilusMatchingPaperExecutionClient
+    book_data_provider: NautilusBookDataProvider | None
+    data_ingestor: NautilusDataIngestor | None
+    node: _TradingNodeLike
     observability: ObservabilityActor
-    orchestrator: NautilusOrchestrator
-    websocket_tasks: list[asyncio.Task]
+    websocket_tasks: list[asyncio.Task[object]]
 
+
+
+def _ensure_nautilus_imports() -> None:
+    """Lazy-import Nautilus TradingNode and Polymarket helpers into module globals.
+
+    Uses module-level placeholders so tests on py3.11 can monkeypatch before
+    the first real call triggers the import chain.  Reads the guard from
+    ``sys.modules`` so a ``monkeypatch.setattr`` on the string path always
+    takes effect even if this function's ``__globals__`` references a stale
+    module object.
+    """
+    global TradingNode, PolymarketInstrumentProviderConfig, NautilusActor, NautilusStrategy
+    global NautilusActorConfig, NautilusStrategyConfig, build_paper_trading_node_config, register_paper_factories
+
+    mod = sys.modules.get(__name__)
+    module_node = getattr(mod, "TradingNode", None) if mod is not None else None
+    current_node = module_node or TradingNode
+    if current_node is not None:
+        # Sync our __globals__ from the live module entry so subsequent
+        # calls that reach this function use patched values together.
+        TradingNode = cast(_TradingNodeFactory, current_node)
+        if mod is not None:
+            PolymarketInstrumentProviderConfig = cast(Callable[..., object], getattr(mod, "PolymarketInstrumentProviderConfig", PolymarketInstrumentProviderConfig))
+            NautilusActor = cast(type[object] | None, getattr(mod, "NautilusActor", NautilusActor))
+            NautilusActorConfig = cast(Callable[[], object] | None, getattr(mod, "NautilusActorConfig", NautilusActorConfig))
+            NautilusStrategy = cast(type[object] | None, getattr(mod, "NautilusStrategy", NautilusStrategy))
+            NautilusStrategyConfig = cast(Callable[[], object] | None, getattr(mod, "NautilusStrategyConfig", NautilusStrategyConfig))
+            build_paper_trading_node_config = cast(_PaperConfigBuilder, getattr(mod, "build_paper_trading_node_config", build_paper_trading_node_config))
+            register_paper_factories = cast(_FactoryRegistrar, getattr(mod, "register_paper_factories", register_paper_factories))
+        return
+
+    trading_node_mod = importlib.import_module("nautilus_trader.live.node")
+    provider_mod = importlib.import_module("nautilus_trader.adapters.polymarket.providers")
+    actor_mod = importlib.import_module("nautilus_trader.common.actor")
+    strategy_mod = importlib.import_module("nautilus_trader.trading.strategy")
+    config_mod = importlib.import_module("nautilus_trader.config")
+    runtime_config_mod = importlib.import_module("polysignal_lab.nautilus_runtime.trading_node")
+
+    TradingNode = cast(_TradingNodeFactory, getattr(trading_node_mod, "TradingNode"))
+    PolymarketInstrumentProviderConfig = cast(
+        Callable[..., object],
+        getattr(provider_mod, "PolymarketInstrumentProviderConfig"),
+    )
+    NautilusActor = cast(type[object], getattr(actor_mod, "Actor"))
+    NautilusActorConfig = cast(Callable[[], object], getattr(config_mod, "ActorConfig"))
+    NautilusStrategy = cast(type[object], getattr(strategy_mod, "Strategy"))
+    NautilusStrategyConfig = cast(Callable[[], object], getattr(config_mod, "StrategyConfig"))
+    build_paper_trading_node_config = cast(
+        _PaperConfigBuilder,
+        getattr(runtime_config_mod, "build_paper_trading_node_config"),
+    )
+    register_paper_factories = cast(
+        _FactoryRegistrar,
+        getattr(runtime_config_mod, "register_paper_factories"),
+    )
 
 def build_trading_node(
     settings: Settings | None = None,
     *,
     condition_ids: Sequence[str] = (),
-    store: Any = None,
-    wallet: PaperWallet | None = None,
-) -> dict[str, Any]:
-    """Build the Nautilus paper runtime wiring as a component dict.
-
-    Returns a dict of wired components (no Nautilus TradingNode dependency).
-    Callers use the components directly for the default paper-safe mode.
-    """
+    markets: Sequence[Market] = (),
+    store: AnchorPriceStore | None = None,
+    wallet: object | None = None,
+    observability: ObservabilityActor | None = None,
+) -> dict[str, object]:
+    """Build the Nautilus-owned paper runtime wiring."""
     if settings is None:
         settings = load_settings()
+    _ = wallet
 
-    # -- Data infrastructure --
+    configured_markets = tuple(markets)
+    configured_condition_ids = _configured_condition_ids(condition_ids, configured_markets)
+
+    _ensure_nautilus_imports()
+    trading_node_factory = TradingNode
+    if trading_node_factory is None:
+        raise RuntimeError("Nautilus TradingNode is unavailable")
+
+    instrument_config = PolymarketInstrumentProviderConfig(
+        load_ids=_instrument_load_ids(configured_markets),
+    )
+    config = build_paper_trading_node_config(settings, instrument_config=instrument_config)
+    node = trading_node_factory(config=config)
+    register_paper_factories(node)
+
     registry = PolymarketMarketRegistry()
+    _register_markets(registry, configured_markets)
     sidecar = ExternalDataSidecar()
-    assembler = MarketViewAssembler(registry=registry, books=None, sidecar=sidecar)
-    group_assembler = MarketGroupViewAssembler()
-
-    # -- Wallet & execution --
-    wallet = wallet or PaperWallet(
-        starting_balance=settings.paper_trading.starting_balance_usdc
+    book_data_provider = NautilusBookDataProvider()
+    assembler = MarketViewAssembler(
+        registry=registry,
+        books=book_data_provider,
+        sidecar=sidecar,
     )
-    paper_client = NautilusMatchingPaperExecutionClient(
-        wallet=wallet,
-        accuracy_mode=settings.runtime.nautilus.matching_accuracy_mode,
-        max_book_staleness_ms=settings.data.polymarket.max_book_staleness_ms,
+    policy = _build_policy(settings)
+
+    from polysignal_lab.nautilus_runtime.sidecar_data import runtime_sidecar_actor_type
+
+    actor_type = runtime_sidecar_actor_type(NautilusActor, NautilusActorConfig)
+    sidecar_actor = actor_type(
+        settings=settings,
+        markets=configured_markets,
+        registry=registry,
+        sidecar=sidecar,
+        anchor_store=store,
+    )
+    node.trader.add_actor(sidecar_actor)
+
+    strategies = _build_native_strategies(
+        settings,
+        assembler,
+        policy,
+        configured_condition_ids,
+        registry,
+        sidecar,
+        observability,
+    )
+    for strategy in strategies:
+        node.trader.add_strategy(strategy)
+    node.build()
+
+    from polysignal_lab.nautilus_runtime.cache_reader import NautilusCacheReader
+    kernel = getattr(node, "kernel", None)
+    cache_reader = NautilusCacheReader(
+        getattr(node, "cache", None) or getattr(kernel, "cache", None),
+        portfolio=getattr(node, "portfolio", None) or getattr(kernel, "portfolio", None),
     )
 
-    # -- Decision policy --
-    policy = DecisionPolicyActor()
+    return {
+        "node": node,
+        "config": config,
+        "registry": registry,
+        "sidecar": sidecar,
+        "sidecar_actor": sidecar_actor,
+        "book_data_provider": book_data_provider,
+        "assembler": assembler,
+        "policy": policy,
+        "strategies": strategies,
+        "strategy_names": [strategy.strategy_name for strategy in strategies],
+        "cache_reader": cache_reader,
+    }
+def _configured_condition_ids(
+    condition_ids: Sequence[str],
+    markets: Sequence[Market],
+) -> tuple[str, ...]:
+    explicit_ids = tuple(str(condition_id) for condition_id in condition_ids if str(condition_id))
+    if explicit_ids:
+        return explicit_ids
+    return tuple(market.condition_id for market in markets if market.condition_id)
 
-    # -- Position & settlement --
-    position_policy = PositionPolicyActor(settings.paper_trading.exit_model, wallet=wallet)
-    settlement_engine = PaperSettlementEngine(wallet)
-    settlement_actor = SettlementActor(
-        settlement_engine=settlement_engine,
-        wallet=wallet,
-        logger=logger,
+
+def _instrument_load_ids(markets: Sequence[Market]) -> frozenset[str]:
+    from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
+
+    load_ids: set[str] = set()
+    for market in markets:
+        for token in market.outcome_tokens:
+            if token.token_id and market.condition_id:
+                load_ids.add(polymarket_instrument_id(market.condition_id, token.token_id))
+    return frozenset(load_ids)
+
+
+def _register_markets(
+    registry: PolymarketMarketRegistry,
+    markets: Sequence[Market],
+) -> None:
+    from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
+
+    for market in markets:
+        try:
+            registry.register(
+                MarketPairMeta.from_market(
+                    market,
+                    up_instrument_id=polymarket_instrument_id(
+                        market.condition_id,
+                        market.token_for(Side.UP).token_id,
+                    ),
+                    down_instrument_id=polymarket_instrument_id(
+                        market.condition_id,
+                        market.token_for(Side.DOWN).token_id,
+                    ),
+                )
+            )
+        except (KeyError, ValueError) as exc:
+            logger.debug("skipping runtime market registration for %s: %s", market.market_id, exc)
+
+
+def _build_native_strategies(
+    settings: Settings,
+    assembler: MarketViewAssembler,
+    policy: DecisionPolicyActor,
+    condition_ids: Sequence[str],
+    registry: PolymarketMarketRegistry,
+    sidecar: ExternalDataSidecar,
+    observability: ObservabilityActor | None,
+) -> list[_NativeStrategyLike]:
+    from polysignal_lab.nautilus_runtime.native_strategy import runtime_native_strategy_type
+
+    strategy_type = runtime_native_strategy_type(NautilusStrategy, NautilusStrategyConfig)
+    instrument_id_resolver = _instrument_id_resolver(registry)
+    strategy_book_type = (
+        "L1_MBP"
+        if settings.runtime.nautilus.matching_accuracy_mode == "fast_l1"
+        else "L2_MBP"
     )
-
-    # -- Observability --
-    observability = ObservabilityActor(health=None, notifier=None)
-
-    # -- Strategy wrappers --
-    strategies: list[PolySignalNautilusStrategy] = []
-    strategy_names = set()
+    strategies: list[_NativeStrategyLike] = []
+    strategy_names: set[str] = set()
 
     for name in settings.strategies.explicit_strategy_names():
         if name in strategy_names:
             continue
         strategy_names.add(name)
-        cfg = getattr(settings.strategies, name, None)
+        cfg = cast(object | None, getattr(settings.strategies, name, None))
         if cfg is None:
             continue
 
-        wrapper = _build_wrapper(name, cfg, assembler, policy, paper_client, condition_ids)
-        if wrapper is not None:
-            strategies.append(wrapper)
+        core = _native_core_for(name, cfg)
+        if core is None:
+            logger.warning("no native alpha core for strategy %s", name)
+            continue
 
-    return {
-        "registry": registry,
-        "sidecar": sidecar,
-        "assembler": assembler,
-        "group_assembler": group_assembler,
-        "wallet": wallet,
-        "paper_client": paper_client,
-        "policy": policy,
-        "position_policy": position_policy,
-        "settlement_actor": settlement_actor,
-        "observability": observability,
-        "strategies": strategies,
-        "strategy_names": sorted(strategy_names),
-    }
+        fixed_stake = _fixed_stake_for(cfg)
+        strategy = strategy_type(
+            core=core,
+            assembler=assembler,
+            condition_ids=tuple(condition_ids),
+            strategy_name=name,
+            policy=policy,
+            fixed_stake_usdc=fixed_stake,
+            book_type=strategy_book_type,
+            instrument_id_resolver=instrument_id_resolver,
+            registry=registry,
+            sidecar=sidecar,
+            observability=observability,
+        )
+        strategies.append(strategy)
+
+    return strategies
 
 
-def _build_wrapper(
-    name: str,
-    cfg: Any,
-    assembler: MarketViewAssembler,
-    policy: DecisionPolicyActor,
-    paper_client: NautilusMatchingPaperExecutionClient,
-    condition_ids: Sequence[str],
-) -> PolySignalNautilusStrategy | None:
-    """Build a strategy wrapper by name."""
-    fixed_stake = float(getattr(cfg, "stake_usdc", None) or getattr(cfg, "basket_notional", 10.0))
+def _instrument_id_resolver(registry: PolymarketMarketRegistry) -> Callable[[str], object]:
+    def resolve(token_id: str) -> object:
+        meta = registry.token_meta(token_id)
+        if meta is None:
+            raise ValueError(f"token_id {token_id!r} is not registered in the Nautilus runtime registry")
+        return meta.instrument_id
 
-    wrapper_kwargs = dict(
-        config=cfg,
-        assembler=assembler,
-        condition_ids=list(condition_ids),
-        policy=policy,
-        submitter=lambda spec: paper_client.submit_spec(spec),
-        fixed_stake_usdc=fixed_stake,
+    return resolve
+
+
+async def _stop_nautilus_scheduler(scheduler: object) -> None:
+    stop = getattr(scheduler, "stop", None)
+    if hasattr(scheduler, "wallet") and callable(stop):
+        await cast(Callable[[], Awaitable[object]], stop)()
+        return
+    setattr(scheduler, "_running", False)
+    try:
+        scheduler_health.persist_health_snapshot(cast(PolySignalScheduler, scheduler))
+    except Exception as exc:
+        cast(logging.Logger, getattr(scheduler, "logger", logger)).warning(
+            "Failed to persist Nautilus health snapshot: %s",
+            exc,
+        )
+
+
+def _native_core_for(name: str, cfg: object) -> AlphaCore | None:
+    """Return the alpha core for a strategy name, or None."""
+    from polysignal_lab.alpha.binary_momentum_core import BinaryMomentumAlphaCore
+    from polysignal_lab.alpha.cross_market_core import CrossMarketAlphaCore
+    from polysignal_lab.alpha.dump_hedge_core import DumpHedgeAlphaCore
+    from polysignal_lab.alpha.fibonacci_core import FibonacciAlphaCore
+    from polysignal_lab.alpha.late_consensus_core import LateConsensusAlphaCore
+    from polysignal_lab.alpha.low_side_dual_reversion_core import LowSideDualReversionAlphaCore
+    from polysignal_lab.alpha.mid_price_sizing_core import MidPriceSizingAlphaCore
+    from polysignal_lab.alpha.ninety_nine_cent_sniper_core import NinetyNineCentSniperAlphaCore
+    from polysignal_lab.alpha.one_cent_buy_core import OneCentBuyAlphaCore
+    from polysignal_lab.alpha.pre_order_market_core import PreOrderMarketAlphaCore
+    from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
+    from polysignal_lab.alpha.skew_mean_reversion_core import SkewMeanReversionAlphaCore
+    from polysignal_lab.alpha.vwap_momentum_core import VWAPMomentumAlphaCore
+
+    core_factory = cast(
+        Callable[[object], AlphaCore] | None,
+        {
+            "ptb_diff": PTBDiffAlphaCore,
+            "skew_mean_reversion": SkewMeanReversionAlphaCore,
+            "binary_momentum": BinaryMomentumAlphaCore,
+            "fibonacci_bot": FibonacciAlphaCore,
+            "one_cent_buy": OneCentBuyAlphaCore,
+            "ninety_nine_cent_sniper": NinetyNineCentSniperAlphaCore,
+            "late_consensus": LateConsensusAlphaCore,
+            "vwap_momentum": VWAPMomentumAlphaCore,
+            "dump_hedge": DumpHedgeAlphaCore,
+            "mid_price_sizing": MidPriceSizingAlphaCore,
+            "pre_order_market": PreOrderMarketAlphaCore,
+            "low_side_dual_reversion": LowSideDualReversionAlphaCore,
+            "cross_market_bot": CrossMarketAlphaCore,
+        }.get(name),
     )
-
-    mapping = {
-        "ptb_diff": PTBDiffNautilusStrategy,
-        "skew_mean_reversion": SkewMeanReversionNautilusStrategy,
-        "binary_momentum": BinaryMomentumNautilusStrategy,
-        "fibonacci_bot": FibonacciBotNautilusStrategy,
-        "one_cent_buy": OneCentBuyNautilusStrategy,
-        "ninety_nine_cent_sniper": NinetyNineCentSniperNautilusStrategy,
-        "late_consensus": LateConsensusNautilusStrategy,
-        "vwap_momentum": VWAPMomentumNautilusStrategy,
-        "dump_hedge": DumpHedgeNautilusStrategy,
-        "mid_price_sizing": MidPriceSizingNautilusStrategy,
-        "pre_order_market": PreOrderMarketNautilusStrategy,
-        "low_side_dual_reversion": LowSideDualReversionNautilusStrategy,
-    }
-    cls = mapping.get(name)
-    if cls is None:
-        logger.warning("no nautilus wrapper for strategy %s", name)
+    if core_factory is None:
         return None
-    return cls(**wrapper_kwargs)
+    return core_factory(cfg)
+
+
+def _fixed_stake_for(cfg: object) -> float:
+    stake_usdc = cast(object, getattr(cfg, "stake_usdc", None))
+    if isinstance(stake_usdc, (int, float, str)):
+        return float(stake_usdc)
+    basket_notional = cast(object, getattr(cfg, "basket_notional", 10.0))
+    if isinstance(basket_notional, (int, float, str)):
+        return float(basket_notional)
+    return 10.0
+
+
+
+def _build_policy(settings: Settings) -> DecisionPolicyActor:
+    return DecisionPolicyActor(
+        gate=SignalGate(
+            settings.signal,
+            settings.data.polymarket,
+            settings.data.binance,
+        ),
+        arbiter=SignalArbiter(),
+        consensus=ConsensusEngine(
+            window_sec=settings.signal.consensus_window_sec,
+            enabled=settings.signal.consensus_enabled,
+        ),
+    )
 
 
 def build_control(policy: DecisionPolicyActor) -> DecisionPolicyControl:
@@ -198,7 +490,8 @@ def build_control(policy: DecisionPolicyActor) -> DecisionPolicyControl:
 
 def _initialize_nautilus_scheduler_components(scheduler: PolySignalScheduler) -> None:
     """Initialize scheduler state needed by Nautilus without legacy local paper."""
-    if scheduler._trading_components_initialized:
+    initialized = cast(object, getattr(scheduler, "_trading_components_initialized", False))
+    if initialized is True:
         return
     scheduler.strategy_schedule = build_strategy_schedule(scheduler.settings.strategies)
     scheduler.strategies = [entry.strategy for entry in scheduler.strategy_schedule]
@@ -207,127 +500,207 @@ def _initialize_nautilus_scheduler_components(scheduler: PolySignalScheduler) ->
         {entry.name: tuple(entry.depends_on) for entry in scheduler.strategy_schedule}
     )
     known_strategy_names = {entry.name for entry in scheduler.strategy_schedule}
-    disabled = scheduler.persistence.read_state("telegram_disabled_strategies", default=[])
-    for name in disabled if isinstance(disabled, list) else []:
+    disabled_raw = cast(object, scheduler.persistence.read_state("telegram_disabled_strategies", default=[]))
+    disabled_names: tuple[str, ...] = ()
+    if isinstance(disabled_raw, list):
+        disabled_names = tuple(str(name) for name in cast(list[object], disabled_raw))
+    for name in disabled_names:
         if name in known_strategy_names:
-            scheduler.signal_pipeline.set_strategy_enabled(str(name), False)
+            scheduler.signal_pipeline.set_strategy_enabled(name, False)
     scheduler.arbiter = SignalArbiter()
-    scheduler.wallet = PaperWallet(scheduler.settings.paper_trading.starting_balance_usdc)
-    scheduler.paper = None
-    scheduler.exits = PaperExitEngine(scheduler.settings.paper_trading.exit_model, scheduler.wallet)
-    scheduler.settlement = PaperSettlementEngine(scheduler.wallet)
-    scheduler.paper_portfolio.configure(
-        wallet=scheduler.wallet,
-        paper=None,
-        exits=scheduler.exits,
-        settlement=scheduler.settlement,
-        markets=scheduler.ctx.markets,
-        books=scheduler.ctx.books,
-        persistence=scheduler.persistence,
-    )
-    scheduler._trading_components_initialized = True
+    setattr(scheduler, "_trading_components_initialized", True)
 
 
-async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRuntimeBundle:
-    """Build and wire the complete Nautilus runtime with a PolySignal-owned scheduler."""
-    if settings is None:
-        settings = load_settings()
-
+async def _prepare_nautilus_runtime_context(
+    settings: Settings,
+) -> tuple[PolySignalScheduler, tuple[Market, ...], ObservabilityActor]:
     scheduler = PolySignalScheduler(settings)
     _initialize_nautilus_scheduler_components(scheduler)
-    await scheduler_market_data.refresh_markets_once(scheduler)
-
-    book_data_provider = NautilusBookDataProvider(scheduler.ctx.books)
-
-    condition_ids = tuple(m.condition_id for m in scheduler.ctx.markets.active())
-    components = build_trading_node(
-        settings,
-        condition_ids=condition_ids,
-        wallet=scheduler.wallet,
-    )
-
-    # Wire real book data provider into the assembler
-    components["assembler"].books = book_data_provider
-
-    data_ingestor = NautilusDataIngestor(
-        markets=scheduler.ctx.markets,
-        books=scheduler.ctx.books,
-        spots=scheduler.ctx.spots,
-        bridge_registry=components["registry"],
-        sidecar=components["sidecar"],
-        book_data_provider=book_data_provider,
-        matching_client=components["paper_client"],
-        price_to_beat_provider=scheduler.ptb,
-    )
-
+    discovered_markets = tuple(await scheduler.market_universe.refresh_once())
     observability = ObservabilityActor(
         health=scheduler.health,
         store=NautilusEventStoreAdapter(scheduler.persistence),
         notifier=NautilusNotifierAdapter(scheduler.publisher),
     )
+    return scheduler, discovered_markets, observability
 
-    websocket_tasks = await scheduler_market_data.start_websockets(scheduler)
 
-    orchestrator = NautilusOrchestrator(
-        scheduler=scheduler,
-        registered_strategies=components["strategies"],
-        data_ingestor=data_ingestor,
-        book_data_provider=book_data_provider,
-        paper_client=components["paper_client"],
-        position_policy=components["position_policy"],
-        settlement_actor=components["settlement_actor"],
+def _build_nautilus_runtime_bundle(
+    settings: Settings,
+    scheduler: PolySignalScheduler,
+    discovered_markets: tuple[Market, ...],
+    observability: ObservabilityActor,
+) -> NautilusRuntimeBundle:
+    condition_ids = tuple(market.condition_id for market in discovered_markets if market.condition_id)
+    components = build_trading_node(
+        settings,
+        condition_ids=condition_ids,
+        markets=discovered_markets,
+        store=getattr(scheduler, "sqlite", None),
         observability=observability,
-        health=scheduler.health,
-        refresh_interval_sec=settings.markets.refresh_interval_sec,
     )
+    paper_execution_metadata = {
+        "paper_engine": settings.runtime.nautilus.paper_engine,
+        "accuracy_mode": settings.runtime.nautilus.matching_accuracy_mode,
+    }
+    setattr(scheduler, "nautilus_cache_reader", components.get("cache_reader"))
+    setattr(scheduler, "paper_execution_metadata", paper_execution_metadata)
 
     return NautilusRuntimeBundle(
         scheduler=scheduler,
         components=components,
-        bridge_registry=components["registry"],
-        sidecar=components["sidecar"],
-        book_data_provider=book_data_provider,
-        data_ingestor=data_ingestor,
-        paper_client=components["paper_client"],
+        bridge_registry=cast(PolymarketMarketRegistry, components["registry"]),
+        sidecar=cast(ExternalDataSidecar, components["sidecar"]),
+        book_data_provider=None,
+        data_ingestor=None,
+        node=cast(_TradingNodeLike, components["node"]),
         observability=observability,
-        orchestrator=orchestrator,
-        websocket_tasks=websocket_tasks,
+        websocket_tasks=[],
     )
 
 
+async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRuntimeBundle:
+    """Build the default Nautilus runtime without PolySignal market-data ownership."""
+    if settings is None:
+        settings = load_settings()
+
+    scheduler, discovered_markets, observability = await _prepare_nautilus_runtime_context(settings)
+    return _build_nautilus_runtime_bundle(settings, scheduler, discovered_markets, observability)
+async def _run_nautilus_report_loop(
+    scheduler: PolySignalScheduler,
+    stop_event: asyncio.Event,
+) -> None:
+    from polysignal_lab.app.scheduler_runtime import _generate_iteration_report
+
+    last_report_date = None
+    interval_sec = max(float(scheduler.settings.markets.refresh_interval_sec), 1.0)
+    while not stop_event.is_set():
+        last_report_date = await _generate_iteration_report(scheduler, last_report_date)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_sec)
+        except asyncio.TimeoutError:
+            continue
+
+
+
+
 async def run_nautilus_cli_async(settings: Settings | None = None,
-                                 stop_event: asyncio.Event | None = None) -> None:
-    """Run the Nautilus CLI with async orchestrator loop and signal handling."""
+                                 stop_event: asyncio.Event | None = None) -> _TradingNodeLike:
+    """Run the Nautilus CLI with async orchestration and signal handling."""
     event = stop_event or asyncio.Event()
     bundle = await build_nautilus_runtime(settings)
+    node = bundle.node
     loop = asyncio.get_running_loop()
 
     def request_stop() -> None:
-        bundle.orchestrator.stop()
         event.set()
+
+    runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
             loop.add_signal_handler(sig, request_stop)
         except (NotImplementedError, RuntimeError):
-            signal.signal(sig, lambda _signum, _frame: request_stop())
+            _ = signal.signal(sig, lambda _signum, _frame: request_stop())
 
+    report_task: asyncio.Task[None] | None = None
+    run_task: asyncio.Task[None] | None = None
+    stop_waiter: asyncio.Task[bool] | None = None
     try:
-        paper_client = bundle.components["paper_client"]
-        await bundle.observability.notify_startup(
-            [s.strategy_name for s in bundle.components["strategies"]],
-            paper_engine=paper_client.paper_engine,
-            accuracy_mode=paper_client.accuracy_mode,
+        strategies = bundle.components.get("strategies", ())
+        strategy_count = len(strategies) if isinstance(strategies, Sequence) else 0
+        strategy_names = (
+            [str(getattr(strategy, "strategy_name", "")) for strategy in strategies]
+            if isinstance(strategies, Sequence)
+            else []
         )
-        await bundle.orchestrator.run(event)
+        try:
+            await bundle.observability.notify_startup(
+                strategy_names,
+                paper_engine=bundle.scheduler.settings.runtime.nautilus.paper_engine,
+                accuracy_mode=bundle.scheduler.settings.runtime.nautilus.matching_accuracy_mode,
+            )
+        except Exception:
+            runtime_logger.exception("Nautilus startup notification failed")
+        print(f"Nautilus runtime ready — {strategy_count} strategies")
+        if stop_event is not None and stop_event.is_set():
+            return node
+        report_task = asyncio.create_task(_run_nautilus_report_loop(bundle.scheduler, event))
+        run_task = asyncio.create_task(asyncio.to_thread(node.run))
+        stop_waiter = asyncio.create_task(event.wait())
+        done, pending = await asyncio.wait(
+            [run_task, stop_waiter],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if run_task in done:
+            if stop_waiter in pending:
+                _ = stop_waiter.cancel()
+            await run_task
+        elif stop_waiter in done and run_task is not None:
+            stopper = getattr(node, "stop", None)
+            if callable(stopper):
+                stopper()
+            await run_task
     finally:
-        request_stop()
-        await bundle.scheduler.stop()
+        event.set()
+        if report_task is not None:
+            report_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await report_task
+        try:
+            await bundle.observability.notify_shutdown()
+        except Exception:
+            runtime_logger.exception("Nautilus shutdown notification failed")
+        await _stop_nautilus_scheduler(bundle.scheduler)
+    return node
 
 
 def run_nautilus_cli(settings: Settings | None = None) -> None:
     """Entry point for the ``nautilus`` CLI mode — sync wrapper."""
-    asyncio.run(run_nautilus_cli_async(settings))
+    if settings is None:
+        settings = load_settings()
+    scheduler, discovered_markets, observability = asyncio.run(
+        _prepare_nautilus_runtime_context(settings)
+    )
+    bundle = _build_nautilus_runtime_bundle(
+        settings,
+        scheduler,
+        discovered_markets,
+        observability,
+    )
+    node = bundle.node
+    runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))
+    strategies = bundle.components.get("strategies", ())
+    strategy_names = (
+        [str(getattr(strategy, "strategy_name", "")) for strategy in strategies]
+        if isinstance(strategies, Sequence)
+        else []
+    )
+    try:
+        try:
+            asyncio.run(
+                bundle.observability.notify_startup(
+                    strategy_names,
+                    paper_engine=bundle.scheduler.settings.runtime.nautilus.paper_engine,
+                    accuracy_mode=bundle.scheduler.settings.runtime.nautilus.matching_accuracy_mode,
+                )
+            )
+        except Exception:
+            runtime_logger.exception("Nautilus startup notification failed")
+        print(f"Nautilus runtime ready — {len(strategy_names)} strategies")
+        run_method = cast(Callable[..., None], getattr(node, "run"))
+        if "raise_exception" in inspect.signature(run_method).parameters:
+            run_method(raise_exception=True)
+        else:
+            run_method()
+    finally:
+        try:
+            asyncio.run(bundle.observability.notify_shutdown())
+        except Exception:
+            runtime_logger.exception("Nautilus shutdown notification failed")
+        asyncio.run(_stop_nautilus_scheduler(bundle.scheduler))
+        if isinstance(node, _Disposable):
+            node.dispose()
 
 
 def main() -> int:

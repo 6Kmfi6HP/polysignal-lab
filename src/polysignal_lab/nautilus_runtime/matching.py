@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from datetime import UTC, datetime, timedelta
+from importlib import import_module
 from typing import Any, Protocol
 
 from polysignal_lab.alpha.types import NautilusOrderSpec
@@ -376,41 +377,52 @@ class OwnedNautilusMatchingBoundary:
         try:
             import asyncio
 
-            from nautilus_trader.backtest.engine import SimulatedExchange
-            from nautilus_trader.backtest.execution_client import BacktestExecClient
-            from nautilus_trader.backtest.models import FillModel, LatencyModel, MakerTakerFeeModel
-            from nautilus_trader.cache.cache import Cache
-            from nautilus_trader.common.component import MessageBus, TestClock
-            from nautilus_trader.common.factories import OrderFactory
-            from nautilus_trader.execution.engine import ExecutionEngine
-            from nautilus_trader.core.uuid import UUID4
-            from nautilus_trader.execution.messages import SubmitOrder
-            from nautilus_trader.model.data import BookOrder, OrderBookDelta, OrderBookDeltas, TradeTick
-            from nautilus_trader.model.events.order import OrderFilled
-            from nautilus_trader.model.enums import (
-                AggressorSide,
-                BookAction,
-                LiquiditySide,
-                OrderSide,
-                OrderType,
-                RecordFlag,
-                TimeInForce,
-                account_type_from_str,
-                book_type_from_str,
-                oms_type_from_str,
-            )
-            from nautilus_trader.model.identifiers import (
-                ClientOrderId,
-                PositionId,
-                StrategyId,
-                TradeId,
-                TraderId,
-                Venue,
-                VenueOrderId,
-            )
-            from nautilus_trader.model.objects import Currency, Money, Price, Quantity
-            from nautilus_trader.model.position import Position
-            from nautilus_trader.portfolio.portfolio import Portfolio
+            def _attr(module_name: str, attr_name: str) -> Any:
+                return getattr(import_module(module_name), attr_name)
+
+            SimulatedExchange = _attr("nautilus_trader.backtest.engine", "SimulatedExchange")
+            BacktestExecClient = _attr("nautilus_trader.backtest.execution_client", "BacktestExecClient")
+            FillModel = _attr("nautilus_trader.backtest.models", "FillModel")
+            LatencyModel = _attr("nautilus_trader.backtest.models", "LatencyModel")
+            MakerTakerFeeModel = _attr("nautilus_trader.backtest.models", "MakerTakerFeeModel")
+            Cache = _attr("nautilus_trader.cache.cache", "Cache")
+            MessageBus = _attr("nautilus_trader.common.component", "MessageBus")
+            TestClock = _attr("nautilus_trader.common.component", "TestClock")
+            OrderFactory = _attr("nautilus_trader.common.factories", "OrderFactory")
+            ExecutionEngine = _attr("nautilus_trader.execution.engine", "ExecutionEngine")
+            UUID4 = _attr("nautilus_trader.core.uuid", "UUID4")
+            SubmitOrder = _attr("nautilus_trader.execution.messages", "SubmitOrder")
+            BookOrder = _attr("nautilus_trader.model.data", "BookOrder")
+            OrderBookDelta = _attr("nautilus_trader.model.data", "OrderBookDelta")
+            OrderBookDeltas = _attr("nautilus_trader.model.data", "OrderBookDeltas")
+            TradeTick = _attr("nautilus_trader.model.data", "TradeTick")
+            OrderFilled = _attr("nautilus_trader.model.events.order", "OrderFilled")
+            model_enums = import_module("nautilus_trader.model.enums")
+            AggressorSide = getattr(model_enums, "AggressorSide")
+            BookAction = getattr(model_enums, "BookAction")
+            LiquiditySide = getattr(model_enums, "LiquiditySide")
+            OrderSide = getattr(model_enums, "OrderSide")
+            OrderType = getattr(model_enums, "OrderType")
+            RecordFlag = getattr(model_enums, "RecordFlag")
+            TimeInForce = getattr(model_enums, "TimeInForce")
+            account_type_from_str = getattr(model_enums, "account_type_from_str")
+            book_type_from_str = getattr(model_enums, "book_type_from_str")
+            oms_type_from_str = getattr(model_enums, "oms_type_from_str")
+            identifiers = import_module("nautilus_trader.model.identifiers")
+            ClientOrderId = getattr(identifiers, "ClientOrderId")
+            PositionId = getattr(identifiers, "PositionId")
+            StrategyId = getattr(identifiers, "StrategyId")
+            TradeId = getattr(identifiers, "TradeId")
+            TraderId = getattr(identifiers, "TraderId")
+            Venue = getattr(identifiers, "Venue")
+            VenueOrderId = getattr(identifiers, "VenueOrderId")
+            objects = import_module("nautilus_trader.model.objects")
+            Currency = getattr(objects, "Currency")
+            Money = getattr(objects, "Money")
+            Price = getattr(objects, "Price")
+            Quantity = getattr(objects, "Quantity")
+            Position = _attr("nautilus_trader.model.position", "Position")
+            Portfolio = _attr("nautilus_trader.portfolio.portfolio", "Portfolio")
         except Exception as exc:  # pragma: no cover - depends on optional Nautilus runtime
             raise NautilusMatchingUnavailable() from exc
 
@@ -505,7 +517,8 @@ class OwnedNautilusMatchingBoundary:
             ts_init_ns=session.clock.timestamp_ns(),
         )
         session.cache.add_instrument(instrument)
-        if instrument.id not in session.sandbox.exchange.instruments:
+        instrument_id = getattr(instrument, "id")
+        if instrument_id not in session.sandbox.exchange.instruments:
             session.sandbox.exchange.add_instrument(instrument)
         self._instruments[order.token_id] = instrument
         return instrument
@@ -624,6 +637,8 @@ class OwnedNautilusMatchingBoundary:
         if add_order is not None:
             add_order(nautilus_order, None, None)
         client_order_id = _identifier_value(nautilus_order.client_order_id)
+        if client_order_id is None:
+            raise ValueError("nautilus order is missing client_order_id")
         self._client_orders[client_order_id] = order
         start_index = len(session.order_events)
         command = components["SubmitOrder"](
@@ -850,12 +865,13 @@ class NautilusMatchingPaperExecutionClient:
             "paper_engine": self.paper_engine,
             "accuracy_mode": self.accuracy_mode,
         }
+        limit_price = _tag_float(tags, "max_entry_price", spec.price)
         return PaperOrder(
             paper_order_id=new_id("paper"),
             signal_id=tags.get("signal_id", ""),
             token_id=spec.instrument_id,
             side=spec.side,
-            limit_price=_tag_float(tags, "max_entry_price", spec.price),
+            limit_price=spec.price if limit_price is None else limit_price,
             stake_usdc=spec.quantity * spec.price,
             shares=spec.quantity,
             asset=tags.get("asset", ""),

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -32,6 +32,8 @@ DEFAULT_DATA_NAMES = (
     "price_to_beat",
 )
 
+COMPATIBILITY_ONLY = True
+
 
 @dataclass(frozen=True, slots=True)
 class StrategyEvaluationBatch:
@@ -42,6 +44,7 @@ class StrategyEvaluationBatch:
 
 
 class PolySignalNautilusStrategy:
+    """Compatibility wrapper for pre-TradingNode tests; default runtime uses PolySignalNativeStrategy."""
     def __init__(
         self,
         *,
@@ -214,10 +217,15 @@ class PolySignalNautilusStrategy:
                 notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
         handler = getattr(self.core, "on_order_filled", None)
         hedge_decisions = handler(alpha_event) if callable(handler) else []
+        if not isinstance(hedge_decisions, Iterable) or isinstance(
+            hedge_decisions,
+            (str, bytes),
+        ):
+            hedge_decisions = ()
         if skip_notify:
             return []
         submitted: list[NautilusOrderSpec] = []
-        for decision in hedge_decisions or []:
+        for decision in hedge_decisions:
             view = self._view_for_decision(decision)
             if view is None:
                 continue
@@ -433,7 +441,12 @@ class PolySignalNautilusStrategy:
 
     def on_save(self) -> dict[str, bytes]:
         saver = getattr(self.core, "save_state", None)
-        payload = dict(saver()) if callable(saver) else {}
+        raw_payload = saver() if callable(saver) else {}
+        payload = (
+            {str(key): value for key, value in raw_payload.items()}
+            if isinstance(raw_payload, Mapping)
+            else {}
+        )
         return encode_state(self.strategy_name, payload)
 
     def on_load(self, state: Mapping[str, bytes]) -> None:

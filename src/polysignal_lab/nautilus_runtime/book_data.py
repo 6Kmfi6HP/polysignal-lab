@@ -23,6 +23,7 @@ class NautilusBookDataProvider:
     def __init__(self, registry: OrderBookRegistry | None = None) -> None:
         self._registry = registry
         self._books: dict[str, OrderBook] = {}
+        self._trades: dict[str, list[TradeView]] = {}
         if registry is not None:
             self.update_from_registry(registry)
 
@@ -33,6 +34,28 @@ class NautilusBookDataProvider:
 
     def update_book(self, token_id: str, book: OrderBook) -> None:
         self._books[token_id] = book
+
+    def update_trade(
+        self,
+        token_id: str,
+        *,
+        price: float,
+        size: float,
+        side: str | None,
+        ts: datetime | None,
+    ) -> None:
+        self._trades.setdefault(token_id, []).append(
+            TradeView(price=price, size=size, side=side, ts=ts),
+        )
+        self._trades[token_id] = self._trades[token_id][-512:]
+        book = self._book(token_id)
+        if book is not None:
+            updated = book.model_copy(deep=True)
+            updated.last_trade_price = price
+            updated.last_trade_size = size
+            updated.last_trade_side = side
+            updated.last_trade_timestamp = ts.isoformat() if ts is not None else None
+            self._books[token_id] = updated
 
     def book_for_token(self, token_id: str) -> SideBookView | None:
         book = self._book(token_id)
@@ -57,17 +80,17 @@ class NautilusBookDataProvider:
         )
 
     def trades_for_token(self, token_id: str) -> Sequence[TradeView]:
-        if self._registry is None:
-            return ()
-        return tuple(
-            TradeView(
-                price=trade.price,
-                size=trade.size,
-                side=getattr(trade, "side", None),
-                ts=getattr(trade, "datetime", None),
+        if self._registry is not None:
+            return tuple(
+                TradeView(
+                    price=trade.price,
+                    size=trade.size,
+                    side=getattr(trade, "side", None),
+                    ts=getattr(trade, "datetime", None),
+                )
+                for trade in self._registry.recent_trades(token_id)
             )
-            for trade in self._registry.recent_trades(token_id)
-        )
+        return tuple(self._trades.get(token_id, ()))
 
     def snapshot_for_token(self, token_id: str) -> BookSnapshot | None:
         book = self._book(token_id)

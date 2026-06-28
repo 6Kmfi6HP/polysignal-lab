@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 import anyio
 import websockets
@@ -16,9 +16,16 @@ from polysignal_lab.utils import safe_float, utc_now
 class PolymarketRtdsPriceFeed:
     """Polymarket RTDS Chainlink crypto price feed."""
 
-    def __init__(self, registry: SpotRegistry, config: PolymarketDataConfig | None = None) -> None:
+    def __init__(
+        self,
+        registry: SpotRegistry,
+        config: PolymarketDataConfig | None = None,
+        *,
+        on_spot: Callable[[SpotPrice], None] | None = None,
+    ) -> None:
         self.registry = registry
         self.config = config or PolymarketDataConfig()
+        self.on_spot = on_spot
         self.running = False
         self.connected = False
         self.reconnect_count = 0
@@ -85,16 +92,17 @@ class PolymarketRtdsPriceFeed:
             self.ignored_message_count += 1
             return
         self.message_count += 1
-        self.registry.update(
-            SpotPrice(
-                asset=asset,
-                symbol=symbol.upper().replace("/", ""),
-                price=price,
-                source="polymarket_rtds",
-                event_time=_event_time(body),
-                received_at=utc_now(),
-            )
+        spot = SpotPrice(
+            asset=asset,
+            symbol=symbol.upper().replace("/", ""),
+            price=price,
+            source="polymarket_rtds",
+            event_time=_event_time(body),
+            received_at=utc_now(),
         )
+        self.registry.update(spot)
+        if self.on_spot is not None:
+            self.on_spot(spot)
 
 
 def _symbol(payload: dict[str, Any]) -> str | None:

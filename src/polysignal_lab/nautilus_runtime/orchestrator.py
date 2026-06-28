@@ -227,7 +227,7 @@ class NautilusOrchestrator:
             ),
         }
         try:
-            self.scheduler.paper_execution_metadata = dict(metadata)
+            setattr(self.scheduler, "paper_execution_metadata", dict(metadata))
             await self.scheduler.generate_daily_report()
             self.health.mark_ok("daily_report", **metadata)
         except Exception as exc:

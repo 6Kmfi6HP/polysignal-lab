@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Protocol, cast
 
 import pytest
 
 from nautilus_optional import require_nautilus
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_bridge.market_registry import InstrumentTokenMeta, MarketPairMeta
+
+
+class _BinaryOptionLike(Protocol):
+    id: object
+    price_increment: object
+    price_precision: int
+    size_increment: object
+    size_precision: int
+    min_quantity: object
+    expiration_ns: int
+    ts_event: int
+    ts_init: int
+    info: dict[str, object]
 
 
 def _pair() -> MarketPairMeta:
@@ -43,7 +57,10 @@ def test_build_binary_option_sets_precision_and_metadata() -> None:
     from polysignal_lab.nautilus_runtime.instrument_mapping import build_binary_option
 
     pair = _pair()
-    instrument = build_binary_option(pair, pair.up, tick_size=None, min_order_size=None, ts_init_ns=7)
+    instrument = cast(
+        _BinaryOptionLike,
+        build_binary_option(pair, pair.up, tick_size=None, min_order_size=None, ts_init_ns=7),
+    )
 
     assert str(instrument.id) == "123456789.POLYSIGNAL_PM_PAPER"
     assert str(instrument.price_increment) == "0.001"
@@ -58,3 +75,22 @@ def test_build_binary_option_sets_precision_and_metadata() -> None:
     assert instrument.info["condition_id"] == "0xcondition"
     assert instrument.info["market_slug"] == "btc-updown-1700000000"
     assert instrument.info["side"] == "UP"
+
+
+def test_build_binary_option_preserves_explicit_token_venue() -> None:
+    require_nautilus()
+    from polysignal_lab.nautilus_runtime.instrument_mapping import build_binary_option
+
+    pair = _pair()
+    token = InstrumentTokenMeta(
+        instrument_id="123456789.POLYMARKET",
+        token_id="123456789",
+        side=Side.UP,
+    )
+
+    instrument = cast(
+        _BinaryOptionLike,
+        build_binary_option(pair, token, tick_size=None, min_order_size=None, ts_init_ns=7),
+    )
+
+    assert str(instrument.id) == "123456789.POLYMARKET"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TYPE_CHECKING, assert_never
+from typing import TYPE_CHECKING, assert_never, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from polysignal_lab.app import scheduler_health
@@ -223,9 +223,10 @@ def _paper_order_metrics(order: dict[str, object]) -> dict[str, object]:
 
 def _paper_terminal_at(order: dict[str, object]) -> datetime | None:
     metrics = _paper_order_metrics(order)
-    terminal_at = parse_dt(
-        metrics.get("paper_terminal_at") or metrics.get("paper_cancelled_at")
-    )
+    terminal_raw = metrics.get("paper_terminal_at") or metrics.get("paper_cancelled_at")
+    if terminal_raw is not None and not isinstance(terminal_raw, (str, datetime)):
+        terminal_raw = str(terminal_raw)
+    terminal_at = parse_dt(cast(str | datetime | None, terminal_raw))
     if terminal_at is None:
         return None
     if terminal_at.tzinfo is None:
@@ -292,6 +293,94 @@ def _fill_payloads_with_order_intents(
     return enriched
 
 
+def _query_nautilus_projection_rows(
+    scheduler: PolySignalScheduler,
+    *,
+    event_type: str,
+    day_params: tuple[str, str],
+    limit: int = 10000,
+) -> list[dict[str, object]]:
+    return cast(
+        list[dict[str, object]],
+        scheduler.persistence.query_json(
+            "system_events",
+            where="WHERE event_type = ? AND created_at >= ? AND created_at < ? ORDER BY created_at ASC, rowid ASC",
+            params=(event_type, *day_params),
+            limit=limit,
+        ),
+    )
+
+def _nautilus_cache_reader(scheduler: PolySignalScheduler) -> object | None:
+    return getattr(scheduler, "nautilus_cache_reader", None)
+
+
+def _projection_float(source: dict[str, object] | None, key: str) -> float | None:
+    if not isinstance(source, dict):
+        return None
+    value = source.get(key)
+    if not isinstance(value, (int, float, str)):
+        return None
+    return float(value)
+
+
+def _report_equity_inputs(scheduler: PolySignalScheduler) -> tuple[float, float, int]:
+    wallet = getattr(scheduler, "wallet", None)
+    if wallet is not None:
+        return (
+            float(getattr(wallet, "starting_balance")),
+            float(getattr(wallet, "equity")),
+            int(getattr(wallet, "open_position_count")),
+        )
+
+    starting_equity = float(scheduler.settings.paper_trading.starting_balance_usdc)
+    ending_equity = starting_equity
+    open_positions = 0
+    cache_reader = _nautilus_cache_reader(scheduler)
+    if cache_reader is None:
+        return starting_equity, ending_equity, open_positions
+
+    read_account_projection = getattr(cache_reader, "read_account_projection", None)
+    snapshot_portfolio_projection = getattr(cache_reader, "snapshot_portfolio_projection", None)
+    read_positions = getattr(cache_reader, "read_positions", None)
+
+    portfolio_projection = (
+        snapshot_portfolio_projection()
+        if callable(snapshot_portfolio_projection)
+        else None
+    )
+    account_projection = (
+        read_account_projection()
+        if callable(read_account_projection)
+        else None
+    )
+    ending_equity = (
+        _projection_float(cast(dict[str, object] | None, portfolio_projection), "equity")
+        or ending_equity
+    )
+    if ending_equity == starting_equity and isinstance(account_projection, dict):
+        balances = account_projection.get("balances")
+        if isinstance(balances, list):
+            for balance in balances:
+                if not isinstance(balance, dict):
+                    continue
+                if str(balance.get("currency", "")).upper() != "USDC":
+                    continue
+                total = _projection_float(balance, "total")
+                if total is not None:
+                    ending_equity = total
+                    break
+    positions = read_positions() if callable(read_positions) else []
+    if isinstance(positions, list):
+        open_positions = sum(
+            1
+            for position in positions
+            if isinstance(position, dict) and not bool(position.get("is_closed"))
+        )
+    return starting_equity, ending_equity, open_positions
+
+
+
+
 async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport | None:
     try:
         report_tz = ZoneInfo(scheduler.settings.app.timezone)
@@ -327,34 +416,49 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
         params=day_params,
         limit=10000,
     )
+    if not today_fills_raw:
+        today_fills_raw = _query_nautilus_projection_rows(
+            scheduler,
+            event_type="nautilus_fill",
+            day_params=day_params,
+        )
     today_orders_raw = scheduler.persistence.query_json(
         "paper_orders",
         where=day_created_where,
         params=day_params,
         limit=10000,
     )
+    using_nautilus_order_rows = False
+    if not today_orders_raw:
+        today_orders_raw = _query_nautilus_projection_rows(
+            scheduler,
+            event_type="nautilus_order",
+            day_params=day_params,
+        )
+        using_nautilus_order_rows = bool(today_orders_raw)
     today_order_ids = {
         str(order.get("paper_order_id") or "")
         for order in today_orders_raw
         if order.get("paper_order_id")
     }
-    terminal_order_candidates = scheduler.persistence.query_json(
-        "paper_orders",
-        where="WHERE status IN (?, ?)",
-        params=("REJECTED", "CANCELLED"),
-        limit=10000,
-    )
     today_terminal_orders_raw = []
-    for order in terminal_order_candidates:
-        order_id = str(order.get("paper_order_id") or "")
-        if order_id in today_order_ids:
-            continue
-        terminal_at = _paper_terminal_at(order)
-        if terminal_at is None or not (day_start <= terminal_at < day_end):
-            continue
-        if not is_rejected_paper_order_payload(order, _paper_order_metrics(order)):
-            continue
-        today_terminal_orders_raw.append(order)
+    if not using_nautilus_order_rows:
+        terminal_order_candidates = scheduler.persistence.query_json(
+            "paper_orders",
+            where="WHERE status IN (?, ?)",
+            params=("REJECTED", "CANCELLED"),
+            limit=10000,
+        )
+        for order in terminal_order_candidates:
+            order_id = str(order.get("paper_order_id") or "")
+            if order_id in today_order_ids:
+                continue
+            terminal_at = _paper_terminal_at(order)
+            if terminal_at is None or not (day_start <= terminal_at < day_end):
+                continue
+            if not is_rejected_paper_order_payload(order, _paper_order_metrics(order)):
+                continue
+            today_terminal_orders_raw.append(order)
     today_reject_orders_raw = [*today_orders_raw, *today_terminal_orders_raw]
     today_signals_raw = scheduler.persistence.query_json(
         "signals",
@@ -374,7 +478,7 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
         1
         for order in today_orders_raw
         if order.get("status") == "FILLED"
-        and order.get("metrics", {}).get("orderbook_fresh") is False
+        and _paper_order_metrics(order).get("orderbook_fresh") is False
     )
     fill_cfg = scheduler.settings.paper_trading.fill_model
     paper_execution_assumptions = {
@@ -394,18 +498,19 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
             }
         )
 
+    starting_equity, ending_equity, open_positions = _report_equity_inputs(scheduler)
     try:
         report = PaperReportService().build_daily_report(
             report_date=today,
-            starting_equity=scheduler.wallet.starting_balance,
-            ending_equity=scheduler.wallet.equity,
+            starting_equity=starting_equity,
+            ending_equity=ending_equity,
             total_signals=len(today_signals_raw),
             paper_orders=len(today_orders_raw),
             paper_fills=len(today_fills_raw),
             rejected_paper_orders=rejected_paper_orders,
-            open_positions=scheduler.wallet.open_position_count,
+            open_positions=open_positions,
             results=trade_results,
-            equity_curve=[scheduler.wallet.starting_balance, scheduler.wallet.equity],
+            equity_curve=[starting_equity, ending_equity],
             stale_paper_fills=stale_paper_fills,
             paper_order_payloads=today_orders_raw,
             paper_fill_payloads=today_fill_payloads,

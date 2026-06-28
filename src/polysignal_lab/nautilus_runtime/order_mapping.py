@@ -55,8 +55,9 @@ def order_spec_from_decision(
     if intent == OrderIntent.TAKER_FOK:
         if available_shares is None or available_shares < quantity:
             raise ValueError("insufficient depth for full fill")
-    elif available_shares is not None and available_shares <= 0:
-        raise ValueError("insufficient depth for taker order")
+    elif intent in {OrderIntent.TAKER_FAK, OrderIntent.TAKER_IOC}:
+        if available_shares is not None and available_shares <= 0:
+            raise ValueError("insufficient depth for taker order")
 
     tags: dict[str, str] = {
         "strategy": str(source.strategy),
