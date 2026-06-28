@@ -22,6 +22,11 @@ The failure mode here is obvious: you generate "correct" code that's completely 
 
 If you're not sure how something is done in this project, say so. "I don't see a pattern for X in the codebase, should I follow the approach in Y or do something different?" It's always better than guessing.
 
+
+### NautilusTrader-specific rule
+
+- For any NautilusTrader-related development, refactor, testing, or integration work in this project, consult `docs/nautilus_reference/` before implementation.
+- Treat `docs/nautilus_reference/developer_guide/` as the default guidance for design principles, coding standards, Python/Rust implementation details, testing, adapters, and FFI constraints unless the current task explicitly overrides it.
 ---
 
 ## 2. Think Before You Code
