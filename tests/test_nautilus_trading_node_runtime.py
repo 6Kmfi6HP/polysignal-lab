@@ -114,6 +114,28 @@ def test_build_paper_trading_node_config_uses_polymarket_data_and_sandbox_exec(
     assert "POLYMARKET" not in exec_clients
 
 
+def test_build_paper_trading_node_config_enables_dynamic_instrument_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_nautilus(monkeypatch)
+    settings = Settings()
+    settings.runtime.nautilus.market_rotation.allow_adapter_new_market_events = True
+
+    config = build_paper_trading_node_config(
+        settings,
+        instrument_config=SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"})),
+    )
+
+    data_clients = _dict_attr(config, "data_clients")
+    polymarket = data_clients["POLYMARKET"]
+
+    assert getattr(polymarket, "auto_load_missing_instruments") is True
+    assert getattr(polymarket, "auto_load_debounce_ms") == 100
+    assert getattr(polymarket, "auto_load_max_retries") == 12
+    assert getattr(polymarket, "subscribe_new_markets") is True
+    assert getattr(polymarket, "ws_max_subscriptions") == 200
+    assert getattr(polymarket, "update_instruments_interval_mins") == 1
+
 def test_register_paper_factories_registers_data_and_sandbox_exec_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

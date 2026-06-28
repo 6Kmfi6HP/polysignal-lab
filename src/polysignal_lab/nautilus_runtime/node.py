@@ -137,6 +137,14 @@ class _NoopMatchingSink:
         _ = token_id, price, size, side, ts_event
 
 
+class _StaticMarketUniverse:
+    def __init__(self, markets: tuple[Market, ...]) -> None:
+        self._markets = markets
+
+    async def refresh_once(self) -> tuple[Market, ...]:
+        return self._markets
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -215,8 +223,10 @@ def build_trading_node(
     *,
     condition_ids: Sequence[str] = (),
     markets: Sequence[Market] = (),
+    market_universe: object | None = None,
     store: AnchorPriceStore | None = None,
     wallet: object | None = None,
+    health: object | None = None,
     observability: ObservabilityActor | None = None,
 ) -> dict[str, object]:
     """Build the Nautilus-owned paper runtime wiring."""
@@ -226,6 +236,9 @@ def build_trading_node(
 
     configured_markets = tuple(markets)
     configured_condition_ids = _configured_condition_ids(condition_ids, configured_markets)
+    runtime_market_universe = (
+        market_universe if market_universe is not None else _StaticMarketUniverse(configured_markets)
+    )
 
     _ensure_nautilus_imports()
     trading_node_factory = TradingNode
@@ -250,17 +263,19 @@ def build_trading_node(
     )
     policy = _build_policy(settings)
 
-    from polysignal_lab.nautilus_runtime.sidecar_data import runtime_sidecar_actor_type
+    from polysignal_lab.nautilus_runtime.market_rotation import runtime_market_rotation_actor_type
 
-    actor_type = runtime_sidecar_actor_type(NautilusActor, NautilusActorConfig)
-    sidecar_actor = actor_type(
+    actor_type = runtime_market_rotation_actor_type(NautilusActor, NautilusActorConfig)
+    market_rotation_actor = actor_type(
         settings=settings,
-        markets=configured_markets,
+        startup_markets=configured_markets,
+        market_universe=runtime_market_universe,
         registry=registry,
         sidecar=sidecar,
         anchor_store=store,
+        health=health,
     )
-    node.trader.add_actor(sidecar_actor)
+    node.trader.add_actor(market_rotation_actor)
 
     strategies = _build_native_strategies(
         settings,
@@ -287,7 +302,7 @@ def build_trading_node(
         "config": config,
         "registry": registry,
         "sidecar": sidecar,
-        "sidecar_actor": sidecar_actor,
+        "market_rotation_actor": market_rotation_actor,
         "book_data_provider": book_data_provider,
         "assembler": assembler,
         "policy": policy,
@@ -388,6 +403,7 @@ def _build_native_strategies(
             registry=registry,
             sidecar=sidecar,
             observability=observability,
+            unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
         )
         strategies.append(strategy)
 
@@ -536,7 +552,9 @@ def _build_nautilus_runtime_bundle(
         settings,
         condition_ids=condition_ids,
         markets=discovered_markets,
+        market_universe=scheduler.market_universe,
         store=getattr(scheduler, "sqlite", None),
+        health=scheduler.health,
         observability=observability,
     )
     paper_execution_metadata = {

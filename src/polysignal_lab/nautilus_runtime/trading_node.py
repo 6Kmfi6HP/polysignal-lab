@@ -41,6 +41,7 @@ def build_paper_trading_node_config(
     routing_config = _import_callable("nautilus_trader.config", "RoutingConfig")
     trader_id = _import_callable("nautilus_trader.model.identifiers", "TraderId")
 
+    nautilus_runtime = settings.runtime.nautilus
     config = trading_node_config(
         trader_id=trader_id("POLYSIGNAL-001"),
         logging=logging_config(log_level="INFO", use_pyo3=True),
@@ -49,6 +50,12 @@ def build_paper_trading_node_config(
         data_clients={
             POLYMARKET_CLIENT_ID: polymarket_data_config(
                 instrument_config=instrument_config,
+                ws_max_subscriptions=nautilus_runtime.polymarket_data.ws_max_subscriptions_per_connection,
+                update_instruments_interval_mins=1,
+                subscribe_new_markets=nautilus_runtime.market_rotation.allow_adapter_new_market_events,
+                auto_load_missing_instruments=True,
+                auto_load_debounce_ms=100,
+                auto_load_max_retries=12,
             ),
         },
         exec_clients={

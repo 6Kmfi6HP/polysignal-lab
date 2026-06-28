@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 import pytest
 
+from polysignal_lab.config import Settings
 from polysignal_lab.nautilus_runtime.node import (
     build_trading_node,
     build_control,
@@ -104,6 +105,66 @@ def test_build_trading_node_returns_nautilus_runtime_components(monkeypatch) -> 
     assert "paper_client" not in runtime
 
 
+def test_build_trading_node_registers_market_rotation_actor(monkeypatch) -> None:
+    built = {}
+
+    class FakeTradingNode:
+        def __init__(self, config):
+            self.config = config
+            self.trader = SimpleNamespace(strategies=[], actors=[])
+            self.trader.add_strategy = self.trader.strategies.append
+            self.trader.add_actor = self.trader.actors.append
+            built["node"] = self
+
+        def add_data_client_factory(self, name, factory):
+            pass
+
+        def add_exec_client_factory(self, name, factory):
+            pass
+
+        def build(self):
+            return None
+
+    class FakeRotationActor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.TradingNode", FakeTradingNode)
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.PolymarketInstrumentProviderConfig",
+        lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.build_paper_trading_node_config",
+        lambda settings, **kwargs: SimpleNamespace(**kwargs),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.register_paper_factories",
+        lambda node: None,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.market_rotation.runtime_market_rotation_actor_type",
+        lambda _base, _config: FakeRotationActor,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.sidecar_data.runtime_sidecar_actor_type",
+        lambda _base, _config: pytest.fail("build_trading_node should register MarketRotationActor"),
+    )
+
+    universe = object()
+    health = object()
+    runtime = build_trading_node(
+        condition_ids=("condition-btc-5m",),
+        market_universe=universe,
+        health=health,
+    )
+
+    assert len(built["node"].trader.actors) == 1
+    assert built["node"].trader.actors[0] is runtime["market_rotation_actor"]
+    assert isinstance(runtime["market_rotation_actor"], FakeRotationActor)
+    assert runtime["market_rotation_actor"].kwargs["market_universe"] is universe
+    assert runtime["market_rotation_actor"].kwargs["health"] is health
+
 def test_build_trading_node_uses_sandbox_execution_not_matching_client(monkeypatch) -> None:
     class FakeTradingNode:
         def __init__(self, config):
@@ -153,6 +214,48 @@ def test_build_trading_node_strategies_is_list(monkeypatch) -> None:
     runtime = build_trading_node()
     assert isinstance(runtime["strategies"], list)
 
+
+def test_build_trading_node_forwards_unsubscribe_exited_to_native_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_nautilus_placeholders(monkeypatch)
+    captured: dict[str, object] = {}
+
+    class FakeRotationActor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeStrategy:
+        def __init__(self, **kwargs):
+            captured["kwargs"] = kwargs
+            self.strategy_name = kwargs["strategy_name"]
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.market_rotation.runtime_market_rotation_actor_type",
+        lambda _base, _config: FakeRotationActor,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.native_strategy.runtime_native_strategy_type",
+        lambda _base, _config: FakeStrategy,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._native_core_for",
+        lambda _name, _cfg: object(),
+    )
+
+    settings = Settings()
+    settings.runtime.nautilus.market_rotation.unsubscribe_exited = False
+    settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
+
+    runtime = build_trading_node(
+        settings=settings,
+        condition_ids=("condition-btc-5m",),
+    )
+
+    assert len(runtime["strategies"]) == 1
+    assert runtime["node"].trader.strategies == runtime["strategies"]
+    assert captured["kwargs"]["unsubscribe_exited"] is False
+    assert captured["kwargs"]["strategy_name"] == "vwap_momentum"
 
 def test_build_control_adapts_policy() -> None:
     from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
@@ -237,10 +340,12 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     monkeypatch.setattr(
         node_mod,
         "build_trading_node",
-        lambda settings=None, *, condition_ids=(), markets=(), store=None, observability=None: captured.update(
+        lambda settings=None, *, condition_ids=(), markets=(), market_universe=None, store=None, health=None, observability=None: captured.update(
             condition_ids=tuple(condition_ids),
             markets=tuple(markets),
+            market_universe=market_universe,
             store=store,
+            health=health,
             observability=observability,
         )
         or {
@@ -258,6 +363,8 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert refresh_calls == 1
     assert captured["condition_ids"] == ("condition-btc-5m",)
     assert captured["markets"] == (market,)
+    assert captured["market_universe"] is bundle.scheduler.market_universe
+    assert captured["health"] is bundle.scheduler.health
     assert captured["observability"] is not None
     assert bundle.scheduler is not None
     assert getattr(bundle.scheduler, "nautilus_cache_reader") is cache_reader
