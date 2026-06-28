@@ -220,3 +220,11 @@ runtime:
       preserve_gate_first_failure_order: true
       consensus_enabled: true
       arbiter_policy: suppress_ambiguous
+
+    market_rotation:
+      enabled: true
+      interval_sec: 10
+      include_next_periods: 1
+      stale_grace_sec: 5
+      unsubscribe_exited: true
+      allow_adapter_new_market_events: false

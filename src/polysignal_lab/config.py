@@ -255,6 +255,14 @@ class NautilusDecisionPolicyConfig(BaseModel):
     consensus_enabled: bool = True
     arbiter_policy: Literal["suppress_ambiguous"] = "suppress_ambiguous"
 
+class NautilusMarketRotationConfig(BaseModel):
+    enabled: bool = True
+    interval_sec: int = 10
+    include_next_periods: int = 1
+    stale_grace_sec: int = 5
+    unsubscribe_exited: bool = True
+    allow_adapter_new_market_events: bool = False
+
 
 class NautilusRuntimeConfig(BaseModel):
     trader_id: str = "PolySignal-Nautilus-001"
@@ -266,6 +274,9 @@ class NautilusRuntimeConfig(BaseModel):
     polymarket_data: NautilusDataClientConfig = Field(default_factory=NautilusDataClientConfig)
     sidecar: NautilusSidecarConfig = Field(default_factory=NautilusSidecarConfig)
     decision_policy: NautilusDecisionPolicyConfig = Field(default_factory=NautilusDecisionPolicyConfig)
+    market_rotation: NautilusMarketRotationConfig = Field(
+        default_factory=NautilusMarketRotationConfig
+    )
 
     @model_validator(mode="after")
     def validate_paper_safe(self) -> "NautilusRuntimeConfig":

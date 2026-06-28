@@ -7,7 +7,9 @@ them through ``publish_data`` and ``CustomData``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from importlib import import_module
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -38,6 +40,18 @@ def _as_optional_int(value: object) -> int | None:
 
 def _as_bool(value: object) -> bool:
     return bool(value)
+
+def _as_str_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise TypeError("expected a string sequence")
+    return tuple(_as_str(item) for item in value)
+
+
+def _as_str_dict(value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise TypeError("expected a string mapping")
+    return {_as_str(key): _as_str(item) for key, item in value.items()}
+
 
 
 class _PolySignalDataBase(_NautilusDataBase):
@@ -221,6 +235,95 @@ class PolySignalMarketMetaData(_PolySignalDataBase):
         )
 
 
+class PolySignalMarketUniverseData(_PolySignalDataBase):
+    __slots__ = (
+        "_sealed",
+        "epoch",
+        "active_condition_ids",
+        "entered_condition_ids",
+        "exited_condition_ids",
+        "condition_to_up_token",
+        "condition_to_down_token",
+        "condition_to_asset",
+        "condition_to_timeframe",
+    )
+    _fields = (
+        "epoch",
+        "active_condition_ids",
+        "entered_condition_ids",
+        "exited_condition_ids",
+        "condition_to_up_token",
+        "condition_to_down_token",
+        "condition_to_asset",
+        "condition_to_timeframe",
+    )
+
+    def __init__(  # pyright: ignore[reportMissingSuperCall]
+        self,
+        epoch: int,
+        active_condition_ids: tuple[str, ...],
+        entered_condition_ids: tuple[str, ...],
+        exited_condition_ids: tuple[str, ...],
+        condition_to_up_token: dict[str, str],
+        condition_to_down_token: dict[str, str],
+        condition_to_asset: dict[str, str],
+        condition_to_timeframe: dict[str, str],
+        ts_event: int,
+        ts_init: int,
+    ) -> None:
+        object.__setattr__(self, "epoch", int(epoch))
+        object.__setattr__(self, "active_condition_ids", tuple(active_condition_ids))
+        object.__setattr__(self, "entered_condition_ids", tuple(entered_condition_ids))
+        object.__setattr__(self, "exited_condition_ids", tuple(exited_condition_ids))
+        object.__setattr__(
+            self, "condition_to_up_token", MappingProxyType(dict(condition_to_up_token))
+        )
+        object.__setattr__(
+            self, "condition_to_down_token", MappingProxyType(dict(condition_to_down_token))
+        )
+        object.__setattr__(self, "condition_to_asset", MappingProxyType(dict(condition_to_asset)))
+        object.__setattr__(
+            self,
+            "condition_to_timeframe",
+            MappingProxyType(dict(condition_to_timeframe)),
+        )
+        object.__setattr__(self, "_ts_event", int(ts_event))
+        object.__setattr__(self, "_ts_init", int(ts_init))
+        object.__setattr__(self, "_sealed", True)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, object]) -> "PolySignalMarketUniverseData":
+        return cls(
+            epoch=_as_int(d["epoch"]),
+            active_condition_ids=_as_str_tuple(d["active_condition_ids"]),
+            entered_condition_ids=_as_str_tuple(d["entered_condition_ids"]),
+            exited_condition_ids=_as_str_tuple(d["exited_condition_ids"]),
+            condition_to_up_token=_as_str_dict(d["condition_to_up_token"]),
+            condition_to_down_token=_as_str_dict(d["condition_to_down_token"]),
+            condition_to_asset=_as_str_dict(d["condition_to_asset"]),
+            condition_to_timeframe=_as_str_dict(d["condition_to_timeframe"]),
+            ts_event=_as_int(d["ts_event"]),
+            ts_init=_as_int(d["ts_init"]),
+        )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("PolySignalMarketUniverseData is immutable")
+        object.__setattr__(self, name, value)
+
+    def to_dict(self) -> dict[str, object]:
+        payload = super().to_dict()
+        payload["active_condition_ids"] = list(self.active_condition_ids)
+        payload["entered_condition_ids"] = list(self.entered_condition_ids)
+        payload["exited_condition_ids"] = list(self.exited_condition_ids)
+        payload["condition_to_up_token"] = dict(self.condition_to_up_token)
+        payload["condition_to_down_token"] = dict(self.condition_to_down_token)
+        payload["condition_to_asset"] = dict(self.condition_to_asset)
+        payload["condition_to_timeframe"] = dict(self.condition_to_timeframe)
+        return payload
+
+
+
 def register_polysignal_data_types() -> None:
     """Register PolySignal custom data types with the Nautilus serializer."""
     register_serializable_type = getattr(
@@ -228,6 +331,23 @@ def register_polysignal_data_types() -> None:
         "register_serializable_type",
     )
 
-    register_serializable_type(PolySignalSpotData, PolySignalSpotData.to_dict, PolySignalSpotData.from_dict)
-    register_serializable_type(PolySignalPriceToBeatData, PolySignalPriceToBeatData.to_dict, PolySignalPriceToBeatData.from_dict)
-    register_serializable_type(PolySignalMarketMetaData, PolySignalMarketMetaData.to_dict, PolySignalMarketMetaData.from_dict)
+    register_serializable_type(
+        PolySignalSpotData,
+        PolySignalSpotData.to_dict,
+        PolySignalSpotData.from_dict,
+    )
+    register_serializable_type(
+        PolySignalPriceToBeatData,
+        PolySignalPriceToBeatData.to_dict,
+        PolySignalPriceToBeatData.from_dict,
+    )
+    register_serializable_type(
+        PolySignalMarketMetaData,
+        PolySignalMarketMetaData.to_dict,
+        PolySignalMarketMetaData.from_dict,
+    )
+    register_serializable_type(
+        PolySignalMarketUniverseData,
+        PolySignalMarketUniverseData.to_dict,
+        PolySignalMarketUniverseData.from_dict,
+    )
