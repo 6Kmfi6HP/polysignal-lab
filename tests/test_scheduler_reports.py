@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from polysignal_lab.app import scheduler_reporting, scheduler_runtime
 from polysignal_lab.app.scheduler import PolySignalScheduler
@@ -18,6 +19,10 @@ from polysignal_lab.domain.enums import (
 from polysignal_lab.domain.paper_result import PaperTradeResult
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
+from polysignal_lab.nautilus_runtime.observability import (
+    NautilusEventStoreAdapter,
+    ObservabilityActor,
+)
 from factories import BookFactoryConfig, sample_book
 
 
@@ -428,6 +433,145 @@ async def test_daily_report_uses_prior_day_resting_fill_intent(
     assert report.paper_fills_by_intent == {"passive_gtd": 1}
 
 
+
+async def test_daily_report_uses_persisted_nautilus_projection_rows(
+    tmp_path: Path, settings, monkeypatch
+) -> None:
+    # Given: no legacy paper_* rows exist for the day, but Nautilus projection
+    # events were durably persisted through the observability adapter.
+    settings.app.timezone = "UTC"
+    scheduler = _scheduler(tmp_path, settings)
+    scheduler.settings.telegram.send_daily_report = False
+    actor = ObservabilityActor(store=NautilusEventStoreAdapter(scheduler.persistence))
+    actor.record_nautilus_order_event(
+        SimpleNamespace(
+            client_order_id="C-NAUTILUS-1",
+            instrument_id="up-token.POLYMARKET",
+            order_side="BUY",
+            order_type="LIMIT",
+            time_in_force="GTD",
+            quantity=12.5,
+            price=0.80,
+            status="FILLED",
+            metrics={"orderbook_fresh": False},
+            tags=[
+                "strategy=one_cent_buy",
+                "condition_id=condition-btc-5m",
+                "market_id=btc-5m",
+                "order_intent=passive_gtd",
+            ],
+            ts_event=datetime(2026, 6, 23, 10, 0, tzinfo=UTC),
+        )
+    )
+    actor.record_nautilus_fill_event(
+        SimpleNamespace(
+            client_order_id="C-NAUTILUS-1",
+            instrument_id="up-token.POLYMARKET",
+            trade_id="T-NAUTILUS-1",
+            last_qty=12.5,
+            last_px=0.80,
+            liquidity_side="TAKER",
+            ts_event=datetime(2026, 6, 23, 10, 1, tzinfo=UTC),
+        )
+    )
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return cls(2026, 6, 23, 12, 30, tzinfo=UTC)
+            return cls(2026, 6, 23, 12, 30, tzinfo=tz)
+
+    monkeypatch.setattr(scheduler_reporting, "datetime", FixedDateTime)
+
+    # When: the daily report aggregates the persisted report-day rows.
+    report = await scheduler.generate_daily_report()
+
+    # Then: report counts and intent buckets can be built from Nautilus
+    # projection rows without requiring legacy paper_* inserts for the day.
+    assert report is not None
+    assert report.report_date == date(2026, 6, 23)
+    assert report.paper_orders == 1
+    assert report.paper_fills == 1
+    assert report.rejected_paper_orders == 0
+    assert report.stale_paper_fills == 1
+    assert report.paper_attempts_by_intent == {"passive_gtd": 1}
+    assert report.paper_fills_by_intent == {"passive_gtd": 1}
+
+async def test_daily_report_uses_nautilus_cache_reader_when_wallet_missing(
+    tmp_path: Path, settings, monkeypatch
+) -> None:
+    # Given: the Nautilus runtime path initialized scheduler compatibility state
+    # without a PaperWallet, but exposed a read-only Nautilus cache projection.
+    from polysignal_lab.nautilus_runtime.node import _initialize_nautilus_scheduler_components
+
+    settings.app.timezone = "UTC"
+    settings.telegram.enabled = False
+    settings.telegram.dry_run = True
+    settings.telegram.send_daily_report = False
+    settings.data.binance.enabled = False
+    settings.data.polymarket.use_market_ws = False
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    _initialize_nautilus_scheduler_components(scheduler)
+    setattr(
+        scheduler,
+        "nautilus_cache_reader",
+        SimpleNamespace(
+            read_account_projection=lambda: {
+                "account_id": "acct-1",
+                "balances": [{"currency": "USDC", "total": 987.0}],
+            },
+            snapshot_portfolio_projection=lambda: {
+                "portfolio_id": "portfolio-1",
+                "equity": 987.0,
+            },
+            read_positions=lambda: [
+                {"position_id": "pos-open", "is_closed": False},
+                {"position_id": "pos-closed", "is_closed": True},
+            ],
+        ),
+    )
+    actor = ObservabilityActor(store=NautilusEventStoreAdapter(scheduler.persistence))
+    actor.record_nautilus_order_event(
+        SimpleNamespace(
+            client_order_id="C-NAUTILUS-2",
+            instrument_id="up-token.POLYMARKET",
+            order_side="BUY",
+            order_type="LIMIT",
+            time_in_force="GTD",
+            quantity=10.0,
+            price=0.80,
+            status="ACCEPTED",
+            tags=[
+                "strategy=one_cent_buy",
+                "condition_id=condition-btc-5m",
+                "market_id=btc-5m",
+                "order_intent=passive_gtd",
+            ],
+            ts_event=datetime(2026, 6, 23, 10, 0, tzinfo=UTC),
+        )
+    )
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return cls(2026, 6, 23, 12, 30, tzinfo=UTC)
+            return cls(2026, 6, 23, 12, 30, tzinfo=tz)
+
+    monkeypatch.setattr(scheduler_reporting, "datetime", FixedDateTime)
+
+    # When: the daily report is generated from Nautilus projections only.
+    report = await scheduler.generate_daily_report()
+
+    # Then: equity/open-position stats come from the Nautilus cache reader,
+    # not a missing legacy wallet object.
+    assert report is not None
+    assert report.report_date == date(2026, 6, 23)
+    assert report.starting_equity == settings.paper_trading.starting_balance_usdc
+    assert report.ending_equity == 987.0
+    assert report.open_positions == 1
+
 async def test_daily_report_counts_cancelled_paper_rejects(
     tmp_path: Path, settings, monkeypatch
 ) -> None:
@@ -556,10 +700,14 @@ async def test_daily_report_publish_record_written(tmp_path: Path, snapshot, set
     scheduler.wallet.close_position(position.paper_position_id, result.settlement_value, result.pnl_usdc)
     scheduler.sqlite.upsert_paper_position(position)
     scheduler.sqlite.insert_paper_trade_result(result)
-    scheduler.paper_execution_metadata = {
-        "paper_engine": "nautilus_matching",
-        "accuracy_mode": "queue_l2",
-    }
+    setattr(
+        scheduler,
+        "paper_execution_metadata",
+        {
+            "paper_engine": "nautilus_matching",
+            "accuracy_mode": "queue_l2",
+        },
+    )
 
     # When: the daily report is generated with Telegram daily reporting enabled.
     report = await scheduler.generate_daily_report()

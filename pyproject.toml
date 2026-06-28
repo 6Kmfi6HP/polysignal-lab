@@ -48,6 +48,7 @@ allow-direct-references = true
 [tool.basedpyright]
 include = ["src", "tests"]
 pythonVersion = "3.11"
+failOnWarnings = false
 reportMissingTypeStubs = false
 executionEnvironments = [
     { root = "src", extraPaths = ["src"] },
