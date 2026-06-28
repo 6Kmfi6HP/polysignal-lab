@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from polysignal_lab.config import ExitModelConfig
 from polysignal_lab.domain.enums import ExitMode, PositionStatus, TradeResultStatus
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperTradeResult

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-
+from importlib import import_module
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_bridge.market_registry import InstrumentTokenMeta, MarketPairMeta
 
@@ -34,6 +34,23 @@ def instrument_id_for_token(token_id: str, venue: str = DEFAULT_VENUE) -> str:
     return f"{stripped}.{venue_id}"
 
 
+def polymarket_instrument_id(condition_id: str, token_id: str) -> str:
+    condition = str(condition_id).strip()
+    token = str(token_id).strip()
+    if not condition:
+        raise ValueError("condition_id must not be empty")
+    if not token:
+        raise ValueError("token_id must not be empty")
+    try:
+        helper = getattr(
+            import_module("nautilus_trader.adapters.polymarket"),
+            "get_polymarket_instrument_id",
+        )
+    except (ModuleNotFoundError, AttributeError):
+        return f"{condition}-{token}.POLYMARKET"
+    return str(helper(condition, token))
+
+
 def _positive(value: float, name: str) -> float:
     if value <= 0:
         raise ValueError(f"{name} must be positive")
@@ -55,22 +72,32 @@ def build_binary_option(
     tick_size: float | None,
     min_order_size: float | None,
     ts_init_ns: int,
-):
-    from nautilus_trader.model.currencies import USDC
-    from nautilus_trader.model.enums import AssetClass
-    from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
-    from nautilus_trader.model.instruments import BinaryOption
-    from nautilus_trader.model.objects import Price, Quantity
+) -> object:
+    USDC = getattr(import_module("nautilus_trader.model.currencies"), "USDC")
+    AssetClass = getattr(import_module("nautilus_trader.model.enums"), "AssetClass")
+    identifiers = import_module("nautilus_trader.model.identifiers")
+    InstrumentId = getattr(identifiers, "InstrumentId")
+    Symbol = getattr(identifiers, "Symbol")
+    Venue = getattr(identifiers, "Venue")
+    BinaryOption = getattr(import_module("nautilus_trader.model.instruments"), "BinaryOption")
+    objects = import_module("nautilus_trader.model.objects")
+    Price = getattr(objects, "Price")
+    Quantity = getattr(objects, "Quantity")
 
     tick = _positive(DEFAULT_TICK_SIZE if tick_size is None else tick_size, "tick_size")
     size_increment = _positive(DEFAULT_SIZE_INCREMENT, "size_increment")
     minimum = _positive(DEFAULT_MIN_ORDER_SIZE if min_order_size is None else min_order_size, "min_order_size")
     price_increment = Price.from_str(f"{tick:g}")
     quantity_increment = Quantity.from_str(f"{size_increment:g}")
-    symbol = Symbol(token.token_id)
+    instrument_text = str(token.instrument_id or token.token_id).strip()
+    if "." in instrument_text:
+        symbol_text, venue_text = instrument_text.rsplit(".", 1)
+    else:
+        symbol_text, venue_text = str(token.token_id).strip(), DEFAULT_VENUE
+    symbol = Symbol(symbol_text)
 
     return BinaryOption(
-        instrument_id=InstrumentId(symbol=symbol, venue=Venue(DEFAULT_VENUE)),
+        instrument_id=InstrumentId(symbol=symbol, venue=Venue(venue_text)),
         raw_symbol=symbol,
         asset_class=AssetClass.ALTERNATIVE,
         currency=USDC,

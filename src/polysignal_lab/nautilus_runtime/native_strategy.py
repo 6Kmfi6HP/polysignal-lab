@@ -1,13 +1,136 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import Any
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import UTC, datetime
+from importlib import import_module
+from types import SimpleNamespace, new_class
+from typing import Protocol, cast
 
-from polysignal_lab.alpha.types import AlphaCore, MarketView
+from polysignal_lab.alpha.types import (
+    AlphaCore,
+    AlphaDecision,
+    AlphaFillEvent,
+    AlphaOrderEvent,
+    MarketView,
+    SpotView,
+)
+from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.orderbook import BookLevel, OrderBook
+from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
+from polysignal_lab.nautilus_bridge.market_registry import InstrumentTokenMeta, MarketPairMeta, PolymarketMarketRegistry
+from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketMetaData, PolySignalPriceToBeatData, PolySignalSpotData
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision, DecisionPolicyActor, RejectedDecision
-from polysignal_lab.nautilus_runtime.native_order import submit_approved_decision
+from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy, submit_approved_decision
 
 DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
+
+
+class _Assembler(Protocol):
+    def build(self, condition_id: str) -> MarketView | None: ...
+
+class _Observability(Protocol):
+    def record_decision(self, decision: AlphaDecision, accepted: bool) -> None: ...
+
+    def record_rejected_decision(self, rejected: object) -> None: ...
+
+    def record_nautilus_order_event(self, event: object) -> None: ...
+
+    def record_nautilus_fill_event(self, event: object) -> None: ...
+
+    def record_nautilus_position(self, position: object) -> None: ...
+
+
+def _identity_instrument_id(token_id: str) -> str:
+    return token_id
+
+def _nautilus_instrument_id(value: str) -> object:
+    try:
+        identifiers = import_module("nautilus_trader.model.identifiers")
+    except ModuleNotFoundError:
+        return value
+    instrument_id_cls = getattr(identifiers, "InstrumentId", None)
+    from_str = getattr(instrument_id_cls, "from_str", None) if instrument_id_cls is not None else None
+    if callable(from_str):
+        return cast(Callable[[str], object], from_str)(value)
+    return value
+
+def _nautilus_book_type(value: str) -> object:
+    try:
+        enums = import_module("nautilus_trader.model.enums")
+    except ModuleNotFoundError:
+        return value
+    converter = getattr(enums, "book_type_from_str", None)
+    if callable(converter):
+        return cast(Callable[[str], object], converter)(value)
+    return value
+
+def _nautilus_data_type(value: object) -> object:
+    if not isinstance(value, type):
+        return value
+    try:
+        module = import_module("nautilus_trader.model.data")
+    except ModuleNotFoundError:
+        return value
+    data_type_cls = getattr(module, "DataType", None)
+    if callable(data_type_cls):
+        return cast(Callable[[type[object]], object], data_type_cls)(value)
+    return value
+
+
+
+def runtime_native_strategy_type(
+    nautilus_base: type[object] | None,
+    config_factory: Callable[[], object] | None,
+) -> type["PolySignalNativeStrategy"]:
+    if nautilus_base is None:
+        return PolySignalNativeStrategy
+
+    def exec_body(namespace: dict[str, object]) -> None:
+        def __init__(
+            self: PolySignalNativeStrategy,
+            *,
+            core: AlphaCore,
+            assembler: _Assembler,
+            condition_ids: Sequence[str],
+            strategy_name: str,
+            policy: DecisionPolicyActor | None = None,
+            fixed_stake_usdc: float = 10.0,
+            data_names: Sequence[str] = DEFAULT_NATIVE_DATA_NAMES,
+            book_type: str = "L2_MBP",
+            instrument_id_resolver: Callable[[str], object] | None = None,
+            registry: PolymarketMarketRegistry | None = None,
+            sidecar: ExternalDataSidecar | None = None,
+            observability: _Observability | None = None,
+        ) -> None:
+            base_init = cast(Callable[..., None], nautilus_base.__init__)
+            if config_factory is None:
+                base_init(self)
+            else:
+                base_init(self, config=config_factory())
+            PolySignalNativeStrategy.__init__(
+                self,
+                core=core,
+                assembler=assembler,
+                condition_ids=condition_ids,
+                strategy_name=strategy_name,
+                policy=policy,
+                fixed_stake_usdc=fixed_stake_usdc,
+                data_names=data_names,
+                book_type=book_type,
+                instrument_id_resolver=instrument_id_resolver,
+                registry=registry,
+                sidecar=sidecar,
+                observability=observability,
+            )
+
+        namespace["__init__"] = __init__
+
+    strategy_cls = new_class(
+        "NautilusPolySignalNativeStrategy",
+        (PolySignalNativeStrategy, nautilus_base),
+        exec_body=exec_body,
+    )
+    return cast(type[PolySignalNativeStrategy], strategy_cls)
 
 
 class PolySignalNativeStrategy:
@@ -17,76 +140,719 @@ class PolySignalNativeStrategy:
         self,
         *,
         core: AlphaCore,
-        assembler: Any,
+        assembler: _Assembler,
         condition_ids: Sequence[str],
         strategy_name: str,
         policy: DecisionPolicyActor | None = None,
         fixed_stake_usdc: float = 10.0,
         data_names: Sequence[str] = DEFAULT_NATIVE_DATA_NAMES,
-        instrument_id_resolver: Callable[[str], Any] | None = None,
+        book_type: str = "L2_MBP",
+        instrument_id_resolver: Callable[[str], object] | None = None,
+        registry: PolymarketMarketRegistry | None = None,
+        sidecar: ExternalDataSidecar | None = None,
+        observability: _Observability | None = None,
     ) -> None:
-        self.core = core
-        self.assembler = assembler
-        self.condition_ids = tuple(condition_ids)
-        self.strategy_name = strategy_name
-        self.policy = policy or DecisionPolicyActor()
-        self.fixed_stake_usdc = fixed_stake_usdc
-        self.data_names = tuple(data_names)
-        self.instrument_id_resolver = instrument_id_resolver or (lambda token_id: token_id)
+        self.core: AlphaCore = core
+        self.assembler: _Assembler = assembler
+        self.condition_ids: tuple[str, ...] = tuple(condition_ids)
+        self.strategy_name: str = strategy_name
+        self.policy: DecisionPolicyActor = policy or DecisionPolicyActor()
+        self.fixed_stake_usdc: float = fixed_stake_usdc
+        self.data_names: tuple[str, ...] = tuple(data_names)
+        self.book_type: str = book_type
+        self.instrument_id_resolver: Callable[[str], object] = (
+            instrument_id_resolver or _identity_instrument_id
+        )
+        self.registry: PolymarketMarketRegistry | None = registry
+        self.sidecar: ExternalDataSidecar | None = sidecar
+        self.observability: _Observability | None = observability
+        self._asset_condition_ids: dict[str, tuple[str, ...]] = _asset_conditions(
+            registry,
+            self.condition_ids,
+        )
+        self._approved_signal_metrics: dict[str, dict[str, object]] = {}
         self.rejected_decisions: list[RejectedDecision] = []
-        self.submitted_orders: list[Any] = []
-        # Compatibility sentinels: native strategy never uses these paths.
-        # Kept as empty containers so tests can assert the native path is clean.
-        self.submitted_specs: list[Any] = []
-        self.execution_results: list[Any] = []
+        self.submitted_orders: list[object] = []
+        self.submitted_specs: list[object] = []
+        self.execution_results: list[object] = []
 
     def on_start(self) -> None:
-        for name in self.data_names:
-            self.subscribe_data(name)
+        if self.registry is None:
+            for name in self.data_names:
+                self.subscribe_data(name)
+            return
+        for instrument_id in _instrument_ids(self.registry, self.condition_ids):
+            _ = getattr(self, "subscribe_order_book_deltas")(
+                instrument_id=instrument_id,
+                book_type=_nautilus_book_type(self.book_type),
+            )
+            _ = getattr(self, "subscribe_trade_ticks")(instrument_id)
+        _subscribe_custom_data(self, PolySignalSpotData)
+        _subscribe_custom_data(self, PolySignalPriceToBeatData)
+        _subscribe_custom_data(self, PolySignalMarketMetaData)
 
     def on_data(self, data: object) -> None:
+        if self.sidecar is not None and isinstance(data, PolySignalSpotData):
+            self.sidecar.update_spot(
+                SpotView(
+                    asset=data.asset,
+                    symbol=data.symbol,
+                    price=data.price,
+                    source=data.source,
+                    freshness_ms=data.freshness_ms,
+                )
+            )
+            for candidate in self._asset_condition_ids.get(data.asset.upper(), ()):
+                self.evaluate_condition(candidate)
+            return
+        if self.sidecar is not None and isinstance(data, PolySignalPriceToBeatData):
+            self.sidecar.update_price_to_beat(
+                condition_id=data.condition_id,
+                value=data.value,
+                source=data.source,
+                verified=data.verified,
+                from_anchor_service=data.from_anchor_service,
+                anchor_source=data.anchor_source,
+                anchor_lag_ms=data.anchor_lag_ms,
+            )
+            self.evaluate_condition(data.condition_id)
+            return
+        if self.registry is not None and isinstance(data, PolySignalMarketMetaData):
+            self.registry.register(_pair_from_metadata(self.registry, data))
+            self._asset_condition_ids = _asset_conditions(self.registry, self.condition_ids)
+            return
         updater = getattr(self.assembler, "on_data", None) or getattr(self.assembler, "update", None)
         if callable(updater):
-            updater(data)
-        condition_id = getattr(data, "condition_id", None)
+            _ = updater(data)
+        condition_id = cast(object, getattr(data, "condition_id", None))
         if condition_id is not None:
             self.evaluate_condition(str(condition_id))
             return
         for candidate in self.condition_ids:
             self.evaluate_condition(candidate)
 
+    def on_order_book_deltas(self, deltas: object) -> None:
+        if self.registry is None:
+            return
+        instrument_id_value = getattr(deltas, "instrument_id", None)
+        instrument_id = _identifier_text(instrument_id_value)
+        if instrument_id is None:
+            return
+        token_id = _token_id_for_instrument(self.registry, instrument_id)
+        condition_id = _condition_id_for_instrument(self.registry, instrument_id)
+        if token_id is None or condition_id is None:
+            return
+        cache = cast(object, getattr(self, "cache", None))
+        order_book = _cache_order_book(cache, instrument_id_value)
+        if order_book is None:
+            return
+        books = getattr(self.assembler, "books", None)
+        updater = getattr(books, "update_book", None)
+        if callable(updater):
+            _ = updater(token_id, _domain_order_book(token_id, order_book))
+        self.evaluate_condition(condition_id)
+
+    def on_trade_tick(self, tick: object) -> None:
+        if self.registry is None:
+            return
+        instrument_id = _identifier_text(getattr(tick, "instrument_id", None))
+        if instrument_id is None:
+            return
+        token_id = _token_id_for_instrument(self.registry, instrument_id)
+        condition_id = _condition_id_for_instrument(self.registry, instrument_id)
+        if token_id is None or condition_id is None:
+            return
+        books = getattr(self.assembler, "books", None)
+        updater = getattr(books, "update_trade", None)
+        if callable(updater):
+            _ = updater(
+                token_id,
+                price=float(getattr(tick, "price")),
+                size=float(getattr(tick, "size")),
+                side=_identifier_text(getattr(tick, "aggressor_side", None)),
+                ts=_maybe_datetime(getattr(tick, "ts_event", None)),
+            )
+        self.evaluate_condition(condition_id)
+
+    def on_order_submitted(self, event: object) -> None:
+        alpha_event = self._order_event(event)
+        self._record_nautilus_order(event, alpha_event.metrics)
+        self._call_core("on_order_submitted", alpha_event)
+
+    def on_order_accepted(self, event: object) -> None:
+        alpha_event = self._order_event(event)
+        self._record_nautilus_order(event, alpha_event.metrics)
+        self._call_core("on_order_accepted", alpha_event)
+
+    def on_order_rejected(self, event: object) -> None:
+        alpha_event = self._order_event(event)
+        self._record_nautilus_order(event, alpha_event.metrics)
+        self._call_core("on_order_rejected", alpha_event)
+        self._forget_approved_metrics(event, alpha_event)
+
+    def on_order_canceled(self, event: object) -> None:
+        alpha_event = self._order_event(event)
+        self._record_nautilus_order(event, alpha_event.metrics)
+        self._call_core("on_order_canceled", alpha_event)
+        self._forget_approved_metrics(event, alpha_event)
+
+    def on_order_expired(self, event: object) -> None:
+        alpha_event = self._order_event(event)
+        self._record_nautilus_order(event, alpha_event.metrics)
+        self._call_core("on_order_expired", alpha_event)
+        self._forget_approved_metrics(event, alpha_event)
+
+    def on_order_filled(self, event: object) -> None:
+        alpha_event = self._fill_event(event)
+        if self._should_notify_fill(alpha_event):
+            notify = getattr(self.core, "on_notify_fill", None)
+            if callable(notify):
+                notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
+        self._record_nautilus_fill(event, alpha_event.metrics)
+        handler = getattr(self.core, "on_order_filled", None)
+        decisions = handler(alpha_event) if callable(handler) else ()
+        if isinstance(decisions, Iterable) and not isinstance(decisions, (str, bytes)):
+            for decision in cast(Iterable[AlphaDecision], decisions):
+                view = self.assembler.build(decision.condition_id)
+                if view is None:
+                    continue
+                self._handle_decision(decision, view)
+
+    def on_position_opened(self, position: object) -> None:
+        self._record_nautilus_position(position)
+
+    def on_position_changed(self, position: object) -> None:
+        self._record_nautilus_position(position)
+
+    def on_position_closed(self, position: object) -> None:
+        self._record_nautilus_position(position)
+
     def evaluate_condition(self, condition_id: str) -> None:
         view = self.assembler.build(condition_id)
         if view is None:
             return
         for decision in self.core.evaluate(view):
-            policy_result = self.policy.evaluate(decision, view)
-            if isinstance(policy_result, ApprovedDecision):
-                order = self._submit_approved(policy_result, view=view)
-                self.submitted_orders.append(order)
-            else:
-                self.rejected_decisions.append(policy_result)
+            self._handle_decision(decision, view)
 
-    def _submit_approved(self, approved: ApprovedDecision, *, view: MarketView) -> Any:
+    def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
+        policy_result = self.policy.evaluate(decision, view)
+        if isinstance(policy_result, ApprovedDecision):
+            try:
+                order = self._submit_approved(policy_result, view=view)
+            except ValueError as exc:
+                rejected = RejectedDecision(
+                    reason_code="ORDER_MAPPING_FAILED",
+                    detail={"error": str(exc)},
+                    candidate=policy_result.signal,
+                )
+                self.rejected_decisions.append(rejected)
+                self._record_decision(decision, accepted=False)
+                self._record_rejected(rejected)
+                return
+            self._remember_approved_metrics(order, policy_result)
+            self.submitted_orders.append(order)
+            self._record_decision(decision, accepted=True)
+            return
+        self.rejected_decisions.append(policy_result)
+        self._record_decision(decision, accepted=False)
+        self._record_rejected(policy_result)
+
+    def _submit_approved(self, approved: ApprovedDecision, *, view: MarketView) -> object:
         signal = approved.signal
         book = view.book_for(signal.side)
+        # Subclasses supplied by Nautilus/tests provide the native submit surface.
         return submit_approved_decision(
-            self,
+            cast(OrderSubmittingStrategy[object], cast(object, self)),
             approved,
             fixed_stake_usdc=self.fixed_stake_usdc,
             best_ask=book.best_ask,
             available_shares=_visible_ask_shares(book.ask_levels, signal.max_entry_price),
-            instrument_id_resolver=self.instrument_id_resolver,
+            instrument_id_resolver=self._resolved_instrument,
         )
+    def _resolved_instrument(self, token_id: str) -> object:
+        resolved = self.instrument_id_resolver(token_id)
+        cache = getattr(self, "cache", None)
+        getter = getattr(cache, "instrument", None)
+        if callable(getter):
+            instrument_key = getattr(resolved, "id", resolved)
+            cache_lookup = cast(Callable[[object], object | None], getter)
+            try:
+                cached = cache_lookup(instrument_key)
+            except TypeError:
+                cached = None
+            if cached is None:
+                try:
+                    cached = cache_lookup(_nautilus_instrument_id(str(instrument_key)))
+                except TypeError:
+                    cached = None
+            if cached is not None:
+                return cached
+        return resolved
+
+    def _call_core(self, method_name: str, event: AlphaOrderEvent) -> None:
+        handler = getattr(self.core, method_name, None)
+        if callable(handler):
+            handler(event)
+
+    def _record_decision(self, decision: AlphaDecision, *, accepted: bool) -> None:
+        if self.observability is not None:
+            self.observability.record_decision(decision, accepted)
+
+    def _record_rejected(self, rejected: object) -> None:
+        if self.observability is not None:
+            self.observability.record_rejected_decision(rejected)
+
+    def _record_nautilus_order(
+        self, event: object, metrics: Mapping[str, object]
+    ) -> None:
+        if self.observability is None:
+            return
+        self.observability.record_nautilus_order_event(
+            _projection_order_event(event, metrics)
+        )
+
+    def _record_nautilus_fill(
+        self, event: object, metrics: Mapping[str, object]
+    ) -> None:
+        if self.observability is None:
+            return
+        self.observability.record_nautilus_fill_event(
+            _projection_fill_event(event, metrics)
+        )
+
+    def _record_nautilus_position(self, position: object) -> None:
+        if self.observability is not None:
+            self.observability.record_nautilus_position(position)
+
+    def _order_event(self, event: object) -> AlphaOrderEvent:
+        tags = _tags(_value(event, "tags"))
+        instrument_id = _identifier_text(_value(event, "instrument_id"))
+        condition_id = tags.get("condition_id")
+        if not condition_id and self.registry is not None and instrument_id is not None:
+            condition_id = _condition_id_for_instrument(self.registry, instrument_id)
+        market_id = tags.get("market_id")
+        if not market_id and self.registry is not None and condition_id is not None:
+            market_id = _market_id_for_condition(self.registry, condition_id)
+        token_id = tags.get("token_id")
+        if not token_id and self.registry is not None and instrument_id is not None:
+            token_id = _token_id_for_instrument(self.registry, instrument_id)
+        metrics = self._approved_metrics_for_event(event)
+        price = _maybe_float(_value(event, "price"))
+        if "level_price" not in metrics and price is not None:
+            metrics["level_price"] = price
+        if "order_intent" not in metrics and tags.get("order_intent"):
+            metrics["order_intent"] = tags["order_intent"]
+        if "hedge_leg" not in metrics and tags.get("hedge_leg"):
+            metrics["hedge_leg"] = tags["hedge_leg"] == "true"
+        return AlphaOrderEvent(
+            strategy=tags.get("strategy", self.strategy_name),
+            market_id=market_id or str(_value(event, "market_id", "")),
+            condition_id=condition_id or str(_value(event, "condition_id", "")),
+            token_id=token_id or str(_value(event, "token_id", instrument_id or "")),
+            side=_event_side(self.registry, instrument_id, token_id, _value(event, "side")),
+            order_id=str(_value(event, "order_id", _value(event, "id", ""))),
+            client_order_id=_optional_str(_value(event, "client_order_id")),
+            reason=_optional_str(_value(event, "reason")),
+            ts_event=_datetime_or_now(_value(event, "ts_event", _value(event, "timestamp"))),
+            metrics=metrics,
+        )
+
+    def _fill_event(self, event: object) -> AlphaFillEvent:
+        order = self._order_event(event)
+        metrics = dict(order.metrics)
+        fill_price = _maybe_float(
+            _value(event, "fill_price", _value(event, "last_px", _value(event, "price")))
+        )
+        if fill_price is not None:
+            metrics.setdefault("fill_price", fill_price)
+        shares = _maybe_float(
+            _value(event, "shares", _value(event, "last_qty", _value(event, "quantity")))
+        ) or 0.0
+        return AlphaFillEvent(
+            strategy=order.strategy,
+            market_id=order.market_id,
+            condition_id=order.condition_id,
+            token_id=order.token_id,
+            side=order.side,
+            order_id=order.order_id,
+            client_order_id=order.client_order_id,
+            reason=order.reason,
+            ts_event=order.ts_event,
+            metrics=metrics,
+            fill_price=fill_price or 0.0,
+            shares=shares,
+            liquidity_side=_optional_str(_value(event, "liquidity_side")),
+        )
+
+    def _should_notify_fill(self, event: AlphaFillEvent) -> bool:
+        if self.strategy_name != "vwap_momentum":
+            return True
+        intent = event.metrics.get("order_intent")
+        if isinstance(intent, OrderIntent):
+            intent = intent.value
+        return not (
+            bool(event.metrics.get("hedge_leg"))
+            or intent == OrderIntent.PASSIVE_GTD.value
+        )
+
+    def _approved_metrics_for_event(self, event: object) -> dict[str, object]:
+        for key in self._event_lookup_ids(event):
+            metrics = self._approved_signal_metrics.get(key)
+            if metrics is not None:
+                return dict(metrics)
+        return {}
+
+    def _event_lookup_ids(self, event: object) -> tuple[str, ...]:
+        tags = _tags(_value(event, "tags"))
+        values = (
+            _value(event, "order_id"),
+            _value(event, "client_order_id"),
+            _value(event, "id"),
+            tags.get("signal_id"),
+            tags.get("order_id"),
+            tags.get("client_order_id"),
+        )
+        return tuple(
+            text
+            for text in (_lookup_id_text(value) for value in values)
+            if text is not None
+        )
+
+    def _remember_approved_metrics(
+        self, order: object, approved: ApprovedDecision
+    ) -> None:
+        metrics = dict(getattr(approved.signal, "metrics", {}) or {})
+        tags = _tags(_value(order, "tags"))
+        values = (
+            _value(order, "id"),
+            _value(order, "client_order_id"),
+            getattr(approved.signal, "signal_id", None),
+            tags.get("signal_id"),
+            tags.get("order_id"),
+            tags.get("client_order_id"),
+        )
+        for value in values:
+            text = _lookup_id_text(value)
+            if text is not None:
+                self._approved_signal_metrics[text] = dict(metrics)
+
+    def _forget_approved_metrics(self, event: object, order: AlphaOrderEvent) -> None:
+        keys = set(self._event_lookup_ids(event))
+        if order.order_id:
+            keys.add(order.order_id)
+        if order.client_order_id:
+            keys.add(order.client_order_id)
+        for key in keys:
+            self._approved_signal_metrics.pop(key, None)
 
     def subscribe_data(self, data_type: object) -> None:
         method = getattr(self, f"subscribe_{data_type}", None)
         if callable(method):
             for condition_id in self.condition_ids:
-                method(condition_id)
+                _ = method(condition_id)
 
 
+def _value(obj: object, name: str, default: object = None) -> object:
+    if isinstance(obj, Mapping):
+        return cast(Mapping[object, object], obj).get(name, default)
+    return getattr(obj, name, default)
+
+
+def _tags(raw: object) -> dict[str, str]:
+    if isinstance(raw, Mapping):
+        return {
+            str(key): str(value)
+            for key, value in cast(Mapping[object, object], raw).items()
+        }
+    if not isinstance(raw, Iterable) or isinstance(raw, (str, bytes)):
+        return {}
+    parsed: dict[str, str] = {}
+    for item in raw:
+        text = str(item)
+        if "=" not in text:
+            continue
+        key, value = text.split("=", 1)
+        parsed[key] = value
+    return parsed
+
+
+def _optional_str(value: object) -> str | None:
+    text = _lookup_id_text(value)
+    return text
+
+
+def _lookup_id_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = _identifier_text(value)
+    return None if text in (None, "") else text
+
+
+def _market_id_for_condition(
+    registry: PolymarketMarketRegistry, condition_id: str
+) -> str | None:
+    pair = registry.by_condition(condition_id)
+    return None if pair is None else pair.market_id
+
+
+def _event_side(
+    registry: PolymarketMarketRegistry | None,
+    instrument_id: str | None,
+    token_id: str | None,
+    value: object,
+) -> Side:
+    if isinstance(value, Side):
+        return value
+    text = _identifier_text(value)
+    if text in {Side.UP.value, Side.DOWN.value}:
+        return Side(text)
+    if registry is not None and token_id is not None:
+        meta = registry.token_meta(token_id)
+        if meta is not None:
+            return meta.side
+    if registry is not None and instrument_id is not None:
+        for condition_id in registry._by_condition:
+            pair = registry.by_condition(condition_id)
+            if pair is None:
+                continue
+            if str(pair.up.instrument_id) == instrument_id:
+                return pair.up.side
+            if str(pair.down.instrument_id) == instrument_id:
+                return pair.down.side
+    return Side.UP
+
+
+def _projection_order_event(
+    event: object, metrics: Mapping[str, object]
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        client_order_id=_value(event, "client_order_id"),
+        instrument_id=_value(event, "instrument_id"),
+        order_side=_value(event, "order_side"),
+        order_type=_value(event, "order_type"),
+        time_in_force=_value(event, "time_in_force"),
+        quantity=_value(event, "quantity"),
+        price=_value(event, "price"),
+        status=_value(event, "status"),
+        tags=_value(event, "tags", ()),
+        metrics=dict(metrics),
+        ts_event=_value(event, "ts_event", _value(event, "timestamp")),
+    )
+
+
+def _projection_fill_event(
+    event: object, metrics: Mapping[str, object]
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        client_order_id=_value(event, "client_order_id"),
+        instrument_id=_value(event, "instrument_id"),
+        trade_id=_value(event, "trade_id", _value(event, "fill_id")),
+        last_qty=_value(event, "last_qty", _value(event, "shares", _value(event, "quantity"))),
+        last_px=_value(event, "last_px", _value(event, "fill_price", _value(event, "price"))),
+        liquidity_side=_value(event, "liquidity_side"),
+        metrics=dict(metrics),
+        ts_event=_value(event, "ts_event", _value(event, "timestamp")),
+    )
+
+
+
+def _instrument_ids(
+    registry: PolymarketMarketRegistry,
+    condition_ids: Sequence[str],
+) -> tuple[object, ...]:
+    instrument_ids: list[object] = []
+    for condition_id in condition_ids:
+        pair = registry.by_condition(condition_id)
+        if pair is None:
+            continue
+        instrument_ids.extend(
+            (
+                _nautilus_instrument_id(str(pair.up.instrument_id)),
+                _nautilus_instrument_id(str(pair.down.instrument_id)),
+            )
+        )
+    return tuple(instrument_ids)
+
+
+def _asset_conditions(
+    registry: PolymarketMarketRegistry | None,
+    condition_ids: Sequence[str],
+) -> dict[str, tuple[str, ...]]:
+    if registry is None:
+        return {}
+    grouped: dict[str, list[str]] = {}
+    for condition_id in condition_ids:
+        pair = registry.by_condition(condition_id)
+        if pair is None:
+            continue
+        grouped.setdefault(pair.asset.upper(), []).append(condition_id)
+    return {asset: tuple(ids) for asset, ids in grouped.items()}
 def _visible_ask_shares(levels: Sequence[tuple[float, float]], limit_price: float | None) -> float | None:
     if not levels or limit_price is None:
         return None
     return sum(float(size) for price, size in levels if float(price) <= limit_price)
+
+
+def _identifier_text(value: object) -> str | None:
+    if value is None:
+        return None
+    raw = getattr(value, "value", None)
+    text = str(raw if raw is not None else value)
+    return text or None
+
+
+def _condition_id_for_instrument(
+    registry: PolymarketMarketRegistry,
+    instrument_id: str,
+) -> str | None:
+    for condition_id in registry._by_condition:
+        pair = registry.by_condition(condition_id)
+        if pair is None:
+            continue
+        if str(pair.up.instrument_id) == instrument_id or str(pair.down.instrument_id) == instrument_id:
+            return pair.condition_id
+    return None
+
+
+def _token_id_for_instrument(
+    registry: PolymarketMarketRegistry,
+    instrument_id: str,
+) -> str | None:
+    for condition_id in registry._by_condition:
+        pair = registry.by_condition(condition_id)
+        if pair is None:
+            continue
+        if str(pair.up.instrument_id) == instrument_id:
+            return pair.up.token_id
+        if str(pair.down.instrument_id) == instrument_id:
+            return pair.down.token_id
+    return None
+
+
+def _cache_order_book(cache: object, instrument_id: object) -> object | None:
+    getter = getattr(cache, "order_book", None)
+    if not callable(getter):
+        return None
+    return cast(Callable[[object], object | None], getter)(instrument_id)
+
+
+def _domain_order_book(token_id: str, book: object) -> OrderBook:
+    raw_bids = getattr(book, "bids", [])
+    if callable(raw_bids):
+        raw_bids = raw_bids()
+    raw_asks = getattr(book, "asks", [])
+    if callable(raw_asks):
+        raw_asks = raw_asks()
+    bids = [
+        BookLevel(price=_float_attr(level, "price"), size=_float_attr(level, "size"))
+        for level in cast(list[object], raw_bids or [])
+    ]
+    asks = [
+        BookLevel(price=_float_attr(level, "price"), size=_float_attr(level, "size"))
+        for level in cast(list[object], raw_asks or [])
+    ]
+    return OrderBook(
+        token_id=token_id,
+        bids=bids,
+        asks=asks,
+        last_trade_price=_maybe_float(getattr(book, "last_trade_price", None)),
+        last_trade_size=_maybe_float(getattr(book, "last_trade_size", None)),
+        last_trade_timestamp=str(getattr(book, "last_trade_timestamp", "") or "") or None,
+        received_at=_datetime_or_now(getattr(book, "received_at", None)),
+    )
+
+
+def _maybe_datetime(value: object) -> datetime | None:
+    return value if isinstance(value, datetime) else None
+
+def _float_attr(source: object, name: str) -> float:
+    value = getattr(source, name)
+    if callable(value):
+        value = value()
+    return float(value if isinstance(value, (int, float, str, bytes, bytearray)) else str(value))
+
+
+def _maybe_float(value: object) -> float | None:
+    if value is None or not isinstance(value, (int, float, str, bytes, bytearray)):
+        return None
+    return float(value)
+
+def _datetime_or_now(value: object) -> datetime:
+    return value if isinstance(value, datetime) else datetime.now(UTC)
+
+def _subscribe_custom_data(strategy: object, data_type: object) -> None:
+    mro = type(strategy).mro()
+    try:
+        base_index = mro.index(PolySignalNativeStrategy) + 1
+    except ValueError:
+        base_index = -1
+    resolved_data_type = _nautilus_data_type(data_type)
+    if _subscribe_custom_data_on_bus(strategy, resolved_data_type):
+        return
+    base_subscribe = (
+        getattr(mro[base_index], "subscribe_data", None)
+        if 0 <= base_index < len(mro)
+        else None
+    )
+    if callable(base_subscribe):
+        _ = base_subscribe(strategy, resolved_data_type)
+        return
+    fallback = getattr(strategy, "subscribe_data", None)
+    if callable(fallback):
+        _ = fallback(resolved_data_type)
+
+
+def _subscribe_custom_data_on_bus(strategy: object, data_type: object) -> bool:
+    msgbus = getattr(strategy, "msgbus", None)
+    if msgbus is None:
+        msgbus = getattr(strategy, "_msgbus", None)
+    handler = getattr(strategy, "handle_data", None)
+    subscribe = getattr(msgbus, "subscribe", None)
+    topic_cache = getattr(strategy, "_topic_cache", None)
+    topic_getter = getattr(topic_cache, "get_custom_data_topic", None)
+    if not callable(topic_getter):
+        try:
+            topic_module = import_module("nautilus_trader.common.data_topics")
+        except ModuleNotFoundError:
+            return False
+        topic_cache_cls = getattr(topic_module, "TopicCache", None)
+        topic_cache = topic_cache_cls() if callable(topic_cache_cls) else None
+        topic_getter = getattr(topic_cache, "get_custom_data_topic", None)
+    if not callable(subscribe) or not callable(topic_getter) or not callable(handler):
+        return False
+    subscribe(topic=topic_getter(data_type, None), handler=handler)
+    return True
+
+
+def _datetime_ns(value: int | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value / 1_000_000_000, UTC)
+
+
+def _pair_from_metadata(
+    registry: PolymarketMarketRegistry,
+    meta: PolySignalMarketMetaData,
+) -> MarketPairMeta:
+    existing = registry.by_condition(meta.condition_id)
+    up_instrument_id = existing.up.instrument_id if existing is not None else meta.up_token_id
+    down_instrument_id = existing.down.instrument_id if existing is not None else meta.down_token_id
+    return MarketPairMeta(
+        market_id=meta.market_id,
+        market_slug=meta.market_slug,
+        condition_id=meta.condition_id,
+        asset=meta.asset.upper(),
+        timeframe=meta.timeframe,
+        start_ts=_datetime_ns(meta.start_ts_ns),
+        end_ts=_datetime_ns(meta.end_ts_ns),
+        up=InstrumentTokenMeta(
+            instrument_id=up_instrument_id,
+            token_id=meta.up_token_id,
+            side=Side.UP,
+        ),
+        down=InstrumentTokenMeta(
+            instrument_id=down_instrument_id,
+            token_id=meta.down_token_id,
+            side=Side.DOWN,
+        ),
+    )

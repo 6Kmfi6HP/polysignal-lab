@@ -27,7 +27,7 @@ class SettlementActor:
         settlement_engine: PaperSettlementEngine,
         resolver: SettlementResolver | None = None,
         wallet: PaperWallet | None = None,
-        logger: logging.Logger = None,
+        logger: logging.Logger | None = None,
     ) -> None:
         self.settlement_engine = settlement_engine
         self.resolver = resolver
@@ -99,7 +99,7 @@ class SettlementActor:
             market = (markets or {}).get(position.market_id)
             if market is None:
                 continue
-            if market.status in (MarketStatus.OPEN, MarketStatus.UNKNOWN):
+            if market.status in (MarketStatus.ACTIVE, MarketStatus.UNKNOWN):
                 continue
 
             result = await self.settle_position(position, market)

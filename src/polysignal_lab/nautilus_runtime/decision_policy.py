@@ -7,17 +7,31 @@ current runtime.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any, cast
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, SideBookView, SpotView
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
+
+def _string_tuple_mapping(raw: object) -> dict[str, tuple[str, ...]]:
+    if not isinstance(raw, Mapping):
+        return {}
+    coerced: dict[str, tuple[str, ...]] = {}
+    for name, deps in raw.items():
+        if isinstance(deps, str):
+            coerced[str(name)] = (deps,)
+            continue
+        if isinstance(deps, Iterable):
+            coerced[str(name)] = tuple(str(dep) for dep in deps)
+    return coerced
 
 _UNKNOWN_LAG_MS = 10**12
 
@@ -134,11 +148,12 @@ class DecisionPolicyActor:
     def load_state(self, payload: Mapping[str, object]) -> None:
         disabled = payload.get("disabled_strategies", ()) or ()
         dependencies = payload.get("strategy_dependencies", {}) or {}
-        self.disabled_strategies = {str(name) for name in disabled}
-        self.strategy_dependencies = {
-            str(name): tuple(str(dep) for dep in deps)
-            for name, deps in dict(dependencies).items()
-        }
+        self.disabled_strategies = (
+            {str(name) for name in disabled}
+            if isinstance(disabled, Iterable) and not isinstance(disabled, (str, bytes))
+            else set()
+        )
+        self.strategy_dependencies = _string_tuple_mapping(dependencies)
 
     def evaluate(
         self, decision: AlphaDecision, view: MarketView
@@ -158,7 +173,10 @@ class DecisionPolicyActor:
                 candidate=candidate,
             )
 
-        gate_decision = self.gate.evaluate(candidate, _GateSnapshotAdapter(view))
+        gate_decision = self.gate.evaluate(
+            candidate,
+            cast(MarketSnapshot, cast(object, _GateSnapshotAdapter(view))),
+        )
         if gate_decision.accepted:
             signal = gate_decision.signal or candidate
             return ApprovedDecision(signal=signal, consensus=self.consensus.add(signal))
