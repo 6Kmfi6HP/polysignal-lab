@@ -962,12 +962,14 @@ def _datetime_ns(value: int | None) -> datetime | None:
 def _metadata_instrument_id(
     token_id: str,
     instrument_id_resolver: Callable[[str], object],
-) -> object:
+) -> str:
     resolved = instrument_id_resolver(token_id)
     resolved_text = _identifier_text(resolved)
-    if resolved_text is None or "." in resolved_text:
-        return resolved
-    return _nautilus_instrument_id(f"{resolved_text}.POLYMARKET")
+    if resolved_text is None:
+        return f"{token_id}.POLYMARKET"
+    if "." in resolved_text:
+        return resolved_text
+    return f"{resolved_text}.POLYMARKET"
 
 
 def _pair_from_metadata(

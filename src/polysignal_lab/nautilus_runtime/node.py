@@ -141,8 +141,8 @@ class _StaticMarketUniverse:
     def __init__(self, markets: tuple[Market, ...]) -> None:
         self._markets = markets
 
-    async def refresh_once(self) -> tuple[Market, ...]:
-        return self._markets
+    async def refresh_once(self) -> list[Market]:
+        return list(self._markets)
 
 
 logger = logging.getLogger(__name__)
@@ -265,8 +265,11 @@ def build_trading_node(
 
     from polysignal_lab.nautilus_runtime.market_rotation import runtime_market_rotation_actor_type
 
-    actor_type = runtime_market_rotation_actor_type(NautilusActor, NautilusActorConfig)
-    market_rotation_actor = actor_type(
+    actor_factory = cast(
+        Callable[..., object],
+        runtime_market_rotation_actor_type(NautilusActor, NautilusActorConfig),
+    )
+    market_rotation_actor = actor_factory(
         settings=settings,
         startup_markets=configured_markets,
         market_universe=runtime_market_universe,

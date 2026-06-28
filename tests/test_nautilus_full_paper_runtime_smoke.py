@@ -390,3 +390,289 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
     assert any(isinstance(item, PolySignalSpotData) for item in published)
     assert strategy.submitted != []
     assert str(strategy.submitted[-1]["instrument_id"]) == "up-token.POLYMARKET"
+
+def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polysignal_lab.nautilus_runtime.market_rotation as rotation_mod
+    from polysignal_lab.domain.spot import SpotPrice
+    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
+    from polysignal_lab.nautilus_bridge.market_registry import (
+        PolymarketMarketRegistry,
+    )
+    from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+    from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
+    from polysignal_lab.nautilus_runtime.market_data import (
+        PolySignalMarketMetaData,
+        PolySignalMarketUniverseData,
+        PolySignalPriceToBeatData,
+    )
+    from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    published: list[object] = []
+    created: list[tuple[str, object]] = []
+
+    class DummyTask:
+        def cancel(self) -> None:
+            return None
+
+    def fake_create_task(coro):
+        code = getattr(coro, "cr_code", None)
+        created.append((code.co_name if code is not None else "", coro))
+        return DummyTask()
+
+    def drain_ptb_tasks() -> None:
+        while created:
+            name, coro = created.pop(0)
+            if name == "_publish_price_to_beat":
+                asyncio.run(coro)
+            else:
+                coro.close()
+
+    class FakeUniverse:
+        async def refresh_once(self) -> list[Market]:
+            return [market_b]
+
+    class FakeLevel:
+        def __init__(self, price: float, size: float) -> None:
+            self.price = price
+            self.size = size
+
+    class FakeOrderBook:
+        def __init__(self, bids, asks) -> None:
+            self.bids = bids
+            self.asks = asks
+            self.last_trade_price = None
+            self.last_trade_size = None
+            self.last_trade_timestamp = None
+            self.received_at = datetime.now(UTC)
+
+    class FakeCache:
+        def __init__(self) -> None:
+            self.books = {
+                instrument_id_for_token("up-a"): FakeOrderBook(
+                    bids=[FakeLevel(0.49, 20.0)],
+                    asks=[FakeLevel(0.50, 20.0), FakeLevel(0.52, 20.0)],
+                ),
+                instrument_id_for_token("down-a"): FakeOrderBook(
+                    bids=[FakeLevel(0.48, 20.0)],
+                    asks=[FakeLevel(0.51, 20.0), FakeLevel(0.53, 20.0)],
+                ),
+                instrument_id_for_token("up-b"): FakeOrderBook(
+                    bids=[FakeLevel(0.47, 20.0)],
+                    asks=[FakeLevel(0.50, 20.0), FakeLevel(0.52, 20.0)],
+                ),
+                instrument_id_for_token("down-b"): FakeOrderBook(
+                    bids=[FakeLevel(0.46, 20.0)],
+                    asks=[FakeLevel(0.51, 20.0), FakeLevel(0.53, 20.0)],
+                ),
+            }
+
+        def order_book(self, instrument_id):
+            return self.books[str(instrument_id)]
+
+    class FakeOrderFactory:
+        def limit(self, **kwargs):
+            return kwargs
+
+    class FakeCore:
+        def evaluate(self, view):
+            return [
+                AlphaDecision(
+                    strategy="ptb_diff",
+                    asset=view.asset,
+                    timeframe=view.timeframe,
+                    market_id=view.market_id,
+                    market_slug=view.market_slug,
+                    condition_id=view.condition_id,
+                    token_id=view.book_for(Side.UP).token_id,
+                    side=Side.UP,
+                    confidence=0.8,
+                    entry_reference_price=0.50,
+                    max_entry_price=0.52,
+                    seconds_to_close=60,
+                    data_freshness_ms=20,
+                    reason_codes=("TEST",),
+                    metrics={},
+                    order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK, pair_id=f"pair-{view.condition_id}"),
+                    hedge_leg=False,
+                )
+            ]
+
+    class FakePolicy:
+        def evaluate(self, decision, view):
+            from polysignal_lab.domain.signal import SignalCandidate
+            from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
+
+            candidate = SignalCandidate.build(
+                strategy=decision.strategy,
+                asset=decision.asset,
+                timeframe=decision.timeframe,
+                market_id=decision.market_id,
+                market_slug=decision.market_slug,
+                condition_id=decision.condition_id,
+                token_id=decision.token_id,
+                side=decision.side,
+                confidence=decision.confidence,
+                entry_reference_price=decision.entry_reference_price,
+                max_entry_price=decision.max_entry_price,
+                seconds_to_close=decision.seconds_to_close,
+                data_freshness_ms=decision.data_freshness_ms,
+                reason_codes=list(decision.reason_codes),
+                metrics=dict(decision.metrics),
+                order_intent=decision.order_intent.intent,
+                expiry_seconds=None,
+                pair_id=decision.order_intent.pair_id,
+                hedge_leg=decision.hedge_leg,
+            )
+            return ApprovedDecision(signal=candidate)
+
+    class FakeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.cache = FakeCache()
+            self.order_factory = FakeOrderFactory()
+            self.submitted = []
+
+        def submit_order(self, order):
+            self.submitted.append(order)
+
+    def market(
+        *,
+        market_id: str,
+        market_slug: str,
+        condition_id: str,
+        up_token: str,
+        down_token: str,
+    ) -> Market:
+        return Market(
+            market_id=market_id,
+            market_slug=market_slug,
+            condition_id=condition_id,
+            asset="BTC",
+            timeframe="5m",
+            outcome_tokens=[
+                OutcomeToken(token_id=up_token, side=Side.UP, outcome_name="Up", market_id=market_id),
+                OutcomeToken(token_id=down_token, side=Side.DOWN, outcome_name="Down", market_id=market_id),
+            ],
+        )
+
+    market_a = market(
+        market_id="btc-5m-a",
+        market_slug="btc-updown-5m-a",
+        condition_id="condition-a",
+        up_token="up-a",
+        down_token="down-a",
+    )
+    market_b = market(
+        market_id="btc-5m-b",
+        market_slug="btc-updown-5m-b",
+        condition_id="condition-b",
+        up_token="up-b",
+        down_token="down-b",
+    )
+    settings = Settings()
+    settings.runtime.nautilus.sidecar.spot_source = "disabled"
+    settings.runtime.nautilus.market_rotation.enabled = False
+    registry = PolymarketMarketRegistry()
+    sidecar = ExternalDataSidecar()
+    books = NautilusBookDataProvider()
+    assembler = MarketViewAssembler(registry=registry, books=books, sidecar=sidecar)
+    strategy = FakeStrategy(
+        core=FakeCore(),
+        assembler=assembler,
+        condition_ids=("condition-a",),
+        strategy_name="ptb_diff",
+        policy=FakePolicy(),
+        fixed_stake_usdc=10.0,
+        instrument_id_resolver=instrument_id_for_token,
+        registry=registry,
+        sidecar=sidecar,
+    )
+    actor = MarketRotationActor(
+        settings=settings,
+        startup_markets=(market_a,),
+        market_universe=FakeUniverse(),
+        registry=registry,
+        sidecar=sidecar,
+        anchor_store=None,
+    )
+
+    def publish_and_route(data_type: object, data: object) -> None:
+        _ = data_type
+        published.append(data)
+        strategy.on_data(data)
+
+    async def fake_get(market: Market) -> PriceToBeatResult:
+        return PriceToBeatResult(
+            value=99950.0 if market.condition_id == "condition-a" else 100050.0,
+            source="anchor",
+            verified=True,
+            anchor_source="chainlink",
+            anchor_lag_ms=5,
+            from_anchor_service=True,
+        )
+
+    monkeypatch.setattr("asyncio.create_task", fake_create_task)
+    monkeypatch.setattr(rotation_mod, "register_polysignal_data_types", lambda: None)
+    monkeypatch.setattr(actor.ptb_provider, "get", fake_get)
+    actor.publish_data = publish_and_route
+
+    try:
+        actor.on_start()
+        drain_ptb_tasks()
+        actor._on_spot(
+            SpotPrice(
+                asset="BTC",
+                symbol="BTCUSD",
+                price=100000.0,
+                source="polymarket_rtds",
+                event_time=datetime.now(UTC),
+                received_at=datetime.now(UTC),
+            )
+        )
+        strategy.on_order_book_deltas(SimpleNamespace(instrument_id=instrument_id_for_token("down-a")))
+        strategy.on_order_book_deltas(SimpleNamespace(instrument_id=instrument_id_for_token("up-a")))
+        assert [str(order["instrument_id"]) for order in strategy.submitted] == [instrument_id_for_token("up-a")]
+
+        asyncio.run(actor.refresh_once())
+        drain_ptb_tasks()
+        actor._on_spot(
+            SpotPrice(
+                asset="BTC",
+                symbol="BTCUSD",
+                price=100100.0,
+                source="polymarket_rtds",
+                event_time=datetime.now(UTC),
+                received_at=datetime.now(UTC),
+            )
+        )
+        before_late_a = len(strategy.submitted)
+        strategy.on_order_book_deltas(SimpleNamespace(instrument_id=instrument_id_for_token("up-a")))
+        assert len(strategy.submitted) == before_late_a
+        strategy.on_order_book_deltas(SimpleNamespace(instrument_id=instrument_id_for_token("down-b")))
+        strategy.on_order_book_deltas(SimpleNamespace(instrument_id=instrument_id_for_token("up-b")))
+
+        assert [str(order["instrument_id"]) for order in strategy.submitted] == [
+            instrument_id_for_token("up-a"),
+            instrument_id_for_token("up-b"),
+        ]
+        rotated = [
+            item
+            for item in published
+            if isinstance(item, PolySignalMarketUniverseData)
+            and item.active_condition_ids == ("condition-b",)
+        ]
+        assert rotated
+        assert rotated[-1].exited_condition_ids == ("condition-a",)
+        assert any(
+            isinstance(item, PolySignalMarketMetaData) and item.condition_id == "condition-b"
+            for item in published
+        )
+        assert any(
+            isinstance(item, PolySignalPriceToBeatData) and item.condition_id == "condition-b"
+            for item in published
+        )
+    finally:
+        drain_ptb_tasks()

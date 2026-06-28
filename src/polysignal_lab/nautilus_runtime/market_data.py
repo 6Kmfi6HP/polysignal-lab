@@ -13,7 +13,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nautilus_trader.core.data import Data as _NautilusDataBase
+    _NautilusDataBase = object
 else:
     try:
         from nautilus_trader.core.data import Data as _NautilusDataBase
@@ -57,6 +57,10 @@ def _as_str_dict(value: object) -> dict[str, str]:
 class _PolySignalDataBase(_NautilusDataBase):
     __slots__ = ("_ts_event", "_ts_init")
     _fields: tuple[str, ...] = ()
+
+    def __init__(self) -> None:
+        self._ts_event = 0
+        self._ts_init = 0
 
     def __eq__(self, other: object) -> bool:
         return type(self) is type(other) and isinstance(other, _PolySignalDataBase) and self.to_dict() == other.to_dict()
@@ -271,25 +275,18 @@ class PolySignalMarketUniverseData(_PolySignalDataBase):
         ts_event: int,
         ts_init: int,
     ) -> None:
-        object.__setattr__(self, "epoch", int(epoch))
-        object.__setattr__(self, "active_condition_ids", tuple(active_condition_ids))
-        object.__setattr__(self, "entered_condition_ids", tuple(entered_condition_ids))
-        object.__setattr__(self, "exited_condition_ids", tuple(exited_condition_ids))
-        object.__setattr__(
-            self, "condition_to_up_token", MappingProxyType(dict(condition_to_up_token))
-        )
-        object.__setattr__(
-            self, "condition_to_down_token", MappingProxyType(dict(condition_to_down_token))
-        )
-        object.__setattr__(self, "condition_to_asset", MappingProxyType(dict(condition_to_asset)))
-        object.__setattr__(
-            self,
-            "condition_to_timeframe",
-            MappingProxyType(dict(condition_to_timeframe)),
-        )
-        object.__setattr__(self, "_ts_event", int(ts_event))
-        object.__setattr__(self, "_ts_init", int(ts_init))
-        object.__setattr__(self, "_sealed", True)
+        self._sealed = False
+        self.epoch = int(epoch)
+        self.active_condition_ids = tuple(active_condition_ids)
+        self.entered_condition_ids = tuple(entered_condition_ids)
+        self.exited_condition_ids = tuple(exited_condition_ids)
+        self.condition_to_up_token = MappingProxyType(dict(condition_to_up_token))
+        self.condition_to_down_token = MappingProxyType(dict(condition_to_down_token))
+        self.condition_to_asset = MappingProxyType(dict(condition_to_asset))
+        self.condition_to_timeframe = MappingProxyType(dict(condition_to_timeframe))
+        self._ts_event = int(ts_event)
+        self._ts_init = int(ts_init)
+        self._sealed = True
 
     @classmethod
     def from_dict(cls, d: dict[str, object]) -> "PolySignalMarketUniverseData":

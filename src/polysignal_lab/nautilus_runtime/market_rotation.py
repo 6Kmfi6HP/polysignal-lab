@@ -36,6 +36,10 @@ class _Health(Protocol):
     def mark_down(self, name: str, error: str | None = None, **metrics: object) -> None: ...
 
 
+class _CancelableTask(Protocol):
+    def cancel(self, msg: object | None = None) -> bool | None: ...
+
+
 class MarketRotationActor:
     def __init__(
         self,
@@ -75,8 +79,8 @@ class MarketRotationActor:
         )
         self._active_by_condition = _markets_by_condition(startup_markets)
         self._epoch = 0
-        self._refresh_task: object | None = None
-        self._rtds_task: object | None = None
+        self._refresh_task: _CancelableTask | None = None
+        self._rtds_task: _CancelableTask | None = None
     def publish_data(self, data_type: object, data: object) -> None:
         base_publish = getattr(super(MarketRotationActor, self), "publish_data", None)
         if callable(base_publish):
