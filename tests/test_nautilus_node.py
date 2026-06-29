@@ -107,6 +107,62 @@ def test_build_trading_node_returns_nautilus_runtime_components(monkeypatch) -> 
     assert "paper_client" not in runtime
 
 
+
+def test_build_trading_node_injects_shared_projections_and_no_manual_sync_components(monkeypatch) -> None:
+    built = {}
+
+    class FakeTradingNode:
+        def __init__(self, config):
+            self.config = config
+            self.trader = SimpleNamespace(strategies=[], actors=[])
+            self.trader.add_strategy = self.trader.strategies.append
+            self.trader.add_actor = self.trader.actors.append
+            built["node"] = self
+
+        def add_data_client_factory(self, name, factory):
+            built.setdefault("data_factories", []).append((name, factory))
+
+        def add_exec_client_factory(self, name, factory):
+            built.setdefault("exec_factories", []).append((name, factory))
+
+        def build(self):
+            self.built = True
+
+    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.TradingNode", FakeTradingNode)
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.PolymarketInstrumentProviderConfig",
+        lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.build_paper_trading_node_config",
+        lambda settings, **kwargs: SimpleNamespace(**kwargs),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.register_paper_factories",
+        lambda node: (
+            node.add_data_client_factory("POLYMARKET", object()),
+            node.add_exec_client_factory(PAPER_EXEC_CLIENT_ID, object()),
+        ),
+    )
+
+    runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+    strategies = cast(list[object], runtime["strategies"])
+
+    assert "registry" in runtime
+    assert "sidecar" in runtime
+    assert "book_data_provider" in runtime
+    assert "assembler" in runtime
+    assert "market_rotation_actor" in runtime
+    assert "data_ingestor" not in runtime
+    assert "orchestrator" not in runtime
+    assert "paper_client" not in runtime
+    assert "matching_client" not in runtime
+    assert strategies
+    first_strategy = strategies[0]
+    assert getattr(first_strategy, "registry") is runtime["registry"]
+    assert getattr(first_strategy, "sidecar") is runtime["sidecar"]
+    assert getattr(first_strategy, "assembler") is runtime["assembler"]
+
 def test_build_trading_node_registers_market_rotation_actor(monkeypatch) -> None:
     built = {}
 
