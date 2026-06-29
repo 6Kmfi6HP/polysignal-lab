@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 import pytest
 
@@ -14,6 +14,13 @@ from polysignal_lab.nautilus_runtime.node import (
     run_nautilus_cli_async,
 )
 from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
+
+if TYPE_CHECKING:
+    from polysignal_lab.publish.telegram_publisher import TelegramPublisher
+
+
+def _fake_telegram_publisher() -> TelegramPublisher:
+    return cast("TelegramPublisher", cast(object, SimpleNamespace(send=lambda *_args, **_kwargs: None)))
 
 
 def _patch_nautilus_placeholders(monkeypatch):
@@ -117,6 +124,7 @@ def test_build_trading_node_injects_shared_projections_and_no_manual_sync_compon
             self.trader = SimpleNamespace(strategies=[], actors=[])
             self.trader.add_strategy = self.trader.strategies.append
             self.trader.add_actor = self.trader.actors.append
+            self.built = False
             built["node"] = self
 
         def add_data_client_factory(self, name, factory):
@@ -310,10 +318,13 @@ def test_build_trading_node_forwards_unsubscribe_exited_to_native_strategy(
         condition_ids=("condition-btc-5m",),
     )
 
-    assert len(runtime["strategies"]) == 1
-    assert runtime["node"].trader.strategies == runtime["strategies"]
-    assert captured["kwargs"]["unsubscribe_exited"] is False
-    assert captured["kwargs"]["strategy_name"] == "vwap_momentum"
+    strategies = cast(list[object], runtime["strategies"])
+    captured_kwargs = cast(dict[str, object], captured["kwargs"])
+
+    assert len(strategies) == 1
+    assert getattr(runtime["node"], "trader").strategies == strategies
+    assert captured_kwargs["unsubscribe_exited"] is False
+    assert captured_kwargs["strategy_name"] == "vwap_momentum"
 
 def test_build_control_adapts_policy() -> None:
     from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
@@ -541,16 +552,17 @@ def test_prepare_nautilus_runtime_context_rebinds_market_discovery_client_for_la
 
     assert [item.market_id for item in discovered_markets] == ["btc-5m"]
     old_client = cast(LoopBoundClient, created["old_client"])
-    assert cast(FakeMarketUniverse, scheduler.market_universe).calls == 1
+    market_universe = cast(FakeMarketUniverse, cast(object, scheduler.market_universe))
+    discovery = cast(FakeDiscovery, cast(object, scheduler.discovery))
+    assert market_universe.calls == 1
     node_mod._rebind_market_discovery_client(scheduler)
 
-
-    refreshed_markets = asyncio.run(scheduler.market_universe.refresh_once())
+    refreshed_markets = asyncio.run(market_universe.refresh_once())
 
     assert [item.market_id for item in refreshed_markets] == ["btc-5m"]
-    assert cast(FakeMarketUniverse, scheduler.market_universe).calls == 2
-    assert cast(FakeDiscovery, scheduler.discovery).replace_calls == 1
-    assert cast(FakeDiscovery, scheduler.discovery).client is not old_client
+    assert market_universe.calls == 2
+    assert discovery.replace_calls == 1
+    assert discovery.client is not old_client
 
 
 async def test_prepare_nautilus_runtime_context_initializes_settlement_compat_state(
@@ -576,7 +588,7 @@ async def test_prepare_nautilus_runtime_context_initializes_settlement_compat_st
     settings = Settings()
     scheduler = node_mod.PolySignalScheduler(settings, base_dir=tmp_path)
     scheduler.market_universe.refresh_once = AsyncMock(return_value=[market])
-    scheduler.publisher = SimpleNamespace(send=lambda *_args, **_kwargs: None)
+    scheduler.publisher = _fake_telegram_publisher()
 
     monkeypatch.setattr(node_mod, "PolySignalScheduler", lambda _settings=None: scheduler)
 
@@ -620,7 +632,7 @@ async def test_run_nautilus_housekeeping_once_settles_mirrored_fill_position(
     settings.telegram.send_daily_report = False
     scheduler = node_mod.PolySignalScheduler(settings, base_dir=tmp_path)
     scheduler.market_universe.refresh_once = AsyncMock(return_value=[market])
-    scheduler.publisher = SimpleNamespace(send=lambda *_args, **_kwargs: None)
+    scheduler.publisher = _fake_telegram_publisher()
 
     monkeypatch.setattr(node_mod, "PolySignalScheduler", lambda _settings=None: scheduler)
     monkeypatch.setattr(
