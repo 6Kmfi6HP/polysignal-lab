@@ -213,16 +213,32 @@ class PolySignalNativeStrategy:
         self.submitted_specs: list[object] = []
         self.execution_results: list[object] = []
 
-    def on_start(self) -> None:
+    def _require_registry(self) -> PolymarketMarketRegistry:
         if self.registry is None:
-            for name in self.data_names:
-                self.subscribe_data(name)
-            _subscribe_custom_data(
-                self,
-                PolySignalMarketUniverseData,
-                allow_fallback=False,
+            raise RuntimeError(
+                "PolySignalNativeStrategy requires injected registry, sidecar, and assembler projections"
             )
-            return
+        return self.registry
+
+    def _require_sidecar(self) -> ExternalDataSidecar:
+        if self.sidecar is None:
+            raise RuntimeError(
+                "PolySignalNativeStrategy requires injected registry, sidecar, and assembler projections"
+            )
+        return self.sidecar
+
+    def _require_assembler(self) -> _Assembler:
+        if self.assembler is None:
+            raise RuntimeError(
+                "PolySignalNativeStrategy requires injected registry, sidecar, and assembler projections"
+            )
+        return self.assembler
+
+
+    def on_start(self) -> None:
+        _ = self._require_registry()
+        _ = self._require_sidecar()
+        _ = self._require_assembler()
         self._subscribe_market_conditions(self._startup_condition_ids)
         _subscribe_custom_data(self, PolySignalSpotData)
         _subscribe_custom_data(self, PolySignalPriceToBeatData)
@@ -230,8 +246,9 @@ class PolySignalNativeStrategy:
         _subscribe_custom_data(self, PolySignalMarketUniverseData)
 
     def on_data(self, data: object) -> None:
-        if self.sidecar is not None and isinstance(data, PolySignalSpotData):
-            self.sidecar.update_spot(
+        if isinstance(data, PolySignalSpotData):
+            sidecar = self._require_sidecar()
+            sidecar.update_spot(
                 SpotView(
                     asset=data.asset,
                     symbol=data.symbol,
@@ -243,8 +260,9 @@ class PolySignalNativeStrategy:
             for candidate in self._asset_condition_ids.get(data.asset.upper(), ()):
                 self.evaluate_condition(candidate)
             return
-        if self.sidecar is not None and isinstance(data, PolySignalPriceToBeatData):
-            self.sidecar.update_price_to_beat(
+        if isinstance(data, PolySignalPriceToBeatData):
+            sidecar = self._require_sidecar()
+            sidecar.update_price_to_beat(
                 condition_id=data.condition_id,
                 value=data.value,
                 source=data.source,
@@ -256,11 +274,10 @@ class PolySignalNativeStrategy:
             self.evaluate_condition(data.condition_id)
             return
         if isinstance(data, PolySignalMarketMetaData):
-            if self.registry is None:
-                return
-            self.registry.register(
+            registry = self._require_registry()
+            registry.register(
                 _pair_from_metadata(
-                    self.registry,
+                    registry,
                     data,
                     instrument_id_resolver=self.instrument_id_resolver,
                 )
@@ -275,8 +292,6 @@ class PolySignalNativeStrategy:
             self._market_epoch = data.epoch
             self._active_condition_ids = set(data.active_condition_ids)
             self._refresh_asset_conditions()
-            if self.registry is None:
-                return
             for condition_id in data.exited_condition_ids:
                 self._subscription_state.pending_metadata_condition_ids.discard(
                     condition_id

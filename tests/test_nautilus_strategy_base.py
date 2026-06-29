@@ -590,30 +590,115 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
     assert strategy.execution_results == []
 
 
-def test_native_strategy_on_start_subscribes_configured_data_names() -> None:
+def test_native_strategy_on_start_requires_injected_projections() -> None:
+    import pytest
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=(),
+        strategy_name="ptb_diff",
+    )
+
+    with pytest.raises(RuntimeError, match="requires injected registry, sidecar, and assembler projections"):
+        strategy.on_start()
+
+
+def test_native_strategy_on_start_requires_injected_assembler() -> None:
+    import pytest
+
+    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
+    from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=cast(Any, None),
+        condition_ids=(),
+        strategy_name="ptb_diff",
+        registry=PolymarketMarketRegistry(),
+        sidecar=ExternalDataSidecar(),
+    )
+
+    with pytest.raises(RuntimeError, match="requires injected registry, sidecar, and assembler projections"):
+        strategy.on_start()
+
+
+def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_projections() -> None:
+    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
+    from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+    from polysignal_lab.nautilus_runtime.market_data import (
+        PolySignalMarketMetaData,
+        PolySignalMarketUniverseData,
+        PolySignalPriceToBeatData,
+        PolySignalSpotData,
+    )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     class FakeNativeStrategy(PolySignalNativeStrategy):
-        def __init__(self, **kwargs: Any) -> None:
+        def __init__(self, **kwargs):
             super().__init__(**kwargs)
-            self.subscriptions = []
+            self.custom_subscriptions: list[object] = []
 
-        def subscribe_data(self, data_type: object) -> None:
-            self.subscriptions.append(data_type)
+        def subscribe_data(self, data_type):
+            self.custom_subscriptions.append(getattr(data_type, "type", data_type))
 
     strategy = FakeNativeStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
-        condition_ids=("condition-btc-5m",),
+        condition_ids=(),
         strategy_name="ptb_diff",
-        data_names=("quote_ticks", "trade_ticks"),
+        registry=PolymarketMarketRegistry(),
+        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
 
-    assert strategy.subscriptions == ["quote_ticks", "trade_ticks"]
+    assert PolySignalMarketMetaData in strategy.custom_subscriptions
+    assert PolySignalMarketUniverseData in strategy.custom_subscriptions
+    assert PolySignalSpotData in strategy.custom_subscriptions
+    assert PolySignalPriceToBeatData in strategy.custom_subscriptions
+
+
+def test_native_strategy_metadata_without_registry_fails_clearly() -> None:
+    import pytest
+
+    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
+    from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketMetaData
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=(),
+        strategy_name="ptb_diff",
+        sidecar=ExternalDataSidecar(),
+        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+    )
+
+    with pytest.raises(RuntimeError, match="requires injected registry, sidecar, and assembler projections"):
+        strategy.on_data(
+            PolySignalMarketMetaData(
+                market_id="market-bootstrap",
+                market_slug="btc-updown-5m-bootstrap",
+                condition_id="condition-bootstrap",
+                asset="BTC",
+                timeframe="5m",
+                start_ts_ns=1,
+                end_ts_ns=2,
+                up_token_id="up-bootstrap",
+                down_token_id="down-bootstrap",
+                ts_event=2,
+                ts_init=2,
+            )
+        )
+
+
 
 def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument() -> None:
+    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
         MarketPairMeta,
@@ -658,6 +743,7 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         registry=registry,
+        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
