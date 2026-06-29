@@ -87,17 +87,35 @@ def project_account(account: object) -> dict[str, object]:
     }
 
 
-def project_portfolio_snapshot(portfolio: object) -> dict[str, object]:
+def project_portfolio_snapshot(
+    portfolio: object,
+    *,
+    account: object | None = None,
+) -> dict[str, object]:
+    equity_value = _portfolio_equity(portfolio, account)
     return {
         "portfolio_id": _text_attr(portfolio, "id"),
-        "equity": _float_attr(portfolio, "equity"),
+        "equity": equity_value,
     }
 
 
-def _float_attr(source: object, name: str) -> float:
-    value = getattr(source, name, 0.0)
-    if callable(value):
-        value = value()
+def _portfolio_equity(portfolio: object, account: object | None) -> float:
+    equity = getattr(portfolio, "equity", 0.0)
+    if callable(equity):
+        account_id = getattr(account, "id", None)
+        if account_id is not None:
+            try:
+                return _to_float(equity(account_id=account_id))
+            except TypeError:
+                pass
+        try:
+            return _to_float(equity())
+        except TypeError:
+            return 0.0
+    return _to_float(equity)
+
+
+def _to_float(value: object) -> float:
     coerced = (
         value
         if isinstance(value, (int, float, str, bytes, bytearray))
@@ -107,6 +125,13 @@ def _float_attr(source: object, name: str) -> float:
         return float(coerced)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _float_attr(source: object, name: str) -> float:
+    value = getattr(source, name, 0.0)
+    if callable(value):
+        value = value()
+    return _to_float(value)
 
 
 def _text_attr(source: object, name: str) -> str:

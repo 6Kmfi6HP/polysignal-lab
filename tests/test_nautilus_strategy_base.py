@@ -898,6 +898,7 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
+        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -1271,6 +1272,7 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
+        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -1372,6 +1374,7 @@ def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() ->
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
+        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -1441,6 +1444,7 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
         strategy_name="ptb_diff",
         registry=registry,
         unsubscribe_exited=False,
+        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -1516,6 +1520,7 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_retains_wire_st
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
+        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -1608,6 +1613,7 @@ def test_native_strategy_retained_wire_trade_tick_stays_gated() -> None:
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
+        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()

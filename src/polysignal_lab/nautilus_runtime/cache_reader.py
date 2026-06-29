@@ -75,7 +75,7 @@ class NautilusCacheReader:
             return None
         from polysignal_lab.nautilus_runtime.projections import project_portfolio_snapshot
 
-        return project_portfolio_snapshot(source)
+        return project_portfolio_snapshot(source, account=self.read_account())
     def snapshot_portfolio(self) -> object | None:
         source = self._portfolio
         if source is None:
