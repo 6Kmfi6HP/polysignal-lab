@@ -34,6 +34,10 @@ class Publisher(Protocol):
     async def send(self, message: str, message_type: str, signal_id: str | None = None) -> object: ...
 
 
+class AcceptedSignalNotifier(Protocol):
+    def __call__(self, signal: SignalCandidate, stake_usdc: float) -> None: ...
+
+
 class PaperFillNotifier(Protocol):
     def __call__(self, payload: dict[str, object]) -> None: ...
 
@@ -238,12 +242,16 @@ class ObservabilityActor:
         store: EventStore | None = None,
         health: HealthRegistry | None = None,
         notifier: Notifier | None = None,
+        accepted_signal_notifier: AcceptedSignalNotifier | None = None,
         paper_fill_notifier: PaperFillNotifier | None = None,
         paper_fill_mirror: PaperFillMirror | None = None,
     ) -> None:
         self.store: EventStore | None = store
         self.health: HealthRegistry = health or HealthRegistry()
         self.notifier: Notifier | None = notifier
+        self.accepted_signal_notifier: AcceptedSignalNotifier | None = (
+            accepted_signal_notifier
+        )
         self.paper_fill_notifier: PaperFillNotifier | None = paper_fill_notifier
         self.paper_fill_mirror: PaperFillMirror | None = paper_fill_mirror
         self._event_count: int = 0
@@ -276,12 +284,14 @@ class ObservabilityActor:
             "metrics": dict(decision.metrics),
         })
 
-    def record_signal_from_order(self, order: PaperOrder) -> None:
+    def record_signal(self, signal: SignalCandidate) -> None:
         self._event_count += 1
         if self.store is None:
             return
-        signal = signal_candidate_from_order(order)
         self.store.insert_json("signals", signal.model_dump(mode="json"))
+
+    def record_signal_from_order(self, order: PaperOrder) -> None:
+        self.record_signal(signal_candidate_from_order(order))
 
     def record_rejected_decision(self, rejected: object) -> None:
         self._event_count += 1
@@ -406,6 +416,15 @@ class ObservabilityActor:
 
     def record_nautilus_position(self, position: object) -> None:
         self.record_event("nautilus_position", project_position(position))
+
+    def notify_accepted_signal(
+        self,
+        signal: SignalCandidate,
+        stake_usdc: float,
+    ) -> None:
+        if self.accepted_signal_notifier is None:
+            return
+        self.accepted_signal_notifier(signal, stake_usdc)
 
     def notify_nautilus_paper_fill(self, payload: dict[str, object]) -> None:
         if self.paper_fill_notifier is None:

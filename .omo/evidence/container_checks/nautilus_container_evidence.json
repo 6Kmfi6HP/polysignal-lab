@@ -1,0 +1,15 @@
+{
+  "discovered_15m": 8,
+  "discovered_5m": 8,
+  "intercept_os_signals": false,
+  "selected_conditions": [
+    "0xc9f512fa0926e8cc8f147a4f1e639fb791bb80021d83710905feb017f38b68d2",
+    "0x27d8f17b8f4e15b8625716407e3be514e66d0ac21820aea3648555ad4ef69ee2"
+  ],
+  "strategy_count": 3,
+  "strategy_names": [
+    "vwap_momentum",
+    "late_consensus",
+    "ptb_diff"
+  ]
+}

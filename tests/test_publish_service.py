@@ -1,3 +1,4 @@
+
 from polysignal_lab.app.services.publish_service import PublishService
 
 
@@ -19,6 +20,9 @@ class _Publisher:
     async def send(self, message: str, message_type: str, signal_id: str | None):
         self.last = (message, message_type, signal_id)
         return _Publish()
+
+
+
 
 
 class _Persistence:

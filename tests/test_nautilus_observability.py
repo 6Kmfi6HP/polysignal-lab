@@ -89,6 +89,35 @@ def test_record_decision_writes_to_nautilus_decision_stream() -> None:
     assert rows[0]["side"] == "UP"
 
 
+def test_record_signal_writes_to_signal_stream() -> None:
+    store = FakeStore()
+    actor = ObservabilityActor(store=store)
+    signal = SignalCandidate.build(
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m1",
+        market_slug="s1",
+        condition_id="c1",
+        token_id="t1",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=["EDGE"],
+        metrics={"edge": 0.1},
+    )
+    actor.record_signal(signal)
+
+    rows = store.tables.get("signals", [])
+    assert len(rows) == 1
+    assert rows[0]["signal_id"] == signal.signal_id
+    assert rows[0]["strategy"] == "test"
+    assert rows[0]["condition_id"] == "c1"
+
+
 def test_record_decision_event_store_persists_system_event_without_signal_id(
     tmp_path: Path,
 ) -> None:

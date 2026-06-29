@@ -23,10 +23,13 @@ from typing import Protocol, cast, runtime_checkable
 from polysignal_lab.alpha.types import AlphaCore, TradeView
 from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.app import scheduler_health
+from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.market import Market
+from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import MarketPairMeta, PolymarketMarketRegistry
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
@@ -46,7 +49,7 @@ from polysignal_lab.nautilus_runtime.scheduler_compat import (
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
-from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID, POLYMARKET_CLIENT_ID
+from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
 from polysignal_lab.strategies.execution import build_strategy_schedule
 
 class _FactoryNode(Protocol):
@@ -456,16 +459,88 @@ async def _stop_nautilus_scheduler(scheduler: object) -> None:
         )
 
 
+def _fresh_publish_service(
+    scheduler: PolySignalScheduler,
+) -> tuple[PublishService, TelegramPublisher]:
+    base_service = scheduler.publish_service
+    publisher = TelegramPublisher(scheduler.settings.telegram)
+    publish_service = PublishService(
+        base_service.formatter,
+        publisher,
+        base_service.persistence,
+        timeout_sec=base_service.timeout_sec,
+    )
+    return publish_service, publisher
+
+
+async def _publish_accepted_signal_once(
+    scheduler: PolySignalScheduler,
+    signal: SignalCandidate,
+    stake_usdc: float,
+) -> dict[str, str | None]:
+    publish_service, publisher = _fresh_publish_service(scheduler)
+    try:
+        publish = await publish_service.publish_signal(signal, stake_usdc)
+        return publish.as_dict()
+    finally:
+        await publisher.client.aclose()
+
+
+def _publish_accepted_signal_in_background(
+    scheduler: PolySignalScheduler,
+    signal: SignalCandidate,
+    stake_usdc: float,
+) -> None:
+    try:
+        publish = asyncio.run(_publish_accepted_signal_once(scheduler, signal, stake_usdc))
+        scheduler_health.note_publish_result(scheduler, publish)
+    except Exception as exc:
+        scheduler.logger.warning(
+            "Nautilus accepted signal publish failed for %s: %s",
+            signal.signal_id,
+            exc,
+        )
+
+
+def _notify_accepted_signal(
+    scheduler: PolySignalScheduler,
+    signal: SignalCandidate,
+    stake_usdc: float,
+) -> None:
+    if not getattr(scheduler.settings.telegram, "send_signals", False):
+        return
+    thread = threading.Thread(
+        target=_publish_accepted_signal_in_background,
+        args=(scheduler, signal, stake_usdc),
+        daemon=True,
+    )
+    thread.start()
+
+
+async def _publish_nautilus_paper_fill_once(
+    scheduler: PolySignalScheduler,
+    payload: Mapping[str, object],
+) -> None:
+    publish_service, publisher = _fresh_publish_service(scheduler)
+    try:
+        await publish_service.publish_nautilus_paper_fill(dict(payload))
+    finally:
+        await publisher.client.aclose()
+
+
 def _publish_nautilus_paper_fill_in_background(
     scheduler: PolySignalScheduler,
     payload: Mapping[str, object],
 ) -> None:
     try:
-        asyncio.run(scheduler.publish_service.publish_nautilus_paper_fill(dict(payload)))
+        asyncio.run(_publish_nautilus_paper_fill_once(scheduler, payload))
     except Exception as exc:
         scheduler.logger.warning(
             "Nautilus paper fill publish failed for %s: %s",
-            payload.get("paper_fill_id") or payload.get("client_order_id") or payload.get("order_id") or "unknown",
+            payload.get("paper_fill_id")
+            or payload.get("client_order_id")
+            or payload.get("order_id")
+            or "unknown",
             exc,
         )
 
@@ -517,6 +592,11 @@ async def _prepare_nautilus_runtime_context(
         health=scheduler.health,
         store=NautilusEventStoreAdapter(scheduler.persistence),
         notifier=NautilusNotifierAdapter(scheduler.publisher),
+        accepted_signal_notifier=lambda signal, stake_usdc: _notify_accepted_signal(
+            scheduler,
+            signal,
+            stake_usdc,
+        ),
         paper_fill_notifier=lambda payload: _notify_nautilus_paper_fill(scheduler, payload),
         paper_fill_mirror=lambda payload: _mirror_nautilus_paper_fill(scheduler, payload),
     )
@@ -709,8 +789,64 @@ async def _run_nautilus_report_loop(
 
 
 
-async def run_nautilus_cli_async(settings: Settings | None = None,
-                                 stop_event: asyncio.Event | None = None) -> _TradingNodeLike:
+def _runtime_intercepts_os_signals(settings: object | None) -> bool:
+    runtime_settings = getattr(settings, "runtime", None)
+    nautilus_settings = getattr(runtime_settings, "nautilus", None)
+    return bool(getattr(nautilus_settings, "intercept_os_signals", False))
+
+
+_SignalHandler = signal.Handlers | Callable[..., object] | None
+_SignalHandlerSnapshot = tuple[signal.Signals, _SignalHandler]
+
+
+def _restore_os_signal_handlers(
+    previous_handlers: Sequence[_SignalHandlerSnapshot],
+) -> None:
+    for sig, previous in reversed(previous_handlers):
+        with suppress(ValueError, OSError, RuntimeError):
+            _ = signal.signal(sig, previous)
+
+
+def _install_async_os_signal_handlers(
+    loop: asyncio.AbstractEventLoop,
+    request_stop: Callable[[], None],
+) -> Callable[[], None]:
+    loop_handlers: list[_SignalHandlerSnapshot] = []
+    sync_handlers: list[_SignalHandlerSnapshot] = []
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        previous = signal.getsignal(sig)
+        try:
+            loop.add_signal_handler(sig, request_stop)
+        except (NotImplementedError, RuntimeError):
+            _ = signal.signal(sig, lambda _signum, _frame: request_stop())
+            sync_handlers.append((sig, previous))
+        else:
+            loop_handlers.append((sig, previous))
+
+    def cleanup() -> None:
+        for sig, previous in reversed(loop_handlers):
+            with suppress(NotImplementedError, RuntimeError):
+                _ = loop.remove_signal_handler(sig)
+            _restore_os_signal_handlers(((sig, previous),))
+        _restore_os_signal_handlers(sync_handlers)
+
+    return cleanup
+
+
+def _install_sync_os_signal_handlers(
+    request_stop: Callable[[], None],
+) -> Callable[[], None]:
+    previous_handlers: list[_SignalHandlerSnapshot] = []
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        previous_handlers.append((sig, signal.getsignal(sig)))
+        _ = signal.signal(sig, lambda _signum, _frame: request_stop())
+    return lambda: _restore_os_signal_handlers(previous_handlers)
+
+
+async def run_nautilus_cli_async(
+    settings: Settings | None = None,
+    stop_event: asyncio.Event | None = None,
+) -> _TradingNodeLike:
     """Run the Nautilus CLI with async orchestration and signal handling."""
     event = stop_event or asyncio.Event()
     bundle = await build_nautilus_runtime(settings)
@@ -722,11 +858,10 @@ async def run_nautilus_cli_async(settings: Settings | None = None,
 
     runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))
 
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            loop.add_signal_handler(sig, request_stop)
-        except (NotImplementedError, RuntimeError):
-            _ = signal.signal(sig, lambda _signum, _frame: request_stop())
+    cleanup_signals: Callable[[], None] = lambda: None
+    runtime_settings = getattr(bundle.scheduler, "settings", settings)
+    if _runtime_intercepts_os_signals(runtime_settings):
+        cleanup_signals = _install_async_os_signal_handlers(loop, request_stop)
 
     report_task: asyncio.Task[None] | None = None
     run_task: asyncio.Task[None] | None = None
@@ -752,7 +887,9 @@ async def run_nautilus_cli_async(settings: Settings | None = None,
         print(f"Nautilus runtime ready — {strategy_count} strategies")
         if stop_event is not None and stop_event.is_set():
             return node
-        report_task = asyncio.create_task(_run_nautilus_report_loop(bundle.scheduler, event))
+        report_task = asyncio.create_task(
+            _run_nautilus_report_loop(bundle.scheduler, event)
+        )
         run_task = asyncio.create_task(asyncio.to_thread(node.run))
         stop_waiter = asyncio.create_task(event.wait())
         done, pending = await asyncio.wait(
@@ -769,16 +906,19 @@ async def run_nautilus_cli_async(settings: Settings | None = None,
                 stopper()
             await run_task
     finally:
-        event.set()
-        if report_task is not None:
-            report_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await report_task
         try:
-            await bundle.observability.notify_shutdown()
-        except Exception:
-            runtime_logger.exception("Nautilus shutdown notification failed")
-        await _stop_nautilus_scheduler(bundle.scheduler)
+            event.set()
+            if report_task is not None:
+                report_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await report_task
+            try:
+                await bundle.observability.notify_shutdown()
+            except Exception:
+                runtime_logger.exception("Nautilus shutdown notification failed")
+            await _stop_nautilus_scheduler(bundle.scheduler)
+        finally:
+            cleanup_signals()
     return node
 
 
@@ -797,6 +937,17 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
         observability,
     )
     node = bundle.node
+
+    def request_stop() -> None:
+        stopper = getattr(node, "stop", None)
+        if callable(stopper):
+            stopper()
+            return
+        raise KeyboardInterrupt
+
+    cleanup_signals: Callable[[], None] = lambda: None
+    if _runtime_intercepts_os_signals(getattr(bundle.scheduler, "settings", settings)):
+        cleanup_signals = _install_sync_os_signal_handlers(request_stop)
     runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))
     strategies = bundle.components.get("strategies", ())
     strategy_names = (
@@ -823,12 +974,15 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
             run_method()
     finally:
         try:
-            asyncio.run(bundle.observability.notify_shutdown())
-        except Exception:
-            runtime_logger.exception("Nautilus shutdown notification failed")
-        asyncio.run(_stop_nautilus_scheduler(bundle.scheduler))
-        if isinstance(node, _Disposable):
-            node.dispose()
+            try:
+                asyncio.run(bundle.observability.notify_shutdown())
+            except Exception:
+                runtime_logger.exception("Nautilus shutdown notification failed")
+            asyncio.run(_stop_nautilus_scheduler(bundle.scheduler))
+            if isinstance(node, _Disposable):
+                node.dispose()
+        finally:
+            cleanup_signals()
 
 
 def main() -> int:

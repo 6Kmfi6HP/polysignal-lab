@@ -542,6 +542,53 @@ async def test_gamma_discovery_fetches_current_slot_by_slug_when_list_has_only_f
     assert any(call.url.endswith("/events/slug/btc-updown-5m-1782254400") for call in client.calls)
 
 
+async def test_gamma_discovery_fetches_current_5m_and_15m_crypto_slots(
+    monkeypatch,
+) -> None:
+    from polysignal_lab.data import polymarket_market_discovery as discovery_module
+
+    now = datetime(2026, 6, 23, 22, 41, tzinfo=timezone.utc)
+    monkeypatch.setattr(discovery_module, "utc_now", lambda: now)
+    current_5m = _gamma_market_payload(
+        slug="btc-updown-5m-1782254400",
+        market_id="market-current-5m",
+        start="2026-06-23T22:40:00Z",
+        end="2026-06-23T22:45:00Z",
+    )
+    current_15m = _gamma_market_payload(
+        slug="btc-updown-15m-1782253800",
+        market_id="market-current-15m",
+        start="2026-06-23T22:30:00Z",
+        end="2026-06-23T22:45:00Z",
+    )
+    client = FakeAsyncClient([[], current_5m, current_15m])
+    discovery = MarketDiscovery(
+        PolymarketDataConfig(),
+        MarketConfig(
+            assets=["BTC"],
+            timeframes=["5m", "15m"],
+            active_only=True,
+            closed=False,
+        ),
+        client=client,
+    )
+
+    markets = await discovery.discover()
+
+    assert [(market.market_id, market.timeframe) for market in markets] == [
+        ("market-current-5m", "5m"),
+        ("market-current-15m", "15m"),
+    ]
+    assert any(
+        call.url.endswith("/events/slug/btc-updown-5m-1782254400")
+        for call in client.calls
+    )
+    assert any(
+        call.url.endswith("/events/slug/btc-updown-15m-1782253800")
+        for call in client.calls
+    )
+
+
 async def test_gamma_discovery_includes_next_period_market_when_requested(monkeypatch) -> None:
     from polysignal_lab.data import polymarket_market_discovery as discovery_module
 

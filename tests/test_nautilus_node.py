@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
@@ -437,6 +438,8 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert captured["observability"] is not None
     assert callable(getattr(captured["observability"], "paper_fill_notifier", None))
     assert callable(getattr(captured["observability"], "paper_fill_mirror", None))
+    assert callable(getattr(captured["observability"], "accepted_signal_notifier", None))
+
     assert bundle.scheduler is not None
     assert getattr(bundle.scheduler, "nautilus_cache_reader") is cache_reader
     assert getattr(bundle.scheduler, "paper_execution_metadata") == {
@@ -444,6 +447,136 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
         "accuracy_mode": "depth_l2",
     }
     assert bundle.websocket_tasks == []
+
+
+def test_publish_accepted_signal_in_background_uses_fresh_publish_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+    from polysignal_lab.domain.enums import Side
+    from polysignal_lab.domain.signal import SignalCandidate
+
+    published: list[tuple[str, float]] = []
+    noted: list[dict[str, str]] = []
+    closed: list[bool] = []
+
+    class FakeTelegramPublisher:
+        def __init__(self, config) -> None:
+            self.config = config
+            self.client = SimpleNamespace(aclose=self._aclose)
+
+        async def _aclose(self) -> None:
+            closed.append(True)
+
+    class FakePublishService:
+        def __init__(
+            self,
+            formatter,
+            publisher,
+            persistence,
+            *,
+            timeout_sec: float,
+        ) -> None:
+            assert formatter == "formatter"
+            assert persistence == "persistence"
+            assert timeout_sec == 7.0
+            self.publisher = publisher
+
+        async def publish_signal(self, signal, stake_usdc):
+            published.append((signal.signal_id, stake_usdc))
+            return SimpleNamespace(as_dict=lambda: {"status": "SENT"})
+
+    monkeypatch.setattr(node_mod, "TelegramPublisher", FakeTelegramPublisher, raising=False)
+    monkeypatch.setattr(node_mod, "PublishService", FakePublishService, raising=False)
+    monkeypatch.setattr(
+        node_mod.scheduler_health,
+        "note_publish_result",
+        lambda _scheduler, publish: noted.append(publish),
+    )
+    scheduler = SimpleNamespace(
+        settings=SimpleNamespace(telegram="telegram-config"),
+        publish_service=SimpleNamespace(
+            formatter="formatter",
+            persistence="persistence",
+            timeout_sec=7.0,
+        ),
+        logger=SimpleNamespace(warning=lambda *_args, **_kwargs: None),
+    )
+    signal = SignalCandidate.build(
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m1",
+        market_slug="s1",
+        condition_id="c1",
+        token_id="t1",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=["EDGE"],
+        metrics={"edge": 0.1},
+    )
+
+    node_mod._publish_accepted_signal_in_background(scheduler, signal, 10.0)
+
+    assert published == [(signal.signal_id, 10.0)]
+    assert noted == [{"status": "SENT"}]
+    assert closed == [True]
+
+def test_publish_nautilus_paper_fill_in_background_uses_fresh_publish_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    published: list[dict[str, object]] = []
+    closed: list[bool] = []
+
+    class FakeTelegramPublisher:
+        def __init__(self, config) -> None:
+            self.config = config
+            self.client = SimpleNamespace(aclose=self._aclose)
+
+        async def _aclose(self) -> None:
+            closed.append(True)
+
+    class FakePublishService:
+        def __init__(
+            self,
+            formatter,
+            publisher,
+            persistence,
+            *,
+            timeout_sec: float,
+        ) -> None:
+            assert formatter == "formatter"
+            assert persistence == "persistence"
+            assert timeout_sec == 7.0
+            self.publisher = publisher
+
+        async def publish_nautilus_paper_fill(self, payload):
+            published.append(dict(payload))
+            return SimpleNamespace(as_dict=lambda: {"status": "SENT"})
+
+    monkeypatch.setattr(node_mod, "TelegramPublisher", FakeTelegramPublisher, raising=False)
+    monkeypatch.setattr(node_mod, "PublishService", FakePublishService, raising=False)
+    scheduler = SimpleNamespace(
+        settings=SimpleNamespace(telegram="telegram-config"),
+        publish_service=SimpleNamespace(
+            formatter="formatter",
+            persistence="persistence",
+            timeout_sec=7.0,
+        ),
+        logger=SimpleNamespace(warning=lambda *_args, **_kwargs: None),
+    )
+    payload = {"signal_id": "sig-1", "paper_fill_id": "fill-1"}
+
+    node_mod._publish_nautilus_paper_fill_in_background(scheduler, payload)
+
+    assert published == [payload]
+    assert closed == [True]
 
 
 def test_prepare_nautilus_runtime_context_rebinds_market_discovery_client_for_later_loop(
@@ -754,6 +887,194 @@ async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
     stop_event = asyncio.Event()
     stop_event.set()
     await run_nautilus_cli_async(stop_event=stop_event)
+
+
+async def test_run_nautilus_cli_async_does_not_install_signal_handlers_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTradingNode:
+        def run(self):
+            return None
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    fake_bundle = SimpleNamespace(
+        node=FakeTradingNode(),
+        websocket_tasks=[],
+        scheduler=SimpleNamespace(
+            stop=_noop,
+            settings=SimpleNamespace(
+                runtime=SimpleNamespace(
+                    nautilus=SimpleNamespace(
+                        paper_engine="nautilus_matching",
+                        matching_accuracy_mode="depth_l2",
+                    )
+                ),
+            ),
+        ),
+        observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+        components={"strategies": []},
+    )
+
+    async def fake_build(settings=None):
+        _ = settings
+        return fake_bundle
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.build_nautilus_runtime",
+        fake_build,
+    )
+    monkeypatch.setattr(
+        "asyncio.get_running_loop",
+        lambda: SimpleNamespace(
+            add_signal_handler=lambda *_args, **_kwargs: pytest.fail(
+                "OS signal handlers must be opt-in"
+            )
+        ),
+    )
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    await run_nautilus_cli_async(stop_event=stop_event)
+
+
+async def test_run_nautilus_cli_async_installs_signal_handlers_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installed: list[tuple[object, object]] = []
+    removed: list[object] = []
+
+    class FakeTradingNode:
+        def run(self):
+            return None
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    fake_bundle = SimpleNamespace(
+        node=FakeTradingNode(),
+        websocket_tasks=[],
+        scheduler=SimpleNamespace(
+            stop=_noop,
+            settings=SimpleNamespace(
+                runtime=SimpleNamespace(
+                    nautilus=SimpleNamespace(
+                        paper_engine="nautilus_matching",
+                        matching_accuracy_mode="depth_l2",
+                        intercept_os_signals=True,
+                    )
+                ),
+            ),
+        ),
+        observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+        components={"strategies": []},
+    )
+
+    async def fake_build(settings=None):
+        _ = settings
+        return fake_bundle
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.build_nautilus_runtime",
+        fake_build,
+    )
+    monkeypatch.setattr(
+        "asyncio.get_running_loop",
+        lambda: SimpleNamespace(
+            add_signal_handler=lambda sig, handler: installed.append((sig, handler)),
+            remove_signal_handler=lambda sig: removed.append(sig),
+        ),
+    )
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    await run_nautilus_cli_async(stop_event=stop_event)
+
+    assert [item[0] for item in installed] == [signal.SIGTERM, signal.SIGINT]
+    assert set(removed) == {signal.SIGTERM, signal.SIGINT}
+
+
+async def test_run_nautilus_cli_async_restores_signals_after_shutdown_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installed: list[tuple[object, object]] = []
+    removed: list[object] = []
+    previous = {
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+    }
+
+
+    class FakeTradingNode:
+        def run(self):
+            return None
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    fake_bundle = SimpleNamespace(
+        node=FakeTradingNode(),
+        websocket_tasks=[],
+        scheduler=SimpleNamespace(
+            stop=_noop,
+            settings=SimpleNamespace(
+                runtime=SimpleNamespace(
+                    nautilus=SimpleNamespace(
+                        paper_engine="nautilus_matching",
+                        matching_accuracy_mode="depth_l2",
+                        intercept_os_signals=True,
+                    )
+                ),
+            ),
+        ),
+        observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+        components={"strategies": []},
+    )
+
+    async def fake_build(settings=None):
+        _ = settings
+        return fake_bundle
+
+    async def fail_stop(_scheduler):
+        raise RuntimeError("shutdown failed")
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.build_nautilus_runtime",
+        fake_build,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._stop_nautilus_scheduler",
+        fail_stop,
+    )
+    def add_signal_handler(sig, handler):
+        installed.append((sig, handler))
+        signal.signal(sig, lambda _signum, _frame: None)
+
+    def remove_signal_handler(sig):
+        removed.append(sig)
+
+    monkeypatch.setattr(
+        "asyncio.get_running_loop",
+        lambda: SimpleNamespace(
+            add_signal_handler=add_signal_handler,
+            remove_signal_handler=remove_signal_handler,
+        ),
+    )
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    try:
+        with pytest.raises(RuntimeError, match="shutdown failed"):
+            await run_nautilus_cli_async(stop_event=stop_event)
+
+        assert signal.getsignal(signal.SIGTERM) == previous[signal.SIGTERM]
+        assert signal.getsignal(signal.SIGINT) == previous[signal.SIGINT]
+        assert [item[0] for item in installed] == [signal.SIGTERM, signal.SIGINT]
+        assert set(removed) == {signal.SIGTERM, signal.SIGINT}
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 async def test_run_nautilus_cli_async_surfaces_node_run_failure(monkeypatch) -> None:
     class FakeTradingNode:
@@ -1149,6 +1470,255 @@ def test_run_nautilus_cli_disposes_node_after_async_exit(monkeypatch) -> None:
     run_nautilus_cli()
 
     assert node.disposed is True
+
+
+def test_run_nautilus_cli_does_not_install_signal_handlers_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeNode:
+        def run(self) -> None:
+            return None
+
+        def dispose(self) -> None:
+            return None
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    async def fake_prepare(settings):
+        _ = settings
+        return SimpleNamespace(stop=_noop, settings=SimpleNamespace()), (), SimpleNamespace()
+
+    def fake_bundle(settings, scheduler, discovered_markets, observability):
+        _ = settings, scheduler, discovered_markets, observability
+        return SimpleNamespace(
+            node=FakeNode(),
+            scheduler=SimpleNamespace(
+                stop=_noop,
+                settings=SimpleNamespace(
+                    runtime=SimpleNamespace(
+                        nautilus=SimpleNamespace(
+                            paper_engine="nautilus_matching",
+                            matching_accuracy_mode="depth_l2",
+                        )
+                    )
+                ),
+            ),
+            observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+            components={"strategies": []},
+        )
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._prepare_nautilus_runtime_context",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._build_nautilus_runtime_bundle",
+        fake_bundle,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._install_sync_os_signal_handlers",
+        lambda _request_stop: pytest.fail("OS signal handlers must be opt-in"),
+    )
+
+    run_nautilus_cli()
+
+
+def test_run_nautilus_cli_installs_signal_handlers_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installed: list[object] = []
+
+    class FakeNode:
+        def run(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+        def dispose(self) -> None:
+            return None
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    async def fake_prepare(settings):
+        _ = settings
+        return SimpleNamespace(stop=_noop, settings=SimpleNamespace()), (), SimpleNamespace()
+
+    def fake_bundle(settings, scheduler, discovered_markets, observability):
+        _ = settings, scheduler, discovered_markets, observability
+        return SimpleNamespace(
+            node=FakeNode(),
+            scheduler=SimpleNamespace(
+                stop=_noop,
+                settings=SimpleNamespace(
+                    runtime=SimpleNamespace(
+                        nautilus=SimpleNamespace(
+                            paper_engine="nautilus_matching",
+                            matching_accuracy_mode="depth_l2",
+                            intercept_os_signals=True,
+                        )
+                    )
+                ),
+            ),
+            observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+            components={"strategies": []},
+        )
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._prepare_nautilus_runtime_context",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._build_nautilus_runtime_bundle",
+        fake_bundle,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._install_sync_os_signal_handlers",
+        lambda handler: (installed.append(handler), lambda: None)[1],
+    )
+
+    run_nautilus_cli()
+
+    assert len(installed) == 1
+
+
+def test_run_nautilus_cli_restores_opt_in_signal_handlers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous = {
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+    }
+
+    class FakeNode:
+        def run(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+        def dispose(self) -> None:
+            return None
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    async def fake_prepare(settings):
+        _ = settings
+        return (
+            SimpleNamespace(stop=_noop, settings=SimpleNamespace()),
+            (),
+            SimpleNamespace(),
+        )
+
+    def fake_bundle(settings, scheduler, discovered_markets, observability):
+        _ = settings, scheduler, discovered_markets, observability
+        return SimpleNamespace(
+            node=FakeNode(),
+            scheduler=SimpleNamespace(
+                stop=_noop,
+                settings=SimpleNamespace(
+                    runtime=SimpleNamespace(
+                        nautilus=SimpleNamespace(
+                            paper_engine="nautilus_matching",
+                            matching_accuracy_mode="depth_l2",
+                            intercept_os_signals=True,
+                        )
+                    )
+                ),
+            ),
+            observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+            components={"strategies": []},
+        )
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._prepare_nautilus_runtime_context",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._build_nautilus_runtime_bundle",
+        fake_bundle,
+    )
+
+    try:
+        run_nautilus_cli()
+
+        assert signal.getsignal(signal.SIGTERM) == previous[signal.SIGTERM]
+        assert signal.getsignal(signal.SIGINT) == previous[signal.SIGINT]
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def test_run_nautilus_cli_restores_signal_handlers_after_dispose_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous = {
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+    }
+
+    class FakeNode:
+        def run(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+        def dispose(self) -> None:
+            raise RuntimeError("dispose failed")
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    async def fake_prepare(settings):
+        _ = settings
+        return (
+            SimpleNamespace(stop=_noop, settings=SimpleNamespace()),
+            (),
+            SimpleNamespace(),
+        )
+
+    def fake_bundle(settings, scheduler, discovered_markets, observability):
+        _ = settings, scheduler, discovered_markets, observability
+        return SimpleNamespace(
+            node=FakeNode(),
+            scheduler=SimpleNamespace(
+                stop=_noop,
+                settings=SimpleNamespace(
+                    runtime=SimpleNamespace(
+                        nautilus=SimpleNamespace(
+                            paper_engine="nautilus_matching",
+                            matching_accuracy_mode="depth_l2",
+                            intercept_os_signals=True,
+                        )
+                    )
+                ),
+            ),
+            observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+            components={"strategies": []},
+        )
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._prepare_nautilus_runtime_context",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._build_nautilus_runtime_bundle",
+        fake_bundle,
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="dispose failed"):
+            run_nautilus_cli()
+
+        assert signal.getsignal(signal.SIGTERM) == previous[signal.SIGTERM]
+        assert signal.getsignal(signal.SIGINT) == previous[signal.SIGINT]
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def test_run_nautilus_cli_prints_ready(monkeypatch, capsys) -> None:

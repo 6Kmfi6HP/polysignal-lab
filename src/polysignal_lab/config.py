@@ -158,7 +158,9 @@ class PolymarketDataConfig(BaseModel):
     rest_rate_limit_per_sec: float = 8.0
     max_book_staleness_ms: int = 60000  # 60s — books refetched every ~30-40s via REST
     max_market_metadata_staleness_ms: int = 10000
-    settlement: PolymarketSettlementConfig = Field(default_factory=PolymarketSettlementConfig)
+    settlement: PolymarketSettlementConfig = Field(
+        default_factory=PolymarketSettlementConfig
+    )
 
 
 class BinanceDataConfig(BaseModel):
@@ -271,9 +273,14 @@ class NautilusRuntimeConfig(BaseModel):
     paper_engine: Literal["nautilus_matching"] = "nautilus_matching"
     matching_accuracy_mode: Literal["fast_l1", "depth_l2", "queue_l2"] = "depth_l2"
     allow_live_polymarket_execution: bool = False
-    polymarket_data: NautilusDataClientConfig = Field(default_factory=NautilusDataClientConfig)
+    intercept_os_signals: bool = False
+    polymarket_data: NautilusDataClientConfig = Field(
+        default_factory=NautilusDataClientConfig
+    )
     sidecar: NautilusSidecarConfig = Field(default_factory=NautilusSidecarConfig)
-    decision_policy: NautilusDecisionPolicyConfig = Field(default_factory=NautilusDecisionPolicyConfig)
+    decision_policy: NautilusDecisionPolicyConfig = Field(
+        default_factory=NautilusDecisionPolicyConfig
+    )
     market_rotation: NautilusMarketRotationConfig = Field(
         default_factory=NautilusMarketRotationConfig
     )
@@ -281,7 +288,9 @@ class NautilusRuntimeConfig(BaseModel):
     @model_validator(mode="after")
     def validate_paper_safe(self) -> "NautilusRuntimeConfig":
         if self.allow_live_polymarket_execution:
-            raise ValueError("live Polymarket execution is invalid in the default runtime")
+            raise ValueError(
+                "live Polymarket execution is invalid in the default runtime"
+            )
         return self
 
 
