@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
-from typing import cast
+from inspect import Parameter, signature
+from typing import SupportsFloat, cast
 
 
 def project_order_event(event: object) -> dict[str, object]:
@@ -107,24 +108,43 @@ def _portfolio_equity(portfolio: object, account: object | None) -> float:
             try:
                 return _to_float(equity(account_id=account_id))
             except TypeError:
-                pass
-        try:
-            return _to_float(equity())
-        except TypeError:
-            return 0.0
+                try:
+                    parameters = signature(equity).parameters.values()
+                except (TypeError, ValueError):
+                    raise
+                if any(
+                    parameter.kind == Parameter.VAR_KEYWORD or parameter.name == "account_id"
+                    for parameter in parameters
+                ):
+                    raise
+        return _to_float(equity())
     return _to_float(equity)
 
 
 def _to_float(value: object) -> float:
+    if isinstance(value, Mapping):
+        return sum(_to_float(item) for item in cast(Mapping[object, object], value).values())
+
+    for name in ("as_double", "as_decimal"):
+        numeric = getattr(value, name, None)
+        if callable(numeric):
+            try:
+                return _to_float(numeric())
+            except (TypeError, ValueError):
+                pass
+
     coerced = (
         value
         if isinstance(value, (int, float, str, bytes, bytearray))
-        else str(value)
+        else cast(SupportsFloat, value)
     )
     try:
         return float(coerced)
     except (TypeError, ValueError):
-        return 0.0
+        try:
+            return float(str(value))
+        except (TypeError, ValueError):
+            return 0.0
 
 
 def _float_attr(source: object, name: str) -> float:

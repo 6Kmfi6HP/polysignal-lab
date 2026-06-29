@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from polysignal_lab.nautilus_runtime.projections import (
     project_fill_event,
     project_order_event,
+    project_portfolio_snapshot,
     project_position,
 )
 
@@ -18,6 +19,17 @@ class _FloatLike:
 
     def __str__(self) -> str:
         return str(self.value)
+
+
+class _MoneyLike:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def as_double(self) -> float:
+        return self.value
+
+    def __str__(self) -> str:
+        return f"{self.value} USDC"
 
 
 def test_project_order_event_uses_nautilus_event_fields() -> None:
@@ -105,3 +117,18 @@ def test_project_position_uses_nautilus_position_fields() -> None:
     assert row["realized_pnl"] == 1.25
     assert row["status"] == "OPEN"
     assert row["is_closed"] is False
+
+
+def test_project_portfolio_snapshot_sums_currency_equity_mapping() -> None:
+    account = SimpleNamespace(id="ACCOUNT-001")
+
+    class Portfolio:
+        id = "portfolio-001"
+
+        def equity(self, *, account_id: str) -> dict[str, _MoneyLike]:
+            assert account_id == "ACCOUNT-001"
+            return {"USDC": _MoneyLike(101.25), "USD": _MoneyLike(2.5)}
+
+    row = project_portfolio_snapshot(Portfolio(), account=account)
+
+    assert row["equity"] == 103.75
