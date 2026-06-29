@@ -40,6 +40,18 @@ class _OneMarketDiscovery:
         return [self.market]
 
 
+class _DiscoverOnly:
+    def __init__(self, market):
+        self.market = market
+        self.kwargs = None
+
+    async def discover(self, *, include_next_periods: int = 0, stale_grace_sec: int = 0):
+        self.kwargs = {
+            "include_next_periods": include_next_periods,
+            "stale_grace_sec": stale_grace_sec,
+        }
+        return [self.market]
+
 class _FailingPersistence:
     def upsert_market(self, market):
         raise OSError("disk full")
@@ -84,6 +96,47 @@ async def test_market_universe_refresh_keeps_tokens_when_persistence_fails(setti
     assert service.active_markets() == [market]
     assert service.latest_token_ids == tuple(token.token_id for token in market.outcome_tokens)
 
+
+async def test_market_universe_refresh_passes_rotation_window_options(settings) -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    discovery = _DiscoverOnly(market)
+    settings.runtime.nautilus.market_rotation.include_next_periods = 2
+    settings.runtime.nautilus.market_rotation.stale_grace_sec = 7
+    service = MarketUniverseService(
+        discovery,
+        MarketRegistry(),
+        _Persistence(),
+        settings=settings,
+    )
+
+    await service.refresh_once()
+
+    assert discovery.kwargs == {
+        "include_next_periods": 2,
+        "stale_grace_sec": 7,
+    }
+
+async def test_market_universe_refresh_does_not_apply_rotation_window_options_in_legacy_mode(
+    settings,
+) -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    discovery = _DiscoverOnly(market)
+    settings.runtime.engine = "legacy"
+    settings.runtime.nautilus.market_rotation.include_next_periods = 2
+    settings.runtime.nautilus.market_rotation.stale_grace_sec = 7
+    service = MarketUniverseService(
+        discovery,
+        MarketRegistry(),
+        _Persistence(),
+        settings=settings,
+    )
+
+    await service.refresh_once()
+
+    assert discovery.kwargs == {
+        "include_next_periods": 0,
+        "stale_grace_sec": 0,
+    }
 
 async def test_market_universe_resolved_refresh_keeps_registry_when_persistence_fails(settings) -> None:
     market = sample_market(

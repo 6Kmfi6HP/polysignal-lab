@@ -542,6 +542,57 @@ async def test_gamma_discovery_fetches_current_slot_by_slug_when_list_has_only_f
     assert any(call.url.endswith("/events/slug/btc-updown-5m-1782254400") for call in client.calls)
 
 
+async def test_gamma_discovery_includes_next_period_market_when_requested(monkeypatch) -> None:
+    from polysignal_lab.data import polymarket_market_discovery as discovery_module
+
+    now = datetime(2026, 6, 23, 22, 41, tzinfo=timezone.utc)
+    monkeypatch.setattr(discovery_module, "utc_now", lambda: now)
+    current = _gamma_market_payload(
+        slug="btc-updown-5m-1782254400",
+        market_id="market-current",
+        start="2026-06-23T22:40:00Z",
+        end="2026-06-23T22:45:00Z",
+    )
+    next_market = _gamma_market_payload(
+        slug="btc-updown-5m-1782254700",
+        market_id="market-next",
+        start="2026-06-23T22:45:00Z",
+        end="2026-06-23T22:50:00Z",
+    )
+    client = FakeAsyncClient([[], current, next_market])
+    discovery = MarketDiscovery(
+        PolymarketDataConfig(),
+        MarketConfig(assets=["BTC"], timeframes=["5m"], active_only=True, closed=False),
+        client=client,
+    )
+
+    markets = await discovery.discover(include_next_periods=1)
+
+    assert [market.market_id for market in markets] == ["market-current", "market-next"]
+
+
+async def test_gamma_discovery_keeps_recently_ended_slot_with_stale_grace(monkeypatch) -> None:
+    from polysignal_lab.data import polymarket_market_discovery as discovery_module
+
+    now = datetime(2026, 6, 23, 22, 45, 3, tzinfo=timezone.utc)
+    monkeypatch.setattr(discovery_module, "utc_now", lambda: now)
+    previous = _gamma_market_payload(
+        slug="btc-updown-5m-1782254400",
+        market_id="market-previous",
+        start="2026-06-23T22:40:00Z",
+        end="2026-06-23T22:45:00Z",
+    )
+    client = FakeAsyncClient([[], previous])
+    discovery = MarketDiscovery(
+        PolymarketDataConfig(),
+        MarketConfig(assets=["BTC"], timeframes=["5m"], active_only=True, closed=False),
+        client=client,
+    )
+
+    markets = await discovery.discover(stale_grace_sec=5)
+
+    assert [market.market_id for market in markets] == ["market-previous"]
+
 async def test_gamma_discovery_maps_current_slot_tokens_by_outcome_label(monkeypatch) -> None:
     from polysignal_lab.data import polymarket_market_discovery as discovery_module
 

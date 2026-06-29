@@ -6,14 +6,16 @@ no private key/env-var reading, no allowance scripts.
 """
 from __future__ import annotations
 
+from datetime import date
 import asyncio
 import inspect
 import importlib
 import logging
 import signal
+import threading
 from contextlib import suppress
 import sys
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Protocol, cast, runtime_checkable
@@ -36,6 +38,10 @@ from polysignal_lab.nautilus_runtime.observability import (
     NautilusEventStoreAdapter,
     NautilusNotifierAdapter,
     ObservabilityActor,
+)
+from polysignal_lab.nautilus_runtime.scheduler_compat import (
+    init_scheduler_paper_components,
+    mirror_nautilus_fill_into_scheduler,
 )
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
@@ -424,10 +430,22 @@ def _instrument_id_resolver(registry: PolymarketMarketRegistry) -> Callable[[str
 
 
 async def _stop_nautilus_scheduler(scheduler: object) -> None:
+    if bool(getattr(scheduler, "_nautilus_runtime_compat_only", False)):
+        setattr(scheduler, "_running", False)
+        try:
+            scheduler_health.persist_health_snapshot(cast(PolySignalScheduler, scheduler))
+        except Exception as exc:
+            cast(logging.Logger, getattr(scheduler, "logger", logger)).warning(
+                "Failed to persist Nautilus health snapshot: %s",
+                exc,
+            )
+        return
+
     stop = getattr(scheduler, "stop", None)
     if hasattr(scheduler, "wallet") and callable(stop):
         await cast(Callable[[], Awaitable[object]], stop)()
         return
+
     setattr(scheduler, "_running", False)
     try:
         scheduler_health.persist_health_snapshot(cast(PolySignalScheduler, scheduler))
@@ -436,6 +454,129 @@ async def _stop_nautilus_scheduler(scheduler: object) -> None:
             "Failed to persist Nautilus health snapshot: %s",
             exc,
         )
+
+
+def _publish_nautilus_paper_fill_in_background(
+    scheduler: PolySignalScheduler,
+    payload: Mapping[str, object],
+) -> None:
+    try:
+        asyncio.run(scheduler.publish_service.publish_nautilus_paper_fill(dict(payload)))
+    except Exception as exc:
+        scheduler.logger.warning(
+            "Nautilus paper fill publish failed for %s: %s",
+            payload.get("paper_fill_id") or payload.get("client_order_id") or payload.get("order_id") or "unknown",
+            exc,
+        )
+
+
+def _notify_nautilus_paper_fill(
+    scheduler: PolySignalScheduler,
+    payload: Mapping[str, object],
+) -> None:
+    if not getattr(scheduler.settings.telegram, "send_paper_results", False):
+        return
+    thread = threading.Thread(
+        target=_publish_nautilus_paper_fill_in_background,
+        args=(scheduler, dict(payload)),
+        daemon=True,
+    )
+    thread.start()
+
+
+def _mirror_nautilus_paper_fill(
+    scheduler: PolySignalScheduler,
+    payload: Mapping[str, object],
+) -> None:
+    try:
+        _ = mirror_nautilus_fill_into_scheduler(scheduler, payload)
+    except Exception as exc:
+        scheduler.logger.warning(
+            "Nautilus paper fill mirror failed for %s: %s",
+            payload.get("paper_fill_id") or payload.get("client_order_id") or payload.get("order_id") or "unknown",
+            exc,
+        )
+
+
+async def _initialize_nautilus_settlement_compat(
+    scheduler: PolySignalScheduler,
+) -> None:
+    init_scheduler_paper_components(scheduler)
+    restore_wallet = getattr(scheduler, "_restore_wallet_state", None)
+    if callable(restore_wallet):
+        await cast(Callable[[], Awaitable[object]], restore_wallet)()
+
+async def _prepare_nautilus_runtime_context(
+    settings: Settings,
+) -> tuple[PolySignalScheduler, tuple[Market, ...], ObservabilityActor]:
+    scheduler = PolySignalScheduler(settings)
+    _initialize_nautilus_scheduler_components(scheduler)
+    await _initialize_nautilus_settlement_compat(scheduler)
+    discovered_markets = tuple(await scheduler.market_universe.refresh_once())
+    observability = ObservabilityActor(
+        health=scheduler.health,
+        store=NautilusEventStoreAdapter(scheduler.persistence),
+        notifier=NautilusNotifierAdapter(scheduler.publisher),
+        paper_fill_notifier=lambda payload: _notify_nautilus_paper_fill(scheduler, payload),
+        paper_fill_mirror=lambda payload: _mirror_nautilus_paper_fill(scheduler, payload),
+    )
+    return scheduler, discovered_markets, observability
+
+
+def _rebind_market_discovery_client(scheduler: PolySignalScheduler) -> None:
+    discovery = cast(object, getattr(scheduler, "discovery", None))
+    client = getattr(discovery, "client", None)
+    if client is None:
+        return
+    replace_client = getattr(discovery, "replace_client", None)
+    if callable(replace_client):
+        _ = replace_client()
+        return
+    try:
+        import httpx
+
+        setattr(discovery, "client", httpx.AsyncClient(timeout=15.0))
+    except Exception:
+        scheduler.logger.warning(
+            "Failed to replace startup market discovery client before live runtime handoff",
+            exc_info=True,
+        )
+
+
+def _build_nautilus_runtime_bundle(
+    settings: Settings,
+    scheduler: PolySignalScheduler,
+    discovered_markets: tuple[Market, ...],
+    observability: ObservabilityActor,
+) -> NautilusRuntimeBundle:
+    condition_ids = tuple(market.condition_id for market in discovered_markets if market.condition_id)
+    components = build_trading_node(
+        settings,
+        condition_ids=condition_ids,
+        markets=discovered_markets,
+        market_universe=scheduler.market_universe,
+        store=getattr(scheduler, "sqlite", None),
+        health=scheduler.health,
+        observability=observability,
+    )
+    paper_execution_metadata = {
+        "paper_engine": settings.runtime.nautilus.paper_engine,
+        "accuracy_mode": settings.runtime.nautilus.matching_accuracy_mode,
+    }
+    setattr(scheduler, "nautilus_cache_reader", components.get("cache_reader"))
+    setattr(scheduler, "paper_execution_metadata", paper_execution_metadata)
+
+    return NautilusRuntimeBundle(
+        scheduler=scheduler,
+        components=components,
+        bridge_registry=cast(PolymarketMarketRegistry, components["registry"]),
+        sidecar=cast(ExternalDataSidecar, components["sidecar"]),
+        book_data_provider=None,
+        data_ingestor=None,
+        node=cast(_TradingNodeLike, components["node"]),
+        observability=observability,
+        websocket_tasks=[],
+    )
 
 
 def _native_core_for(name: str, cfg: object) -> AlphaCore | None:
@@ -487,7 +628,6 @@ def _fixed_stake_for(cfg: object) -> float:
     return 10.0
 
 
-
 def _build_policy(settings: Settings) -> DecisionPolicyActor:
     return DecisionPolicyActor(
         gate=SignalGate(
@@ -506,6 +646,7 @@ def _build_policy(settings: Settings) -> DecisionPolicyActor:
 def build_control(policy: DecisionPolicyActor) -> DecisionPolicyControl:
     """Build a StrategyControl adapter from a DecisionPolicyActor."""
     return DecisionPolicyControl(policy)
+
 
 def _initialize_nautilus_scheduler_components(scheduler: PolySignalScheduler) -> None:
     """Initialize scheduler state needed by Nautilus without legacy local paper."""
@@ -529,57 +670,6 @@ def _initialize_nautilus_scheduler_components(scheduler: PolySignalScheduler) ->
     scheduler.arbiter = SignalArbiter()
     setattr(scheduler, "_trading_components_initialized", True)
 
-
-async def _prepare_nautilus_runtime_context(
-    settings: Settings,
-) -> tuple[PolySignalScheduler, tuple[Market, ...], ObservabilityActor]:
-    scheduler = PolySignalScheduler(settings)
-    _initialize_nautilus_scheduler_components(scheduler)
-    discovered_markets = tuple(await scheduler.market_universe.refresh_once())
-    observability = ObservabilityActor(
-        health=scheduler.health,
-        store=NautilusEventStoreAdapter(scheduler.persistence),
-        notifier=NautilusNotifierAdapter(scheduler.publisher),
-    )
-    return scheduler, discovered_markets, observability
-
-
-def _build_nautilus_runtime_bundle(
-    settings: Settings,
-    scheduler: PolySignalScheduler,
-    discovered_markets: tuple[Market, ...],
-    observability: ObservabilityActor,
-) -> NautilusRuntimeBundle:
-    condition_ids = tuple(market.condition_id for market in discovered_markets if market.condition_id)
-    components = build_trading_node(
-        settings,
-        condition_ids=condition_ids,
-        markets=discovered_markets,
-        market_universe=scheduler.market_universe,
-        store=getattr(scheduler, "sqlite", None),
-        health=scheduler.health,
-        observability=observability,
-    )
-    paper_execution_metadata = {
-        "paper_engine": settings.runtime.nautilus.paper_engine,
-        "accuracy_mode": settings.runtime.nautilus.matching_accuracy_mode,
-    }
-    setattr(scheduler, "nautilus_cache_reader", components.get("cache_reader"))
-    setattr(scheduler, "paper_execution_metadata", paper_execution_metadata)
-
-    return NautilusRuntimeBundle(
-        scheduler=scheduler,
-        components=components,
-        bridge_registry=cast(PolymarketMarketRegistry, components["registry"]),
-        sidecar=cast(ExternalDataSidecar, components["sidecar"]),
-        book_data_provider=None,
-        data_ingestor=None,
-        node=cast(_TradingNodeLike, components["node"]),
-        observability=observability,
-        websocket_tasks=[],
-    )
-
-
 async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRuntimeBundle:
     """Build the default Nautilus runtime without PolySignal market-data ownership."""
     if settings is None:
@@ -587,16 +677,30 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
 
     scheduler, discovered_markets, observability = await _prepare_nautilus_runtime_context(settings)
     return _build_nautilus_runtime_bundle(settings, scheduler, discovered_markets, observability)
+async def _run_nautilus_housekeeping_once(
+    scheduler: PolySignalScheduler,
+    last_report_date: date | None,
+) -> date | None:
+    from polysignal_lab.app.scheduler_runtime import (
+        _check_iteration_settlements,
+        _generate_iteration_report,
+    )
+
+    await _check_iteration_settlements(scheduler)
+    return await _generate_iteration_report(scheduler, last_report_date)
+
+
 async def _run_nautilus_report_loop(
     scheduler: PolySignalScheduler,
     stop_event: asyncio.Event,
 ) -> None:
-    from polysignal_lab.app.scheduler_runtime import _generate_iteration_report
-
     last_report_date = None
     interval_sec = max(float(scheduler.settings.markets.refresh_interval_sec), 1.0)
     while not stop_event.is_set():
-        last_report_date = await _generate_iteration_report(scheduler, last_report_date)
+        last_report_date = await _run_nautilus_housekeeping_once(
+            scheduler,
+            last_report_date,
+        )
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval_sec)
         except asyncio.TimeoutError:
@@ -635,6 +739,8 @@ async def run_nautilus_cli_async(settings: Settings | None = None,
             if isinstance(strategies, Sequence)
             else []
         )
+        await asyncio.to_thread(_rebind_market_discovery_client, bundle.scheduler)
+
         try:
             await bundle.observability.notify_startup(
                 strategy_names,
@@ -683,6 +789,7 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
     scheduler, discovered_markets, observability = asyncio.run(
         _prepare_nautilus_runtime_context(settings)
     )
+    _rebind_market_discovery_client(scheduler)
     bundle = _build_nautilus_runtime_bundle(
         settings,
         scheduler,

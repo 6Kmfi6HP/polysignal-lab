@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 from types import new_class
 from typing import Callable, Protocol, cast
 
@@ -24,6 +25,13 @@ from polysignal_lab.nautilus_runtime.sidecar_data import (
     _market_metadata,
     _timestamp_ns,
 )
+
+logger = logging.getLogger("polysignal_lab.nautilus.market_rotation")
+
+REFRESH_TIMER_NAME = "market_rotation_refresh"
+
+
+_PriceToBeatSignature = tuple[float, str, bool, bool, str | None]
 
 
 class _MarketUniverse(Protocol):
@@ -81,6 +89,8 @@ class MarketRotationActor:
         self._epoch = 0
         self._refresh_task: _CancelableTask | None = None
         self._rtds_task: _CancelableTask | None = None
+        self._refresh_in_flight = False
+        self._last_published_ptb: dict[str, _PriceToBeatSignature] = {}
     def publish_data(self, data_type: object, data: object) -> None:
         base_publish = getattr(super(MarketRotationActor, self), "publish_data", None)
         if callable(base_publish):
@@ -97,16 +107,44 @@ class MarketRotationActor:
                 exited_condition_ids=(),
             )
             self._epoch = next_epoch
+            self._mark_ok(
+                active_count=len(self._active_by_condition),
+                entered_count=len(self._active_by_condition),
+                exited_count=0,
+                epoch=self._epoch,
+                phase="startup",
+            )
+            logger.info(
+                "market_rotation phase=startup epoch=%s active=%s entered=%s exited=%s",
+                self._epoch,
+                len(self._active_by_condition),
+                len(self._active_by_condition),
+                0,
+            )
         for market in self.active_markets():
             self.publisher.publish_market_metadata(_market_metadata(market))
             _ = asyncio.create_task(self._publish_price_to_beat(market))
         if self.settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds":
             self._rtds_task = asyncio.create_task(self.rtds_feed.run())
         if self.settings.runtime.nautilus.market_rotation.enabled:
-            self._refresh_task = asyncio.create_task(self._run_loop())
+            interval = max(int(self.settings.runtime.nautilus.market_rotation.interval_sec), 1)
+            clock = getattr(self, "clock", None)
+            set_timer = getattr(clock, "set_timer", None)
+            if callable(set_timer):
+                _ = set_timer(
+                    REFRESH_TIMER_NAME,
+                    timedelta(seconds=interval),
+                    callback=self._on_refresh_timer,
+                )
+            else:
+                self._refresh_task = asyncio.create_task(self._run_loop())
 
     def on_stop(self) -> None:
         self.rtds_feed.stop()
+        clock = getattr(self, "clock", None)
+        cancel_timer = getattr(clock, "cancel_timer", None)
+        if callable(cancel_timer):
+            _ = cancel_timer(REFRESH_TIMER_NAME)
         for task in (self._refresh_task, self._rtds_task):
             if task is not None and hasattr(task, "cancel"):
                 task.cancel()
@@ -115,16 +153,35 @@ class MarketRotationActor:
         try:
             refreshed_markets = tuple(await self.market_universe.refresh_once())
         except Exception as exc:
-            self._mark_down(exc)
+            logger.exception("market_rotation phase=refresh failed epoch=%s", self._epoch)
+            self._mark_down(exc, phase="refresh")
             raise
+        markets = self._apply_refreshed_markets(refreshed_markets)
+        await self._refresh_price_to_beat_batch(markets)
+        return markets
 
+    def _apply_refreshed_markets(
+        self,
+        refreshed_markets: tuple[Market, ...],
+    ) -> tuple[Market, ...]:
         current = _markets_by_condition(refreshed_markets)
-        if _universe_signature(current) == _universe_signature(self._active_by_condition):
+        previous = self._active_by_condition
+        if _universe_signature(current) == _universe_signature(previous):
             self._active_by_condition = current
-            self._mark_ok(active_count=len(current), entered_count=0, exited_count=0)
+            self._mark_ok(
+                active_count=len(current),
+                entered_count=0,
+                exited_count=0,
+                epoch=self._epoch,
+                phase="refresh",
+            )
+            logger.info(
+                "market_rotation phase=refresh epoch=%s active=%s entered=0 exited=0",
+                self._epoch,
+                len(current),
+            )
             return tuple(current.values())
 
-        previous = self._active_by_condition
         entered_condition_ids = tuple(
             condition_id for condition_id in current if condition_id not in previous
         )
@@ -139,9 +196,9 @@ class MarketRotationActor:
             exited_condition_ids=exited_condition_ids,
         )
         for condition_id in entered_condition_ids:
-            market = current[condition_id]
-            self.publisher.publish_market_metadata(_market_metadata(market))
-            _ = asyncio.create_task(self._publish_price_to_beat(market))
+            self.publisher.publish_market_metadata(_market_metadata(current[condition_id]))
+        for condition_id in exited_condition_ids:
+            self._last_published_ptb.pop(condition_id, None)
         self._active_by_condition = current
         self._epoch = next_epoch
         self._mark_ok(
@@ -149,6 +206,14 @@ class MarketRotationActor:
             entered_count=len(entered_condition_ids),
             exited_count=len(exited_condition_ids),
             epoch=self._epoch,
+            phase="refresh",
+        )
+        logger.info(
+            "market_rotation phase=refresh epoch=%s active=%s entered=%s exited=%s",
+            self._epoch,
+            len(current),
+            len(entered_condition_ids),
+            len(exited_condition_ids),
         )
         return tuple(current.values())
 
@@ -156,12 +221,66 @@ class MarketRotationActor:
         interval = max(int(self.settings.runtime.nautilus.market_rotation.interval_sec), 1)
         while True:
             await asyncio.sleep(interval)
+            await self.refresh_once()
+
+    async def _refresh_market_universe_async(self) -> tuple[Market, ...]:
+        discovery = getattr(self.market_universe, "discovery", None)
+        client = getattr(discovery, "client", None)
+        if discovery is None or client is None:
+            return tuple(await self.market_universe.refresh_once())
+
+        import httpx
+
+        original_client = client
+        fresh_client = httpx.AsyncClient(timeout=15.0)
+        setattr(discovery, "client", fresh_client)
+        try:
+            return tuple(await self.market_universe.refresh_once())
+        finally:
+            setattr(discovery, "client", original_client)
+            await fresh_client.aclose()
+    def _refresh_market_universe_sync(self) -> tuple[Market, ...]:
+        return tuple(asyncio.run(self._refresh_market_universe_async()))
+
+    def _run_refresh_price_to_beat_batch_sync(self, markets: tuple[Market, ...]) -> None:
+        _ = asyncio.run(self._refresh_price_to_beat_batch(markets))
+
+    async def _refresh_once_via_thread(self) -> tuple[Market, ...]:
+        try:
+            refreshed_markets = tuple(await asyncio.to_thread(self._refresh_market_universe_sync))
+        except Exception as exc:
+            logger.exception("market_rotation phase=refresh failed epoch=%s", self._epoch)
+            self._mark_down(exc, phase="refresh")
+            raise
+        markets = self._apply_refreshed_markets(refreshed_markets)
+        await self._refresh_price_to_beat_batch(markets)
+        return markets
+
+    async def _refresh_once_via_thread_guarded(self) -> tuple[Market, ...]:
+        try:
+            return await self._refresh_once_via_thread()
+        finally:
+            self._refresh_in_flight = False
+
+    def _on_refresh_timer(self, _event: object = None) -> None:
+        if self._refresh_in_flight:
+            return
+        self._refresh_in_flight = True
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
             try:
-                await self.refresh_once()
-            except asyncio.CancelledError:
+                refreshed_markets = self._refresh_market_universe_sync()
+                markets = self._apply_refreshed_markets(refreshed_markets)
+                self._run_refresh_price_to_beat_batch_sync(markets)
+            except Exception as exc:
+                logger.exception("market_rotation phase=refresh failed epoch=%s", self._epoch)
+                self._mark_down(exc, phase="refresh")
                 raise
-            except Exception:
-                continue
+            finally:
+                self._refresh_in_flight = False
+            return
+        _ = loop.create_task(self._refresh_once_via_thread_guarded())
 
     def _on_spot(self, spot: SpotPrice) -> None:
         self.publisher.publish_spot(
@@ -188,6 +307,15 @@ class MarketRotationActor:
         result = await self.ptb_provider.get(market)
         if result.value is None:
             return
+        signature: _PriceToBeatSignature = (
+            result.value,
+            result.source,
+            result.verified,
+            result.from_anchor_service,
+            result.anchor_source,
+        )
+        if self._last_published_ptb.get(market.condition_id) == signature:
+            return
         now = datetime.now(UTC)
         self.publisher.publish_price_to_beat(
             condition_id=market.condition_id,
@@ -200,6 +328,18 @@ class MarketRotationActor:
             ts_event=_timestamp_ns(now),
             ts_init=_timestamp_ns(now),
         )
+        self._last_published_ptb[market.condition_id] = signature
+
+    async def _refresh_price_to_beat_batch(self, markets: tuple[Market, ...]) -> None:
+        for market in markets:
+            try:
+                await self._publish_price_to_beat(market)
+            except Exception:
+                logger.exception(
+                    "market_rotation phase=refresh_ptb failed epoch=%s condition_id=%s",
+                    self._epoch,
+                    market.condition_id,
+                )
 
     def _publish_market_universe(
         self,
@@ -242,9 +382,9 @@ class MarketRotationActor:
         if self.health is not None:
             self.health.mark_ok("market_rotation", **metrics)
 
-    def _mark_down(self, exc: Exception) -> None:
+    def _mark_down(self, exc: Exception, **metrics: object) -> None:
         if self.health is not None:
-            self.health.mark_down("market_rotation", str(exc), epoch=self._epoch)
+            self.health.mark_down("market_rotation", str(exc), epoch=self._epoch, **metrics)
 
 
 def runtime_market_rotation_actor_type(

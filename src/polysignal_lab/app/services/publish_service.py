@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -51,6 +52,20 @@ class PublishService:
         message = self.formatter.daily_report_message(report)
         publish = await asyncio.wait_for(
             self.publisher.send(message, "daily_report", None),
+            timeout=self.timeout_sec,
+        )
+        self._persist_publish(publish)
+        return publish
+
+    async def publish_nautilus_paper_fill(self, fill: Mapping[str, object]) -> Any:
+        message = self.formatter.nautilus_fill_message(dict(fill))
+        signal_id = fill.get("signal_id")
+        publish = await asyncio.wait_for(
+            self.publisher.send(
+                message,
+                "nautilus_paper_fill",
+                str(signal_id) if isinstance(signal_id, str) and signal_id else None,
+            ),
             timeout=self.timeout_sec,
         )
         self._persist_publish(publish)

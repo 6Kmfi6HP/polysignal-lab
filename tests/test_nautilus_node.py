@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock
 import pytest
 
 from polysignal_lab.config import Settings
@@ -366,6 +368,8 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert captured["market_universe"] is bundle.scheduler.market_universe
     assert captured["health"] is bundle.scheduler.health
     assert captured["observability"] is not None
+    assert callable(getattr(captured["observability"], "paper_fill_notifier", None))
+    assert callable(getattr(captured["observability"], "paper_fill_mirror", None))
     assert bundle.scheduler is not None
     assert getattr(bundle.scheduler, "nautilus_cache_reader") is cache_reader
     assert getattr(bundle.scheduler, "paper_execution_metadata") == {
@@ -375,6 +379,262 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert bundle.websocket_tasks == []
 
 
+def test_prepare_nautilus_runtime_context_rebinds_market_discovery_client_for_later_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+    from polysignal_lab.domain.enums import Side
+    from polysignal_lab.domain.market import Market, OutcomeToken
+
+    market = Market(
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        condition_id="condition-btc-5m",
+        asset="BTC",
+        timeframe="5m",
+        outcome_tokens=[
+            OutcomeToken(token_id="up-token", side=Side.UP, outcome_name="Up", market_id="btc-5m"),
+            OutcomeToken(token_id="down-token", side=Side.DOWN, outcome_name="Down", market_id="btc-5m"),
+        ],
+    )
+    class LoopBoundClient:
+        def __init__(self, label: str) -> None:
+            self.label = label
+            try:
+                self.bound_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.bound_loop = None
+            self.closed = False
+
+        async def get(self, _url: str, params: object | None = None) -> object:
+            _ = params
+            loop = asyncio.get_running_loop()
+            if self.bound_loop is None:
+                self.bound_loop = loop
+            elif loop is not self.bound_loop:
+                raise RuntimeError("client reused across event loops")
+            return object()
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    class FakeDiscovery:
+        def __init__(self) -> None:
+            self.client = LoopBoundClient("old")
+            self.replace_calls = 0
+
+        def replace_client(self) -> None:
+            self.replace_calls += 1
+            self.client = LoopBoundClient("new")
+
+    class FakeMarketUniverse:
+        def __init__(self, discovery: FakeDiscovery) -> None:
+            self.discovery = discovery
+            self.calls = 0
+
+        async def refresh_once(self) -> list[Market]:
+            self.calls += 1
+            await self.discovery.client.get("https://example.invalid")
+            return [market]
+
+    class FakePersistence:
+        def insert_signal(self, payload):
+            _ = payload
+
+        def insert_rejected_signal(self, payload):
+            _ = payload
+
+        def upsert_paper_order(self, payload):
+            _ = payload
+
+        def insert_paper_fill(self, payload):
+            _ = payload
+
+        def upsert_paper_position(self, payload):
+            _ = payload
+
+        def insert_paper_trade_result(self, payload):
+            _ = payload
+
+        def insert_system_event(self, payload):
+            _ = payload
+
+        def append_log(self, stream, payload):
+            _ = stream, payload
+
+    created: dict[str, object] = {}
+
+    class FakeScheduler:
+        def __init__(self, settings=None):
+            self.settings = settings or SimpleNamespace(markets=SimpleNamespace(refresh_interval_sec=60))
+            self.discovery = FakeDiscovery()
+            created["old_client"] = self.discovery.client
+            self.market_universe = FakeMarketUniverse(self.discovery)
+            self.health = object()
+            self.persistence = FakePersistence()
+            self.publisher = SimpleNamespace(send=lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(node_mod, "PolySignalScheduler", FakeScheduler)
+    monkeypatch.setattr(node_mod, "_initialize_nautilus_scheduler_components", lambda _scheduler: None)
+    monkeypatch.setattr(node_mod, "NautilusEventStoreAdapter", lambda persistence: persistence)
+    monkeypatch.setattr(node_mod, "NautilusNotifierAdapter", lambda publisher: publisher)
+    monkeypatch.setattr(node_mod, "ObservabilityActor", lambda **kwargs: SimpleNamespace(**kwargs))
+
+    scheduler, discovered_markets, _observability = asyncio.run(
+        node_mod._prepare_nautilus_runtime_context(Settings())
+    )
+
+    assert [item.market_id for item in discovered_markets] == ["btc-5m"]
+    old_client = cast(LoopBoundClient, created["old_client"])
+    assert cast(FakeMarketUniverse, scheduler.market_universe).calls == 1
+    node_mod._rebind_market_discovery_client(scheduler)
+
+
+    refreshed_markets = asyncio.run(scheduler.market_universe.refresh_once())
+
+    assert [item.market_id for item in refreshed_markets] == ["btc-5m"]
+    assert cast(FakeMarketUniverse, scheduler.market_universe).calls == 2
+    assert cast(FakeDiscovery, scheduler.discovery).replace_calls == 1
+    assert cast(FakeDiscovery, scheduler.discovery).client is not old_client
+
+
+async def test_prepare_nautilus_runtime_context_initializes_settlement_compat_state(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+    from polysignal_lab.domain.enums import Side
+    from polysignal_lab.domain.market import Market, OutcomeToken
+
+    market = Market(
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        condition_id="0x" + "1" * 64,
+        asset="BTC",
+        timeframe="5m",
+        outcome_tokens=[
+            OutcomeToken(token_id="up-token", side=Side.UP, outcome_name="Up", market_id="btc-5m"),
+            OutcomeToken(token_id="down-token", side=Side.DOWN, outcome_name="Down", market_id="btc-5m"),
+        ],
+    )
+
+    settings = Settings()
+    scheduler = node_mod.PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler.market_universe.refresh_once = AsyncMock(return_value=[market])
+    scheduler.publisher = SimpleNamespace(send=lambda *_args, **_kwargs: None)
+
+    monkeypatch.setattr(node_mod, "PolySignalScheduler", lambda _settings=None: scheduler)
+
+    sched, discovered_markets, observability = await node_mod._prepare_nautilus_runtime_context(settings)
+
+    assert sched is scheduler
+    assert discovered_markets == (market,)
+    assert getattr(scheduler, "_nautilus_runtime_compat_only") is True
+    assert scheduler.paper is None
+    assert scheduler.paper_portfolio.wallet is scheduler.wallet
+    assert scheduler.paper_portfolio.exits is scheduler.exits
+    assert scheduler.paper_portfolio.settlement is scheduler.settlement
+    assert scheduler.wallet.open_position_count == 0
+    assert callable(getattr(observability, "paper_fill_notifier", None))
+    assert callable(getattr(observability, "paper_fill_mirror", None))
+
+
+async def test_run_nautilus_housekeeping_once_settles_mirrored_fill_position(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+    import polysignal_lab.app.scheduler_runtime as runtime_mod
+    from polysignal_lab.domain.enums import Side
+    from polysignal_lab.domain.market import Market, OutcomeToken
+    from polysignal_lab.paper.settlement_sources import ResolutionDecision
+
+    market = Market(
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        condition_id="0x" + "1" * 64,
+        asset="BTC",
+        timeframe="5m",
+        outcome_tokens=[
+            OutcomeToken(token_id="up-token", side=Side.UP, outcome_name="Up", market_id="btc-5m"),
+            OutcomeToken(token_id="down-token", side=Side.DOWN, outcome_name="Down", market_id="btc-5m"),
+        ],
+    )
+    settings = Settings()
+    settings.telegram.enabled = False
+    settings.telegram.send_daily_report = False
+    scheduler = node_mod.PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler.market_universe.refresh_once = AsyncMock(return_value=[market])
+    scheduler.publisher = SimpleNamespace(send=lambda *_args, **_kwargs: None)
+
+    monkeypatch.setattr(node_mod, "PolySignalScheduler", lambda _settings=None: scheduler)
+    monkeypatch.setattr(
+        runtime_mod,
+        "_generate_iteration_report",
+        AsyncMock(return_value=None),
+    )
+
+    sched, _discovered_markets, observability = await node_mod._prepare_nautilus_runtime_context(settings)
+    sched.ctx.markets.upsert_many([market])
+    sched.settlement_resolver.resolve_market = AsyncMock(
+        return_value=ResolutionDecision(
+            market.market_id,
+            market.condition_id,
+            "resolved",
+            "chain",
+            {"up-token": 1.0, "down-token": 0.0},
+            False,
+            (),
+            {
+                "settlement_source": "chain",
+                "condition_id": market.condition_id,
+                "payout_values_by_token": {"up-token": 1.0, "down-token": 0.0},
+                "chain_status": "resolved",
+            },
+        )
+    )
+
+    marker = "runtime-settlement-marker"
+    observability.mirror_nautilus_paper_fill(
+        {
+            "strategy": "probe",
+            "asset": "BTC",
+            "timeframe": "5m",
+            "market_id": market.market_id,
+            "market_slug": market.market_slug,
+            "condition_id": market.condition_id,
+            "token_id": "up-token",
+            "side": "UP",
+            "fill_price": 0.4,
+            "shares": 25.0,
+            "stake_usdc": 10.0,
+            "signal_id": marker,
+            "order_id": "order-1",
+            "client_order_id": "client-1",
+            "paper_fill_id": "fill-1",
+            "liquidity_side": "TAKER",
+            "metrics": {"fill_price": 0.4},
+        }
+    )
+
+    assert sched.wallet.open_position_count == 1
+
+    await node_mod._run_nautilus_housekeeping_once(sched, None)
+
+    trade_rows = sched.sqlite.query_json(
+        "paper_trade_results",
+        where="WHERE signal_id = ?",
+        params=(marker,),
+    )
+    position_rows = sched.sqlite.query_json(
+        "paper_positions",
+        where="WHERE signal_id = ?",
+        params=(marker,),
+    )
+
+    assert [row["result"] for row in trade_rows] == ["WIN"]
+    assert trade_rows[0]["details"]["settlement_source"] == "chain"
+    assert [row["status"] for row in position_rows] == ["CLOSED"]
+    assert sched.wallet.open_position_count == 0
 async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
     class FakeTradingNode:
         def __init__(self):
@@ -412,8 +672,8 @@ async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
         _ = settings
         return fake_bundle
 
-    async def fake_to_thread(fn):
-        return fn()
+    async def fake_to_thread(fn, *args):
+        return fn(*args)
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node.build_nautilus_runtime",
@@ -461,8 +721,8 @@ async def test_run_nautilus_cli_async_surfaces_node_run_failure(monkeypatch) -> 
         _ = settings
         return fake_bundle
 
-    async def fake_to_thread(fn):
-        return fn()
+    async def fake_to_thread(fn, *args):
+        return fn(*args)
 
     async def fake_report_loop(scheduler, stop_event):
         _ = scheduler
@@ -529,10 +789,9 @@ async def test_run_nautilus_cli_async_waits_for_node_stop_instead_of_canceling_r
         _ = settings
         return fake_bundle
 
-    async def fake_to_thread(fn):
-        if getattr(fn, "__name__", "") == "dispose":
-            fn()
-            return None
+    async def fake_to_thread(fn, *args):
+        if getattr(fn, "__name__", "") != "run":
+            return fn(*args)
         await run_released.wait()
 
     async def fake_report_loop(scheduler, stop_event):
@@ -655,8 +914,8 @@ async def test_run_nautilus_cli_async_notifies_and_starts_report_loop(
             components={"strategies": [SimpleNamespace(strategy_name="one_cent_buy")]},
         )
 
-    async def fake_to_thread(fn):
-        return fn()
+    async def fake_to_thread(fn, *args):
+        return fn(*args)
 
     async def fake_report_loop(scheduler, stop_event):
         calls.append(("report_loop", scheduler))
@@ -726,8 +985,8 @@ async def test_run_nautilus_cli_async_tolerates_notification_failures(
             components={"strategies": [SimpleNamespace(strategy_name="one_cent_buy")]},
         )
 
-    async def fake_to_thread(fn):
-        return fn()
+    async def fake_to_thread(fn, *args):
+        return fn(*args)
 
     async def fake_report_loop(scheduler, stop_event):
         calls.append(("report_loop", scheduler))

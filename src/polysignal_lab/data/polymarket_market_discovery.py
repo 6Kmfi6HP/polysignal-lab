@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import timedelta
 from typing import Final
 
 import httpx
@@ -23,9 +24,23 @@ class MarketDiscovery:
         self.market_config = market_config
         self.client = client or httpx.AsyncClient(timeout=15.0)
 
-    async def discover(self) -> list[Market]:
+    def replace_client(self, client: httpx.AsyncClient | None = None) -> httpx.AsyncClient:
+        self.client = client or httpx.AsyncClient(timeout=15.0)
+        return self.client
+
+    async def discover(
+        self,
+        *,
+        include_next_periods: int = 0,
+        stale_grace_sec: int = 0,
+    ) -> list[Market]:
         payloads = await self._fetch_gamma_events()
-        payloads.extend(await self._fetch_current_slot_payloads())
+        payloads.extend(
+            await self._fetch_current_slot_payloads(
+                include_next_periods=include_next_periods,
+                stale_grace_sec=stale_grace_sec,
+            )
+        )
         candidates = self._flatten_markets(payloads)
         markets: list[Market] = []
         seen: set[str] = set()
@@ -42,7 +57,11 @@ class MarketDiscovery:
                 inferred = self._infer_tokens(payload, market.market_id)
                 if inferred:
                     market.outcome_tokens = inferred
-            if not self._is_allowed_window(market):
+            if not self._is_allowed_window(
+                market,
+                include_next_periods=include_next_periods,
+                stale_grace_sec=stale_grace_sec,
+            ):
                 continue
             if len(market.outcome_tokens) >= 2:
                 key = market.condition_id or market.market_id or market.market_slug
@@ -75,11 +94,19 @@ class MarketDiscovery:
         response.raise_for_status()
         return _gamma_events_from_json(JSON_VALUE_ADAPTER.validate_python(response.json()))
 
-    async def _fetch_current_slot_payloads(self) -> list[JsonObject]:
+    async def _fetch_current_slot_payloads(
+        self,
+        *,
+        include_next_periods: int = 0,
+        stale_grace_sec: int = 0,
+    ) -> list[JsonObject]:
         if not (self.market_config.active_only and not self.market_config.closed):
             return []
         payloads: list[JsonObject] = []
-        for slug in self._current_slot_slugs():
+        for slug in self._current_slot_slugs(
+            include_next_periods=include_next_periods,
+            stale_grace_sec=stale_grace_sec,
+        ):
             payload = await self._fetch_gamma_event_by_slug(slug)
             if payload is None:
                 payload = await self._fetch_gamma_market_by_slug(slug)
@@ -87,8 +114,15 @@ class MarketDiscovery:
                 payloads.append(payload)
         return payloads
 
-    def _current_slot_slugs(self) -> list[str]:
+    def _current_slot_slugs(
+        self,
+        *,
+        include_next_periods: int = 0,
+        stale_grace_sec: int = 0,
+    ) -> list[str]:
         now_ts = int(utc_now().timestamp())
+        next_periods = max(int(include_next_periods), 0)
+        grace_sec = max(int(stale_grace_sec), 0)
         slugs: list[str] = []
         for asset in self.market_config.assets:
             asset_slug = str(asset).strip().lower()
@@ -99,8 +133,16 @@ class MarketDiscovery:
                 seconds = _timeframe_seconds(timeframe_slug)
                 if seconds is None:
                     continue
-                slot_base = now_ts // seconds * seconds
-                slugs.append(f"{asset_slug}-updown-{timeframe_slug}-{slot_base}")
+                current_slot_base = now_ts // seconds * seconds
+                bases: list[int] = []
+                if grace_sec > 0 and now_ts - current_slot_base < grace_sec:
+                    bases.append(current_slot_base - seconds)
+                bases.extend(
+                    current_slot_base + offset * seconds
+                    for offset in range(next_periods + 1)
+                )
+                for slot_base in bases:
+                    slugs.append(f"{asset_slug}-updown-{timeframe_slug}-{slot_base}")
         return slugs
 
     async def _fetch_gamma_event_by_slug(self, slug: str) -> JsonObject | None:
@@ -159,13 +201,24 @@ class MarketDiscovery:
             return False
         return closed == self.market_config.closed
 
-    def _is_allowed_window(self, market: Market) -> bool:
+    def _is_allowed_window(
+        self,
+        market: Market,
+        *,
+        include_next_periods: int = 0,
+        stale_grace_sec: int = 0,
+    ) -> bool:
         if not (self.market_config.active_only and not self.market_config.closed):
             return True
         if market.start_ts is None or market.end_ts is None:
             return True
         now = utc_now()
-        return market.start_ts <= now <= market.end_ts
+        grace_window = timedelta(seconds=max(int(stale_grace_sec), 0))
+        future_seconds = max(int(include_next_periods), 0) * (
+            _timeframe_seconds(market.timeframe) or 0
+        )
+        future_window = timedelta(seconds=future_seconds)
+        return market.start_ts <= now + future_window and market.end_ts >= now - grace_window
 
     def _infer_tokens(self, payload: JsonObject, market_id: str) -> list[OutcomeToken]:
         token_ids = _json_list(payload.get("clobTokenIds") or payload.get("clob_token_ids") or payload.get("tokenIds"))

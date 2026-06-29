@@ -43,8 +43,12 @@ DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
 
 @dataclass(slots=True)
 class MarketSubscriptionState:
-    subscribed_condition_ids: set[str] = field(default_factory=set)
-    subscribed_instrument_ids: set[str] = field(default_factory=set)
+    """Track wire subscriptions separately from active-condition membership."""
+    wire_condition_ids: set[str] = field(default_factory=set)
+    wire_instrument_ids: set[str] = field(default_factory=set)
+    pending_metadata_condition_ids: set[str] = field(default_factory=set)
+    pending_subscribe_condition_ids: set[str] = field(default_factory=set)
+    retained_wire_condition_ids: set[str] = field(default_factory=set)
 
 
 class _Assembler(Protocol):
@@ -60,6 +64,9 @@ class _Observability(Protocol):
     def record_nautilus_fill_event(self, event: object) -> None: ...
 
     def record_nautilus_position(self, position: object) -> None: ...
+
+    def notify_nautilus_paper_fill(self, payload: dict[str, object]) -> None: ...
+    def mirror_nautilus_paper_fill(self, payload: dict[str, object]) -> None: ...
 
 
 def _identity_instrument_id(token_id: str) -> str:
@@ -195,7 +202,7 @@ class PolySignalNativeStrategy:
         self._active_condition_ids: set[str] = set(self.condition_ids)
         self._market_epoch: int | None = None
         self.unsubscribe_exited: bool = unsubscribe_exited
-        self._subscription_state = MarketSubscriptionState()
+        self._subscription_state: MarketSubscriptionState = MarketSubscriptionState()
         self._asset_condition_ids: dict[str, tuple[str, ...]] = _asset_conditions(
             registry,
             self._startup_condition_ids,
@@ -270,9 +277,16 @@ class PolySignalNativeStrategy:
             self._refresh_asset_conditions()
             if self.registry is None:
                 return
+            for condition_id in data.exited_condition_ids:
+                self._subscription_state.pending_metadata_condition_ids.discard(
+                    condition_id
+                )
+                self._subscription_state.pending_subscribe_condition_ids.discard(
+                    condition_id
+                )
             if self.unsubscribe_exited:
                 self._unsubscribe_market_conditions(data.exited_condition_ids)
-            self._subscribe_market_conditions(data.entered_condition_ids)
+            self._subscribe_market_conditions(tuple(self._active_condition_ids))
             return
         updater = getattr(self.assembler, "on_data", None) or getattr(self.assembler, "update", None)
         if callable(updater):
@@ -357,11 +371,16 @@ class PolySignalNativeStrategy:
 
     def on_order_filled(self, event: object) -> None:
         alpha_event = self._fill_event(event)
-        if self._should_notify_fill(alpha_event):
+        should_notify = self._should_notify_fill(alpha_event)
+        if should_notify:
             notify = getattr(self.core, "on_notify_fill", None)
             if callable(notify):
                 notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
         self._record_nautilus_fill(event, alpha_event.metrics)
+        payload = self._nautilus_paper_fill_payload(event, alpha_event)
+        self._mirror_nautilus_paper_fill(payload)
+        if should_notify:
+            self._notify_nautilus_paper_fill(payload)
         handler = getattr(self.core, "on_order_filled", None)
         decisions = handler(alpha_event) if callable(handler) else ()
         if isinstance(decisions, Iterable) and not isinstance(decisions, (str, bytes)):
@@ -483,6 +502,48 @@ class PolySignalNativeStrategy:
         if self.observability is not None:
             self.observability.record_nautilus_position(position)
 
+    def _nautilus_paper_fill_payload(
+        self,
+        event: object,
+        fill: AlphaFillEvent,
+    ) -> dict[str, object]:
+        tags = _tags(_value(event, "tags", ()))
+        pair = self.registry.by_condition(fill.condition_id) if self.registry is not None else None
+        return {
+            "strategy": fill.strategy,
+            "asset": "" if pair is None else pair.asset,
+            "timeframe": "" if pair is None else pair.timeframe,
+            "market_id": fill.market_id or ("" if pair is None else pair.market_id),
+            "market_slug": "" if pair is None else pair.market_slug,
+            "condition_id": fill.condition_id,
+            "token_id": fill.token_id,
+            "side": fill.side.value,
+            "fill_price": fill.fill_price,
+            "shares": fill.shares,
+            "stake_usdc": fill.fill_price * fill.shares,
+            "signal_id": tags.get("signal_id", ""),
+            "order_id": fill.order_id,
+            "client_order_id": fill.client_order_id or fill.order_id,
+            "paper_fill_id": _lookup_id_text(
+                _value(event, "trade_id", _value(event, "fill_id"))
+            ) or "",
+            "liquidity_side": fill.liquidity_side or "",
+            "metrics": dict(fill.metrics),
+        }
+
+    def _notify_nautilus_paper_fill(self, payload: dict[str, object]) -> None:
+        if self.observability is None:
+            return
+        notifier = getattr(self.observability, "notify_nautilus_paper_fill", None)
+        if callable(notifier):
+            notifier(dict(payload))
+
+    def _mirror_nautilus_paper_fill(self, payload: dict[str, object]) -> None:
+        if self.observability is None:
+            return
+        mirror = getattr(self.observability, "mirror_nautilus_paper_fill", None)
+        if callable(mirror):
+            mirror(dict(payload))
     def _order_event(self, event: object) -> AlphaOrderEvent:
         tags = _tags(_value(event, "tags"))
         instrument_id = _identifier_text(_value(event, "instrument_id"))
@@ -614,62 +675,117 @@ class PolySignalNativeStrategy:
         if self.registry is None:
             return
         for condition_id in condition_ids:
-            if condition_id in self._subscription_state.subscribed_condition_ids:
+            if condition_id not in self._active_condition_ids:
+                continue
+            if condition_id in self._subscription_state.wire_condition_ids:
+                self._subscription_state.pending_metadata_condition_ids.discard(
+                    condition_id
+                )
+                self._subscription_state.pending_subscribe_condition_ids.discard(
+                    condition_id
+                )
+                self._subscription_state.retained_wire_condition_ids.discard(
+                    condition_id
+                )
                 continue
             instrument_ids = _instrument_ids(self.registry, (condition_id,))
             if not instrument_ids:
+                self._subscription_state.pending_metadata_condition_ids.add(
+                    condition_id
+                )
+                self._subscription_state.pending_subscribe_condition_ids.discard(
+                    condition_id
+                )
                 continue
+            self._subscription_state.pending_metadata_condition_ids.discard(
+                condition_id
+            )
+            subscribed = True
             for instrument_id in instrument_ids:
-                self._subscribe_market_instrument(instrument_id)
-            self._subscription_state.subscribed_condition_ids.add(condition_id)
+                subscribed = self._subscribe_market_instrument(instrument_id) and subscribed
+            if not subscribed:
+                self._subscription_state.pending_subscribe_condition_ids.add(
+                    condition_id
+                )
+                continue
+            self._subscription_state.pending_subscribe_condition_ids.discard(
+                condition_id
+            )
+            self._subscription_state.retained_wire_condition_ids.discard(condition_id)
+            self._subscription_state.wire_condition_ids.add(condition_id)
 
-    def _subscribe_market_instrument(self, instrument_id: object) -> None:
+    def _subscribe_market_instrument(self, instrument_id: object) -> bool:
         instrument_text = _identifier_text(instrument_id)
-        if (
-            instrument_text is None
-            or instrument_text in self._subscription_state.subscribed_instrument_ids
-        ):
-            return
+        if instrument_text is None:
+            return False
+        if instrument_text in self._subscription_state.wire_instrument_ids:
+            return True
         subscribe_order_book_deltas = getattr(self, "subscribe_order_book_deltas", None)
         subscribe_trade_ticks = getattr(self, "subscribe_trade_ticks", None)
-        if not callable(subscribe_order_book_deltas) and not callable(subscribe_trade_ticks):
-            return
-        if callable(subscribe_order_book_deltas):
-            _ = subscribe_order_book_deltas(
-                instrument_id=instrument_id,
-                book_type=_nautilus_book_type(self.book_type),
-            )
-        if callable(subscribe_trade_ticks):
-            _ = subscribe_trade_ticks(instrument_id)
-        self._subscription_state.subscribed_instrument_ids.add(instrument_text)
+        if not callable(subscribe_order_book_deltas) or not callable(
+            subscribe_trade_ticks
+        ):
+            return False
+        _ = subscribe_order_book_deltas(
+            instrument_id=instrument_id,
+            book_type=_nautilus_book_type(self.book_type),
+        )
+        _ = subscribe_trade_ticks(instrument_id)
+        self._subscription_state.wire_instrument_ids.add(instrument_text)
+        return True
 
     def _unsubscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
         if self.registry is None:
             return
         for condition_id in condition_ids:
-            if condition_id not in self._subscription_state.subscribed_condition_ids:
-                continue
-            for instrument_id in _instrument_ids(self.registry, (condition_id,)):
-                self._unsubscribe_market_instrument(instrument_id)
-            self._subscription_state.subscribed_condition_ids.discard(condition_id)
-
-    def _unsubscribe_market_instrument(self, instrument_id: object) -> None:
-        instrument_text = _identifier_text(instrument_id)
-        if (
-            instrument_text is None
-            or instrument_text not in self._subscription_state.subscribed_instrument_ids
-        ):
-            return
-        unsubscribe_order_book_deltas = getattr(self, "unsubscribe_order_book_deltas", None)
-        if callable(unsubscribe_order_book_deltas):
-            _ = unsubscribe_order_book_deltas(
-                instrument_id=instrument_id,
-                book_type=_nautilus_book_type(self.book_type),
+            self._subscription_state.pending_metadata_condition_ids.discard(
+                condition_id
             )
+            self._subscription_state.pending_subscribe_condition_ids.discard(
+                condition_id
+            )
+            if condition_id not in self._subscription_state.wire_condition_ids:
+                self._subscription_state.retained_wire_condition_ids.discard(
+                    condition_id
+                )
+                continue
+            instrument_ids = _instrument_ids(self.registry, (condition_id,))
+            if not instrument_ids:
+                self._subscription_state.retained_wire_condition_ids.add(
+                    condition_id
+                )
+                continue
+            unsubscribed = True
+            for instrument_id in instrument_ids:
+                unsubscribed = self._unsubscribe_market_instrument(
+                    instrument_id
+                ) and unsubscribed
+            if not unsubscribed:
+                self._subscription_state.retained_wire_condition_ids.add(
+                    condition_id
+                )
+                continue
+            self._subscription_state.retained_wire_condition_ids.discard(condition_id)
+            self._subscription_state.wire_condition_ids.discard(condition_id)
+
+    def _unsubscribe_market_instrument(self, instrument_id: object) -> bool:
+        instrument_text = _identifier_text(instrument_id)
+        if instrument_text is None:
+            return False
+        if instrument_text not in self._subscription_state.wire_instrument_ids:
+            return True
+        unsubscribe_order_book_deltas = getattr(
+            self, "unsubscribe_order_book_deltas", None
+        )
         unsubscribe_trade_ticks = getattr(self, "unsubscribe_trade_ticks", None)
-        if callable(unsubscribe_trade_ticks):
-            _ = unsubscribe_trade_ticks(instrument_id)
-        self._subscription_state.subscribed_instrument_ids.discard(instrument_text)
+        if not callable(unsubscribe_order_book_deltas) or not callable(
+            unsubscribe_trade_ticks
+        ):
+            return False
+        _ = unsubscribe_order_book_deltas(instrument_id)
+        _ = unsubscribe_trade_ticks(instrument_id)
+        self._subscription_state.wire_instrument_ids.discard(instrument_text)
+        return True
 
     def subscribe_data(self, data_type: object) -> None:
         method = getattr(self, f"subscribe_{data_type}", None)

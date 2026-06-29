@@ -60,6 +60,39 @@ async def test_telegram_dry_run_publish(settings):
     assert result.signal_id == "sig1"
 
 
+def test_formatter_nautilus_fill_message_is_compact() -> None:
+    fill = {
+        "strategy": "ptb_diff",
+        "asset": "BTC",
+        "timeframe": "5m",
+        "market_id": "btc-5m",
+        "market_slug": "btc-updown-5m",
+        "condition_id": "condition-btc-5m",
+        "token_id": "up-token",
+        "side": "UP",
+        "fill_price": 0.5,
+        "shares": 10.0,
+        "stake_usdc": 5.0,
+        "signal_id": "sig-fill-1",
+        "order_id": "order-1",
+        "client_order_id": "client-1",
+        "paper_fill_id": "trade-1",
+    }
+
+    message = MessageFormatter(max_chars=4096).nautilus_fill_message(fill)
+
+    assert len(message) <= 4096
+    assert "<b>" in message
+    assert "FILL" in message
+    assert "<code>ptb_diff</code>" in message
+    assert "Fill   0.5000" in message
+    assert "Shares 10.0000" in message
+    assert "Stake  5.00 USDC" in message
+    assert "Mode: Paper" in message
+    assert "Order  <code>client-1</code>" in message
+    assert "FillID <code>trade-1</code>" in message
+
+
 def test_jsonl_and_state_store(tmp_path):
     logs = JSONLStore(tmp_path / "logs")
     state = StateStore(tmp_path / "state")

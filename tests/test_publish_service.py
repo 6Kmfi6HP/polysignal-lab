@@ -11,6 +11,8 @@ class _Publish:
 class _Formatter:
     def signal_message(self, signal, stake_usdc: float) -> str:
         return f"signal {stake_usdc}"
+    def nautilus_fill_message(self, fill) -> str:
+        return f"fill {fill['fill_price']}"
 
 
 class _Publisher:
@@ -50,5 +52,20 @@ async def test_publish_signal_persists_publish_audit() -> None:
 
     assert publish.status == "dry_run"
     assert publisher.last == ("signal 5.0", "signal", "sig-1")
+    assert persistence.logs == [("telegram_publishes", {"publish_id": "pub-1", "status": "dry_run"})]
+    assert persistence.publishes == [{"publish_id": "pub-1", "status": "dry_run"}]
+
+
+async def test_publish_nautilus_paper_fill_persists_publish_audit() -> None:
+    persistence = _Persistence()
+    publisher = _Publisher()
+    service = PublishService(_Formatter(), publisher, persistence)
+
+    publish = await service.publish_nautilus_paper_fill(
+        {"signal_id": "sig-fill-1", "fill_price": 0.5}
+    )
+
+    assert publish.status == "dry_run"
+    assert publisher.last == ("fill 0.5", "nautilus_paper_fill", "sig-fill-1")
     assert persistence.logs == [("telegram_publishes", {"publish_id": "pub-1", "status": "dry_run"})]
     assert persistence.publishes == [{"publish_id": "pub-1", "status": "dry_run"}]

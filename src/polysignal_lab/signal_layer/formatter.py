@@ -54,6 +54,22 @@ Mode: Paper
 ID: <code>{html.escape(result.signal_id)}</code>"""
         return self._truncate(message)
 
+    def nautilus_fill_message(self, fill: dict[str, object]) -> str:
+        fill_price = _float_value(fill.get("fill_price", 0.0))
+        shares = _float_value(fill.get("shares", 0.0))
+        stake_usdc = _float_value(fill.get("stake_usdc", 0.0))
+        message = f"""<b>🟦 {html.escape(str(fill.get("asset", "")))} {html.escape(str(fill.get("timeframe", "")))} · FILL {html.escape(str(fill.get("side", "")))}</b>
+<code>{html.escape(str(fill.get("strategy", "")))}</code>
+
+Fill   {fill_price:.4f}
+Shares {shares:.4f}
+Stake  {stake_usdc:.2f} USDC
+
+Mode: Paper
+Order  <code>{html.escape(str(fill.get("client_order_id", "")))}</code>
+FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
+        return self._truncate(message)
+
     def daily_report_message(self, report: DailyReport) -> str:
         lines = []
         for strategy, row in report.strategy_breakdown.items():
@@ -104,3 +120,14 @@ WR      {report.win_rate:.2%}
         if len(message) <= self.max_chars:
             return message
         return message[: self.max_chars - 32] + "\n[truncated for Telegram]"
+
+
+def _float_value(value: object) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    return 0.0

@@ -34,6 +34,14 @@ class Publisher(Protocol):
     async def send(self, message: str, message_type: str, signal_id: str | None = None) -> object: ...
 
 
+class PaperFillNotifier(Protocol):
+    def __call__(self, payload: dict[str, object]) -> None: ...
+
+
+class PaperFillMirror(Protocol):
+    def __call__(self, payload: dict[str, object]) -> None: ...
+
+
 def signal_candidate_from_order(order: PaperOrder) -> SignalCandidate:
     """Rebuild the accepted signal payload from the paper order metadata."""
     metrics = dict(cast(Mapping[str, object], order.metrics))
@@ -162,6 +170,7 @@ class NautilusEventStoreAdapter:
             "settlements": persistence.insert_paper_trade_result,
             "health_snapshot": persistence.insert_system_event,
             "system_events": persistence.insert_system_event,
+            "nautilus_decision": persistence.insert_system_event,
             "nautilus_order": persistence.insert_system_event,
             "nautilus_fill": persistence.insert_system_event,
             "nautilus_position": persistence.insert_system_event,
@@ -175,6 +184,7 @@ class NautilusEventStoreAdapter:
             "settlements": "paper_trade_results",
             "health_snapshot": "system_events",
             "system_events": "system_events",
+            "nautilus_decision": "nautilus_decisions",
             "nautilus_order": "nautilus_orders",
             "nautilus_fill": "nautilus_fills",
             "nautilus_position": "nautilus_positions",
@@ -228,10 +238,14 @@ class ObservabilityActor:
         store: EventStore | None = None,
         health: HealthRegistry | None = None,
         notifier: Notifier | None = None,
+        paper_fill_notifier: PaperFillNotifier | None = None,
+        paper_fill_mirror: PaperFillMirror | None = None,
     ) -> None:
         self.store: EventStore | None = store
         self.health: HealthRegistry = health or HealthRegistry()
         self.notifier: Notifier | None = notifier
+        self.paper_fill_notifier: PaperFillNotifier | None = paper_fill_notifier
+        self.paper_fill_mirror: PaperFillMirror | None = paper_fill_mirror
         self._event_count: int = 0
 
     @property
@@ -244,14 +258,22 @@ class ObservabilityActor:
         self._event_count += 1
         if self.store is None:
             return
-        self.store.insert_json("signals", {
+        self.store.insert_json("nautilus_decision", {
             "ts": utc_iso(),
             "strategy": decision.strategy,
+            "asset": decision.asset,
+            "timeframe": decision.timeframe,
+            "market_id": decision.market_id,
+            "market_slug": decision.market_slug,
             "condition_id": decision.condition_id,
+            "token_id": decision.token_id,
             "side": decision.side.value,
             "confidence": decision.confidence,
             "accepted": accepted,
             "reason_codes": list(decision.reason_codes),
+            "seconds_to_close": decision.seconds_to_close,
+            "data_freshness_ms": decision.data_freshness_ms,
+            "metrics": dict(decision.metrics),
         })
 
     def record_signal_from_order(self, order: PaperOrder) -> None:
@@ -384,6 +406,16 @@ class ObservabilityActor:
 
     def record_nautilus_position(self, position: object) -> None:
         self.record_event("nautilus_position", project_position(position))
+
+    def notify_nautilus_paper_fill(self, payload: dict[str, object]) -> None:
+        if self.paper_fill_notifier is None:
+            return
+        self.paper_fill_notifier(dict(payload))
+
+    def mirror_nautilus_paper_fill(self, payload: dict[str, object]) -> None:
+        if self.paper_fill_mirror is None:
+            return
+        self.paper_fill_mirror(dict(payload))
 
     # -- Notifications --
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -66,7 +67,7 @@ def test_startup_message_includes_matching_engine_metadata() -> None:
 
 
 
-def test_record_decision_writes_to_signals_table() -> None:
+def test_record_decision_writes_to_nautilus_decision_stream() -> None:
     store = FakeStore()
     actor = ObservabilityActor(store=store)
 
@@ -80,12 +81,43 @@ def test_record_decision_writes_to_signals_table() -> None:
     )
     actor.record_decision(decision, accepted=True)
 
-    rows = store.tables.get("signals", [])
+    rows = store.tables.get("nautilus_decision", [])
     assert len(rows) == 1
     assert rows[0]["strategy"] == "test"
     assert rows[0]["accepted"] is True
     assert rows[0]["side"] == "UP"
 
+
+def test_record_decision_event_store_persists_system_event_without_signal_id(
+    tmp_path: Path,
+) -> None:
+    persistence = PersistenceService(
+        JSONLStore(tmp_path / "logs"),
+        SQLiteStore(tmp_path / "nautilus-observability.sqlite3"),
+        StateStore(tmp_path / "state"),
+    )
+    actor = ObservabilityActor(store=NautilusEventStoreAdapter(persistence))
+
+    decision = AlphaDecision(
+        strategy="test", asset="BTC", timeframe="5m",
+        market_id="m1", market_slug="s1", condition_id="c1",
+        token_id="t1", side=Side.UP, confidence=0.8,
+        entry_reference_price=0.5, max_entry_price=0.55,
+        seconds_to_close=120, data_freshness_ms=100,
+        reason_codes=("EDGE",), metrics={},
+    )
+    actor.record_decision(decision, accepted=True)
+
+    rows = persistence.sqlite.query_json(
+        "system_events",
+        where="WHERE event_type = ?",
+        params=("nautilus_decision",),
+    )
+    assert len(rows) == 1
+    assert rows[0]["strategy"] == "test"
+    assert rows[0]["accepted"] is True
+    assert rows[0]["side"] == "UP"
+    assert rows[0]["event_type"] == "nautilus_decision"
 
 def test_record_order_writes_to_orders_table() -> None:
     store = FakeStore()

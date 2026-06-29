@@ -50,7 +50,7 @@ def build_paper_trading_node_config(
         data_clients={
             POLYMARKET_CLIENT_ID: polymarket_data_config(
                 instrument_config=instrument_config,
-                ws_max_subscriptions=nautilus_runtime.polymarket_data.ws_max_subscriptions_per_connection,
+                ws_max_subscriptions_per_connection=nautilus_runtime.polymarket_data.ws_max_subscriptions_per_connection,
                 update_instruments_interval_mins=1,
                 subscribe_new_markets=nautilus_runtime.market_rotation.allow_adapter_new_market_events,
                 auto_load_missing_instruments=True,

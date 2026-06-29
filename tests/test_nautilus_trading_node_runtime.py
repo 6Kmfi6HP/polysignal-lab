@@ -133,7 +133,7 @@ def test_build_paper_trading_node_config_enables_dynamic_instrument_loading(
     assert getattr(polymarket, "auto_load_debounce_ms") == 100
     assert getattr(polymarket, "auto_load_max_retries") == 12
     assert getattr(polymarket, "subscribe_new_markets") is True
-    assert getattr(polymarket, "ws_max_subscriptions") == 200
+    assert getattr(polymarket, "ws_max_subscriptions_per_connection") == 200
     assert getattr(polymarket, "update_instruments_interval_mins") == 1
 
 def test_register_paper_factories_registers_data_and_sandbox_exec_only(

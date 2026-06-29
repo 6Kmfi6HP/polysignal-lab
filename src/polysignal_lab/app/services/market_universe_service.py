@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import sqlite3
-from typing import Any, assert_never
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 import httpx
 
@@ -47,8 +49,18 @@ class MarketUniverseService:
         }
 
     async def refresh_once(self) -> list[Market]:
-        discover_active = getattr(self.discovery, "active_markets", None)
-        markets = await (discover_active() if callable(discover_active) else self.discovery.discover())
+        discover_active = cast(
+            Callable[[], Awaitable[list[Market]]] | None,
+            getattr(self.discovery, "active_markets", None),
+        )
+        if callable(discover_active):
+            markets = await discover_active()
+        else:
+            discover = cast(
+                Callable[..., Awaitable[list[Market]]],
+                self.discovery.discover,
+            )
+            markets = await discover(**self._discover_kwargs(discover))
         self.markets.upsert_many(markets)
         for market in markets:
             try:
@@ -61,15 +73,22 @@ class MarketUniverseService:
         return markets
 
     async def fetch_resolved(self, open_market_ids: set[str] | None = None) -> list[Market]:
-        resolved_markets = getattr(self.discovery, "resolved_markets", None)
+        resolved_markets = cast(
+            Callable[[], Awaitable[list[Market]]] | None,
+            getattr(self.discovery, "resolved_markets", None),
+        )
         if callable(resolved_markets):
             markets = await resolved_markets()
             return self._store_resolved(markets)
+        if self.settings is None:
+            return []
         resolved: list[Market] = []
         async with httpx.AsyncClient(timeout=15.0) as client:
-            for market_id in sorted(open_market_ids):
+            for market_id in sorted(open_market_ids or ()):
                 local_market = self.markets.get(market_id)
-                response = await client.get(f"{self.settings.data.polymarket.gamma_base_url}/markets/{market_id}")
+                response = await client.get(
+                    f"{self.settings.data.polymarket.gamma_base_url}/markets/{market_id}"
+                )
                 if response.status_code == 404 and local_market is not None and local_market.condition_id:
                     response = await client.get(
                         f"{self.settings.data.polymarket.gamma_base_url}/markets",
@@ -81,8 +100,16 @@ class MarketUniverseService:
                 payload = data[0] if isinstance(data, list) and data else data
                 if not isinstance(payload, dict):
                     continue
-                match = self.discovery._match_crypto_updown(payload) if hasattr(self.discovery, "_match_crypto_updown") else None
-                asset, timeframe = match if match else ((local_market.asset, local_market.timeframe) if local_market else ("UNKNOWN", "UNKNOWN"))
+                match = (
+                    self.discovery._match_crypto_updown(payload)
+                    if hasattr(self.discovery, "_match_crypto_updown")
+                    else None
+                )
+                asset, timeframe = match if match else (
+                    (local_market.asset, local_market.timeframe)
+                    if local_market
+                    else ("UNKNOWN", "UNKNOWN")
+                )
                 market = Market.from_gamma(payload, asset=asset, timeframe=timeframe)
                 if market.status in {MarketStatus.RESOLVED, MarketStatus.CANCELLED}:
                     resolved.append(market)
@@ -96,6 +123,33 @@ class MarketUniverseService:
 
     def token_ids(self) -> tuple[str, ...]:
         return token_ids_for_markets(list(self.markets.markets.values()))
+
+    def _discover_kwargs(
+        self,
+        discover: Callable[..., Awaitable[list[Market]]],
+    ) -> dict[str, int]:
+        if self.settings is None or self.settings.runtime.engine != "nautilus":
+            return {}
+        try:
+            parameters = inspect.signature(discover).parameters
+        except (TypeError, ValueError):
+            return {}
+        kwargs = {
+            "include_next_periods": max(
+                int(self.settings.runtime.nautilus.market_rotation.include_next_periods),
+                0,
+            ),
+            "stale_grace_sec": max(
+                int(self.settings.runtime.nautilus.market_rotation.stale_grace_sec),
+                0,
+            ),
+        }
+        if any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            return kwargs
+        return {name: value for name, value in kwargs.items() if name in parameters}
 
     def _store_resolved(self, markets: list[Market]) -> list[Market]:
         for market in markets:

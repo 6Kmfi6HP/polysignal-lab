@@ -12,6 +12,8 @@ from importlib import import_module
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+_POLYSIGNAL_DATA_TYPES_REGISTERED = False
+
 if TYPE_CHECKING:
     _NautilusDataBase = object
 else:
@@ -174,6 +176,7 @@ class PolySignalPriceToBeatData(_PolySignalDataBase):
 
 class PolySignalMarketMetaData(_PolySignalDataBase):
     __slots__ = (
+        "_sealed",
         "market_id",
         "market_slug",
         "condition_id",
@@ -210,6 +213,7 @@ class PolySignalMarketMetaData(_PolySignalDataBase):
         ts_event: int,
         ts_init: int,
     ) -> None:
+        self._sealed = False
         self.market_id = market_id
         self.market_slug = market_slug
         self.condition_id = condition_id
@@ -221,6 +225,7 @@ class PolySignalMarketMetaData(_PolySignalDataBase):
         self.down_token_id = down_token_id
         self._ts_event = int(ts_event)
         self._ts_init = int(ts_init)
+        self._sealed = True
 
     @classmethod
     def from_dict(cls, d: dict[str, object]) -> "PolySignalMarketMetaData":
@@ -237,6 +242,11 @@ class PolySignalMarketMetaData(_PolySignalDataBase):
             ts_event=_as_int(d["ts_event"]),
             ts_init=_as_int(d["ts_init"]),
         )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("PolySignalMarketMetaData is immutable")
+        object.__setattr__(self, name, value)
 
 
 class PolySignalMarketUniverseData(_PolySignalDataBase):
@@ -323,6 +333,11 @@ class PolySignalMarketUniverseData(_PolySignalDataBase):
 
 def register_polysignal_data_types() -> None:
     """Register PolySignal custom data types with the Nautilus serializer."""
+    global _POLYSIGNAL_DATA_TYPES_REGISTERED
+
+    if _POLYSIGNAL_DATA_TYPES_REGISTERED:
+        return
+
     register_serializable_type = getattr(
         import_module("nautilus_trader.serialization.base"),
         "register_serializable_type",
@@ -348,3 +363,4 @@ def register_polysignal_data_types() -> None:
         PolySignalMarketUniverseData.to_dict,
         PolySignalMarketUniverseData.from_dict,
     )
+    _POLYSIGNAL_DATA_TYPES_REGISTERED = True
