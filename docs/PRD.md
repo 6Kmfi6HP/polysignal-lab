@@ -206,7 +206,7 @@ Nautilus Data / Custom Data Callback
 | UP / DOWN best bid ask | Polymarket CLOB |
 | last trade price | Polymarket CLOB |
 | orderbook depth | Polymarket CLOB |
-| BTC spot | Binance |
+| BTC spot | Polymarket RTDS crypto price feed（Binance source；Chainlink 可作 fallback） |
 | market start / end | Polymarket metadata |
 
 **指标：**
@@ -223,8 +223,8 @@ Nautilus Data / Custom Data Callback
 **触发规则：**
 
 必须满足：
-- 当前 market active。
-- 当前 orderbook fresh。
+- 当前 market active、未 closed、CLOB order book enabled、accepting_orders=true。
+- 当前 orderbook fresh，且 UP / DOWN token ids 可映射到 WebSocket asset ids。
 - 当前处于允许入场窗口。
 - target ask 在允许价格区间内。
 - VWAP deviation 达标。
@@ -254,7 +254,7 @@ Nautilus Data / Custom Data Callback
 | ask sum | Derived |
 | ask skew | Derived |
 | spread | Derived |
-| asset spot movement | Binance |
+| asset spot movement | Polymarket RTDS crypto price feed（Binance source；Chainlink 可作 fallback） |
 | seconds_to_close | Derived |
 
 **触发规则：**
@@ -285,8 +285,8 @@ Nautilus Data / Custom Data Callback
 
 | 输入 | 来源 |
 |------|------|
-| BTC spot price | Binance |
-| price_to_beat | Polymarket market metadata |
+| BTC spot price | Polymarket RTDS crypto price feed（Binance source；Chainlink 可作 fallback） |
+| price_to_beat | 本地 market window anchor；若使用 Polymarket price-to-beat endpoint，必须标记为未正式 API ref 依赖 |
 | UP / DOWN implied price | Polymarket CLOB |
 | seconds_to_close | Derived |
 | trigger rows | Config |
@@ -354,7 +354,7 @@ Action: BUY UP
 
 Reference Entry: 0.62
 Max Entry: 0.68
-Paper Stake: 10.00 USDC
+Paper Stake: 10.00 PAPER_USD
 Confidence: 81%
 Time Left: 02:25
 
@@ -386,12 +386,12 @@ Signal: 20260621-BTC-5m-UP-ptb_diff-0001
 Market: BTC Up/Down 5m
 Paper Side: UP
 Paper Entry: 0.62
-Paper Stake: 10.00 USDC
+Paper Stake: 10.00 PAPER_USD
 Paper Shares: 16.1290
 
 Result: WIN
-Settlement Value: 16.1290 USDC
-Paper PnL: +6.1290 USDC
+Settlement Value: 16.1290 PAPER_USD
+Paper PnL: +6.1290 PAPER_USD
 ROI: +61.29%
 
 Strategy:
@@ -436,12 +436,14 @@ paper_trading:
   max_strategy_exposure_usdc: 100.0
 ```
 
+字段名中的 `usdc` 表示 paper USD-equivalent accounting，不表示真实 Polymarket 钱包余额。Polymarket 外部抵押/赎回术语以官方 docs 的 pUSD 为准；paper 报表必须标注为 synthetic paper accounting。
+
 账户投影字段：
 
 ```json
 {
   "source": "nautilus_cache",
-  "currency": "USDC",
+  "currency": "PAPER_USD_EQUIVALENT",
   "starting_balance": 1000.0,
   "cash_balance": 970.0,
   "reserved_balance": 0.0,
@@ -478,12 +480,12 @@ Paper order 是 Nautilus strategy wrapper 通过 order factory / `submit_order` 
 
 默认 runtime 使用 Nautilus sandbox paper execution。PolySignal 不再把本地简化成交模型作为默认成交真相。
 
-规则：
-1. Strategy wrapper 将 approved decision 映射为 Nautilus native order。
+1. Strategy wrapper 将 approved decision 映射为 Nautilus native paper order。
 2. Nautilus sandbox 根据当前 instrument、book、trade 数据处理 order。
 3. 订单状态、成交、持仓、账户状态来自 Nautilus cache/portfolio。
 4. PolySignal 将 Nautilus events/projected cache rows 写入 SQLite/JSONL、Telegram、日报和 dashboard。
 5. 如果数据过旧、instrument 缺失或 policy 不通过，则记录 rejected decision / rejected order projection。
+6. V1 paper PnL 默认 fee-free，必须写入 `fee_model=ignored_v1`；如果启用 Polymarket fee parity，则用 CLOB market fee schedule 计算 taker fee。
 
 **当前配置：**
 
@@ -494,8 +496,13 @@ runtime:
     execution_mode: paper_sandbox
     allow_live_polymarket_execution: false
     sidecar:
-      spot_source: polymarket_rtds
-      price_to_beat_source: anchor_or_gamma
+      spot_source:
+        primary: polymarket_rtds.crypto_prices
+        vendor: binance
+        fallback: polymarket_rtds.crypto_prices_chainlink
+      price_to_beat_source:
+        primary: local_market_window_anchor
+        external_endpoint_status: undocumented_for_crypto_up_down
 ```
 
 **成交拒绝原因示例：**
@@ -537,20 +544,23 @@ Nautilus fill 后创建 position projection。
 
 | 结果 | 结算 |
 |------|------|
-| 预测正确 | 每 share 兑付 1.00 USDC |
-| 预测错误 | 每 share 兑付 0.00 USDC |
+| 预测正确 | 每 share 兑付 1.00 paper USD-equivalent |
+| 预测错误 | 每 share 兑付 0.00 paper USD-equivalent |
 
 **PnL 计算：**
 
 ```
+shares = stake_usdc / entry_price
+entry_fee = 0.0  # V1 fee_model=ignored_v1
 settlement_value = shares * outcome_value
-pnl = settlement_value - stake_usdc
+pnl = settlement_value - stake_usdc - entry_fee
 roi = pnl / stake_usdc
 ```
 
 其中：
 - outcome_value = 1.0 if side wins else 0.0
 - outcome_value = 0.0 if side loses
+- 如果开启 fee parity，entry_fee 必须按 Polymarket market fee schedule 计算并写入 result。
 
 **胜负判断：**
 
@@ -634,9 +644,9 @@ TP/SL 只影响 paper result，不发送真实卖单。
 [PolySignal Lab Daily Paper Report]
 
 Date: 2026-06-21
-Starting Equity: 1000.00 USDC
-Ending Equity: 1024.35 USDC
-Paper PnL: +24.35 USDC
+Starting Equity: 1000.00 PAPER_USD
+Ending Equity: 1024.35 PAPER_USD
+Paper PnL: +24.35 PAPER_USD
 Paper ROI: +2.44%
 
 Signals: 38
@@ -647,9 +657,9 @@ Losses: 8
 Win Rate: 61.90%
 
 By Strategy:
-- PTB Diff: 8 trades, 6W / 2L, +18.20 USDC
-- VWAP Momentum: 7 trades, 4W / 3L, +3.10 USDC
-- Late Consensus: 6 trades, 3W / 3L, +3.05 USDC
+- PTB Diff: 8 trades, 6W / 2L, +18.20 PAPER_USD
+- VWAP Momentum: 7 trades, 4W / 3L, +3.10 PAPER_USD
+- Late Consensus: 6 trades, 3W / 3L, +3.05 PAPER_USD
 
 Notes:
 Paper results only. No real trades were placed.
@@ -798,8 +808,12 @@ data:
   polymarket:
     use_market_ws: true
     max_book_staleness_ms: 1500
-  binance:
-    enabled: true
+  spot:
+    primary_feed: polymarket_rtds.crypto_prices
+    source_vendor: binance
+    fallback_feed: polymarket_rtds.crypto_prices_chainlink
+    binance_symbol_format: btcusdt
+    chainlink_symbol_format: btc/usd
     max_price_staleness_ms: 1500
 
 signal:
@@ -880,7 +894,10 @@ strategies:
 | Gate | 拒绝原因 |
 |------|----------|
 | Market Active Gate | MARKET_NOT_ACTIVE |
-| Time Window Gate | OUTSIDE_ENTRY_WINDOW |
+| Market Closed Gate | MARKET_CLOSED |
+| Order Book Enabled Gate | ORDER_BOOK_NOT_ENABLED |
+| Accepting Orders Gate | MARKET_NOT_ACCEPTING_ORDERS |
+| Token Mapping Gate | CLOB_TOKEN_IDS_MISSING |
 | Book Freshness Gate | STALE_ORDERBOOK |
 | Spot Freshness Gate | STALE_SPOT_PRICE |
 | Spread Gate | SPREAD_TOO_WIDE |
@@ -906,10 +923,11 @@ strategies:
 ### 20.1 市场结算来源
 
 优先级：
-1. Polymarket market resolved status。
-2. Gamma / market metadata 中的 winning outcome。
-3. 本地 market close 后轮询。
-4. 如果无法确认，则标记 UNKNOWN。
+1. Polymarket market WebSocket `market_resolved.winning_asset_id` / `winning_outcome`。
+2. CLOB / public market token metadata 中的 `tokens[].winner`。
+3. UMA / Gamma resolution status 只作为 lifecycle/status 信号；除非官方 schema 明确提供 winner 字段，否则不得用它直接推断 WIN/LOSS。
+4. 本地 market close 后轮询上述 winner source。
+5. 如果无法确认，则标记 UNKNOWN。
 
 ### 20.2 结果状态
 
@@ -924,13 +942,14 @@ strategies:
 
 ```
 shares = stake_usdc / entry_price
+entry_fee = 0.0  # V1 fee_model=ignored_v1
 
 if WIN:
   settlement_value = shares * 1.0
 if LOSS:
   settlement_value = shares * 0.0
 
-pnl = settlement_value - stake_usdc
+pnl = settlement_value - stake_usdc - entry_fee
 roi = pnl / stake_usdc
 ```
 
@@ -951,8 +970,8 @@ roi = pnl / stake_usdc
 | 要求 | 标准 |
 |------|------|
 | 无钱包密钥 | 配置和环境变量不得包含私钥 |
-| 无真实交易客户端 | 不创建需认证的交易客户端 |
-| 无真实交易方法 | 不调用 create/cancel/submit order |
+| 无真实交易客户端 | 不创建需认证的 Polymarket/CLOB 交易客户端 |
+| 无真实交易方法 | 不调用 authenticated Polymarket/CLOB create/post/cancel order、EIP-712 signing 或 live execution API；允许 Nautilus sandbox 内部 `order_factory` / `submit_order` |
 | Telegram token 脱敏 | 日志不得输出完整 bot token |
 | Paper 明确标注 | 所有结果必须写明 paper only |
 | 信号非建议声明 | Telegram 消息必须写明不是收益保证 |
@@ -964,9 +983,9 @@ roi = pnl / stake_usdc
 | 编号 | 验收项 | 标准 |
 |------|--------|------|
 | AC-001 | 能启动服务 | 无钱包密钥也可启动 |
-| AC-002 | 能发现市场 | 当前 BTC 5m/15m market cache 非空 |
-| AC-003 | 能接收 orderbook | best bid ask 持续更新 |
-| AC-004 | 能接收 spot | Binance spot 持续更新 |
+| AC-002 | 能发现市场 | 当前 BTC 5m/15m market cache 包含 active、未 closed、enableOrderBook、accepting_orders、UP/DOWN token ids |
+| AC-003 | 能接收 orderbook | 通过 UP/DOWN asset ids 订阅后 best bid ask 持续更新 |
+| AC-004 | 能接收 spot | Polymarket RTDS crypto price feed 持续更新，并记录 Binance/Chainlink source |
 | AC-005 | 能生成信号 | 至少一个策略可输出 SignalCandidate |
 | AC-006 | 能发送 Telegram | 频道收到格式化信号 |
 | AC-007 | 能创建 paper order | 信号发布后生成 paper order |
@@ -980,8 +999,8 @@ roi = pnl / stake_usdc
 
 | 编号 | 验收项 | 标准 |
 |------|--------|------|
-| SEC-001 | 不存在真实下单路径 | 搜索不到 create order 调用 |
-| SEC-002 | 不存在真实取消订单路径 | 搜索不到 cancel order 调用 |
+| SEC-001 | 不存在真实下单路径 | 搜索不到 authenticated Polymarket/CLOB create/post order、EIP-712 signing 或 live execution client registration；允许 Nautilus sandbox `submit_order` |
+| SEC-002 | 不存在真实取消订单路径 | 搜索不到 authenticated Polymarket/CLOB cancel order 调用 |
 | SEC-003 | 不存在钱包密钥 | 配置 schema 拒绝钱包密钥 |
 | SEC-004 | 不存在链上领取模块 | 无链上领取模块 |
 | SEC-005 | 不存在真实 sell | 无真实 sell execution |
@@ -995,11 +1014,12 @@ roi = pnl / stake_usdc
 | SIM-002 | shares 计算正确 | fills/positions projection 中 shares 与 fill price 一致 |
 | SIM-003 | WIN 结算正确 | settlement = shares |
 | SIM-004 | LOSS 结算正确 | settlement = 0 |
-| SIM-005 | PnL 正确 | pnl = settlement - stake |
-| SIM-006 | stale book 不成交 | stale 时 paper order rejected |
-| SIM-007 | ask 超价不成交 | ask > max_entry_price 时 rejected |
-| SIM-008 | 余额不足不成交 | account cash 不足时 rejected |
-| SIM-009 | 结果写入日志 | paper_results.jsonl 有完整记录 |
+| SIM-005 | PnL 正确 | pnl = settlement - stake - entry_fee |
+| SIM-006 | fee model 明确 | V1 写入 `fee_model=ignored_v1`，启用 fee parity 时 PnL 扣除 taker fee |
+| SIM-007 | stale book 不成交 | stale 时 paper order rejected |
+| SIM-008 | ask 超价不成交 | ask > max_entry_price 时 rejected |
+| SIM-009 | 余额不足不成交 | account cash 不足时 rejected |
+| SIM-010 | 结果写入日志 | paper_results.jsonl 有完整记录 |
 
 ## 24. 实施阶段
 

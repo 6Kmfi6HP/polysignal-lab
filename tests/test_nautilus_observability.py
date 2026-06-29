@@ -14,6 +14,7 @@ from polysignal_lab.domain.enums import ExitMode, Side, OrderStatus, TradeResult
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperTradeResult
+from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
@@ -118,6 +119,110 @@ def test_record_decision_event_store_persists_system_event_without_signal_id(
     assert rows[0]["accepted"] is True
     assert rows[0]["side"] == "UP"
     assert rows[0]["event_type"] == "nautilus_decision"
+
+def test_record_rejected_decision_writes_duplicate_signal_candidate_payload() -> None:
+    store = FakeStore()
+    actor = ObservabilityActor(store=store)
+    candidate = SignalCandidate.build(
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m1",
+        market_slug="s1",
+        condition_id="c1",
+        token_id="t1",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=["EDGE"],
+        metrics={"edge": 0.1},
+    )
+
+    actor.record_rejected_decision(
+        SimpleNamespace(
+            reason_code="DUPLICATE_SIGNAL",
+            detail={"dedupe_key": candidate.dedupe_key},
+            candidate=candidate,
+        )
+    )
+
+    rows = store.tables.get("rejected_signals", [])
+    assert len(rows) == 1
+    assert rows[0]["reason_code"] == "DUPLICATE_SIGNAL"
+    assert rows[0]["details"]["dedupe_key"] == candidate.dedupe_key
+    assert rows[0]["candidate"]["condition_id"] == "c1"
+    assert rows[0]["candidate"]["token_id"] == "t1"
+
+def test_record_decision_and_duplicate_rejection_write_jsonl_payloads(tmp_path: Path) -> None:
+    persistence = PersistenceService(
+        JSONLStore(tmp_path / "logs"),
+        SQLiteStore(tmp_path / "nautilus-observability.sqlite3"),
+        StateStore(tmp_path / "state"),
+    )
+    actor = ObservabilityActor(store=NautilusEventStoreAdapter(persistence))
+    decision = AlphaDecision(
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m1",
+        market_slug="s1",
+        condition_id="c1",
+        token_id="t1",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=("EDGE",),
+        metrics={"edge": 0.1},
+    )
+    candidate = SignalCandidate.build(
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m1",
+        market_slug="s1",
+        condition_id="c1",
+        token_id="t1",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=["EDGE"],
+        metrics={"edge": 0.1},
+    )
+
+    actor.record_decision(decision, accepted=True)
+    actor.record_rejected_decision(
+        SimpleNamespace(
+            reason_code="DUPLICATE_SIGNAL",
+            detail={"dedupe_key": candidate.dedupe_key},
+            candidate=candidate,
+        )
+    )
+
+    decision_rows = persistence.logs.read_all("nautilus_decisions")
+    rejection_rows = persistence.logs.read_all("rejected_signals")
+    assert len(decision_rows) == 1
+    assert decision_rows[0]["strategy"] == "test"
+    assert decision_rows[0]["market_id"] == "m1"
+    assert decision_rows[0]["condition_id"] == "c1"
+    assert decision_rows[0]["token_id"] == "t1"
+    assert decision_rows[0]["side"] == "UP"
+    assert decision_rows[0]["data_freshness_ms"] == 100
+    assert decision_rows[0]["reason_codes"] == ["EDGE"]
+    assert decision_rows[0]["metrics"] == {"edge": 0.1}
+    assert len(rejection_rows) == 1
+    assert rejection_rows[0]["reason_code"] == "DUPLICATE_SIGNAL"
+    assert rejection_rows[0]["details"]["dedupe_key"] == candidate.dedupe_key
+    assert rejection_rows[0]["candidate"]["condition_id"] == "c1"
+    assert rejection_rows[0]["candidate"]["token_id"] == "t1"
 
 def test_record_order_writes_to_orders_table() -> None:
     store = FakeStore()

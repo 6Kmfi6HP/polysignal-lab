@@ -40,6 +40,10 @@ from polysignal_lab.nautilus_runtime.native_order import (
 )
 
 DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
+MISSING_PROJECTIONS_ERROR = (
+    "PolySignalNativeStrategy requires injected registry, sidecar, and assembler projections"
+)
+
 
 @dataclass(slots=True)
 class MarketSubscriptionState:
@@ -119,7 +123,7 @@ def runtime_native_strategy_type(
             self: PolySignalNativeStrategy,
             *,
             core: AlphaCore,
-            assembler: _Assembler,
+            assembler: _Assembler | None,
             condition_ids: Sequence[str],
             strategy_name: str,
             policy: DecisionPolicyActor | None = None,
@@ -171,7 +175,7 @@ class PolySignalNativeStrategy:
         self,
         *,
         core: AlphaCore,
-        assembler: _Assembler,
+        assembler: _Assembler | None,
         condition_ids: Sequence[str],
         strategy_name: str,
         policy: DecisionPolicyActor | None = None,
@@ -184,6 +188,9 @@ class PolySignalNativeStrategy:
         observability: _Observability | None = None,
         unsubscribe_exited: bool = True,
     ) -> None:
+        if registry is None or sidecar is None or assembler is None:
+            raise RuntimeError(MISSING_PROJECTIONS_ERROR)
+
         self.core: AlphaCore = core
         self.assembler: _Assembler = assembler
         self.condition_ids: tuple[str, ...] = tuple(condition_ids)
@@ -215,23 +222,15 @@ class PolySignalNativeStrategy:
 
     def _require_registry(self) -> PolymarketMarketRegistry:
         if self.registry is None:
-            raise RuntimeError(
-                "PolySignalNativeStrategy requires injected registry, sidecar, and assembler projections"
-            )
+            raise RuntimeError(MISSING_PROJECTIONS_ERROR)
         return self.registry
 
     def _require_sidecar(self) -> ExternalDataSidecar:
         if self.sidecar is None:
-            raise RuntimeError(
-                "PolySignalNativeStrategy requires injected registry, sidecar, and assembler projections"
-            )
+            raise RuntimeError(MISSING_PROJECTIONS_ERROR)
         return self.sidecar
 
     def _require_assembler(self) -> _Assembler:
-        if self.assembler is None:
-            raise RuntimeError(
-                "PolySignalNativeStrategy requires injected registry, sidecar, and assembler projections"
-            )
         return self.assembler
 
 
@@ -303,7 +302,8 @@ class PolySignalNativeStrategy:
                 self._unsubscribe_market_conditions(data.exited_condition_ids)
             self._subscribe_market_conditions(tuple(self._active_condition_ids))
             return
-        updater = getattr(self.assembler, "on_data", None) or getattr(self.assembler, "update", None)
+        assembler = self._require_assembler()
+        updater = getattr(assembler, "on_data", None) or getattr(assembler, "update", None)
         if callable(updater):
             _ = updater(data)
         condition_id = cast(object, getattr(data, "condition_id", None))
@@ -328,7 +328,7 @@ class PolySignalNativeStrategy:
         order_book = _cache_order_book(cache, instrument_id_value)
         if order_book is None:
             return
-        books = getattr(self.assembler, "books", None)
+        books = getattr(self._require_assembler(), "books", None)
         updater = getattr(books, "update_book", None)
         if callable(updater):
             _ = updater(token_id, _domain_order_book(token_id, order_book))
@@ -344,7 +344,7 @@ class PolySignalNativeStrategy:
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
         if token_id is None or condition_id is None:
             return
-        books = getattr(self.assembler, "books", None)
+        books = getattr(self._require_assembler(), "books", None)
         updater = getattr(books, "update_trade", None)
         if callable(updater):
             _ = updater(
@@ -402,7 +402,7 @@ class PolySignalNativeStrategy:
             for decision in cast(Iterable[AlphaDecision], decisions):
                 if decision.condition_id not in self._active_condition_ids:
                     continue
-                view = self.assembler.build(decision.condition_id)
+                view = self._require_assembler().build(decision.condition_id)
                 if view is None:
                     continue
                 self._handle_decision(decision, view)
@@ -419,7 +419,7 @@ class PolySignalNativeStrategy:
     def evaluate_condition(self, condition_id: str) -> None:
         if condition_id not in self._active_condition_ids:
             return
-        view = self.assembler.build(condition_id)
+        view = self._require_assembler().build(condition_id)
         if view is None:
             return
         for decision in self.core.evaluate(view):
