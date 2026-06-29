@@ -1,26 +1,23 @@
 # PolySignal Lab
 
-PolySignal Lab is a read-only Polymarket short-cycle signal and paper trading validation system.
+PolySignal Lab is a read-only Polymarket short-cycle signal and Nautilus-backed paper trading validation system.
 
-It implements the complete PRD-old scope, not the earlier MVP subset:
+It implements the current production scope:
 
-- Polymarket market discovery, public CLOB orderbook REST adapter, and market WebSocket handler.
-- Binance spot WebSocket feed for BTC / ETH / SOL / XRP.
-- Normalized market snapshot builder.
-- Strategy modules: VWAP Momentum, Late Consensus, PTB Diff.
-- Signal gate, dedupe, channel rate limit, consensus signal aggregation.
+- Polymarket market discovery, public market data, and Nautilus Polymarket data wiring.
+- Spot, price-to-beat, and market metadata sidecar data for Nautilus strategies.
+- PolySignal alpha cores for VWAP Momentum, Late Consensus, PTB Diff, and additional configured strategies.
+- Nautilus `TradingNode` runtime with strategy callbacks, decision policy, native order submission, and sandbox paper execution.
 - Telegram formatting and publisher with dry-run mode by default plus a redacted real Telegram QA path.
-- Paper wallet, paper order, best-ask taker fill model, depth/slippage checks, open positions, TP/SL/max-hold virtual exits, hold-to-resolution settlement.
+- Nautilus cache/portfolio projections for paper orders, fills, positions, account state, daily reports, and dashboard reads.
 - SQLite canonical storage plus JSONL audit logs and atomic state files.
-- Daily report, strategy/asset/timeframe breakdown, strategy leaderboard.
-- Read-only FastAPI dashboard backed by SQLite report and trade data.
 - Safety scanner (`scripts/safety_scan.py`) that blocks disallowed execution symbols.
-- Test suite covering config safety, market data parsing, strategies, gates, consensus, paper simulation, settlement, reporting, storage, and dashboard behavior.
+- Test suite covering config safety, market data parsing, strategies, gates, Nautilus runtime boundaries, paper projections, settlement, reporting, storage, and dashboard behavior.
 - Generated history was removed from the repo root; runtime `logs/`, `state/`, and root `data/*.sqlite*` outputs stay generated-only. Evidence artifacts under `.omo/evidence/` are allowed.
 
 ## Safety boundary
 
-The project is designed as a non-custodial, read-only signal and paper simulation service.
+The project is designed as a non-custodial, read-only signal and Nautilus sandbox paper-validation service.
 
 - No wallet secret material is required.
 - No authenticated Polymarket trading client is instantiated.
@@ -54,11 +51,12 @@ The warning is the existing FastAPI/Starlette `httpx` deprecation warning.
 
 ## Runtime modes
 
-Supported container modes are `scheduler`, `dashboard`, `test`, `shell`, and `smoke`.
-The Python entry point supports `scheduler`, `dashboard`, and bounded `smoke`:
+Supported container modes are `nautilus`, `scheduler`, `dashboard`, `test`, `shell`, and `smoke`.
+With the production config, the Python entry point defaults to the Nautilus runtime. Explicit modes remain available for compatibility and bounded checks:
 
 ```bash
-.venv/bin/python -m polysignal_lab.app.main --mode scheduler --config config/signal_bot.yaml
+.venv/bin/python -m polysignal_lab.app.main --config config/signal_bot.yaml
+.venv/bin/python -m polysignal_lab.app.main --mode nautilus --config config/signal_bot.yaml
 .venv/bin/python -m polysignal_lab.app.main --mode dashboard --config config/signal_bot.yaml
 .venv/bin/python -m polysignal_lab.app.main --mode smoke --config config/signal_bot.yaml --evidence .omo/evidence/local-smoke.json
 ```

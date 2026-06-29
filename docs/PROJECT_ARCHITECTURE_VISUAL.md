@@ -5,7 +5,7 @@
 
 ## 1. 一句话概览
 
-PolySignal Lab 是一个 **只读 Polymarket 短周期信号 + 纸面交易验证系统**：读取公开行情数据，生成策略信号，通过 gate/共识层过滤，默认 dry-run 发布 Telegram，并将信号、纸面订单、成交、持仓、结算和日报写入 SQLite/JSONL，最后由 FastAPI Dashboard 只读展示。
+PolySignal Lab 是一个 **只读 Polymarket 短周期信号 + Nautilus 纸面交易验证系统**：读取公开行情数据和 sidecar 数据，在 Nautilus `TradingNode` strategy callbacks 中运行策略，通过 gate/共识层过滤，默认 dry-run 发布 Telegram，并将 Nautilus order/fill/position/account 投影、结算和日报写入 SQLite/JSONL，最后由 FastAPI Dashboard 只读展示。
 
 ## 2. 总体架构
 
@@ -13,69 +13,62 @@ PolySignal Lab 是一个 **只读 Polymarket 短周期信号 + 纸面交易验�
 flowchart TB
   CLI["CLI 入口<br/>polysignal-lab"] --> Main["app/main.py"]
 
-  Main --> Scheduler["Scheduler 模式"]
+  Main --> Nautilus["Nautilus Runtime<br/>默认"]
+  Main --> Scheduler["Legacy Scheduler 模式<br/>兼容/测试"]
   Main --> Dashboard["Dashboard 模式"]
   Main --> Smoke["Smoke 检查模式"]
 
-  Scheduler --> Data["数据采集层"]
-  Data --> Gamma["Polymarket Gamma<br/>市场发现"]
-  Data --> CLOB["Polymarket CLOB<br/>订单簿 REST / WS"]
-  Data --> Binance["Binance WS<br/>现货价格"]
+  Nautilus --> TN["Nautilus TradingNode"]
+  PM["Polymarket public market data"] --> TN
+  Sidecar["Spot / PTB / Market Metadata<br/>custom data"] --> TN
 
-  Gamma --> Snapshot["MarketSnapshotBuilder"]
-  CLOB --> Snapshot
-  Binance --> Snapshot
+  TN --> Strategies["Nautilus Strategy Wrappers"]
+  Strategies --> Alpha["PolySignal Alpha Cores"]
+  Alpha --> Policy["DecisionPolicyActor<br/>gate / dedupe / consensus"]
+  Policy --> Orders["Nautilus native orders"]
+  Orders --> Sandbox["Nautilus Sandbox<br/>paper execution"]
+  Sandbox --> Cache["Nautilus Cache / Portfolio"]
 
-  Snapshot --> Strategies["策略层<br/>13 个策略"]
-  Strategies --> Gate["SignalGate<br/>过滤 / 去重 / 频控"]
-  Gate --> Consensus["ConsensusEngine<br/>共识聚合"]
-
-  Consensus --> Paper["纸面交易层<br/>PaperSimulator / Wallet"]
-  Consensus --> Telegram["Telegram Publisher<br/>默认 dry-run"]
-  Consensus --> Store["存储层<br/>SQLite + JSONL + state"]
-
-  Paper --> Store
+  Cache --> Projection["PolySignal projections"]
+  Projection --> Store["存储层<br/>SQLite + JSONL + state"]
+  Projection --> Telegram["Telegram Publisher<br/>默认 dry-run"]
   Store --> DashboardApp["FastAPI 只读 Dashboard"]
   Dashboard --> DashboardApp
 ```
 
-## 3. 一次调度循环
+## 3. 一次 Nautilus 纸面交易循环
 
 ```mermaid
 sequenceDiagram
-  participant S as Scheduler
-  participant M as MarketDiscovery
-  participant B as OrderBook / Spot Feeds
-  participant Snap as SnapshotBuilder
-  participant Strat as Strategies
-  participant Gate as SignalGate
-  participant Paper as PaperSimulator
-  participant DB as SQLite/JSONL
+  participant N as Nautilus TradingNode
+  participant D as DataEngine / Custom Data
+  participant Strat as Nautilus Strategy Wrapper
+  participant Core as PolySignal AlphaCore
+  participant Policy as DecisionPolicyActor
+  participant Ex as Nautilus Sandbox Execution
+  participant Cache as Nautilus Cache/Portfolio
+  participant Proj as PolySignal Projection
   participant Tg as Telegram
+  participant DB as SQLite/JSONL
 
-  S->>M: 刷新活跃市场
-  S->>B: 同步 CLOB 订单簿 + Binance 现货
-  S->>Snap: 为每个市场构造快照
-  Snap-->>S: MarketSnapshot
-
-  S->>Strat: evaluate(snapshot)
-  Strat-->>S: SignalCandidate[]
-
-  S->>Gate: 检查信号
-  Gate-->>S: accepted / rejected
+  D->>N: Polymarket market data + sidecar data
+  N->>Strat: on_data / on_order_book_deltas / on_trade_tick
+  Strat->>Core: evaluate(MarketView)
+  Core-->>Strat: AlphaDecision[]
+  Strat->>Policy: gate / dedupe / consensus
 
   alt accepted
-    S->>DB: 存 signals
-    S->>Tg: 发布信号，默认 dry-run
-    S->>Paper: 纸面撮合
-    Paper-->>S: order / fill / position
-    S->>DB: 存 paper_orders / fills / positions
+    Strat->>Tg: 发布信号，默认 dry-run
+    Strat->>Ex: order_factory.limit + submit_order
+    Ex->>Cache: order / fill / position / account state
+    Cache->>Proj: read-only projection
+    Proj->>DB: 存 Nautilus order/fill/position projection
   else rejected
-    S->>DB: 存 rejected_signals
+    Policy->>Proj: rejected decision
+    Proj->>DB: 存 rejected_signals
   end
 
-  S->>Paper: 检查 TP/SL/结算
-  S->>DB: 生成日报 / leaderboard
+  Proj->>DB: 结算 / 日报 / leaderboard
 ```
 
 ## 4. 目录分层
@@ -88,12 +81,14 @@ flowchart LR
   Root --> Docs["docs/<br/>交付/PRD 文档"]
   Root --> Scripts["scripts/<br/>安全扫描等"]
 
-  Src --> App["app/<br/>入口 + 调度器"]
+  Src --> App["app/<br/>入口 + legacy scheduler facade"]
+  Src --> NautilusRuntime["nautilus_runtime/<br/>TradingNode / strategy / order / projections"]
+  Src --> NautilusBridge["nautilus_bridge/<br/>market registry / view assembly / state"]
+  Src --> Alpha["alpha/<br/>策略核心逻辑"]
   Src --> Data["data/<br/>外部行情/市场数据"]
   Src --> Domain["domain/<br/>领域模型"]
-  Src --> Strategies["strategies/<br/>策略实现"]
   Src --> Signal["signal_layer/<br/>信号过滤/共识"]
-  Src --> Paper["paper/<br/>纸面交易/钱包/结算"]
+  Src --> Paper["paper/<br/>legacy scheduler 纸面交易/结算兼容"]
   Src --> Storage["storage/<br/>SQLite/JSONL/state"]
   Src --> Dashboard["dashboard/<br/>FastAPI 只读面板"]
   Src --> Publish["publish/<br/>Telegram"]
@@ -104,30 +99,29 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  External["外部公开数据源"] --> A["Polymarket Gamma<br/>市场元数据"]
-  External --> B["Polymarket CLOB<br/>订单簿"]
-  External --> C["Binance WS<br/>现货价格"]
+  External["外部公开数据源"] --> PM["Polymarket public market data"]
+  External --> Spot["Spot / PTB / market metadata sidecar"]
 
-  A --> Registry["内存 Registry<br/>markets/books/spots"]
-  B --> Registry
-  C --> Registry
+  PM --> TN["Nautilus TradingNode"]
+  Spot --> TN
 
-  Registry --> Snapshot["标准化 MarketSnapshot"]
-  Snapshot --> Strategy["策略判断"]
-  Strategy --> Candidate["SignalCandidate"]
-  Candidate --> Gate["SignalGate"]
+  TN --> Wrapper["Nautilus Strategy Wrapper"]
+  Wrapper --> Core["PolySignal AlphaCore"]
+  Core --> Decision["AlphaDecision"]
+  Decision --> Policy["DecisionPolicyActor"]
 
-  Gate -->|通过| Signal["Accepted Signal"]
-  Gate -->|拒绝| Rejected["RejectedSignal"]
+  Policy -->|通过| Order["Nautilus native order"]
+  Policy -->|拒绝| Rejected["RejectedSignal"]
 
-  Signal --> Paper["纸面订单 / 持仓 / 盈亏"]
-  Signal --> Telegram["Telegram 消息"]
-  Signal --> Audit["SQLite + JSONL"]
+  Order --> Sandbox["Nautilus sandbox paper execution"]
+  Sandbox --> Cache["Nautilus Cache / Portfolio"]
+  Cache --> Projection["Read-only projection"]
+
+  Projection --> Audit["SQLite + JSONL"]
   Rejected --> Audit
-  Paper --> Audit
-
-  Audit --> Dashboard["只读 Dashboard"]
-  Audit --> Report["日报 / Leaderboard"]
+  Projection --> Dashboard["只读 Dashboard"]
+  Projection --> Report["日报 / Leaderboard"]
+  Projection --> Telegram["Telegram 消息"]
 ```
 
 ## 6. 安全边界
@@ -136,8 +130,8 @@ flowchart TD
 flowchart TB
   subgraph Allowed["允许"]
     PublicData["公开行情数据读取"]
-    SignalOnly["信号生成"]
-    PaperOnly["纸面交易模拟"]
+    SignalOnly["Nautilus strategy 信号生成"]
+    PaperOnly["Nautilus sandbox 纸面交易"]
     ReadDashboard["只读 Dashboard"]
     DryTelegram["Telegram dry-run 默认"]
   end
@@ -157,20 +151,20 @@ flowchart TB
 
 | 区域 | 文件/目录 | 职责 |
 |---|---|---|
-| CLI 入口 | `src/polysignal_lab/app/main.py` | 解析 runtime mode，启动 scheduler/dashboard/smoke |
-| 调度器 facade | `src/polysignal_lab/app/scheduler.py` | 组装数据源、策略、gate、纸面交易、存储、发布器 |
-| 调度循环 | `src/polysignal_lab/app/scheduler_runtime.py` | 主循环、周期刷新、信号处理、结算、日报 |
-| 市场数据 | `src/polysignal_lab/app/scheduler_market_data.py` | 市场发现、CLOB book、WS 订阅、resolved market 拉取 |
-| 信号处理 | `src/polysignal_lab/app/scheduler_processing.py` | strategy evaluate、gate、持久化、Telegram、纸面撮合 |
-| 报告/结算 | `src/polysignal_lab/app/scheduler_reporting.py` | TP/SL/settlement、daily report、leaderboard |
+| CLI 入口 | `src/polysignal_lab/app/main.py` | 解析 runtime mode；生产配置默认启动 Nautilus |
+| Nautilus 入口 | `src/polysignal_lab/nautilus_runtime/node.py` | 组装 TradingNode、actor、strategy、cache projection |
+| Nautilus 配置 | `src/polysignal_lab/nautilus_runtime/trading_node.py` | 配置 Polymarket data client 与 sandbox paper execution client |
+| Nautilus 策略 | `src/polysignal_lab/nautilus_runtime/native_strategy.py` | 在 Nautilus callbacks 中运行 alpha core、处理 order/fill/position events |
+| Nautilus 下单 | `src/polysignal_lab/nautilus_runtime/native_order.py` | 将 approved decision 映射为 Nautilus native limit order |
+| Nautilus 投影 | `src/polysignal_lab/nautilus_runtime/cache_reader.py` | 只读读取 Nautilus orders/fills/positions/account/portfolio |
+| Bridge | `src/polysignal_lab/nautilus_bridge/` | market registry、market view assembly、state codec |
+| Alpha core | `src/polysignal_lab/alpha/` | engine-agnostic 策略判断 |
+| 报告/结算 | `src/polysignal_lab/app/scheduler_reporting.py` | settlement、daily report、leaderboard；读取 Nautilus projections |
 | 配置模型 | `src/polysignal_lab/config.py` | Pydantic 配置、安全环境校验、YAML/env override |
-| 策略注册 | `src/polysignal_lab/strategies/factory.py` | config 名称到策略类的 registry |
-| 策略接口 | `src/polysignal_lab/strategies/base.py` | `BaseStrategy.evaluate()` 与候选信号构造 |
 | Gate | `src/polysignal_lab/signal_layer/gate.py` | 市场、时间、book/spot 新鲜度、价差、置信度、去重、频控 |
-| 纸面交易 | `src/polysignal_lab/paper/simulator.py` | taker/passive/multi-leg paper execution |
 | Dashboard | `src/polysignal_lab/dashboard/app.py` | FastAPI 只读 API 与 HTML 首页 |
 | SQLite schema | `src/polysignal_lab/storage/sqlite_schema.py` | canonical 表结构和索引 |
-| 运行配置 | `config/signal_bot.yaml` | asset/timeframe、数据源、策略、paper、telegram、dashboard 配置 |
+| 运行配置 | `config/signal_bot.yaml` | asset/timeframe、数据源、策略、Nautilus、paper、telegram、dashboard 配置 |
 
 ## 8. 存储模型
 
@@ -183,7 +177,7 @@ flowchart LR
   Fills["paper_fills"]
   Positions["paper_positions"]
   Results["paper_trade_results"]
-  Wallet["paper_wallet_snapshots"]
+  Account["paper_wallet_snapshots<br/>account/portfolio projection"]
   Reports["daily_reports"]
   Telegram["telegram_publishes"]
   Events["system_events"]
@@ -195,7 +189,7 @@ flowchart LR
   Fills --> Positions
   Positions --> Results
   Results --> Reports
-  Wallet --> Reports
+  Account --> Reports
   Telegram --> Reports
   Events --> Reports
 ```

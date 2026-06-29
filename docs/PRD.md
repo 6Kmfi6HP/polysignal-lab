@@ -23,10 +23,10 @@ PolySignal Lab 是一个只读 Polymarket 短周期市场信号系统。它把 V
 - **up-down-spread-bot** — BTC / ETH / SOL / XRP 多资产。使用 late-entry、spread、ask skew、confidence、favorite side 判断方向。原始实现包含多资产 desk、stop-loss、flip-stop、Telegram command。
 - **5min-15min-PTB-bot** — BTC 为主。使用 Binance spot、Polymarket price-to-beat、UP/DOWN implied probability 判断方向。原始实现包含 AUTO_TRADE、simulation、TP/SL、Web dashboard。
 
-新项目不复用这些 bot 的执行逻辑，而是抽象其策略原理，统一变成：
+新项目不复用这些 bot 的真实执行逻辑，而是抽象其策略原理，统一变成：
 
 ```
-Market Data → Strategy Signal → Signal Gate → Telegram → Paper Simulation → Win/Loss Report
+Public Market Data → Nautilus Strategy Callback → Signal Gate → Telegram → Nautilus Sandbox Paper Execution → Win/Loss Report
 ```
 
 ## 4. 产品目标
@@ -38,9 +38,9 @@ Market Data → Strategy Signal → Signal Gate → Telegram → Paper Simulatio
 | 统一三套策略 | 3 个机器人不再各自运行 runtime，而是变成统一策略模块 |
 | 只读安全 | 不读取私钥，不创建订单，不调用真实交易 API |
 | Telegram 信号 | 每条可交易信号发送到 Telegram 频道 |
-| 模拟交易 | 每条发布信号可自动生成虚拟 paper trade |
-| 知道输赢 | 市场结束后计算每笔模拟交易是否盈利 |
-| 可审计 | 每条信号、模拟订单、模拟成交、结算结果都落日志 |
+| Nautilus 纸面验证 | 每条通过 gate 的信号可由 Nautilus sandbox 生成虚拟 order/fill/position |
+| 知道输赢 | 市场结束后计算每笔纸面持仓是否盈利 |
+| 可审计 | 每条信号、Nautilus order/fill/position 投影、结算结果都落日志 |
 | 可复盘 | 支持按策略、资产、周期统计胜率和 PnL |
 | 可扩展 | 后续可加入新策略、Discord、Webhook、dashboard |
 
@@ -52,8 +52,8 @@ Market Data → Strategy Signal → Signal Gate → Telegram → Paper Simulatio
 | 钱包管理 | 不读取钱包密钥环境变量，不创建 Polymarket API key |
 | 自动链上领取 | 不做链上领取 |
 | 自动平仓 | 第一版不做真实 sell；paper mode 可做虚拟 exit |
-| 盈利承诺 | 只统计模拟结果，不承诺实盘可复制 |
-| 复杂回测 | 第一版只做 live paper simulation，不做完整历史 replay |
+| 盈利承诺 | 只统计纸面验证结果，不承诺实盘可复制 |
+| 复杂回测 | 第一版只做实时 Nautilus paper validation，不做完整历史 replay |
 | 付费频道 | 第一版不做会员、订阅、支付 |
 
 ## 5. 项目名称
@@ -107,32 +107,35 @@ PolySignal Lab 是一个后台常驻服务，第一版不要求完整 Web UI。
 
 ```
 ┌────────────────────────────┐
-│ Polymarket Market Data      │
-│ Binance Spot Data           │
+│ Public Polymarket Data      │
+│ Spot / PTB Sidecar Data     │
 └──────────────┬─────────────┘
                ↓
 ┌────────────────────────────┐
-│ Normalized Market Snapshot  │
+│ Nautilus TradingNode        │
+│ - DataEngine callbacks      │
+│ - Strategy lifecycle        │
 └──────────────┬─────────────┘
                ↓
 ┌────────────────────────────┐
-│ Strategy Signal Engine      │
+│ PolySignal Alpha Cores      │
 │ - VWAP Momentum             │
 │ - Late Consensus            │
 │ - PTB Diff                  │
 └──────────────┬─────────────┘
                ↓
 ┌────────────────────────────┐
-│ Signal Gate / Dedupe        │
+│ DecisionPolicyActor         │
+│ Gate / dedupe / consensus   │
 └──────────────┬─────────────┘
                ↓
 ┌──────────────┴─────────────┐
 │                            │
 ↓                            ↓
-Telegram Publisher            Paper Simulator
+Telegram Publisher            Nautilus Sandbox Paper Execution
 │                            │
 ↓                            ↓
-Signal Channel                Paper PnL / Win-Loss
+Signal Channel                Nautilus Cache / Portfolio Projection
 ```
 
 ## 9. 核心流程
@@ -142,46 +145,44 @@ Signal Channel                Paper PnL / Win-Loss
 1. 读取配置文件。
 2. 校验 Telegram bot token 和 channel id。
 3. 加载启用资产、周期、策略。
-4. 初始化虚拟钱包。
+4. 初始化 Nautilus `TradingNode` 纸面 runtime。
 5. 发现当前 Polymarket crypto Up/Down 市场。
-6. 建立 Polymarket market data stream。
-7. 建立 Binance spot stream。
-8. 生成 normalized market snapshot。
-9. 周期性运行策略。
-10. 信号通过 gate 后发送 Telegram。
-11. 同步创建 paper trade。
-12. 市场结束后结算 paper trade。
-13. 更新胜率、PnL、资金曲线。
+6. Nautilus data path 接收 Polymarket market data。
+7. PolySignal sidecar 发布 spot、price-to-beat、market metadata。
+8. Nautilus strategy callbacks 构造 market view 并运行 alpha core。
+9. 信号通过 `DecisionPolicyActor` 的 gate / dedupe / consensus。
+10. 通过 gate 后发送 Telegram。
+11. Strategy wrapper 通过 Nautilus order factory / `submit_order` 提交 paper order。
+12. Nautilus sandbox 生成 paper fills / positions / account state。
+13. 市场结束后结算 paper position projection。
+14. 更新胜率、PnL、资金曲线。
 
 ### 9.2 信号流程
 
 ```
-Market Snapshot
-  → Strategy Evaluate
-  → SignalCandidate
-  → SignalGate
-  → SignalDeduper
+Nautilus Data / Custom Data Callback
+  → PolySignal AlphaCore.evaluate()
+  → AlphaDecision
+  → DecisionPolicyActor
   → TelegramMessage
-  → PaperOrder
-  → PaperFill
-  → PaperPosition
-  → PaperSettlement
+  → Nautilus native order
+  → Nautilus sandbox fill / position
+  → PaperSettlement projection
 ```
 
-### 9.3 模拟交易流程
+### 9.3 纸面交易流程
 
-1. 已发布信号生成 PaperOrder。
-2. 模拟器读取当时 best ask 和 orderbook depth。
-3. 按配置 stake size 创建虚拟买入。
-4. 如果可成交，生成 PaperFill。
-5. 创建 PaperPosition。
-6. 持仓直到：
+1. 通过 gate 的信号由 strategy wrapper 映射为 Nautilus native order。
+2. Nautilus sandbox 根据当前 instrument、book、trade 数据处理 paper order。
+3. 如果可成交，Nautilus 生成 fill、position、account/portfolio state。
+4. PolySignal 只读投影 Nautilus cache/portfolio，用于 SQLite、JSONL、Telegram、日报和 dashboard。
+5. 持仓直到：
    - 市场结束后按最终结果结算；或
    - paper take-profit 触发；或
    - paper stop-loss 触发；或
    - paper max-hold-time 触发。
-7. 写入 PaperTradeResult。
-8. 更新统计报表。
+6. 写入 PaperTradeResult projection。
+7. 更新统计报表。
 
 ## 10. 策略模块
 
@@ -363,9 +364,9 @@ Why:
 - Orderbook fresh
 - Spread acceptable
 
-Paper Simulation:
-- A virtual paper trade will be opened.
-- This is not a real order.
+Nautilus Paper Validation:
+- A Nautilus sandbox paper order will be submitted when the signal passes policy.
+- This is not a real Polymarket order.
 
 Risk:
 - Manual execution only.
@@ -400,12 +401,12 @@ Note:
 Paper result only. No real order was placed.
 ```
 
-## 13. 模拟交易系统
+## 13. Nautilus 纸面验证系统
 
 ### 13.1 设计目标
 
-模拟交易系统用于回答：
-- 这条信号如果按规则虚拟买入，最后是赢还是输？
+Nautilus 纸面验证系统用于回答：
+- 这条信号如果按 Nautilus sandbox 规则提交 paper order，最后是赢还是输？
 - 每个策略的 paper win rate 是多少？
 - 每个策略的 paper PnL 是多少？
 - Telegram 信号是否有实际参考价值？
@@ -415,14 +416,14 @@ Paper result only. No real order was placed.
 
 | 原则 | 说明 |
 |------|------|
-| 真实行情 | 使用实时 Polymarket orderbook 和 Binance spot |
-| 虚拟资金 | 使用 paper wallet，不接触真实资金 |
-| 可解释成交 | 每笔 paper fill 必须说明成交模型 |
-| 保守估计 | 默认不使用过度乐观成交价 |
-| 可复盘 | 所有 paper order / fill / result 都写日志 |
-| 可关闭 | paper trading 可配置关闭，只保留信号 |
+| 真实公开行情 | 使用 Polymarket public market data 和 spot/PTB sidecar data |
+| Nautilus 纸面账户 | 使用 Nautilus sandbox/cache/portfolio state，不接触真实资金 |
+| 可解释成交 | 每笔 paper fill 必须能追溯到 Nautilus order/fill/position 投影 |
+| 保守标注 | 不承诺 paper result 可复制到真实交易 |
+| 可复盘 | 所有 paper order / fill / result 投影都写日志 |
+| 可关闭 | paper validation 可配置关闭，只保留信号 |
 
-### 13.3 Paper Wallet
+### 13.3 Nautilus Paper Account Projection
 
 ```yaml
 paper_trading:
@@ -435,11 +436,11 @@ paper_trading:
   max_strategy_exposure_usdc: 100.0
 ```
 
-钱包字段：
+账户投影字段：
 
 ```json
 {
-  "wallet_id": "default",
+  "source": "nautilus_cache",
   "currency": "USDC",
   "starting_balance": 1000.0,
   "cash_balance": 970.0,
@@ -451,20 +452,21 @@ paper_trading:
 }
 ```
 
-### 13.4 Paper Order
+### 13.4 Nautilus Paper Order Projection
 
-Paper order 是信号触发后生成的虚拟订单。
+Paper order 是 Nautilus strategy wrapper 通过 order factory / `submit_order` 提交的虚拟订单投影。
 
 ```json
 {
-  "paper_order_id": "po_20260621_0001",
+  "paper_order_id": "nautilus_order_20260621_0001",
   "signal_id": "20260621-BTC-5m-UP-ptb_diff-0001",
   "asset": "BTC",
   "timeframe": "5m",
   "market_id": "string",
   "token_id": "string",
   "side": "UP",
-  "order_type": "SIMULATED_MARKETABLE_LIMIT",
+  "order_type": "LIMIT",
+  "time_in_force": "IOC",
   "limit_price": 0.68,
   "reference_price": 0.62,
   "stake_usdc": 10.0,
@@ -472,56 +474,43 @@ Paper order 是信号触发后生成的虚拟订单。
 }
 ```
 
-### 13.5 Paper Fill Model
+### 13.5 Nautilus Sandbox Fill Model
 
-第一版只实现简单成交模型，不做复杂队列撮合。
-
-**成交模型：Best Ask Taker Fill**
+默认 runtime 使用 Nautilus sandbox paper execution。PolySignal 不再把本地简化成交模型作为默认成交真相。
 
 规则：
-1. 读取信号生成时的目标 side best ask。
-2. 如果 best_ask <= max_entry_price，则视为可成交。
-3. paper fill price = best_ask + slippage_buffer。
-4. 如果 fill price 超过 max_entry_price，则拒绝成交。
-5. 如果 orderbook depth 不足，则按可用 depth 部分成交或直接拒绝，取决于配置。
-6. 成交后扣除 stake，并创建 paper position。
+1. Strategy wrapper 将 approved decision 映射为 Nautilus native order。
+2. Nautilus sandbox 根据当前 instrument、book、trade 数据处理 order。
+3. 订单状态、成交、持仓、账户状态来自 Nautilus cache/portfolio。
+4. PolySignal 将 Nautilus events/projected cache rows 写入 SQLite/JSONL、Telegram、日报和 dashboard。
+5. 如果数据过旧、instrument 缺失或 policy 不通过，则记录 rejected decision / rejected order projection。
 
-**配置：**
+**当前配置：**
 
 ```yaml
-paper_trading:
-  fill_model:
-    type: best_ask_taker
-    slippage_bps: 25
-    require_depth_check: true
-    min_fill_ratio: 1.0
-    reject_if_partial: true
-    max_fill_delay_ms: 1000
+runtime:
+  engine: nautilus
+  nautilus:
+    execution_mode: paper_sandbox
+    allow_live_polymarket_execution: false
+    sidecar:
+      spot_source: polymarket_rtds
+      price_to_beat_source: anchor_or_gamma
 ```
 
-**成交计算：**
-
-```
-raw_fill_price = best_ask
-slippage = raw_fill_price * slippage_bps / 10000
-paper_fill_price = raw_fill_price + slippage
-shares = stake_usdc / paper_fill_price
-```
-
-**成交拒绝原因：**
+**成交拒绝原因示例：**
 
 | 原因 | 说明 |
 |------|------|
-| ASK_ABOVE_MAX_ENTRY | best ask 已超过信号最高价 |
-| SLIPPAGE_EXCEEDS_MAX_ENTRY | 加滑点后超过最高价 |
+| ASK_ABOVE_MAX_ENTRY | ask 已超过信号最高价 |
 | INSUFFICIENT_DEPTH | orderbook depth 不足 |
 | STALE_ORDERBOOK | orderbook 过旧 |
-| WALLET_INSUFFICIENT_CASH | paper wallet 余额不足 |
+| ACCOUNT_INSUFFICIENT_CASH | Nautilus paper account 余额不足 |
 | EXPOSURE_LIMIT_REACHED | 达到 paper exposure 限制 |
 
-### 13.6 Paper Position
+### 13.6 Paper Position Projection
 
-成交后创建 position。
+Nautilus fill 后创建 position projection。
 
 ```json
 {
@@ -674,15 +663,14 @@ Paper results only. No real trades were placed.
 logs/
   signals.jsonl
   rejected_signals.jsonl
-  paper_orders.jsonl
-  paper_fills.jsonl
-  paper_positions.jsonl
+  nautilus_orders.jsonl
+  nautilus_fills.jsonl
+  nautilus_positions.jsonl
   paper_results.jsonl
   telegram_publish.jsonl
   daily_reports.jsonl
 
 state/
-  paper_wallet.json
   open_positions.json
   market_cache.json
   signal_dedupe.json
@@ -694,11 +682,11 @@ state/
 |----|------|
 | signals | 所有通过 gate 的信号 |
 | rejected_signals | 被拒绝信号 |
-| paper_orders | 虚拟订单 |
-| paper_fills | 虚拟成交 |
-| paper_positions | 虚拟持仓 |
-| paper_trade_results | 模拟交易结果 |
-| paper_wallet_snapshots | 虚拟钱包快照 |
+| paper_orders | Nautilus order 投影 |
+| paper_fills | Nautilus fill 投影 |
+| paper_positions | Nautilus position 投影 |
+| paper_trade_results | 纸面验证结果 |
+| paper_wallet_snapshots | Nautilus account/portfolio projection 快照 |
 | daily_reports | 每日报告 |
 
 ## 16. 架构设计
@@ -741,10 +729,13 @@ polysignal-lab/
       consensus.py
       formatter.py
 
+    nautilus_runtime/
+      node.py
+      trading_node.py
+      native_strategy.py
+      native_order.py
+      cache_reader.py
     paper/
-      wallet.py
-      fill_model.py
-      simulator.py
       settlement.py
       report.py
 
@@ -771,16 +762,14 @@ polysignal-lab/
 | 模块 | 职责 |
 |------|------|
 | MarketDiscovery | 发现当前 Polymarket crypto Up/Down 市场 |
-| CLOBWebSocket | 维护 orderbook、price change、best bid ask |
-| BinanceSpotFeed | 维护 BTC/ETH/SOL/XRP spot |
-| StrategyAdapter | 产生统一 SignalCandidate |
-| SignalGate | stale、spread、price、confidence、时间窗口检查 |
-| SignalDeduper | 防止 Telegram 刷屏 |
+| NautilusTradingNode | 拥有 strategy lifecycle、market data dispatch、order lifecycle |
+| NautilusStrategyWrapper | 在 Nautilus callbacks 中运行 alpha core |
+| AlphaCore | 产生 engine-agnostic AlphaDecision |
+| DecisionPolicyActor | stale、spread、price、confidence、时间窗口、dedupe、consensus 检查 |
+| NautilusSandboxExecution | 处理 paper orders、fills、positions、account state |
+| NautilusCacheReader | 只读投影 Nautilus orders/fills/positions/account/portfolio |
 | TelegramPublisher | 发送信号、结果、日报 |
-| PaperWallet | 管理虚拟 USDC |
-| PaperFillModel | 模拟成交价、滑点、深度 |
-| PaperSimulator | 信号转 paper order / fill / position |
-| PaperSettlement | 市场结束后判断 win/loss |
+| PaperSettlement | 市场结束后判断 projected position win/loss |
 | PaperReport | 统计胜率、PnL、日报 |
 
 ## 17. 配置设计
@@ -900,16 +889,16 @@ strategies:
 | Dedupe Gate | DUPLICATE_SIGNAL |
 | Rate Limit Gate | CHANNEL_RATE_LIMIT |
 
-## 19. Paper Gate
+## 19. Paper Policy Gates
 
-每条已发布信号进入 paper simulator 前还要经过 paper gate。
+每条 approved signal 进入 Nautilus order submission 前还要经过 paper policy gates。
 
 | Gate | 拒绝原因 |
 |------|----------|
-| Wallet Gate | WALLET_INSUFFICIENT_CASH |
+| Account Gate | ACCOUNT_INSUFFICIENT_CASH |
 | Exposure Gate | EXPOSURE_LIMIT_REACHED |
 | Depth Gate | INSUFFICIENT_DEPTH |
-| Slippage Gate | SLIPPAGE_EXCEEDS_MAX_ENTRY |
+| Price Gate | ASK_ABOVE_MAX_ENTRY |
 | Position Limit Gate | MAX_OPEN_POSITIONS_REACHED |
 
 ## 20. 胜负判断
@@ -998,18 +987,18 @@ roi = pnl / stake_usdc
 | SEC-005 | 不存在真实 sell | 无真实 sell execution |
 | SEC-006 | Telegram token 不泄露 | 日志脱敏 |
 
-### 23.3 模拟验收
+### 23.3 Nautilus paper 验收
 
 | 编号 | 验收项 | 标准 |
 |------|--------|------|
-| SIM-001 | paper wallet 正确扣款 | fill 后 cash_balance 减少 |
-| SIM-002 | shares 计算正确 | shares = stake / fill_price |
+| SIM-001 | Nautilus account 正确变化 | fill 后 account/portfolio projection 更新 |
+| SIM-002 | shares 计算正确 | fills/positions projection 中 shares 与 fill price 一致 |
 | SIM-003 | WIN 结算正确 | settlement = shares |
 | SIM-004 | LOSS 结算正确 | settlement = 0 |
 | SIM-005 | PnL 正确 | pnl = settlement - stake |
 | SIM-006 | stale book 不成交 | stale 时 paper order rejected |
 | SIM-007 | ask 超价不成交 | ask > max_entry_price 时 rejected |
-| SIM-008 | 余额不足不成交 | cash 不足时 rejected |
+| SIM-008 | 余额不足不成交 | account cash 不足时 rejected |
 | SIM-009 | 结果写入日志 | paper_results.jsonl 有完整记录 |
 
 ## 24. 实施阶段
@@ -1048,13 +1037,13 @@ roi = pnl / stake_usdc
 - Signal publish log。
 - Rate limit。
 
-### Phase 5：Paper Simulator
+### Phase 5：Nautilus Paper Runtime
 
 交付：
-- Paper wallet。
-- Paper order。
-- Paper fill model。
-- Paper position。
+- Nautilus TradingNode runtime。
+- Nautilus native order submission。
+- Nautilus sandbox paper execution。
+- Nautilus order/fill/position/account projections。
 - Hold-to-resolution settlement。
 - Paper result log。
 
@@ -1077,9 +1066,9 @@ roi = pnl / stake_usdc
 - ✅ VWAP Momentum。
 - ✅ PTB Diff。
 - ✅ Telegram signal。
-- ✅ Paper wallet。
-- ✅ Paper order。
-- ✅ Best ask taker fill model。
+- ✅ Nautilus paper account projection。
+- ✅ Nautilus paper order projection。
+- ✅ Nautilus sandbox fill / position projection。
 - ✅ Hold-to-resolution result。
 - ✅ Win/Loss/PnL 日志。
 - ✅ Telegram paper result。
