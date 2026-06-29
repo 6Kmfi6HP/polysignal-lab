@@ -21,6 +21,11 @@ from polysignal_lab.observability.health import HealthRegistry
 
 
 class NautilusOrchestrator:
+    """Legacy/manual phase loop kept for compatibility.
+
+    Default Nautilus runtime strategy evaluation must be triggered by Nautilus
+    callbacks and custom data, not by this scheduler-style sync/evaluate loop.
+    """
     def __init__(
         self,
         *,

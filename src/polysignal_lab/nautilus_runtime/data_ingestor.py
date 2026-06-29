@@ -29,6 +29,12 @@ class MatchingBookSink(Protocol):
 
 
 class NautilusDataIngestor:
+    """Legacy/manual sync bridge for tests and compatibility paths.
+
+    Default Nautilus runtime market data must come from Nautilus callbacks and
+    actor-published custom data. This class must not be wired as the default
+    strategy-evaluation data owner.
+    """
     def __init__(
         self,
         *,
