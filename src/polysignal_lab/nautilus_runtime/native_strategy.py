@@ -1015,9 +1015,19 @@ def _float_attr(source: object, name: str) -> float:
 
 
 def _maybe_float(value: object) -> float | None:
-    if value is None or not isinstance(value, (int, float, str, bytes, bytearray)):
+    if value is None:
         return None
-    return float(value)
+    if callable(value):
+        value = value()
+    coerced = (
+        value
+        if isinstance(value, (int, float, str, bytes, bytearray))
+        else str(value)
+    )
+    try:
+        return float(coerced)
+    except (TypeError, ValueError):
+        return None
 
 def _datetime_or_now(value: object) -> datetime:
     return value if isinstance(value, datetime) else datetime.now(UTC)

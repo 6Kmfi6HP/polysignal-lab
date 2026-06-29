@@ -16,6 +16,17 @@ from polysignal_lab.nautilus_bridge.strategies.ptb_diff import PTBDiffNautilusSt
 from polysignal_lab.strategies.config import PTBDiffConfig, PTBTriggerConfig
 
 
+class _FloatLike:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def __float__(self) -> float:
+        return self.value
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
 class FakeAssembler:
     def __init__(self, view: object | None):
         self.view = cast(MarketView | None, view)
@@ -2120,8 +2131,8 @@ def test_native_strategy_fill_notifies_telegram_with_fill_payload() -> None:
             condition_id="condition-btc-5m",
             token_id="up-token",
             side=Side.UP,
-            last_qty=10.0,
-            last_px=0.5,
+            last_qty=_FloatLike(10.0),
+            last_px=_FloatLike(0.5),
             trade_id="trade-1",
             liquidity_side="TAKER",
             tags=[

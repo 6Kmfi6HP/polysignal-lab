@@ -9,6 +9,17 @@ from polysignal_lab.nautilus_runtime.projections import (
 )
 
 
+class _FloatLike:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def __float__(self) -> float:
+        return self.value
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
 def test_project_order_event_uses_nautilus_event_fields() -> None:
     event = SimpleNamespace(
         client_order_id="C-001",
@@ -55,6 +66,23 @@ def test_project_fill_event_uses_nautilus_fill_fields() -> None:
     assert row["quantity"] == 12.5
     assert row["price"] == 0.50
     assert row["notional"] == 6.25
+
+
+def test_project_fill_event_accepts_nautilus_price_quantity_objects() -> None:
+    event = SimpleNamespace(
+        client_order_id="C-002",
+        instrument_id="up-token.POLYMARKET",
+        trade_id="T-002",
+        last_qty=_FloatLike(12.0),
+        last_px=_FloatLike(0.66),
+        liquidity_side="TAKER",
+    )
+
+    row = project_fill_event(event)
+
+    assert row["quantity"] == 12.0
+    assert row["price"] == 0.66
+    assert row["notional"] == 7.92
 
 
 def test_project_position_uses_nautilus_position_fields() -> None:

@@ -96,12 +96,17 @@ def project_portfolio_snapshot(portfolio: object) -> dict[str, object]:
 
 def _float_attr(source: object, name: str) -> float:
     value = getattr(source, name, 0.0)
-    if isinstance(value, (int, float, str)):
-        try:
-            return float(value)
-        except ValueError:
-            return 0.0
-    return 0.0
+    if callable(value):
+        value = value()
+    coerced = (
+        value
+        if isinstance(value, (int, float, str, bytes, bytearray))
+        else str(value)
+    )
+    try:
+        return float(coerced)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _text_attr(source: object, name: str) -> str:
