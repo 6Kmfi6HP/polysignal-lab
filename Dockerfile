@@ -31,7 +31,8 @@ CMD ["scheduler"]
 
 # ── Nautilus runtime image (separate target; default stays paper-safe) ──
 FROM builder AS nautilus-builder
-RUN pip install --ignore-installed --no-cache-dir --only-binary=nautilus-trader --prefix=/install-nautilus '.[dev]' 'nautilus_trader[polymarket]==1.229.0'
+RUN pip install --ignore-installed --no-cache-dir --only-binary=nautilus-trader --prefix=/install-nautilus '.[dev]' 'nautilus_trader[polymarket]==1.229.0' \
+    && PYTHONPATH=/install-nautilus/lib/python3.12/site-packages python -m polysignal_lab.nautilus_runtime.patch_nautilus_polymarket_autoload
 
 FROM python:3.12-slim AS nautilus-runtime
 WORKDIR /app
