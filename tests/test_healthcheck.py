@@ -247,3 +247,49 @@ def test_restart_gate_resets_after_recovery() -> None:
     assert result.first_down_at is None
     assert result.down_duration_sec == 0
     assert result.consecutive_failures == 0
+
+
+def test_healthcheck_cli_liveness_returns_zero_for_fresh_heartbeat(tmp_path) -> None:
+    from polysignal_lab.healthcheck import main
+
+    state_dir = tmp_path / "state"
+    config = tmp_path / "settings.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "storage:",
+                f"  state_dir: {state_dir.as_posix()}",
+                "health:",
+                "  liveness:",
+                "    heartbeat_max_age_sec: 120",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    write_runtime_heartbeat(
+        state_dir / "runtime_heartbeat.json",
+        phase="running",
+    )
+
+    assert main(["liveness", "--config", str(config)]) == 0
+
+
+def test_healthcheck_cli_liveness_returns_one_for_missing_heartbeat(tmp_path) -> None:
+    from polysignal_lab.healthcheck import main
+
+    state_dir = tmp_path / "state"
+    config = tmp_path / "settings.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "storage:",
+                f"  state_dir: {state_dir.as_posix()}",
+                "health:",
+                "  liveness:",
+                "    heartbeat_max_age_sec: 120",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["liveness", "--config", str(config)]) == 1
