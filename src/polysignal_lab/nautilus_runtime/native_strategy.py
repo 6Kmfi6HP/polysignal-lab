@@ -218,6 +218,7 @@ def runtime_native_strategy_type(
             registry: PolymarketMarketRegistry | None = None,
             sidecar: ExternalDataSidecar | None = None,
             observability: _Observability | None = None,
+            progress_callback: Callable[[str], None] | None = None,
             unsubscribe_exited: bool = True,
         ) -> None:
             base_init = cast(Callable[..., None], nautilus_base.__init__)
@@ -239,6 +240,7 @@ def runtime_native_strategy_type(
                 registry=registry,
                 sidecar=sidecar,
                 observability=observability,
+                progress_callback=progress_callback,
                 unsubscribe_exited=unsubscribe_exited,
             )
 
@@ -270,6 +272,7 @@ class PolySignalNativeStrategy:
         registry: PolymarketMarketRegistry | None = None,
         sidecar: ExternalDataSidecar | None = None,
         observability: _Observability | None = None,
+        progress_callback: Callable[[str], None] | None = None,
         unsubscribe_exited: bool = True,
     ) -> None:
         if registry is None or sidecar is None or assembler is None:
@@ -289,6 +292,7 @@ class PolySignalNativeStrategy:
         self.registry: PolymarketMarketRegistry | None = registry
         self.sidecar: ExternalDataSidecar | None = sidecar
         self.observability: _Observability | None = observability
+        self.progress_callback: Callable[[str], None] | None = progress_callback
         self._startup_condition_ids: tuple[str, ...] = self.condition_ids
         self._active_condition_ids: set[str] = set(self.condition_ids)
         self._market_epoch: int | None = None
@@ -321,7 +325,14 @@ class PolySignalNativeStrategy:
     def _require_assembler(self) -> _Assembler:
         return self.assembler
 
+    def _note_runtime_progress(self, phase: str) -> None:
+        callback = self.progress_callback
+        if callback is None:
+            return
+        callback(phase)
+
     def on_start(self) -> None:
+        self._note_runtime_progress("start")
         _ = self._require_registry()
         _ = self._require_sidecar()
         _ = self._require_assembler()
@@ -349,6 +360,7 @@ class PolySignalNativeStrategy:
             cancel_timer(EVALUATION_HEARTBEAT_TIMER_NAME)
 
     def _on_evaluation_heartbeat(self, _event: object) -> None:
+        self._note_runtime_progress("evaluation_heartbeat")
         now = datetime.now(UTC)
         for condition_id in tuple(sorted(self._active_condition_ids)):
             last_market_data_eval = self._last_market_data_evaluation_at.get(condition_id)
@@ -491,21 +503,25 @@ class PolySignalNativeStrategy:
         return condition_id
 
     def _evaluate_market_data_condition(self, condition_id: str) -> None:
+        self._note_runtime_progress("market_data_evaluation")
         for strategy in self._market_data_subscription_group.active_strategies(condition_id):
             strategy._last_market_data_evaluation_at[condition_id] = datetime.now(UTC)
             strategy.evaluate_condition(condition_id)
 
     def on_order_submitted(self, event: object) -> None:
+        self._note_runtime_progress("order_event")
         alpha_event = self._order_event(event)
         self._record_nautilus_order(event, alpha_event.metrics)
         self._call_core("on_order_submitted", alpha_event)
 
     def on_order_accepted(self, event: object) -> None:
+        self._note_runtime_progress("order_event")
         alpha_event = self._order_event(event)
         self._record_nautilus_order(event, alpha_event.metrics)
         self._call_core("on_order_accepted", alpha_event)
 
     def on_order_denied(self, event: object) -> None:
+        self._note_runtime_progress("order_event")
         alpha_event = self._order_event(event)
         self._record_nautilus_order(event, alpha_event.metrics)
         self._call_core("on_order_denied", alpha_event)
@@ -513,24 +529,28 @@ class PolySignalNativeStrategy:
 
 
     def on_order_rejected(self, event: object) -> None:
+        self._note_runtime_progress("order_event")
         alpha_event = self._order_event(event)
         self._record_nautilus_order(event, alpha_event.metrics)
         self._call_core("on_order_rejected", alpha_event)
         self._forget_approved_metrics(event, alpha_event)
 
     def on_order_canceled(self, event: object) -> None:
+        self._note_runtime_progress("order_event")
         alpha_event = self._order_event(event)
         self._record_nautilus_order(event, alpha_event.metrics)
         self._call_core("on_order_canceled", alpha_event)
         self._forget_approved_metrics(event, alpha_event)
 
     def on_order_expired(self, event: object) -> None:
+        self._note_runtime_progress("order_event")
         alpha_event = self._order_event(event)
         self._record_nautilus_order(event, alpha_event.metrics)
         self._call_core("on_order_expired", alpha_event)
         self._forget_approved_metrics(event, alpha_event)
 
     def on_order_filled(self, event: object) -> None:
+        self._note_runtime_progress("order_event")
         alpha_event = self._fill_event(event)
         should_notify = self._should_notify_fill(alpha_event)
         if should_notify:

@@ -17,6 +17,7 @@ from contextlib import suppress
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Protocol, cast, runtime_checkable
 
@@ -50,6 +51,7 @@ from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
 from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
+from polysignal_lab.observability.runtime_health import write_runtime_heartbeat
 from polysignal_lab.strategies.execution import build_strategy_schedule
 
 class _FactoryNode(Protocol):
@@ -155,6 +157,19 @@ class _StaticMarketUniverse:
 
 
 logger = logging.getLogger(__name__)
+
+def _runtime_heartbeat_path(settings: Settings) -> Path:
+    return Path(settings.storage.state_dir) / "runtime_heartbeat.json"
+
+
+def _runtime_progress_callback(settings: Settings) -> Callable[[str], None]:
+    path = _runtime_heartbeat_path(settings)
+
+    def note_progress(phase: str) -> None:
+        write_runtime_heartbeat(path, phase=phase)
+
+    return note_progress
+
 
 
 @dataclass(slots=True)
@@ -415,6 +430,7 @@ def _build_native_strategies(
             registry=registry,
             sidecar=sidecar,
             observability=observability,
+            progress_callback=_runtime_progress_callback(settings),
             unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
         )
         strategies.append(strategy)
@@ -850,6 +866,10 @@ async def run_nautilus_cli_async(
     """Run the Nautilus CLI with async orchestration and signal handling."""
     event = stop_event or asyncio.Event()
     bundle = await build_nautilus_runtime(settings)
+    write_runtime_heartbeat(
+        _runtime_heartbeat_path(bundle.scheduler.settings),
+        phase="starting",
+    )
     node = bundle.node
     loop = asyncio.get_running_loop()
 
@@ -936,6 +956,8 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
         discovered_markets,
         observability,
     )
+    heartbeat_path = _runtime_heartbeat_path(bundle.scheduler.settings)
+    write_runtime_heartbeat(heartbeat_path, phase="starting")
     node = bundle.node
 
     def request_stop() -> None:
@@ -972,6 +994,19 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
             run_method(raise_exception=True)
         else:
             run_method()
+        if strategy_names:
+            runtime_logger.error(
+                "TradingNode.run returned unexpectedly with %d strategy/strategies active: %s",
+                len(strategy_names),
+                ", ".join(strategy_names),
+            )
+            write_runtime_heartbeat(
+                heartbeat_path,
+                phase="fatal",
+                fatal=True,
+                fatal_reason="TradingNode.run returned unexpectedly",
+            )
+            raise RuntimeError("TradingNode.run returned unexpectedly")
     finally:
         try:
             try:

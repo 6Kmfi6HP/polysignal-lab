@@ -857,6 +857,41 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
 
     assert strategy.clock.canceled == [EVALUATION_HEARTBEAT_TIMER_NAME]
 
+def test_native_strategy_reports_progress_on_internal_evaluation_heartbeat() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    progress_events: list[str] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(object()),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        **_native_projections(),
+        progress_callback=progress_events.append,
+    )
+
+    strategy._on_evaluation_heartbeat(object())
+
+    assert progress_events == ["evaluation_heartbeat"]
+
+
+def test_native_strategy_reports_progress_on_start_without_market_data() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    progress_events: list[str] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        **_native_projections(),
+        progress_callback=progress_events.append,
+    )
+
+    strategy.on_start()
+
+    assert "start" in progress_events
+
 def test_native_strategy_constructor_without_registry_fails_clearly() -> None:
     import pytest
 

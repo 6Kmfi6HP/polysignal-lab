@@ -24,6 +24,13 @@ def _fake_telegram_publisher() -> TelegramPublisher:
     return cast("TelegramPublisher", cast(object, SimpleNamespace(send=lambda *_args, **_kwargs: None)))
 
 
+def _runtime_settings_stub(**kwargs):
+    return SimpleNamespace(
+        storage=SimpleNamespace(state_dir="/tmp/polysignal-lab-test-runtime"),
+        **kwargs,
+    )
+
+
 def _patch_nautilus_placeholders(monkeypatch):
     """Monkeypatch all 4 module-level nautilus placeholders so tests on py3.11
     can call build_trading_node without importing nautilus_trader."""
@@ -327,6 +334,52 @@ def test_build_trading_node_forwards_unsubscribe_exited_to_native_strategy(
     assert captured_kwargs["unsubscribe_exited"] is False
     assert captured_kwargs["strategy_name"] == "vwap_momentum"
 
+def test_build_trading_node_injects_runtime_progress_callback(monkeypatch, tmp_path) -> None:
+    from polysignal_lab.observability.runtime_health import read_runtime_heartbeat
+
+    captured: dict[str, object] = {}
+
+    class FakeTradingNode:
+        def __init__(self, config):
+            self.config = config
+            self.trader = SimpleNamespace(strategies=[], actors=[])
+            self.trader.add_strategy = self.trader.strategies.append
+            self.trader.add_actor = self.trader.actors.append
+
+        def add_data_client_factory(self, name, factory):
+            return None
+
+        def add_exec_client_factory(self, name, factory):
+            return None
+
+        def build(self):
+            return None
+
+    class FakeStrategy:
+        strategy_name = "vwap_momentum"
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    settings = Settings()
+    settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
+    settings.storage.state_dir = str(tmp_path / "state")
+    _patch_nautilus_placeholders(monkeypatch)
+    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.TradingNode", FakeTradingNode)
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.native_strategy.runtime_native_strategy_type",
+        lambda _base, _config: FakeStrategy,
+    )
+
+    runtime = build_trading_node(settings=settings, condition_ids=("condition-btc-5m",))
+
+    progress = captured["progress_callback"]
+    assert callable(progress)
+    progress("evaluation_heartbeat")
+    heartbeat = read_runtime_heartbeat(tmp_path / "state" / "runtime_heartbeat.json")
+    assert heartbeat.phase == "evaluation_heartbeat"
+    assert runtime["strategies"][0].strategy_name == "vwap_momentum"
+
 def test_build_control_adapts_policy() -> None:
     from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 
@@ -494,7 +547,7 @@ def test_publish_accepted_signal_in_background_uses_fresh_publish_service(
         lambda _scheduler, publish: noted.append(publish),
     )
     scheduler = SimpleNamespace(
-        settings=SimpleNamespace(telegram="telegram-config"),
+        settings=_runtime_settings_stub(telegram="telegram-config"),
         publish_service=SimpleNamespace(
             formatter="formatter",
             persistence="persistence",
@@ -563,7 +616,7 @@ def test_publish_nautilus_paper_fill_in_background_uses_fresh_publish_service(
     monkeypatch.setattr(node_mod, "TelegramPublisher", FakeTelegramPublisher, raising=False)
     monkeypatch.setattr(node_mod, "PublishService", FakePublishService, raising=False)
     scheduler = SimpleNamespace(
-        settings=SimpleNamespace(telegram="telegram-config"),
+        settings=_runtime_settings_stub(telegram="telegram-config"),
         publish_service=SimpleNamespace(
             formatter="formatter",
             persistence="persistence",
@@ -855,7 +908,7 @@ async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
         websocket_tasks=[],
         scheduler=SimpleNamespace(
             stop=_noop,
-            settings=SimpleNamespace(
+            settings=_runtime_settings_stub(
                 markets=SimpleNamespace(refresh_interval_sec=60),
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
@@ -904,7 +957,7 @@ async def test_run_nautilus_cli_async_does_not_install_signal_handlers_by_defaul
         websocket_tasks=[],
         scheduler=SimpleNamespace(
             stop=_noop,
-            settings=SimpleNamespace(
+            settings=_runtime_settings_stub(
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
                         paper_engine="nautilus_matching",
@@ -957,7 +1010,7 @@ async def test_run_nautilus_cli_async_installs_signal_handlers_when_enabled(
         websocket_tasks=[],
         scheduler=SimpleNamespace(
             stop=_noop,
-            settings=SimpleNamespace(
+            settings=_runtime_settings_stub(
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
                         paper_engine="nautilus_matching",
@@ -1018,7 +1071,7 @@ async def test_run_nautilus_cli_async_restores_signals_after_shutdown_failure(
         websocket_tasks=[],
         scheduler=SimpleNamespace(
             stop=_noop,
-            settings=SimpleNamespace(
+            settings=_runtime_settings_stub(
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
                         paper_engine="nautilus_matching",
@@ -1092,7 +1145,7 @@ async def test_run_nautilus_cli_async_surfaces_node_run_failure(monkeypatch) -> 
         websocket_tasks=[],
         scheduler=SimpleNamespace(
             stop=_noop,
-            settings=SimpleNamespace(
+            settings=_runtime_settings_stub(
                 markets=SimpleNamespace(refresh_interval_sec=60),
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
@@ -1160,7 +1213,7 @@ async def test_run_nautilus_cli_async_waits_for_node_stop_instead_of_canceling_r
         websocket_tasks=[],
         scheduler=SimpleNamespace(
             stop=_noop,
-            settings=SimpleNamespace(
+            settings=_runtime_settings_stub(
                 markets=SimpleNamespace(refresh_interval_sec=60),
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
@@ -1228,7 +1281,7 @@ async def test_run_nautilus_cli_async_leaves_node_disposal_to_sync_wrapper(
         websocket_tasks=[],
         scheduler=SimpleNamespace(
             stop=_noop,
-            settings=SimpleNamespace(
+            settings=_runtime_settings_stub(
                 markets=SimpleNamespace(refresh_interval_sec=60),
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
@@ -1290,7 +1343,7 @@ async def test_run_nautilus_cli_async_notifies_and_starts_report_loop(
             websocket_tasks=[],
             scheduler=SimpleNamespace(
                 stop=fake_stop,
-                settings=SimpleNamespace(
+                settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
                             paper_engine="nautilus_matching",
@@ -1360,7 +1413,7 @@ async def test_run_nautilus_cli_async_tolerates_notification_failures(
             scheduler=SimpleNamespace(
                 stop=fake_stop,
                 logger=FakeLogger(),
-                settings=SimpleNamespace(
+                settings=_runtime_settings_stub(
                     markets=SimpleNamespace(refresh_interval_sec=60),
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
@@ -1437,7 +1490,7 @@ def test_run_nautilus_cli_disposes_node_after_async_exit(monkeypatch) -> None:
 
     async def fake_prepare(settings):
         _ = settings
-        return SimpleNamespace(stop=_noop, settings=SimpleNamespace()), (), SimpleNamespace()
+        return SimpleNamespace(stop=_noop, settings=_runtime_settings_stub()), (), SimpleNamespace()
 
     def fake_bundle(settings, scheduler, discovered_markets, observability):
         _ = settings, scheduler, discovered_markets, observability
@@ -1445,7 +1498,7 @@ def test_run_nautilus_cli_disposes_node_after_async_exit(monkeypatch) -> None:
             node=node,
             scheduler=SimpleNamespace(
                 stop=_noop,
-                settings=SimpleNamespace(
+                settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
                             paper_engine="nautilus_matching",
@@ -1472,6 +1525,93 @@ def test_run_nautilus_cli_disposes_node_after_async_exit(monkeypatch) -> None:
     assert node.disposed is True
 
 
+def test_run_nautilus_cli_raises_when_live_node_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeNode:
+        def run(self) -> None:
+            return None
+
+        def dispose(self) -> None:
+            return None
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    async def fake_prepare(settings):
+        _ = settings
+        return SimpleNamespace(stop=_noop, settings=_runtime_settings_stub()), (), SimpleNamespace()
+
+    def fake_bundle(settings, scheduler, discovered_markets, observability):
+        _ = settings, scheduler, discovered_markets, observability
+        return SimpleNamespace(
+            node=FakeNode(),
+            scheduler=SimpleNamespace(
+                stop=_noop,
+                settings=_runtime_settings_stub(
+                    runtime=SimpleNamespace(
+                        nautilus=SimpleNamespace(
+                            paper_engine="nautilus_matching",
+                            matching_accuracy_mode="depth_l2",
+                        )
+                    )
+                ),
+            ),
+            observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+            components={"strategies": [SimpleNamespace(strategy_name="vwap_momentum")]},
+        )
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._prepare_nautilus_runtime_context",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._build_nautilus_runtime_bundle",
+        fake_bundle,
+    )
+
+    with pytest.raises(RuntimeError, match="TradingNode.run returned unexpectedly"):
+        run_nautilus_cli()
+
+
+def test_run_nautilus_cli_writes_fatal_heartbeat_on_unexpected_return(monkeypatch, tmp_path) -> None:
+    from polysignal_lab.observability.runtime_health import read_runtime_heartbeat
+
+    class FakeNode:
+        def run(self, raise_exception=False):
+            return None
+
+        def dispose(self):
+            return None
+
+    settings = Settings()
+    settings.storage.state_dir = str(tmp_path / "state")
+    scheduler = SimpleNamespace(settings=settings, logger=SimpleNamespace(error=lambda *a, **k: None))
+    observability = SimpleNamespace(
+        notify_startup=AsyncMock(return_value=None),
+        notify_shutdown=AsyncMock(return_value=None),
+    )
+    bundle = SimpleNamespace(
+        scheduler=scheduler,
+        components={"strategies": [SimpleNamespace(strategy_name="vwap_momentum")]},
+        node=FakeNode(),
+        observability=observability,
+    )
+
+    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node._prepare_nautilus_runtime_context", AsyncMock(return_value=(scheduler, [], observability)))
+    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node._rebind_market_discovery_client", lambda _scheduler: None)
+    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node._build_nautilus_runtime_bundle", lambda *_args: bundle)
+    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node._stop_nautilus_scheduler", AsyncMock(return_value=None))
+
+    with pytest.raises(RuntimeError, match="TradingNode.run returned unexpectedly"):
+        run_nautilus_cli(settings)
+
+    heartbeat = read_runtime_heartbeat(tmp_path / "state" / "runtime_heartbeat.json")
+    assert heartbeat.fatal is True
+    assert heartbeat.phase == "fatal"
+    assert heartbeat.fatal_reason == "TradingNode.run returned unexpectedly"
+
+
 def test_run_nautilus_cli_does_not_install_signal_handlers_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1487,7 +1627,7 @@ def test_run_nautilus_cli_does_not_install_signal_handlers_by_default(
 
     async def fake_prepare(settings):
         _ = settings
-        return SimpleNamespace(stop=_noop, settings=SimpleNamespace()), (), SimpleNamespace()
+        return SimpleNamespace(stop=_noop, settings=_runtime_settings_stub()), (), SimpleNamespace()
 
     def fake_bundle(settings, scheduler, discovered_markets, observability):
         _ = settings, scheduler, discovered_markets, observability
@@ -1495,7 +1635,7 @@ def test_run_nautilus_cli_does_not_install_signal_handlers_by_default(
             node=FakeNode(),
             scheduler=SimpleNamespace(
                 stop=_noop,
-                settings=SimpleNamespace(
+                settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
                             paper_engine="nautilus_matching",
@@ -1544,7 +1684,7 @@ def test_run_nautilus_cli_installs_signal_handlers_when_enabled(
 
     async def fake_prepare(settings):
         _ = settings
-        return SimpleNamespace(stop=_noop, settings=SimpleNamespace()), (), SimpleNamespace()
+        return SimpleNamespace(stop=_noop, settings=_runtime_settings_stub()), (), SimpleNamespace()
 
     def fake_bundle(settings, scheduler, discovered_markets, observability):
         _ = settings, scheduler, discovered_markets, observability
@@ -1552,7 +1692,7 @@ def test_run_nautilus_cli_installs_signal_handlers_when_enabled(
             node=FakeNode(),
             scheduler=SimpleNamespace(
                 stop=_noop,
-                settings=SimpleNamespace(
+                settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
                             paper_engine="nautilus_matching",
@@ -1608,7 +1748,7 @@ def test_run_nautilus_cli_restores_opt_in_signal_handlers(
     async def fake_prepare(settings):
         _ = settings
         return (
-            SimpleNamespace(stop=_noop, settings=SimpleNamespace()),
+            SimpleNamespace(stop=_noop, settings=_runtime_settings_stub()),
             (),
             SimpleNamespace(),
         )
@@ -1619,7 +1759,7 @@ def test_run_nautilus_cli_restores_opt_in_signal_handlers(
             node=FakeNode(),
             scheduler=SimpleNamespace(
                 stop=_noop,
-                settings=SimpleNamespace(
+                settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
                             paper_engine="nautilus_matching",
@@ -1676,7 +1816,7 @@ def test_run_nautilus_cli_restores_signal_handlers_after_dispose_failure(
     async def fake_prepare(settings):
         _ = settings
         return (
-            SimpleNamespace(stop=_noop, settings=SimpleNamespace()),
+            SimpleNamespace(stop=_noop, settings=_runtime_settings_stub()),
             (),
             SimpleNamespace(),
         )
@@ -1687,7 +1827,7 @@ def test_run_nautilus_cli_restores_signal_handlers_after_dispose_failure(
             node=FakeNode(),
             scheduler=SimpleNamespace(
                 stop=_noop,
-                settings=SimpleNamespace(
+                settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
                             paper_engine="nautilus_matching",
@@ -1736,7 +1876,7 @@ def test_run_nautilus_cli_prints_ready(monkeypatch, capsys) -> None:
 
     async def fake_prepare(settings):
         _ = settings
-        return SimpleNamespace(stop=_noop, settings=SimpleNamespace()), (), SimpleNamespace()
+        return SimpleNamespace(stop=_noop, settings=_runtime_settings_stub()), (), SimpleNamespace()
 
     def fake_bundle(settings, scheduler, discovered_markets, observability):
         _ = settings, scheduler, discovered_markets, observability
@@ -1744,7 +1884,7 @@ def test_run_nautilus_cli_prints_ready(monkeypatch, capsys) -> None:
             node=FakeNode(),
             scheduler=SimpleNamespace(
                 stop=_noop,
-                settings=SimpleNamespace(
+                settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
                             paper_engine="nautilus_matching",
