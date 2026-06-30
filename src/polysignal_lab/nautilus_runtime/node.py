@@ -169,14 +169,40 @@ def _runtime_startup_marker_path(settings: Settings) -> Path:
     return Path(settings.storage.state_dir) / "runtime_startup.json"
 
 
+def _log_probe_write_failure(path: Path) -> None:
+    logger.warning("Failed to write runtime probe state: %s", path, exc_info=True)
+
+
+def _write_runtime_startup_marker_best_effort(path: Path) -> None:
+    try:
+        write_runtime_startup_marker(path)
+    except OSError:
+        _log_probe_write_failure(path)
+
+
+def _write_runtime_heartbeat_best_effort(
+    path: Path,
+    *,
+    phase: str,
+    fatal: bool = False,
+    fatal_reason: str | None = None,
+) -> None:
+    try:
+        write_runtime_heartbeat(
+            path,
+            phase=phase,
+            fatal=fatal,
+            fatal_reason=fatal_reason,
+        )
+    except OSError:
+        _log_probe_write_failure(path)
+
+
 def _runtime_progress_callback(settings: Settings) -> Callable[[str], None]:
     path = _runtime_heartbeat_path(settings)
 
     def note_progress(phase: str) -> None:
-        try:
-            write_runtime_heartbeat(path, phase=phase)
-        except OSError:
-            logger.warning("Failed to write runtime heartbeat", exc_info=True)
+        _write_runtime_heartbeat_best_effort(path, phase=phase)
 
     return note_progress
 
@@ -877,9 +903,9 @@ async def run_nautilus_cli_async(
     event = stop_event or asyncio.Event()
     if settings is None:
         settings = load_settings()
-    write_runtime_startup_marker(_runtime_startup_marker_path(settings))
+    _write_runtime_startup_marker_best_effort(_runtime_startup_marker_path(settings))
     bundle = await build_nautilus_runtime(settings)
-    write_runtime_heartbeat(
+    _write_runtime_heartbeat_best_effort(
         _runtime_heartbeat_path(bundle.scheduler.settings),
         phase="starting",
     )
@@ -959,7 +985,7 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
     """Entry point for the ``nautilus`` CLI mode — sync wrapper."""
     if settings is None:
         settings = load_settings()
-    write_runtime_startup_marker(_runtime_startup_marker_path(settings))
+    _write_runtime_startup_marker_best_effort(_runtime_startup_marker_path(settings))
     scheduler, discovered_markets, observability = asyncio.run(
         _prepare_nautilus_runtime_context(settings)
     )
@@ -971,7 +997,7 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
         observability,
     )
     heartbeat_path = _runtime_heartbeat_path(bundle.scheduler.settings)
-    write_runtime_heartbeat(heartbeat_path, phase="starting")
+    _write_runtime_heartbeat_best_effort(heartbeat_path, phase="starting")
     node = bundle.node
 
     def request_stop() -> None:
@@ -1014,7 +1040,7 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
                 len(strategy_names),
                 ", ".join(strategy_names),
             )
-            write_runtime_heartbeat(
+            _write_runtime_heartbeat_best_effort(
                 heartbeat_path,
                 phase="fatal",
                 fatal=True,

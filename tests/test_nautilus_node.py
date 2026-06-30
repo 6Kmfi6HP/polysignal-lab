@@ -1008,6 +1008,52 @@ async def test_run_nautilus_cli_async_refreshes_startup_marker_before_runtime_bu
 
     assert observed["settings"] is settings
 
+async def test_run_nautilus_cli_async_suppresses_probe_write_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    settings = Settings()
+
+    class FakeTradingNode:
+        def run(self):
+            return None
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    async def fake_build(received_settings=None):
+        assert received_settings is settings
+        return SimpleNamespace(
+            node=FakeTradingNode(),
+            websocket_tasks=[],
+            scheduler=SimpleNamespace(
+                stop=_noop,
+                settings=_runtime_settings_stub(
+                    runtime=SimpleNamespace(
+                        nautilus=SimpleNamespace(
+                            paper_engine="nautilus_matching",
+                            matching_accuracy_mode="depth_l2",
+                        )
+                    )
+                ),
+            ),
+            observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+            components={"strategies": []},
+        )
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("state directory unavailable")
+
+    monkeypatch.setattr(node_mod, "build_nautilus_runtime", fake_build)
+    monkeypatch.setattr(node_mod, "write_runtime_startup_marker", fail_write)
+    monkeypatch.setattr(node_mod, "write_runtime_heartbeat", fail_write)
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+    await run_nautilus_cli_async(settings=settings, stop_event=stop_event)
+
+
 
 async def test_run_nautilus_cli_async_does_not_install_signal_handlers_by_default(
     monkeypatch: pytest.MonkeyPatch,
@@ -1685,6 +1731,46 @@ def test_run_nautilus_cli_writes_fatal_heartbeat_on_unexpected_return(monkeypatc
     assert heartbeat.fatal_reason == "TradingNode.run returned unexpectedly"
     startup_started_at = read_runtime_startup_started_at(startup_marker)
     assert startup_started_at.isoformat() != "2026-06-30T11:00:00+00:00"
+
+def test_run_nautilus_cli_preserves_runtime_error_when_probe_writes_fail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    class FakeNode:
+        def run(self, raise_exception=False):
+            return None
+
+        def dispose(self):
+            return None
+
+    settings = Settings()
+    settings.storage.state_dir = str(tmp_path / "state")
+    scheduler = SimpleNamespace(settings=settings, logger=SimpleNamespace(error=lambda *a, **k: None))
+    observability = SimpleNamespace(
+        notify_startup=AsyncMock(return_value=None),
+        notify_shutdown=AsyncMock(return_value=None),
+    )
+    bundle = SimpleNamespace(
+        scheduler=scheduler,
+        components={"strategies": [SimpleNamespace(strategy_name="vwap_momentum")]},
+        node=FakeNode(),
+        observability=observability,
+    )
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("state directory unavailable")
+
+    monkeypatch.setattr(node_mod, "_prepare_nautilus_runtime_context", AsyncMock(return_value=(scheduler, [], observability)))
+    monkeypatch.setattr(node_mod, "_rebind_market_discovery_client", lambda _scheduler: None)
+    monkeypatch.setattr(node_mod, "_build_nautilus_runtime_bundle", lambda *_args: bundle)
+    monkeypatch.setattr(node_mod, "_stop_nautilus_scheduler", AsyncMock(return_value=None))
+    monkeypatch.setattr(node_mod, "write_runtime_startup_marker", fail_write)
+    monkeypatch.setattr(node_mod, "write_runtime_heartbeat", fail_write)
+
+    with pytest.raises(RuntimeError, match="TradingNode.run returned unexpectedly"):
+        run_nautilus_cli(settings)
 
 
 def test_run_nautilus_cli_does_not_install_signal_handlers_by_default(
