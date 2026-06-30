@@ -27,6 +27,10 @@ If you're not sure how something is done in this project, say so. "I don't see a
 
 - For any NautilusTrader-related development, refactor, testing, or integration work in this project, consult `docs/nautilus_reference/` before implementation.
 - Treat `docs/nautilus_reference/developer_guide/` as the default guidance for design principles, coding standards, Python/Rust implementation details, testing, adapters, and FFI constraints unless the current task explicitly overrides it.
+
+### Reference code rule
+
+- **Never modify the @refs directory.** The @refs directory contains reference code that should not be changed. Use it only for reference and understanding patterns, but do not make any modifications to files within this directory.
 ---
 
 ## 2. Think Before You Code

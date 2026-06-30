@@ -28,3 +28,4 @@ refs/*
 .codex/
 .opencode/
 .omo/lsp.json
+data/*
