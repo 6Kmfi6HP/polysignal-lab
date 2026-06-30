@@ -242,6 +242,24 @@ class DashboardConfig(BaseModel):
     read_only: bool = True
 
 
+class HealthLivenessConfig(BaseModel):
+    heartbeat_max_age_sec: int = 120
+
+
+class HealthRestartGateConfig(BaseModel):
+    enabled: bool = True
+    critical_components: tuple[str, ...] = ("runtime", "scheduler", "sqlite")
+    critical_down_sec: int = 300
+    min_consecutive_failures: int = 5
+    docker_healthcheck_fails_on_restart_recommended: bool = False
+
+
+class HealthConfig(BaseModel):
+    startup_grace_sec: int = 180
+    liveness: HealthLivenessConfig = Field(default_factory=HealthLivenessConfig)
+    restart_gate: HealthRestartGateConfig = Field(default_factory=HealthRestartGateConfig)
+
+
 class NautilusSidecarConfig(BaseModel):
     spot_source: str = "polymarket_rtds"
     price_to_beat_source: str = "anchor_or_gamma"
@@ -311,6 +329,7 @@ class Settings(BaseSettings):
     paper_trading: PaperTradingConfig = Field(default_factory=PaperTradingConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    health: HealthConfig = Field(default_factory=HealthConfig)
     strategies: StrategyConfig = Field(default_factory=StrategyConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 

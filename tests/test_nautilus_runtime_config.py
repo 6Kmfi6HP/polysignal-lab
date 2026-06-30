@@ -56,6 +56,56 @@ def test_production_yaml_declares_nautilus_runtime_section() -> None:
     assert settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
 
 
+def test_health_config_defaults_are_conservative() -> None:
+    settings = Settings()
+
+    assert settings.health.startup_grace_sec == 180
+    assert settings.health.liveness.heartbeat_max_age_sec == 120
+    assert settings.health.restart_gate.enabled is True
+    assert settings.health.restart_gate.critical_components == (
+        "runtime",
+        "scheduler",
+        "sqlite",
+    )
+    assert settings.health.restart_gate.critical_down_sec == 300
+    assert settings.health.restart_gate.min_consecutive_failures == 5
+    assert (
+        settings.health.restart_gate.docker_healthcheck_fails_on_restart_recommended
+        is False
+    )
+
+
+def test_health_config_accepts_yaml_overrides(tmp_path) -> None:
+    path = tmp_path / "settings.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "health:",
+                "  startup_grace_sec: 240",
+                "  liveness:",
+                "    heartbeat_max_age_sec: 90",
+                "  restart_gate:",
+                "    enabled: true",
+                "    critical_components:",
+                "      - runtime",
+                "      - sqlite",
+                "    critical_down_sec: 600",
+                "    min_consecutive_failures: 7",
+                "    docker_healthcheck_fails_on_restart_recommended: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = Settings.from_yaml(path)
+
+    assert settings.health.startup_grace_sec == 240
+    assert settings.health.liveness.heartbeat_max_age_sec == 90
+    assert settings.health.restart_gate.critical_components == ("runtime", "sqlite")
+    assert settings.health.restart_gate.critical_down_sec == 600
+    assert settings.health.restart_gate.min_consecutive_failures == 7
+    assert settings.health.restart_gate.docker_healthcheck_fails_on_restart_recommended is True
+
 def test_nautilus_market_rotation_defaults_are_enabled() -> None:
     settings = Settings()
 

@@ -113,6 +113,19 @@ dashboard:
   port: 8080
   read_only: true
 
+health:
+  startup_grace_sec: 180
+  liveness:
+    heartbeat_max_age_sec: 120
+  restart_gate:
+    enabled: true
+    critical_components:
+      - runtime
+      - scheduler
+      - sqlite
+    critical_down_sec: 300
+    min_consecutive_failures: 5
+    docker_healthcheck_fails_on_restart_recommended: false
 strategies:
   vwap_momentum:
     enabled: true
