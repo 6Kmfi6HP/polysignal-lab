@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -196,6 +198,32 @@ def test_read_runtime_heartbeat_round_trips(tmp_path) -> None:
     assert read.updated_at == "2026-06-30T12:00:00+00:00"
     assert read.phase == "running"
     assert read.fatal is False
+
+def test_write_runtime_heartbeat_uses_independent_temp_files_for_concurrent_writes(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    original_write_text = Path.write_text
+    barrier = threading.Barrier(2)
+    path = tmp_path / "runtime_heartbeat.json"
+
+    def synchronized_tmp_write(self, *args, **kwargs):
+        result = original_write_text(self, *args, **kwargs)
+        if "runtime_heartbeat" in self.name and self.name.endswith(".tmp"):
+            barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(Path, "write_text", synchronized_tmp_write)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(write_runtime_heartbeat, path, phase=f"phase-{index}")
+            for index in range(2)
+        ]
+        for future in futures:
+            future.result()
+
+    assert read_runtime_heartbeat(path).phase in {"phase-0", "phase-1"}
 
 def _snapshot(*components: ComponentHealth) -> HealthSnapshot:
     status = "ok"

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+from uuid import uuid4
 
 from polysignal_lab.observability.health import HealthSnapshot
 
@@ -37,6 +39,17 @@ class RestartGateResult:
     down_duration_sec: int = 0
     consecutive_failures: int = 0
 
+def _write_json_atomically(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        tmp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        tmp.replace(path)
+    finally:
+        with suppress(FileNotFoundError):
+            tmp.unlink()
+
+
 
 def write_runtime_heartbeat(
     path: Path,
@@ -53,22 +66,13 @@ def write_runtime_heartbeat(
         fatal=bool(fatal),
         fatal_reason=fatal_reason,
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(asdict(heartbeat), sort_keys=True), encoding="utf-8")
-    tmp.replace(path)
+    _write_json_atomically(path, asdict(heartbeat))
     return heartbeat
 
 
 def write_runtime_startup_marker(path: Path, *, now: datetime | None = None) -> datetime:
     started_at = (now or _utc_now()).astimezone(UTC)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps({"started_at": started_at.isoformat()}, sort_keys=True),
-        encoding="utf-8",
-    )
-    tmp.replace(path)
+    _write_json_atomically(path, {"started_at": started_at.isoformat()})
     return started_at
 
 
