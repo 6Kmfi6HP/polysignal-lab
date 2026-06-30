@@ -224,6 +224,7 @@ runtime:
     execution_mode: paper_sandbox
     allow_live_polymarket_execution: false
     intercept_os_signals: false
+    matching_accuracy_mode: fast_l1
     polymarket_data:
       enabled: true
       ws_max_subscriptions_per_connection: 200

@@ -53,6 +53,7 @@ def test_production_yaml_declares_nautilus_runtime_section() -> None:
 
     assert settings.runtime.nautilus.trader_id == "PolySignal-Nautilus-001"
     assert settings.runtime.nautilus.python == "3.12"
+    assert settings.runtime.nautilus.matching_accuracy_mode == "fast_l1"
     assert settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
 
 
