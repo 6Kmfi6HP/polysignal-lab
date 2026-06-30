@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from types import SimpleNamespace, new_class
 from typing import Protocol, cast
@@ -42,6 +42,8 @@ from polysignal_lab.nautilus_runtime.native_order import (
 
 DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
 MISSING_PROJECTIONS_ERROR = "PolySignalNativeStrategy requires injected registry, sidecar, and assembler projections"
+EVALUATION_HEARTBEAT_TIMER_NAME = "polysignal_evaluation_heartbeat"
+EVALUATION_HEARTBEAT_INTERVAL = timedelta(seconds=10)
 
 
 @dataclass(slots=True)
@@ -53,6 +55,81 @@ class MarketSubscriptionState:
     pending_metadata_condition_ids: set[str] = field(default_factory=set)
     pending_subscribe_condition_ids: set[str] = field(default_factory=set)
     retained_wire_condition_ids: set[str] = field(default_factory=set)
+
+
+class _MarketDataSubscriptionGroup:
+    def __init__(self) -> None:
+        self._strategies: list[object] = []
+        self._instrument_owners: dict[str, list[object]] = {}
+        self._wire_owners: dict[str, object] = {}
+        self._requested_instruments: dict[str, datetime] = {}
+        self._confirmed_instruments: set[str] = set()
+
+    def register(self, strategy: object) -> None:
+        if strategy not in self._strategies:
+            self._strategies.append(strategy)
+
+    def acquire(self, instrument_id: str, strategy: object) -> bool:
+        owners = self._instrument_owners.setdefault(instrument_id, [])
+        wire_owner = self._wire_owners.get(instrument_id)
+        if strategy in owners:
+            return strategy is wire_owner
+        if wire_owner is None:
+            self._wire_owners[instrument_id] = strategy
+            owners.append(strategy)
+            return True
+        owners.append(strategy)
+        return False
+
+    def release(self, instrument_id: str, strategy: object) -> object | None:
+        owners = self._instrument_owners.get(instrument_id)
+        if not owners or strategy not in owners:
+            return None
+        owners.remove(strategy)
+        if owners:
+            return None
+        _ = self._instrument_owners.pop(instrument_id, None)
+        return self._wire_owners.pop(instrument_id, None)
+
+    def should_request(
+        self, instrument_id: str, *, retry_after: timedelta | None = None
+    ) -> bool:
+        if instrument_id in self._confirmed_instruments:
+            return False
+        now = datetime.now(UTC)
+        last = self._requested_instruments.get(instrument_id)
+        if last is not None:
+            if retry_after is None or now - last < retry_after:
+                return False
+        self._requested_instruments[instrument_id] = now
+        return True
+
+    def mark_confirmed(self, instrument_id: str) -> None:
+        self._confirmed_instruments.add(instrument_id)
+
+    def needs_retry_request(self, instrument_id: str, strategy: object) -> bool:
+        return (
+            instrument_id not in self._confirmed_instruments
+            and self._wire_owners.get(instrument_id) is strategy
+        )
+
+    def active_strategies(self, condition_id: str) -> tuple["PolySignalNativeStrategy", ...]:
+        return tuple(
+            cast("PolySignalNativeStrategy", strategy)
+            for strategy in self._strategies
+            if condition_id in getattr(strategy, "_active_condition_ids", ())
+        )
+
+
+def _market_data_subscription_group(
+    registry: PolymarketMarketRegistry,
+) -> _MarketDataSubscriptionGroup:
+    group = getattr(registry, "_polysignal_market_data_subscription_group", None)
+    if isinstance(group, _MarketDataSubscriptionGroup):
+        return group
+    group = _MarketDataSubscriptionGroup()
+    setattr(registry, "_polysignal_market_data_subscription_group", group)
+    return group
 
 
 class _Assembler(Protocol):
@@ -217,11 +294,15 @@ class PolySignalNativeStrategy:
         self._market_epoch: int | None = None
         self.unsubscribe_exited: bool = unsubscribe_exited
         self._subscription_state: MarketSubscriptionState = MarketSubscriptionState()
+        self._market_data_subscription_group: _MarketDataSubscriptionGroup = _market_data_subscription_group(registry)
+        self._market_data_subscription_group.register(self)
         self._asset_condition_ids: dict[str, tuple[str, ...]] = _asset_conditions(
             registry,
             self._startup_condition_ids,
         )
         self._approved_signal_metrics: dict[str, dict[str, object]] = {}
+        self._submitted_signal_keys: set[str] = set()
+        self._last_market_data_evaluation_at: dict[str, datetime] = {}
         self.rejected_decisions: list[RejectedDecision] = []
         self.submitted_orders: list[object] = []
         self.submitted_specs: list[object] = []
@@ -249,6 +330,34 @@ class PolySignalNativeStrategy:
         _subscribe_custom_data(self, PolySignalPriceToBeatData)
         _subscribe_custom_data(self, PolySignalMarketMetaData)
         _subscribe_custom_data(self, PolySignalMarketUniverseData)
+        self._start_evaluation_heartbeat()
+
+    def _start_evaluation_heartbeat(self) -> None:
+        clock = getattr(self, "clock", None)
+        set_timer = getattr(clock, "set_timer", None)
+        if callable(set_timer):
+            set_timer(
+                EVALUATION_HEARTBEAT_TIMER_NAME,
+                EVALUATION_HEARTBEAT_INTERVAL,
+                callback=self._on_evaluation_heartbeat,
+            )
+
+    def on_stop(self) -> None:
+        clock = getattr(self, "clock", None)
+        cancel_timer = getattr(clock, "cancel_timer", None)
+        if callable(cancel_timer):
+            cancel_timer(EVALUATION_HEARTBEAT_TIMER_NAME)
+
+    def _on_evaluation_heartbeat(self, _event: object) -> None:
+        now = datetime.now(UTC)
+        for condition_id in tuple(sorted(self._active_condition_ids)):
+            last_market_data_eval = self._last_market_data_evaluation_at.get(condition_id)
+            if (
+                last_market_data_eval is not None
+                and now - last_market_data_eval < EVALUATION_HEARTBEAT_INTERVAL
+            ):
+                continue
+            self.evaluate_condition(condition_id)
 
     def on_data(self, data: object) -> None:
         if isinstance(data, PolySignalSpotData):
@@ -275,6 +384,9 @@ class PolySignalNativeStrategy:
                 from_anchor_service=data.from_anchor_service,
                 anchor_source=data.anchor_source,
                 anchor_lag_ms=data.anchor_lag_ms,
+            )
+            self._retry_market_instrument_requests(
+                (data.condition_id,), retry_after=timedelta(seconds=10)
             )
             self.evaluate_condition(data.condition_id)
             return
@@ -322,36 +434,50 @@ class PolySignalNativeStrategy:
             self.evaluate_condition(candidate)
 
     def on_order_book_deltas(self, deltas: object) -> None:
-        if self.registry is None:
+        condition_id = self._update_book_from_deltas(deltas)
+        if condition_id is None:
             return
+        self._evaluate_market_data_condition(condition_id)
+
+    def _update_book_from_deltas(self, deltas: object) -> str | None:
+        if self.registry is None:
+            return None
         instrument_id_value = getattr(deltas, "instrument_id", None)
         instrument_id = _identifier_text(instrument_id_value)
         if instrument_id is None:
-            return
+            return None
         token_id = _token_id_for_instrument(self.registry, instrument_id)
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
         if token_id is None or condition_id is None:
-            return
+            return None
         cache = cast(object, getattr(self, "cache", None))
         order_book = _cache_order_book(cache, instrument_id_value)
         if order_book is None:
-            return
+            return None
+        self._market_data_subscription_group.mark_confirmed(instrument_id)
         books = getattr(self._require_assembler(), "books", None)
         updater = getattr(books, "update_book", None)
         if callable(updater):
             _ = updater(token_id, _domain_order_book(token_id, order_book))
-        self.evaluate_condition(condition_id)
+        return condition_id
 
     def on_trade_tick(self, tick: object) -> None:
-        if self.registry is None:
+        condition_id = self._update_trade_from_tick(tick)
+        if condition_id is None:
             return
+        self._evaluate_market_data_condition(condition_id)
+
+    def _update_trade_from_tick(self, tick: object) -> str | None:
+        if self.registry is None:
+            return None
         instrument_id = _identifier_text(getattr(tick, "instrument_id", None))
         if instrument_id is None:
-            return
+            return None
         token_id = _token_id_for_instrument(self.registry, instrument_id)
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
         if token_id is None or condition_id is None:
-            return
+            return None
+        self._market_data_subscription_group.mark_confirmed(instrument_id)
         books = getattr(self._require_assembler(), "books", None)
         updater = getattr(books, "update_trade", None)
         if callable(updater):
@@ -362,7 +488,12 @@ class PolySignalNativeStrategy:
                 side=_identifier_text(getattr(tick, "aggressor_side", None)),
                 ts=_maybe_datetime(getattr(tick, "ts_event", None)),
             )
-        self.evaluate_condition(condition_id)
+        return condition_id
+
+    def _evaluate_market_data_condition(self, condition_id: str) -> None:
+        for strategy in self._market_data_subscription_group.active_strategies(condition_id):
+            strategy._last_market_data_evaluation_at[condition_id] = datetime.now(UTC)
+            strategy.evaluate_condition(condition_id)
 
     def on_order_submitted(self, event: object) -> None:
         alpha_event = self._order_event(event)
@@ -373,6 +504,13 @@ class PolySignalNativeStrategy:
         alpha_event = self._order_event(event)
         self._record_nautilus_order(event, alpha_event.metrics)
         self._call_core("on_order_accepted", alpha_event)
+
+    def on_order_denied(self, event: object) -> None:
+        alpha_event = self._order_event(event)
+        self._record_nautilus_order(event, alpha_event.metrics)
+        self._call_core("on_order_denied", alpha_event)
+        self._forget_approved_metrics(event, alpha_event)
+
 
     def on_order_rejected(self, event: object) -> None:
         alpha_event = self._order_event(event)
@@ -404,6 +542,10 @@ class PolySignalNativeStrategy:
         self._mirror_nautilus_paper_fill(payload)
         if should_notify:
             self._notify_nautilus_paper_fill(payload)
+        self._forget_approved_metrics(
+            event,
+            cast(AlphaOrderEvent, cast(object, alpha_event)),
+        )
         handler = getattr(self.core, "on_order_filled", None)
         decisions = handler(alpha_event) if callable(handler) else ()
         if isinstance(decisions, Iterable) and not isinstance(decisions, (str, bytes)):
@@ -438,9 +580,22 @@ class PolySignalNativeStrategy:
             return
         policy_result = self.policy.evaluate(decision, view)
         if isinstance(policy_result, ApprovedDecision):
+            signal_key = policy_result.signal.dedupe_key
+            if signal_key in self._submitted_signal_keys:
+                rejected = RejectedDecision(
+                    reason_code="DUPLICATE_IN_FLIGHT_SIGNAL",
+                    detail={"dedupe_key": signal_key},
+                    candidate=policy_result.signal,
+                )
+                self.rejected_decisions.append(rejected)
+                self._record_decision(decision, accepted=False)
+                self._record_rejected(rejected)
+                return
+            self._submitted_signal_keys.add(signal_key)
             try:
                 order = self._submit_approved(policy_result, view=view)
             except ValueError as exc:
+                self._submitted_signal_keys.discard(signal_key)
                 rejected = RejectedDecision(
                     reason_code="ORDER_MAPPING_FAILED",
                     detail={"error": str(exc)},
@@ -496,6 +651,24 @@ class PolySignalNativeStrategy:
             if cached is not None:
                 return cached
         return resolved
+
+    def _instrument_is_cached(self, instrument_id: object) -> bool:
+        cache = getattr(self, "cache", None)
+        getter = getattr(cache, "instrument", None)
+        if not callable(getter):
+            return True
+        cache_lookup = cast(Callable[[object], object | None], getter)
+        try:
+            cached = cache_lookup(instrument_id)
+        except TypeError:
+            cached = None
+        if cached is None:
+            try:
+                cached = cache_lookup(_nautilus_instrument_id(str(instrument_id)))
+            except TypeError:
+                cached = None
+        return cached is not None
+
 
     def _call_core(self, method_name: str, event: AlphaOrderEvent) -> None:
         handler = getattr(self.core, method_name, None)
@@ -574,7 +747,7 @@ class PolySignalNativeStrategy:
             "fill_price": fill.fill_price,
             "shares": fill.shares,
             "stake_usdc": fill.fill_price * fill.shares,
-            "signal_id": tags.get("signal_id", ""),
+            "signal_id": tags.get("signal_id") or str(fill.metrics.get("signal_id") or ""),
             "order_id": fill.order_id,
             "client_order_id": fill.client_order_id or fill.order_id,
             "paper_fill_id": _lookup_id_text(
@@ -601,17 +774,19 @@ class PolySignalNativeStrategy:
 
     def _order_event(self, event: object) -> AlphaOrderEvent:
         tags = _tags(_value(event, "tags"))
+        metrics = self._approved_metrics_for_event(event)
         instrument_id = _identifier_text(_value(event, "instrument_id"))
-        condition_id = tags.get("condition_id")
+        condition_id = tags.get("condition_id") or _optional_str(
+            metrics.get("condition_id")
+        )
         if not condition_id and self.registry is not None and instrument_id is not None:
             condition_id = _condition_id_for_instrument(self.registry, instrument_id)
-        market_id = tags.get("market_id")
+        market_id = tags.get("market_id") or _optional_str(metrics.get("market_id"))
         if not market_id and self.registry is not None and condition_id is not None:
             market_id = _market_id_for_condition(self.registry, condition_id)
-        token_id = tags.get("token_id")
+        token_id = tags.get("token_id") or _optional_str(metrics.get("token_id"))
         if not token_id and self.registry is not None and instrument_id is not None:
             token_id = _token_id_for_instrument(self.registry, instrument_id)
-        metrics = self._approved_metrics_for_event(event)
         price = _maybe_float(_value(event, "price"))
         if "level_price" not in metrics and price is not None:
             metrics["level_price"] = price
@@ -620,7 +795,7 @@ class PolySignalNativeStrategy:
         if "hedge_leg" not in metrics and tags.get("hedge_leg"):
             metrics["hedge_leg"] = tags["hedge_leg"] == "true"
         return AlphaOrderEvent(
-            strategy=tags.get("strategy", self.strategy_name),
+            strategy=tags.get("strategy") or str(metrics.get("strategy") or self.strategy_name),
             market_id=market_id or str(_value(event, "market_id", "")),
             condition_id=condition_id or str(_value(event, "condition_id", "")),
             token_id=token_id or str(_value(event, "token_id", instrument_id or "")),
@@ -713,12 +888,28 @@ class PolySignalNativeStrategy:
     def _remember_approved_metrics(
         self, order: object, approved: ApprovedDecision
     ) -> None:
-        metrics = dict(getattr(approved.signal, "metrics", {}) or {})
+        signal = approved.signal
+        metrics = dict(getattr(signal, "metrics", {}) or {})
+        metrics.setdefault("dedupe_key", signal.dedupe_key)
+        signal_fields = {
+            "signal_id": getattr(signal, "signal_id", None),
+            "strategy": getattr(signal, "strategy", None),
+            "asset": getattr(signal, "asset", None),
+            "timeframe": getattr(signal, "timeframe", None),
+            "market_id": getattr(signal, "market_id", None),
+            "market_slug": getattr(signal, "market_slug", None),
+            "condition_id": getattr(signal, "condition_id", None),
+            "token_id": getattr(signal, "token_id", None),
+            "side": getattr(getattr(signal, "side", None), "value", getattr(signal, "side", None)),
+        }
+        for key, value in signal_fields.items():
+            if value not in (None, ""):
+                metrics.setdefault(key, value)
         tags = _tags(_value(order, "tags"))
         values = (
             _value(order, "id"),
             _value(order, "client_order_id"),
-            getattr(approved.signal, "signal_id", None),
+            getattr(signal, "signal_id", None),
             tags.get("signal_id"),
             tags.get("order_id"),
             tags.get("client_order_id"),
@@ -735,7 +926,11 @@ class PolySignalNativeStrategy:
         if order.client_order_id:
             keys.add(order.client_order_id)
         for key in keys:
-            self._approved_signal_metrics.pop(key, None)
+            metrics = self._approved_signal_metrics.pop(key, None)
+            if metrics is not None:
+                dedupe_key = metrics.get("dedupe_key")
+                if isinstance(dedupe_key, str):
+                    self._submitted_signal_keys.discard(dedupe_key)
 
     def _refresh_asset_conditions(self) -> None:
         tracked_condition_ids = tuple(
@@ -760,6 +955,9 @@ class PolySignalNativeStrategy:
                 )
                 self._subscription_state.retained_wire_condition_ids.discard(
                     condition_id
+                )
+                self._retry_market_instrument_requests(
+                    (condition_id,), retry_after=timedelta(0)
                 )
                 continue
             instrument_ids = _instrument_ids(self.registry, (condition_id,))
@@ -790,26 +988,56 @@ class PolySignalNativeStrategy:
             self._subscription_state.retained_wire_condition_ids.discard(condition_id)
             self._subscription_state.wire_condition_ids.add(condition_id)
 
+    def _retry_market_instrument_requests(
+        self,
+        condition_ids: Sequence[str],
+        *,
+        retry_after: timedelta | None = None,
+    ) -> None:
+        if self.registry is None:
+            return
+        request_instrument = getattr(self, "request_instrument", None)
+        if not callable(request_instrument):
+            return
+        for instrument_id in _instrument_ids(self.registry, condition_ids):
+            instrument_text = _identifier_text(instrument_id)
+            if instrument_text is None:
+                continue
+            if not self._market_data_subscription_group.needs_retry_request(
+                instrument_text, self
+            ):
+                continue
+            if not self._market_data_subscription_group.should_request(
+                instrument_text, retry_after=retry_after
+            ):
+                continue
+            _ = request_instrument(instrument_id)
+
     def _subscribe_market_instrument(self, instrument_id: object) -> bool:
         instrument_text = _identifier_text(instrument_id)
         if instrument_text is None:
             return False
         if instrument_text in self._subscription_state.wire_instrument_ids:
             return True
+        request_instrument = getattr(self, "request_instrument", None)
+        if callable(request_instrument) and self._market_data_subscription_group.should_request(
+            instrument_text
+        ):
+            _ = request_instrument(instrument_id)
+        if not self._instrument_is_cached(instrument_id):
+            return False
         subscribe_order_book_deltas = getattr(self, "subscribe_order_book_deltas", None)
         subscribe_trade_ticks = getattr(self, "subscribe_trade_ticks", None)
         if not callable(subscribe_order_book_deltas) or not callable(
             subscribe_trade_ticks
         ):
             return False
-        request_instrument = getattr(self, "request_instrument", None)
-        if callable(request_instrument):
-            _ = request_instrument(instrument_id)
-        _ = subscribe_order_book_deltas(
-            instrument_id=instrument_id,
-            book_type=_nautilus_book_type(self.book_type),
-        )
-        _ = subscribe_trade_ticks(instrument_id)
+        if self._market_data_subscription_group.acquire(instrument_text, self):
+            _ = subscribe_order_book_deltas(
+                instrument_id=instrument_id,
+                book_type=_nautilus_book_type(self.book_type),
+            )
+            _ = subscribe_trade_ticks(instrument_id)
         self._subscription_state.wire_instrument_ids.add(instrument_text)
         return True
 
@@ -849,6 +1077,16 @@ class PolySignalNativeStrategy:
             return False
         if instrument_text not in self._subscription_state.wire_instrument_ids:
             return True
+        wire_owner = self._market_data_subscription_group.release(instrument_text, self)
+        if wire_owner is not None:
+            sender = cast(PolySignalNativeStrategy, wire_owner)
+            if not sender._send_market_unsubscription(instrument_id):
+                return False
+            sender._subscription_state.wire_instrument_ids.discard(instrument_text)
+        self._subscription_state.wire_instrument_ids.discard(instrument_text)
+        return True
+
+    def _send_market_unsubscription(self, instrument_id: object) -> bool:
         unsubscribe_order_book_deltas = getattr(
             self, "unsubscribe_order_book_deltas", None
         )
@@ -859,7 +1097,6 @@ class PolySignalNativeStrategy:
             return False
         _ = unsubscribe_order_book_deltas(instrument_id)
         _ = unsubscribe_trade_ticks(instrument_id)
-        self._subscription_state.wire_instrument_ids.discard(instrument_text)
         return True
 
     def subscribe_data(self, data_type: object) -> None:
@@ -971,6 +1208,7 @@ def _projection_fill_event(
             event, "last_px", _value(event, "fill_price", _value(event, "price"))
         ),
         liquidity_side=_value(event, "liquidity_side"),
+        tags=_value(event, "tags", ()),
         metrics=dict(metrics),
         ts_event=_value(event, "ts_event", _value(event, "timestamp")),
     )
