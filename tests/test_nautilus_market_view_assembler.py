@@ -93,12 +93,19 @@ def test_assembler_returns_none_when_down_leg_missing() -> None:
     assert assembler.build(pair.condition_id) is None
 
 
-def test_assembler_returns_none_when_sidecar_data_missing() -> None:
+def test_assembler_builds_view_when_optional_sidecar_data_missing() -> None:
     assembler, pair, books, _sidecar = _components()
     books.books[pair.up.token_id] = SideBookView(pair.up.token_id, best_bid=0.81, best_ask=0.82, spread=0.01, freshness_ms=10)
     books.books[pair.down.token_id] = SideBookView(pair.down.token_id, best_bid=0.17, best_ask=0.18, spread=0.01, freshness_ms=20)
 
-    assert assembler.build(pair.condition_id) is None
+    view = assembler.build(pair.condition_id)
+
+    assert view is not None
+    assert view.spot is None
+    assert view.price_to_beat is None
+    assert view.freshness.spot_ms is None
+    assert "spot_source" not in view.metrics
+    assert "price_to_beat_source" not in view.metrics
 
 
 def test_assembler_metadata_ingestion_registers_pair_by_condition_and_token() -> None:

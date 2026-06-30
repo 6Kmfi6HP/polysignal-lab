@@ -9,6 +9,7 @@ from typing import SupportsFloat, cast
 def project_order_event(event: object) -> dict[str, object]:
     tags = _tags(getattr(event, "tags", None))
     metrics = _metrics(event)
+    signal_id = tags.get("signal_id", str(metrics.get("signal_id") or ""))
     order_intent = tags.get("order_intent", str(metrics.get("paper_order_intent") or ""))
     if order_intent and "paper_order_intent" not in metrics:
         metrics["paper_order_intent"] = order_intent
@@ -28,12 +29,16 @@ def project_order_event(event: object) -> dict[str, object]:
         "strategy": tags.get("strategy", ""),
         "condition_id": tags.get("condition_id", ""),
         "market_id": tags.get("market_id", ""),
+        "signal_id": signal_id,
         "metrics": metrics,
         "ts": _timestamp_text(event, "ts_event", "timestamp"),
     }
 
 
 def project_fill_event(event: object) -> dict[str, object]:
+    metrics = _metrics(event)
+    tags = _tags(getattr(event, "tags", None))
+    signal_id = tags.get("signal_id", str(metrics.get("signal_id") or ""))
     quantity = _float_attr(event, "last_qty")
     price = _float_attr(event, "last_px")
     trade_id = _text_attr(event, "trade_id") or _text_attr(event, "fill_id")
@@ -48,7 +53,8 @@ def project_fill_event(event: object) -> dict[str, object]:
         "price": price,
         "notional": quantity * price,
         "liquidity_side": _text_attr(event, "liquidity_side"),
-        "metrics": _metrics(event),
+        "signal_id": signal_id,
+        "metrics": metrics,
         "ts": _timestamp_text(event, "ts_event", "timestamp"),
     }
 

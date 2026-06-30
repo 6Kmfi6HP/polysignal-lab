@@ -41,7 +41,7 @@ def test_project_order_event_uses_nautilus_event_fields() -> None:
         time_in_force="IOC",
         quantity=20.0,
         price=0.50,
-        tags=["strategy=ptb_diff", "condition_id=condition-btc-5m"],
+        tags=["strategy=ptb_diff", "condition_id=condition-btc-5m", "signal_id=sig-001"],
     )
 
     row = project_order_event(event)
@@ -57,6 +57,7 @@ def test_project_order_event_uses_nautilus_event_fields() -> None:
     assert row["price"] == 0.50
     assert row["strategy"] == "ptb_diff"
     assert row["condition_id"] == "condition-btc-5m"
+    assert row["signal_id"] == "sig-001"
 
 
 def test_project_fill_event_uses_nautilus_fill_fields() -> None:
@@ -67,6 +68,7 @@ def test_project_fill_event_uses_nautilus_fill_fields() -> None:
         last_qty=12.5,
         last_px=0.50,
         liquidity_side="TAKER",
+        metrics={"signal_id": "sig-001"},
     )
 
     row = project_fill_event(event)
@@ -78,6 +80,7 @@ def test_project_fill_event_uses_nautilus_fill_fields() -> None:
     assert row["quantity"] == 12.5
     assert row["price"] == 0.50
     assert row["notional"] == 6.25
+    assert row["signal_id"] == "sig-001"
 
 
 def test_project_fill_event_accepts_nautilus_price_quantity_objects() -> None:
