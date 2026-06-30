@@ -62,15 +62,30 @@ def write_runtime_heartbeat(
 
 def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
     payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise TypeError("heartbeat payload must be a JSON object")
+
+    updated_at = payload["updated_at"]
+    if not isinstance(updated_at, str):
+        raise TypeError("heartbeat updated_at must be a string")
+
+    phase = payload["phase"]
+    if not isinstance(phase, str):
+        raise TypeError("heartbeat phase must be a string")
+
+    fatal = payload.get("fatal", False)
+    if not isinstance(fatal, bool):
+        raise TypeError("heartbeat fatal must be a bool")
+
+    fatal_reason = payload.get("fatal_reason")
+    if fatal_reason is not None and not isinstance(fatal_reason, str):
+        raise TypeError("heartbeat fatal_reason must be a string or null")
+
     return RuntimeHeartbeat(
-        updated_at=str(payload["updated_at"]),
-        phase=str(payload["phase"]),
-        fatal=bool(payload.get("fatal", False)),
-        fatal_reason=(
-            str(payload["fatal_reason"])
-            if payload.get("fatal_reason") is not None
-            else None
-        ),
+        updated_at=updated_at,
+        phase=phase,
+        fatal=fatal,
+        fatal_reason=fatal_reason,
     )
 
 
@@ -82,6 +97,7 @@ def evaluate_liveness(
 ) -> LivenessResult:
     try:
         heartbeat = read_runtime_heartbeat(path)
+        updated_at = datetime.fromisoformat(heartbeat.updated_at).astimezone(UTC)
     except FileNotFoundError:
         return LivenessResult(ok=False, reason="heartbeat_missing")
     except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
@@ -95,7 +111,6 @@ def evaluate_liveness(
         )
 
     observed_at = (now or _utc_now()).astimezone(UTC)
-    updated_at = datetime.fromisoformat(heartbeat.updated_at).astimezone(UTC)
     age = max(0, int((observed_at - updated_at).total_seconds()))
     if age > int(max_age_sec):
         return LivenessResult(

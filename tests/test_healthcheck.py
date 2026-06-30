@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from polysignal_lab.observability.health import ComponentHealth, HealthSnapshot
 from polysignal_lab.observability.runtime_health import (
@@ -69,6 +72,65 @@ def test_liveness_fails_for_missing_heartbeat(tmp_path) -> None:
 def test_liveness_fails_for_corrupt_heartbeat(tmp_path) -> None:
     path = tmp_path / "runtime_heartbeat.json"
     path.write_text("not-json", encoding="utf-8")
+
+    result = evaluate_liveness(path, max_age_sec=120, now=_dt(0))
+
+    assert result.ok is False
+    assert result.reason == "heartbeat_unreadable"
+
+
+def test_liveness_fails_for_malformed_heartbeat_timestamp(tmp_path) -> None:
+    path = tmp_path / "runtime_heartbeat.json"
+    path.write_text(
+        json.dumps(
+            {
+                "updated_at": "not-a-timestamp",
+                "phase": "running",
+                "fatal": False,
+                "fatal_reason": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = evaluate_liveness(path, max_age_sec=120, now=_dt(0))
+
+    assert result.ok is False
+    assert result.reason == "heartbeat_unreadable"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "updated_at": 0,
+            "phase": "running",
+            "fatal": False,
+            "fatal_reason": None,
+        },
+        {
+            "updated_at": "2026-06-30T12:00:00+00:00",
+            "phase": 0,
+            "fatal": False,
+            "fatal_reason": None,
+        },
+        {
+            "updated_at": "2026-06-30T12:00:00+00:00",
+            "phase": "running",
+            "fatal": "false",
+            "fatal_reason": None,
+        },
+        {
+            "updated_at": "2026-06-30T12:00:00+00:00",
+            "phase": "running",
+            "fatal": False,
+            "fatal_reason": 0,
+        },
+    ],
+)
+def test_liveness_fails_for_wrong_heartbeat_field_types(tmp_path, payload) -> None:
+    path = tmp_path / "runtime_heartbeat.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
     result = evaluate_liveness(path, max_age_sec=120, now=_dt(0))
 
