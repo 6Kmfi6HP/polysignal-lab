@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -293,3 +294,12 @@ def test_healthcheck_cli_liveness_returns_one_for_missing_heartbeat(tmp_path) ->
     )
 
     assert main(["liveness", "--config", str(config)]) == 1
+
+
+def test_docker_compose_main_healthcheck_uses_liveness_cli() -> None:
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "polysignal_lab.healthcheck" in compose
+    assert "liveness" in compose
+    assert "sqlite3.connect" not in compose
+    assert "start_period: 180s" in compose
