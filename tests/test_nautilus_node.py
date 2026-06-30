@@ -941,6 +941,60 @@ async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
     stop_event.set()
     await run_nautilus_cli_async(stop_event=stop_event)
 
+async def test_run_nautilus_cli_async_refreshes_startup_marker_before_runtime_build(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import json
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    settings = Settings()
+    settings.storage.state_dir = str(tmp_path / "state")
+    old_started_at = "2026-06-30T11:00:00+00:00"
+    marker = tmp_path / "state" / "runtime_startup.json"
+    marker.parent.mkdir()
+    marker.write_text(json.dumps({"started_at": old_started_at}), encoding="utf-8")
+    observed: dict[str, object] = {}
+
+    class FakeTradingNode:
+        def run(self):
+            return None
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    async def fake_build(received_settings=None):
+        observed["settings"] = received_settings
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        assert isinstance(payload["started_at"], str)
+        assert payload["started_at"] != old_started_at
+        return SimpleNamespace(
+            node=FakeTradingNode(),
+            websocket_tasks=[],
+            scheduler=SimpleNamespace(
+                stop=_noop,
+                settings=_runtime_settings_stub(
+                    runtime=SimpleNamespace(
+                        nautilus=SimpleNamespace(
+                            paper_engine="nautilus_matching",
+                            matching_accuracy_mode="depth_l2",
+                        )
+                    )
+                ),
+            ),
+            observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+            components={"strategies": []},
+        )
+
+    monkeypatch.setattr(node_mod, "load_settings", lambda: settings)
+    monkeypatch.setattr(node_mod, "build_nautilus_runtime", fake_build)
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+    await run_nautilus_cli_async(stop_event=stop_event)
+
+    assert observed["settings"] is settings
+
 
 async def test_run_nautilus_cli_async_does_not_install_signal_handlers_by_default(
     monkeypatch: pytest.MonkeyPatch,
@@ -1575,7 +1629,10 @@ def test_run_nautilus_cli_raises_when_live_node_returns(
 
 
 def test_run_nautilus_cli_writes_fatal_heartbeat_on_unexpected_return(monkeypatch, tmp_path) -> None:
-    from polysignal_lab.observability.runtime_health import read_runtime_heartbeat
+    from polysignal_lab.observability.runtime_health import (
+        read_runtime_heartbeat,
+        read_runtime_startup_started_at,
+    )
 
     class FakeNode:
         def run(self, raise_exception=False):
@@ -1586,6 +1643,9 @@ def test_run_nautilus_cli_writes_fatal_heartbeat_on_unexpected_return(monkeypatc
 
     settings = Settings()
     settings.storage.state_dir = str(tmp_path / "state")
+    startup_marker = tmp_path / "state" / "runtime_startup.json"
+    startup_marker.parent.mkdir()
+    startup_marker.write_text('{"started_at": "2026-06-30T11:00:00+00:00"}', encoding="utf-8")
     scheduler = SimpleNamespace(settings=settings, logger=SimpleNamespace(error=lambda *a, **k: None))
     observability = SimpleNamespace(
         notify_startup=AsyncMock(return_value=None),
@@ -1610,6 +1670,8 @@ def test_run_nautilus_cli_writes_fatal_heartbeat_on_unexpected_return(monkeypatc
     assert heartbeat.fatal is True
     assert heartbeat.phase == "fatal"
     assert heartbeat.fatal_reason == "TradingNode.run returned unexpectedly"
+    startup_started_at = read_runtime_startup_started_at(startup_marker)
+    assert startup_started_at.isoformat() != "2026-06-30T11:00:00+00:00"
 
 
 def test_run_nautilus_cli_does_not_install_signal_handlers_by_default(

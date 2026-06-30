@@ -60,6 +60,28 @@ def write_runtime_heartbeat(
     return heartbeat
 
 
+def write_runtime_startup_marker(path: Path, *, now: datetime | None = None) -> datetime:
+    started_at = (now or _utc_now()).astimezone(UTC)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps({"started_at": started_at.isoformat()}, sort_keys=True),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+    return started_at
+
+
+def read_runtime_startup_started_at(path: Path) -> datetime:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise TypeError("startup marker payload must be a JSON object")
+    started_at = payload["started_at"]
+    if not isinstance(started_at, str):
+        raise TypeError("startup marker started_at must be a string")
+    return datetime.fromisoformat(started_at).astimezone(UTC)
+
+
 def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):

@@ -51,7 +51,10 @@ from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
 from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
-from polysignal_lab.observability.runtime_health import write_runtime_heartbeat
+from polysignal_lab.observability.runtime_health import (
+    write_runtime_heartbeat,
+    write_runtime_startup_marker,
+)
 from polysignal_lab.strategies.execution import build_strategy_schedule
 
 class _FactoryNode(Protocol):
@@ -160,6 +163,10 @@ logger = logging.getLogger(__name__)
 
 def _runtime_heartbeat_path(settings: Settings) -> Path:
     return Path(settings.storage.state_dir) / "runtime_heartbeat.json"
+
+
+def _runtime_startup_marker_path(settings: Settings) -> Path:
+    return Path(settings.storage.state_dir) / "runtime_startup.json"
 
 
 def _runtime_progress_callback(settings: Settings) -> Callable[[str], None]:
@@ -865,6 +872,9 @@ async def run_nautilus_cli_async(
 ) -> _TradingNodeLike:
     """Run the Nautilus CLI with async orchestration and signal handling."""
     event = stop_event or asyncio.Event()
+    if settings is None:
+        settings = load_settings()
+    write_runtime_startup_marker(_runtime_startup_marker_path(settings))
     bundle = await build_nautilus_runtime(settings)
     write_runtime_heartbeat(
         _runtime_heartbeat_path(bundle.scheduler.settings),
@@ -946,6 +956,7 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
     """Entry point for the ``nautilus`` CLI mode — sync wrapper."""
     if settings is None:
         settings = load_settings()
+    write_runtime_startup_marker(_runtime_startup_marker_path(settings))
     scheduler, discovered_markets, observability = asyncio.run(
         _prepare_nautilus_runtime_context(settings)
     )

@@ -322,7 +322,10 @@ def test_healthcheck_cli_liveness_returns_zero_for_fresh_heartbeat(tmp_path) -> 
     assert main(["liveness", "--config", str(config)]) == 0
 
 
-def test_healthcheck_cli_liveness_creates_startup_marker_for_first_missing_heartbeat(tmp_path) -> None:
+def test_healthcheck_cli_liveness_returns_one_for_missing_heartbeat_without_startup_marker(
+    tmp_path,
+    capsys,
+) -> None:
     from polysignal_lab.healthcheck import main
 
     state_dir = tmp_path / "state"
@@ -341,10 +344,9 @@ def test_healthcheck_cli_liveness_creates_startup_marker_for_first_missing_heart
         encoding="utf-8",
     )
 
-    assert main(["liveness", "--config", str(config)]) == 0
-    marker = state_dir / "runtime_startup.json"
-    assert marker.exists()
-    assert isinstance(json.loads(marker.read_text(encoding="utf-8"))["started_at"], str)
+    assert main(["liveness", "--config", str(config)]) == 1
+    assert "liveness failed:" in capsys.readouterr().out
+    assert not (state_dir / "runtime_startup.json").exists()
 
 
 def test_healthcheck_cli_liveness_returns_zero_for_missing_heartbeat_with_fresh_startup_marker(tmp_path) -> None:
