@@ -89,16 +89,42 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
     )
 
 
+def _inside_startup_grace(
+    observed_at: datetime,
+    *,
+    startup_started_at: datetime | None,
+    startup_grace_sec: int,
+) -> bool:
+    if startup_started_at is None or int(startup_grace_sec) <= 0:
+        return False
+    elapsed = max(
+        0,
+        int((observed_at - startup_started_at.astimezone(UTC)).total_seconds()),
+    )
+    return elapsed <= int(startup_grace_sec)
+
+
+
 def evaluate_liveness(
     path: Path,
     *,
     max_age_sec: int,
+    startup_started_at: datetime | None = None,
+    startup_grace_sec: int = 0,
     now: datetime | None = None,
 ) -> LivenessResult:
+    observed_at = (now or _utc_now()).astimezone(UTC)
+    inside_startup_grace = _inside_startup_grace(
+        observed_at,
+        startup_started_at=startup_started_at,
+        startup_grace_sec=startup_grace_sec,
+    )
     try:
         heartbeat = read_runtime_heartbeat(path)
         updated_at = datetime.fromisoformat(heartbeat.updated_at).astimezone(UTC)
     except FileNotFoundError:
+        if inside_startup_grace:
+            return LivenessResult(ok=True)
         return LivenessResult(ok=False, reason="heartbeat_missing")
     except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
         return LivenessResult(ok=False, reason="heartbeat_unreadable")
@@ -110,9 +136,10 @@ def evaluate_liveness(
             fatal_reason=heartbeat.fatal_reason,
         )
 
-    observed_at = (now or _utc_now()).astimezone(UTC)
     age = max(0, int((observed_at - updated_at).total_seconds()))
     if age > int(max_age_sec):
+        if inside_startup_grace:
+            return LivenessResult(ok=True, heartbeat_age_sec=age)
         return LivenessResult(
             ok=False,
             reason="heartbeat_stale",

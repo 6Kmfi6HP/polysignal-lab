@@ -69,12 +69,59 @@ def test_liveness_fails_for_missing_heartbeat(tmp_path) -> None:
     assert result.ok is False
     assert result.reason == "heartbeat_missing"
 
+def test_liveness_allows_missing_heartbeat_during_startup_grace(tmp_path) -> None:
+    result = evaluate_liveness(
+        tmp_path / "runtime_heartbeat.json",
+        max_age_sec=120,
+        startup_started_at=_dt(0),
+        startup_grace_sec=60,
+        now=_dt(59),
+    )
+
+    assert result.ok is True
+    assert result.reason is None
+
+
+def test_liveness_fails_for_missing_heartbeat_after_startup_grace(tmp_path) -> None:
+    result = evaluate_liveness(
+        tmp_path / "runtime_heartbeat.json",
+        max_age_sec=120,
+        startup_started_at=_dt(0),
+        startup_grace_sec=60,
+        now=_dt(61),
+    )
+
+    assert result.ok is False
+    assert result.reason == "heartbeat_missing"
+
+
+def test_liveness_allows_stale_heartbeat_during_startup_grace(tmp_path) -> None:
+    path = tmp_path / "runtime_heartbeat.json"
+    write_runtime_heartbeat(path, phase="starting", now=_dt(0))
+
+    result = evaluate_liveness(
+        path,
+        max_age_sec=10,
+        startup_started_at=_dt(0),
+        startup_grace_sec=60,
+        now=_dt(30),
+    )
+
+    assert result.ok is True
+    assert result.heartbeat_age_sec == 30
+
 
 def test_liveness_fails_for_corrupt_heartbeat(tmp_path) -> None:
     path = tmp_path / "runtime_heartbeat.json"
     path.write_text("not-json", encoding="utf-8")
 
-    result = evaluate_liveness(path, max_age_sec=120, now=_dt(0))
+    result = evaluate_liveness(
+        path,
+        max_age_sec=120,
+        startup_started_at=_dt(0),
+        startup_grace_sec=60,
+        now=_dt(30),
+    )
 
     assert result.ok is False
     assert result.reason == "heartbeat_unreadable"
@@ -275,7 +322,7 @@ def test_healthcheck_cli_liveness_returns_zero_for_fresh_heartbeat(tmp_path) -> 
     assert main(["liveness", "--config", str(config)]) == 0
 
 
-def test_healthcheck_cli_liveness_returns_one_for_missing_heartbeat(tmp_path) -> None:
+def test_healthcheck_cli_liveness_creates_startup_marker_for_first_missing_heartbeat(tmp_path) -> None:
     from polysignal_lab.healthcheck import main
 
     state_dir = tmp_path / "state"
@@ -286,6 +333,7 @@ def test_healthcheck_cli_liveness_returns_one_for_missing_heartbeat(tmp_path) ->
                 "storage:",
                 f"  state_dir: {state_dir.as_posix()}",
                 "health:",
+                "  startup_grace_sec: 60",
                 "  liveness:",
                 "    heartbeat_max_age_sec: 120",
             ]
@@ -293,7 +341,74 @@ def test_healthcheck_cli_liveness_returns_one_for_missing_heartbeat(tmp_path) ->
         encoding="utf-8",
     )
 
+    assert main(["liveness", "--config", str(config)]) == 0
+    marker = state_dir / "runtime_startup.json"
+    assert marker.exists()
+    assert isinstance(json.loads(marker.read_text(encoding="utf-8"))["started_at"], str)
+
+
+def test_healthcheck_cli_liveness_returns_zero_for_missing_heartbeat_with_fresh_startup_marker(tmp_path) -> None:
+    from polysignal_lab.healthcheck import main
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    config = tmp_path / "settings.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "storage:",
+                f"  state_dir: {state_dir.as_posix()}",
+                "health:",
+                "  startup_grace_sec: 60",
+                "  liveness:",
+                "    heartbeat_max_age_sec: 120",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "runtime_startup.json").write_text(
+        json.dumps({"started_at": datetime.now(UTC).isoformat()}),
+        encoding="utf-8",
+    )
+
+    assert main(["liveness", "--config", str(config)]) == 0
+
+
+def test_healthcheck_cli_liveness_returns_one_for_missing_heartbeat_with_expired_startup_marker(
+    tmp_path,
+    capsys,
+) -> None:
+    from polysignal_lab.healthcheck import main
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    config = tmp_path / "settings.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "storage:",
+                f"  state_dir: {state_dir.as_posix()}",
+                "health:",
+                "  startup_grace_sec: 60",
+                "  liveness:",
+                "    heartbeat_max_age_sec: 120",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "runtime_startup.json").write_text(
+        json.dumps(
+            {
+                "started_at": (
+                    datetime.now(UTC) - timedelta(seconds=61)
+                ).isoformat()
+            }
+        ),
+        encoding="utf-8",
+    )
+
     assert main(["liveness", "--config", str(config)]) == 1
+    assert "liveness failed:" in capsys.readouterr().out
 
 
 def test_docker_compose_main_healthcheck_uses_liveness_cli() -> None:
