@@ -380,6 +380,19 @@ def test_build_trading_node_injects_runtime_progress_callback(monkeypatch, tmp_p
     assert heartbeat.phase == "evaluation_heartbeat"
     assert runtime["strategies"][0].strategy_name == "vwap_momentum"
 
+def test_runtime_progress_callback_suppresses_heartbeat_write_failures(monkeypatch, tmp_path) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    settings = Settings()
+    settings.storage.state_dir = str(tmp_path / "state")
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("state directory unavailable")
+
+    monkeypatch.setattr(node_mod, "write_runtime_heartbeat", fail_write)
+
+    node_mod._runtime_progress_callback(settings)("evaluation_heartbeat")
+
 def test_build_control_adapts_policy() -> None:
     from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 

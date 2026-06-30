@@ -173,7 +173,10 @@ def _runtime_progress_callback(settings: Settings) -> Callable[[str], None]:
     path = _runtime_heartbeat_path(settings)
 
     def note_progress(phase: str) -> None:
-        write_runtime_heartbeat(path, phase=phase)
+        try:
+            write_runtime_heartbeat(path, phase=phase)
+        except OSError:
+            logger.warning("Failed to write runtime heartbeat", exc_info=True)
 
     return note_progress
 
