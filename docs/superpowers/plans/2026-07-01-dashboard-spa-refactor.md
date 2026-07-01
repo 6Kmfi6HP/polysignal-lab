@@ -1383,7 +1383,7 @@ git commit -m "feat(dashboard): replace demo nav/pages with the 6 real dashboard
 - Consumes: `useOverviewQuery`, `useHealthQuery` from Task 3; `makeOverviewResponse`, `makeHealthResponse` fixtures from Task 3; `renderWithQueryClient` from Task 3.
 - Produces: the real `OverviewPage` (same export name/path as the Task 4 placeholder).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `frontend/src/features/overview/index.test.tsx`:
 
@@ -1414,7 +1414,7 @@ describe('OverviewPage', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd frontend
@@ -1423,7 +1423,7 @@ npm test -- src/features/overview/index.test.tsx
 
 Expected: FAIL — the placeholder page only renders the heading "Overview", not row counts or report data.
 
-- [ ] **Step 3: Replace `frontend/src/features/overview/index.tsx`**
+- [x] **Step 3: Replace `frontend/src/features/overview/index.tsx`**
 
 ```tsx
 import { Header } from '@/components/layout/header'
@@ -1534,7 +1534,7 @@ export function OverviewPage() {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd frontend
@@ -1543,7 +1543,7 @@ npm test -- src/features/overview/index.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/features/overview
