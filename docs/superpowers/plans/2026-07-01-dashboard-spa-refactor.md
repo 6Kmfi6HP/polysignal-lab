@@ -1031,7 +1031,7 @@ git commit -m "feat(dashboard): add typed API client, TanStack Query hooks, and 
 - Consumes: nothing from Task 3 yet (pages are placeholders).
 - Produces: exported components `OverviewPage`, `SignalsPage`, `PaperTradingPage`, `LeaderboardPage`, `StrategyStatusPage`, `SystemHealthPage` from their respective `@/features/<name>` modules — Tasks 5–10 replace each placeholder body in place, keeping the same export name and file path.
 
-- [ ] **Step 1: Write the failing test for the new sidebar structure**
+- [x] **Step 1: Write the failing test for the new sidebar structure**
 
 Create `frontend/src/components/layout/data/sidebar-data.test.ts`:
 
@@ -1057,7 +1057,7 @@ describe('sidebarData', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd frontend
@@ -1066,7 +1066,7 @@ npm test -- src/components/layout/data/sidebar-data.test.ts
 
 Expected: FAIL — the assertion does not match the template's original demo nav items.
 
-- [ ] **Step 3: Replace `frontend/src/components/layout/data/sidebar-data.ts`**
+- [x] **Step 3: Replace `frontend/src/components/layout/data/sidebar-data.ts`**
 
 ```ts
 import {
@@ -1108,7 +1108,7 @@ export const sidebarData: SidebarData = {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd frontend
@@ -1117,13 +1117,13 @@ npm test -- src/components/layout/data/sidebar-data.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Delete the old demo dashboard feature**
+- [x] **Step 5: Delete the old demo dashboard feature**
 
 ```bash
 rm -rf frontend/src/features/dashboard
 ```
 
-- [ ] **Step 6: Create the 6 placeholder feature pages**
+- [x] **Step 6: Create the 6 placeholder feature pages**
 
 Create `frontend/src/features/overview/index.tsx`:
 
@@ -1275,7 +1275,7 @@ export function SystemHealthPage() {
 }
 ```
 
-- [ ] **Step 7: Point the index route at `OverviewPage`**
+- [x] **Step 7: Point the index route at `OverviewPage`**
 
 Replace the contents of `frontend/src/routes/_authenticated/index.tsx`:
 
@@ -1288,7 +1288,7 @@ export const Route = createFileRoute('/_authenticated/')({
 })
 ```
 
-- [ ] **Step 8: Create the 5 new route files**
+- [x] **Step 8: Create the 5 new route files**
 
 Create `frontend/src/routes/_authenticated/signals.tsx`:
 
@@ -1345,7 +1345,7 @@ export const Route = createFileRoute('/_authenticated/system-health')({
 })
 ```
 
-- [ ] **Step 9: Regenerate the route tree and verify the build**
+- [x] **Step 9: Regenerate the route tree and verify the build**
 
 ```bash
 cd frontend
@@ -1354,7 +1354,7 @@ npm run build
 
 Expected: PASS, and `src/routeTree.gen.ts` is regenerated to include the 5 new routes (the `tanstackRouter` Vite plugin does this automatically during `build`/`dev`). If the build reports an error in `src/components/command-menu.tsx` referencing the old `sidebarData` shape or deleted routes, open that file and follow the TypeScript error to fix the reference — the command palette is expected to read `sidebarData` generically and needs no route-specific changes beyond what Step 3 already provided.
 
-- [ ] **Step 10: Manually verify navigation**
+- [x] **Step 10: Manually verify navigation**
 
 ```bash
 npm run dev
@@ -1362,7 +1362,9 @@ npm run dev
 
 Open the printed local URL, confirm the sidebar shows exactly: Overview, Signals, Paper Trading, Leaderboard, Strategy Status, System Health, and that clicking each one navigates to a page showing the matching heading. Stop the dev server (Ctrl-C).
 
-- [ ] **Step 11: Commit**
+Completion note: Manual browser navigation was skipped per user instruction prohibiting browser installation/testing on this device. Automated replacement evidence: focused sidebar test passed, `npm run build` regenerated the route tree with all five new routes, and the full jsdom frontend test suite passed.
+
+- [x] **Step 11: Commit**
 
 ```bash
 git add frontend/src
