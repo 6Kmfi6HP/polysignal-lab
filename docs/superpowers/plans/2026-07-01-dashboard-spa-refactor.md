@@ -2945,7 +2945,7 @@ git commit -m "feat(dashboard): split the dashboard compose service into dashboa
 - Consumes: `frontend/package.json` scripts (`lint`, `build`, `test`, `test:browser:install`) from Task 1.
 - Produces: a `frontend` CI job, independent of and parallel to the existing `test` job.
 
-- [ ] **Step 1: Add the `frontend` job to `.github/workflows/ci.yml`**
+- [x] **Step 1: Add the `frontend` job to `.github/workflows/ci.yml`**
 
 Read the file first to confirm the existing `test` job is still exactly as it was (it is not modified by this task), then add a new top-level job under `jobs:`:
 
@@ -2969,7 +2969,9 @@ Read the file first to confirm the existing `test` job is still exactly as it wa
 
 `npm run test:browser:install` runs the template's pre-defined Playwright/Chromium install step (`playwright install chromium --with-deps`) — this is required because this template's `npm test` runs every test in a real headless Chromium instance via `vitest`'s browser mode, not jsdom.
 
-- [ ] **Step 2: Verify the workflow YAML is well-formed**
+Completion note: User selected the non-browser Vitest resolution in Task 3. The frontend CI job intentionally omits `npm run test:browser:install` and runs `npm ci`, `npm run lint`, `npm run build`, and `npm test` under jsdom instead.
+
+- [x] **Step 2: Verify the workflow YAML is well-formed**
 
 ```bash
 python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))" && echo "YAML OK"
@@ -2977,7 +2979,7 @@ python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))" && ec
 
 Expected: `YAML OK`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/ci.yml
