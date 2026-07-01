@@ -59,9 +59,9 @@ async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapsho
     rejected = client.get("/api/rejected-signals")
     positions = client.get("/api/positions")
     trades = client.get("/api/trades")
-    html = client.get("/")
+    root = client.get("/")
 
-    # Then: payloads contain the persisted rows and the HTML has no write controls.
+    # Then: payloads contain the persisted rows; the API no longer serves any HTML.
     assert health.status_code == 200
     assert health.json()["counts"]["signals"] == 1
     assert health.json()["status"] in {"ok", "degraded", "down"}
@@ -78,18 +78,7 @@ async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapsho
     assert rejected.json()[0]["details"]["policy_source"] == "strategy_and_global"
     assert positions.json()[0]["paper_position_id"] == "pp-1"
     assert trades.json()[0]["paper_trade_id"] == "pt-1"
-    assert html.status_code == 200
-    assert "<header" in html.text
-    assert "<nav" in html.text
-    assert "<main" in html.text
-    assert "ptb_diff" in html.text
-    assert signal["signal_id"] in html.text
-    assert "Paper-only read model" in html.text
-    assert "<form" not in html.text
-    assert "<button" not in html.text
-    assert "lorem" not in html.text.lower()
-    assert "place order" not in html.text.lower()
-    assert "create_" + "order" not in html.text
+    assert root.status_code == 404
 
 
 
@@ -225,19 +214,16 @@ async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
     store.insert_daily_report(report)
     client = TestClient(create_dashboard_app(store))
 
-    # When: paper execution quality surfaces are read from the dashboard.
+    # When: paper execution quality surfaces are read from the dashboard API.
     orders = client.get("/api/paper-orders", params={"status": "rejected"})
     overview = client.get("/api/overview")
-    html = client.get("/")
 
-    # Then: paper order rows, latest report aggregates, and HTML summary expose them.
+    # Then: paper order rows and latest report aggregates expose them.
     assert orders.status_code == 200
     assert orders.json()[0]["reject_reason"] == "PAPER_ENTRY_PRICE_MOVED"
     assert overview.json()["latest_report"]["paper_rejects_by_reason"] == {
         "PAPER_ENTRY_PRICE_MOVED": 1
     }
-    assert "Paper rejects" in html.text
-    assert "PAPER_ENTRY_PRICE_MOVED" in html.text
 
 async def test_leaderboard_uses_sqlite_report_data(tmp_path, snapshot, settings) -> None:
     # Given: stored report rows where voids must remain in the closed-position denominator.
@@ -458,7 +444,6 @@ async def test_dashboard_rejects_write_methods(tmp_path, snapshot, settings) -> 
     # Given: the dashboard app exposes only read routes.
     client, _store = _client_with_store(tmp_path, snapshot, settings)
     read_paths = (
-        "/",
         "/health",
         "/api/overview",
         "/api/signals",

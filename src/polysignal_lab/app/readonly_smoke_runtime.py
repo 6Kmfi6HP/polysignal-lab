@@ -103,7 +103,7 @@ async def check_dashboard_reads(request: ReadonlySmokeRequest) -> DashboardEvide
     try:
         dashboard = create_dashboard_app(scheduler.sqlite)
         transport = httpx.ASGITransport(app=dashboard)
-        endpoints = ("/health", "/api/overview", "/api/leaderboard", "/")
+        endpoints = ("/health", "/api/overview", "/api/leaderboard")
         async with httpx.AsyncClient(transport=transport, base_url="http://dashboard.local") as client:
             responses = [await client.get(endpoint) for endpoint in endpoints]
         ok = all(response.status_code == 200 for response in responses)
