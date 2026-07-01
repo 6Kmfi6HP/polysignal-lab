@@ -2370,7 +2370,7 @@ git commit -m "feat(dashboard): implement the Strategy Status page"
 - Consumes: `useHealthQuery` from Task 3; `makeHealthResponse` fixture.
 - Produces: the real `SystemHealthPage`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `frontend/src/features/system-health/index.test.tsx`:
 
@@ -2407,7 +2407,7 @@ describe('SystemHealthPage', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd frontend
@@ -2416,7 +2416,7 @@ npm test -- src/features/system-health/index.test.tsx
 
 Expected: FAIL — the placeholder page renders no health data.
 
-- [ ] **Step 3: Replace `frontend/src/features/system-health/index.tsx`**
+- [x] **Step 3: Replace `frontend/src/features/system-health/index.tsx`**
 
 ```tsx
 import { Header } from '@/components/layout/header'
@@ -2498,7 +2498,7 @@ export function SystemHealthPage() {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd frontend
@@ -2507,7 +2507,7 @@ npm test -- src/features/system-health/index.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 5: Run the full frontend test suite, lint, and build**
+- [x] **Step 5: Run the full frontend test suite, lint, and build**
 
 ```bash
 cd frontend
@@ -2518,7 +2518,7 @@ npm test
 
 Expected: all pass. This is the last frontend-only task, so it's worth confirming the whole `frontend/` tree is clean before moving to backend/infra tasks.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/features/system-health
