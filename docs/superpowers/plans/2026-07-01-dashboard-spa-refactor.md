@@ -2996,14 +2996,14 @@ git commit -m "ci: add a frontend job for lint, build, and browser tests"
 - Consumes: everything from Tasks 1–13.
 - Produces: a verified, working three-container deployment.
 
-- [ ] **Step 1: Build and start all three services**
+- [x] **Step 1: Build and start all three services**
 
 ```bash
 docker compose build polysignal-lab dashboard-api dashboard-web
 docker compose up -d polysignal-lab dashboard-api dashboard-web
 ```
 
-- [ ] **Step 2: Wait for `dashboard-api` to report healthy**
+- [x] **Step 2: Wait for `dashboard-api` to report healthy**
 
 ```bash
 timeout 60 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" polysignal-lab-dashboard-api)" = "healthy" ]; do sleep 2; done'
@@ -3012,7 +3012,7 @@ echo "dashboard-api healthy"
 
 Expected: `dashboard-api healthy` printed within 60 seconds.
 
-- [ ] **Step 3: Curl the public entrypoint (`dashboard-web`) and verify the SPA shell, the API proxy, and the health proxy**
+- [x] **Step 3: Curl the public entrypoint (`dashboard-web`) and verify the SPA shell, the API proxy, and the health proxy**
 
 ```bash
 curl -sf http://localhost:8081/ | grep -q '<div id="root">' && echo "SPA shell OK"
@@ -3022,7 +3022,7 @@ curl -sf http://localhost:8081/health | python3 -m json.tool | head -5
 
 Expected: `SPA shell OK`, followed by valid JSON output (with `counts`, `latest_report`, etc. keys) for both `/api/overview` and `/health` — proving nginx is correctly proxying to `dashboard-api` over the compose network.
 
-- [ ] **Step 4: Confirm `dashboard-api` itself is not publicly reachable on the host**
+- [x] **Step 4: Confirm `dashboard-api` itself is not publicly reachable on the host**
 
 ```bash
 curl -sf http://localhost:8080/health 2>&1 | grep -qi "couldn't connect\|connection refused" && echo "dashboard-api correctly not published"
@@ -3030,7 +3030,9 @@ curl -sf http://localhost:8080/health 2>&1 | grep -qi "couldn't connect\|connect
 
 Expected: `dashboard-api correctly not published` (no port mapping was added for `dashboard-api` in Task 12, so port 8080 is not reachable from the host at all).
 
-- [ ] **Step 5: Manual browser QA checklist**
+Completion note: This workstation has an unrelated `searxng` container publishing host port 8080, so the exact localhost:8080 curl check returned that service's 404 instead of connection refused. `docker inspect` returned `{}` for `polysignal-lab-dashboard-api` ports and `docker compose port dashboard-api 8080` reported no mapping, confirming `dashboard-api` itself is not published.
+
+- [x] **Step 5: Manual browser QA checklist**
 
 Open `http://localhost:8081/` in a browser and confirm:
 - The sidebar shows all 6 pages and each one loads without a console error.
@@ -3038,12 +3040,14 @@ Open `http://localhost:8081/` in a browser and confirm:
 - The Paper Trading and Leaderboard pages render their charts without errors (an empty chart with "No ... yet." text is expected if there's no data in the mounted volume).
 - Data on at least one page changes within ~15–30 seconds without a manual page reload (confirms the `refetchInterval` polling is working).
 
-- [ ] **Step 6: Tear down**
+Completion note: skipped/deferred per user instruction forbidding browser installation/testing on this device.
+
+- [x] **Step 6: Tear down**
 
 ```bash
 docker compose down
 ```
 
-- [ ] **Step 7: Commit (if the manual QA step above led to any fixes)**
+- [x] **Step 7: Commit (if the manual QA step above led to any fixes)**
 
 If Step 5 surfaced any bugs and you fixed them, commit those fixes individually with descriptive messages before considering this plan complete. If no fixes were needed, there is nothing to commit for this task.
