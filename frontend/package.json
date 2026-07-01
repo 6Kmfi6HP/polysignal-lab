@@ -1,6 +1,6 @@
 {
-  "name": "shadcn-admin",
-  "private": false,
+  "name": "polysignal-dashboard",
+  "private": true,
   "version": "2.2.1",
   "type": "module",
   "scripts": {
