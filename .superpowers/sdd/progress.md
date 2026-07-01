@@ -22,3 +22,4 @@ Task 12: complete (commit 92403bc, review approved; `docker compose config --qui
 Task 13: complete (commit f382090, review approved; frontend CI job added with npm ci/lint/build/test under jsdom; no browser-install step; workflow YAML validation passed).
 Task 14: complete (commit 7941e31, review approved; three services built and reached healthy using copied ignored `.env`; SPA shell returned `SPA shell OK`; `/api/overview` and `/health` returned valid JSON through nginx; `dashboard-api` had no host port mapping; browser QA skipped per user instruction).
 Final verification remediation: commit be2fda2 aligned two stale Nautilus tests with current projection guards/settings; focused failing tests then passed 2/2; full backend suite passed 886/886 with 7 skipped.
+Final review remediation: commit 18d9aeb removed stale Shadcn Admin runtime branding/template baggage; `npm run lint`, `npm run build`, and `npm test` passed afterward with 96/96 tests.
