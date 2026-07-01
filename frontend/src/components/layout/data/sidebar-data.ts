@@ -1,14 +1,10 @@
 import {
-  AudioWaveform,
-  Bug,
-  Command,
-  Construction,
-  FileX,
-  GalleryVerticalEnd,
+  Activity,
+  Gauge,
   LayoutDashboard,
-  Lock,
-  ServerOff,
-  UserX,
+  ListChecks,
+  Radio,
+  Trophy,
 } from 'lucide-react'
 import { type NavGroup } from '../types'
 
@@ -28,72 +24,27 @@ type SidebarData = {
 
 export const sidebarData: SidebarData = {
   user: {
-    name: 'satnaing',
-    email: 'satnaingdev@gmail.com',
+    name: 'PolySignal Lab',
+    email: 'read-only dashboard',
     avatar: '/avatars/shadcn.jpg',
   },
   teams: [
     {
-      name: 'Shadcn Admin',
-      logo: Command,
-      plan: 'Vite + ShadcnUI',
-    },
-    {
-      name: 'Acme Inc',
-      logo: GalleryVerticalEnd,
-      plan: 'Enterprise',
-    },
-    {
-      name: 'Acme Corp.',
-      logo: AudioWaveform,
-      plan: 'Startup',
+      name: 'PolySignal Lab',
+      logo: Gauge,
+      plan: 'Read-only dashboard',
     },
   ],
   navGroups: [
     {
-      title: 'General',
+      title: 'Dashboard',
       items: [
-        {
-          title: 'Dashboard',
-          url: '/',
-          icon: LayoutDashboard,
-        },
-      ],
-    },
-    {
-      title: 'Pages',
-      items: [
-        {
-          title: 'Errors',
-          icon: Bug,
-          items: [
-            {
-              title: 'Unauthorized',
-              url: '/errors/unauthorized',
-              icon: Lock,
-            },
-            {
-              title: 'Forbidden',
-              url: '/errors/forbidden',
-              icon: UserX,
-            },
-            {
-              title: 'Not Found',
-              url: '/errors/not-found',
-              icon: FileX,
-            },
-            {
-              title: 'Internal Server Error',
-              url: '/errors/internal-server-error',
-              icon: ServerOff,
-            },
-            {
-              title: 'Maintenance Error',
-              url: '/errors/maintenance-error',
-              icon: Construction,
-            },
-          ],
-        },
+        { title: 'Overview', url: '/', icon: LayoutDashboard },
+        { title: 'Signals', url: '/signals', icon: Radio },
+        { title: 'Paper Trading', url: '/paper-trading', icon: Activity },
+        { title: 'Leaderboard', url: '/leaderboard', icon: Trophy },
+        { title: 'Strategy Status', url: '/strategy-status', icon: ListChecks },
+        { title: 'System Health', url: '/system-health', icon: Gauge },
       ],
     },
   ],

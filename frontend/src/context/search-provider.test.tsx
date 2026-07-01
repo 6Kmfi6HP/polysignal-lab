@@ -59,7 +59,7 @@ describe('SearchProvider and CommandMenu', () => {
     expect(getByText('Light')).toBeInTheDocument()
     expect(getByText('Dark')).toBeInTheDocument()
     expect(getByText('System')).toBeInTheDocument()
-    expect(getByText('Dashboard')).toBeInTheDocument()
+    expect(getByText('Overview')).toBeInTheDocument()
   })
 
   it('does not show the dialog content when search is closed', async () => {
@@ -92,22 +92,22 @@ describe('SearchProvider and CommandMenu', () => {
 
     await openCommandPalette(screen)
 
-    await userEvent.click(screen.getByText('Dashboard'))
+    await userEvent.click(screen.getByText('Overview'))
 
     expect(mocks.navigate).toHaveBeenCalledWith({ to: '/' })
     expect(screen.queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER))
       .not.toBeInTheDocument()
   })
 
-  it('navigates for nested sidebar items (group with sub-items)', async () => {
+  it('navigates to another top-level route and closes the palette when selected', async () => {
     const screen = await renderWithSearchProvider()
     const { getByRole } = screen
 
     await openCommandPalette(screen)
 
-    await userEvent.click(getByRole('option', { name: 'Errors Forbidden' }))
+    await userEvent.click(getByRole('option', { name: 'Signals' }))
 
-    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/errors/forbidden' })
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/signals' })
     expect(screen.queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER))
       .not.toBeInTheDocument()
   })
