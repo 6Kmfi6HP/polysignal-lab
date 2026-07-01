@@ -2537,7 +2537,7 @@ git commit -m "feat(dashboard): implement the System Health page"
 - Consumes: nothing from the frontend tasks (independent; can be done at any point — see "Note on task ordering" above).
 - Produces: `create_dashboard_app(store)` with the same signature, same `/health` and `/api/*` routes, no `/` route.
 
-- [ ] **Step 1: Run the existing dashboard tests to see today's baseline**
+- [x] **Step 1: Run the existing dashboard tests to see today's baseline**
 
 ```bash
 pytest tests/test_dashboard.py -v
@@ -2545,7 +2545,7 @@ pytest tests/test_dashboard.py -v
 
 Expected: all tests currently pass (this confirms the starting point before the change).
 
-- [ ] **Step 2: Replace `src/polysignal_lab/dashboard/app.py`**
+- [x] **Step 2: Replace `src/polysignal_lab/dashboard/app.py`**
 
 ```python
 from __future__ import annotations
@@ -2773,7 +2773,7 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
 
 This removes the `from html import escape` and `from fastapi.responses import HTMLResponse` imports (both only used by the deleted `home()` route and `_text` helper), the `_text` helper itself, and the entire `home()` route. Every other function and route is byte-for-byte unchanged from today.
 
-- [ ] **Step 3: Update `tests/test_dashboard.py` — `test_dashboard_readonly_endpoints_return_stored_data`**
+- [x] **Step 3: Update `tests/test_dashboard.py` — `test_dashboard_readonly_endpoints_return_stored_data`**
 
 In `tests/test_dashboard.py`, find this test and replace the `html = client.get("/")` line plus the HTML-content assertions at the end:
 
@@ -2812,7 +2812,7 @@ becomes:
 
 Also change the comment above it from `# Then: payloads contain the persisted rows and the HTML has no write controls.` to `# Then: payloads contain the persisted rows; the API no longer serves any HTML.`
 
-- [ ] **Step 4: Update `tests/test_dashboard.py` — `test_dashboard_rejects_write_methods`**
+- [x] **Step 4: Update `tests/test_dashboard.py` — `test_dashboard_rejects_write_methods`**
 
 In the same file, find `test_dashboard_rejects_write_methods` and remove `"/"` from the `read_paths` tuple (it is no longer a registered route on this app, so it now 404s for every method instead of 405ing on writes):
 
@@ -2829,7 +2829,7 @@ becomes:
         "/health",
 ```
 
-- [ ] **Step 5: Run the dashboard tests**
+- [x] **Step 5: Run the dashboard tests**
 
 ```bash
 pytest tests/test_dashboard.py -v
@@ -2837,7 +2837,7 @@ pytest tests/test_dashboard.py -v
 
 Expected: all tests pass, including the two modified above.
 
-- [ ] **Step 6: Run the full test suite to check for regressions elsewhere**
+- [x] **Step 6: Run the full test suite to check for regressions elsewhere**
 
 ```bash
 pytest
@@ -2845,7 +2845,9 @@ pytest
 
 Expected: PASS (no other test file references `create_dashboard_app`'s `/` route — confirm by searching first if this fails).
 
-- [ ] **Step 7: Commit**
+Completion note: Full pytest was run in the project venv during Task 11 and showed two Nautilus failures that were reproduced at the Task 11 base, outside this task's changed files. Task 11 focused dashboard and smoke tests passed; final acceptance still requires full pytest to be green after remediation.
+
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/polysignal_lab/dashboard/app.py tests/test_dashboard.py
