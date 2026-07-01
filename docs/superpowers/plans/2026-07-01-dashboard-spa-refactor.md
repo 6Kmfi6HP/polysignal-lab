@@ -1562,7 +1562,7 @@ git commit -m "feat(dashboard): implement the Overview page"
 - Consumes: `useSignalsQuery`, `useRejectedSignalsQuery` from Task 3; `makeSignal`, `makeRejectedSignal` fixtures.
 - Produces: the real `SignalsPage`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `frontend/src/features/signals/index.test.tsx`:
 
@@ -1594,7 +1594,7 @@ describe('SignalsPage', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd frontend
@@ -1603,7 +1603,7 @@ npm test -- src/features/signals/index.test.tsx
 
 Expected: FAIL — the placeholder page has no tabs or tables.
 
-- [ ] **Step 3: Replace `frontend/src/features/signals/index.tsx`**
+- [x] **Step 3: Replace `frontend/src/features/signals/index.tsx`**
 
 ```tsx
 import { Header } from '@/components/layout/header'
@@ -1729,7 +1729,7 @@ function RejectedSignalsTable({ rejected }: { rejected: RejectedSignal[] }) {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd frontend
@@ -1738,7 +1738,7 @@ npm test -- src/features/signals/index.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/features/signals
