@@ -2223,7 +2223,7 @@ git commit -m "feat(dashboard): implement the Leaderboard page with a PnL-by-str
 - Consumes: `useStrategyStatusQuery` from Task 3; `makeStrategyStatusRow` fixture.
 - Produces: the real `StrategyStatusPage`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `frontend/src/features/strategy-status/index.test.tsx`:
 
@@ -2257,7 +2257,7 @@ describe('StrategyStatusPage', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd frontend
@@ -2266,7 +2266,7 @@ npm test -- src/features/strategy-status/index.test.tsx
 
 Expected: FAIL — the placeholder page has no table or empty state.
 
-- [ ] **Step 3: Replace `frontend/src/features/strategy-status/index.tsx`**
+- [x] **Step 3: Replace `frontend/src/features/strategy-status/index.tsx`**
 
 ```tsx
 import { Header } from '@/components/layout/header'
@@ -2342,7 +2342,7 @@ export function StrategyStatusPage() {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```bash
 cd frontend
@@ -2351,7 +2351,7 @@ npm test -- src/features/strategy-status/index.test.tsx
 
 Expected: PASS, 2 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/features/strategy-status

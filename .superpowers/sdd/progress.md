@@ -15,3 +15,4 @@ Task 5: complete (commit 77d3dc9, review approved; RED overview placeholder miss
 Task 6: complete (commit 4a754e7, review approved; RED Signals placeholder missing accepted content and Rejected tab observed; GREEN focused Signals test passed 5/5; `npm run lint` and `npm run build` passed).
 Task 7: complete (commit de4148c, review approved; RED Paper Trading placeholder missing trade/tabs/states observed; GREEN focused Paper Trading test passed 5/5; `npm run lint` and `npm run build` passed).
 Task 8: complete (commit b8e5a4a, review approved; RED Leaderboard placeholder missing strategy/table/states observed; GREEN focused Leaderboard test passed 4/4; `npm run lint` and `npm run build` passed).
+Task 9: complete (commit eec5dd7, review approved; RED Strategy Status placeholder missing rows/empty/loading/error states observed; GREEN focused Strategy Status test passed 4/4; `npm run lint` and `npm run build` passed).
