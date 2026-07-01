@@ -172,7 +172,7 @@ git commit -m "feat(dashboard): vendor and strip shadcn-admin template into fron
 - Consumes: the buildable `frontend/` project from Task 1 (`npm run build` must produce `frontend/dist/`).
 - Produces: `frontend/Dockerfile` (multi-stage Node build → nginx runtime) and `frontend/nginx.conf`, consumed by Task 12's `docker-compose.yml` change. The dev proxy in `vite.config.ts` is consumed by anyone running `npm run dev` locally in Tasks 5–10.
 
-- [ ] **Step 1: Add the dev-time API proxy to `vite.config.ts`**
+- [x] **Step 1: Add the dev-time API proxy to `vite.config.ts`**
 
 Read `frontend/vite.config.ts` first (it should match the file fetched in Task 1, with `plugins`, `resolve`, and `test` keys in the `defineConfig({...})` call). Add a `server` key alongside them:
 
@@ -187,7 +187,7 @@ Read `frontend/vite.config.ts` first (it should match the file fetched in Task 1
 
 This forwards `/api/*` and `/health` requests made by `npm run dev` (default port 5173) to a `dashboard-api` running locally on port 8080 (started with `uvicorn` the same way `docker-entrypoint.sh dashboard` does), so local frontend development doesn't require Docker.
 
-- [ ] **Step 2: Write `frontend/nginx.conf`**
+- [x] **Step 2: Write `frontend/nginx.conf`**
 
 ```nginx
 server {
@@ -214,7 +214,9 @@ server {
 
 `dashboard-api` here is the Docker Compose service name added in Task 12; nginx resolves it via the compose network's built-in DNS.
 
-- [ ] **Step 3: Write `frontend/Dockerfile`**
+Completion note: The plan's static `proxy_pass http://dashboard-api:8080/...` conflicted with Step 4's standalone `docker run` smoke because nginx resolves static upstreams at startup. User selected the lazy-DNS resolution: `frontend/nginx.conf` uses Docker DNS resolver `127.0.0.11` plus variable `proxy_pass` so standalone `/` smoke starts while `/api/*` and `/health` still proxy to `dashboard-api:8080` at request time in Compose.
+
+- [x] **Step 3: Write `frontend/Dockerfile`**
 
 ```dockerfile
 FROM node:20-slim AS build
@@ -230,7 +232,7 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 ```
 
-- [ ] **Step 4: Build the image standalone and verify it serves the SPA shell**
+- [x] **Step 4: Build the image standalone and verify it serves the SPA shell**
 
 ```bash
 docker build -t polysignal-dashboard-web ./frontend
@@ -242,7 +244,7 @@ docker stop dashboard-web-smoke
 
 Expected output: `SPA shell OK`. (The `/api` and `/health` proxy locations will fail at this point since no `dashboard-api` container/hostname exists yet outside the compose network — that's expected and gets verified in Task 14.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/Dockerfile frontend/nginx.conf frontend/vite.config.ts
@@ -269,7 +271,7 @@ git commit -m "feat(dashboard): add frontend Docker image, nginx reverse proxy, 
   - Hooks: `useHealthQuery`, `useOverviewQuery`, `useSignalsQuery(limit?)`, `useRejectedSignalsQuery(limit?)`, `usePaperOrdersQuery(status?, limit?)`, `usePositionsQuery(status?, limit?)`, `useTradesQuery(limit?)`, `useLeaderboardQuery(limit?)`, `useStrategyStatusQuery(limit?)`.
   - Test helpers: `renderWithQueryClient(ui)`, and `make*` fixture factories.
 
-- [ ] **Step 1: Write the failing test for the API client**
+- [x] **Step 1: Write the failing test for the API client**
 
 Create `frontend/src/lib/api/client.test.ts`:
 
@@ -315,7 +317,7 @@ describe('getOverview', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd frontend
@@ -324,7 +326,7 @@ npm test -- src/lib/api/client.test.ts
 
 Expected: FAIL with a module-resolution error — `./client` does not exist yet.
 
-- [ ] **Step 3: Write `frontend/src/lib/api/types.ts`**
+- [x] **Step 3: Write `frontend/src/lib/api/types.ts`**
 
 ```ts
 export type Side = 'UP' | 'DOWN'
@@ -551,7 +553,7 @@ export interface HealthResponse {
 }
 ```
 
-- [ ] **Step 4: Write `frontend/src/lib/api/client.ts`**
+- [x] **Step 4: Write `frontend/src/lib/api/client.ts`**
 
 ```ts
 import type {
@@ -632,7 +634,7 @@ export function getStrategyStatus(limit = 100) {
 }
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 ```bash
 cd frontend
@@ -641,7 +643,7 @@ npm test -- src/lib/api/client.test.ts
 
 Expected: PASS, 2 tests.
 
-- [ ] **Step 6: Write `frontend/src/lib/api/hooks.ts`**
+- [x] **Step 6: Write `frontend/src/lib/api/hooks.ts`**
 
 ```ts
 import { useQuery } from '@tanstack/react-query'
@@ -723,7 +725,7 @@ export function useStrategyStatusQuery(limit = 100) {
 }
 ```
 
-- [ ] **Step 7: Write `frontend/src/test-utils/render-with-query-client.tsx`**
+- [x] **Step 7: Write `frontend/src/test-utils/render-with-query-client.tsx`**
 
 ```tsx
 import type { ReactElement } from 'react'
@@ -740,7 +742,9 @@ export function renderWithQueryClient(ui: ReactElement) {
 }
 ```
 
-- [ ] **Step 8: Write `frontend/src/test-utils/fixtures.ts`**
+Completion note: User selected the non-browser Vitest resolution because browser installation is forbidden and existing snap Chromium cannot launch. The test helper uses Testing Library under jsdom instead of `vitest-browser-react`, preserving the same render-with-query-client interface while allowing `npm test` to pass without browser binaries.
+
+- [x] **Step 8: Write `frontend/src/test-utils/fixtures.ts`**
 
 ```ts
 import type {
@@ -984,7 +988,7 @@ export function makeLeaderboardResponse(
 }
 ```
 
-- [ ] **Step 9: Run the full frontend verification loop**
+- [x] **Step 9: Run the full frontend verification loop**
 
 ```bash
 cd frontend
@@ -995,7 +999,7 @@ npm test
 
 Expected: all three pass.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add frontend/src/lib/api frontend/src/test-utils
