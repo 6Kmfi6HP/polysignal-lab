@@ -212,12 +212,19 @@ def test_runtime_native_strategy_type_initializes_nautilus_base() -> None:
         def __init__(self, *, config: object) -> None:
             self.nautilus_config: object = config
 
+
+    class FakeRegistry:
+        def by_condition(self, _condition_id: str) -> None:
+            return None
+
     strategy_type = runtime_native_strategy_type(FakeNautilusBase, lambda: "strategy-config")
     strategy = strategy_type(
         core=cast(AlphaCore, object()),
         assembler=FakeAssemblerForRuntimeType(),
         condition_ids=(),
         strategy_name="ptb_diff",
+        registry=FakeRegistry(),
+        sidecar=object(),
     )
 
     assert getattr(strategy, "nautilus_config") == "strategy-config"

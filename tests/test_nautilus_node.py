@@ -494,7 +494,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
         },
     )
 
-    bundle = await node_mod.build_nautilus_runtime()
+    bundle = await node_mod.build_nautilus_runtime(Settings())
 
     assert refresh_calls == 1
     assert captured["condition_ids"] == ("condition-btc-5m",)
