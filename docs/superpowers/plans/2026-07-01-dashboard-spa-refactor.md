@@ -37,7 +37,7 @@ Task 11 (backend cleanup) touches only `src/polysignal_lab/dashboard/app.py` and
 - Consumes: nothing (this is the first task; greenfield within the repo).
 - Produces: a buildable `frontend/` Vite project with `npm run dev`, `npm run build`, `npm run lint`, `npm run test` all working, with Clerk and irrelevant demo pages removed. Later tasks add to this project.
 
-- [ ] **Step 1: Vendor the template at a pinned commit**
+- [x] **Step 1: Vendor the template at a pinned commit**
 
 ```bash
 git clone https://github.com/satnaing/shadcn-admin.git frontend
@@ -47,7 +47,7 @@ rm -rf .git
 cd ..
 ```
 
-- [ ] **Step 2: Delete Clerk auth and irrelevant demo features**
+- [x] **Step 2: Delete Clerk auth and irrelevant demo features**
 
 ```bash
 cd frontend
@@ -69,13 +69,13 @@ rm -f src/assets/clerk-logo.tsx src/assets/clerk-full-logo.tsx
 cd ..
 ```
 
-- [ ] **Step 3: Switch the package manager to npm and remove the pnpm lockfile**
+- [x] **Step 3: Switch the package manager to npm and remove the pnpm lockfile**
 
 ```bash
 rm frontend/pnpm-lock.yaml
 ```
 
-- [ ] **Step 4: Remove dependencies that are unused after the deletions above**
+- [x] **Step 4: Remove dependencies that are unused after the deletions above**
 
 Open `frontend/package.json` and delete these lines from `"dependencies"`:
 
@@ -93,7 +93,7 @@ And this line from `"devDependencies"`:
     "@faker-js/faker": "^10.4.0",
 ```
 
-- [ ] **Step 5: Install dependencies and generate the npm lockfile**
+- [x] **Step 5: Install dependencies and generate the npm lockfile**
 
 ```bash
 cd frontend
@@ -103,7 +103,7 @@ cd ..
 
 Expected: `frontend/package-lock.json` is created. `npm install` completes with no error (some peer-dependency warnings about `react-day-picker`/`zod` version ranges from leftover transitive deps are expected and harmless at this point — they get cleaned up next).
 
-- [ ] **Step 6: Run the template's built-in unused-code detector and fix every finding**
+- [x] **Step 6: Run the template's built-in unused-code detector and fix every finding**
 
 ```bash
 cd frontend
@@ -117,7 +117,7 @@ This prints every file, export, and dependency that is no longer reachable after
 
 Re-run `npm run knip` after each round of fixes until it reports no findings outside of `src/components/ui/**` (knip is pre-configured in `vite.config.ts`'s test-coverage `exclude` list to skip that directory's pattern for coverage, but the `knip` script itself still scans it — unused shadcn/ui primitives are expected and fine to leave, since they are reusable building blocks for pages built in later tasks).
 
-- [ ] **Step 7: Run the full verification loop and fix any remaining TypeScript/lint errors**
+- [x] **Step 7: Run the full verification loop and fix any remaining TypeScript/lint errors**
 
 ```bash
 cd frontend
@@ -127,7 +127,7 @@ npm run build
 
 If either command reports an error referencing a deleted module (e.g. `Cannot find module '@/features/users'` in some file you haven't touched yet, such as `src/components/command-menu.tsx` or `src/components/layout/nav-user.tsx`), open that file and remove the dangling import and the JSX/code that used it. Repeat `npm run lint && npm run build` until both pass with zero errors. Do not run `npm run test` yet — `npm run test:browser:install` (Playwright's Chromium download) has not been run yet; that happens in Step 9.
 
-- [ ] **Step 8: Add template attribution to the frontend README**
+- [x] **Step 8: Add template attribution to the frontend README**
 
 Read `frontend/README.md` first, then add this section near the top (after the title, before "## Features" or equivalent):
 
@@ -140,7 +140,7 @@ CRUD pages (Tasks/Apps/Users/Settings/Chats) from the upstream template have bee
 removed; this project is a read-only operations dashboard with no user accounts.
 ```
 
-- [ ] **Step 9: Install the Playwright browser and run the existing template tests**
+- [x] **Step 9: Install the Playwright browser and run the existing template tests**
 
 ```bash
 cd frontend
@@ -150,7 +150,9 @@ npm run test
 
 Expected: all remaining tests (the ones belonging to components you didn't delete, e.g. `confirm-dialog.test.tsx`, `password-input.test.tsx`) pass. Delete any test file whose corresponding source file you deleted in Step 2/Step 6, if `npm run test` reports it as a missing-module failure.
 
-- [ ] **Step 10: Commit**
+Completion note: `npm run test:browser:install` was skipped because the user forbids installing browsers on this device. `npm test` was attempted with the existing system Chromium and blocked by snap Chromium confinement before test execution; browser-capable/manual verification remains deferred.
+
+- [x] **Step 10: Commit**
 
 ```bash
 git add frontend
