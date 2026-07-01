@@ -14,3 +14,4 @@ Task 4: complete (commit 0830e5f, review approved; RED sidebar route-order misma
 Task 5: complete (commit 77d3dc9, review approved; RED overview placeholder missing fetched count/report/status observed; GREEN focused Overview test passed 4/4; `npm run lint`, `npm run build`, and prettier check passed).
 Task 6: complete (commit 4a754e7, review approved; RED Signals placeholder missing accepted content and Rejected tab observed; GREEN focused Signals test passed 5/5; `npm run lint` and `npm run build` passed).
 Task 7: complete (commit de4148c, review approved; RED Paper Trading placeholder missing trade/tabs/states observed; GREEN focused Paper Trading test passed 5/5; `npm run lint` and `npm run build` passed).
+Task 8: complete (commit b8e5a4a, review approved; RED Leaderboard placeholder missing strategy/table/states observed; GREEN focused Leaderboard test passed 4/4; `npm run lint` and `npm run build` passed).

@@ -2043,7 +2043,7 @@ git commit -m "feat(dashboard): implement the Paper Trading page with a cumulati
 - Consumes: `useLeaderboardQuery` from Task 3; `makeLeaderboardResponse` fixture.
 - Produces: the real `LeaderboardPage`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `frontend/src/features/leaderboard/index.test.tsx`:
 
@@ -2081,7 +2081,7 @@ describe('LeaderboardPage', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd frontend
@@ -2090,7 +2090,7 @@ npm test -- src/features/leaderboard/index.test.tsx
 
 Expected: FAIL — the placeholder page has no table.
 
-- [ ] **Step 3: Replace `frontend/src/features/leaderboard/index.tsx`**
+- [x] **Step 3: Replace `frontend/src/features/leaderboard/index.tsx`**
 
 ```tsx
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis } from 'recharts'
@@ -2195,7 +2195,7 @@ function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd frontend
@@ -2204,7 +2204,7 @@ npm test -- src/features/leaderboard/index.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/features/leaderboard
