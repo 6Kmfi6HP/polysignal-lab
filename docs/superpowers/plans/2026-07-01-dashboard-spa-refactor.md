@@ -2865,7 +2865,7 @@ git commit -m "fix(dashboard): drop the hand-written HTML route, dashboard-api i
 - Consumes: `frontend/Dockerfile` from Task 2; the JSON-only `dashboard-api` behavior from Task 11.
 - Produces: a `dashboard-web` compose service that other tooling (none yet) can depend on; this is the last piece needed before the Task 14 end-to-end smoke test.
 
-- [ ] **Step 1: Replace the `dashboard` service in `docker-compose.yml`**
+- [x] **Step 1: Replace the `dashboard` service in `docker-compose.yml`**
 
 Read `docker-compose.yml` first to confirm the current `dashboard:` service block matches what's expected, then replace it (the `polysignal-lab:` service above it is untouched):
 
@@ -2919,7 +2919,7 @@ Read `docker-compose.yml` first to confirm the current `dashboard:` service bloc
 
 This renames the `dashboard` service to `dashboard-api` (matching its new JSON-only role), removes its `ports:` mapping (it's now internal-only, reached through `dashboard-web`'s nginx proxy), and adds the new `dashboard-web` service that owns the public `8081` port.
 
-- [ ] **Step 2: Validate the compose file syntax**
+- [x] **Step 2: Validate the compose file syntax**
 
 ```bash
 docker compose config --quiet
@@ -2927,7 +2927,7 @@ docker compose config --quiet
 
 Expected: no output, exit code 0 (this validates YAML structure and service references without starting anything).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docker-compose.yml
