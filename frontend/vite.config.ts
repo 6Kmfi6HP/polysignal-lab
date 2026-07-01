@@ -4,9 +4,6 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
-import { playwright } from '@vitest/browser-playwright'
-
-const playwrightChromiumPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -31,21 +28,9 @@ export default defineConfig({
   },
   test: {
     silent: 'passed-only',
+    environment: 'jsdom',
+    setupFiles: ['./src/test-utils/setup.ts'],
     unstubEnvs: true,
-    browser: {
-      enabled: true,
-      provider: playwright(
-        playwrightChromiumPath
-          ? {
-              launchOptions: {
-                executablePath: playwrightChromiumPath,
-                args: ['--no-sandbox', '--disable-setuid-sandbox'],
-              },
-            }
-          : undefined
-      ),
-      instances: [{ browser: 'chromium' }],
-    },
     coverage: {
       // include: ['src/**/*.{js,jsx,ts,tsx}'], // Uncomment to expand the report to all src/**/* so untested modules appear as 0% coverage.
       exclude: [

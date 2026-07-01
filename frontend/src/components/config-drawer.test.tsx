@@ -1,7 +1,7 @@
 import { clearCookies } from '@/test-utils/cookies'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, type RenderResult } from 'vitest-browser-react'
-import { userEvent } from 'vitest/browser'
+import { render, type RenderResult, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { getCookie, setCookie } from '@/lib/cookies'
 import { DirectionProvider } from '@/context/direction-provider'
 import { LayoutProvider } from '@/context/layout-provider'
@@ -31,9 +31,7 @@ async function openDrawer(screen: RenderResult) {
   await userEvent.click(
     screen.getByRole('button', { name: /^Open theme settings$/i })
   )
-  await expect
-    .element(screen.getByText(/^Theme Settings$/i))
-    .toBeInTheDocument()
+  expect(screen.getByText(/^Theme Settings$/i)).toBeInTheDocument()
 }
 
 describe('ConfigDrawer (integration)', () => {
@@ -53,16 +51,14 @@ describe('ConfigDrawer (integration)', () => {
 
     const drawer = screen.getByRole('dialog', { name: /theme settings/i })
 
-    await expect.element(drawer).toBeInTheDocument()
+    expect(drawer).toBeInTheDocument()
 
-    await expect.element(drawer.getByText(/^Theme$/i)).toBeInTheDocument()
-    await expect.element(drawer.getByText(/^Layout$/i)).toBeInTheDocument()
-    await expect
-      .element(drawer.getByText(/^Sidebar$/i).first())
-      .toBeInTheDocument()
-    await expect.element(drawer.getByText(/^Direction$/i)).toBeInTheDocument()
-    await expect
-      .element(
+    const drawerQueries = within(drawer)
+    expect(drawerQueries.getByText(/^Theme$/i)).toBeInTheDocument()
+    expect(drawerQueries.getByText(/^Layout$/i)).toBeInTheDocument()
+    expect(drawerQueries.getAllByText(/^Sidebar$/i)[0]).toBeInTheDocument()
+    expect(drawerQueries.getByText(/^Direction$/i)).toBeInTheDocument()
+    expect(
         screen.getByRole('button', {
           name: /reset all settings to default values/i,
         })
@@ -266,8 +262,7 @@ describe('ConfigDrawer (integration)', () => {
 
     await openDrawer(screen)
 
-    await expect
-      .element(screen.getByRole('radio', { name: /select default/i }))
+    expect(screen.getByRole('radio', { name: /select default/i }))
       .toHaveAttribute('data-state', 'checked')
 
     await userEvent.click(

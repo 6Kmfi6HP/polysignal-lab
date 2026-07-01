@@ -1,7 +1,7 @@
 import type { SubmitEvent } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { render } from 'vitest-browser-react'
-import { userEvent } from 'vitest/browser'
+import { render } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { ConfirmDialog } from './confirm-dialog'
 
 describe('ConfirmDialog', () => {
@@ -16,17 +16,13 @@ describe('ConfirmDialog', () => {
       />
     )
 
-    await expect
-      .element(getByRole('heading', { name: 'Delete item' }))
+    expect(getByRole('heading', { name: 'Delete item' }))
       .toBeInTheDocument()
-    await expect
-      .element(getByText('This action cannot be undone.'))
+    expect(getByText('This action cannot be undone.'))
       .toBeInTheDocument()
-    await expect
-      .element(getByRole('button', { name: 'Cancel' }))
+    expect(getByRole('button', { name: 'Cancel' }))
       .toBeInTheDocument()
-    await expect
-      .element(getByRole('button', { name: 'Continue' }))
+    expect(getByRole('button', { name: 'Continue' }))
       .toBeInTheDocument()
   })
 
@@ -61,7 +57,7 @@ describe('ConfirmDialog', () => {
     )
 
     const confirm = getByRole('button', { name: 'Continue' })
-    await expect.element(confirm).toBeDisabled()
+    expect(confirm).toBeDisabled()
     expect(handleConfirm).not.toHaveBeenCalled()
   })
 
@@ -78,9 +74,8 @@ describe('ConfirmDialog', () => {
       />
     )
 
-    await expect.element(getByRole('button', { name: 'Cancel' })).toBeDisabled()
-    await expect
-      .element(getByRole('button', { name: 'Continue' }))
+    expect(getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    expect(getByRole('button', { name: 'Continue' }))
       .toBeDisabled()
   })
 
@@ -97,11 +92,9 @@ describe('ConfirmDialog', () => {
       />
     )
 
-    await expect
-      .element(getByRole('button', { name: 'No' }))
+    expect(getByRole('button', { name: 'No' }))
       .toBeInTheDocument()
-    await expect
-      .element(getByRole('button', { name: 'Yes' }))
+    expect(getByRole('button', { name: 'Yes' }))
       .toBeInTheDocument()
   })
 
@@ -123,9 +116,8 @@ describe('ConfirmDialog', () => {
     )
 
     const deleteBtn = getByRole('button', { name: 'Delete' })
-    await expect.element(deleteBtn).toHaveAttribute('type', 'submit')
-    await expect
-      .element(deleteBtn)
+    expect(deleteBtn).toHaveAttribute('type', 'submit')
+    expect(deleteBtn)
       .toHaveAttribute('form', 'tasks-multi-delete-form')
   })
 
@@ -164,7 +156,7 @@ describe('ConfirmDialog', () => {
       e.preventDefault()
     })
 
-    const { getByPlaceholder } = await render(
+    const { getByPlaceholderText } = await render(
       <ConfirmDialog
         open
         onOpenChange={vi.fn()}
@@ -184,7 +176,7 @@ describe('ConfirmDialog', () => {
       />
     )
 
-    await userEvent.fill(getByPlaceholder('username'), 'test')
+    await userEvent.type(getByPlaceholderText('username'), 'test')
     await userEvent.keyboard('{Enter}')
     expect(handleFormSubmit).toHaveBeenCalledOnce()
   })
@@ -212,7 +204,7 @@ describe('ConfirmDialog', () => {
     )
 
     const deleteBtn = getByRole('button', { name: 'Delete' })
-    await expect.element(deleteBtn).toBeDisabled()
+    expect(deleteBtn).toBeDisabled()
     expect(handleFormSubmit).not.toHaveBeenCalled()
   })
 })

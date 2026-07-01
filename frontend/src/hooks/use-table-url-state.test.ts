@@ -1,5 +1,5 @@
 import { type Mock, describe, expect, it, vi } from 'vitest'
-import { renderHook } from 'vitest-browser-react'
+import { act, renderHook } from '@testing-library/react'
 import { type NavigateFn, useTableUrlState } from '@/hooks/use-table-url-state'
 
 function lastNavigateOpts(navigate: Mock<NavigateFn>) {
@@ -69,7 +69,7 @@ describe('useTableUrlState', () => {
   it('onPaginationChange omits page and pageSize from search when they match defaults', async () => {
     const navigate = vi.fn() as Mock<NavigateFn>
     const prev = { page: 2, pageSize: 20, filter: 'q' }
-    const { result, act } = await renderHook(() =>
+    const { result } = await renderHook(() =>
       useTableUrlState({
         search: prev,
         navigate,
@@ -94,7 +94,7 @@ describe('useTableUrlState', () => {
   it('onPaginationChange writes non-default page and pageSize', async () => {
     const navigate = vi.fn() as Mock<NavigateFn>
     const prev = { filter: 'x' }
-    const { result, act } = await renderHook(() =>
+    const { result } = await renderHook(() =>
       useTableUrlState({
         search: { ...prev, page: 1, pageSize: 10 },
         navigate,
@@ -139,7 +139,7 @@ describe('useTableUrlState', () => {
 
   it('reads globalFilter from search and onGlobalFilterChange updates URL and clears page', async () => {
     const navigate = vi.fn() as Mock<NavigateFn>
-    const { result, act } = await renderHook(() =>
+    const { result } = await renderHook(() =>
       useTableUrlState({
         search: { page: 2, filter: 'hello' },
         navigate,
@@ -162,7 +162,7 @@ describe('useTableUrlState', () => {
 
   it('clears filter key in URL when global filter becomes empty after trim', async () => {
     const navigate = vi.fn() as Mock<NavigateFn>
-    const { result, act } = await renderHook(() =>
+    const { result } = await renderHook(() =>
       useTableUrlState({
         search: { filter: 'x' },
         navigate,
@@ -182,7 +182,7 @@ describe('useTableUrlState', () => {
 
   it('does not trim global filter when trim is false', async () => {
     const navigate = vi.fn() as Mock<NavigateFn>
-    const { result, act } = await renderHook(() =>
+    const { result } = await renderHook(() =>
       useTableUrlState({
         search: {},
         navigate,
@@ -254,7 +254,7 @@ describe('useTableUrlState', () => {
   it('onColumnFiltersChange merges serialized filters into search and clears page', async () => {
     const navigate = vi.fn() as Mock<NavigateFn>
     const prev = { page: 3, status: ['old'], other: 1 }
-    const { result, act } = await renderHook(() =>
+    const { result } = await renderHook(() =>
       useTableUrlState({
         search: prev,
         navigate,
@@ -283,7 +283,7 @@ describe('useTableUrlState', () => {
 
   it('ensurePageInRange navigates with replace when current page exceeds pageCount', async () => {
     const navigate = vi.fn() as Mock<NavigateFn>
-    const { result, act } = await renderHook(() =>
+    const { result } = await renderHook(() =>
       useTableUrlState({
         search: { page: 5 },
         navigate,
@@ -307,7 +307,7 @@ describe('useTableUrlState', () => {
 
   it('ensurePageInRange resets to last page when resetTo is last', async () => {
     const navigate = vi.fn() as Mock<NavigateFn>
-    const { result, act } = await renderHook(() =>
+    const { result } = await renderHook(() =>
       useTableUrlState({
         search: { page: 9 },
         navigate,
@@ -327,7 +327,7 @@ describe('useTableUrlState', () => {
 
   it('ensurePageInRange does not navigate when page is in range', async () => {
     const navigate = vi.fn() as Mock<NavigateFn>
-    const { result, act } = await renderHook(() =>
+    const { result } = await renderHook(() =>
       useTableUrlState({
         search: { page: 2 },
         navigate,
@@ -344,7 +344,7 @@ describe('useTableUrlState', () => {
 
   it('uses custom serialize and deserialize for column filters', async () => {
     const navigate = vi.fn() as Mock<NavigateFn>
-    const { result, act } = await renderHook(() =>
+    const { result } = await renderHook(() =>
       useTableUrlState({
         search: { tag: 'a|b' },
         navigate,
