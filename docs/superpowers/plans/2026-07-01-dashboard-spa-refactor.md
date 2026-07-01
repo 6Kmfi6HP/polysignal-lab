@@ -1757,7 +1757,7 @@ git commit -m "feat(dashboard): implement the Signals page"
 - Consumes: `usePaperOrdersQuery`, `usePositionsQuery`, `useTradesQuery` from Task 3; `makePaperOrder`, `makePaperPosition`, `makePaperTradeResult` fixtures.
 - Produces: the real `PaperTradingPage`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `frontend/src/features/paper-trading/index.test.tsx`:
 
@@ -1787,7 +1787,7 @@ describe('PaperTradingPage', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 ```bash
 cd frontend
@@ -1796,7 +1796,7 @@ npm test -- src/features/paper-trading/index.test.tsx
 
 Expected: FAIL — the placeholder page has no tabs or tables.
 
-- [ ] **Step 3: Replace `frontend/src/features/paper-trading/index.tsx`**
+- [x] **Step 3: Replace `frontend/src/features/paper-trading/index.tsx`**
 
 ```tsx
 import { useMemo } from 'react'
@@ -2015,7 +2015,7 @@ function OrdersTable({ orders }: { orders: PaperOrder[] }) {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 ```bash
 cd frontend
@@ -2024,7 +2024,7 @@ npm test -- src/features/paper-trading/index.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/features/paper-trading
