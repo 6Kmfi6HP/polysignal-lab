@@ -45,7 +45,10 @@ def build_paper_trading_node_config(
     config = trading_node_config(
         trader_id=trader_id("POLYSIGNAL-001"),
         logging=logging_config(log_level="INFO", use_pyo3=True),
-        data_engine=live_data_engine_config(validate_data_sequence=True),
+        data_engine=live_data_engine_config(
+            validate_data_sequence=True,
+            graceful_shutdown_on_exception=True,
+        ),
         exec_engine=live_exec_engine_config(reconciliation=False),
         data_clients={
             POLYMARKET_CLIENT_ID: polymarket_data_config(
