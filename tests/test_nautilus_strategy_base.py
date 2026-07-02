@@ -3477,3 +3477,153 @@ def test_native_strategy_l2_keeps_order_book_deltas_and_trade_ticks() -> None:
         {"instrument_id": "up-token.POLYMARKET", "book_type": "L2_MBP"}
     ]
     assert strategy.subscribed_trades == ["up-token.POLYMARKET"]
+
+
+def test_native_strategy_quote_tick_updates_token_book_and_evaluates() -> None:
+    from types import SimpleNamespace
+    from datetime import UTC, datetime
+    from polysignal_lab.nautilus_bridge.market_registry import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+        PolymarketMarketRegistry,
+    )
+    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
+    from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+    from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    registry = PolymarketMarketRegistry()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-5m",
+            market_slug="btc-updown-5m",
+            condition_id="condition-btc-5m",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+        )
+    )
+    books = NautilusBookDataProvider()
+    assembler = MarketViewAssembler(
+        registry=registry,
+        books=books,
+        sidecar=ExternalDataSidecar(),
+    )
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.evaluated: list[str] = []
+
+        def evaluate_condition(self, condition_id: str) -> None:
+            self.evaluated.append(condition_id)
+            super().evaluate_condition(condition_id)
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=assembler,
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        registry=registry,
+        sidecar=ExternalDataSidecar(),
+    )
+
+    strategy.on_quote_tick(
+        SimpleNamespace(
+            instrument_id="up-token.POLYMARKET",
+            bid_price=0.49,
+            ask_price=0.51,
+            bid_size=12.0,
+            ask_size=13.0,
+            ts_event=datetime.now(UTC),
+        )
+    )
+
+    book = books.book_for_token("up-token")
+    assert book is not None
+    assert book.best_bid == 0.49
+    assert book.best_ask == 0.51
+    assert book.last_trade_price is None
+    assert book.last_trade_size is None
+    assert strategy.evaluated == ["condition-btc-5m"]
+
+
+def test_native_strategy_order_book_snapshot_updates_token_book_and_evaluates() -> None:
+    from types import SimpleNamespace
+    from datetime import UTC, datetime
+    from polysignal_lab.nautilus_bridge.market_registry import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+        PolymarketMarketRegistry,
+    )
+    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
+    from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+    from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeLevel:
+        def __init__(self, price: float, size: float) -> None:
+            self.price = price
+            self.size = size
+
+    registry = PolymarketMarketRegistry()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-5m",
+            market_slug="btc-updown-5m",
+            condition_id="condition-btc-5m",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+        )
+    )
+    books = NautilusBookDataProvider()
+    assembler = MarketViewAssembler(
+        registry=registry,
+        books=books,
+        sidecar=ExternalDataSidecar(),
+    )
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.evaluated: list[str] = []
+
+        def evaluate_condition(self, condition_id: str) -> None:
+            self.evaluated.append(condition_id)
+            super().evaluate_condition(condition_id)
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=assembler,
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        registry=registry,
+        sidecar=ExternalDataSidecar(),
+    )
+
+    strategy.on_order_book(
+        SimpleNamespace(
+            instrument_id="down-token.POLYMARKET",
+            bids=[FakeLevel(0.47, 10.0)],
+            asks=[FakeLevel(0.53, 11.0)],
+            last_trade_price=0.52,
+            last_trade_size=3.0,
+            last_trade_timestamp=None,
+            received_at=datetime.now(UTC),
+        )
+    )
+
+    book = books.book_for_token("down-token")
+    assert book is not None
+    assert book.best_bid == 0.47
+    assert book.best_ask == 0.53
+    assert book.last_trade_price == 0.52
+    assert book.last_trade_size == 3.0
+    assert strategy.evaluated == ["condition-btc-5m"]

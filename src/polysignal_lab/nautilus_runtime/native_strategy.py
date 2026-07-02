@@ -475,6 +475,89 @@ class PolySignalNativeStrategy:
             _ = updater(token_id, _domain_order_book(token_id, order_book))
         return condition_id
 
+    def on_quote_tick(self, tick: object) -> None:
+        condition_id = self._update_book_from_quote_tick(tick)
+        if condition_id is None:
+            return
+        self._evaluate_market_data_condition(condition_id)
+
+    def _update_book_from_quote_tick(self, tick: object) -> str | None:
+        if self.registry is None:
+            return None
+        instrument_id = _identifier_text(getattr(tick, "instrument_id", None))
+        if instrument_id is None:
+            return None
+        token_id = _token_id_for_instrument(self.registry, instrument_id)
+        condition_id = _condition_id_for_instrument(self.registry, instrument_id)
+        if token_id is None or condition_id is None:
+            return None
+        self._market_data_subscription_group.mark_confirmed(instrument_id)
+        bid_price = _maybe_float(getattr(tick, "bid_price", None))
+        ask_price = _maybe_float(getattr(tick, "ask_price", None))
+        bid_size = _maybe_float(getattr(tick, "bid_size", None))
+        ask_size = _maybe_float(getattr(tick, "ask_size", None))
+        bids = [BookLevel(price=bid_price, size=bid_size)] if bid_price is not None else []
+        asks = [BookLevel(price=ask_price, size=ask_size)] if ask_price is not None else []
+        order_book = OrderBook(
+            token_id=token_id,
+            bids=bids,
+            asks=asks,
+            received_at=_datetime_or_now(getattr(tick, "ts_event", None)),
+        )
+        books = getattr(self._require_assembler(), "books", None)
+        updater = getattr(books, "update_book", None)
+        if callable(updater):
+            _ = updater(token_id, order_book)
+        return condition_id
+
+    def on_order_book(self, book: object) -> None:
+        condition_id = self._update_book_from_order_book(book)
+        if condition_id is None:
+            return
+        self._evaluate_market_data_condition(condition_id)
+
+    def _update_book_from_order_book(self, book: object) -> str | None:
+        if self.registry is None:
+            return None
+        instrument_id = _identifier_text(getattr(book, "instrument_id", None))
+        if instrument_id is None:
+            return None
+        token_id = _token_id_for_instrument(self.registry, instrument_id)
+        condition_id = _condition_id_for_instrument(self.registry, instrument_id)
+        if token_id is None or condition_id is None:
+            return None
+        self._market_data_subscription_group.mark_confirmed(instrument_id)
+        raw_bids = getattr(book, "bids", [])
+        if callable(raw_bids):
+            raw_bids = raw_bids()
+        raw_asks = getattr(book, "asks", [])
+        if callable(raw_asks):
+            raw_asks = raw_asks()
+        bids = [
+            BookLevel(price=_float_attr(level, "price"), size=_float_attr(level, "size"))
+            for level in cast(list[object], raw_bids or [])
+        ]
+        asks = [
+            BookLevel(price=_float_attr(level, "price"), size=_float_attr(level, "size"))
+            for level in cast(list[object], raw_asks or [])
+        ]
+        last_trade_price = _maybe_float(getattr(book, "last_trade_price", None))
+        last_trade_size = _maybe_float(getattr(book, "last_trade_size", None))
+        order_book = OrderBook(
+            token_id=token_id,
+            bids=bids,
+            asks=asks,
+            last_trade_price=last_trade_price,
+            last_trade_size=last_trade_size,
+            last_trade_timestamp=str(getattr(book, "last_trade_timestamp", "") or "") or None,
+            received_at=_datetime_or_now(getattr(book, "received_at", None)),
+        )
+        books = getattr(self._require_assembler(), "books", None)
+        updater = getattr(books, "update_book", None)
+        if callable(updater):
+            _ = updater(token_id, order_book)
+        return condition_id
+
     def on_trade_tick(self, tick: object) -> None:
         condition_id = self._update_trade_from_tick(tick)
         if condition_id is None:
