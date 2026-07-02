@@ -13,6 +13,7 @@ import importlib
 import logging
 import signal
 import threading
+import traceback
 from contextlib import suppress
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -896,6 +897,48 @@ def _install_sync_os_signal_handlers(
     return lambda: _restore_os_signal_handlers(previous_handlers)
 
 
+def _dump_thread_stacks(log_path: str) -> None:
+    """Write all thread stack traces to a file that survives container restart."""
+    try:
+        _crash_dir = Path(log_path).parent
+        _crash_dir.mkdir(parents=True, exist_ok=True)
+        frames = sys._current_frames()
+        lines: list[str] = [
+            f"=== crash dump {datetime.now(UTC).isoformat()} ===",
+            f"threads={len(frames)}",
+        ]
+        for tid, stack in frames.items():
+            lines.append(f"\n--- thread {tid} ---")
+            for filename, lineno, name, line in traceback.extract_stack(stack):
+                lines.append(f"  {filename}:{lineno} {name}")
+                if line:
+                    lines.append(f"    {line.strip()}")
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except Exception:
+        pass
+
+
+def _install_crash_logger(log_dir: str) -> None:
+    """Install hooks that capture crash context before exit.
+
+    Writes to ``log_dir/crash.log`` which survives container restarts
+    when ``log_dir`` is a mounted volume.
+    """
+    crash_path = f"{log_dir.rstrip('/')}/crash.log"
+
+    def crash_excepthook(typ: type[BaseException], val: BaseException, tb: object | None) -> None:
+        _dump_thread_stacks(crash_path)
+        try:
+            with open(crash_path, "a", encoding="utf-8") as fh:
+                traceback.print_exception(typ, val, tb, file=fh)
+        except Exception:
+            pass
+        sys.__excepthook__(typ, val, tb)
+
+    sys.excepthook = crash_excepthook
+
+
 async def run_nautilus_cli_async(
     settings: Settings | None = None,
     stop_event: asyncio.Event | None = None,
@@ -1030,12 +1073,14 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
         except Exception:
             runtime_logger.exception("Nautilus startup notification failed")
         print(f"Nautilus runtime ready — {len(strategy_names)} strategies")
+        _install_crash_logger(settings.storage.jsonl_dir)
         run_method = cast(Callable[..., None], getattr(node, "run"))
         if "raise_exception" in inspect.signature(run_method).parameters:
             run_method(raise_exception=True)
         else:
             run_method()
         if strategy_names:
+            _dump_thread_stacks(f"{settings.storage.jsonl_dir.rstrip('/')}/crash.log")
             runtime_logger.warning(
                 "TradingNode.run returned unexpectedly with %d strategies active",
                 len(strategy_names),
