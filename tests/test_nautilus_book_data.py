@@ -85,3 +85,53 @@ def test_snapshot_freshness_falls_back_to_book_received_at() -> None:
     assert snapshot is not None
     assert snapshot.freshness_ms is not None
     assert snapshot.freshness_ms >= 0
+
+
+def test_update_trade_updates_last_trade_fields_without_full_deep_copy() -> None:
+    provider = NautilusBookDataProvider()
+    provider.update_book(
+        "up-token",
+        OrderBook(
+            token_id="up-token",
+            bids=[BookLevel(price=0.81, size=10.0)],
+            asks=[BookLevel(price=0.83, size=12.0)],
+        ),
+    )
+
+    provider.update_trade(
+        token_id="up-token",
+        price=0.82,
+        size=5.0,
+        side="BUY",
+        ts=datetime.now(UTC),
+    )
+
+    stored = provider.book_for_token("up-token")
+    assert stored is not None
+    assert stored.last_trade_price == 0.82
+    assert stored.last_trade_size == 5.0
+    # Book levels must be preserved after trade update
+    assert stored.best_bid == 0.81
+    assert stored.best_ask == 0.83
+
+
+def test_update_trade_twice_preserves_all_levels() -> None:
+    provider = NautilusBookDataProvider()
+    provider.update_book(
+        "up-token",
+        OrderBook(
+            token_id="up-token",
+            bids=[BookLevel(price=0.80, size=5.0), BookLevel(price=0.79, size=8.0)],
+            asks=[BookLevel(price=0.84, size=4.0), BookLevel(price=0.85, size=6.0)],
+        ),
+    )
+
+    provider.update_trade(token_id="up-token", price=0.82, size=5.0, side="BUY", ts=datetime.now(UTC))
+    provider.update_trade(token_id="up-token", price=0.81, size=3.0, side="SELL", ts=datetime.now(UTC))
+
+    stored = provider.book_for_token("up-token")
+    assert stored is not None
+    assert stored.last_trade_price == 0.81
+    assert stored.last_trade_size == 3.0
+    assert stored.best_bid == 0.80
+    assert stored.best_ask == 0.84

@@ -50,7 +50,7 @@ class NautilusBookDataProvider:
         self._trades[token_id] = self._trades[token_id][-512:]
         book = self._book(token_id)
         if book is not None:
-            updated = book.model_copy(deep=True)
+            updated = book.model_copy()
             updated.last_trade_price = price
             updated.last_trade_size = size
             updated.last_trade_side = side
