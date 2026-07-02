@@ -562,6 +562,18 @@ def test_owned_boundary_mirrors_legacy_position_once_before_reduce_only_exit() -
     assert mirrored.fill.last_px == "0.82"
     assert oms_type == "oms:NETTING"
 
+def test_matching_price_value_quantizes_before_instrument_converter() -> None:
+    from polysignal_lab.nautilus_runtime.matching import _price_value
+
+    class FakeInstrument:
+        price_precision = 2
+
+        def make_price(self, value: float) -> str:
+            return f"price:{value:.3f}"
+
+    assert _price_value({}, FakeInstrument(), 0.832) == "price:0.830"
+
+
 def test_publish_book_preserves_instrument_precision_for_nautilus_deltas() -> None:
     captured: list[object] = []
 

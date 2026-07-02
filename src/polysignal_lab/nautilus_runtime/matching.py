@@ -1168,10 +1168,11 @@ def _decimal_str(value: float, precision: int | None = None) -> str:
 
 
 def _price_value(components: dict[str, Any], instrument: Any, value: float) -> Any:
+    precision = getattr(instrument, "price_precision", None)
+    normalized = float(_decimal_str(value, precision)) if precision is not None else value
     maker = getattr(instrument, "make_price", None)
     if callable(maker):
-        return maker(value)
-    precision = getattr(instrument, "price_precision", None)
+        return maker(normalized)
     return components["Price"].from_str(_decimal_str(value, precision))
 
 

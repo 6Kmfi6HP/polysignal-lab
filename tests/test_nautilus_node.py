@@ -1686,6 +1686,126 @@ def test_run_nautilus_cli_disposes_node_after_async_exit(monkeypatch) -> None:
     assert node.disposed is True
 
 
+def test_polymarket_precision_guard_suppresses_precision_mismatch() -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    calls: list[tuple[Exception, str]] = []
+
+    class FakeEngine:
+        def _handle_queue_exception(self, exc: Exception, queue_name: str) -> None:
+            calls.append((exc, queue_name))
+
+    original = FakeEngine._handle_queue_exception
+    guarded = node_mod._polymarket_precision_guarded_queue_exception_handler(original)
+
+    guarded(
+        FakeEngine(),
+        RuntimeError("invalid tick.bid_price.precision=2 did not match instrument.price_precision=3"),
+        "Data",
+    )
+
+    assert calls == []
+
+
+def test_polymarket_precision_guard_handles_nautilus_logger_signature() -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    calls: list[tuple[Exception, str]] = []
+
+    class FakeNautilusLogger:
+        def warning(self, message: str, color: int | None = None) -> None:
+            _ = message
+            if color is not None and not isinstance(color, int):
+                raise TypeError("an integer is required")
+
+    class FakeEngine:
+        _log = FakeNautilusLogger()
+
+        def _handle_queue_exception(self, exc: Exception, queue_name: str) -> None:
+            calls.append((exc, queue_name))
+
+    original = FakeEngine._handle_queue_exception
+    guarded = node_mod._polymarket_precision_guarded_queue_exception_handler(original)
+
+    guarded(
+        FakeEngine(),
+        RuntimeError("invalid delta price precision=2 did not match instrument.price_precision=3"),
+        "Data",
+    )
+
+    assert calls == []
+
+
+def test_polymarket_precision_guard_preserves_unrelated_exceptions() -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    calls: list[tuple[Exception, str]] = []
+
+    class FakeEngine:
+        def _handle_queue_exception(self, exc: Exception, queue_name: str) -> None:
+            calls.append((exc, queue_name))
+
+    original = FakeEngine._handle_queue_exception
+    guarded = node_mod._polymarket_precision_guarded_queue_exception_handler(original)
+    exc = RuntimeError("database unavailable")
+
+    guarded(FakeEngine(), exc, "Data")
+
+    assert calls == [(exc, "Data")]
+
+
+def test_run_nautilus_cli_installs_polymarket_precision_guard(monkeypatch) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    installed = False
+
+    class FakeNode:
+        def run(self) -> None:
+            return None
+
+        def dispose(self) -> None:
+            return None
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    async def fake_prepare(settings):
+        _ = settings
+        return SimpleNamespace(stop=_noop, settings=_runtime_settings_stub()), (), SimpleNamespace()
+
+    def fake_bundle(settings, scheduler, discovered_markets, observability):
+        _ = settings, scheduler, discovered_markets, observability
+        return SimpleNamespace(
+            node=FakeNode(),
+            scheduler=SimpleNamespace(
+                stop=_noop,
+                settings=_runtime_settings_stub(
+                    runtime=SimpleNamespace(
+                        nautilus=SimpleNamespace(
+                            paper_engine="nautilus_matching",
+                            matching_accuracy_mode="depth_l2",
+                        )
+                    )
+                ),
+            ),
+            observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+            components={"strategies": []},
+        )
+
+    def fake_install() -> None:
+        nonlocal installed
+        installed = True
+
+    monkeypatch.setattr(node_mod, "_prepare_nautilus_runtime_context", fake_prepare)
+    monkeypatch.setattr(node_mod, "_rebind_market_discovery_client", lambda _scheduler: None)
+    monkeypatch.setattr(node_mod, "_build_nautilus_runtime_bundle", fake_bundle)
+    monkeypatch.setattr(node_mod, "_install_polymarket_precision_data_engine_guard", fake_install)
+
+    run_nautilus_cli()
+
+    assert installed is True
+
+
 def test_run_nautilus_cli_exits_cleanly_when_live_node_returns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

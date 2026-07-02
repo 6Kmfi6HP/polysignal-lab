@@ -152,6 +152,29 @@ def test_submit_approved_decision_uses_instrument_value_converters() -> None:
 
 
 
+def test_submit_approved_decision_quantizes_price_before_instrument_converter() -> None:
+    strategy = FakeStrategy()
+
+    class FakeInstrument:
+        id: str = "up-token.POLYMARKET"
+        price_precision = 2
+
+        def make_price(self, value: float) -> str:
+            return f"price:{value:.3f}"
+
+    order = submit_approved_decision(
+        cast(OrderSubmittingStrategy[FakeOrder], strategy),
+        _approved(OrderIntent.TAKER_IOC),
+        fixed_stake_usdc=10.0,
+        best_ask=0.512,
+        available_shares=100.0,
+        instrument_id_resolver=lambda _token_id: FakeInstrument(),
+    )
+
+    assert order.price == "price:0.510"
+
+
+
 def test_submit_approved_decision_maps_passive_gtd_expiry() -> None:
     strategy = FakeStrategy()
 

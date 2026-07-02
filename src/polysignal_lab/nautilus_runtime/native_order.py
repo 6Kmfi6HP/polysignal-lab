@@ -103,14 +103,16 @@ def _instrument_id(instrument: object) -> object:
 
 
 def _price_value(instrument: object, value: float) -> object:
+    precision = _precision(instrument, "price_precision")
+    normalized = float(_decimal_str(value, precision)) if precision is not None else value
     maker = cast(object, getattr(instrument, "make_price", None))
     if callable(maker):
-        return cast(Callable[[float], object], maker)(value)
+        return cast(Callable[[float], object], maker)(normalized)
     price_cls = _optional_nautilus_attr("nautilus_trader.model.objects", "Price")
     from_str = cast(object, getattr(price_cls, "from_str", None)) if price_cls is not None else None
     if callable(from_str):
-        return cast(Callable[[str], object], from_str)(_decimal_str(value, _precision(instrument, "price_precision")))
-    return value
+        return cast(Callable[[str], object], from_str)(_decimal_str(value, precision))
+    return normalized
 
 
 def _quantity_value(instrument: object, value: float) -> object:
