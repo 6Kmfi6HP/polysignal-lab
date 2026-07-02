@@ -108,6 +108,8 @@ def test_default_runtime_routes_fill_position_and_account_through_nautilus(monke
     from nautilus_trader.test_kit.mocks.data import MockMarketDataClient
     from nautilus_trader.test_kit.stubs.data import TestDataStubs
     import nautilus_trader.adapters.polymarket as polymarket_mod
+    instruments_by_id: dict[str, object] = {}
+
 
     class NoNetworkPolymarketClient(MockMarketDataClient):
         def subscribe(self, command) -> None:
@@ -115,6 +117,18 @@ def test_default_runtime_routes_fill_position_and_account_through_nautilus(monke
 
         def subscribe_order_book_deltas(self, command: SubscribeOrderBook) -> None:
             self._add_subscription_order_book_deltas(command.instrument_id)
+
+        def request_instrument(self, request) -> None:
+            instrument = instruments_by_id.get(str(request.instrument_id))
+            if instrument is None:
+                return
+            self._handle_instrument(
+                instrument,
+                request.id,
+                request.start,
+                request.end,
+                request.params,
+            )
 
         def connect(self) -> None:
             self._set_connected(True)
@@ -166,9 +180,15 @@ def test_default_runtime_routes_fill_position_and_account_through_nautilus(monke
         min_order_size=1.0,
         ts_init_ns=1,
     )
+    instruments_by_id[str(instrument.id)] = instrument
+    instruments_by_id[str(down_instrument.id)] = down_instrument
+
     sidecar = cast(Any, runtime["sidecar"])
     data_engine = cast(Any, cast(_LoopKernel, node.kernel).data_engine)
     trader = cast(Any, runtime["node"]).trader
+    data_engine.process(instrument)
+    data_engine.process(down_instrument)
+
 
     failures: list[BaseException] = []
 
