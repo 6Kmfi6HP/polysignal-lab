@@ -527,31 +527,7 @@ class PolySignalNativeStrategy:
         if token_id is None or condition_id is None:
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
-        raw_bids = getattr(book, "bids", [])
-        if callable(raw_bids):
-            raw_bids = raw_bids()
-        raw_asks = getattr(book, "asks", [])
-        if callable(raw_asks):
-            raw_asks = raw_asks()
-        bids = [
-            BookLevel(price=_float_attr(level, "price"), size=_float_attr(level, "size"))
-            for level in cast(list[object], raw_bids or [])
-        ]
-        asks = [
-            BookLevel(price=_float_attr(level, "price"), size=_float_attr(level, "size"))
-            for level in cast(list[object], raw_asks or [])
-        ]
-        last_trade_price = _maybe_float(getattr(book, "last_trade_price", None))
-        last_trade_size = _maybe_float(getattr(book, "last_trade_size", None))
-        order_book = OrderBook(
-            token_id=token_id,
-            bids=bids,
-            asks=asks,
-            last_trade_price=last_trade_price,
-            last_trade_size=last_trade_size,
-            last_trade_timestamp=str(getattr(book, "last_trade_timestamp", "") or "") or None,
-            received_at=_datetime_or_now(getattr(book, "received_at", None)),
-        )
+        order_book = _domain_order_book(token_id, book)
         books = getattr(self._require_assembler(), "books", None)
         updater = getattr(books, "update_book", None)
         if callable(updater):
