@@ -90,17 +90,43 @@ class PolymarketMarketRegistry:
     def __init__(self) -> None:
         self._by_condition: dict[str, MarketPairMeta] = {}
         self._by_token: dict[str, MarketPairMeta] = {}
+        self._by_instrument: dict[str, str] = {}
 
     def register(self, pair: MarketPairMeta) -> None:
         self._by_condition[pair.condition_id] = pair
         self._by_token[pair.up.token_id] = pair
         self._by_token[pair.down.token_id] = pair
+        self._by_instrument[str(pair.up.instrument_id)] = pair.condition_id
+        self._by_instrument[str(pair.down.instrument_id)] = pair.condition_id
 
     def by_condition(self, condition_id: str) -> MarketPairMeta | None:
         return self._by_condition.get(condition_id)
 
     def by_token(self, token_id: str) -> MarketPairMeta | None:
         return self._by_token.get(token_id)
+
+    def by_instrument(self, instrument_id: str) -> MarketPairMeta | None:
+        condition_id = self._by_instrument.get(instrument_id)
+        if condition_id is None:
+            return None
+        return self._by_condition.get(condition_id)
+
+    def condition_id_for_instrument(self, instrument_id: str) -> str | None:
+        return self._by_instrument.get(instrument_id)
+
+    def token_id_for_instrument(self, instrument_id: str) -> str | None:
+        """O(1) reverse lookup from instrument_id to token_id."""
+        condition_id = self._by_instrument.get(instrument_id)
+        if condition_id is None:
+            return None
+        pair = self._by_condition.get(condition_id)
+        if pair is None:
+            return None
+        if str(pair.up.instrument_id) == instrument_id:
+            return pair.up.token_id
+        if str(pair.down.instrument_id) == instrument_id:
+            return pair.down.token_id
+        return None
 
     def token_meta(self, token_id: str) -> InstrumentTokenMeta | None:
         pair = self.by_token(token_id)

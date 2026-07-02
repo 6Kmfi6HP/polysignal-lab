@@ -47,3 +47,55 @@ def test_market_registry_rejects_non_binary_market() -> None:
 
     with pytest.raises(ValueError, match="binary YES/NO"):
         MarketPairMeta.from_market(market)
+
+
+def test_market_registry_by_instrument_returns_pair_for_up_token() -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    pair = MarketPairMeta.from_market(market, up_instrument_id="PM-UP", down_instrument_id="PM-DOWN")
+    registry = PolymarketMarketRegistry()
+
+    registry.register(pair)
+
+    assert registry.by_instrument("PM-UP") == pair
+
+
+def test_market_registry_by_instrument_returns_pair_for_down_token() -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    pair = MarketPairMeta.from_market(market, up_instrument_id="PM-UP", down_instrument_id="PM-DOWN")
+    registry = PolymarketMarketRegistry()
+
+    registry.register(pair)
+
+    assert registry.by_instrument("PM-DOWN") == pair
+
+
+def test_market_registry_by_instrument_returns_none_for_unknown() -> None:
+    registry = PolymarketMarketRegistry()
+
+    assert registry.by_instrument("UNKNOWN") is None
+
+
+def test_market_registry_token_id_for_instrument_returns_up_token() -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    pair = MarketPairMeta.from_market(market, up_instrument_id="PM-UP", down_instrument_id="PM-DOWN")
+    registry = PolymarketMarketRegistry()
+
+    registry.register(pair)
+
+    assert registry.token_id_for_instrument("PM-UP") == pair.up.token_id
+
+
+def test_market_registry_token_id_for_instrument_returns_down_token() -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    pair = MarketPairMeta.from_market(market, up_instrument_id="PM-UP", down_instrument_id="PM-DOWN")
+    registry = PolymarketMarketRegistry()
+
+    registry.register(pair)
+
+    assert registry.token_id_for_instrument("PM-DOWN") == pair.down.token_id
+
+
+def test_market_registry_token_id_for_instrument_returns_none_for_unknown() -> None:
+    registry = PolymarketMarketRegistry()
+
+    assert registry.token_id_for_instrument("UNKNOWN") is None

@@ -1281,10 +1281,8 @@ def _event_side(
         if meta is not None:
             return meta.side
     if registry is not None and instrument_id is not None:
-        for condition_id in registry._by_condition:
-            pair = registry.by_condition(condition_id)
-            if pair is None:
-                continue
+        pair = registry.by_instrument(instrument_id)
+        if pair is not None:
             if str(pair.up.instrument_id) == instrument_id:
                 return pair.up.side
             if str(pair.down.instrument_id) == instrument_id:
@@ -1383,31 +1381,14 @@ def _condition_id_for_instrument(
     registry: PolymarketMarketRegistry,
     instrument_id: str,
 ) -> str | None:
-    for condition_id in registry._by_condition:
-        pair = registry.by_condition(condition_id)
-        if pair is None:
-            continue
-        if (
-            str(pair.up.instrument_id) == instrument_id
-            or str(pair.down.instrument_id) == instrument_id
-        ):
-            return pair.condition_id
-    return None
+    return registry.condition_id_for_instrument(instrument_id)
 
 
 def _token_id_for_instrument(
     registry: PolymarketMarketRegistry,
     instrument_id: str,
 ) -> str | None:
-    for condition_id in registry._by_condition:
-        pair = registry.by_condition(condition_id)
-        if pair is None:
-            continue
-        if str(pair.up.instrument_id) == instrument_id:
-            return pair.up.token_id
-        if str(pair.down.instrument_id) == instrument_id:
-            return pair.down.token_id
-    return None
+    return registry.token_id_for_instrument(instrument_id)
 
 
 def _cache_order_book(cache: object, instrument_id: object) -> object | None:
