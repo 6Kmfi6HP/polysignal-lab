@@ -161,10 +161,6 @@ class _StaticMarketUniverse:
 
 logger = logging.getLogger(__name__)
 
-# Allow tests to shorten the retry window by monkeypatching these.
-_NODE_RUN_MAX_RESTART_ATTEMPTS = 5
-_NODE_RUN_RESTART_DELAY_SEC = 5
-
 def _runtime_heartbeat_path(settings: Settings) -> Path:
     return Path(settings.storage.state_dir) / "runtime_heartbeat.json"
 
@@ -1035,46 +1031,14 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
             runtime_logger.exception("Nautilus startup notification failed")
         print(f"Nautilus runtime ready — {len(strategy_names)} strategies")
         run_method = cast(Callable[..., None], getattr(node, "run"))
-        max_restart_attempts = _NODE_RUN_MAX_RESTART_ATTEMPTS
-        restart_delay_sec = _NODE_RUN_RESTART_DELAY_SEC
-        for attempt in range(1, max_restart_attempts + 1):
-            try:
-                if "raise_exception" in inspect.signature(run_method).parameters:
-                    run_method(raise_exception=True)
-                else:
-                    run_method()
-            except Exception as exc:
-                runtime_logger.exception(
-                    "TradingNode.run raised (attempt %d/%d): %s",
-                    attempt, max_restart_attempts, exc,
-                )
-            if not strategy_names:
-                break
-            runtime_logger.warning(
-                "TradingNode.run returned (attempt %d/%d), restarting in %ds ...",
-                attempt, max_restart_attempts, restart_delay_sec,
-            )
-            _write_runtime_heartbeat_best_effort(
-                heartbeat_path,
-                phase="restarting",
-            )
-            if attempt < max_restart_attempts:
-                import time as _time
-                _time.sleep(restart_delay_sec)
-                _write_runtime_heartbeat_best_effort(
-                    heartbeat_path,
-                    phase="starting",
-                )
+        if "raise_exception" in inspect.signature(run_method).parameters:
+            run_method(raise_exception=True)
         else:
-            runtime_logger.error(
-                "TradingNode.run exceeded %d restart attempts, giving up",
-                max_restart_attempts,
-            )
-            _write_runtime_heartbeat_best_effort(
-                heartbeat_path,
-                phase="fatal",
-                fatal=True,
-                fatal_reason=f"exceeded {max_restart_attempts} restart attempts",
+            run_method()
+        if strategy_names:
+            runtime_logger.warning(
+                "TradingNode.run returned unexpectedly with %d strategies active",
+                len(strategy_names),
             )
     finally:
         try:
