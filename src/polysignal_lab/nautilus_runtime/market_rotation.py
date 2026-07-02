@@ -267,20 +267,14 @@ class MarketRotationActor:
             return
         self._refresh_in_flight = True
         try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            try:
-                refreshed_markets = self._refresh_market_universe_sync()
-                markets = self._apply_refreshed_markets(refreshed_markets)
-                self._run_refresh_price_to_beat_batch_sync(markets)
-            except Exception as exc:
-                logger.exception("market_rotation phase=refresh failed epoch=%s", self._epoch)
-                self._mark_down(exc, phase="refresh")
-                raise
-            finally:
-                self._refresh_in_flight = False
-            return
-        _ = loop.create_task(self._refresh_once_via_thread_guarded())
+            refreshed_markets = self._refresh_market_universe_sync()
+            markets = self._apply_refreshed_markets(refreshed_markets)
+            self._run_refresh_price_to_beat_batch_sync(markets)
+        except Exception as exc:
+            logger.exception("market_rotation phase=refresh failed epoch=%s", self._epoch)
+            self._mark_down(exc, phase="refresh")
+        finally:
+            self._refresh_in_flight = False
 
     def _on_spot(self, spot: SpotPrice) -> None:
         self.publisher.publish_spot(

@@ -939,11 +939,10 @@ def test_market_rotation_actor_on_start_uses_clock_timer_when_available(
         _close_recorded_tasks(created)
 
 
-def test_market_rotation_actor_refresh_timer_offloads_refresh_when_loop_running(
+def test_market_rotation_actor_refresh_timer_runs_sync_after_removing_async_offload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    scheduled: list[object] = []
-    sentinel = object()
+    calls: list[str] = []
     actor = MarketRotationActor(
         settings=Settings(),
         startup_markets=(),
@@ -954,16 +953,14 @@ def test_market_rotation_actor_refresh_timer_offloads_refresh_when_loop_running(
         health=None,
     )
 
-    class FakeLoop:
-        def create_task(self, coro: object) -> None:
-            scheduled.append(coro)
-
-    monkeypatch.setattr("asyncio.get_running_loop", lambda: FakeLoop())
-    monkeypatch.setattr(actor, "_refresh_once_via_thread_guarded", lambda: sentinel)
+    monkeypatch.setattr(actor, "_refresh_market_universe_sync", lambda: calls.append("refresh"))
+    monkeypatch.setattr(actor, "_apply_refreshed_markets", lambda markets: calls.append("apply"))
+    monkeypatch.setattr(actor, "_run_refresh_price_to_beat_batch_sync", lambda markets: calls.append("ptb"))
 
     actor._on_refresh_timer()
 
-    assert scheduled == [sentinel]
+    assert calls == ["refresh", "apply", "ptb"]
+    assert actor._refresh_in_flight is False
 
 
 def test_market_rotation_actor_refresh_timer_skips_when_refresh_in_flight(
