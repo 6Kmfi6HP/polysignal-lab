@@ -6,7 +6,9 @@ no private key/env-var reading, no allowance scripts.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
+
+UTC = timezone.utc
 import asyncio
 import atexit
 import inspect
