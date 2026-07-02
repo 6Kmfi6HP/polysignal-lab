@@ -468,6 +468,7 @@ def _build_native_strategies(
             observability=observability,
             progress_callback=_runtime_progress_callback(settings),
             unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
+            l1_book_snapshot_interval_ms=settings.runtime.nautilus.l1_book_snapshot_interval_ms,
         )
         strategies.append(strategy)
 

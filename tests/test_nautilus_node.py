@@ -334,6 +334,54 @@ def test_build_trading_node_forwards_unsubscribe_exited_to_native_strategy(
     assert captured_kwargs["unsubscribe_exited"] is False
     assert captured_kwargs["strategy_name"] == "vwap_momentum"
 
+
+def test_build_trading_node_passes_l1_snapshot_interval_to_native_strategies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_nautilus_placeholders(monkeypatch)
+    captured: dict[str, object] = {}
+
+    class FakeRotationActor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeStrategy:
+        def __init__(self, **kwargs):
+            captured["kwargs"] = kwargs
+            self.strategy_name = kwargs["strategy_name"]
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.market_rotation.runtime_market_rotation_actor_type",
+        lambda _base, _config: FakeRotationActor,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.native_strategy.runtime_native_strategy_type",
+        lambda _base, _config: FakeStrategy,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._native_core_for",
+        lambda _name, _cfg: object(),
+    )
+
+    settings = Settings()
+    settings.runtime.nautilus.matching_accuracy_mode = "fast_l1"
+    settings.runtime.nautilus.l1_book_snapshot_interval_ms = 250
+    settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
+
+    runtime = build_trading_node(
+        settings=settings,
+        condition_ids=("condition-btc-5m",),
+    )
+
+    strategies = cast(list[object], runtime["strategies"])
+    captured_kwargs = cast(dict[str, object], captured["kwargs"])
+
+    assert len(strategies) == 1
+    assert getattr(runtime["node"], "trader").strategies == strategies
+    assert captured_kwargs["book_type"] == "L1_MBP"
+    assert captured_kwargs["l1_book_snapshot_interval_ms"] == 250
+
+
 def test_build_trading_node_injects_runtime_progress_callback(monkeypatch, tmp_path) -> None:
     from polysignal_lab.observability.runtime_health import read_runtime_heartbeat
 

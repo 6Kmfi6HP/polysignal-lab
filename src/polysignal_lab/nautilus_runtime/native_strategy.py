@@ -222,6 +222,7 @@ def runtime_native_strategy_type(
             observability: _Observability | None = None,
             progress_callback: Callable[[str], None] | None = None,
             unsubscribe_exited: bool = True,
+            l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
         ) -> None:
             base_init = cast(Callable[..., None], nautilus_base.__init__)
             if config_factory is None:
@@ -244,6 +245,7 @@ def runtime_native_strategy_type(
                 observability=observability,
                 progress_callback=progress_callback,
                 unsubscribe_exited=unsubscribe_exited,
+                l1_book_snapshot_interval_ms=l1_book_snapshot_interval_ms,
             )
 
         namespace["__init__"] = __init__
@@ -276,6 +278,7 @@ class PolySignalNativeStrategy:
         observability: _Observability | None = None,
         progress_callback: Callable[[str], None] | None = None,
         unsubscribe_exited: bool = True,
+        l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
     ) -> None:
         if registry is None or sidecar is None or assembler is None:
             raise RuntimeError(MISSING_PROJECTIONS_ERROR)
@@ -288,6 +291,7 @@ class PolySignalNativeStrategy:
         self.fixed_stake_usdc: float = fixed_stake_usdc
         self.data_names: tuple[str, ...] = tuple(data_names)
         self.book_type: str = book_type
+        self.l1_book_snapshot_interval_ms: int = int(l1_book_snapshot_interval_ms)
         self.instrument_id_resolver: Callable[[str], object] = (
             instrument_id_resolver or _identity_instrument_id
         )

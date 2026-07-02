@@ -290,6 +290,7 @@ class NautilusRuntimeConfig(BaseModel):
     execution_mode: Literal["paper_sandbox"] = "paper_sandbox"
     paper_engine: Literal["nautilus_matching"] = "nautilus_matching"
     matching_accuracy_mode: Literal["fast_l1", "depth_l2", "queue_l2"] = "depth_l2"
+    l1_book_snapshot_interval_ms: int = 1000
     allow_live_polymarket_execution: bool = False
     intercept_os_signals: bool = False
     polymarket_data: NautilusDataClientConfig = Field(
