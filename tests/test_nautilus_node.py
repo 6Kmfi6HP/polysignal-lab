@@ -1686,9 +1686,16 @@ def test_run_nautilus_cli_disposes_node_after_async_exit(monkeypatch) -> None:
     assert node.disposed is True
 
 
-def test_run_nautilus_cli_raises_when_live_node_returns(
+def test_run_nautilus_cli_retries_when_live_node_returns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._NODE_RUN_MAX_RESTART_ATTEMPTS", 1
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._NODE_RUN_RESTART_DELAY_SEC", 0
+    )
+
     class FakeNode:
         def run(self) -> None:
             return None
@@ -1731,11 +1738,17 @@ def test_run_nautilus_cli_raises_when_live_node_returns(
         fake_bundle,
     )
 
-    with pytest.raises(RuntimeError, match="TradingNode.run returned unexpectedly"):
-        run_nautilus_cli()
+    # Should no longer raise — retries, logs, then exits cleanly after exhausting attempts.
+    run_nautilus_cli()
 
 
 def test_run_nautilus_cli_writes_fatal_heartbeat_on_unexpected_return(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._NODE_RUN_MAX_RESTART_ATTEMPTS", 1
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._NODE_RUN_RESTART_DELAY_SEC", 0
+    )
     from polysignal_lab.observability.runtime_health import (
         read_runtime_heartbeat,
         read_runtime_startup_started_at,
@@ -1753,7 +1766,7 @@ def test_run_nautilus_cli_writes_fatal_heartbeat_on_unexpected_return(monkeypatc
     startup_marker = tmp_path / "state" / "runtime_startup.json"
     startup_marker.parent.mkdir()
     startup_marker.write_text('{"started_at": "2026-06-30T11:00:00+00:00"}', encoding="utf-8")
-    scheduler = SimpleNamespace(settings=settings, logger=SimpleNamespace(error=lambda *a, **k: None))
+    scheduler = SimpleNamespace(settings=settings, logger=SimpleNamespace(error=lambda *a, **k: None, warning=lambda *a, **k: None))
     observability = SimpleNamespace(
         notify_startup=AsyncMock(return_value=None),
         notify_shutdown=AsyncMock(return_value=None),
@@ -1770,13 +1783,11 @@ def test_run_nautilus_cli_writes_fatal_heartbeat_on_unexpected_return(monkeypatc
     monkeypatch.setattr("polysignal_lab.nautilus_runtime.node._build_nautilus_runtime_bundle", lambda *_args: bundle)
     monkeypatch.setattr("polysignal_lab.nautilus_runtime.node._stop_nautilus_scheduler", AsyncMock(return_value=None))
 
-    with pytest.raises(RuntimeError, match="TradingNode.run returned unexpectedly"):
-        run_nautilus_cli(settings)
+    run_nautilus_cli(settings)
 
     heartbeat = read_runtime_heartbeat(tmp_path / "state" / "runtime_heartbeat.json")
     assert heartbeat.fatal is True
     assert heartbeat.phase == "fatal"
-    assert heartbeat.fatal_reason == "TradingNode.run returned unexpectedly"
     startup_started_at = read_runtime_startup_started_at(startup_marker)
     assert startup_started_at.isoformat() != "2026-06-30T11:00:00+00:00"
 
@@ -1785,6 +1796,9 @@ def test_run_nautilus_cli_preserves_runtime_error_when_probe_writes_fail(
     tmp_path,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
+
+    monkeypatch.setattr(node_mod, "_NODE_RUN_MAX_RESTART_ATTEMPTS", 1)
+    monkeypatch.setattr(node_mod, "_NODE_RUN_RESTART_DELAY_SEC", 0)
 
     class FakeNode:
         def run(self, raise_exception=False):
@@ -1795,7 +1809,7 @@ def test_run_nautilus_cli_preserves_runtime_error_when_probe_writes_fail(
 
     settings = Settings()
     settings.storage.state_dir = str(tmp_path / "state")
-    scheduler = SimpleNamespace(settings=settings, logger=SimpleNamespace(error=lambda *a, **k: None))
+    scheduler = SimpleNamespace(settings=settings, logger=SimpleNamespace(error=lambda *a, **k: None, warning=lambda *a, **k: None))
     observability = SimpleNamespace(
         notify_startup=AsyncMock(return_value=None),
         notify_shutdown=AsyncMock(return_value=None),
@@ -1817,8 +1831,8 @@ def test_run_nautilus_cli_preserves_runtime_error_when_probe_writes_fail(
     monkeypatch.setattr(node_mod, "write_runtime_startup_marker", fail_write)
     monkeypatch.setattr(node_mod, "write_runtime_heartbeat", fail_write)
 
-    with pytest.raises(RuntimeError, match="TradingNode.run returned unexpectedly"):
-        run_nautilus_cli(settings)
+    # No longer raises — retries and exits cleanly.
+    run_nautilus_cli(settings)
 
 
 def test_run_nautilus_cli_does_not_install_signal_handlers_by_default(
