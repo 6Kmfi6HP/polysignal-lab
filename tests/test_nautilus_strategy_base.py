@@ -3627,3 +3627,176 @@ def test_native_strategy_order_book_snapshot_updates_token_book_and_evaluates() 
     assert book.last_trade_price == 0.52
     assert book.last_trade_size == 3.0
     assert strategy.evaluated == ["condition-btc-5m"]
+
+
+def test_native_strategy_l1_projection_preserves_vwap_momentum_decision_inputs() -> None:
+    from types import SimpleNamespace
+
+    from polysignal_lab.alpha.types import SpotView
+    from polysignal_lab.alpha.vwap_momentum_core import VWAPMomentumAlphaCore
+    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
+    from polysignal_lab.nautilus_bridge.market_registry import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+    )
+    from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+    from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.strategies.config import VWAPMomentumConfig
+
+    now = datetime.now(UTC)
+    start_ts = now - timedelta(seconds=500)
+    end_ts = now + timedelta(seconds=400)
+
+    registry = PolymarketMarketRegistry()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-15m",
+            market_slug="btc-updown-15m",
+            condition_id="condition-btc-15m",
+            asset="BTC",
+            timeframe="15m",
+            start_ts=start_ts,
+            end_ts=end_ts,
+            up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+        )
+    )
+
+    sidecar = ExternalDataSidecar()
+    sidecar.update_spot(
+        SpotView(
+            asset="BTC",
+            symbol="BTCUSD",
+            price=100000.0,
+            source="polymarket_rtds",
+            freshness_ms=10,
+        )
+    )
+    sidecar.update_price_to_beat(
+        condition_id="condition-btc-15m",
+        value=99950.0,
+        source="anchor",
+        verified=True,
+        from_anchor_service=True,
+        anchor_source="chainlink",
+        anchor_lag_ms=5,
+    )
+
+    books = NautilusBookDataProvider()
+    assembler = MarketViewAssembler(
+        registry=registry,
+        books=books,
+        sidecar=sidecar,
+    )
+
+    config = VWAPMomentumConfig(
+        assets=["BTC"],
+        timeframes=["15m"],
+        min_price=0.35,
+        max_price=0.85,
+        min_elapsed_sec=45,
+        no_entry_before_end_sec=20,
+        vwap_window_sec=30,
+        momentum_window_sec=60,
+        min_deviation_pct=0.01,
+        max_deviation_pct=1.0,
+        min_momentum=0.01,
+    )
+
+    class FakeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.evaluated: list[str] = []
+
+        def evaluate_condition(self, condition_id: str) -> None:
+            self.evaluated.append(condition_id)
+
+    strategy = FakeStrategy(
+        core=FakeCore([]),
+        assembler=assembler,
+        condition_ids=("condition-btc-15m",),
+        strategy_name="vwap_momentum",
+        registry=registry,
+        sidecar=sidecar,
+    )
+
+    # Feed L1 quote ticks for both tokens to establish the shared books
+    strategy.on_quote_tick(
+        SimpleNamespace(
+            instrument_id="up-token.POLYMARKET",
+            bid_price=0.48,
+            ask_price=0.52,
+            bid_size=10.0,
+            ask_size=10.0,
+            ts_event=now - timedelta(seconds=120),
+        )
+    )
+    strategy.on_quote_tick(
+        SimpleNamespace(
+            instrument_id="down-token.POLYMARKET",
+            bid_price=0.47,
+            ask_price=0.53,
+            bid_size=10.0,
+            ask_size=11.0,
+            ts_event=now - timedelta(seconds=120),
+        )
+    )
+
+    # Feed L1 trade ticks for down-token to seed VWAP history
+    # Trade within momentum band around now-60s
+    strategy.on_trade_tick(
+        SimpleNamespace(
+            instrument_id="down-token.POLYMARKET",
+            price=0.45,
+            size=5.0,
+            aggressor_side="SELLER",
+            ts_event=now - timedelta(seconds=60),
+        )
+    )
+    # Trade within VWAP window at now-25s
+    strategy.on_trade_tick(
+        SimpleNamespace(
+            instrument_id="down-token.POLYMARKET",
+            price=0.48,
+            size=5.0,
+            aggressor_side="BUYER",
+            ts_event=now - timedelta(seconds=25),
+        )
+    )
+    # Latest trade sets latest_price=0.55 for down-token
+    strategy.on_trade_tick(
+        SimpleNamespace(
+            instrument_id="down-token.POLYMARKET",
+            price=0.55,
+            size=3.0,
+            aggressor_side="BUYER",
+            ts_event=now,
+        )
+    )
+
+    # Verify the strategy routed all L1 ticks through evaluate_condition
+    assert len(strategy.evaluated) == 5
+
+    # Build the view from shared data fed via L1 callbacks
+    view = assembler.build("condition-btc-15m", created_at=now)
+    assert view is not None, "MarketView should be buildable after feeding L1 data"
+
+    # Evaluate with a fresh VWAPMomentumAlphaCore so its TradeHistory
+    # reflects only the data in this view (not any intermediate pushes
+    # from the strategy's own evaluate_condition routing).
+    fresh_core = VWAPMomentumAlphaCore(config)
+    decisions = fresh_core.evaluate(view)
+
+    assert len(decisions) > 0, (
+        "VWAPMomentumAlphaCore should produce decisions from "
+        "a MarketView assembled purely from L1 data"
+    )
+
+    decision = decisions[0]
+    assert decision.strategy == "vwap_momentum"
+    assert decision.condition_id == "condition-btc-15m"
+    assert decision.token_id == "down-token"
+    assert decision.side == Side.DOWN
+    assert "VWAP_DEVIATION_OK" in decision.reason_codes
+    assert "MOMENTUM_OK" in decision.reason_codes
