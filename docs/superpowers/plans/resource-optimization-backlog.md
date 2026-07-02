@@ -4,7 +4,7 @@
 
 | # | 优化项 | 发现方式 | 当前基准 | 预期收益 | 涉及模块 | 状态 | 提交 |
 |---|--------|----------|----------|----------|----------|------|------|
-| 1 | 添加 instrument_id → condition_id 反向索引，消除 O(N) 线性扫描 | 源码分析：`_condition_id_for_instrument` / `_token_id_for_instrument` 在每次回调中遍历所有 condition_id | ~20 次 O(N) 扫描/事件 × 每秒 ~1000 事件 | O(N) → O(1)，200 条件下约 200x 提速 | market_registry.py, native_strategy.py | 待测试 | — |
+| 1 | 添加 instrument_id → condition_id 反向索引，消除 O(N) 线性扫描 | 源码分析：`_condition_id_for_instrument` / `_token_id_for_instrument` 在每次回调中遍历所有 condition_id | ~10 次 O(N) 扫描/事件 × 每秒 ~1000 事件 | O(N) → O(1)，200 条件下约 200x 提速 | market_registry.py, native_strategy.py | 已合入 | `652b1c9` |
 
 ## Hotspot 1 详情
 

@@ -341,7 +341,7 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
     assert len(specs) == 1
     assert specs[0].intent == OrderIntent.TAKER_FOK
     assert specs[0].quantity == 20.0
-    assert strategy.rejected_decisions == []
+    assert len(strategy.rejected_decisions) == 0
 
 
 def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
@@ -402,8 +402,8 @@ def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
 
     strategy.evaluate_condition("condition-btc-5m")
 
-    assert strategy.submitted_orders == []
-    assert strategy.rejected_decisions != []
+    assert len(strategy.submitted_orders) == 0
+    assert len(strategy.rejected_decisions) != 0
 
 
 def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
@@ -714,8 +714,8 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
         )
         == "GTD"
     )
-    assert strategy.submitted_specs == []
-    assert strategy.execution_results == []
+    assert len(strategy.submitted_specs) == 0
+    assert len(strategy.execution_results) == 0
 
 
 def test_native_strategy_constructor_requires_injected_projections() -> None:
@@ -910,6 +910,40 @@ def test_native_strategy_constructor_without_registry_fails_clearly() -> None:
             sidecar=ExternalDataSidecar(),
             instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         )
+
+
+def test_native_strategy_bounds_rejected_decisions_to_prevent_memory_leak() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        **_native_projections(),
+    )
+
+    for _ in range(2000):
+        strategy.rejected_decisions.append("rejected")
+    # With unbounded list this will have 2000 entries, with bounded maxlen <= 1000
+    assert len(strategy.rejected_decisions) <= 1000
+
+
+def test_native_strategy_bounds_submitted_orders_to_prevent_memory_leak() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        **_native_projections(),
+    )
+
+    for _ in range(2000):
+        strategy.submitted_orders.append("order")
+    # With unbounded list this will have 2000 entries, with bounded maxlen <= 1000
+    assert len(strategy.submitted_orders) <= 1000
 
 
 def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument() -> (
@@ -1892,7 +1926,7 @@ def test_native_strategy_exited_market_fill_follow_up_is_gated() -> None:
 
     assert core.fill_condition_ids == ["condition-a"]
     assert strategy.submitted == []
-    assert strategy.submitted_orders == []
+    assert len(strategy.submitted_orders) == 0
 
 
 def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:

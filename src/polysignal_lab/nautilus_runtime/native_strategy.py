@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -313,10 +314,10 @@ class PolySignalNativeStrategy:
         self._approved_signal_metrics: dict[str, dict[str, object]] = {}
         self._submitted_signal_keys: set[str] = set()
         self._last_market_data_evaluation_at: dict[str, datetime] = {}
-        self.rejected_decisions: list[RejectedDecision] = []
-        self.submitted_orders: list[object] = []
-        self.submitted_specs: list[object] = []
-        self.execution_results: list[object] = []
+        self.rejected_decisions: deque[RejectedDecision] = deque(maxlen=1000)
+        self.submitted_orders: deque[object] = deque(maxlen=1000)
+        self.submitted_specs: deque[object] = deque(maxlen=1000)
+        self.execution_results: deque[object] = deque(maxlen=1000)
 
     def _require_registry(self) -> PolymarketMarketRegistry:
         if self.registry is None:
