@@ -44,6 +44,8 @@ DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
 MISSING_PROJECTIONS_ERROR = "PolySignalNativeStrategy requires injected registry, sidecar, and assembler projections"
 EVALUATION_HEARTBEAT_TIMER_NAME = "polysignal_evaluation_heartbeat"
 EVALUATION_HEARTBEAT_INTERVAL = timedelta(seconds=10)
+DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS = 1000
+L1_RAW_DELTA_FALLBACK_PHASE = "l1_raw_delta_fallback"
 
 
 @dataclass(slots=True)
@@ -689,6 +691,35 @@ class PolySignalNativeStrategy:
                 cached = None
         return cached is not None
 
+    def _is_l1_book_mode(self) -> bool:
+        return self.book_type == "L1_MBP"
+
+    def _l1_book_snapshot_interval_ms(self) -> int:
+        return int(getattr(self, "l1_book_snapshot_interval_ms", DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS))
+
+    def _subscribe_l1_book_feed(self, instrument_id: object) -> bool:
+        subscribe_quote_ticks = getattr(self, "subscribe_quote_ticks", None)
+        if callable(subscribe_quote_ticks):
+            _ = subscribe_quote_ticks(instrument_id)
+            return True
+        subscribe_order_book_at_interval = getattr(self, "subscribe_order_book_at_interval", None)
+        if callable(subscribe_order_book_at_interval):
+            _ = subscribe_order_book_at_interval(
+                instrument_id=instrument_id,
+                interval_ms=self._l1_book_snapshot_interval_ms(),
+            )
+            return True
+        return False
+
+    def _subscribe_raw_delta_feed(self, instrument_id: object) -> bool:
+        subscribe_order_book_deltas = getattr(self, "subscribe_order_book_deltas", None)
+        if not callable(subscribe_order_book_deltas):
+            return False
+        _ = subscribe_order_book_deltas(
+            instrument_id=instrument_id,
+            book_type=_nautilus_book_type(self.book_type),
+        )
+        return True
 
     def _call_core(self, method_name: str, event: AlphaOrderEvent) -> None:
         handler = getattr(self.core, method_name, None)
@@ -1046,17 +1077,19 @@ class PolySignalNativeStrategy:
             _ = request_instrument(instrument_id)
         if not self._instrument_is_cached(instrument_id):
             return False
-        subscribe_order_book_deltas = getattr(self, "subscribe_order_book_deltas", None)
         subscribe_trade_ticks = getattr(self, "subscribe_trade_ticks", None)
-        if not callable(subscribe_order_book_deltas) or not callable(
-            subscribe_trade_ticks
-        ):
+        if not callable(subscribe_trade_ticks):
             return False
         if self._market_data_subscription_group.acquire(instrument_text, self):
-            _ = subscribe_order_book_deltas(
-                instrument_id=instrument_id,
-                book_type=_nautilus_book_type(self.book_type),
-            )
+            book_feed_subscribed = False
+            if self._is_l1_book_mode():
+                book_feed_subscribed = self._subscribe_l1_book_feed(instrument_id)
+                if not book_feed_subscribed:
+                    self._note_runtime_progress(L1_RAW_DELTA_FALLBACK_PHASE)
+            if not book_feed_subscribed:
+                book_feed_subscribed = self._subscribe_raw_delta_feed(instrument_id)
+            if not book_feed_subscribed:
+                return False
             _ = subscribe_trade_ticks(instrument_id)
         self._subscription_state.wire_instrument_ids.add(instrument_text)
         return True
