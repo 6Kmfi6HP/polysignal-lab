@@ -3317,3 +3317,163 @@ def test_native_strategy_notifies_core_before_fill_handler() -> None:
         ("notify", "btc-5m", Side.UP, 10.0),
         ("filled", "btc-5m", Side.UP, 10.0),
     ]
+
+
+# ── L1 subscription selection tests ──────────────────────────────────────────
+
+
+def test_native_strategy_l1_prefers_quote_ticks_and_trade_ticks() -> None:
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.cache = SimpleNamespace(instrument=lambda instrument_id: object())
+            self.subscribed_quotes: list[str] = []
+            self.subscribed_trades: list[str] = []
+            self.subscribed_deltas: list[str] = []
+
+        def subscribe_quote_ticks(self, instrument_id):
+            self.subscribed_quotes.append(str(instrument_id))
+
+        def subscribe_trade_ticks(self, instrument_id):
+            self.subscribed_trades.append(str(instrument_id))
+
+        def subscribe_order_book_deltas(self, **kwargs):
+            self.subscribed_deltas.append(kwargs)
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        book_type="L1_MBP",
+        **_native_projections(),
+    )
+
+    strategy._subscribe_market_instrument("up-token.POLYMARKET")
+
+    assert strategy.subscribed_quotes == ["up-token.POLYMARKET"]
+    assert strategy.subscribed_trades == ["up-token.POLYMARKET"]
+    assert strategy.subscribed_deltas == []
+
+
+def test_native_strategy_l1_uses_interval_book_when_quote_ticks_unavailable() -> None:
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.cache = SimpleNamespace(instrument=lambda instrument_id: object())
+            self.subscribed_interval_books: list[dict[str, object]] = []
+            self.subscribed_trades: list[str] = []
+            self.subscribed_deltas: list[str] = []
+
+        def subscribe_order_book_at_interval(self, **kwargs):
+            self.subscribed_interval_books.append(kwargs)
+
+        def subscribe_trade_ticks(self, instrument_id):
+            self.subscribed_trades.append(str(instrument_id))
+
+        def subscribe_order_book_deltas(self, **kwargs):
+            self.subscribed_deltas.append(kwargs)
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        book_type="L1_MBP",
+        **_native_projections(),
+    )
+
+    strategy._subscribe_market_instrument("up-token.POLYMARKET")
+
+    assert strategy.subscribed_interval_books == [
+        {"instrument_id": "up-token.POLYMARKET", "interval_ms": 1000}
+    ]
+    assert strategy.subscribed_trades == ["up-token.POLYMARKET"]
+    assert strategy.subscribed_deltas == []
+
+
+def test_native_strategy_l1_raw_delta_fallback_is_visible() -> None:
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    phases: list[str] = []
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.cache = SimpleNamespace(instrument=lambda instrument_id: object())
+            self.subscribed_deltas: list[dict[str, object]] = []
+            self.subscribed_trades: list[str] = []
+
+        def subscribe_order_book_deltas(self, **kwargs):
+            self.subscribed_deltas.append(kwargs)
+
+        def subscribe_trade_ticks(self, instrument_id):
+            self.subscribed_trades.append(str(instrument_id))
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        book_type="L1_MBP",
+        progress_callback=phases.append,
+        **_native_projections(),
+    )
+
+    strategy._subscribe_market_instrument("up-token.POLYMARKET")
+
+    assert strategy.subscribed_deltas == [
+        {"instrument_id": "up-token.POLYMARKET", "book_type": "L1_MBP"}
+    ]
+    assert strategy.subscribed_trades == ["up-token.POLYMARKET"]
+    assert "l1_raw_delta_fallback" in phases
+
+
+def test_native_strategy_l2_keeps_order_book_deltas_and_trade_ticks() -> None:
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.cache = SimpleNamespace(instrument=lambda instrument_id: object())
+            self.subscribed_quotes: list[str] = []
+            self.subscribed_trades: list[str] = []
+            self.subscribed_deltas: list[dict[str, object]] = []
+
+        def subscribe_quote_ticks(self, instrument_id):
+            self.subscribed_quotes.append(str(instrument_id))
+
+        def subscribe_trade_ticks(self, instrument_id):
+            self.subscribed_trades.append(str(instrument_id))
+
+        def subscribe_order_book_deltas(self, **kwargs):
+            self.subscribed_deltas.append(kwargs)
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        book_type="L2_MBP",
+        **_native_projections(),
+    )
+
+    strategy._subscribe_market_instrument("up-token.POLYMARKET")
+
+    assert strategy.subscribed_quotes == []
+    assert strategy.subscribed_deltas == [
+        {"instrument_id": "up-token.POLYMARKET", "book_type": "L2_MBP"}
+    ]
+    assert strategy.subscribed_trades == ["up-token.POLYMARKET"]
