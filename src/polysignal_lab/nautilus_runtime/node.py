@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date
 import asyncio
+import atexit
 import inspect
 import importlib
 import logging
@@ -937,6 +938,16 @@ def _install_crash_logger(log_dir: str) -> None:
         sys.__excepthook__(typ, val, tb)
 
     sys.excepthook = crash_excepthook
+
+    def _atexit_dump() -> None:
+        _dump_thread_stacks(crash_path)
+        try:
+            with open(crash_path, "a", encoding="utf-8") as fh:
+                fh.write(f"=== atexit {datetime.now(UTC).isoformat()} ===\n")
+        except Exception:
+            pass
+
+    atexit.register(_atexit_dump)
 
 
 async def run_nautilus_cli_async(
