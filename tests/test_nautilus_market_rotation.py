@@ -989,6 +989,43 @@ def test_market_rotation_actor_refresh_timer_skips_when_refresh_in_flight(
     assert scheduled == []
 
 
+def test_market_rotation_actor_refresh_preserves_result_when_fresh_client_close_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ClosingClient:
+        async def aclose(self) -> None:
+            raise RuntimeError("Set changed size during iteration")
+
+    class FakeDiscovery:
+        def __init__(self) -> None:
+            self.client = object()
+
+    class FakeUniverse:
+        def __init__(self, discovery: FakeDiscovery) -> None:
+            self.discovery = discovery
+
+        async def refresh_once(self) -> list[Market]:
+            return [_market("condition-a")]
+
+    monkeypatch.setattr("httpx.AsyncClient", lambda *, timeout: ClosingClient())
+    discovery = FakeDiscovery()
+    original_client = discovery.client
+    actor = MarketRotationActor(
+        settings=Settings(),
+        startup_markets=(),
+        market_universe=FakeUniverse(discovery),
+        registry=PolymarketMarketRegistry(),
+        sidecar=ExternalDataSidecar(),
+        anchor_store=None,
+        health=None,
+    )
+
+    refreshed = actor._refresh_market_universe_sync()
+
+    assert [market.condition_id for market in refreshed] == ["condition-a"]
+    assert discovery.client is original_client
+
+
 def test_market_rotation_actor_refresh_market_universe_sync_uses_fresh_client_each_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -238,7 +238,10 @@ class MarketRotationActor:
             return tuple(await self.market_universe.refresh_once())
         finally:
             setattr(discovery, "client", original_client)
-            await fresh_client.aclose()
+            try:
+                await fresh_client.aclose()
+            except RuntimeError:
+                logger.exception("market_rotation phase=refresh close_client failed")
     def _refresh_market_universe_sync(self) -> tuple[Market, ...]:
         return tuple(asyncio.run(self._refresh_market_universe_async()))
 
