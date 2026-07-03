@@ -48,6 +48,24 @@ def test_trades_for_token_uses_registry_recent_trades_copy() -> None:
     assert trades[0].side is None
 
 
+def test_trades_for_token_hardcodes_none_for_missing_fields() -> None:
+    """Registry-backend Trade objects have price/size/timestamp only.
+
+    side and ts must be None because the Trade model lacks those fields.
+    Hard-coding None avoids expensive Pydantic getattr on nonexistent
+    fields (~8.3 µs per nonexistent field lookup).
+    """
+    registry = OrderBookRegistry()
+    registry.trade_events["up-token"] = [Trade(price=0.82, size=5.0, timestamp=1.0)]
+    provider = NautilusBookDataProvider(registry)
+
+    trades = provider.trades_for_token("up-token")
+
+    assert len(trades) == 1
+    assert trades[0].side is None
+    assert trades[0].ts is None
+
+
 def test_empty_book_has_no_best_prices() -> None:
     provider = NautilusBookDataProvider()
     provider.update_book(
