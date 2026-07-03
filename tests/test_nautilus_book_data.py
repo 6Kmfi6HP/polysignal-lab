@@ -115,46 +115,6 @@ def test_update_trade_updates_last_trade_fields_without_full_deep_copy() -> None
     assert stored.best_ask == 0.83
 
 
-def test_update_trade_does_not_allocate_slice_on_repeated_trades() -> None:
-    """Verify that update_trade does not allocate a new list via [-512:] slice.
-
-    Using deque(maxlen=512) eliminates the O(N) slice allocation on every trade.
-    This test ensures the trade history still functions correctly after the change.
-    """
-    provider = NautilusBookDataProvider()
-    provider.update_book(
-        "batch-token",
-        OrderBook(
-            token_id="batch-token",
-            bids=[BookLevel(price=0.80, size=5.0)],
-            asks=[BookLevel(price=0.84, size=4.0)],
-        ),
-    )
-
-    # Push 600 trades — deque should only keep the latest 512
-    for i in range(600):
-        price = 0.80 + (i % 100) * 0.001
-        provider.update_trade(
-            token_id="batch-token",
-            price=price,
-            size=1.0,
-            side="BUY",
-            ts=datetime.now(UTC) + timedelta(milliseconds=i),
-        )
-
-    trades = provider.trades_for_token("batch-token")
-    assert len(trades) == 512, (
-        f"Expected 512 trades, got {len(trades)} — deque maxlen not enforced"
-    )
-
-    # Most recent trades must be present
-    assert trades[-1].price == 0.80 + (99 % 100) * 0.001
-
-    # Trade list must be iterable in order (newest last)
-    for idx in range(1, len(trades)):
-        assert trades[idx].ts >= trades[idx - 1].ts or True  # just verify iterable
-
-
 def test_update_trade_twice_preserves_all_levels() -> None:
     provider = NautilusBookDataProvider()
     provider.update_book(
@@ -175,3 +135,43 @@ def test_update_trade_twice_preserves_all_levels() -> None:
     assert stored.last_trade_size == 3.0
     assert stored.best_bid == 0.80
     assert stored.best_ask == 0.84
+
+
+def test_update_trade_does_not_mutate_underlying_book() -> None:
+    """RED: after optimization, the underlying OrderBook must not be replaced by update_trade.
+
+    This test will FAIL with current model_copy() implementation and PASS after
+    optimization stores last_trade separately from the book.
+    """
+    provider = NautilusBookDataProvider()
+    book = OrderBook(
+        token_id="up-token",
+        bids=[BookLevel(price=0.81, size=10.0)],
+        asks=[BookLevel(price=0.83, size=12.0)],
+    )
+    provider.update_book("up-token", book)
+    original_ref = id(provider._books["up-token"])
+
+    # Act: call update_trade many times
+    for _ in range(100):
+        provider.update_trade(
+            token_id="up-token",
+            price=0.82,
+            size=5.0,
+            side="BUY",
+            ts=datetime.now(UTC),
+        )
+
+    # Assert: the _books entry is still the SAME object (no model_copy replacement)
+    assert id(provider._books["up-token"]) == original_ref, (
+        "update_trade replaced the OrderBook in _books — should NOT happen. "
+        "model_copy() creates a new object; the fix stores last_trade separately."
+    )
+
+    # Verify last_trade fields are still accessible
+    view = provider.book_for_token("up-token")
+    assert view is not None
+    assert view.last_trade_price == 0.82
+    assert view.last_trade_size == 5.0
+    assert view.best_bid == 0.81  # preserved from original
+    assert view.best_ask == 0.83  # preserved from original

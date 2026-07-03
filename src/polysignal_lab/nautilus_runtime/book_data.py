@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,14 +19,14 @@ class BookSnapshot:
     received_at: datetime | None
 
 
-_TRADES_DEQUE_MAXLEN = 512
-
-
 class NautilusBookDataProvider:
     def __init__(self, registry: OrderBookRegistry | None = None) -> None:
         self._registry = registry
         self._books: dict[str, OrderBook] = {}
-        self._trades: dict[str, deque[TradeView]] = {}
+        self._trades: dict[str, list[TradeView]] = {}
+        # Separate cache for last-trade data: token_id → (price, size, side, timestamp_iso)
+        # Avoids replacing the OrderBook on every trade tick via model_copy().
+        self._last_trades: dict[str, tuple[float | None, float | None, str | None, str | None]] = {}
         if registry is not None:
             self.update_from_registry(registry)
 
@@ -38,6 +37,18 @@ class NautilusBookDataProvider:
 
     def update_book(self, token_id: str, book: OrderBook) -> None:
         self._books[token_id] = book
+        # Seed the last-trade cache from the book's own fields so they are
+        # available even when update_trade is never called (e.g. on_order_book
+        # snapshots from the Nautilus adapter already carry last-trade data).
+        if token_id not in self._last_trades and any(
+            (book.last_trade_price, book.last_trade_size, book.last_trade_timestamp)
+        ):
+            self._last_trades[token_id] = (
+                book.last_trade_price,
+                book.last_trade_size,
+                book.last_trade_side,
+                book.last_trade_timestamp,
+            )
 
     def update_trade(
         self,
@@ -48,21 +59,22 @@ class NautilusBookDataProvider:
         side: str | None,
         ts: datetime | None,
     ) -> None:
-        trades = self._trades.get(token_id)
-        if trades is None:
-            trades = deque[TradeView](maxlen=_TRADES_DEQUE_MAXLEN)
-            self._trades[token_id] = trades
-        trades.append(
+        self._trades.setdefault(token_id, []).append(
             TradeView(price=price, size=size, side=side, ts=ts),
         )
-        book = self._book(token_id)
-        if book is not None:
-            updated = book.model_copy()
-            updated.last_trade_price = price
-            updated.last_trade_size = size
-            updated.last_trade_side = side
-            updated.last_trade_timestamp = ts.isoformat() if ts is not None else None
-            self._books[token_id] = updated
+        self._trades[token_id] = self._trades[token_id][-512:]
+        # Store last-trade fields in a separate lightweight cache instead of
+        # copying the entire OrderBook. This eliminates OrderBook.model_copy()
+        # allocation on every trade tick.
+        self._last_trades[token_id] = (
+            price,
+            size,
+            side,
+            ts.isoformat() if ts is not None else None,
+        )
+
+    def _last_trade_parts(self, token_id: str) -> tuple[float | None, float | None, str | None, str | None]:
+        return self._last_trades.get(token_id, (None, None, None, None))
 
     def book_for_token(self, token_id: str) -> SideBookView | None:
         book = self._book(token_id)
@@ -71,6 +83,7 @@ class NautilusBookDataProvider:
         bid = book.best_bid
         ask = book.best_ask
         spread = round(ask - bid, 10) if bid is not None and ask is not None else None
+        last_price, last_size, _last_side, last_ts = self._last_trade_parts(token_id)
         return SideBookView(
             token_id=token_id,
             best_bid=bid,
@@ -79,9 +92,10 @@ class NautilusBookDataProvider:
             freshness_ms=self._freshness_ms(token_id, book),
             min_order_size=getattr(book, "min_order_size", None),
             tick_size=getattr(book, "tick_size", None),
-            last_trade_price=book.last_trade_price,
-            last_trade_size=book.last_trade_size,
-            last_trade_timestamp=book.last_trade_timestamp,
+            # Read last-trade data from the separate cache, not from the OrderBook.
+            last_trade_price=last_price,
+            last_trade_size=last_size,
+            last_trade_timestamp=last_ts,
             received_at=book.received_at,
             ask_levels=tuple((float(level.price), float(level.size)) for level in book.asks),
         )
