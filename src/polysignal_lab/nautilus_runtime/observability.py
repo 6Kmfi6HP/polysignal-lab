@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol, cast
 
@@ -231,6 +232,13 @@ class NautilusNotifierAdapter:
         _ = await self.publisher.send(message, msg_type)
 
 
+# Per-tick evaluation re-emits the same rejected decision on every market data
+# event (measured ~220/s during entry windows, ~1GB/day across SQLite + JSONL).
+# Identical rejection records within this window are suppressed; accepted
+# decisions are never suppressed.
+REPEAT_SUPPRESS_TTL_SEC = 60.0
+
+
 class ObservabilityActor:
     """Receives typed events and writes them to SQLite + JSONL + health registry.
 
@@ -255,16 +263,38 @@ class ObservabilityActor:
         self.paper_fill_notifier: PaperFillNotifier | None = paper_fill_notifier
         self.paper_fill_mirror: PaperFillMirror | None = paper_fill_mirror
         self._event_count: int = 0
+        self._recent_rejections: dict[tuple[object, ...], float] = {}
 
     @property
     def event_count(self) -> int:
         return self._event_count
+
+    def _suppress_repeat(self, key: tuple[object, ...]) -> bool:
+        now = time.monotonic()
+        last = self._recent_rejections.get(key)
+        if last is not None and now - last < REPEAT_SUPPRESS_TTL_SEC:
+            return True
+        if len(self._recent_rejections) > 4096:
+            cutoff = now - REPEAT_SUPPRESS_TTL_SEC
+            self._recent_rejections = {
+                k: t for k, t in self._recent_rejections.items() if t >= cutoff
+            }
+        self._recent_rejections[key] = now
+        return False
 
     # -- Event recording --
 
     def record_decision(self, decision: AlphaDecision, accepted: bool) -> None:
         self._event_count += 1
         if self.store is None:
+            return
+        if not accepted and self._suppress_repeat((
+            "decision",
+            decision.strategy,
+            decision.market_id,
+            decision.side.value,
+            tuple(decision.reason_codes),
+        )):
             return
         self.store.insert_json("nautilus_decision", {
             "ts": utc_iso(),
@@ -298,12 +328,21 @@ class ObservabilityActor:
         candidate = getattr(rejected, "candidate", None)
         if self.store is None or not isinstance(candidate, SignalCandidate):
             return
+        reason_code = str(getattr(rejected, "reason_code", ""))
+        if self._suppress_repeat((
+            "rejected",
+            candidate.strategy,
+            candidate.market_id,
+            candidate.side.value,
+            reason_code,
+        )):
+            return
         self.store.insert_json(
             "rejected_signals",
             RejectedSignal(
                 candidate=candidate,
                 gate_name="nautilus_decision_policy",
-                reason_code=str(getattr(rejected, "reason_code", "")),
+                reason_code=reason_code,
                 details=dict(getattr(rejected, "detail", {}) or {}),
             ).model_dump(),
         )

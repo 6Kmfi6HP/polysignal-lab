@@ -253,6 +253,99 @@ def test_record_decision_and_duplicate_rejection_write_jsonl_payloads(tmp_path: 
     assert rejection_rows[0]["candidate"]["condition_id"] == "c1"
     assert rejection_rows[0]["candidate"]["token_id"] == "t1"
 
+def _decision(**overrides: object) -> AlphaDecision:
+    base: dict[str, Any] = dict(
+        strategy="test", asset="BTC", timeframe="5m",
+        market_id="m1", market_slug="s1", condition_id="c1",
+        token_id="t1", side=Side.UP, confidence=0.8,
+        entry_reference_price=0.5, max_entry_price=0.55,
+        seconds_to_close=120, data_freshness_ms=100,
+        reason_codes=("EDGE",), metrics={},
+    )
+    base.update(overrides)
+    return AlphaDecision(**base)
+
+
+def _rejected(reason_code: str = "DUPLICATE_SIGNAL") -> SimpleNamespace:
+    candidate = SignalCandidate.build(
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m1",
+        market_slug="s1",
+        condition_id="c1",
+        token_id="t1",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=["EDGE"],
+        metrics={},
+    )
+    return SimpleNamespace(
+        reason_code=reason_code,
+        detail={"dedupe_key": candidate.dedupe_key},
+        candidate=candidate,
+    )
+
+
+def test_repeated_identical_rejected_decision_is_persisted_once_within_ttl() -> None:
+    store = FakeStore()
+    actor = ObservabilityActor(store=store)
+
+    for _ in range(50):
+        actor.record_rejected_decision(_rejected())
+
+    assert len(store.tables.get("rejected_signals", [])) == 1
+
+
+def test_rejected_decision_with_different_reason_is_persisted() -> None:
+    store = FakeStore()
+    actor = ObservabilityActor(store=store)
+
+    actor.record_rejected_decision(_rejected("DUPLICATE_SIGNAL"))
+    actor.record_rejected_decision(_rejected("STALE_ORDERBOOK"))
+
+    assert len(store.tables.get("rejected_signals", [])) == 2
+
+
+def test_rejected_decision_is_persisted_again_after_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    from polysignal_lab.nautilus_runtime import observability as obs_module
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(obs_module.time, "monotonic", lambda: clock["now"])
+    store = FakeStore()
+    actor = ObservabilityActor(store=store)
+
+    actor.record_rejected_decision(_rejected())
+    clock["now"] += 61.0
+    actor.record_rejected_decision(_rejected())
+
+    assert len(store.tables.get("rejected_signals", [])) == 2
+
+
+def test_repeated_identical_rejected_nautilus_decision_is_persisted_once_within_ttl() -> None:
+    store = FakeStore()
+    actor = ObservabilityActor(store=store)
+
+    for _ in range(50):
+        actor.record_decision(_decision(), accepted=False)
+
+    assert len(store.tables.get("nautilus_decision", [])) == 1
+
+
+def test_accepted_decisions_are_never_suppressed() -> None:
+    store = FakeStore()
+    actor = ObservabilityActor(store=store)
+
+    actor.record_decision(_decision(), accepted=True)
+    actor.record_decision(_decision(), accepted=True)
+
+    assert len(store.tables.get("nautilus_decision", [])) == 2
+
+
 def test_record_order_writes_to_orders_table() -> None:
     store = FakeStore()
     actor = ObservabilityActor(store=store)
