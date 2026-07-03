@@ -17,8 +17,7 @@ class FakeBookProvider:
         self.books: dict[str, SideBookView] = {}
         self.trades: dict[str, tuple[TradeView, ...]] = {}
 
-    def book_for_token(self, token_id: str, *, now: datetime | None = None) -> SideBookView | None:
-        _ = now
+    def book_for_token(self, token_id: str) -> SideBookView | None:
         return self.books.get(token_id)
 
     def trades_for_token(self, token_id: str) -> tuple[TradeView, ...]:

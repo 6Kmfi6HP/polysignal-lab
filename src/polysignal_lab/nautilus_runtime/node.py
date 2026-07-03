@@ -101,8 +101,8 @@ class _NativeStrategyLike(Protocol):
 
 
 class _EmptyBookDataProvider:
-    def book_for_token(self, token_id: str, *, now: datetime | None = None) -> None:
-        _ = (token_id, now)
+    def book_for_token(self, token_id: str) -> None:
+        _ = token_id
         return None
 
     def trades_for_token(self, token_id: str) -> tuple[TradeView, ...]:

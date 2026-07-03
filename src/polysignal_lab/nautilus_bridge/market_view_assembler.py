@@ -10,7 +10,7 @@ from polysignal_lab.utils import stable_hash, utc_now
 
 
 class BookDataProvider(Protocol):
-    def book_for_token(self, token_id: str, *, now: datetime | None = None) -> SideBookView | None: ...
+    def book_for_token(self, token_id: str) -> SideBookView | None: ...
 
     def trades_for_token(self, token_id: str) -> Sequence[TradeView]: ...
 
@@ -25,14 +25,14 @@ class MarketViewAssembler:
         pair = self.registry.by_condition(condition_id)
         if pair is None:
             return None
-        now = created_at or utc_now()
-        up_book = self.books.book_for_token(pair.up.token_id, now=now)
-        down_book = self.books.book_for_token(pair.down.token_id, now=now)
+        up_book = self.books.book_for_token(pair.up.token_id)
+        down_book = self.books.book_for_token(pair.down.token_id)
         spot = self.sidecar.spot_for(pair.asset)
         ptb = self.sidecar.ptb_for(pair.condition_id)
         if up_book is None or down_book is None:
             return None
 
+        now = created_at or utc_now()
         seconds_to_close = None
         if pair.end_ts is not None and hasattr(pair.end_ts, "__sub__"):
             seconds_to_close = max(0, int((pair.end_ts - now).total_seconds()))
