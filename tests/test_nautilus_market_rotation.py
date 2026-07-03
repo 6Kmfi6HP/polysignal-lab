@@ -989,6 +989,32 @@ def test_market_rotation_actor_refresh_timer_skips_when_refresh_in_flight(
     assert scheduled == []
 
 
+def test_market_rotation_actor_refresh_timer_applies_result_when_asyncio_run_close_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_run = asyncio.run
+    actor = MarketRotationActor(
+        settings=Settings(),
+        startup_markets=(),
+        market_universe=_Universe([[_market("condition-a")]]),
+        registry=PolymarketMarketRegistry(),
+        sidecar=ExternalDataSidecar(),
+        anchor_store=None,
+        health=None,
+    )
+
+    def run_then_fail(coro: Coroutine[Any, Any, object]) -> object:
+        _ = original_run(coro)
+        raise RuntimeError("Set changed size during iteration")
+
+    monkeypatch.setattr(asyncio, "run", run_then_fail)
+
+    actor._on_refresh_timer()
+
+    assert [market.condition_id for market in actor.active_markets()] == ["condition-a"]
+    assert actor._refresh_in_flight is False
+
+
 def test_market_rotation_actor_refresh_preserves_result_when_fresh_client_close_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

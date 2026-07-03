@@ -243,7 +243,15 @@ class MarketRotationActor:
             except RuntimeError:
                 logger.exception("market_rotation phase=refresh close_client failed")
     def _refresh_market_universe_sync(self) -> tuple[Market, ...]:
-        return tuple(asyncio.run(self._refresh_market_universe_async()))
+        loop = asyncio.new_event_loop()
+        try:
+            return tuple(loop.run_until_complete(self._refresh_market_universe_async()))
+        finally:
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except RuntimeError:
+                logger.exception("market_rotation phase=refresh shutdown_asyncgens failed")
+            loop.close()
 
     def _run_refresh_price_to_beat_batch_sync(self, markets: tuple[Market, ...]) -> None:
         _ = asyncio.run(self._refresh_price_to_beat_batch(markets))
