@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import sqlite3
 import time
+from dataclasses import dataclass, replace
+from enum import Enum
+from queue import Empty, Full, Queue
+from threading import Event, Thread
 from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol, cast
 
@@ -18,6 +23,34 @@ from polysignal_lab.nautilus_runtime.projections import (
     project_order_event,
     project_position,
 )
+
+
+class PersistenceClass(Enum):
+    BEST_EFFORT_TELEMETRY = "best_effort_telemetry"
+    DURABLE_OR_DEGRADED = "durable_or_degraded"
+    CRITICAL_PAPER_STATE = "critical_paper_state"
+    FATAL_ON_LOSS = "fatal_on_loss"
+
+
+_BEST_EFFORT_TELEMETRY_TABLES = frozenset({
+    "nautilus_decision",
+    "nautilus_order",
+    "nautilus_fill",
+    "nautilus_position",
+    "health_snapshot",
+})
+_DURABLE_OR_DEGRADED_TABLES = frozenset({"signals", "rejected_signals"})
+_CRITICAL_PAPER_STATE_TABLES = frozenset({"orders", "fills", "positions", "settlements"})
+
+
+def persistence_class_for_table(table: str) -> PersistenceClass:
+    if table in _BEST_EFFORT_TELEMETRY_TABLES:
+        return PersistenceClass.BEST_EFFORT_TELEMETRY
+    if table in _DURABLE_OR_DEGRADED_TABLES:
+        return PersistenceClass.DURABLE_OR_DEGRADED
+    if table in _CRITICAL_PAPER_STATE_TABLES:
+        return PersistenceClass.CRITICAL_PAPER_STATE
+    return PersistenceClass.FATAL_ON_LOSS
 
 
 class PersistenceWriter(Protocol):
@@ -124,6 +157,12 @@ def _order_intent(value: str | None) -> OrderIntent | None:
 
 
 
+@dataclass(frozen=True, slots=True)
+class TelemetryEvent:
+    table: str
+    payload: Mapping[str, object]
+
+
 class EventStore(Protocol):
     """Protocol for storing observability events."""
 
@@ -195,8 +234,15 @@ class NautilusEventStoreAdapter:
             "nautilus_position": "nautilus_positions",
         }
         self._append_log: Callable[[str, object], None] | None = persistence.append_log
+        self._best_effort_tables: set[str] = set(_BEST_EFFORT_TELEMETRY_TABLES)
 
-    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+    def insert_json(
+        self,
+        table: str,
+        data: Mapping[str, object],
+        *,
+        suppress_best_effort_locks: bool = True,
+    ) -> None:
         route = self._routes.get(table)
         if route is None:
             raise ValueError(f"Unknown Nautilus event table: {table}")
@@ -213,7 +259,15 @@ class NautilusEventStoreAdapter:
             created_at = payload.get("ts") or utc_iso()
             _ = payload.setdefault("created_at", created_at)
             _ = payload.setdefault("event_id", _system_event_id(table, payload))
-        route(payload)
+        try:
+            route(payload)
+        except sqlite3.OperationalError as exc:
+            if (
+                table not in self._best_effort_tables
+                or "locked" not in str(exc).lower()
+                or not suppress_best_effort_locks
+            ):
+                raise
         if self._append_log is not None:
             self._append_log(self._streams[table], payload)
 
@@ -253,6 +307,10 @@ class ObservabilityActor:
         accepted_signal_notifier: AcceptedSignalNotifier | None = None,
         paper_fill_notifier: PaperFillNotifier | None = None,
         paper_fill_mirror: PaperFillMirror | None = None,
+        telemetry_queue_size: int = 1024,
+        telemetry_autostart: bool = False,
+        telemetry_sqlite_lock_retries: int = 3,
+        telemetry_retry_backoff_sec: float = 0.01,
     ) -> None:
         self.store: EventStore | None = store
         self.health: HealthRegistry = health or HealthRegistry()
@@ -264,6 +322,13 @@ class ObservabilityActor:
         self.paper_fill_mirror: PaperFillMirror | None = paper_fill_mirror
         self._event_count: int = 0
         self._recent_rejections: dict[tuple[object, ...], float] = {}
+        self._telemetry_queue: Queue[TelemetryEvent] = Queue(maxsize=telemetry_queue_size)
+        self._telemetry_sqlite_lock_retries = telemetry_sqlite_lock_retries
+        self._telemetry_retry_backoff_sec = telemetry_retry_backoff_sec
+        self._telemetry_stop = Event()
+        self._telemetry_thread: Thread | None = None
+        if telemetry_autostart:
+            self.start()
 
     @property
     def event_count(self) -> int:
@@ -282,6 +347,155 @@ class ObservabilityActor:
         self._recent_rejections[key] = now
         return False
 
+    def _mark_side_effect_failure(self, *, kind: str, error: BaseException) -> None:
+        component = self.health.components.get("observability_actor")
+        current = 0 if component is None else int(
+            component.metrics.get("non_critical_side_effect_failures", 0) or 0
+        )
+        self.health.mark_degraded(
+            "observability_actor",
+            str(error),
+            side_effect_kind=kind,
+            non_critical_side_effect_failures=current + 1,
+        )
+        component = self.health.components["observability_actor"]
+        metrics = dict(component.metrics)
+        metrics["error"] = str(error)
+        self.health.components["observability_actor"] = replace(component, metrics=metrics)
+
+    def _set_telemetry_backlog_metric(self) -> None:
+        component = self.health.components.get("observability_actor")
+        if component is None:
+            self.health.set_metric(
+                "observability_actor",
+                "telemetry_writer_backlog",
+                self._telemetry_queue.qsize(),
+            )
+            return
+        metrics = dict(component.metrics)
+        metrics["telemetry_writer_backlog"] = self._telemetry_queue.qsize()
+        self.health.components["observability_actor"] = replace(component, metrics=metrics)
+
+    def _mark_telemetry_drop(self, count: int = 1, reason: str = "telemetry queue full") -> None:
+        component = self.health.components.get("observability_actor")
+        current = 0 if component is None else int(
+            component.metrics.get("telemetry_queue_drops", 0) or 0
+        )
+        self.health.mark_degraded(
+            "observability_actor",
+            reason,
+            telemetry_queue_drops=current + count,
+            telemetry_writer_backlog=self._telemetry_queue.qsize(),
+        )
+
+    def _drop_queued_telemetry(self, reason: str) -> None:
+        dropped = 0
+        while True:
+            try:
+                self._telemetry_queue.get_nowait()
+            except Empty:
+                break
+            self._telemetry_queue.task_done()
+            dropped += 1
+        if dropped:
+            self._mark_telemetry_drop(count=dropped, reason=reason)
+        else:
+            self._set_telemetry_backlog_metric()
+
+    def _mark_sqlite_lock_retry(self, table: str) -> None:
+        component = self.health.components.get("observability_actor")
+        current = 0 if component is None else int(
+            component.metrics.get("sqlite_lock_retries", 0) or 0
+        )
+        self.health.set_metric(
+            "observability_actor",
+            "sqlite_lock_retries",
+            current + 1,
+        )
+        component = self.health.components["observability_actor"]
+        metrics = dict(component.metrics)
+        metrics["sqlite_lock_retry_table"] = table
+        self.health.components["observability_actor"] = replace(component, metrics=metrics)
+
+    def _insert_best_effort(self, table: str, payload: Mapping[str, object]) -> None:
+        if self.store is None:
+            return
+        try:
+            if isinstance(self.store, NautilusEventStoreAdapter):
+                self.store.insert_json(table, payload, suppress_best_effort_locks=False)
+            else:
+                self.store.insert_json(table, payload)
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc).lower():
+                raise
+            self._mark_side_effect_failure(kind=table, error=exc)
+        except (OSError, sqlite3.Error) as exc:
+            self._mark_side_effect_failure(kind=table, error=exc)
+
+    def _write_telemetry_event(self, event: TelemetryEvent) -> None:
+        attempts = 0
+        while True:
+            try:
+                self._insert_best_effort(event.table, event.payload)
+                return
+            except sqlite3.OperationalError as exc:
+                if (
+                    "locked" not in str(exc).lower()
+                    or attempts >= self._telemetry_sqlite_lock_retries
+                ):
+                    self._mark_side_effect_failure(kind=event.table, error=exc)
+                    return
+                attempts += 1
+                self._mark_sqlite_lock_retry(event.table)
+                time.sleep(self._telemetry_retry_backoff_sec)
+
+    def _enqueue_best_effort(self, table: str, payload: Mapping[str, object]) -> None:
+        if self.store is None:
+            return
+        try:
+            self._telemetry_queue.put_nowait(TelemetryEvent(table=table, payload=dict(payload)))
+        except Full:
+            self._mark_telemetry_drop()
+            return
+        self._set_telemetry_backlog_metric()
+
+    def drain_telemetry_once(self) -> bool:
+        try:
+            event = self._telemetry_queue.get_nowait()
+        except Empty:
+            self._set_telemetry_backlog_metric()
+            return False
+        try:
+            self._write_telemetry_event(event)
+        finally:
+            self._telemetry_queue.task_done()
+            self._set_telemetry_backlog_metric()
+        return True
+
+    def _run_telemetry_writer(self) -> None:
+        while not self._telemetry_stop.is_set() or not self._telemetry_queue.empty():
+            if not self.drain_telemetry_once():
+                self._telemetry_stop.wait(0.1)
+
+    def start(self) -> None:
+        if self._telemetry_thread is not None and self._telemetry_thread.is_alive():
+            return
+        self._telemetry_stop.clear()
+        self._telemetry_thread = Thread(
+            target=self._run_telemetry_writer,
+            name="polysignal-telemetry-writer",
+            daemon=True,
+        )
+        self._telemetry_thread.start()
+
+    def stop(self) -> None:
+        self._telemetry_stop.set()
+        thread = self._telemetry_thread
+        if thread is not None:
+            thread.join(timeout=5.0)
+        self._telemetry_thread = None
+        self._drop_queued_telemetry("telemetry writer stopped before draining")
+
     # -- Event recording --
 
     def record_decision(self, decision: AlphaDecision, accepted: bool) -> None:
@@ -296,7 +510,7 @@ class ObservabilityActor:
             tuple(decision.reason_codes),
         )):
             return
-        self.store.insert_json("nautilus_decision", {
+        self._enqueue_best_effort("nautilus_decision", {
             "ts": utc_iso(),
             "strategy": decision.strategy,
             "asset": decision.asset,
@@ -435,7 +649,7 @@ class ObservabilityActor:
         if self.store is None:
             return
         snapshot = self.health.snapshot()
-        self.store.insert_json("health_snapshot", {
+        self._enqueue_best_effort("health_snapshot", {
             "ts": snapshot.generated_at,
             "status": snapshot.status,
             "components": [c.as_dict() for c in snapshot.components],
@@ -444,6 +658,9 @@ class ObservabilityActor:
     def record_event(self, table: str, data: Mapping[str, object]) -> None:
         self._event_count += 1
         if self.store is None:
+            return
+        if persistence_class_for_table(table) is PersistenceClass.BEST_EFFORT_TELEMETRY:
+            self._enqueue_best_effort(table, data)
             return
         self.store.insert_json(table, data)
 
@@ -463,17 +680,26 @@ class ObservabilityActor:
     ) -> None:
         if self.accepted_signal_notifier is None:
             return
-        self.accepted_signal_notifier(signal, stake_usdc)
+        try:
+            self.accepted_signal_notifier(signal, stake_usdc)
+        except Exception as exc:
+            self._mark_side_effect_failure(kind="accepted_signal_notifier", error=exc)
 
     def notify_nautilus_paper_fill(self, payload: dict[str, object]) -> None:
         if self.paper_fill_notifier is None:
             return
-        self.paper_fill_notifier(dict(payload))
+        try:
+            self.paper_fill_notifier(dict(payload))
+        except Exception as exc:
+            self._mark_side_effect_failure(kind="paper_fill_notifier", error=exc)
 
     def mirror_nautilus_paper_fill(self, payload: dict[str, object]) -> None:
         if self.paper_fill_mirror is None:
             return
-        self.paper_fill_mirror(dict(payload))
+        try:
+            self.paper_fill_mirror(dict(payload))
+        except Exception as exc:
+            self._mark_side_effect_failure(kind="paper_fill_mirror", error=exc)
 
     # -- Notifications --
 

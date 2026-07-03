@@ -181,3 +181,17 @@ def test_strategy_leaderboard_win_rate_counts_voids_as_closed(tmp_path):
     assert leaderboard[0]["win_count"] == 1
     assert leaderboard[0]["void_count"] == 1
     assert leaderboard[0]["win_rate"] == 0.5
+
+
+def test_sqlite_store_uses_wal_and_busy_timeout(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "pragma.sqlite3")
+    try:
+        journal_mode = store._conn.execute("PRAGMA journal_mode").fetchone()[0]
+        busy_timeout = store._conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        synchronous = store._conn.execute("PRAGMA synchronous").fetchone()[0]
+    finally:
+        store.close()
+
+    assert str(journal_mode).lower() == "wal"
+    assert busy_timeout == 30000
+    assert int(synchronous) == 1

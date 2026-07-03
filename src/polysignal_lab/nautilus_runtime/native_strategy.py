@@ -4,7 +4,9 @@ from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from importlib import import_module
+import sqlite3
 from types import SimpleNamespace, new_class
 from typing import Protocol, cast
 
@@ -47,6 +49,45 @@ EVALUATION_HEARTBEAT_TIMER_NAME = "polysignal_evaluation_heartbeat"
 EVALUATION_HEARTBEAT_INTERVAL = timedelta(seconds=10)
 DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS = 1000
 L1_RAW_DELTA_FALLBACK_PHASE = "l1_raw_delta_fallback"
+
+
+class DataBoundaryClassification(Enum):
+    VALID_DATA = "ValidData"
+    DROPPED_FRAME = "DroppedFrame"
+    RECOVERABLE_FEED_ERROR = "RecoverableFeedError"
+    FATAL_FEED_ERROR = "FatalFeedError"
+
+
+def classify_project_owned_data(data: object) -> DataBoundaryClassification:
+    if isinstance(
+        data,
+        (
+            PolySignalSpotData,
+            PolySignalPriceToBeatData,
+            PolySignalMarketMetaData,
+            PolySignalMarketUniverseData,
+        ),
+    ):
+        return DataBoundaryClassification.VALID_DATA
+    if type(data).__name__ == "DataEvent" and getattr(data, "condition_id", None) is not None:
+        return DataBoundaryClassification.VALID_DATA
+    return DataBoundaryClassification.DROPPED_FRAME
+
+
+def _book_has_quote_depth(book: object) -> bool:
+    if getattr(book, "best_ask", None) is not None:
+        return True
+    ask_levels = getattr(book, "ask_levels", ()) or ()
+    return len(ask_levels) > 0
+
+
+def _market_view_ready(view: MarketView) -> bool:
+    try:
+        up_book = view.book_for(Side.UP)
+        down_book = view.book_for(Side.DOWN)
+    except (AttributeError, ValueError):
+        return False
+    return _book_has_quote_depth(up_book) and _book_has_quote_depth(down_book)
 
 
 @dataclass(slots=True)
@@ -379,6 +420,9 @@ class PolySignalNativeStrategy:
             self.evaluate_condition(condition_id)
 
     def on_data(self, data: object) -> None:
+        if classify_project_owned_data(data) is DataBoundaryClassification.DROPPED_FRAME:
+            self._note_runtime_progress("dropped_frame")
+            return
         if isinstance(data, PolySignalSpotData):
             sidecar = self._require_sidecar()
             sidecar.update_spot(
@@ -468,6 +512,7 @@ class PolySignalNativeStrategy:
         token_id = _token_id_for_instrument(self.registry, instrument_id)
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
         if token_id is None or condition_id is None:
+            self._note_runtime_progress("dropped_frame")
             return None
         cache = cast(object, getattr(self, "cache", None))
         order_book = _cache_order_book(cache, instrument_id_value)
@@ -495,6 +540,7 @@ class PolySignalNativeStrategy:
         token_id = _token_id_for_instrument(self.registry, instrument_id)
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
         if token_id is None or condition_id is None:
+            self._note_runtime_progress("dropped_frame")
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
         bid_price = _maybe_float(getattr(tick, "bid_price", None))
@@ -530,6 +576,7 @@ class PolySignalNativeStrategy:
         token_id = _token_id_for_instrument(self.registry, instrument_id)
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
         if token_id is None or condition_id is None:
+            self._note_runtime_progress("dropped_frame")
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
         order_book = _domain_order_book(token_id, book)
@@ -554,6 +601,7 @@ class PolySignalNativeStrategy:
         token_id = _token_id_for_instrument(self.registry, instrument_id)
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
         if token_id is None or condition_id is None:
+            self._note_runtime_progress("dropped_frame")
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
         books = getattr(self._require_assembler(), "books", None)
@@ -658,10 +706,16 @@ class PolySignalNativeStrategy:
         view = self._require_assembler().build(condition_id)
         if view is None:
             return
+        if not _market_view_ready(view):
+            self._note_runtime_progress("readiness_miss")
+            return
         for decision in self.core.evaluate(view):
             self._handle_decision(decision, view)
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
+        if not _market_view_ready(view):
+            self._note_runtime_progress("readiness_miss")
+            return
         if decision.condition_id not in self._active_condition_ids:
             return
         policy_result = self.policy.evaluate(decision, view)
@@ -810,34 +864,49 @@ class PolySignalNativeStrategy:
 
 
     def _record_decision(self, decision: AlphaDecision, *, accepted: bool) -> None:
-        if self.observability is not None:
+        if self.observability is None:
+            return
+        try:
             self.observability.record_decision(decision, accepted)
+        except (OSError, sqlite3.Error):
+            self._note_runtime_progress("telemetry_side_effect_failed")
 
     def _record_rejected(self, rejected: object) -> None:
-        if self.observability is not None:
-            self.observability.record_rejected_decision(rejected)
+        if self.observability is None:
+            return
+        self.observability.record_rejected_decision(rejected)
 
     def _record_nautilus_order(
         self, event: object, metrics: Mapping[str, object]
     ) -> None:
         if self.observability is None:
             return
-        self.observability.record_nautilus_order_event(
-            _projection_order_event(event, metrics)
-        )
+        try:
+            self.observability.record_nautilus_order_event(
+                _projection_order_event(event, metrics)
+            )
+        except (OSError, sqlite3.Error):
+            self._note_runtime_progress("telemetry_side_effect_failed")
 
     def _record_nautilus_fill(
         self, event: object, metrics: Mapping[str, object]
     ) -> None:
         if self.observability is None:
             return
-        self.observability.record_nautilus_fill_event(
-            _projection_fill_event(event, metrics)
-        )
+        try:
+            self.observability.record_nautilus_fill_event(
+                _projection_fill_event(event, metrics)
+            )
+        except (OSError, sqlite3.Error):
+            self._note_runtime_progress("telemetry_side_effect_failed")
 
     def _record_nautilus_position(self, position: object) -> None:
-        if self.observability is not None:
+        if self.observability is None:
+            return
+        try:
             self.observability.record_nautilus_position(position)
+        except (OSError, sqlite3.Error):
+            self._note_runtime_progress("telemetry_side_effect_failed")
 
     def _nautilus_paper_fill_payload(
         self,

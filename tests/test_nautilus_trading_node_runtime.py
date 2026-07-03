@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from types import ModuleType, SimpleNamespace
 from typing import cast
@@ -7,6 +8,7 @@ from typing import cast
 import pytest
 
 from polysignal_lab.config import Settings
+from polysignal_lab.nautilus_runtime.node import run_nautilus_cli_async
 from polysignal_lab.nautilus_runtime.trading_node import (
     PAPER_EXEC_CLIENT_ID,
     assert_no_live_polymarket_execution,
@@ -163,3 +165,62 @@ def test_register_paper_factories_registers_data_and_sandbox_exec_only(
     assert node.data_factories == [("POLYMARKET", FakePolymarketLiveDataClientFactory)]
     assert node.exec_factories == [(PAPER_EXEC_CLIENT_ID, FakeSandboxLiveExecClientFactory)]
     assert all(name != "POLYMARKET" for name, _factory in node.exec_factories)
+
+async def test_run_nautilus_cli_async_starts_and_stops_observability_writer(monkeypatch, tmp_path) -> None:
+    calls: list[str] = []
+    settings = Settings()
+    settings.storage.state_dir = str(tmp_path / "state")
+
+    class FakeObservability:
+        def start(self) -> None:
+            calls.append("start")
+
+        def stop(self) -> None:
+            calls.append("stop")
+
+        async def notify_startup(self, strategy_names=(), **kwargs):
+            _ = strategy_names, kwargs
+            calls.append("startup")
+
+        async def notify_shutdown(self):
+            calls.append("shutdown")
+
+    class FakeTradingNode:
+        def run(self):
+            return None
+
+    async def _stop_scheduler(*args, **kwargs):
+        _ = args, kwargs
+        calls.append("scheduler_stop")
+
+    async def fake_build(settings=None):
+        _ = settings
+        return SimpleNamespace(
+            node=FakeTradingNode(),
+            websocket_tasks=[],
+            scheduler=SimpleNamespace(
+                stop=_stop_scheduler,
+                settings=settings,
+                wallet=object(),
+            ),
+            observability=FakeObservability(),
+            components={"strategies": []},
+        )
+
+    async def fake_to_thread(fn, *args):
+        return fn(*args)
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.build_nautilus_runtime",
+        fake_build,
+    )
+    monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    await run_nautilus_cli_async(settings=settings, stop_event=stop_event)
+
+    assert calls[0] == "start"
+    assert "stop" in calls
+    assert calls.index("stop") < calls.index("scheduler_stop")

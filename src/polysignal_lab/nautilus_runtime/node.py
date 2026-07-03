@@ -1041,6 +1041,9 @@ async def run_nautilus_cli_async(
     run_task: asyncio.Task[None] | None = None
     stop_waiter: asyncio.Task[bool] | None = None
     try:
+        starter = getattr(bundle.observability, "start", None)
+        if callable(starter):
+            starter()
         strategies = bundle.components.get("strategies", ())
         strategy_count = len(strategies) if isinstance(strategies, Sequence) else 0
         strategy_names = (
@@ -1090,6 +1093,9 @@ async def run_nautilus_cli_async(
                 await bundle.observability.notify_shutdown()
             except Exception:
                 runtime_logger.exception("Nautilus shutdown notification failed")
+            stopper = getattr(bundle.observability, "stop", None)
+            if callable(stopper):
+                stopper()
             await _stop_nautilus_scheduler(bundle.scheduler)
         finally:
             cleanup_signals()
@@ -1133,6 +1139,9 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
         else []
     )
     try:
+        starter = getattr(bundle.observability, "start", None)
+        if callable(starter):
+            starter()
         try:
             asyncio.run(
                 bundle.observability.notify_startup(
@@ -1163,6 +1172,9 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
                 asyncio.run(bundle.observability.notify_shutdown())
             except Exception:
                 runtime_logger.exception("Nautilus shutdown notification failed")
+            stopper = getattr(bundle.observability, "stop", None)
+            if callable(stopper):
+                stopper()
             asyncio.run(_stop_nautilus_scheduler(bundle.scheduler))
             if isinstance(node, _Disposable):
                 node.dispose()

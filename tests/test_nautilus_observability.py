@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+import threading
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timezone
 from pathlib import Path
@@ -39,6 +41,57 @@ class FakeStore:
     def insert_many_json(self, table: str, rows: Sequence[Mapping[str, object]]) -> None:
         for row in rows:
             self.insert_json(table, row)
+
+
+class FailingTelemetryStore(FakeStore):
+    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+        if table.startswith("nautilus_"):
+            raise OSError("jsonl unavailable")
+        super().insert_json(table, data)
+
+
+class BlockingTelemetryStore(FakeStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.insert_started = threading.Event()
+        self.release_insert = threading.Event()
+
+    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+        self.insert_started.set()
+        _ = self.release_insert.wait(timeout=10.0)
+        super().insert_json(table, data)
+
+
+class FlakyLockedTelemetryStore(FakeStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            raise sqlite3.OperationalError("database is locked")
+        super().insert_json(table, data)
+
+
+class AlwaysLockedTelemetryStore(FakeStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+        self.calls += 1
+        raise sqlite3.OperationalError("database is locked")
+
+
+class NonLockingOperationalErrorTelemetryStore(FakeStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+        self.calls += 1
+        raise sqlite3.OperationalError("disk I/O error")
 
 
 # ── ObservabilityActor tests ──────────────────────────────────────────────────
@@ -81,6 +134,7 @@ def test_record_decision_writes_to_nautilus_decision_stream() -> None:
         reason_codes=("EDGE",), metrics={},
     )
     actor.record_decision(decision, accepted=True)
+    actor.drain_telemetry_once()
 
     rows = store.tables.get("nautilus_decision", [])
     assert len(rows) == 1
@@ -88,6 +142,160 @@ def test_record_decision_writes_to_nautilus_decision_stream() -> None:
     assert rows[0]["accepted"] is True
     assert rows[0]["side"] == "UP"
 
+
+def test_observability_actor_isolates_best_effort_telemetry_write_failure() -> None:
+    actor = ObservabilityActor(store=FailingTelemetryStore())
+
+    actor.record_decision(_decision(), accepted=True)
+    actor.drain_telemetry_once()
+
+    component = actor.health.components["observability_actor"]
+    assert component.status == "degraded"
+    assert component.metrics["non_critical_side_effect_failures"] == 1
+    assert actor.event_count == 1
+
+
+def test_observability_actor_isolates_accepted_signal_notifier_failure() -> None:
+    signal = SignalCandidate.build(
+        strategy="test", asset="BTC", timeframe="5m", market_id="m1", market_slug="s1",
+        condition_id="c1", token_id="t1", side=Side.UP, confidence=0.8,
+        entry_reference_price=0.5, max_entry_price=0.55,
+        seconds_to_close=120, data_freshness_ms=100, reason_codes=["EDGE"], metrics={},
+    )
+    actor = ObservabilityActor(
+        accepted_signal_notifier=lambda _signal, _stake: (_ for _ in ()).throw(RuntimeError("telegram failed"))
+    )
+
+    actor.notify_accepted_signal(signal, 10.0)
+
+    component = actor.health.components["observability_actor"]
+    assert component.status == "degraded"
+    assert component.metrics["non_critical_side_effect_failures"] == 1
+
+
+def test_observability_actor_isolates_paper_fill_notifier_failure() -> None:
+    actor = ObservabilityActor(
+        paper_fill_notifier=lambda _payload: (_ for _ in ()).throw(RuntimeError("notify failed"))
+    )
+
+    actor.notify_nautilus_paper_fill({"paper_fill_id": "fill-1"})
+
+    component = actor.health.components["observability_actor"]
+    assert component.status == "degraded"
+    assert component.metrics["non_critical_side_effect_failures"] == 1
+
+
+def test_observability_actor_isolates_paper_fill_mirror_failure() -> None:
+    actor = ObservabilityActor(
+        paper_fill_mirror=lambda _payload: (_ for _ in ()).throw(RuntimeError("mirror failed"))
+    )
+
+    actor.mirror_nautilus_paper_fill({"paper_fill_id": "fill-1"})
+
+    component = actor.health.components["observability_actor"]
+    assert component.status == "degraded"
+    assert component.metrics["non_critical_side_effect_failures"] == 1
+
+
+
+def test_best_effort_telemetry_queue_drops_when_full_and_marks_health() -> None:
+    store = FakeStore()
+    actor = ObservabilityActor(store=store, telemetry_queue_size=1, telemetry_autostart=False)
+
+    actor.record_decision(_decision(market_id="m1"), accepted=True)
+    actor.record_decision(_decision(market_id="m2"), accepted=True)
+
+    component = actor.health.components["observability_actor"]
+    assert component.status == "degraded"
+    assert component.metrics["telemetry_queue_drops"] == 1
+    assert component.metrics["telemetry_writer_backlog"] == 1
+    assert store.tables == {}
+
+
+def test_best_effort_telemetry_writer_drains_queued_events() -> None:
+    store = FakeStore()
+    actor = ObservabilityActor(store=store, telemetry_queue_size=8, telemetry_autostart=False)
+
+    actor.record_decision(_decision(), accepted=True)
+    actor.drain_telemetry_once()
+
+    assert len(store.tables["nautilus_decision"]) == 1
+
+
+def test_telemetry_writer_retries_transient_sqlite_lock() -> None:
+    store = FlakyLockedTelemetryStore()
+    actor = ObservabilityActor(store=store, telemetry_queue_size=8, telemetry_autostart=False)
+
+    actor.record_decision(_decision(), accepted=True)
+    actor.drain_telemetry_once()
+
+    assert store.calls == 2
+    assert len(store.tables["nautilus_decision"]) == 1
+    component = actor.health.components["observability_actor"]
+    assert component.metrics["sqlite_lock_retries"] == 1
+
+
+def test_telemetry_writer_stops_after_bounded_sqlite_lock_retries() -> None:
+    store = AlwaysLockedTelemetryStore()
+    actor = ObservabilityActor(
+        store=store,
+        telemetry_queue_size=8,
+        telemetry_autostart=False,
+        telemetry_sqlite_lock_retries=2,
+        telemetry_retry_backoff_sec=0,
+    )
+
+    actor.record_decision(_decision(), accepted=True)
+    actor.drain_telemetry_once()
+
+    assert store.calls == 3
+    assert store.tables.get("nautilus_decision", []) == []
+    component = actor.health.components["observability_actor"]
+    assert component.status == "degraded"
+    assert component.metrics["sqlite_lock_retries"] == 2
+    assert component.metrics["non_critical_side_effect_failures"] == 1
+
+
+def test_telemetry_writer_does_not_retry_non_lock_sqlite_operational_error() -> None:
+    store = NonLockingOperationalErrorTelemetryStore()
+    actor = ObservabilityActor(
+        store=store,
+        telemetry_queue_size=8,
+        telemetry_autostart=False,
+        telemetry_sqlite_lock_retries=2,
+        telemetry_retry_backoff_sec=0,
+    )
+
+    actor.record_decision(_decision(), accepted=True)
+    actor.drain_telemetry_once()
+
+    assert store.calls == 1
+    assert store.tables.get("nautilus_decision", []) == []
+    component = actor.health.components["observability_actor"]
+    assert component.status == "degraded"
+    assert component.metrics.get("sqlite_lock_retries", 0) == 0
+    assert component.metrics["non_critical_side_effect_failures"] == 1
+
+
+def test_stop_returns_without_sync_drain_when_best_effort_store_blocks() -> None:
+    store = BlockingTelemetryStore()
+    actor = ObservabilityActor(store=store, telemetry_queue_size=8, telemetry_autostart=False)
+    actor.record_decision(_decision(), accepted=True)
+
+    stop_thread = threading.Thread(target=actor.stop)
+    stop_thread.start()
+    stop_thread.join(timeout=0.2)
+
+    try:
+        assert not store.insert_started.is_set()
+        assert not stop_thread.is_alive()
+        assert store.tables == {}
+        component = actor.health.components["observability_actor"]
+        assert component.metrics["telemetry_writer_backlog"] == 0
+        assert component.metrics["telemetry_queue_drops"] == 1
+    finally:
+        store.release_insert.set()
+        stop_thread.join(timeout=1.0)
 
 def test_record_signal_writes_to_signal_stream() -> None:
     store = FakeStore()
@@ -137,6 +345,7 @@ def test_record_decision_event_store_persists_system_event_without_signal_id(
         reason_codes=("EDGE",), metrics={},
     )
     actor.record_decision(decision, accepted=True)
+    actor.drain_telemetry_once()
 
     rows = persistence.sqlite.query_json(
         "system_events",
@@ -228,6 +437,7 @@ def test_record_decision_and_duplicate_rejection_write_jsonl_payloads(tmp_path: 
     )
 
     actor.record_decision(decision, accepted=True)
+    actor.drain_telemetry_once()
     actor.record_rejected_decision(
         SimpleNamespace(
             reason_code="DUPLICATE_SIGNAL",
@@ -332,6 +542,7 @@ def test_repeated_identical_rejected_nautilus_decision_is_persisted_once_within_
 
     for _ in range(50):
         actor.record_decision(_decision(), accepted=False)
+    actor.drain_telemetry_once()
 
     assert len(store.tables.get("nautilus_decision", [])) == 1
 
@@ -342,6 +553,8 @@ def test_accepted_decisions_are_never_suppressed() -> None:
 
     actor.record_decision(_decision(), accepted=True)
     actor.record_decision(_decision(), accepted=True)
+    while actor.drain_telemetry_once():
+        pass
 
     assert len(store.tables.get("nautilus_decision", [])) == 2
 
@@ -490,6 +703,8 @@ def test_record_nautilus_projection_events_write_projected_rows() -> None:
             is_closed=False,
         )
     )
+    while actor.drain_telemetry_once():
+        pass
 
     order_rows = store.tables["nautilus_order"]
     fill_rows = store.tables["nautilus_fill"]
@@ -541,6 +756,8 @@ def test_nautilus_projection_events_with_integer_timestamps_get_unique_event_ids
             ts_event=1_717_000_000_001_000_000,
         )
     )
+    while actor.drain_telemetry_once():
+        pass
 
     system_events = [
         payload
@@ -657,6 +874,63 @@ class FakePublisher:
         del signal_id
         self.calls.append((message, message_type))
         return None
+
+
+def test_nautilus_persistence_table_classification_separates_telemetry_from_critical_state() -> None:
+    from polysignal_lab.nautilus_runtime.observability import (
+        PersistenceClass,
+        persistence_class_for_table,
+    )
+
+    assert persistence_class_for_table("nautilus_decision") is PersistenceClass.BEST_EFFORT_TELEMETRY
+    assert persistence_class_for_table("nautilus_order") is PersistenceClass.BEST_EFFORT_TELEMETRY
+    assert persistence_class_for_table("nautilus_fill") is PersistenceClass.BEST_EFFORT_TELEMETRY
+    assert persistence_class_for_table("nautilus_position") is PersistenceClass.BEST_EFFORT_TELEMETRY
+    assert persistence_class_for_table("health_snapshot") is PersistenceClass.BEST_EFFORT_TELEMETRY
+    assert persistence_class_for_table("signals") is PersistenceClass.DURABLE_OR_DEGRADED
+    assert persistence_class_for_table("rejected_signals") is PersistenceClass.DURABLE_OR_DEGRADED
+    assert persistence_class_for_table("orders") is PersistenceClass.CRITICAL_PAPER_STATE
+    assert persistence_class_for_table("fills") is PersistenceClass.CRITICAL_PAPER_STATE
+    assert persistence_class_for_table("positions") is PersistenceClass.CRITICAL_PAPER_STATE
+    assert persistence_class_for_table("settlements") is PersistenceClass.CRITICAL_PAPER_STATE
+
+
+def test_unknown_nautilus_persistence_table_remains_fatal() -> None:
+    from polysignal_lab.nautilus_runtime.observability import (
+        PersistenceClass,
+        persistence_class_for_table,
+    )
+
+    assert persistence_class_for_table("schema_migration") is PersistenceClass.FATAL_ON_LOSS
+
+
+class LockingSystemEventPersistence(FakePersistence):
+    def insert_system_event(self, event: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+
+class LockingCriticalPersistence(FakePersistence):
+    def upsert_paper_order(self, order: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+
+def test_event_store_raises_on_critical_paper_state_sqlite_lock() -> None:
+    adapter = NautilusEventStoreAdapter(LockingCriticalPersistence())
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        adapter.insert_json("orders", {"paper_order_id": "order-1"})
+
+
+def test_nautilus_event_store_keeps_runtime_callbacks_alive_when_observability_sqlite_is_locked() -> None:
+    persistence = LockingSystemEventPersistence()
+    adapter = NautilusEventStoreAdapter(persistence)
+
+    adapter.insert_json("nautilus_order", {"client_order_id": "C-001", "ts": "2026-07-03T12:31:01Z"})
+
+    assert persistence.calls == []
+    assert [(stream, payload["client_order_id"]) for stream, payload in persistence.logs] == [
+        ("nautilus_orders", "C-001")
+    ]
 
 
 def test_event_store_routes_known_tables_and_rejects_unknown() -> None:

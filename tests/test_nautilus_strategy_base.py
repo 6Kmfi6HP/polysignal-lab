@@ -218,8 +218,8 @@ from polysignal_lab.nautilus_runtime.strategies.base import (  # noqa: E402
 
 
 class _MockBook:
-    best_ask: float | None = None
-    ask_levels: tuple[tuple[float, float], ...] = ()
+    best_ask: float | None = 0.82
+    ask_levels: tuple[tuple[float, float], ...] = ((0.82, 50.0),)
 
 
 class _MockView:
@@ -863,7 +863,7 @@ def test_native_strategy_reports_progress_on_internal_evaluation_heartbeat() -> 
     progress_events: list[str] = []
     strategy = PolySignalNativeStrategy(
         core=FakeCore([]),
-        assembler=_assembler(object()),
+        assembler=_assembler(_MockView()),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         **_native_projections(),
@@ -891,6 +891,334 @@ def test_native_strategy_reports_progress_on_start_without_market_data() -> None
     strategy.on_start()
 
     assert "start" in progress_events
+
+
+def test_native_strategy_drops_unknown_project_owned_data_with_metric() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    observed: list[tuple[str, object]] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        **_native_projections(),
+    )
+    strategy.progress_callback = lambda phase: observed.append((phase, None))
+
+    strategy.on_data(object())
+
+    assert ("dropped_frame", None) in observed
+
+
+def test_malformed_project_owned_data_does_not_poison_later_valid_market_metadata() -> None:
+    from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketMetaData
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        **_native_projections(),
+    )
+
+    strategy.on_data(object())
+    strategy.on_data(
+        PolySignalMarketMetaData(
+            market_id="market-1",
+            market_slug="btc-updown-5m-market-1",
+            condition_id="condition-1",
+            asset="BTC",
+            timeframe="5m",
+            start_ts_ns=1,
+            end_ts_ns=2,
+            up_token_id="up-1",
+            down_token_id="down-1",
+            ts_event=11,
+            ts_init=12,
+        )
+    )
+
+    assert strategy.registry.by_condition("condition-1") is not None
+
+
+def test_native_strategy_unknown_quote_tick_instrument_is_dropped_with_metric() -> None:
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    phases: list[str] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        **_native_projections(),
+    )
+    strategy.progress_callback = phases.append
+
+    strategy.on_quote_tick(
+        SimpleNamespace(
+            instrument_id="unknown.POLYMARKET",
+            bid_price=0.1,
+            ask_price=0.2,
+        )
+    )
+
+    assert "dropped_frame" in phases
+
+
+def test_native_strategy_quote_tick_missing_mapping_value_is_dropped_with_metric() -> None:
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_bridge.market_registry import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+        PolymarketMarketRegistry,
+    )
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class MissingTokenRegistry(PolymarketMarketRegistry):
+        def token_id_for_instrument(self, instrument_id: str) -> str | None:
+            _ = instrument_id
+            return None
+
+    class MissingConditionRegistry(PolymarketMarketRegistry):
+        def condition_id_for_instrument(self, instrument_id: str) -> str | None:
+            _ = instrument_id
+            return None
+
+    for registry in (MissingTokenRegistry(), MissingConditionRegistry()):
+        registry.register(
+            MarketPairMeta(
+                market_id="btc-5m",
+                market_slug="btc-updown-5m",
+                condition_id="condition-btc-5m",
+                asset="BTC",
+                timeframe="5m",
+                start_ts=None,
+                end_ts=None,
+                up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
+                down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+            )
+        )
+        phases: list[str] = []
+        strategy = PolySignalNativeStrategy(
+            core=FakeCore([]),
+            assembler=_assembler(None),
+            condition_ids=("condition-btc-5m",),
+            strategy_name="ptb_diff",
+            **_native_projections(registry),
+            progress_callback=phases.append,
+        )
+
+        strategy.on_quote_tick(
+            SimpleNamespace(
+                instrument_id="up-token.POLYMARKET",
+                bid_price=0.1,
+                ask_price=0.2,
+            )
+        )
+
+        assert "dropped_frame" in phases
+
+
+def test_native_strategy_unknown_market_data_instruments_are_dropped_with_metric() -> None:
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    cases = (
+        (
+            "order_book",
+            lambda strategy, data: strategy.on_order_book(data),
+            SimpleNamespace(instrument_id="unknown-book.POLYMARKET", bids=[], asks=[]),
+        ),
+        (
+            "order_book_deltas",
+            lambda strategy, data: strategy.on_order_book_deltas(data),
+            SimpleNamespace(instrument_id="unknown-deltas.POLYMARKET"),
+        ),
+        (
+            "trade_tick",
+            lambda strategy, data: strategy.on_trade_tick(data),
+            SimpleNamespace(
+                instrument_id="unknown-trade.POLYMARKET",
+                price=0.2,
+                size=3.0,
+                aggressor_side="BUY",
+            ),
+        ),
+    )
+
+    for name, handle, data in cases:
+        phases: list[str] = []
+        strategy = PolySignalNativeStrategy(
+            core=FakeCore([]),
+            assembler=_assembler(None),
+            condition_ids=("condition-btc-5m",),
+            strategy_name="ptb_diff",
+            **_native_projections(),
+            progress_callback=phases.append,
+        )
+
+        handle(strategy, data)
+
+        assert "dropped_frame" in phases, name
+
+
+def test_native_strategy_drops_unknown_project_owned_data_with_condition_id() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class UnknownProjectData:
+        condition_id = "condition-btc-5m"
+
+    observed: list[tuple[str, object]] = []
+    calls: list[str] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        **_native_projections(),
+    )
+    strategy.progress_callback = lambda phase: observed.append((phase, None))
+    strategy.evaluate_condition = lambda condition_id: calls.append(condition_id)  # type: ignore[method-assign]
+
+    strategy.on_data(UnknownProjectData())
+
+    assert ("dropped_frame", None) in observed
+    assert calls == []
+
+
+def test_native_strategy_readiness_gate_skips_missing_required_market_view_inputs() -> None:
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    calls: list[object] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        **_native_projections(),
+    )
+    strategy.core.evaluate = lambda view: calls.append(view) or []  # type: ignore[method-assign]
+    strategy.assembler.build = lambda _condition_id: SimpleNamespace(
+        condition_id="condition-btc-5m",
+        up_book=None,
+        down_book=None,
+        spot=None,
+        price_to_beat=None,
+    )
+    phases: list[str] = []
+    strategy.progress_callback = phases.append
+
+    strategy.evaluate_condition("condition-btc-5m")
+
+    assert calls == []
+    assert "readiness_miss" in phases
+
+
+def test_native_strategy_does_not_submit_when_approved_decision_view_lacks_book() -> None:
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    decision = _decision()
+    approved_decision = RuntimeFakePolicy().evaluate(decision, _MockView())
+    submitted: list[object] = []
+    phases: list[str] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        **_native_projections(),
+        progress_callback=phases.append,
+    )
+    strategy.policy.evaluate = lambda decision, view: approved_decision  # type: ignore[method-assign]
+    strategy._submit_approved = lambda approved, *, view: submitted.append((approved, view))  # type: ignore[method-assign]
+    view = SimpleNamespace(
+        book_for=lambda _side: (_ for _ in ()).throw(
+            ValueError("Quote maps must not be empty")
+        )
+    )
+
+    strategy._handle_decision(decision, view)
+
+    assert submitted == []
+    assert "readiness_miss" in phases
+
+
+def _real_market_view_with_empty_quote_depth() -> MarketView:
+    from polysignal_lab.alpha.types import FreshnessView, SideBookView, SpotView
+
+    now = datetime.now(UTC)
+    return MarketView(
+        view_id="view-empty-depth",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        condition_id="condition-btc-5m",
+        asset="BTC",
+        timeframe="5m",
+        start_ts=None,
+        end_ts=None,
+        created_at=now,
+        seconds_to_close=60,
+        up=SideBookView(
+            token_id="up-token",
+            best_bid=None,
+            best_ask=None,
+            spread=None,
+            freshness_ms=10,
+            ask_levels=(),
+        ),
+        down=SideBookView(
+            token_id="down-token",
+            best_bid=None,
+            best_ask=None,
+            spread=None,
+            freshness_ms=10,
+            ask_levels=(),
+        ),
+        spot=SpotView(
+            asset="BTC",
+            symbol="BTCUSD",
+            price=100_000.0,
+            source="test",
+            freshness_ms=10,
+        ),
+        price_to_beat=None,
+        up_trades=(),
+        down_trades=(),
+        metrics={},
+        freshness=FreshnessView(up_book_ms=10, down_book_ms=10, spot_ms=10, max_ms=10),
+    )
+
+
+def test_native_strategy_readiness_gate_skips_real_market_view_with_empty_quote_depth() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    calls: list[object] = []
+    phases: list[str] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(_real_market_view_with_empty_quote_depth()),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        progress_callback=phases.append,
+        **_native_projections(),
+    )
+    strategy.core.evaluate = lambda view: calls.append(view) or []  # type: ignore[method-assign]
+
+    strategy.evaluate_condition("condition-btc-5m")
+
+    assert calls == []
+    assert "readiness_miss" in phases
+
 
 def test_native_strategy_constructor_without_registry_fails_clearly() -> None:
     import pytest
@@ -2996,6 +3324,50 @@ def test_native_strategy_on_order_denied_records_event_and_forgets_metrics() -> 
     assert order.metrics["signal_id"] == "sig-denied-1"
     assert "client-denied-1" not in strategy._approved_signal_metrics
 
+
+def test_order_submitted_observability_failure_does_not_block_core_event() -> None:
+    import sqlite3
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FailingObservability:
+        def record_nautilus_order_event(self, event: object) -> None:
+            _ = event
+            raise sqlite3.OperationalError("database is locked")
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.order_factory = object()
+
+    core_calls: list[object] = []
+    phases: list[str] = []
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        observability=FailingObservability(),
+        progress_callback=phases.append,
+        **_native_projections(),
+    )
+    strategy.core.on_order_submitted = lambda event: core_calls.append(event)  # type: ignore[attr-defined]
+
+    strategy.on_order_submitted(
+        SimpleNamespace(
+            order_id="order-1",
+            client_order_id="C-001",
+            instrument_id="up-token.POLYMARKET",
+            status="SUBMITTED",
+            tags=[],
+            ts_event=datetime.now(UTC),
+        )
+    )
+
+    assert len(core_calls) == 1
+    assert "telemetry_side_effect_failed" in phases
+
 def test_native_strategy_surfaces_approved_signal_to_observability() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
@@ -3081,6 +3453,96 @@ def test_native_strategy_surfaces_approved_signal_to_observability() -> None:
     assert published_stake == 10.0
     assert observability.rejections == []
 
+
+
+def test_native_strategy_does_not_swallow_durable_signal_persistence_failure() -> None:
+    import sqlite3
+
+    import pytest
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class Book:
+        best_ask: float | None = 0.82
+        ask_levels: tuple[tuple[float, float], ...] = ((0.82, 50.0),)
+
+    class View(_MockView):
+        def book_for(self, side: Side) -> _BookViewLike:
+            _ = side
+            return Book()
+
+    class FailingSignalObservability:
+        def record_decision(self, decision, accepted: bool) -> None:
+            _ = decision, accepted
+
+        def record_signal(self, signal: object) -> None:
+            _ = signal
+            raise sqlite3.OperationalError("database is locked")
+
+    class FakeOrderFactory:
+        def limit(self, **kwargs):
+            return kwargs
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.order_factory = FakeOrderFactory()
+
+        def submit_order(self, order: object) -> None:
+            _ = order
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([_decision()]),
+        assembler=_assembler(View()),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
+        fixed_stake_usdc=10.0,
+        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        observability=FailingSignalObservability(),
+        **_native_projections(),
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        strategy.evaluate_condition("condition-btc-5m")
+
+
+def test_native_strategy_does_not_swallow_durable_rejection_persistence_failure() -> None:
+    import sqlite3
+
+    import pytest
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FailingRejectedObservability:
+        def record_decision(self, decision, accepted: bool) -> None:
+            _ = decision, accepted
+
+        def record_rejected_decision(self, rejected: object) -> None:
+            _ = rejected
+            raise sqlite3.OperationalError("database is locked")
+
+    class RejectingPolicy(DecisionPolicyActor):
+        def evaluate(self, decision: AlphaDecision, view: MarketView):
+            _ = view
+            return type("Rejected", (), {
+                "reason_code": "TEST_REJECTED",
+                "detail": {},
+                "candidate": None,
+            })()
+
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([_decision()]),
+        assembler=_assembler(_MockView()),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        policy=RejectingPolicy(),
+        observability=FailingRejectedObservability(),
+        **_native_projections(),
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        strategy.evaluate_condition("condition-btc-5m")
 
 
 def test_native_strategy_fill_and_position_callbacks_bridge_to_observability() -> None:
