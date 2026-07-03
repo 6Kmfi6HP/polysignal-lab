@@ -1707,6 +1707,34 @@ def test_polymarket_precision_guard_suppresses_precision_mismatch() -> None:
     assert calls == []
 
 
+def test_polymarket_precision_guard_throttles_repeated_warnings(monkeypatch) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    now = 1000.0
+    monkeypatch.setattr(node_mod.time, "monotonic", lambda: now)
+    calls: list[str] = []
+
+    class FakeLogger:
+        def warning(self, message: str) -> None:
+            calls.append(message)
+
+    class FakeEngine:
+        _log = FakeLogger()
+
+        def _handle_queue_exception(self, exc: Exception, queue_name: str) -> None:
+            raise AssertionError("precision mismatch should be suppressed")
+
+    guarded = node_mod._polymarket_precision_guarded_queue_exception_handler(
+        FakeEngine._handle_queue_exception
+    )
+    exc = RuntimeError("invalid delta price precision=2 did not match instrument.price_precision=3")
+
+    guarded(FakeEngine(), exc, "Data")
+    guarded(FakeEngine(), exc, "Data")
+
+    assert len(calls) == 1
+
+
 def test_polymarket_precision_guard_handles_nautilus_logger_signature() -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
 

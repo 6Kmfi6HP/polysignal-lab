@@ -19,6 +19,7 @@ import threading
 import traceback
 from contextlib import suppress
 import sys
+import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -968,17 +969,27 @@ def _is_polymarket_precision_mismatch(exc: Exception, queue_name: str) -> bool:
     )
 
 
+PRECISION_MISMATCH_WARNING_INTERVAL_SEC = 60.0
+
+
 def _polymarket_precision_guarded_queue_exception_handler(
     original: Callable[[object, Exception, str], None],
 ) -> Callable[[object, Exception, str], None]:
+    last_warning_at: dict[str, float] = {}
+
     def guarded(engine: object, exc: Exception, queue_name: str) -> None:
         if _is_polymarket_precision_mismatch(exc, queue_name):
-            engine_logger = getattr(engine, "_log", logger)
-            warning = getattr(engine_logger, "warning", None)
-            if callable(warning):
-                warning(
-                    f"Dropping Polymarket market-data precision mismatch without shutting down: {exc!r}"
-                )
+            message = str(exc)
+            now = time.monotonic()
+            last = last_warning_at.get(message)
+            if last is None or now - last >= PRECISION_MISMATCH_WARNING_INTERVAL_SEC:
+                last_warning_at[message] = now
+                engine_logger = getattr(engine, "_log", logger)
+                warning = getattr(engine_logger, "warning", None)
+                if callable(warning):
+                    warning(
+                        f"Dropping Polymarket market-data precision mismatch without shutting down: {exc!r}"
+                    )
             return
         original(engine, exc, queue_name)
 
