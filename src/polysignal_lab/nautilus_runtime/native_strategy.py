@@ -1204,15 +1204,16 @@ class PolySignalNativeStrategy:
         return True
 
     def _send_market_unsubscription(self, instrument_id: object) -> bool:
-        unsubscribe_order_book_deltas = getattr(
-            self, "unsubscribe_order_book_deltas", None
-        )
         unsubscribe_trade_ticks = getattr(self, "unsubscribe_trade_ticks", None)
-        if not callable(unsubscribe_order_book_deltas) or not callable(
-            unsubscribe_trade_ticks
-        ):
+        if not callable(unsubscribe_trade_ticks):
             return False
-        _ = unsubscribe_order_book_deltas(instrument_id)
+        if self._is_l1_book_mode():
+            unsubscribe_book_feed = getattr(self, "unsubscribe_quote_ticks", None)
+        else:
+            unsubscribe_book_feed = getattr(self, "unsubscribe_order_book_deltas", None)
+        if not callable(unsubscribe_book_feed):
+            return False
+        _ = unsubscribe_book_feed(instrument_id)
         _ = unsubscribe_trade_ticks(instrument_id)
         return True
 
