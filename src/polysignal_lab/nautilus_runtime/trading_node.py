@@ -26,6 +26,7 @@ def build_paper_trading_node_config(
     if settings is None:
         settings = load_settings()
 
+    cache_config = _import_callable("nautilus_trader.config", "CacheConfig")
     polymarket_data_config = _import_callable(
         "nautilus_trader.adapters.polymarket",
         "PolymarketDataClientConfig",
@@ -45,6 +46,12 @@ def build_paper_trading_node_config(
     config = trading_node_config(
         trader_id=trader_id("POLYSIGNAL-001"),
         logging=logging_config(log_level="INFO", use_pyo3=True),
+        # Default tick_capacity=10_000 retains up to 10k quote + 10k trade
+        # ticks per instrument, and market rotation subscribes ~128 new
+        # instruments/hour that the cache never evicts — unbounded RSS growth
+        # over hours. Strategies read market data from NautilusBookDataProvider,
+        # not from cache tick history, so a small capacity is sufficient.
+        cache=cache_config(tick_capacity=100, bar_capacity=100),
         data_engine=live_data_engine_config(
             validate_data_sequence=True,
             graceful_shutdown_on_exception=True,

@@ -64,6 +64,7 @@ def _install_fake_nautilus(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     _ = fake_module(
         "nautilus_trader.config",
+        CacheConfig=FakeConfig,
         LiveDataEngineConfig=FakeConfig,
         LiveExecEngineConfig=FakeConfig,
         LoggingConfig=FakeConfig,
@@ -135,6 +136,21 @@ def test_build_paper_trading_node_config_enables_dynamic_instrument_loading(
     assert getattr(polymarket, "subscribe_new_markets") is True
     assert getattr(polymarket, "ws_max_subscriptions_per_connection") == 200
     assert getattr(polymarket, "update_instruments_interval_mins") == 1
+
+def test_build_paper_trading_node_config_bounds_cache_tick_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_nautilus(monkeypatch)
+
+    config = build_paper_trading_node_config(
+        Settings(),
+        instrument_config=SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"})),
+    )
+
+    cache = getattr(config, "cache")
+    assert getattr(cache, "tick_capacity") == 100
+    assert getattr(cache, "bar_capacity") == 100
+
 
 def test_register_paper_factories_registers_data_and_sandbox_exec_only(
     monkeypatch: pytest.MonkeyPatch,
