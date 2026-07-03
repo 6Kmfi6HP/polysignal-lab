@@ -1,27 +1,40 @@
 # Resource Optimization Backlog
 
-> 首轮系统化资源优化。每个周期 = 发现 → RED(测试基准) → GREEN(实现) → 验证 → commit
+> 2026-07-03 修订：前 6 轮微优化未解决实际资源问题，已按实测证据重新定位根因并修复。
 
-| # | 优化项 | 发现方式 | 当前基准 | 预期收益 | 涉及模块 | 状态 | 提交 |
-|---|--------|----------|----------|----------|----------|------|------|
-| 1 | 添加 instrument_id → condition_id 反向索引，消除 O(N) 线性扫描 | 源码分析：`_condition_id_for_instrument` / `_token_id_for_instrument` 在每次回调中遍历所有 condition_id | ~10 次 O(N) 扫描/事件 × 每秒 ~1000 事件 | O(N) → O(1)，200 条件下约 200x 提速 | market_registry.py, native_strategy.py | 已合入 | `652b1c9` |
-| 2 | 无界列表 → 有界 deque(maxlen=1000)，消除内存泄漏 | 子代理代码审查：4 个列表永不回收 | 每次 reject/submit 追加，无上限 | O(entries) → O(1000) 内存上界 | native_strategy.py | 已合入 | `95e6a81` |
-| 3 | update_trade 深拷贝 → 浅拷贝，减少高频 trade tick 的对象分配 | 源码分析：`model_copy(deep=True)` 对 BookLevel 全量复制 | 每次 trade tick 复制 ~102 个对象 | 约 100x 分配量减少 | book_data.py | 已合入 | `95aeb5f` |
+## 复盘：为什么前 6 轮优化无效
 
-## 剩余未优化热点评分
+前 6 轮优化（`652b1c9`…`ffe31db`）全部针对评估热路径上 **微秒级 CPU 开销**（O(N) 扫描、Pydantic 拷贝/getattr、computed_field 遍历）。但运行时实测显示真实的资源消耗是 **I/O 与累积**，两者不在同一量级：
 
-| 潜在热点 | 位置 | 频率 | 影响评分 | 解释 |
-|----------|------|------|----------|------|
-| `_on_evaluation_heartbeat` sorted() + O(N) 迭代 | native_strategy.py:372 | 10s | 低 | N 个 condition × 10s 间隔，仅当 N>500 才显著 |
-| `_book_signature` 排序 | matching.py:1132-1140 | 按每 match_order | 低 | 仅对有变更的 books 排序，执行路径不热 |
-| `_publish_book_to_nautilus` 层级转换 | matching.py:526-570 | 按 book 变更 | 低 | 仅在脏 book 时触发，非每个事件 |
-| `_event_side` 遍历 | native_strategy.py:1279-1292 | 按 order_event | 低 | 已优化为 O(1) `by_instrument()` |
-| 无界 `_seen_matching_trades` | data_ingestor.py:60 | sync 时 | 低 | 每轮替换为 current_seen，有限增长 |
-| `MarketViewAssembler.build()` 分配 | market_view_assembler.py:24 | 按 evaluate | 低 | 每次 evaluate 构建 view，无法避免 |
+| 实测指标（2026-07-03，运行 ~4h） | 数值 | 微优化可影响？ |
+|---|---|---|
+| 进程 RSS | 558 MB → 3.9 GB | 否 |
+| `markets.jsonl` 增长 | ~909 KB/min（1.29 GB 累积） | 否 |
+| `rejected_signals.jsonl` + `nautilus_decisions.jsonl` | 695 MB + 437 MB（各 ~338k 行） | 否 |
+| SQLite | 2.14 GB（99.6% 为 nautilus_decision/rejected_signals 行） | 否 |
+| CPU | ~70–97% | 边际（µs 级节省 vs 每 tick 全量评估 + 持久化） |
 
-## 停止条件评估
+处置：4 个提交保留（`652b1c9` 反向索引、`95e6a81` 有界 deque、`95aeb5f` 浅拷贝、`9de5473` trades deque），4 个提交回退（`3f42fbe`/`8b91267` 在 registry 模式下引入 last-trade 冻结与缓存过期正确性缺陷、`ffe31db` 依赖前者、`74e81fc` 文档结论与实测矛盾）。
 
-- 连续 0 个循环发现「无可用优化项」
-- 已读完设计文档和 native_strategy.py，matching.py，node.py 源码
-- 3 轮优化覆盖 2 个 CPU 热点 + 1 个内存热点
-- 剩余热点确认无足够影响启动新一轮 RED→GREEN 周期
+## 根因与修复（按实测证据）
+
+| # | 根因 | 证据 | 修复 | 提交 |
+|---|------|------|------|------|
+| 1 | `MarketUniverseService.refresh_once` 每 10s 对每个活跃市场无条件追加 ~10KB 完整 Gamma payload 到 `markets.jsonl` | 实测 +909 KB/min；文件 1.29 GB，135k 行几乎全为重复 payload | 与 registry 中副本比较，仅在市场新增或内容变化时追加；SQLite upsert 行为不变 | `76d25a9` |
+| 2 | 每个 quote tick 触发全量策略评估，并将相同的拒绝决策（98% `DUPLICATE_SIGNAL`）逐条写入 SQLite + JSONL，入市窗口内 ~220 写/秒 | 338k rejected_signals 行 + 339k nautilus_decision 行/天；热路径上 json.dumps + 带锁 SQLite insert | `ObservabilityActor` 对相同 (strategy, market, side, reason) 的拒绝记录做 60s TTL 抑制；accepted 决策永不抑制（设计规范中已预留的 "rejected decision sampling"） | `e3138e0` |
+| 3 | Nautilus Cache 默认 `tick_capacity=10000`：每 instrument 保留 1 万 quote + 1 万 trade tick，市场轮换每小时订阅 ~128 个新 instrument 且缓存从不清除 | RSS 4h 内 558 MB → 3.9 GB；策略从不读取 cache tick 历史（数据来自 NautilusBookDataProvider） | `TradingNodeConfig` 显式设置 `cache=CacheConfig(tick_capacity=100, bar_capacity=100)` | `a6ac3f2` |
+
+## 保留的微优化（正确但非根因）
+
+| # | 优化项 | 提交 |
+|---|--------|------|
+| 1 | instrument_id → condition_id O(1) 反向索引 | `652b1c9` |
+| 2 | 策略跟踪列表 → deque(maxlen=1000) | `95e6a81` |
+| 3 | update_trade 深拷贝 → 浅拷贝 | `95aeb5f` |
+| 4 | trades 列表切片 → deque(maxlen=512) | `9de5473` |
+
+## 遗留观察项（未修复，待部署后验证）
+
+- 每 tick 全量策略评估仍是 CPU 大头（评估频率由设计决定，降频会改变信号时序，需产品决策，不在本次范围）。
+- `PolymarketMarketRegistry` / `NautilusBookDataProvider` 的 per-token dict 随轮换缓慢增长（MB/天量级，远小于已修复项）。
+- 修复 3 的效果需在重建镜像部署后用 `docker exec polysignal-lab grep VmRSS /proc/1/status` 连续采样验证；修复 1/2 可直接观察 `logs/*.jsonl` 增速。
