@@ -83,6 +83,34 @@ class _FailFirstSqlitePersistence:
         pass
 
 
+class _RecordingPersistence:
+    def __init__(self):
+        self.appended = []
+
+    def upsert_market(self, market):
+        pass
+
+    def append_log(self, stream, payload):
+        self.appended.append((stream, payload))
+
+
+async def test_market_universe_refresh_appends_market_log_only_on_change(settings) -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    discovery = _OneMarketDiscovery(market)
+    persistence = _RecordingPersistence()
+    service = MarketUniverseService(discovery, MarketRegistry(), persistence)
+
+    await service.refresh_once()
+    await service.refresh_once()
+
+    assert len(persistence.appended) == 1
+
+    discovery.market = market.model_copy(update={"status": MarketStatus.CLOSED})
+    await service.refresh_once()
+
+    assert len(persistence.appended) == 2
+
+
 async def test_market_universe_refresh_keeps_tokens_when_persistence_fails(settings) -> None:
     market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
     service = MarketUniverseService(
