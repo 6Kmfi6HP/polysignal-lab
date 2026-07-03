@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,11 +20,14 @@ class BookSnapshot:
     received_at: datetime | None
 
 
+_TRADES_DEQUE_MAXLEN = 512
+
+
 class NautilusBookDataProvider:
     def __init__(self, registry: OrderBookRegistry | None = None) -> None:
         self._registry = registry
         self._books: dict[str, OrderBook] = {}
-        self._trades: dict[str, list[TradeView]] = {}
+        self._trades: dict[str, deque[TradeView]] = {}
         if registry is not None:
             self.update_from_registry(registry)
 
@@ -44,10 +48,13 @@ class NautilusBookDataProvider:
         side: str | None,
         ts: datetime | None,
     ) -> None:
-        self._trades.setdefault(token_id, []).append(
+        trades = self._trades.get(token_id)
+        if trades is None:
+            trades = deque[TradeView](maxlen=_TRADES_DEQUE_MAXLEN)
+            self._trades[token_id] = trades
+        trades.append(
             TradeView(price=price, size=size, side=side, ts=ts),
         )
-        self._trades[token_id] = self._trades[token_id][-512:]
         book = self._book(token_id)
         if book is not None:
             updated = book.model_copy()
