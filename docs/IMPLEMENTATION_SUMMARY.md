@@ -12,6 +12,7 @@
 | Signal layer | SignalCandidate schema, gate, dedupe, channel rate limiter, consensus engine, formatter |
 | Telegram | Dry-run default publisher, retry-capable HTTP sender, publish audit record, real Telegram QA command with redacted evidence |
 | Paper trading | Nautilus `TradingNode`, native order submission, sandbox paper execution, cache/portfolio projections |
+| Node surface | Current default uses legacy Nautilus `TradingNode`; this is tracked as a non-wheel design deviation with a separate `LiveNode.builder` migration gate |
 | Exits/settlement | Paper TP/SL/max-hold virtual exit and hold-to-resolution settlement over projected positions |
 | Reporting | Daily report, PnL, ROI, win rate, drawdown, profit factor, breakdowns |
 | Storage | SQLite tables, JSONL audit logs, atomic state files |

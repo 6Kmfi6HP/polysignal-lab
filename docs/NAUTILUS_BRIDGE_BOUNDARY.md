@@ -12,6 +12,19 @@ PolySignal Lab remains read-only and paper-safe by default. The default Python 3
 
 ## Bridge Runtime
 
+## Node Surface Status
+
+The current default Nautilus bridge enters through `nautilus_trader.live.node.TradingNode`. This is an active default-path design deviation from the newer `LiveNode.builder` surface documented by Nautilus, but it is not a duplicated PolySignal platform implementation.
+
+This cleanup does not delete or rename `TradingNode` wiring. A future `LiveNode` migration is accepted only when all of these conditions are true:
+
+- `build_trading_node()` constructs the Nautilus node through `LiveNode.builder` or the exact supported builder API in the installed Nautilus version.
+- Polymarket data remains registered through the Nautilus Polymarket data client factory.
+- Paper execution remains registered through the Nautilus sandbox execution client factory.
+- Strategy order submission still uses Nautilus `order_factory` and `submit_order`.
+- Market views still read from Nautilus cache projections plus PolySignal business custom data.
+- No `NautilusMatchingPaperExecutionClient`, `NautilusOrchestrator`, `NautilusDataIngestor`, `PaperWallet` runtime ledger, installed-source patch, or private engine monkeypatch is reintroduced.
+
 NautilusTrader is isolated behind the optional dependency group:
 
 ```bash
@@ -26,7 +39,6 @@ ldd --version
 ```
 
 The first line must report glibc 2.35 or newer.
-
 ## ARM64 / rk3588 Verification
 
 On the ARM64 host, record the outcome of this command before using the bridge runtime:
