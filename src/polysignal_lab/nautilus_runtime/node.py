@@ -1048,8 +1048,12 @@ def _is_polymarket_precision_mismatch(exc: Exception, queue_name: str) -> bool:
     if not isinstance(exc, RuntimeError):
         return False
     message = str(exc)
+    fill_precision_mismatch = (
+        "fill_price.precision=" in message
+        and "did not match instrument price_prec=" in message
+    )
     if queue_name == "Data":
-        return (
+        return fill_precision_mismatch or (
             "precision=" in message
             and "did not match instrument.price_precision=" in message
             and (
@@ -1060,10 +1064,7 @@ def _is_polymarket_precision_mismatch(exc: Exception, queue_name: str) -> bool:
             )
         )
     if queue_name in {"Command", "Exec", "Execution"}:
-        return (
-            "fill_price.precision=" in message
-            and "did not match instrument price_prec=" in message
-        )
+        return fill_precision_mismatch
     return False
 
 

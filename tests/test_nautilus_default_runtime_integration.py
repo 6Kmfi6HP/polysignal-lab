@@ -99,11 +99,13 @@ def test_default_runtime_sandbox_client_id_stays_distinct_from_polymarket_venue(
     assert PAPER_EXEC_CLIENT_ID != "POLYMARKET"
 
 
-def test_default_runtime_routes_fill_position_and_account_through_nautilus(monkeypatch) -> None:
+def test_default_runtime_fills_after_running_tick_size_precision_update(monkeypatch) -> None:
     require_nautilus()
 
     from nautilus_trader.data.messages import SubscribeOrderBook
     from nautilus_trader.live.factories import LiveDataClientFactory
+    from nautilus_trader.model.data import BookOrder, OrderBookDelta, OrderBookDeltas
+    from nautilus_trader.model.enums import BookAction, OrderSide, RecordFlag
     from nautilus_trader.model.identifiers import ClientId
     from nautilus_trader.test_kit.mocks.data import MockMarketDataClient
     from nautilus_trader.test_kit.stubs.data import TestDataStubs
@@ -207,7 +209,7 @@ def test_default_runtime_routes_fill_position_and_account_through_nautilus(monke
         ts_0 = int(datetime.now(UTC).timestamp() * 1_000_000_000)
         ts_1 = ts_0 + 1_000_000
         ts_2 = ts_1 + 1_000_000
-
+        ts_3 = ts_2 + 1_000_000
         _publish(node, instrument)
         _publish(
             node,
@@ -269,16 +271,46 @@ def test_default_runtime_routes_fill_position_and_account_through_nautilus(monke
         assert _wait_until(lambda: len(strategy.submitted_orders) >= 1, timeout=10.0), strategy.rejected_decisions
         assert _wait_until(lambda: len(cache_reader.read_orders()) >= 1, timeout=10.0)
 
+        updated_instrument = build_binary_option(
+            pair,
+            token,
+            tick_size=0.01,
+            min_order_size=1.0,
+            ts_init_ns=ts_2,
+        )
+        instruments_by_id[str(updated_instrument.id)] = updated_instrument
+        _publish(node, updated_instrument)
+
+        sell_order = BookOrder(
+            side=OrderSide.SELL,
+            price=updated_instrument.make_price(0.01),
+            size=updated_instrument.make_qty(5_000.0),
+            order_id=0,
+        )
         _publish(
             node,
-            TestDataStubs.order_book_snapshot(
-                instrument=instrument,
-                bid_price=0.009,
-                ask_price=0.01,
-                bid_size=5_000.0,
-                ask_size=5_000.0,
-                ts_event=ts_2,
-                ts_init=ts_2,
+            OrderBookDeltas(
+                instrument_id=updated_instrument.id,
+                deltas=[
+                    OrderBookDelta(
+                        instrument_id=updated_instrument.id,
+                        action=BookAction.CLEAR,
+                        order=None,
+                        flags=RecordFlag.F_SNAPSHOT,
+                        sequence=0,
+                        ts_event=ts_3,
+                        ts_init=ts_3,
+                    ),
+                    OrderBookDelta(
+                        instrument_id=updated_instrument.id,
+                        action=BookAction.ADD,
+                        order=sell_order,
+                        flags=RecordFlag.F_SNAPSHOT | RecordFlag.F_LAST,
+                        sequence=0,
+                        ts_event=ts_3,
+                        ts_init=ts_3,
+                    ),
+                ],
             ),
         )
 
@@ -288,10 +320,11 @@ def test_default_runtime_routes_fill_position_and_account_through_nautilus(monke
         assert cache_reader.read_account_projection() is not None
         assert cache_reader.snapshot_portfolio() is not None
         assert cache_reader.snapshot_portfolio_projection() is not None
-        assert failures == []
     finally:
         try:
             node.stop()
         finally:
             thread.join(timeout=10.0)
             node.dispose()
+    assert not thread.is_alive()
+    assert failures == []

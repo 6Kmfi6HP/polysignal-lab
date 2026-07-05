@@ -1742,6 +1742,27 @@ def test_polymarket_precision_guard_suppresses_exec_fill_precision_mismatch() ->
     assert calls == []
 
 
+def test_polymarket_precision_guard_suppresses_data_fill_precision_mismatch() -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    calls: list[tuple[Exception, str]] = []
+
+    class FakeEngine:
+        def _handle_queue_exception(self, exc: Exception, queue_name: str) -> None:
+            calls.append((exc, queue_name))
+
+    original = FakeEngine._handle_queue_exception
+    guarded = node_mod._polymarket_precision_guarded_queue_exception_handler(original)
+
+    guarded(
+        FakeEngine(),
+        RuntimeError("fill_price.precision=2 did not match instrument price_prec=3"),
+        "Data",
+    )
+
+    assert calls == []
+
+
 def test_polymarket_precision_guard_preserves_unrelated_exec_runtime_errors() -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
 
