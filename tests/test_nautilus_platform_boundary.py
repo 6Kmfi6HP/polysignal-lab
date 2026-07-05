@@ -262,3 +262,22 @@ def test_nautilus_runtime_does_not_patch_nautilus_installed_sources() -> None:
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
+
+
+def test_nautilus_runtime_does_not_construct_instruments_locally() -> None:
+    forbidden = (
+        "class NautilusInstrumentMeta",
+        "def instrument_id_for_token",
+        "def build_binary_option",
+        "BinaryOption(",
+        "cache.add_instrument",
+        "exchange.add_instrument",
+        "DEFAULT_VENUE = \"POLYSIGNAL_PM_PAPER\"",
+        "return f\"{condition}-{token}.POLYMARKET\"",
+    )
+    findings: list[str] = []
+    for path in Path("src/polysignal_lab/nautilus_runtime").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []

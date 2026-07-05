@@ -5,9 +5,8 @@ from collections.abc import Callable, Mapping
 from typing import Protocol, cast
 
 from polysignal_lab.config import Settings, load_settings
-from polysignal_lab.nautilus_runtime.instrument_mapping import DEFAULT_VENUE
 
-PAPER_EXEC_CLIENT_ID = DEFAULT_VENUE
+PAPER_EXEC_CLIENT_ID = "POLYSIGNAL_PM_PAPER"
 POLYMARKET_CLIENT_ID = "POLYMARKET"
 
 

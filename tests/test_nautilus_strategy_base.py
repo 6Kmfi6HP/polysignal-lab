@@ -1460,7 +1460,7 @@ def test_native_strategy_coalesces_wire_subscriptions_across_strategy_instances(
     assert second.trade_unsubscriptions == []
 
 
-def test_native_strategy_universe_update_subscribes_entered_market_once() -> None:
+def test_native_strategy_universe_update_subscribes_entered_market_once(monkeypatch) -> None:
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
         MarketPairMeta,
@@ -1474,6 +1474,17 @@ def test_native_strategy_universe_update_subscribes_entered_market_once() -> Non
         PolySignalMarketUniverseData,
     )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    import sys
+    from types import SimpleNamespace
+
+    def helper(condition_id: str, token_id: str) -> str:
+        return f"{condition_id}:{token_id}.POLYMARKET"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "nautilus_trader.adapters.polymarket",
+        SimpleNamespace(get_polymarket_instrument_id=helper),
+    )
 
     class FakeNativeStrategy(PolySignalNativeStrategy):
         def __init__(self, **kwargs):

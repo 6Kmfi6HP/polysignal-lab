@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
@@ -14,6 +15,17 @@ from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
 from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
+
+
+def _install_fake_polymarket_id_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    def helper(condition_id: str, token_id: str) -> str:
+        return f"{condition_id}:{token_id}.POLYMARKET"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "nautilus_trader.adapters.polymarket",
+        SimpleNamespace(get_polymarket_instrument_id=helper),
+    )
 
 
 def _sample_market() -> Market:
@@ -33,6 +45,7 @@ def _sample_market() -> Market:
 def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pytest.MonkeyPatch) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
     from polysignal_lab.nautilus_runtime.cache_reader import NautilusCacheReader
+    _install_fake_polymarket_id_helper(monkeypatch)
 
     data_factories: list[str] = []
     exec_factories: list[str] = []
@@ -108,8 +121,8 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pyte
     instrument_config = cast(SimpleNamespace, config.instrument_config)
     assert instrument_config.load_ids == frozenset(
         {
-            f"{_sample_market().condition_id}-up-token.POLYMARKET",
-            f"{_sample_market().condition_id}-down-token.POLYMARKET",
+            f"{_sample_market().condition_id}:up-token.POLYMARKET",
+            f"{_sample_market().condition_id}:down-token.POLYMARKET",
         }
     )
     assert "paper_client" not in runtime
@@ -125,6 +138,7 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pyte
 def test_build_trading_node_uses_cache_backed_market_data_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
+    _install_fake_polymarket_id_helper(monkeypatch)
 
     class FakeTrader:
         def __init__(self) -> None:
@@ -410,6 +424,7 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
     )
     from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    _install_fake_polymarket_id_helper(monkeypatch)
 
     published: list[object] = []
     created: list[tuple[str, object]] = []
