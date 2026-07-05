@@ -48,10 +48,6 @@ from polysignal_lab.nautilus_runtime.observability import (
     NautilusNotifierAdapter,
     ObservabilityActor,
 )
-from polysignal_lab.nautilus_runtime.scheduler_compat import (
-    init_scheduler_paper_components,
-    mirror_nautilus_fill_into_scheduler,
-)
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
@@ -617,18 +613,6 @@ def _notify_nautilus_paper_fill(
     thread.start()
 
 
-def _mirror_nautilus_paper_fill(
-    scheduler: PolySignalScheduler,
-    payload: Mapping[str, object],
-) -> None:
-    try:
-        _ = mirror_nautilus_fill_into_scheduler(scheduler, payload)
-    except Exception as exc:
-        scheduler.logger.warning(
-            "Nautilus paper fill mirror failed for %s: %s",
-            payload.get("paper_fill_id") or payload.get("client_order_id") or payload.get("order_id") or "unknown",
-            exc,
-        )
 
 
 _InteractiveTelegramBotThread = tuple[threading.Thread, threading.Event]
@@ -745,20 +729,13 @@ def _stop_nautilus_report_loop_thread(
     thread.join(timeout=timeout_sec)
 
 
-async def _initialize_nautilus_settlement_compat(
-    scheduler: PolySignalScheduler,
-) -> None:
-    init_scheduler_paper_components(scheduler)
-    restore_wallet = getattr(scheduler, "_restore_wallet_state", None)
-    if callable(restore_wallet):
-        await cast(Callable[[], Awaitable[object]], restore_wallet)()
 
 async def _prepare_nautilus_runtime_context(
     settings: Settings,
 ) -> tuple[PolySignalScheduler, tuple[Market, ...], ObservabilityActor]:
     scheduler = PolySignalScheduler(settings)
     _initialize_nautilus_scheduler_components(scheduler)
-    await _initialize_nautilus_settlement_compat(scheduler)
+    setattr(scheduler, "_nautilus_runtime_owned_by_trading_node", True)
     discovered_markets = tuple(await scheduler.market_universe.refresh_once())
     observability = ObservabilityActor(
         health=scheduler.health,
@@ -770,7 +747,6 @@ async def _prepare_nautilus_runtime_context(
             stake_usdc,
         ),
         paper_fill_notifier=lambda payload: _notify_nautilus_paper_fill(scheduler, payload),
-        paper_fill_mirror=lambda payload: _mirror_nautilus_paper_fill(scheduler, payload),
     )
     return scheduler, discovered_markets, observability
 

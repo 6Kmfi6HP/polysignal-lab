@@ -555,7 +555,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert captured["health"] is bundle.scheduler.health
     assert captured["observability"] is not None
     assert callable(getattr(captured["observability"], "paper_fill_notifier", None))
-    assert callable(getattr(captured["observability"], "paper_fill_mirror", None))
+    assert getattr(captured["observability"], "paper_fill_mirror", None) is None
     assert callable(getattr(captured["observability"], "accepted_signal_notifier", None))
 
     assert bundle.scheduler is not None
@@ -816,7 +816,7 @@ def test_prepare_nautilus_runtime_context_rebinds_market_discovery_client_for_la
     assert discovery.client is not old_client
 
 
-async def test_prepare_nautilus_runtime_context_initializes_settlement_compat_state(
+async def test_prepare_nautilus_runtime_context_does_not_wire_shadow_wallet_mirror(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -847,14 +847,10 @@ async def test_prepare_nautilus_runtime_context_initializes_settlement_compat_st
 
     assert sched is scheduler
     assert discovered_markets == (market,)
-    assert getattr(scheduler, "_nautilus_runtime_compat_only") is True
-    assert scheduler.paper is None
-    assert scheduler.paper_portfolio.wallet is scheduler.wallet
-    assert scheduler.paper_portfolio.exits is scheduler.exits
-    assert scheduler.paper_portfolio.settlement is scheduler.settlement
-    assert scheduler.wallet.open_position_count == 0
+    assert getattr(scheduler, "_nautilus_runtime_owned_by_trading_node") is True
+    assert not hasattr(scheduler, "_nautilus_runtime_compat_only")
     assert callable(getattr(observability, "paper_fill_notifier", None))
-    assert callable(getattr(observability, "paper_fill_mirror", None))
+    assert getattr(observability, "paper_fill_mirror", None) is None
 
 
 async def test_run_nautilus_housekeeping_once_settles_mirrored_fill_position(
