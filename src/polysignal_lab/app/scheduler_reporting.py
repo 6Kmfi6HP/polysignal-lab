@@ -320,7 +320,10 @@ def _projection_float(source: dict[str, object] | None, key: str) -> float | Non
     value = source.get(key)
     if not isinstance(value, (int, float, str)):
         return None
-    return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _report_equity_inputs(scheduler: PolySignalScheduler) -> tuple[float, float, int]:
@@ -365,11 +368,12 @@ def _report_equity_inputs_from_nautilus_cache(
         if callable(read_account_projection)
         else None
     )
-    ending_equity = (
-        _projection_float(cast(dict[str, object] | None, portfolio_projection), "equity")
-        or ending_equity
+    portfolio_equity = _projection_float(
+        cast(dict[str, object] | None, portfolio_projection), "equity"
     )
-    if ending_equity == starting_equity and isinstance(account_projection, dict):
+    if portfolio_equity is not None:
+        ending_equity = portfolio_equity
+    elif isinstance(account_projection, dict):
         balances = account_projection.get("balances")
         if isinstance(balances, list):
             for balance in balances:

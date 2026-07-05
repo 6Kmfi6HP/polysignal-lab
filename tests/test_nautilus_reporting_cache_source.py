@@ -37,9 +37,43 @@ def test_report_equity_inputs_prefers_nautilus_cache_reader_over_shadow_wallet()
     assert _report_equity_inputs(scheduler) == (1_000.0, 1_234.5, 2)
 
 
-def test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing() -> None:
+def test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity() -> None:
+    cache_reader = SimpleNamespace(
+        snapshot_portfolio_projection=lambda: {"equity": 1_000.0},
+        read_account_projection=lambda: {
+            "balances": [{"currency": "USDC", "total": 987.65}],
+        },
+        read_positions=lambda: [],
+    )
+    scheduler = SimpleNamespace(
+        settings=_settings(),
+        wallet=SimpleNamespace(starting_balance=50.0, equity=50.0, open_position_count=50),
+        nautilus_cache_reader=cache_reader,
+    )
+
+    assert _report_equity_inputs(scheduler) == (1_000.0, 1_000.0, 0)
+
+
+def test_report_equity_inputs_keeps_zero_portfolio_equity() -> None:
     cache_reader = SimpleNamespace(
         snapshot_portfolio_projection=lambda: {"equity": 0.0},
+        read_account_projection=lambda: {
+            "balances": [{"currency": "USDC", "total": 987.65}],
+        },
+        read_positions=lambda: [],
+    )
+    scheduler = SimpleNamespace(
+        settings=_settings(),
+        wallet=SimpleNamespace(starting_balance=50.0, equity=50.0, open_position_count=50),
+        nautilus_cache_reader=cache_reader,
+    )
+
+    assert _report_equity_inputs(scheduler) == (1_000.0, 0.0, 0)
+
+
+def test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing() -> None:
+    cache_reader = SimpleNamespace(
+        snapshot_portfolio_projection=lambda: {},
         read_account_projection=lambda: {
             "balances": [
                 {"currency": "BTC", "total": 99.0},
@@ -55,6 +89,23 @@ def test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equit
     )
 
     assert _report_equity_inputs(scheduler) == (1_000.0, 987.65, 1)
+
+
+def test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity() -> None:
+    cache_reader = SimpleNamespace(
+        snapshot_portfolio_projection=lambda: {"equity": "bad"},
+        read_account_projection=lambda: {
+            "balances": [{"currency": "USDC", "total": 987.65}],
+        },
+        read_positions=lambda: [],
+    )
+    scheduler = SimpleNamespace(
+        settings=_settings(),
+        wallet=SimpleNamespace(starting_balance=50.0, equity=50.0, open_position_count=50),
+        nautilus_cache_reader=cache_reader,
+    )
+
+    assert _report_equity_inputs(scheduler) == (1_000.0, 987.65, 0)
 
 
 def test_report_equity_inputs_keeps_legacy_wallet_fallback_without_cache_reader() -> None:
