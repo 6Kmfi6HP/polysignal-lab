@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+from typing import Literal
 
 from polysignal_lab.domain.enums import TradeResultStatus
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
@@ -109,6 +110,29 @@ WR      {report.win_rate:.2%}
 
 <b>Strategies</b>
 {strategy_text}"""
+        return self._truncate(message)
+
+    def strategy_leaderboard_message(
+        self,
+        rows: list[dict[str, float | int | str]],
+        scope: Literal["all", "today"] = "all",
+    ) -> str:
+        scope_label = "累计" if scope == "all" else "今日"
+        header = f"<b>🏆 Strategy Leaderboard ({scope_label})</b>"
+        if not rows:
+            return f"{header}\n暂无已结算策略战绩。"
+        lines = []
+        for row in rows:
+            closed = int(row.get("closed_positions", 0))
+            trade_word = "trade" if closed == 1 else "trades"
+            lines.append(
+                f"• {html.escape(str(row.get('strategy', '?')))}: {closed} {trade_word}, "
+                f"{int(row.get('win_count', 0))}W/{int(row.get('loss_count', 0))}L/"
+                f"{int(row.get('void_count', 0))}V, "
+                f"{float(row.get('total_pnl_usdc', 0.0)):+.2f} USDC, "
+                f"WR {float(row.get('win_rate', 0.0)):.1%}"
+            )
+        message = header + "\n" + "\n".join(lines)
         return self._truncate(message)
 
     def _format_seconds(self, seconds: int | None) -> str:

@@ -138,7 +138,15 @@ def test_telegram_bot_registers_ptb_handlers() -> None:
         if isinstance(handler, CommandHandler)
         for command in handler.commands
     }
-    assert command_names == {"start", "positions", "status", "signals", "strategies", "daily"}
+    assert command_names == {
+        "start",
+        "positions",
+        "status",
+        "signals",
+        "strategies",
+        "daily",
+        "leaderboard",
+    }
     assert any(isinstance(handler, CallbackQueryHandler) for handler in app.handlers)
 
 
@@ -236,7 +244,7 @@ def test_telegram_bot_uses_ptb_inline_keyboard_markup() -> None:
 
     assert isinstance(keyboard, InlineKeyboardMarkup)
     callback_values = [button.callback_data for row in keyboard.inline_keyboard for button in row]
-    assert callback_values == ["p", "st", "sg", "str", "dy"]
+    assert callback_values == ["p", "st", "sg", "str", "dy", "lb"]
     assert all(1 <= len(value.encode("utf-8")) <= 64 for value in callback_values)
 
 
@@ -336,6 +344,7 @@ class _FormattingPersistence(_FakePersistence):
         self.signals: list[dict[str, object]] = []
         self.rejected: list[dict[str, object]] = []
         self.reports: list[dict[str, object]] = []
+        self.trade_results: list[dict[str, object]] = []
         self.wallet: dict[str, object] | None = None
         self.health_event: dict[str, object] | None = None
         self.table_counts = {"signals": 0, "rejected_signals": 0}
@@ -356,11 +365,36 @@ class _FormattingPersistence(_FakePersistence):
     def restore_daily_reports(self, limit: int = 100) -> list[dict[str, object]]:
         return self.reports[:limit]
 
+    def restore_closed_trade_results(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 50_000,
+    ) -> list[dict[str, object]]:
+        rows = self.trade_results
+        if since is None and until is None:
+            return rows[:limit]
+        filtered: list[dict[str, object]] = []
+        for row in rows:
+            closed_at = row.get("closed_at")
+            if closed_at is None:
+                continue
+            closed_dt = datetime.fromisoformat(str(closed_at).replace("Z", "+00:00"))
+            if since is not None and closed_dt < since:
+                continue
+            if until is not None and closed_dt >= until:
+                continue
+            filtered.append(row)
+        return filtered[:limit]
+
     def query_json(self, table: str, limit: int = 100, where: str = "", params=()) -> list[dict[str, object]]:
         if table == "signals":
             return self.signals[:limit]
         if table == "rejected_signals":
             return self.rejected[:limit]
+        if table == "paper_trade_results":
+            return self.trade_results[:limit]
         raise AssertionError(table)
 
 
@@ -584,3 +618,138 @@ def test_telegram_bot_strategy_toggle_rejects_unknown_strategy() -> None:
 
     with pytest.raises(ValueError, match="Unknown strategy"):
         service._toggle_strategy("tg:not_real")
+
+
+def test_telegram_bot_leaderboard_all_time() -> None:
+    from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
+    from polysignal_lab.domain.paper_result import PaperTradeResult
+
+    persistence = _FormattingPersistence()
+    result = PaperTradeResult(
+        signal_id="sig-1",
+        paper_position_id="pos-1",
+        strategy="ptb_diff",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m-1",
+        market_slug="btc-5m",
+        side=Side.UP,
+        entry_price=0.50,
+        shares=20.0,
+        stake_usdc=10.0,
+        exit_mode=ExitMode.RESOLUTION,
+        outcome_value=1.0,
+        settlement_value=12.4,
+        pnl_usdc=2.4,
+        roi=0.24,
+        result=TradeResultStatus.WIN,
+        opened_at=datetime(2026, 6, 21, tzinfo=timezone.utc),
+        closed_at=datetime(2026, 6, 22, tzinfo=timezone.utc),
+    )
+    persistence.trade_results = [result.model_dump(mode="json")]
+    service = _formatting_service(persistence)
+
+    text = service._format_leaderboard("all")
+
+    assert "累计" in text
+    assert "ptb_diff" in text
+    assert "1W" in text or "1W/" in text
+
+
+def test_telegram_bot_leaderboard_today_filters_by_closed_at(monkeypatch: pytest.MonkeyPatch) -> None:
+    from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
+    from polysignal_lab.domain.paper_result import PaperTradeResult
+
+    persistence = _FormattingPersistence()
+    today_result = PaperTradeResult(
+        signal_id="sig-today",
+        paper_position_id="pos-today",
+        strategy="ptb_diff",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m-1",
+        market_slug="btc-5m",
+        side=Side.UP,
+        entry_price=0.50,
+        shares=20.0,
+        stake_usdc=10.0,
+        exit_mode=ExitMode.RESOLUTION,
+        outcome_value=1.0,
+        settlement_value=12.4,
+        pnl_usdc=2.4,
+        roi=0.24,
+        result=TradeResultStatus.WIN,
+        opened_at=datetime(2026, 7, 5, 1, 0, tzinfo=timezone.utc),
+        closed_at=datetime(2026, 7, 5, 2, 0, tzinfo=timezone.utc),
+    )
+    old_result = PaperTradeResult(
+        signal_id="sig-old",
+        paper_position_id="pos-old",
+        strategy="vwap_momentum",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m-2",
+        market_slug="btc-5m",
+        side=Side.UP,
+        entry_price=0.50,
+        shares=20.0,
+        stake_usdc=10.0,
+        exit_mode=ExitMode.RESOLUTION,
+        outcome_value=0.0,
+        settlement_value=0.0,
+        pnl_usdc=-10.0,
+        roi=-1.0,
+        result=TradeResultStatus.LOSS,
+        opened_at=datetime(2026, 7, 4, 1, 0, tzinfo=timezone.utc),
+        closed_at=datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc),
+    )
+    persistence.trade_results = [
+        today_result.model_dump(mode="json"),
+        old_result.model_dump(mode="json"),
+    ]
+    service = _formatting_service(persistence)
+    service.scheduler = SimpleNamespace(
+        settings=SimpleNamespace(app=SimpleNamespace(timezone="Asia/Bangkok"))
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.publish.telegram_bot.datetime",
+        SimpleNamespace(
+            now=lambda tz=None: datetime(2026, 7, 5, 10, 0, tzinfo=tz),
+            combine=datetime.combine,
+        ),
+    )
+
+    text = service._format_leaderboard("today")
+
+    assert "今日" in text
+    assert "ptb_diff" in text
+    assert "vwap_momentum" not in text
+
+
+def test_telegram_bot_leaderboard_today_title() -> None:
+    persistence = _FormattingPersistence()
+    service = _formatting_service(persistence)
+    service.scheduler = SimpleNamespace(
+        settings=SimpleNamespace(app=SimpleNamespace(timezone="UTC"))
+    )
+
+    text = service._format_leaderboard("today")
+
+    assert "今日" in text
+    assert "暂无已结算策略战绩" in text
+
+
+def test_telegram_bot_leaderboard_callback_renders_today() -> None:
+    persistence = _FormattingPersistence()
+    service = _formatting_service(persistence)
+    service.scheduler = SimpleNamespace(
+        settings=SimpleNamespace(app=SimpleNamespace(timezone="UTC"))
+    )
+
+    text, keyboard = service._render_callback("lbt")
+
+    assert "今日" in text
+    assert keyboard is not None
+    values = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert "lbt" in values
+    assert "lb" in values

@@ -3,8 +3,9 @@ from __future__ import annotations
 import html
 import logging
 from collections.abc import Callable
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime, time, timedelta, timezone
+from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType, ParseMode
@@ -23,7 +24,8 @@ from polysignal_lab.app.services.signal_pipeline import SignalPipeline
 from polysignal_lab.config import TelegramConfig
 from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry
 from polysignal_lab.domain.paper_position import PaperPosition
-from polysignal_lab.domain.paper_result import DailyReport
+from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
+from polysignal_lab.paper.strategy_stats import build_strategy_leaderboard_rows
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.utils import new_id, utc_iso
 
@@ -75,6 +77,7 @@ class TelegramBotService:
             BotCommand("signals", "最近信号"),
             BotCommand("strategies", "策略启停"),
             BotCommand("daily", "每日报告"),
+            BotCommand("leaderboard", "各策略输赢战绩"),
         ]
         try:
             await self.application.bot.set_my_commands(commands)
@@ -90,6 +93,7 @@ class TelegramBotService:
         self.application.add_handler(CommandHandler("signals", self._signals))
         self.application.add_handler(CommandHandler("strategies", self._strategies))
         self.application.add_handler(CommandHandler("daily", self._daily))
+        self.application.add_handler(CommandHandler("leaderboard", self._leaderboard))
         self.application.add_handler(CallbackQueryHandler(self._callback))
 
     async def start(self) -> None:
@@ -234,6 +238,15 @@ class TelegramBotService:
             return
         await self._reply_rendered(update, self._format_daily, self._back_keyboard)
 
+    async def _leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        await self._reply_rendered(
+            update,
+            lambda: self._format_leaderboard("all"),
+            lambda: self._leaderboard_keyboard("all"),
+        )
+
     def _render_callback(self, data: str) -> tuple[str, InlineKeyboardMarkup | None]:
         match data:
             case "m" | "bk":
@@ -246,6 +259,10 @@ class TelegramBotService:
                 return self._format_signals(), self._back_keyboard()
             case "dy":
                 return self._format_daily(), self._back_keyboard()
+            case "lb":
+                return self._format_leaderboard("all"), self._leaderboard_keyboard("all")
+            case "lbt":
+                return self._format_leaderboard("today"), self._leaderboard_keyboard("today")
             case "str":
                 return self._format_strategies(), self._strategies_keyboard()
             case _:
@@ -259,7 +276,7 @@ class TelegramBotService:
             await query.answer("Unauthorized", show_alert=True)
             return
         data = query.data or ""
-        known_actions = {"m", "bk", "p", "st", "sg", "dy", "str"}
+        known_actions = {"m", "bk", "p", "st", "sg", "dy", "str", "lb", "lbt"}
         if data.startswith("tg:"):
             name = data[3:]
             if name not in set(self._strategy_names()):
@@ -399,6 +416,37 @@ class TelegramBotService:
                 ]
             )
 
+    def _report_timezone(self) -> ZoneInfo:
+        timezone_name = "Asia/Bangkok"
+        if self.scheduler is not None and hasattr(self.scheduler, "settings"):
+            timezone_name = getattr(self.scheduler.settings.app, "timezone", timezone_name)
+        try:
+            return ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError:
+            return ZoneInfo("UTC")
+
+    def _today_closed_bounds(self) -> tuple[datetime, datetime]:
+        report_tz = self._report_timezone()
+        today = datetime.now(report_tz).date()
+        day_start_local = datetime.combine(today, time.min, tzinfo=report_tz)
+        day_end_local = datetime.combine(today + timedelta(days=1), time.min, tzinfo=report_tz)
+        return day_start_local.astimezone(UTC), day_end_local.astimezone(UTC)
+
+    def _format_leaderboard(self, scope: Literal["all", "today"]) -> str:
+        since: datetime | None = None
+        until: datetime | None = None
+        if scope == "today":
+            since, until = self._today_closed_bounds()
+        rows_raw = self.persistence.restore_closed_trade_results(since=since, until=until)
+        results: list[PaperTradeResult] = []
+        for payload in rows_raw:
+            try:
+                results.append(PaperTradeResult.model_validate(payload))
+            except Exception:
+                self.logger.exception("Invalid paper trade result payload")
+        rows = build_strategy_leaderboard_rows(results)
+        return self.formatter.strategy_leaderboard_message(rows, scope=scope)
+
     def _strategy_names(self) -> list[str]:
         return [
             str(getattr(strategy, "name", ""))
@@ -472,8 +520,22 @@ class TelegramBotService:
                     InlineKeyboardButton("⚙️ 策略", callback_data="str"),
                 ],
                 [InlineKeyboardButton("📋 每日报告", callback_data="dy")],
+                [InlineKeyboardButton("🏆 策略战绩", callback_data="lb")],
             ]
         )
+
+    def _leaderboard_keyboard(self, scope: Literal["all", "today"]) -> InlineKeyboardMarkup:
+        if scope == "today":
+            toggle_row = [
+                InlineKeyboardButton("📅 今日 ✓", callback_data="lbt"),
+                InlineKeyboardButton("📈 累计", callback_data="lb"),
+            ]
+        else:
+            toggle_row = [
+                InlineKeyboardButton("📅 今日", callback_data="lbt"),
+                InlineKeyboardButton("📈 累计 ✓", callback_data="lb"),
+            ]
+        return InlineKeyboardMarkup([toggle_row, [InlineKeyboardButton("⬅️ 返回", callback_data="bk")]])
 
     def _back_keyboard(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 返回", callback_data="bk")]])
