@@ -67,7 +67,7 @@ services:
     container_name: polysignal-lab-dashboard-web
     restart: unless-stopped
     ports:
-      - "0.0.0.0:8081:80"
+      - "0.0.0.0:8091:80"
     depends_on:
       dashboard-api:
         condition: service_healthy
