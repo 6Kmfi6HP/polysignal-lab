@@ -293,22 +293,38 @@ def _fill_payloads_with_order_intents(
     return enriched
 
 
-def _query_nautilus_projection_rows(
+def _nautilus_projection_rows(
     scheduler: PolySignalScheduler,
-    *,
-    event_type: str,
-    day_params: tuple[str, str],
-    limit: int = 10000,
+    name: str,
 ) -> list[dict[str, object]]:
-    return cast(
-        list[dict[str, object]],
-        scheduler.persistence.query_json(
-            "system_events",
-            where="WHERE event_type = ? AND created_at >= ? AND created_at < ? ORDER BY created_at ASC, rowid ASC",
-            params=(event_type, *day_params),
-            limit=limit,
-        ),
-    )
+    reader = getattr(scheduler, "nautilus_cache_reader", None)
+    method = getattr(reader, name, None)
+    if not callable(method):
+        return []
+    rows = method()
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _nautilus_projection_rows_for_day(
+    scheduler: PolySignalScheduler,
+    name: str,
+    *,
+    day_start: datetime,
+    day_end: datetime,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for row in _nautilus_projection_rows(scheduler, name):
+        timestamp = parse_dt(cast(str | datetime | None, row.get("ts") or row.get("created_at")))
+        if timestamp is None:
+            continue
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        timestamp = timestamp.astimezone(UTC)
+        if day_start <= timestamp < day_end:
+            rows.append(row)
+    return rows
 
 def _nautilus_cache_reader(scheduler: PolySignalScheduler) -> object | None:
     return getattr(scheduler, "nautilus_cache_reader", None)
@@ -431,10 +447,11 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
         limit=10000,
     )
     if not today_fills_raw:
-        today_fills_raw = _query_nautilus_projection_rows(
+        today_fills_raw = _nautilus_projection_rows_for_day(
             scheduler,
-            event_type="nautilus_fill",
-            day_params=day_params,
+            "read_fills",
+            day_start=day_start,
+            day_end=day_end,
         )
     today_orders_raw = scheduler.persistence.query_json(
         "paper_orders",
@@ -444,10 +461,11 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
     )
     using_nautilus_order_rows = False
     if not today_orders_raw:
-        today_orders_raw = _query_nautilus_projection_rows(
+        today_orders_raw = _nautilus_projection_rows_for_day(
             scheduler,
-            event_type="nautilus_order",
-            day_params=day_params,
+            "read_orders",
+            day_start=day_start,
+            day_end=day_end,
         )
         using_nautilus_order_rows = bool(today_orders_raw)
     today_order_ids = {

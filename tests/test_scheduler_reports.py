@@ -434,45 +434,89 @@ async def test_daily_report_uses_prior_day_resting_fill_intent(
 
 
 
-async def test_daily_report_uses_persisted_nautilus_projection_rows(
+async def test_daily_report_uses_nautilus_cache_reader_projection_rows(
     tmp_path: Path, settings, monkeypatch
 ) -> None:
-    # Given: no legacy paper_* rows exist for the day, but Nautilus projection
-    # events were durably persisted through the observability adapter.
+    # Given: no legacy paper_* rows exist for the day, and stale persisted
+    # Nautilus observability events must not be used as a reporting fallback.
     settings.app.timezone = "UTC"
     scheduler = _scheduler(tmp_path, settings)
     scheduler.settings.telegram.send_daily_report = False
     actor = ObservabilityActor(store=NautilusEventStoreAdapter(scheduler.persistence))
-    actor.record_nautilus_order_event(
+    for index in range(2):
+        actor.record_nautilus_order_event(
+            SimpleNamespace(
+                client_order_id=f"C-PERSISTED-{index}",
+                instrument_id="up-token.POLYMARKET",
+                order_side="BUY",
+                order_type="LIMIT",
+                time_in_force="GTD",
+                quantity=1.0,
+                price=0.20,
+                status="FILLED",
+                metrics={"orderbook_fresh": True},
+                tags=[
+                    "strategy=one_cent_buy",
+                    "condition_id=condition-btc-5m",
+                    "market_id=btc-5m",
+                    "order_intent=persisted_system_event",
+                ],
+                ts_event=datetime(2026, 6, 23, 9, index, tzinfo=UTC),
+            )
+        )
+        actor.record_nautilus_fill_event(
+            SimpleNamespace(
+                client_order_id=f"C-PERSISTED-{index}",
+                instrument_id="up-token.POLYMARKET",
+                trade_id=f"T-PERSISTED-{index}",
+                last_qty=1.0,
+                last_px=0.20,
+                liquidity_side="TAKER",
+                ts_event=datetime(2026, 6, 23, 9, index, tzinfo=UTC),
+            )
+        )
+    while actor.drain_telemetry_once():
+        pass
+    setattr(
+        scheduler,
+        "nautilus_cache_reader",
         SimpleNamespace(
-            client_order_id="C-NAUTILUS-1",
-            instrument_id="up-token.POLYMARKET",
-            order_side="BUY",
-            order_type="LIMIT",
-            time_in_force="GTD",
-            quantity=12.5,
-            price=0.80,
-            status="FILLED",
-            metrics={"orderbook_fresh": False},
-            tags=[
-                "strategy=one_cent_buy",
-                "condition_id=condition-btc-5m",
-                "market_id=btc-5m",
-                "order_intent=passive_gtd",
+            read_orders=lambda: [
+                {
+                    "paper_order_id": "C-NAUTILUS-1",
+                    "client_order_id": "C-NAUTILUS-1",
+                    "status": "FILLED",
+                    "order_intent": "passive_gtd",
+                    "metrics": {"paper_order_intent": "passive_gtd", "orderbook_fresh": False},
+                    "ts": "2026-06-23T10:00:00+00:00",
+                },
+                {
+                    "paper_order_id": "C-OLD-NAUTILUS",
+                    "client_order_id": "C-OLD-NAUTILUS",
+                    "status": "FILLED",
+                    "order_intent": "old_projection",
+                    "metrics": {"paper_order_intent": "old_projection", "orderbook_fresh": False},
+                    "ts": "2026-06-22T10:00:00+00:00",
+                },
             ],
-            ts_event=datetime(2026, 6, 23, 10, 0, tzinfo=UTC),
-        )
-    )
-    actor.record_nautilus_fill_event(
-        SimpleNamespace(
-            client_order_id="C-NAUTILUS-1",
-            instrument_id="up-token.POLYMARKET",
-            trade_id="T-NAUTILUS-1",
-            last_qty=12.5,
-            last_px=0.80,
-            liquidity_side="TAKER",
-            ts_event=datetime(2026, 6, 23, 10, 1, tzinfo=UTC),
-        )
+            read_fills=lambda: [
+                {
+                    "paper_fill_id": "T-NAUTILUS-1",
+                    "paper_order_id": "C-NAUTILUS-1",
+                    "client_order_id": "C-NAUTILUS-1",
+                    "order_intent": "passive_gtd",
+                    "ts": "2026-06-23T10:01:00+00:00",
+                },
+                {
+                    "paper_fill_id": "T-OLD-NAUTILUS",
+                    "paper_order_id": "C-OLD-NAUTILUS",
+                    "client_order_id": "C-OLD-NAUTILUS",
+                    "order_intent": "old_projection",
+                    "ts": "2026-06-22T10:01:00+00:00",
+                },
+            ],
+            read_positions=lambda: [],
+        ),
     )
 
     class FixedDateTime(datetime):
@@ -484,11 +528,11 @@ async def test_daily_report_uses_persisted_nautilus_projection_rows(
 
     monkeypatch.setattr(scheduler_reporting, "datetime", FixedDateTime)
 
-    # When: the daily report aggregates the persisted report-day rows.
+    # When: the daily report aggregates the report-day Nautilus cache rows.
     report = await scheduler.generate_daily_report()
 
-    # Then: report counts and intent buckets can be built from Nautilus
-    # projection rows without requiring legacy paper_* inserts for the day.
+    # Then: report counts and intent buckets come from read-only Nautilus cache
+    # projections, not persisted system_events or legacy paper_* inserts.
     assert report is not None
     assert report.report_date == date(2026, 6, 23)
     assert report.paper_orders == 1

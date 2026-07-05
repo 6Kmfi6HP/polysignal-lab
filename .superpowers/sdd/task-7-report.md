@@ -1,87 +1,23 @@
-# Task 7 Report: Paper Trading Page
+# Task 7 Report: Nautilus observability/reporting projection-only boundary
 
-## Summary
+## Status
+DONE
 
-Replaced the Paper Trading placeholder with a real dashboard page that:
+## Scope Completed
+- Added `test_nautilus_observability_has_no_paper_model_recording_api` to `tests/test_nautilus_platform_boundary.py` with the Task 7 forbidden-token boundary assertions.
+- Verified `src/polysignal_lab/nautilus_runtime/observability.py` has no remaining paper model recording API imports, methods, or mirror/notifier symbols covered by the Task 7 boundary.
+- Verified `tests/test_nautilus_observability.py` has no remaining tests calling removed local paper recording APIs.
+- Replaced `generate_daily_report()` Nautilus order/fill fallback so it reads `scheduler.nautilus_cache_reader.read_orders()` / `read_fills()` and filters projection rows to the report day using `ts`/`created_at` timestamps.
+- Left existing `scheduler.nautilus_cache_reader.read_positions()` reporting path in place for open-position/equity projection reporting.
+- Removed the persisted `system_events` `_query_nautilus_projection_rows()` fallback from `scheduler_reporting.py`.
+- Retargeted the scheduler report test to prove report-day order/fill counts and intent buckets come from live Nautilus cache reader projections, that prior-day projection rows are filtered out, and that drained same-day persisted `system_events` Nautilus events are ignored.
 
-- loads paper trades, positions, and orders through the Task 3 query hooks;
-- renders Trades, Positions, and Orders tabs with tables;
-- renders a cumulative PnL chart for closed paper trades;
-- handles empty trades with the chart/table empty state;
-- handles loading and error states for the page resources.
-
-No backend, compose, CI, progress ledger, or unrelated page files were changed. No new jsdom/Recharts polyfills were needed.
-
-## Files Changed
-
-- `frontend/src/features/paper-trading/index.tsx`
-- `frontend/src/features/paper-trading/index.test.tsx`
-- `.superpowers/sdd/task-7-report.md`
-
-## RED Evidence
-
-Command:
-
-```bash
-cd frontend
-npm test -- src/features/paper-trading/index.test.tsx
-```
-
-Result before implementation: FAIL.
-
-Observed evidence:
-
-- `src/features/paper-trading/index.test.tsx` reported 5 failed tests.
-- The primary failure was `Unable to find an element with the text: pt-1`, proving the placeholder did not render the paper trades table.
-- Additional failures showed missing `Positions` tab, missing empty states, missing load error text, and missing loading skeleton.
-
-## GREEN Evidence
-
-Command:
-
-```bash
-cd frontend
-npm test -- src/features/paper-trading/index.test.tsx
-```
-
-Result after implementation and test review: PASS.
-
-Observed evidence:
-
-- `Test Files 1 passed (1)`
-- `Tests 5 passed (5)`
-
-## Additional Verification
-
-Command:
-
-```bash
-cd frontend
-npm run lint
-```
-
-Result: PASS. ESLint completed with no reported problems.
-
-Command:
-
-```bash
-cd frontend
-npm run build
-```
-
-Result: PASS. `tsc -b && vite build` completed successfully.
-
-## Self-Review
-
-- Confirmed `PaperTradingPage` export is preserved.
-- Confirmed all data access goes through `useTradesQuery`, `usePositionsQuery`, and `usePaperOrdersQuery`.
-- Confirmed tab labels and table content are user-visible and covered by Testing Library assertions.
-- Confirmed cumulative PnL chart data is tested with out-of-order trades, proving sorting by `closed_at` and running PnL accumulation before data reaches Recharts.
-- Confirmed the chart has an accessible `role="img"` label so jsdom tests can assert chart presence without coupling to Recharts SVG internals.
-- Confirmed empty trade data renders `No closed paper trades yet.` for both the chart card and Trades tab table area.
-- Confirmed no test-only polyfills were added because existing jsdom setup was sufficient.
-- Confirmed focused tests were reviewed by the Tester subagent; it strengthened loading-state assertions to scope skeleton checks to each active tab panel.
+## Verification
+- RED check before implementation: `uv run pytest tests/test_scheduler_reports.py::test_daily_report_uses_nautilus_cache_reader_projection_rows -q` failed with `assert report.paper_orders == 1` while the old persisted-system-events fallback ignored `scheduler.nautilus_cache_reader` rows.
+- Boundary test: `uv run pytest tests/test_nautilus_platform_boundary.py::test_nautilus_observability_has_no_paper_model_recording_api -q` passed.
+- Task 7 test command: `uv run pytest tests/test_nautilus_platform_boundary.py::test_nautilus_observability_has_no_paper_model_recording_api tests/test_nautilus_observability.py tests/test_scheduler_reports.py -q` passed: `47 passed`.
+- Compile command: `uv run python -m py_compile src/polysignal_lab/nautilus_runtime/observability.py src/polysignal_lab/app/scheduler_reporting.py` passed with no output.
+- Targeted grep checks found no Task 7 forbidden observability tokens, no removed paper recording API calls in `tests/test_nautilus_observability.py`, and no `_query_nautilus_projection_rows` / deleted Nautilus execution/matching/orchestrator imports in `scheduler_reporting.py`.
 
 ## Concerns
-
-- The test mocks Recharts to inspect the `LineChart` data prop for sorted cumulative values. It intentionally does not assert generated SVG paths because those are implementation details of Recharts under jsdom.
+- Worktree contains pre-existing unrelated changes outside Task 7 scope (`.superpowers/sdd/progress.md`, task 1/4/5/6 reports, and an untracked plan file). They were not modified for Task 7 and should not be included in the Task 7 commit.

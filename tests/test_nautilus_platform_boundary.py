@@ -281,3 +281,25 @@ def test_nautilus_runtime_does_not_construct_instruments_locally() -> None:
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
+
+
+def test_nautilus_observability_has_no_paper_model_recording_api() -> None:
+    source = Path("src/polysignal_lab/nautilus_runtime/observability.py").read_text(
+        encoding="utf-8"
+    )
+    forbidden = (
+        "from polysignal_lab.domain.paper_order import",
+        "from polysignal_lab.domain.paper_position import",
+        "from polysignal_lab.domain.paper_result import",
+        "def record_order(",
+        "def record_fill(",
+        "def record_position(",
+        "def record_settlement(",
+        "def record_signal_from_order(",
+        "def signal_candidate_from_order(",
+        "PaperFillNotifier",
+        "PaperFillMirror",
+        "mirror_nautilus_paper_fill",
+    )
+
+    assert [token for token in forbidden if token in source] == []
