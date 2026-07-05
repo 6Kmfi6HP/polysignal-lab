@@ -39,6 +39,7 @@ ldd --version
 ```
 
 The first line must report glibc 2.35 or newer.
+
 ## ARM64 / rk3588 Verification
 
 On the ARM64 host, record the outcome of this command before using the bridge runtime:
