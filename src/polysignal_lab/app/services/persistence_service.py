@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, Iterable
 
 from polysignal_lab.storage.jsonl_store import JSONLStore
@@ -87,6 +88,27 @@ class PersistenceService:
     def restore_daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
         return self.sqlite.restore_daily_reports(limit=limit)
 
+    def restore_closed_trade_results(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 50_000,
+    ) -> list[dict[str, Any]]:
+        where_parts: list[str] = []
+        params: list[Any] = []
+        if since is not None:
+            where_parts.append("closed_at >= ?")
+            params.append(_closed_at_bound(since))
+        if until is not None:
+            where_parts.append("closed_at < ?")
+            params.append(_closed_at_bound(until))
+        where = ""
+        if where_parts:
+            where = "WHERE " + " AND ".join(where_parts)
+        where = f"{where} ORDER BY closed_at DESC".strip()
+        return self.sqlite.query_json("paper_trade_results", where=where, params=tuple(params), limit=limit)
+
     def restore_latest_system_event(self, event_type: str) -> dict[str, Any] | None:
         return self.sqlite.restore_latest_system_event(event_type)
 
@@ -141,3 +163,9 @@ class PersistenceService:
 
     def close(self) -> None:
         self.sqlite.close()
+
+
+def _closed_at_bound(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
