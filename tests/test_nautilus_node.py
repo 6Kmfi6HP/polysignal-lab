@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import threading
+import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
@@ -13,6 +15,8 @@ from polysignal_lab.nautilus_runtime.node import (
     build_control,
     run_nautilus_cli,
     run_nautilus_cli_async,
+    _start_interactive_telegram_bot_thread,
+    _stop_interactive_telegram_bot_thread,
 )
 from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
 
@@ -2323,3 +2327,121 @@ def test_run_nautilus_cli_prints_ready(monkeypatch, capsys) -> None:
     run_nautilus_cli()
 
     assert "Nautilus runtime ready — 0 strategies" in capsys.readouterr().out
+
+
+def test_start_interactive_telegram_bot_thread_starts_and_stops_bot() -> None:
+    started = threading.Event()
+    stopped = threading.Event()
+
+    class FakeBot:
+        async def start(self) -> None:
+            started.set()
+
+        async def stop(self) -> None:
+            stopped.set()
+
+    scheduler = SimpleNamespace(telegram_bot=FakeBot(), logger=SimpleNamespace(exception=print))
+    handle = _start_interactive_telegram_bot_thread(cast(object, scheduler))
+    assert handle is not None
+    assert started.wait(timeout=5.0)
+    _stop_interactive_telegram_bot_thread(handle)
+    assert stopped.wait(timeout=5.0)
+
+
+def test_start_interactive_telegram_bot_thread_returns_none_without_bot() -> None:
+    scheduler = SimpleNamespace(telegram_bot=None)
+    assert _start_interactive_telegram_bot_thread(cast(object, scheduler)) is None
+
+
+def test_start_nautilus_report_loop_thread_runs_housekeeping_until_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.nautilus_runtime.node import (
+        _start_nautilus_report_loop_thread,
+        _stop_nautilus_report_loop_thread,
+    )
+
+    calls: list[str] = []
+
+    async def fake_housekeeping(scheduler, last_report_date):
+        _ = scheduler
+        calls.append("housekeeping")
+        return last_report_date
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._run_nautilus_housekeeping_once",
+        fake_housekeeping,
+    )
+
+    scheduler = SimpleNamespace(
+        settings=SimpleNamespace(markets=SimpleNamespace(refresh_interval_sec=0.01)),
+        logger=SimpleNamespace(exception=print),
+    )
+    handle = _start_nautilus_report_loop_thread(cast(object, scheduler))
+    assert handle is not None
+    deadline = time.monotonic() + 2.0
+    while not calls and time.monotonic() < deadline:
+        time.sleep(0.05)
+    _stop_nautilus_report_loop_thread(handle)
+    assert calls
+
+
+def test_run_nautilus_cli_starts_report_loop_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    started = threading.Event()
+    stopped = threading.Event()
+
+    def fake_start_report_loop(scheduler):
+        _ = scheduler
+        started.set()
+        return threading.Thread(), threading.Event()
+
+    def fake_stop_report_loop(handle, *, timeout_sec=15.0):
+        _ = handle, timeout_sec
+        stopped.set()
+
+    class FakeNode:
+        def run(self) -> None:
+            return None
+
+        def dispose(self) -> None:
+            return None
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    async def fake_prepare(settings):
+        _ = settings
+        return SimpleNamespace(stop=_noop, settings=_runtime_settings_stub()), (), SimpleNamespace()
+
+    def fake_bundle(settings, scheduler, discovered_markets, observability):
+        _ = settings, scheduler, discovered_markets, observability
+        return SimpleNamespace(
+            node=FakeNode(),
+            scheduler=SimpleNamespace(
+                stop=_noop,
+                settings=_runtime_settings_stub(
+                    runtime=SimpleNamespace(
+                        nautilus=SimpleNamespace(
+                            paper_engine="nautilus_matching",
+                            matching_accuracy_mode="depth_l2",
+                        )
+                    )
+                ),
+            ),
+            observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+            components={"strategies": []},
+        )
+
+    monkeypatch.setattr(node_mod, "_prepare_nautilus_runtime_context", fake_prepare)
+    monkeypatch.setattr(node_mod, "_rebind_market_discovery_client", lambda _scheduler: None)
+    monkeypatch.setattr(node_mod, "_build_nautilus_runtime_bundle", fake_bundle)
+    monkeypatch.setattr(node_mod, "_install_polymarket_precision_runtime_guards", lambda: None)
+    monkeypatch.setattr(node_mod, "_start_nautilus_report_loop_thread", fake_start_report_loop)
+    monkeypatch.setattr(node_mod, "_stop_nautilus_report_loop_thread", fake_stop_report_loop)
+
+    run_nautilus_cli()
+
+    assert started.wait(timeout=5.0)
+    assert stopped.is_set()

@@ -631,6 +631,120 @@ def _mirror_nautilus_paper_fill(
         )
 
 
+_InteractiveTelegramBotThread = tuple[threading.Thread, threading.Event]
+
+
+async def _run_interactive_telegram_bot_until_stop(
+    bot: object,
+    stop: asyncio.Event,
+) -> None:
+    start = getattr(bot, "start", None)
+    stop_bot = getattr(bot, "stop", None)
+    if not callable(start) or not callable(stop_bot):
+        return
+    try:
+        await cast(Callable[[], Awaitable[object]], start)()
+        await stop.wait()
+    finally:
+        await cast(Callable[[], Awaitable[object]], stop_bot)()
+
+
+def _start_interactive_telegram_bot_thread(
+    scheduler: PolySignalScheduler,
+) -> _InteractiveTelegramBotThread | None:
+    bot = getattr(scheduler, "telegram_bot", None)
+    if bot is None:
+        return None
+    stop_event = threading.Event()
+    runtime_logger = cast(logging.Logger, getattr(scheduler, "logger", logger))
+
+    def _run() -> None:
+        async def _main() -> None:
+            try:
+                await bot.start()
+                while not stop_event.is_set():
+                    await asyncio.sleep(0.5)
+            finally:
+                await bot.stop()
+
+        try:
+            asyncio.run(_main())
+        except Exception:
+            runtime_logger.exception("Interactive Telegram bot thread exited with error")
+
+    thread = threading.Thread(
+        target=_run,
+        name="telegram-interactive-bot",
+        daemon=True,
+    )
+    thread.start()
+    return thread, stop_event
+
+
+def _stop_interactive_telegram_bot_thread(
+    handle: _InteractiveTelegramBotThread | None,
+    *,
+    timeout_sec: float = 15.0,
+) -> None:
+    if handle is None:
+        return
+    thread, stop_event = handle
+    stop_event.set()
+    thread.join(timeout=timeout_sec)
+
+
+_NautilusReportLoopThread = tuple[threading.Thread, threading.Event]
+
+
+def _start_nautilus_report_loop_thread(
+    scheduler: PolySignalScheduler,
+) -> _NautilusReportLoopThread:
+    stop_event = threading.Event()
+    runtime_logger = cast(logging.Logger, getattr(scheduler, "logger", logger))
+
+    def _run() -> None:
+        async def _main() -> None:
+            asyncio_stop = asyncio.Event()
+
+            async def _watch_stop() -> None:
+                while not stop_event.is_set():
+                    await asyncio.sleep(0.5)
+                asyncio_stop.set()
+
+            watcher = asyncio.create_task(_watch_stop())
+            try:
+                await _run_nautilus_report_loop(scheduler, asyncio_stop)
+            finally:
+                watcher.cancel()
+                with suppress(asyncio.CancelledError):
+                    await watcher
+
+        try:
+            asyncio.run(_main())
+        except Exception:
+            runtime_logger.exception("Nautilus report loop thread exited with error")
+
+    thread = threading.Thread(
+        target=_run,
+        name="nautilus-report-loop",
+        daemon=True,
+    )
+    thread.start()
+    return thread, stop_event
+
+
+def _stop_nautilus_report_loop_thread(
+    handle: _NautilusReportLoopThread | None,
+    *,
+    timeout_sec: float = 15.0,
+) -> None:
+    if handle is None:
+        return
+    thread, stop_event = handle
+    stop_event.set()
+    thread.join(timeout=timeout_sec)
+
+
 async def _initialize_nautilus_settlement_compat(
     scheduler: PolySignalScheduler,
 ) -> None:
@@ -1070,10 +1184,17 @@ async def run_nautilus_cli_async(
     report_task: asyncio.Task[None] | None = None
     run_task: asyncio.Task[None] | None = None
     stop_waiter: asyncio.Task[bool] | None = None
+    telegram_stop = asyncio.Event()
+    telegram_task: asyncio.Task[None] | None = None
     try:
         starter = getattr(bundle.observability, "start", None)
         if callable(starter):
             starter()
+        bot = getattr(bundle.scheduler, "telegram_bot", None)
+        if bot is not None:
+            telegram_task = asyncio.create_task(
+                _run_interactive_telegram_bot_until_stop(bot, telegram_stop)
+            )
         strategies = bundle.components.get("strategies", ())
         strategy_count = len(strategies) if isinstance(strategies, Sequence) else 0
         strategy_names = (
@@ -1116,6 +1237,10 @@ async def run_nautilus_cli_async(
     finally:
         try:
             event.set()
+            telegram_stop.set()
+            if telegram_task is not None:
+                with suppress(asyncio.CancelledError):
+                    await telegram_task
             if report_task is not None:
                 report_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -1169,10 +1294,14 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
         if isinstance(strategies, Sequence)
         else []
     )
+    telegram_bot_thread: _InteractiveTelegramBotThread | None = None
+    report_loop_thread: _NautilusReportLoopThread | None = None
     try:
         starter = getattr(bundle.observability, "start", None)
         if callable(starter):
             starter()
+        telegram_bot_thread = _start_interactive_telegram_bot_thread(bundle.scheduler)
+        report_loop_thread = _start_nautilus_report_loop_thread(bundle.scheduler)
         try:
             asyncio.run(
                 bundle.observability.notify_startup(
@@ -1198,6 +1327,8 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
                 len(strategy_names),
             )
     finally:
+        _stop_nautilus_report_loop_thread(report_loop_thread)
+        _stop_interactive_telegram_bot_thread(telegram_bot_thread)
         try:
             try:
                 asyncio.run(bundle.observability.notify_shutdown())
