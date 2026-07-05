@@ -15,12 +15,15 @@ def polymarket_instrument_id(condition_id: str, token_id: str) -> str:
     if not token:
         raise ValueError("token_id must not be empty")
     try:
-        helper = getattr(
-            import_module("nautilus_trader.adapters.polymarket"),
-            "get_polymarket_instrument_id",
+        helper = cast(
+            Callable[[str, str], object],
+            getattr(
+                import_module("nautilus_trader.adapters.polymarket"),
+                "get_polymarket_instrument_id",
+            ),
         )
     except (ModuleNotFoundError, AttributeError) as exc:
         raise RuntimeError(
             "Nautilus Polymarket adapter is required to resolve instrument IDs"
         ) from exc
-    return str(cast(Callable[[str, str], object], helper)(condition, token))
+    return str(helper(condition, token))

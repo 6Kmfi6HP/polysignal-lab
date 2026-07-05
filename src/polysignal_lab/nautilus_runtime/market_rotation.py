@@ -22,8 +22,8 @@ from polysignal_lab.nautilus_runtime.market_data import (
 )
 from polysignal_lab.nautilus_runtime.sidecar_data import (
     SidecarDataActor,
-    _market_metadata,
-    _timestamp_ns,
+    _market_metadata,  # pyright: ignore[reportPrivateUsage] - shared sidecar serializer has no public equivalent.
+    _timestamp_ns,  # pyright: ignore[reportPrivateUsage] - shared sidecar timestamp helper has no public equivalent.
 )
 
 logger = logging.getLogger("polysignal_lab.nautilus.market_rotation")
@@ -60,36 +60,36 @@ class MarketRotationActor:
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
     ) -> None:
-        self.settings = settings
-        self.market_universe = market_universe
-        self.registry = registry
-        self.sidecar = sidecar
-        self.health = health
-        self.publisher = SidecarDataActor(
+        self.settings: Settings = settings
+        self.market_universe: _MarketUniverse = market_universe
+        self.registry: PolymarketMarketRegistry = registry
+        self.sidecar: ExternalDataSidecar = sidecar
+        self.health: _Health | None = health
+        self.publisher: SidecarDataActor = SidecarDataActor(
             publisher=self,
             sidecar=sidecar,
             registry=registry,
         )
-        self.spots = SpotRegistry()
-        self.anchor_prices = (
+        self.spots: SpotRegistry = SpotRegistry()
+        self.anchor_prices: AnchorPriceService | None = (
             AnchorPriceService(self.spots, anchor_store)
             if anchor_store is not None
             else None
         )
-        self.ptb_provider = PriceToBeatProvider(
+        self.ptb_provider: PriceToBeatProvider = PriceToBeatProvider(
             use_crypto_price_api=settings.data.polymarket.use_crypto_price_api,
             anchor_store=anchor_store,
         )
-        self.rtds_feed = PolymarketRtdsPriceFeed(
+        self.rtds_feed: PolymarketRtdsPriceFeed = PolymarketRtdsPriceFeed(
             self.spots,
             settings.data.polymarket,
             on_spot=self._on_spot,
         )
-        self._active_by_condition = _markets_by_condition(startup_markets)
-        self._epoch = 0
+        self._active_by_condition: dict[str, Market] = _markets_by_condition(startup_markets)
+        self._epoch: int = 0
         self._refresh_task: _CancelableTask | None = None
         self._rtds_task: _CancelableTask | None = None
-        self._refresh_in_flight = False
+        self._refresh_in_flight: bool = False
         self._last_published_ptb: dict[str, _PriceToBeatSignature] = {}
     def publish_data(self, data_type: object, data: object) -> None:
         base_publish = getattr(super(MarketRotationActor, self), "publish_data", None)
@@ -147,7 +147,7 @@ class MarketRotationActor:
             _ = cancel_timer(REFRESH_TIMER_NAME)
         for task in (self._refresh_task, self._rtds_task):
             if task is not None and hasattr(task, "cancel"):
-                task.cancel()
+                _ = task.cancel()
 
     async def refresh_once(self) -> tuple[Market, ...]:
         try:
@@ -198,7 +198,7 @@ class MarketRotationActor:
         for condition_id in entered_condition_ids:
             self.publisher.publish_market_metadata(_market_metadata(current[condition_id]))
         for condition_id in exited_condition_ids:
-            self._last_published_ptb.pop(condition_id, None)
+            _ = self._last_published_ptb.pop(condition_id, None)
         self._active_by_condition = current
         self._epoch = next_epoch
         self._mark_ok(
@@ -221,17 +221,17 @@ class MarketRotationActor:
         interval = max(int(self.settings.runtime.nautilus.market_rotation.interval_sec), 1)
         while True:
             await asyncio.sleep(interval)
-            await self.refresh_once()
+            _ = await self.refresh_once()
 
     async def _refresh_market_universe_async(self) -> tuple[Market, ...]:
-        discovery = getattr(self.market_universe, "discovery", None)
-        client = getattr(discovery, "client", None)
+        discovery = cast(object | None, getattr(self.market_universe, "discovery", None))
+        client = cast(object | None, getattr(discovery, "client", None))
         if discovery is None or client is None:
             return tuple(await self.market_universe.refresh_once())
 
         import httpx
 
-        original_client = client
+        original_client: object = client
         fresh_client = httpx.AsyncClient(timeout=15.0)
         setattr(discovery, "client", fresh_client)
         try:

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import SupportsFloat, cast
 
-from polysignal_lab.alpha.types import AlphaDecision, NautilusOrderSpec
+from polysignal_lab.alpha.types import AlphaDecision, NautilusOrderSpec, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
@@ -19,7 +20,7 @@ def order_spec_from_decision(
     intent = _intent(source) or OrderIntent.TAKER_IOC
     expiry_seconds = _expiry_seconds(source)
     pair_id = _pair_id(source)
-    metrics = dict(getattr(source, "metrics", {}) or {})
+    metrics = dict(cast(Mapping[str, object], source.metrics))
     if available_shares is None:
         available_shares = _metric_float(
             metrics, "available_ask_shares", "ask_available_shares", "depth_shares"
@@ -71,19 +72,19 @@ def order_spec_from_decision(
         "max_entry_price": str(source.max_entry_price),
         "order_intent": intent.value,
     }
-    signal_id = getattr(source, "signal_id", None)
+    signal_id = source.signal_id if isinstance(source, SignalCandidate) else None
     if signal_id is not None:
         tags["signal_id"] = str(signal_id)
-    seconds_to_close = getattr(source, "seconds_to_close", None)
+    seconds_to_close = source.seconds_to_close
     if seconds_to_close is not None:
         tags["seconds_to_close"] = str(seconds_to_close)
-    data_freshness_ms = getattr(source, "data_freshness_ms", None)
+    data_freshness_ms = source.data_freshness_ms
     if data_freshness_ms is not None:
         tags["data_freshness_ms"] = str(data_freshness_ms)
-    reason_codes = getattr(source, "reason_codes", None)
+    reason_codes = source.reason_codes
     if reason_codes:
         tags["reason_codes"] = "|".join(str(code) for code in reason_codes)
-    if bool(getattr(source, "hedge_leg", False)):
+    if source.hedge_leg:
         tags["hedge_leg"] = "true"
     if intent == OrderIntent.PASSIVE_GTD:
         tags["time_in_force"] = "GTD"
@@ -106,7 +107,7 @@ def order_spec_from_decision(
         expiry_seconds=expiry_seconds,
         pair_id=pair_id,
         reduce_only=False,
-        hedge_leg=bool(getattr(source, "hedge_leg", False)),
+        hedge_leg=source.hedge_leg,
         tags=tags,
     )
 
@@ -120,29 +121,30 @@ def _decision_source(
 
 
 def _intent(source: AlphaDecision | SignalCandidate) -> OrderIntent | None:
-    raw = getattr(source, "order_intent", None)
+    raw = source.order_intent
     if raw is None:
         return None
     if isinstance(raw, OrderIntent):
         return raw
-    value = getattr(raw, "intent", raw)
-    return value if isinstance(value, OrderIntent) else OrderIntent(value)
+    return raw.intent
 
 
 def _expiry_seconds(source: AlphaDecision | SignalCandidate) -> int | None:
-    raw = getattr(source, "order_intent", None)
-    value = getattr(raw, "expiry_seconds", None)
-    if value is None and (raw is None or isinstance(raw, OrderIntent)):
-        value = getattr(source, "expiry_seconds", None)
-    return int(value) if value is not None else None
+    raw = source.order_intent
+    if isinstance(raw, OrderIntentSpec):
+        return raw.expiry_seconds
+    if isinstance(source, SignalCandidate):
+        return source.expiry_seconds
+    return None
 
 
 def _pair_id(source: AlphaDecision | SignalCandidate) -> str | None:
-    raw = getattr(source, "order_intent", None)
-    value = getattr(raw, "pair_id", None)
-    if value is None and (raw is None or isinstance(raw, OrderIntent)):
-        value = getattr(source, "pair_id", None)
-    return str(value) if value is not None else None
+    raw = source.order_intent
+    if isinstance(raw, OrderIntentSpec):
+        return raw.pair_id
+    if isinstance(source, SignalCandidate):
+        return source.pair_id
+    return None
 
 
 def _positive_float(value: float, name: str) -> float:
@@ -152,9 +154,9 @@ def _positive_float(value: float, name: str) -> float:
     return number
 
 
-def _metric_float(metrics: dict[str, Any], *names: str) -> float | None:
+def _metric_float(metrics: dict[str, object], *names: str) -> float | None:
     for name in names:
         value = metrics.get(name)
         if value is not None:
-            return float(value)
+            return float(cast(SupportsFloat | str | bytes | bytearray, value))
     return None

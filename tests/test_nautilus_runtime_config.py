@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -24,7 +25,7 @@ def test_nautilus_book_type_defaults_are_paper_only() -> None:
 
 def test_nautilus_rejects_unknown_sandbox_book_type() -> None:
     with pytest.raises(ValidationError):
-        Settings.model_validate(
+        _ = Settings.model_validate(
             {
                 "runtime": {
                     "nautilus": {
@@ -46,7 +47,7 @@ def test_nautilus_runtime_uses_sandbox_book_type_not_matching_engine() -> None:
 
 def test_removed_nautilus_matching_keys_fail_fast() -> None:
     with pytest.raises(ValidationError):
-        Settings.model_validate(
+        _ = Settings.model_validate(
             {
                 "runtime": {
                     "nautilus": {
@@ -57,7 +58,7 @@ def test_removed_nautilus_matching_keys_fail_fast() -> None:
         )
 
     with pytest.raises(ValidationError):
-        Settings.model_validate(
+        _ = Settings.model_validate(
             {
                 "runtime": {
                     "nautilus": {
@@ -78,7 +79,7 @@ def test_yaml_runtime_book_type_values_are_explicit() -> None:
 
 def test_live_polymarket_execution_is_invalid_in_default_runtime() -> None:
     with pytest.raises(ValueError, match="live Polymarket execution"):
-        Settings.model_validate(
+        _ = Settings.model_validate(
             {
                 "runtime": {
                     "engine": "nautilus",
@@ -116,9 +117,9 @@ def test_health_config_defaults_are_conservative() -> None:
     )
 
 
-def test_health_config_accepts_yaml_overrides(tmp_path) -> None:
+def test_health_config_accepts_yaml_overrides(tmp_path: Path) -> None:
     path = tmp_path / "settings.yaml"
-    path.write_text(
+    _ = path.write_text(
         "\n".join(
             [
                 "health:",

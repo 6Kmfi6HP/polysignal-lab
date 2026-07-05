@@ -201,12 +201,8 @@ def _nautilus_instrument_id(value: str) -> object:
         identifiers = import_module("nautilus_trader.model.identifiers")
     except ModuleNotFoundError:
         return value
-    instrument_id_cls = getattr(identifiers, "InstrumentId", None)
-    from_str = (
-        getattr(instrument_id_cls, "from_str", None)
-        if instrument_id_cls is not None
-        else None
-    )
+    instrument_id_cls = cast(object | None, getattr(identifiers, "InstrumentId", None))
+    from_str = cast(object | None, getattr(instrument_id_cls, "from_str", None))
     if callable(from_str):
         return cast(Callable[[str], object], from_str)(value)
     return value
@@ -392,7 +388,7 @@ class PolySignalNativeStrategy:
         clock = getattr(self, "clock", None)
         set_timer = getattr(clock, "set_timer", None)
         if callable(set_timer):
-            set_timer(
+            _ = set_timer(
                 EVALUATION_HEARTBEAT_TIMER_NAME,
                 EVALUATION_HEARTBEAT_INTERVAL,
                 callback=self._on_evaluation_heartbeat,
@@ -402,7 +398,7 @@ class PolySignalNativeStrategy:
         clock = getattr(self, "clock", None)
         cancel_timer = getattr(clock, "cancel_timer", None)
         if callable(cancel_timer):
-            cancel_timer(EVALUATION_HEARTBEAT_TIMER_NAME)
+            _ = cancel_timer(EVALUATION_HEARTBEAT_TIMER_NAME)
 
     def _on_evaluation_heartbeat(self, _event: object) -> None:
         self._note_runtime_progress("evaluation_heartbeat")
@@ -627,7 +623,7 @@ class PolySignalNativeStrategy:
         if should_notify:
             notify = getattr(self.core, "on_notify_fill", None)
             if callable(notify):
-                notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
+                _ = notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
         self._record_nautilus_fill(event, alpha_event.metrics)
         self._forget_approved_metrics(
             event,
@@ -795,7 +791,7 @@ class PolySignalNativeStrategy:
     def _call_core(self, method_name: str, event: AlphaOrderEvent) -> None:
         handler = getattr(self.core, method_name, None)
         if callable(handler):
-            handler(event)
+            _ = handler(event)
 
     def _record_signal(self, signal: SignalCandidate) -> None:
         recorder = (
@@ -804,7 +800,7 @@ class PolySignalNativeStrategy:
             else getattr(self.observability, "record_signal", None)
         )
         if callable(recorder):
-            recorder(signal)
+            _ = recorder(signal)
 
     def _notify_accepted_signal(self, signal: SignalCandidate) -> None:
         notifier = (
@@ -813,7 +809,7 @@ class PolySignalNativeStrategy:
             else getattr(self.observability, "notify_accepted_signal", None)
         )
         if callable(notifier):
-            notifier(signal, self.fixed_stake_usdc)
+            _ = notifier(signal, self.fixed_stake_usdc)
 
 
     def _record_decision(self, decision: AlphaDecision, *, accepted: bool) -> None:
@@ -981,9 +977,12 @@ class PolySignalNativeStrategy:
         self, order: object, approved: ApprovedDecision
     ) -> None:
         signal = approved.signal
-        metrics = dict(getattr(signal, "metrics", {}) or {})
-        metrics.setdefault("dedupe_key", signal.dedupe_key)
-        signal_fields = {
+        metrics: dict[str, object] = dict(
+            cast(Mapping[str, object], getattr(signal, "metrics", {}) or {})
+        )
+        _ = metrics.setdefault("dedupe_key", signal.dedupe_key)
+        signal_side = cast(object, getattr(signal, "side", None))
+        signal_fields: dict[str, object] = {
             "signal_id": getattr(signal, "signal_id", None),
             "strategy": getattr(signal, "strategy", None),
             "asset": getattr(signal, "asset", None),
@@ -992,11 +991,11 @@ class PolySignalNativeStrategy:
             "market_slug": getattr(signal, "market_slug", None),
             "condition_id": getattr(signal, "condition_id", None),
             "token_id": getattr(signal, "token_id", None),
-            "side": getattr(getattr(signal, "side", None), "value", getattr(signal, "side", None)),
+            "side": getattr(signal_side, "value", signal_side),
         }
         for key, value in signal_fields.items():
             if value not in (None, ""):
-                metrics.setdefault(key, value)
+                _ = metrics.setdefault(key, value)
         tags = _tags(_value(order, "tags"))
         values = (
             _value(order, "id"),
@@ -1470,7 +1469,7 @@ def _subscribe_custom_data_on_bus(strategy: object, data_type: object) -> bool:
         topic_getter = getattr(topic_cache, "get_custom_data_topic", None)
     if not callable(subscribe) or not callable(topic_getter) or not callable(handler):
         return False
-    subscribe(topic=topic_getter(data_type, None), handler=handler)
+    _ = subscribe(topic=topic_getter(data_type, None), handler=handler)
     return True
 
 

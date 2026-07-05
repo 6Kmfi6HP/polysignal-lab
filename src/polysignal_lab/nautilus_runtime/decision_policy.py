@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, SideBookView, SpotView
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
@@ -24,8 +24,9 @@ from polysignal_lab.signal_layer.gate import SignalGate
 def _string_tuple_mapping(raw: object) -> dict[str, tuple[str, ...]]:
     if not isinstance(raw, Mapping):
         return {}
+    raw_mapping = cast(Mapping[object, object], raw)
     coerced: dict[str, tuple[str, ...]] = {}
-    for name, deps in raw.items():
+    for name, deps in raw_mapping.items():
         if isinstance(deps, str):
             coerced[str(name)] = (deps,)
             continue
@@ -45,7 +46,7 @@ class ApprovedDecision:
 @dataclass(frozen=True, slots=True)
 class RejectedDecision:
     reason_code: str
-    detail: Mapping[str, Any]
+    detail: Mapping[str, object]
     candidate: SignalCandidate | None = None
 
 
@@ -84,7 +85,8 @@ class _GateSnapshotAdapter:
 
     @property
     def market(self) -> _MarketAdapter:
-        raw = self.view.metrics.get("market_is_active", self.view.metrics.get("is_active", True))
+        metrics = cast(Mapping[str, object], self.view.metrics)
+        raw = metrics.get("market_is_active", metrics.get("is_active", True))
         return _MarketAdapter(is_active=bool(raw))
 
     @property
@@ -118,17 +120,17 @@ class DecisionPolicyActor:
         strategy_freshness_policies: Mapping[str, FreshnessPolicy] | None = None,
     ) -> None:
         signal_config = SignalConfig()
-        self.gate = gate or SignalGate(signal_config, PolymarketDataConfig(), BinanceDataConfig())
-        self.arbiter = arbiter or SignalArbiter()
-        self.consensus = consensus or ConsensusEngine(
+        self.gate: SignalGate = gate or SignalGate(signal_config, PolymarketDataConfig(), BinanceDataConfig())
+        self.arbiter: SignalArbiter = arbiter or SignalArbiter()
+        self.consensus: ConsensusEngine = consensus or ConsensusEngine(
             window_sec=signal_config.consensus_window_sec,
             enabled=signal_config.consensus_enabled,
         )
-        self.disabled_strategies = set(disabled_strategies)
-        self.strategy_dependencies = {
+        self.disabled_strategies: set[str] = set(disabled_strategies)
+        self.strategy_dependencies: dict[str, tuple[str, ...]] = {
             name: tuple(deps) for name, deps in (dependencies or {}).items()
         }
-        self.strategy_freshness_policies = dict(strategy_freshness_policies or {})
+        self.strategy_freshness_policies: dict[str, FreshnessPolicy] = dict(strategy_freshness_policies or {})
 
     def set_strategy_enabled(self, name: str, enabled: bool) -> None:
         if enabled:
@@ -147,9 +149,9 @@ class DecisionPolicyActor:
 
     def load_state(self, payload: Mapping[str, object]) -> None:
         disabled = payload.get("disabled_strategies", ()) or ()
-        dependencies = payload.get("strategy_dependencies", {}) or {}
+        dependencies = cast(object, payload.get("strategy_dependencies", {}) or {})
         self.disabled_strategies = (
-            {str(name) for name in disabled}
+            {str(name) for name in cast(Iterable[object], disabled)}
             if isinstance(disabled, Iterable) and not isinstance(disabled, (str, bytes))
             else set()
         )

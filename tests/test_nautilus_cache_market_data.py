@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from collections.abc import Sequence
-from typing import Any
+from typing_extensions import override
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_bridge.market_registry import (
@@ -24,26 +24,29 @@ class FakeLevel:
 
 class FakeBook:
     def __init__(self) -> None:
-        self.bids = [FakeLevel(price=0.48, size=10.0)]
-        self.asks = [FakeLevel(price=0.52, size=11.0), FakeLevel(price=0.53, size=12.0)]
-        self.last_trade_price = 0.51
-        self.last_trade_size = 2.0
-        self.last_trade_timestamp = "2026-07-05T00:00:00Z"
-        self.received_at = datetime.now(UTC) - timedelta(milliseconds=25)
+        self.bids: list[FakeLevel] = [FakeLevel(price=0.48, size=10.0)]
+        self.asks: list[FakeLevel] = [
+            FakeLevel(price=0.52, size=11.0),
+            FakeLevel(price=0.53, size=12.0),
+        ]
+        self.last_trade_price: float = 0.51
+        self.last_trade_size: float = 2.0
+        self.last_trade_timestamp: str = "2026-07-05T00:00:00Z"
+        self.received_at: datetime = datetime.now(UTC) - timedelta(milliseconds=25)
 
 
 class FakeTrade:
-    price = 0.51
-    size = 2.0
-    aggressor_side = "BUYER"
-    ts_event = datetime(2026, 7, 5, tzinfo=UTC)
+    price: float = 0.51
+    size: float = 2.0
+    aggressor_side: str = "BUYER"
+    ts_event: datetime | int = datetime(2026, 7, 5, tzinfo=UTC)
 
 
 class FakeCache:
     def __init__(self, instrument_id: str) -> None:
-        self.instrument_id = instrument_id
-        self.book = FakeBook()
-        self.requested: list[Any] = []
+        self.instrument_id: str = instrument_id
+        self.book: FakeBook = FakeBook()
+        self.requested: list[object] = []
 
     def order_book(self, instrument_id: object) -> FakeBook | None:
         self.requested.append(instrument_id)
@@ -122,12 +125,13 @@ def test_cache_market_data_provider_converts_nautilus_trade_ns_timestamp() -> No
     expected = datetime(2026, 7, 5, tzinfo=UTC)
 
     class NsTrade(FakeTrade):
-        price = 0.51
-        size = 2.0
-        aggressor_side = "BUYER"
-        ts_event = int(expected.timestamp() * 1_000_000_000)
+        price: float = 0.51
+        size: float = 2.0
+        aggressor_side: str = "BUYER"
+        ts_event: datetime | int = int(expected.timestamp() * 1_000_000_000)
 
     class NsCache(FakeCache):
+        @override
         def trade_ticks(self, instrument_id: object) -> list[NsTrade]:
             return [NsTrade()] if str(instrument_id) == self.instrument_id else []
 

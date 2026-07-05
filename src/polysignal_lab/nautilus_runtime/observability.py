@@ -7,7 +7,7 @@ from enum import Enum
 from queue import Empty, Full, Queue
 from threading import Event, Thread
 from collections.abc import Callable, Mapping, Sequence
-from typing import Protocol, cast
+from typing import Protocol
 
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
@@ -230,9 +230,9 @@ class ObservabilityActor:
         self._event_count: int = 0
         self._recent_rejections: dict[tuple[object, ...], float] = {}
         self._telemetry_queue: Queue[TelemetryEvent] = Queue(maxsize=telemetry_queue_size)
-        self._telemetry_sqlite_lock_retries = telemetry_sqlite_lock_retries
-        self._telemetry_retry_backoff_sec = telemetry_retry_backoff_sec
-        self._telemetry_stop = Event()
+        self._telemetry_sqlite_lock_retries: int = telemetry_sqlite_lock_retries
+        self._telemetry_retry_backoff_sec: float = telemetry_retry_backoff_sec
+        self._telemetry_stop: Event = Event()
         self._telemetry_thread: Thread | None = None
         if telemetry_autostart:
             self.start()
@@ -299,7 +299,7 @@ class ObservabilityActor:
         dropped = 0
         while True:
             try:
-                self._telemetry_queue.get_nowait()
+                _ = self._telemetry_queue.get_nowait()
             except Empty:
                 break
             self._telemetry_queue.task_done()
@@ -382,7 +382,7 @@ class ObservabilityActor:
     def _run_telemetry_writer(self) -> None:
         while not self._telemetry_stop.is_set() or not self._telemetry_queue.empty():
             if not self.drain_telemetry_once():
-                self._telemetry_stop.wait(0.1)
+                _ = self._telemetry_stop.wait(0.1)
 
     def start(self) -> None:
         if self._telemetry_thread is not None and self._telemetry_thread.is_alive():

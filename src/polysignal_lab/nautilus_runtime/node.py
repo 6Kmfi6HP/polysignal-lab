@@ -19,10 +19,10 @@ import threading
 import traceback
 from contextlib import suppress
 import sys
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import FrameType, SimpleNamespace, TracebackType
+from types import SimpleNamespace, TracebackType
 from typing import Protocol, cast, runtime_checkable
 
 from polysignal_lab.alpha.types import AlphaCore, TradeView
@@ -94,6 +94,26 @@ class _NativeStrategyLike(Protocol):
     strategy_name: str
 
 
+class _PublishResultLike(Protocol):
+    def as_dict(self) -> dict[str, str | None]: ...
+
+
+class _PublishServiceLike(Protocol):
+    formatter: object
+    persistence: object
+    timeout_sec: float
+
+    async def publish_signal(
+        self,
+        signal: SignalCandidate,
+        stake_usdc: float,
+    ) -> _PublishResultLike: ...
+
+
+class _InteractiveBotLike(Protocol):
+    async def start(self) -> object: ...
+    async def stop(self) -> object: ...
+
 class _EmptyBookDataProvider:
     def book_for_token(self, token_id: str) -> None:
         _ = token_id
@@ -130,7 +150,7 @@ register_paper_factories: _FactoryRegistrar = _stub_register_factories
 
 class _StaticMarketUniverse:
     def __init__(self, markets: tuple[Market, ...]) -> None:
-        self._markets = markets
+        self._markets: tuple[Market, ...] = markets
 
     async def refresh_once(self) -> list[Market]:
         return list(self._markets)
@@ -152,7 +172,7 @@ def _log_probe_write_failure(path: Path) -> None:
 
 def _write_runtime_startup_marker_best_effort(path: Path) -> None:
     try:
-        write_runtime_startup_marker(path)
+        _ = write_runtime_startup_marker(path)
     except OSError:
         _log_probe_write_failure(path)
 
@@ -165,7 +185,7 @@ def _write_runtime_heartbeat_best_effort(
     fatal_reason: str | None = None,
 ) -> None:
     try:
-        write_runtime_heartbeat(
+        _ = write_runtime_heartbeat(
             path,
             phase=phase,
             fatal=fatal,
@@ -476,7 +496,7 @@ async def _stop_nautilus_scheduler(scheduler: object) -> None:
 
     stop = getattr(scheduler, "stop", None)
     if hasattr(scheduler, "wallet") and callable(stop):
-        await cast(Callable[[], Awaitable[object]], stop)()
+        _ = await cast(Callable[[], Awaitable[object]], stop)()
         return
 
     setattr(scheduler, "_running", False)
@@ -492,7 +512,7 @@ async def _stop_nautilus_scheduler(scheduler: object) -> None:
 def _fresh_publish_service(
     scheduler: PolySignalScheduler,
 ) -> tuple[PublishService, TelegramPublisher]:
-    base_service = scheduler.publish_service
+    base_service = cast(_PublishServiceLike, scheduler.publish_service)
     publisher = TelegramPublisher(scheduler.settings.telegram)
     publish_service = PublishService(
         base_service.formatter,
@@ -510,7 +530,7 @@ async def _publish_accepted_signal_once(
 ) -> dict[str, str | None]:
     publish_service, publisher = _fresh_publish_service(scheduler)
     try:
-        publish = await publish_service.publish_signal(signal, stake_usdc)
+        publish = await cast(_PublishServiceLike, publish_service).publish_signal(signal, stake_usdc)
         return publish.as_dict()
     finally:
         await publisher.client.aclose()
@@ -563,16 +583,16 @@ async def _run_interactive_telegram_bot_until_stop(
     if not callable(start) or not callable(stop_bot):
         return
     try:
-        await cast(Callable[[], Awaitable[object]], start)()
-        await stop.wait()
+        _ = await cast(Callable[[], Awaitable[object]], start)()
+        _ = await stop.wait()
     finally:
-        await cast(Callable[[], Awaitable[object]], stop_bot)()
+        _ = await cast(Callable[[], Awaitable[object]], stop_bot)()
 
 
 def _start_interactive_telegram_bot_thread(
     scheduler: PolySignalScheduler,
 ) -> _InteractiveTelegramBotThread | None:
-    bot = getattr(scheduler, "telegram_bot", None)
+    bot = cast(object | None, getattr(scheduler, "telegram_bot", None))
     if bot is None:
         return None
     stop_event = threading.Event()
@@ -581,11 +601,12 @@ def _start_interactive_telegram_bot_thread(
     def _run() -> None:
         async def _main() -> None:
             try:
-                await bot.start()
+                typed_bot = cast(_InteractiveBotLike, bot)
+                _ = await typed_bot.start()
                 while not stop_event.is_set():
                     await asyncio.sleep(0.5)
             finally:
-                await bot.stop()
+                _ = await cast(_InteractiveBotLike, bot).stop()
 
         try:
             asyncio.run(_main())
@@ -635,7 +656,7 @@ def _start_nautilus_report_loop_thread(
             try:
                 await _run_nautilus_report_loop(scheduler, asyncio_stop)
             finally:
-                watcher.cancel()
+                _ = watcher.cancel()
                 with suppress(asyncio.CancelledError):
                     await watcher
 
@@ -841,7 +862,7 @@ async def _run_nautilus_housekeeping_once(
     scheduler: PolySignalScheduler,
     last_report_date: date | None,
 ) -> date | None:
-    from polysignal_lab.app.scheduler_runtime import _generate_iteration_report
+    from polysignal_lab.app.scheduler_runtime import _generate_iteration_report  # pyright: ignore[reportPrivateUsage] - runtime reuses scheduler's existing report generator.
 
     return await _generate_iteration_report(scheduler, last_report_date)
 
@@ -858,7 +879,7 @@ async def _run_nautilus_report_loop(
             last_report_date,
         )
         try:
-            await asyncio.wait_for(stop_event.wait(), timeout=interval_sec)
+            _ = await asyncio.wait_for(stop_event.wait(), timeout=interval_sec)
         except asyncio.TimeoutError:
             continue
 
@@ -924,19 +945,20 @@ def _dump_thread_stacks(log_path: str) -> None:
     try:
         _crash_dir = Path(log_path).parent
         _crash_dir.mkdir(parents=True, exist_ok=True)
-        frames = sys._current_frames()
+        frames = sys._current_frames()  # pyright: ignore[reportPrivateUsage] - crash diagnostics need live thread frames.
         lines: list[str] = [
             f"=== crash dump {datetime.now(UTC).isoformat()} ===",
             f"threads={len(frames)}",
         ]
         for tid, stack in frames.items():
             lines.append(f"\n--- thread {tid} ---")
-            for filename, lineno, name, line in traceback.extract_stack(stack):
-                lines.append(f"  {filename}:{lineno} {name}")
-                if line:
-                    lines.append(f"    {line.strip()}")
+            stack_summary = cast(Sequence[traceback.FrameSummary], traceback.extract_stack(stack))
+            for frame in stack_summary:
+                lines.append(f"  {frame.filename}:{frame.lineno} {frame.name}")
+                if frame.line:
+                    lines.append(f"    {frame.line.strip()}")
         with open(log_path, "a", encoding="utf-8") as fh:
-            fh.write("\n".join(lines) + "\n")
+            _ = fh.write("\n".join(lines) + "\n")
     except Exception:
         pass
 
@@ -964,11 +986,11 @@ def _install_crash_logger(log_dir: str) -> None:
         _dump_thread_stacks(crash_path)
         try:
             with open(crash_path, "a", encoding="utf-8") as fh:
-                fh.write(f"=== atexit {datetime.now(UTC).isoformat()} ===\n")
+                _ = fh.write(f"=== atexit {datetime.now(UTC).isoformat()} ===\n")
         except Exception:
             pass
 
-    atexit.register(_atexit_dump)
+    _ = atexit.register(_atexit_dump)
 
 
 
@@ -1008,19 +1030,20 @@ async def run_nautilus_cli_async(
     try:
         starter = getattr(bundle.observability, "start", None)
         if callable(starter):
-            starter()
-        bot = getattr(bundle.scheduler, "telegram_bot", None)
+            _ = starter()
+        bot = cast(object | None, getattr(bundle.scheduler, "telegram_bot", None))
         if bot is not None:
             telegram_task = asyncio.create_task(
                 _run_interactive_telegram_bot_until_stop(bot, telegram_stop)
             )
         strategies = bundle.components.get("strategies", ())
-        strategy_count = len(strategies) if isinstance(strategies, Sequence) else 0
-        strategy_names = (
-            [str(getattr(strategy, "strategy_name", "")) for strategy in strategies]
+        strategy_sequence: Sequence[object] = (
+            strategies
             if isinstance(strategies, Sequence)
-            else []
+            else ()
         )
+        strategy_count = len(strategy_sequence)
+        strategy_names = [str(getattr(strategy, "strategy_name", "")) for strategy in strategy_sequence]
         await asyncio.to_thread(_rebind_market_discovery_client, bundle.scheduler)
 
         try:
@@ -1046,10 +1069,10 @@ async def run_nautilus_cli_async(
             if stop_waiter in pending:
                 _ = stop_waiter.cancel()
             await run_task
-        elif stop_waiter in done and run_task is not None:
+        elif stop_waiter in done:
             stopper = getattr(node, "stop", None)
             if callable(stopper):
-                stopper()
+                _ = stopper()
             await run_task
     finally:
         try:
@@ -1059,7 +1082,7 @@ async def run_nautilus_cli_async(
                 with suppress(asyncio.CancelledError):
                     await telegram_task
             if report_task is not None:
-                report_task.cancel()
+                _ = report_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await report_task
             try:
@@ -1068,7 +1091,7 @@ async def run_nautilus_cli_async(
                 runtime_logger.exception("Nautilus shutdown notification failed")
             stopper = getattr(bundle.observability, "stop", None)
             if callable(stopper):
-                stopper()
+                _ = stopper()
             await _stop_nautilus_scheduler(bundle.scheduler)
         finally:
             cleanup_signals()
@@ -1097,7 +1120,7 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
     def request_stop() -> None:
         stopper = getattr(node, "stop", None)
         if callable(stopper):
-            stopper()
+            _ = stopper()
             return
         raise KeyboardInterrupt
 
@@ -1106,17 +1129,18 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
         cleanup_signals = _install_sync_os_signal_handlers(request_stop)
     runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))
     strategies = bundle.components.get("strategies", ())
-    strategy_names = (
-        [str(getattr(strategy, "strategy_name", "")) for strategy in strategies]
+    strategy_sequence: Sequence[object] = (
+        strategies
         if isinstance(strategies, Sequence)
-        else []
+        else ()
     )
+    strategy_names = [str(getattr(strategy, "strategy_name", "")) for strategy in strategy_sequence]
     telegram_bot_thread: _InteractiveTelegramBotThread | None = None
     report_loop_thread: _NautilusReportLoopThread | None = None
     try:
         starter = getattr(bundle.observability, "start", None)
         if callable(starter):
-            starter()
+            _ = starter()
         telegram_bot_thread = _start_interactive_telegram_bot_thread(bundle.scheduler)
         report_loop_thread = _start_nautilus_report_loop_thread(bundle.scheduler)
         try:
@@ -1151,7 +1175,7 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
                 runtime_logger.exception("Nautilus shutdown notification failed")
             stopper = getattr(bundle.observability, "stop", None)
             if callable(stopper):
-                stopper()
+                _ = stopper()
             asyncio.run(_stop_nautilus_scheduler(bundle.scheduler))
             if isinstance(node, _Disposable):
                 node.dispose()

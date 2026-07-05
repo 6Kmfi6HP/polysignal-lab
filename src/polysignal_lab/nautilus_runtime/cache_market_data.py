@@ -12,8 +12,8 @@ class NautilusCacheMarketDataProvider:
     """Read current market data from Nautilus Cache without owning book/trade state."""
 
     def __init__(self, cache: object, *, registry: PolymarketMarketRegistry) -> None:
-        self._cache = cache
-        self._registry = registry
+        self._cache: object = cache
+        self._registry: PolymarketMarketRegistry = registry
 
     def book_for_token(self, token_id: str) -> SideBookView | None:
         meta = self._registry.token_meta(token_id)

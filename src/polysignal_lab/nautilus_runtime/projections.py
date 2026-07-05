@@ -81,7 +81,7 @@ def project_account(account: object) -> dict[str, object]:
         balances_raw = balances_raw()
     balances: list[dict[str, object]] = []
     if isinstance(balances_raw, Iterable) and not isinstance(balances_raw, (str, bytes)):
-        for balance in balances_raw:
+        for balance in cast(Iterable[object], balances_raw):
             balances.append(
                 {
                     "currency": _text_attr(balance, "currency"),
@@ -173,9 +173,9 @@ def _metrics(source: object) -> dict[str, object]:
 
 
 def _order_status(event: object) -> str:
-    status = getattr(event, "status", None)
+    status: object = getattr(event, "status", None)
     if status is not None:
-        name = getattr(status, "name", None)
+        name: object = getattr(status, "name", None)
         value = name if name not in (None, "") else status
         return str(value)
     event_name = type(event).__name__

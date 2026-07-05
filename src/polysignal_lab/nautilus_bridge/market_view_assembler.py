@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Protocol, Sequence
+from collections.abc import Sequence
+from typing import Protocol
+
+from typing_extensions import final
 
 from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView, TradeView
 from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
@@ -15,11 +18,12 @@ class BookDataProvider(Protocol):
     def trades_for_token(self, token_id: str) -> Sequence[TradeView]: ...
 
 
+@final
 class MarketViewAssembler:
     def __init__(self, *, registry: PolymarketMarketRegistry, books: BookDataProvider, sidecar: ExternalDataSidecar):
-        self.registry = registry
-        self.books = books
-        self.sidecar = sidecar
+        self.registry: PolymarketMarketRegistry = registry
+        self.books: BookDataProvider = books
+        self.sidecar: ExternalDataSidecar = sidecar
 
     def build(self, condition_id: str, *, created_at: datetime | None = None) -> MarketView | None:
         pair = self.registry.by_condition(condition_id)
@@ -51,7 +55,7 @@ class MarketViewAssembler:
             spot_ms=spot.freshness_ms if spot is not None else None,
             max_ms=max(freshness_values) if freshness_values else None,
         )
-        metrics: dict[str, Any] = {
+        metrics: dict[str, object] = {
             "up_token_id": pair.up.token_id,
             "down_token_id": pair.down.token_id,
         }

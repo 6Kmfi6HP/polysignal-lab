@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-
 from polysignal_lab.alpha.types import MarketGroupView, MarketView
 
 
@@ -14,7 +13,7 @@ class MarketGroupViewAssembler:
     """
 
     def __init__(self, max_source_skew_ms: int = 5000) -> None:
-        self.max_source_skew_ms = max_source_skew_ms
+        self.max_source_skew_ms: int = max_source_skew_ms
 
     def assemble(
         self,
@@ -34,7 +33,7 @@ class MarketGroupViewAssembler:
             return None
 
         max_skew = 0
-        freshness_values = []
+        freshness_values: list[int] = []
         for view in views_by_condition_id.values():
             if view.freshness and view.freshness.max_ms is not None:
                 freshness_values.append(view.freshness.max_ms)

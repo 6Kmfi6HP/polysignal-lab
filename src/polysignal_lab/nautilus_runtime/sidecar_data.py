@@ -60,9 +60,9 @@ class SidecarDataActor:
         sidecar: ExternalDataSidecar | None = None,
         registry: PolymarketMarketRegistry | None = None,
     ) -> None:
-        self.publisher = publisher
-        self.sidecar = sidecar or ExternalDataSidecar()
-        self.registry = registry
+        self.publisher: _Publisher = publisher
+        self.sidecar: ExternalDataSidecar = sidecar or ExternalDataSidecar()
+        self.registry: PolymarketMarketRegistry | None = registry
 
     def publish_spot(
         self,
@@ -182,31 +182,31 @@ class PolySignalRuntimeSidecarActor:
         sidecar: ExternalDataSidecar,
         anchor_store: AnchorPriceStore | None = None,
     ) -> None:
-        self.settings = settings
-        self.markets = markets
-        self.registry = registry
-        self.sidecar = sidecar
-        self.publisher = SidecarDataActor(
+        self.settings: Settings = settings
+        self.markets: tuple[Market, ...] = markets
+        self.registry: PolymarketMarketRegistry = registry
+        self.sidecar: ExternalDataSidecar = sidecar
+        self.publisher: SidecarDataActor = SidecarDataActor(
             publisher=self,
             sidecar=sidecar,
             registry=registry,
         )
-        self.spots = SpotRegistry()
-        self.anchor_prices = (
+        self.spots: SpotRegistry = SpotRegistry()
+        self.anchor_prices: AnchorPriceService | None = (
             AnchorPriceService(self.spots, anchor_store)
             if anchor_store is not None
             else None
         )
-        self.ptb_provider = PriceToBeatProvider(
+        self.ptb_provider: PriceToBeatProvider = PriceToBeatProvider(
             use_crypto_price_api=settings.data.polymarket.use_crypto_price_api,
             anchor_store=anchor_store,
         )
-        self.rtds_feed = PolymarketRtdsPriceFeed(
+        self.rtds_feed: PolymarketRtdsPriceFeed = PolymarketRtdsPriceFeed(
             self.spots,
             settings.data.polymarket,
             on_spot=self._on_spot,
         )
-        self._rtds_task = None
+        self._rtds_task: asyncio.Task[None] | None = None
 
     def publish_data(self, data_type: object, data: object) -> None:
         base_publish = getattr(super(PolySignalRuntimeSidecarActor, self), "publish_data", None)
@@ -225,7 +225,7 @@ class PolySignalRuntimeSidecarActor:
         self.rtds_feed.stop()
         task = self._rtds_task
         if task is not None:
-            task.cancel()
+            _ = task.cancel()
 
     def _on_spot(self, spot: SpotPrice) -> None:
         self.publisher.publish_spot(

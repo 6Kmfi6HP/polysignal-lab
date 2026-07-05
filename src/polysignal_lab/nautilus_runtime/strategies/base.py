@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import Any
+from typing import cast
 
 from polysignal_lab.alpha.types import (
     AlphaCore,
@@ -13,8 +13,9 @@ from polysignal_lab.alpha.types import (
     NautilusOrderSpec,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
-from polysignal_lab.nautilus_bridge.state import decode_state, encode_state
+from polysignal_lab.nautilus_bridge.state import JsonValue, decode_state, encode_state
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     DecisionPolicyActor,
@@ -48,21 +49,21 @@ class PolySignalNautilusStrategy:
         fixed_stake_usdc: float = 10.0,
         data_names: Sequence[str] = DEFAULT_DATA_NAMES,
     ) -> None:
-        self.core = core
-        self.assembler = assembler
-        self.condition_ids = tuple(condition_ids)
-        self.strategy_name = strategy_name
-        self.policy = policy or DecisionPolicyActor()
-        self.submitter = submitter
-        self.fixed_stake_usdc = fixed_stake_usdc
-        self.data_names = tuple(data_names)
+        self.core: AlphaCore = core
+        self.assembler: MarketViewAssembler = assembler
+        self.condition_ids: tuple[str, ...] = tuple(condition_ids)
+        self.strategy_name: str = strategy_name
+        self.policy: DecisionPolicyActor = policy or DecisionPolicyActor()
+        self.submitter: Callable[[NautilusOrderSpec], object] | None = submitter
+        self.fixed_stake_usdc: float = fixed_stake_usdc
+        self.data_names: tuple[str, ...] = tuple(data_names)
         self.subscribed_data_names: list[str] = []
         self.submitted_specs: list[NautilusOrderSpec] = []
         self.rejected_decisions: list[RejectedDecision] = []
         self.execution_results: list[object] = []
         self._last_views: dict[str, MarketView] = {}
         self._locally_accepted_order_ids: set[str] = set()
-        self._approved_signal_metrics: dict[str, dict[str, Any]] = {}
+        self._approved_signal_metrics: dict[str, dict[str, object]] = {}
         self._consensus_order_ids: set[str] = set()
 
     def on_start(self) -> None:
@@ -70,12 +71,12 @@ class PolySignalNautilusStrategy:
             self._subscribe_data_name(name)
 
     def on_data(self, data: object) -> list[NautilusOrderSpec]:
-        updater = getattr(self.assembler, "on_data", None) or getattr(
-            self.assembler, "update", None
+        updater = _callable_attr(self.assembler, "on_data") or _callable_attr(
+            self.assembler, "update"
         )
-        if callable(updater):
-            updater(data)
-        condition_id = getattr(data, "condition_id", None)
+        if updater is not None:
+            _ = updater(data)
+        condition_id = _first_attr(data, "condition_id", default=None)
         if condition_id is not None:
             return self.evaluate_condition(str(condition_id))
         submitted: list[NautilusOrderSpec] = []
@@ -143,14 +144,14 @@ class PolySignalNautilusStrategy:
             )
         return submitted
 
-    def on_order_submitted(self, event: Any) -> None:
+    def on_order_submitted(self, event: object) -> None:
         alpha_event = self._order_event(event)
         if self._alias_consensus_order_ids(event, alpha_event):
             return
         self._alias_approved_signal_metrics(event, alpha_event)
         self._call_core("on_order_submitted", alpha_event)
 
-    def on_order_accepted(self, event: Any) -> None:
+    def on_order_accepted(self, event: object) -> None:
         alpha_event = self._order_event(event)
         if self._alias_consensus_order_ids(event, alpha_event):
             return
@@ -162,25 +163,25 @@ class PolySignalNautilusStrategy:
             return
         self._call_core("on_order_accepted", alpha_event)
 
-    def on_order_rejected(self, event: Any) -> None:
+    def on_order_rejected(self, event: object) -> None:
         alpha_event = self._order_event(event)
         if self._alias_consensus_order_ids(event, alpha_event):
             return
         self._call_core("on_order_rejected", alpha_event)
 
-    def on_order_canceled(self, event: Any) -> None:
+    def on_order_canceled(self, event: object) -> None:
         alpha_event = self._order_event(event)
         if self._alias_consensus_order_ids(event, alpha_event):
             return
         self._call_core("on_order_canceled", alpha_event)
 
-    def on_order_expired(self, event: Any) -> None:
+    def on_order_expired(self, event: object) -> None:
         alpha_event = self._order_event(event)
         if self._alias_consensus_order_ids(event, alpha_event):
             return
         self._call_core("on_order_expired", alpha_event)
 
-    def on_order_filled(self, event: Any) -> list[NautilusOrderSpec]:
+    def on_order_filled(self, event: object) -> list[NautilusOrderSpec]:
         alpha_event = self._fill_event(event)
         if self._alias_consensus_order_ids(event, alpha_event):
             return []
@@ -188,15 +189,17 @@ class PolySignalNautilusStrategy:
             alpha_event
         )
         if not skip_notify:
-            notify = getattr(self.core, "on_notify_fill", None)
-            if callable(notify):
-                notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
-        handler = getattr(self.core, "on_order_filled", None)
-        hedge_decisions = handler(alpha_event) if callable(handler) else []
-        if not isinstance(hedge_decisions, Iterable) or isinstance(
-            hedge_decisions,
-            (str, bytes),
+            notify = _callable_attr(self.core, "on_notify_fill")
+            if notify is not None:
+                _ = notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
+        handler = _callable_attr(self.core, "on_order_filled")
+        raw_hedge_decisions = handler(alpha_event) if handler is not None else ()
+        hedge_decisions: Iterable[AlphaDecision]
+        if isinstance(raw_hedge_decisions, Iterable) and not isinstance(
+            raw_hedge_decisions, (str, bytes)
         ):
+            hedge_decisions = cast(Iterable[AlphaDecision], raw_hedge_decisions)
+        else:
             hedge_decisions = ()
         if skip_notify:
             return []
@@ -241,7 +244,7 @@ class PolySignalNautilusStrategy:
                 order_id=rollback_id,
                 client_order_id=rollback_id,
                 reason=policy_result.reason_code,
-                metrics=dict(policy_result.detail),
+                metrics=_object_dict(policy_result.detail),
             ),
         )
 
@@ -274,7 +277,7 @@ class PolySignalNautilusStrategy:
 
     def _submit_consensus_signal(
         self,
-        signal: Any,
+        signal: SignalCandidate,
         *,
         view: MarketView,
         submitted: list[NautilusOrderSpec],
@@ -319,17 +322,21 @@ class PolySignalNautilusStrategy:
         *,
         decision: AlphaDecision,
         view: MarketView,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         signal = approved.signal
-        metrics = dict(signal.metrics)
-        metrics.setdefault("asset", signal.asset)
-        metrics.setdefault("timeframe", signal.timeframe)
-        metrics.setdefault("market_slug", signal.market_slug)
-        metrics.setdefault(
-            "condition_id",
-            signal.condition_id or view.condition_id or decision.condition_id,
-        )
-        metrics.setdefault("seconds_to_close", signal.seconds_to_close)
+        metrics = _object_dict(signal.metrics)
+        if "asset" not in metrics:
+            metrics["asset"] = signal.asset
+        if "timeframe" not in metrics:
+            metrics["timeframe"] = signal.timeframe
+        if "market_slug" not in metrics:
+            metrics["market_slug"] = signal.market_slug
+        if "condition_id" not in metrics:
+            metrics["condition_id"] = (
+                signal.condition_id or view.condition_id or decision.condition_id
+            )
+        if "seconds_to_close" not in metrics:
+            metrics["seconds_to_close"] = signal.seconds_to_close
         metrics["hedge_leg"] = bool(signal.hedge_leg)
         if signal.order_intent is not None:
             metrics["order_intent"] = signal.order_intent.value
@@ -337,11 +344,12 @@ class PolySignalNautilusStrategy:
             metrics["expiry_seconds"] = signal.expiry_seconds
         if signal.pair_id is not None:
             metrics["pair_id"] = signal.pair_id
-        metrics.setdefault("signal_confidence", signal.confidence)
+        if "signal_confidence" not in metrics:
+            metrics["signal_confidence"] = signal.confidence
         return metrics
 
     def _alias_approved_signal_metrics(
-        self, event: Any, order: AlphaOrderEvent
+        self, event: object, order: AlphaOrderEvent
     ) -> None:
         lookup_ids = self._event_lookup_ids(event, order)
         metrics = self._approved_metrics_for_event(event, order)
@@ -351,11 +359,11 @@ class PolySignalNautilusStrategy:
             key in self._locally_accepted_order_ids for key in lookup_ids
         )
         for key in lookup_ids:
-            self._approved_signal_metrics.setdefault(key, dict(metrics))
+            _ = self._approved_signal_metrics.setdefault(key, dict(metrics))
         if aliases_locally_accepted:
             self._locally_accepted_order_ids.update(lookup_ids)
 
-    def _alias_consensus_order_ids(self, event: Any, order: AlphaOrderEvent) -> bool:
+    def _alias_consensus_order_ids(self, event: object, order: AlphaOrderEvent) -> bool:
         lookup_ids = self._event_lookup_ids(event, order)
         if _event_strategy(event) == "consensus" or any(
             key in self._consensus_order_ids for key in lookup_ids
@@ -365,49 +373,50 @@ class PolySignalNautilusStrategy:
         return False
 
     def _approved_metrics_for_event(
-        self, event: Any, order: AlphaOrderEvent
-    ) -> Mapping[str, Any]:
+        self, event: object, order: AlphaOrderEvent
+    ) -> Mapping[str, object]:
         for key in self._event_lookup_ids(event, order):
             metrics = self._approved_signal_metrics.get(key)
             if metrics is not None:
                 return metrics
         return {}
 
-    def _event_lookup_ids(self, event: Any, order: AlphaOrderEvent) -> tuple[str, ...]:
-        values = [
+    def _event_lookup_ids(self, event: object, order: AlphaOrderEvent) -> tuple[str, ...]:
+        values: list[object] = [
             order.order_id,
             order.client_order_id,
             _first_attr(event, "id", default=None),
         ]
         tags = _first_attr(event, "tags", default=None)
         if isinstance(tags, Mapping):
+            tag_values = cast(Mapping[str, object], tags)
             values.extend(
-                tags.get(key) for key in ("signal_id", "order_id", "client_order_id")
+                tag_values.get(key) for key in ("signal_id", "order_id", "client_order_id")
             )
         return tuple(str(value) for value in values if value not in (None, ""))
 
     def _bind_core_signal(self, market_id: str, signal_id: str) -> None:
-        binder = getattr(self.core, "bind_signal", None)
-        if callable(binder):
-            binder(market_id, signal_id)
+        binder = _callable_attr(self.core, "bind_signal")
+        if binder is not None:
+            _ = binder(market_id, signal_id)
 
     def _decision_order_event(
         self,
         decision: AlphaDecision,
         *,
         view: MarketView,
-        signal: Any,
+        signal: object,
         order_id: str,
         client_order_id: str | None,
         reason: str | None,
-        metrics: Mapping[str, Any],
+        metrics: Mapping[str, object],
     ) -> AlphaOrderEvent:
         return AlphaOrderEvent(
             strategy=decision.strategy,
             market_id=decision.market_id,
             condition_id=view.condition_id,
-            token_id=str(getattr(signal, "token_id", decision.token_id)),
-            side=_side(getattr(signal, "side", decision.side)),
+            token_id=str(_first_attr(signal, "token_id", default=decision.token_id)),
+            side=_side(_first_attr(signal, "side", default=decision.side)),
             order_id=order_id,
             client_order_id=client_order_id,
             reason=reason,
@@ -416,27 +425,23 @@ class PolySignalNautilusStrategy:
         )
 
     def on_save(self) -> dict[str, bytes]:
-        saver = getattr(self.core, "save_state", None)
-        raw_payload = saver() if callable(saver) else {}
-        payload = (
-            {str(key): value for key, value in raw_payload.items()}
-            if isinstance(raw_payload, Mapping)
-            else {}
-        )
+        saver = _callable_attr(self.core, "save_state")
+        raw_payload: object = saver() if saver is not None else {}
+        payload = cast(Mapping[str, JsonValue], _object_dict(raw_payload))
         return encode_state(self.strategy_name, payload)
 
     def on_load(self, state: Mapping[str, bytes]) -> None:
-        payload = decode_state(self.strategy_name, state)
-        loader = getattr(self.core, "load_state", None)
-        if callable(loader):
-            loader(payload)
+        payload = cast(Mapping[str, object], decode_state(self.strategy_name, state))
+        loader = _callable_attr(self.core, "load_state")
+        if loader is not None:
+            _ = loader(payload)
 
     def _subscribe_data_name(self, name: str) -> None:
         self.subscribed_data_names.append(name)
-        method = getattr(self, f"subscribe_{name}", None)
-        if callable(method):
+        method = _callable_attr(self, f"subscribe_{name}")
+        if method is not None:
             for condition_id in self.condition_ids:
-                method(condition_id)
+                _ = method(condition_id)
 
     def _view_for_decision(self, decision: AlphaDecision) -> MarketView | None:
         view = self._last_views.get(decision.condition_id)
@@ -448,11 +453,11 @@ class PolySignalNautilusStrategy:
         return view
 
     def _call_core(self, method_name: str, event: AlphaOrderEvent) -> None:
-        handler = getattr(self.core, method_name, None)
-        if callable(handler):
-            handler(event)
+        handler = _callable_attr(self.core, method_name)
+        if handler is not None:
+            _ = handler(event)
 
-    def _order_event(self, event: Any) -> AlphaOrderEvent:
+    def _order_event(self, event: object) -> AlphaOrderEvent:
         return AlphaOrderEvent(
             strategy=self.strategy_name,
             market_id=str(_first_attr(event, "market_id", default="")),
@@ -467,13 +472,13 @@ class PolySignalNautilusStrategy:
             ts_event=_timestamp(
                 _first_attr(event, "ts_event", "timestamp", default=None)
             ),
-            metrics=dict(_first_attr(event, "metrics", default={}) or {}),
+            metrics=_object_dict(_first_attr(event, "metrics", default={})),
         )
 
-    def _fill_event(self, event: Any) -> AlphaFillEvent:
+    def _fill_event(self, event: object) -> AlphaFillEvent:
         order = self._order_event(event)
         metrics = dict(self._approved_metrics_for_event(event, order))
-        metrics.update(order.metrics)
+        metrics.update(_object_dict(order.metrics))
         return AlphaFillEvent(
             strategy=order.strategy,
             market_id=order.market_id,
@@ -485,12 +490,11 @@ class PolySignalNautilusStrategy:
             reason=order.reason,
             ts_event=order.ts_event,
             metrics=metrics,
-            fill_price=float(
-                _first_attr(event, "fill_price", "price", default=0.0) or 0.0
+            fill_price=_float_or_zero(
+                _first_attr(event, "fill_price", "price", default=0.0)
             ),
-            shares=float(
+            shares=_float_or_zero(
                 _first_attr(event, "shares", "quantity", "filled_qty", default=0.0)
-                or 0.0
             ),
             liquidity_side=_optional_str(
                 _first_attr(event, "liquidity_side", default=None)
@@ -506,16 +510,34 @@ def _visible_ask_shares(
     return sum(float(size) for price, size in levels if float(price) <= limit_price)
 
 
-def _first_attr(obj: Any, *names: str, default: Any) -> Any:
+def _callable_attr(obj: object, name: str) -> Callable[..., object] | None:
+    value = _first_attr(obj, name, default=None)
+    return value if callable(value) else None
+
+
+def _object_dict(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    mapping = cast(Mapping[object, object], value)
+    return {str(key): item for key, item in mapping.items()}
+
+def _float_or_zero(value: object) -> float:
+    return float(cast(float | str | int, value or 0.0))
+
+
+def _first_attr(obj: object, *names: str, default: object) -> object:
     for name in names:
         if hasattr(obj, name):
-            return getattr(obj, name)
+            return cast(object, getattr(obj, name))
     return default
 
-def _event_strategy(event: Any) -> str | None:
+def _event_strategy(event: object) -> str | None:
     tags = _first_attr(event, "tags", default=None)
-    if isinstance(tags, Mapping) and tags.get("strategy"):
-        return str(tags["strategy"])
+    if isinstance(tags, Mapping):
+        tag_values = cast(Mapping[str, object], tags)
+        strategy_tag = tag_values.get("strategy")
+        if strategy_tag:
+            return str(strategy_tag)
     strategy = _first_attr(event, "strategy", default=None)
     return None if strategy is None else str(strategy)
 
@@ -532,15 +554,15 @@ def _spec_lookup_ids(spec: NautilusOrderSpec) -> tuple[str, ...]:
     )
 
 
-def _optional_str(value: Any) -> str | None:
+def _optional_str(value: object) -> str | None:
     return None if value is None else str(value)
 
 
-def _side(value: Any) -> Side:
+def _side(value: object) -> Side:
     return value if isinstance(value, Side) else Side(str(value))
 
 
-def _timestamp(value: Any) -> datetime:
+def _timestamp(value: object) -> datetime:
     return value if isinstance(value, datetime) else utc_now()
 
 

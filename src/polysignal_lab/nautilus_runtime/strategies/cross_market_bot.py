@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import cast
 
 from polysignal_lab.alpha.cross_market_core import CrossMarketAlphaCore
 from polysignal_lab.alpha.types import (
@@ -39,13 +40,13 @@ class CrossMarketNautilusStrategy:
         submitter: Callable[[NautilusOrderSpec], object] | None = None,
         fixed_stake_usdc: float = 10.0,
     ) -> None:
-        self.core = core
-        self.assembler = assembler
-        self.condition_ids = tuple(condition_ids)
-        self.strategy_name = strategy_name
-        self.policy = policy or DecisionPolicyActor()
-        self.submitter = submitter
-        self.fixed_stake_usdc = fixed_stake_usdc
+        self.core: CrossMarketAlphaCore = core
+        self.assembler: MarketViewAssembler | None = assembler
+        self.condition_ids: tuple[str, ...] = tuple(condition_ids)
+        self.strategy_name: str = strategy_name
+        self.policy: DecisionPolicyActor = policy or DecisionPolicyActor()
+        self.submitter: Callable[[NautilusOrderSpec], object] | None = submitter
+        self.fixed_stake_usdc: float = fixed_stake_usdc
         self.submitted_specs: list[NautilusOrderSpec] = []
         self.rejected_decisions: list[RejectedDecision] = []
 
@@ -82,15 +83,14 @@ class CrossMarketNautilusStrategy:
         book = view.book_for(approved.signal.side)
         best_ask = book.best_ask
         try:
-            available = (
-                sum(
+            max_entry_price = cast("float | None", approved.signal.max_entry_price)
+            available: float | None = None
+            if book.ask_levels and max_entry_price is not None:
+                available = sum(
                     float(size)
                     for price, size in book.ask_levels
-                    if float(price) <= float(approved.signal.max_entry_price)
+                    if float(price) <= float(max_entry_price)
                 )
-                if book.ask_levels and approved.signal.max_entry_price is not None
-                else None
-            )
             spec = order_spec_from_decision(
                 approved,
                 fixed_stake_usdc=self.fixed_stake_usdc,
@@ -127,5 +127,5 @@ class CrossMarketNautilusStrategy:
 
         self.submitted_specs.append(spec)
         if self.submitter is not None:
-            self.submitter(spec)
+            _ = self.submitter(spec)
         return [spec]

@@ -7,10 +7,12 @@ them through ``publish_data`` and ``CustomData``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from importlib import import_module
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar, Callable, cast
+
+from typing_extensions import override
 
 _POLYSIGNAL_DATA_TYPES_REGISTERED = False
 
@@ -46,24 +48,28 @@ def _as_bool(value: object) -> bool:
 def _as_str_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         raise TypeError("expected a string sequence")
-    return tuple(_as_str(item) for item in value)
+    return tuple(_as_str(item) for item in cast(Iterable[object], value))
 
 
 def _as_str_dict(value: object) -> dict[str, str]:
     if not isinstance(value, Mapping):
         raise TypeError("expected a string mapping")
-    return {_as_str(key): _as_str(item) for key, item in value.items()}
+    mapping = cast(Mapping[object, object], value)
+    return {_as_str(key): _as_str(item) for key, item in mapping.items()}
 
 
 
 class _PolySignalDataBase(_NautilusDataBase):
-    __slots__ = ("_ts_event", "_ts_init")
-    _fields: tuple[str, ...] = ()
+    __slots__: ClassVar[tuple[str, ...]] = ("_ts_event", "_ts_init")
+    _fields: ClassVar[tuple[str, ...]] = ()
+    _ts_event: int
+    _ts_init: int
 
     def __init__(self) -> None:
         self._ts_event = 0
         self._ts_init = 0
 
+    @override
     def __eq__(self, other: object) -> bool:
         return type(self) is type(other) and isinstance(other, _PolySignalDataBase) and self.to_dict() == other.to_dict()
 
@@ -83,8 +89,15 @@ class _PolySignalDataBase(_NautilusDataBase):
 
 
 class PolySignalSpotData(_PolySignalDataBase):
-    __slots__ = ("asset", "symbol", "price", "source", "freshness_ms")
-    _fields = ("asset", "symbol", "price", "source", "freshness_ms")
+    __slots__: ClassVar[tuple[str, ...]] = ("asset", "symbol", "price", "source", "freshness_ms")
+    _fields: ClassVar[tuple[str, ...]] = ("asset", "symbol", "price", "source", "freshness_ms")
+    asset: str
+    symbol: str
+    price: float
+    source: str
+    freshness_ms: int | None
+    _ts_event: int
+    _ts_init: int
 
     def __init__(  # pyright: ignore[reportMissingSuperCall]
         self,
@@ -118,7 +131,7 @@ class PolySignalSpotData(_PolySignalDataBase):
 
 
 class PolySignalPriceToBeatData(_PolySignalDataBase):
-    __slots__ = (
+    __slots__: ClassVar[tuple[str, ...]] = (
         "condition_id",
         "value",
         "source",
@@ -127,7 +140,7 @@ class PolySignalPriceToBeatData(_PolySignalDataBase):
         "anchor_source",
         "anchor_lag_ms",
     )
-    _fields = (
+    _fields: ClassVar[tuple[str, ...]] = (
         "condition_id",
         "value",
         "source",
@@ -136,6 +149,15 @@ class PolySignalPriceToBeatData(_PolySignalDataBase):
         "anchor_source",
         "anchor_lag_ms",
     )
+    condition_id: str
+    value: float
+    source: str
+    verified: bool
+    from_anchor_service: bool
+    anchor_source: str | None
+    anchor_lag_ms: int | None
+    _ts_event: int
+    _ts_init: int
 
     def __init__(  # pyright: ignore[reportMissingSuperCall]
         self,
@@ -175,7 +197,7 @@ class PolySignalPriceToBeatData(_PolySignalDataBase):
 
 
 class PolySignalMarketMetaData(_PolySignalDataBase):
-    __slots__ = (
+    __slots__: ClassVar[tuple[str, ...]] = (
         "_sealed",
         "market_id",
         "market_slug",
@@ -187,7 +209,7 @@ class PolySignalMarketMetaData(_PolySignalDataBase):
         "up_token_id",
         "down_token_id",
     )
-    _fields = (
+    _fields: ClassVar[tuple[str, ...]] = (
         "market_id",
         "market_slug",
         "condition_id",
@@ -198,6 +220,18 @@ class PolySignalMarketMetaData(_PolySignalDataBase):
         "up_token_id",
         "down_token_id",
     )
+    _sealed: bool
+    market_id: str
+    market_slug: str
+    condition_id: str
+    asset: str
+    timeframe: str
+    start_ts_ns: int | None
+    end_ts_ns: int | None
+    up_token_id: str
+    down_token_id: str
+    _ts_event: int
+    _ts_init: int
 
     def __init__(  # pyright: ignore[reportMissingSuperCall]
         self,
@@ -243,6 +277,7 @@ class PolySignalMarketMetaData(_PolySignalDataBase):
             ts_init=_as_int(d["ts_init"]),
         )
 
+    @override
     def __setattr__(self, name: str, value: object) -> None:
         if getattr(self, "_sealed", False):
             raise AttributeError("PolySignalMarketMetaData is immutable")
@@ -250,7 +285,7 @@ class PolySignalMarketMetaData(_PolySignalDataBase):
 
 
 class PolySignalMarketUniverseData(_PolySignalDataBase):
-    __slots__ = (
+    __slots__: ClassVar[tuple[str, ...]] = (
         "_sealed",
         "epoch",
         "active_condition_ids",
@@ -261,7 +296,7 @@ class PolySignalMarketUniverseData(_PolySignalDataBase):
         "condition_to_asset",
         "condition_to_timeframe",
     )
-    _fields = (
+    _fields: ClassVar[tuple[str, ...]] = (
         "epoch",
         "active_condition_ids",
         "entered_condition_ids",
@@ -271,6 +306,17 @@ class PolySignalMarketUniverseData(_PolySignalDataBase):
         "condition_to_asset",
         "condition_to_timeframe",
     )
+    _sealed: bool
+    epoch: int
+    active_condition_ids: tuple[str, ...]
+    entered_condition_ids: tuple[str, ...]
+    exited_condition_ids: tuple[str, ...]
+    condition_to_up_token: Mapping[str, str]
+    condition_to_down_token: Mapping[str, str]
+    condition_to_asset: Mapping[str, str]
+    condition_to_timeframe: Mapping[str, str]
+    _ts_event: int
+    _ts_init: int
 
     def __init__(  # pyright: ignore[reportMissingSuperCall]
         self,
@@ -313,11 +359,13 @@ class PolySignalMarketUniverseData(_PolySignalDataBase):
             ts_init=_as_int(d["ts_init"]),
         )
 
+    @override
     def __setattr__(self, name: str, value: object) -> None:
         if getattr(self, "_sealed", False):
             raise AttributeError("PolySignalMarketUniverseData is immutable")
         object.__setattr__(self, name, value)
 
+    @override
     def to_dict(self) -> dict[str, object]:
         payload = super().to_dict()
         payload["active_condition_ids"] = list(self.active_condition_ids)
@@ -338,11 +386,13 @@ def register_polysignal_data_types() -> None:
     if _POLYSIGNAL_DATA_TYPES_REGISTERED:
         return
 
-    register_serializable_type = getattr(
-        import_module("nautilus_trader.serialization.base"),
-        "register_serializable_type",
+    register_serializable_type = cast(
+        Callable[[type[object], object, object], None],
+        getattr(
+            import_module("nautilus_trader.serialization.base"),
+            "register_serializable_type",
+        ),
     )
-
     register_serializable_type(
         PolySignalSpotData,
         PolySignalSpotData.to_dict,

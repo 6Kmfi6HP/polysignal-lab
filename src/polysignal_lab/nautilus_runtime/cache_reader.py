@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import cast
 
 
@@ -57,7 +57,7 @@ class NautilusCacheReader:
         if callable(load_accounts):
             rows = cast(Callable[[], object], load_accounts)()
             if isinstance(rows, dict):
-                for row in rows.values():
+                for row in cast(Mapping[object, object], rows).values():
                     return row
         return None
 
@@ -95,10 +95,10 @@ class NautilusCacheReader:
             return ()
         rows = cast(Callable[[], object], source)()
         if isinstance(rows, dict):
-            return rows.values()
+            return cast(Mapping[object, object], rows).values()
         if not isinstance(rows, Iterable) or isinstance(rows, (str, bytes)):
             return ()
-        return cast(Iterable[object], rows)
+        return rows
     def _read_many(
         self,
         name: str,
