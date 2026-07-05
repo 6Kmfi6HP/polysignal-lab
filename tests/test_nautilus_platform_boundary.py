@@ -163,3 +163,100 @@ def test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
+
+
+def test_nautilus_runtime_duplicate_platform_modules_are_deleted() -> None:
+    duplicate_modules = (
+        Path("src/polysignal_lab/nautilus_runtime/matching.py"),
+        Path("src/polysignal_lab/nautilus_runtime/orchestrator.py"),
+        Path("src/polysignal_lab/nautilus_runtime/data_ingestor.py"),
+        Path("src/polysignal_lab/nautilus_runtime/execution_types.py"),
+        Path("src/polysignal_lab/nautilus_runtime/scheduler_compat.py"),
+        Path("src/polysignal_lab/nautilus_runtime/position_policy.py"),
+        Path("src/polysignal_lab/nautilus_runtime/settlement.py"),
+        Path("src/polysignal_lab/nautilus_runtime/book_data.py"),
+        Path("src/polysignal_lab/nautilus_runtime/patch_nautilus_polymarket_autoload.py"),
+    )
+
+    assert [str(path) for path in duplicate_modules if path.exists()] == []
+
+
+def test_nautilus_runtime_source_has_no_platform_truth_source_terms() -> None:
+    forbidden = (
+        "NautilusMatchingPaperExecutionClient",
+        "OwnedNautilusMatchingBoundary",
+        "PaperWallet",
+        "PaperExecutionResult",
+        "PaperSettlementEngine",
+        "PaperSimulator",
+        "NautilusOrchestrator",
+        "NautilusDataIngestor",
+        "evaluate_all_conditions(",
+        "matching_boundary",
+        "process_resting_orders",
+        "drain_events",
+        "cache.add_order",
+        "MessageBus(",
+        "SimulatedExchange(",
+        "BacktestExecClient(",
+    )
+    allowed_files = {
+        Path("src/polysignal_lab/nautilus_runtime/cache_reader.py"),
+        Path("src/polysignal_lab/nautilus_runtime/projections.py"),
+    }
+    findings: list[str] = []
+    for path in Path("src/polysignal_lab/nautilus_runtime").rglob("*.py"):
+        if path in allowed_files:
+            continue
+        text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []
+
+
+def test_nautilus_runtime_does_not_mirror_market_data_outside_nautilus_cache() -> None:
+    forbidden_by_file = {
+        Path("src/polysignal_lab/nautilus_runtime/node.py"): (
+            "NautilusBookDataProvider",
+            "book_data_provider =",
+        ),
+        Path("src/polysignal_lab/nautilus_runtime/native_strategy.py"): (
+            ".update_book(",
+            ".update_trade(",
+            "_domain_order_book(",
+        ),
+        Path("src/polysignal_lab/nautilus_bridge/market_view_assembler.py"): (
+            "self._books",
+            "self._trades",
+            "update_book(",
+            "update_trade(",
+        ),
+    }
+    findings: list[str] = []
+    for path, forbidden in forbidden_by_file.items():
+        text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []
+
+
+def test_nautilus_runtime_does_not_patch_nautilus_installed_sources() -> None:
+    forbidden = (
+        "patch_nautilus_polymarket_autoload",
+        "patch_source(",
+        "EXPECTED_VERSION",
+        "_handle_queue_exception",
+        "_polysignal_precision_guard",
+        "_install_polymarket_precision_runtime_guards",
+        "_polymarket_precision_guarded_queue_exception_handler",
+    )
+    scanned_paths = (
+        Path("Dockerfile"),
+        Path("src/polysignal_lab/nautilus_runtime/node.py"),
+    )
+    findings: list[str] = []
+    for path in scanned_paths:
+        text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []
