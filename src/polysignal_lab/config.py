@@ -7,6 +7,7 @@ from typing import Final, Literal
 import yaml
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     JsonValue,
     TypeAdapter,
@@ -285,11 +286,12 @@ class NautilusMarketRotationConfig(BaseModel):
 
 
 class NautilusRuntimeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     trader_id: str = "PolySignal-Nautilus-001"
     python: str = "3.12"
     execution_mode: Literal["paper_sandbox"] = "paper_sandbox"
-    paper_engine: Literal["nautilus_matching"] = "nautilus_matching"
-    matching_accuracy_mode: Literal["fast_l1", "depth_l2", "queue_l2"] = "depth_l2"
+    sandbox_book_type: Literal["L1_MBP", "L2_MBP"] = "L2_MBP"
     l1_book_snapshot_interval_ms: int = 1000
     allow_live_polymarket_execution: bool = False
     intercept_os_signals: bool = False

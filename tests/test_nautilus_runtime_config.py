@@ -14,26 +14,66 @@ def test_runtime_config_defaults_to_nautilus_and_stays_paper_safe() -> None:
     assert settings.runtime.nautilus.execution_mode == "paper_sandbox"
 
 
-def test_nautilus_matching_defaults_are_paper_only() -> None:
+def test_nautilus_book_type_defaults_are_paper_only() -> None:
     settings = Settings()
 
     assert settings.runtime.nautilus.execution_mode == "paper_sandbox"
-    assert settings.runtime.nautilus.paper_engine == "nautilus_matching"
-    assert settings.runtime.nautilus.matching_accuracy_mode == "depth_l2"
+    assert settings.runtime.nautilus.sandbox_book_type == "L2_MBP"
     assert settings.runtime.nautilus.allow_live_polymarket_execution is False
 
 
-def test_nautilus_rejects_unknown_matching_accuracy_mode() -> None:
+def test_nautilus_rejects_unknown_sandbox_book_type() -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate(
             {
                 "runtime": {
                     "nautilus": {
-                        "matching_accuracy_mode": "legacy_local",
+                        "sandbox_book_type": "legacy_local",
                     }
                 }
             }
         )
+
+
+def test_nautilus_runtime_uses_sandbox_book_type_not_matching_engine() -> None:
+    settings = Settings()
+
+    assert settings.runtime.nautilus.execution_mode == "paper_sandbox"
+    assert settings.runtime.nautilus.sandbox_book_type == "L2_MBP"
+    assert not hasattr(settings.runtime.nautilus, "paper_engine")
+    assert not hasattr(settings.runtime.nautilus, "matching_accuracy_mode")
+
+
+def test_removed_nautilus_matching_keys_fail_fast() -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate(
+            {
+                "runtime": {
+                    "nautilus": {
+                        "paper_engine": "nautilus_matching",
+                    }
+                }
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        Settings.model_validate(
+            {
+                "runtime": {
+                    "nautilus": {
+                        "matching_accuracy_mode": "depth_l2",
+                    }
+                }
+            }
+        )
+
+
+def test_yaml_runtime_book_type_values_are_explicit() -> None:
+    production = Settings.from_yaml("config/signal_bot.yaml")
+    lab = Settings.from_yaml("config/signal_bot.lab.yaml")
+
+    assert production.runtime.nautilus.sandbox_book_type == "L1_MBP"
+    assert lab.runtime.nautilus.sandbox_book_type == "L2_MBP"
 
 
 def test_live_polymarket_execution_is_invalid_in_default_runtime() -> None:
@@ -53,7 +93,7 @@ def test_production_yaml_declares_nautilus_runtime_section() -> None:
 
     assert settings.runtime.nautilus.trader_id == "PolySignal-Nautilus-001"
     assert settings.runtime.nautilus.python == "3.12"
-    assert settings.runtime.nautilus.matching_accuracy_mode == "fast_l1"
+    assert settings.runtime.nautilus.sandbox_book_type == "L1_MBP"
     assert settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
 
 

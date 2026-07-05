@@ -368,7 +368,7 @@ def test_build_trading_node_passes_l1_snapshot_interval_to_native_strategies(
     )
 
     settings = Settings()
-    settings.runtime.nautilus.matching_accuracy_mode = "fast_l1"
+    settings.runtime.nautilus.sandbox_book_type = "L1_MBP"
     settings.runtime.nautilus.l1_book_snapshot_interval_ms = 250
     settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
 
@@ -561,8 +561,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert bundle.scheduler is not None
     assert getattr(bundle.scheduler, "nautilus_cache_reader") is cache_reader
     assert getattr(bundle.scheduler, "paper_execution_metadata") == {
-        "paper_engine": "nautilus_matching",
-        "accuracy_mode": "depth_l2",
+        "sandbox_book_type": "L2_MBP",
     }
     assert bundle.websocket_tasks == []
 
@@ -902,8 +901,7 @@ async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
                 markets=SimpleNamespace(refresh_interval_sec=60),
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
-                        paper_engine="nautilus_matching",
-                        matching_accuracy_mode="depth_l2",
+                        sandbox_book_type="L2_MBP",
                     )
                 ),
             ),
@@ -966,8 +964,7 @@ async def test_run_nautilus_cli_async_refreshes_startup_marker_before_runtime_bu
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                         )
                     )
                 ),
@@ -1009,8 +1006,7 @@ async def test_run_nautilus_cli_async_suppresses_probe_write_failures(
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                         )
                     )
                 ),
@@ -1050,8 +1046,7 @@ async def test_run_nautilus_cli_async_does_not_install_signal_handlers_by_defaul
             settings=_runtime_settings_stub(
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
-                        paper_engine="nautilus_matching",
-                        matching_accuracy_mode="depth_l2",
+                        sandbox_book_type="L2_MBP",
                     )
                 ),
             ),
@@ -1103,8 +1098,7 @@ async def test_run_nautilus_cli_async_installs_signal_handlers_when_enabled(
             settings=_runtime_settings_stub(
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
-                        paper_engine="nautilus_matching",
-                        matching_accuracy_mode="depth_l2",
+                        sandbox_book_type="L2_MBP",
                         intercept_os_signals=True,
                     )
                 ),
@@ -1164,8 +1158,7 @@ async def test_run_nautilus_cli_async_restores_signals_after_shutdown_failure(
             settings=_runtime_settings_stub(
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
-                        paper_engine="nautilus_matching",
-                        matching_accuracy_mode="depth_l2",
+                        sandbox_book_type="L2_MBP",
                         intercept_os_signals=True,
                     )
                 ),
@@ -1239,8 +1232,7 @@ async def test_run_nautilus_cli_async_surfaces_node_run_failure(monkeypatch) -> 
                 markets=SimpleNamespace(refresh_interval_sec=60),
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
-                        paper_engine="nautilus_matching",
-                        matching_accuracy_mode="depth_l2",
+                        sandbox_book_type="L2_MBP",
                     )
                 ),
             ),
@@ -1307,8 +1299,7 @@ async def test_run_nautilus_cli_async_waits_for_node_stop_instead_of_canceling_r
                 markets=SimpleNamespace(refresh_interval_sec=60),
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
-                        paper_engine="nautilus_matching",
-                        matching_accuracy_mode="depth_l2",
+                        sandbox_book_type="L2_MBP",
                     )
                 ),
             ),
@@ -1375,8 +1366,7 @@ async def test_run_nautilus_cli_async_leaves_node_disposal_to_sync_wrapper(
                 markets=SimpleNamespace(refresh_interval_sec=60),
                 runtime=SimpleNamespace(
                     nautilus=SimpleNamespace(
-                        paper_engine="nautilus_matching",
-                        matching_accuracy_mode="depth_l2",
+                        sandbox_book_type="L2_MBP",
                     )
                 ),
             ),
@@ -1436,8 +1426,7 @@ async def test_run_nautilus_cli_async_notifies_and_starts_report_loop(
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                         )
                     )
                 ),
@@ -1460,6 +1449,7 @@ async def test_run_nautilus_cli_async_notifies_and_starts_report_loop(
     await node_mod.run_nautilus_cli_async()
 
     assert any(call[0] == "startup" for call in calls)
+    assert ("startup", ("one_cent_buy",), {"sandbox_book_type": "L2_MBP"}) in calls
     assert any(call[0] == "report_loop" for call in calls)
     assert any(call[0] == "shutdown" for call in calls)
 
@@ -1507,8 +1497,7 @@ async def test_run_nautilus_cli_async_tolerates_notification_failures(
                     markets=SimpleNamespace(refresh_interval_sec=60),
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                         )
                     ),
                 ),
@@ -1619,8 +1608,7 @@ def test_run_nautilus_cli_disposes_node_after_async_exit(monkeypatch) -> None:
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                         )
                     )
                 ),
@@ -1853,8 +1841,7 @@ def test_run_nautilus_cli_installs_polymarket_precision_guard(monkeypatch) -> No
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                         )
                     )
                 ),
@@ -1903,8 +1890,7 @@ def test_run_nautilus_cli_exits_cleanly_when_live_node_returns(
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                         )
                     )
                 ),
@@ -2030,8 +2016,7 @@ def test_run_nautilus_cli_does_not_install_signal_handlers_by_default(
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                         )
                     )
                 ),
@@ -2087,8 +2072,7 @@ def test_run_nautilus_cli_installs_signal_handlers_when_enabled(
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                             intercept_os_signals=True,
                         )
                     )
@@ -2154,8 +2138,7 @@ def test_run_nautilus_cli_restores_opt_in_signal_handlers(
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                             intercept_os_signals=True,
                         )
                     )
@@ -2222,8 +2205,7 @@ def test_run_nautilus_cli_restores_signal_handlers_after_dispose_failure(
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                             intercept_os_signals=True,
                         )
                     )
@@ -2279,8 +2261,7 @@ def test_run_nautilus_cli_prints_ready(monkeypatch, capsys) -> None:
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                         )
                     )
                 ),
@@ -2398,8 +2379,7 @@ def test_run_nautilus_cli_starts_report_loop_thread(monkeypatch: pytest.MonkeyPa
                 settings=_runtime_settings_stub(
                     runtime=SimpleNamespace(
                         nautilus=SimpleNamespace(
-                            paper_engine="nautilus_matching",
-                            matching_accuracy_mode="depth_l2",
+                            sandbox_book_type="L2_MBP",
                         )
                     )
                 ),

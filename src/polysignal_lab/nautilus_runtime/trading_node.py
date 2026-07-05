@@ -78,7 +78,7 @@ def build_paper_trading_node_config(
                 base_currency="USDC",
                 oms_type="NETTING",
                 account_type="CASH",
-                book_type=_book_type_for(settings.runtime.nautilus.matching_accuracy_mode),
+                book_type=settings.runtime.nautilus.sandbox_book_type,
                 bar_execution=False,
                 trade_execution=True,
                 support_gtd_orders=True,
@@ -117,10 +117,6 @@ def assert_no_live_polymarket_execution(config: object) -> None:
         raise RuntimeError("default paper runtime refuses live Polymarket execution")
 
 
-def _book_type_for(mode: str) -> str:
-    if mode == "fast_l1":
-        return "L1_MBP"
-    return "L2_MBP"
 
 
 def _import_callable(module_name: str, attr_name: str) -> Callable[..., object]:

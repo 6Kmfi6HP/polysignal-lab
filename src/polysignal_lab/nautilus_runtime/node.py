@@ -433,11 +433,7 @@ def _build_native_strategies(
 
     strategy_type = runtime_native_strategy_type(NautilusStrategy, NautilusStrategyConfig)
     instrument_id_resolver = _instrument_id_resolver(registry)
-    strategy_book_type = (
-        "L1_MBP"
-        if settings.runtime.nautilus.matching_accuracy_mode == "fast_l1"
-        else "L2_MBP"
-    )
+    strategy_book_type = settings.runtime.nautilus.sandbox_book_type
     strategies: list[_NativeStrategyLike] = []
     strategy_names: set[str] = set()
 
@@ -788,8 +784,7 @@ def _build_nautilus_runtime_bundle(
         observability=observability,
     )
     paper_execution_metadata = {
-        "paper_engine": settings.runtime.nautilus.paper_engine,
-        "accuracy_mode": settings.runtime.nautilus.matching_accuracy_mode,
+        "sandbox_book_type": settings.runtime.nautilus.sandbox_book_type,
     }
     setattr(scheduler, "nautilus_cache_reader", components.get("cache_reader"))
     setattr(scheduler, "paper_execution_metadata", paper_execution_metadata)
@@ -1185,8 +1180,7 @@ async def run_nautilus_cli_async(
         try:
             await bundle.observability.notify_startup(
                 strategy_names,
-                paper_engine=bundle.scheduler.settings.runtime.nautilus.paper_engine,
-                accuracy_mode=bundle.scheduler.settings.runtime.nautilus.matching_accuracy_mode,
+                sandbox_book_type=bundle.scheduler.settings.runtime.nautilus.sandbox_book_type,
             )
         except Exception:
             runtime_logger.exception("Nautilus startup notification failed")
@@ -1284,8 +1278,7 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
             asyncio.run(
                 bundle.observability.notify_startup(
                     strategy_names,
-                    paper_engine=bundle.scheduler.settings.runtime.nautilus.paper_engine,
-                    accuracy_mode=bundle.scheduler.settings.runtime.nautilus.matching_accuracy_mode,
+                    sandbox_book_type=bundle.scheduler.settings.runtime.nautilus.sandbox_book_type,
                 )
             )
         except Exception:

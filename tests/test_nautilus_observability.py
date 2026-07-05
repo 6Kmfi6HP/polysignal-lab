@@ -96,28 +96,25 @@ class NonLockingOperationalErrorTelemetryStore(FakeStore):
 
 # ── ObservabilityActor tests ──────────────────────────────────────────────────
 
-def test_startup_message_includes_matching_engine_metadata() -> None:
+def test_startup_message_includes_sandbox_book_type() -> None:
     publisher = FakePublisher()
     actor = ObservabilityActor(notifier=NautilusNotifierAdapter(publisher))
 
     asyncio.run(
         actor.notify_startup(
             ["ptb_diff"],
-            paper_engine="nautilus_matching",
-            accuracy_mode="depth_l2",
+            sandbox_book_type="L2_MBP",
         )
     )
 
     assert publisher.calls == [
         (
-            "Nautilus runtime started — 1 strategies loaded — "
-            "paper_engine=nautilus_matching accuracy_mode=depth_l2",
+            "Nautilus runtime started — 1 strategies loaded — sandbox_book_type=L2_MBP",
             "startup",
         )
     ]
     component = actor.health.components["observability_actor"]
-    assert component.metrics["paper_engine"] == "nautilus_matching"
-    assert component.metrics["accuracy_mode"] == "depth_l2"
+    assert component.metrics["sandbox_book_type"] == "L2_MBP"
 
 
 

@@ -707,17 +707,15 @@ class ObservabilityActor:
         self,
         strategy_names: Sequence[str] = (),
         *,
-        paper_engine: str = "nautilus_matching",
-        accuracy_mode: str = "depth_l2",
+        sandbox_book_type: str = "L2_MBP",
     ) -> None:
         msg = (
             f"Nautilus runtime started — {len(strategy_names)} strategies loaded — "
-            f"paper_engine={paper_engine} accuracy_mode={accuracy_mode}"
+            f"sandbox_book_type={sandbox_book_type}"
         )
         self.health.mark_ok(
             "observability_actor",
-            paper_engine=paper_engine,
-            accuracy_mode=accuracy_mode,
+            sandbox_book_type=sandbox_book_type,
         )
         if self.notifier is None:
             return
