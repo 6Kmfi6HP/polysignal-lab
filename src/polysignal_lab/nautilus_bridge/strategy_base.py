@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from importlib import import_module
+from typing import Any, cast
 
 from polysignal_lab.alpha.types import AlphaCore, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent
@@ -11,7 +12,7 @@ from polysignal_lab.nautilus_bridge.state import decode_state, encode_state
 
 def _load_strategy_base() -> type:
     try:
-        from nautilus_trader.trading.strategy import Strategy
+        Strategy = cast(type, getattr(import_module("nautilus_trader.trading.strategy"), "Strategy"))
     except ModuleNotFoundError:
         return object
     return Strategy

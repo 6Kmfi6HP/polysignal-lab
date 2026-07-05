@@ -5,16 +5,16 @@
 | Area | Delivered |
 |---|---|
 | Config and safety | Pydantic settings, YAML config, disallowed environment key detection, `scripts/safety_scan.py`, CI workflow |
-| Polymarket data | Gamma market discovery adapter, public CLOB REST/orderbook adapters, Nautilus Polymarket data wiring |
+| Polymarket data | Nautilus Polymarket data factory plus business market rotation custom data |
 | Sidecar data | Spot, price-to-beat, anchor, and market metadata custom data for Nautilus strategies |
-| Snapshots | Market view assembly, freshness metrics, derived metrics |
+| Snapshots | Market view assembly from Nautilus cache projections and business custom data |
 | Strategies | PolySignal alpha cores wrapped by Nautilus strategy callbacks |
 | Signal layer | SignalCandidate schema, gate, dedupe, channel rate limiter, consensus engine, formatter |
 | Telegram | Dry-run default publisher, retry-capable HTTP sender, publish audit record, real Telegram QA command with redacted evidence |
-| Paper trading | Nautilus `TradingNode`, native order submission, sandbox paper execution, cache/portfolio projections |
+| Paper trading | Nautilus node, native order submission, Nautilus sandbox execution, cache/portfolio projections |
 | Node surface | Current default uses legacy Nautilus `TradingNode`; this is tracked as a non-wheel design deviation with a separate `LiveNode.builder` migration gate |
-| Exits/settlement | Paper TP/SL/max-hold virtual exit and hold-to-resolution settlement over projected positions |
-| Reporting | Daily report, PnL, ROI, win rate, drawdown, profit factor, breakdowns |
+| Exits/settlement | Prediction-market resolution remains business logic; runtime positions come from Nautilus portfolio projection |
+| Reporting | Daily report, PnL, ROI, win rate, drawdown, profit factor, breakdowns over projected Nautilus state |
 | Storage | SQLite tables, JSONL audit logs, atomic state files |
 | Dashboard | Read-only FastAPI dashboard and JSON endpoints backed by SQLite data |
 | Scheduler/smoke | Nautilus mode, legacy scheduler compatibility mode, dashboard mode, and bounded public read-only smoke mode |

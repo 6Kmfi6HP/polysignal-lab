@@ -70,12 +70,12 @@ class NautilusCacheMarketDataProvider:
         return cast(Callable[[object], object | None], getter)(instrument_id)
 
 
-def _levels(raw: object) -> Sequence[tuple[float, float]]:
+def _levels(raw: object) -> tuple[tuple[float, float], ...]:
     if callable(raw):
         raw = raw()
     if not isinstance(raw, Iterable) or isinstance(raw, (str, bytes)):
         return ()
-    values = []
+    values: list[tuple[float, float]] = []
     for level in raw:
         price = _maybe_float(getattr(level, "price", None))
         size = _maybe_float(getattr(level, "size", None))

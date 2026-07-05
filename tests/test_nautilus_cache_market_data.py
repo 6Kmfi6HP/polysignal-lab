@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from collections.abc import Sequence
 from typing import Any
 
 from polysignal_lab.domain.enums import Side
@@ -48,7 +49,7 @@ class FakeCache:
         self.requested.append(instrument_id)
         return self.book if str(instrument_id) == self.instrument_id else None
 
-    def trade_ticks(self, instrument_id: object) -> list[FakeTrade]:
+    def trade_ticks(self, instrument_id: object) -> Sequence[FakeTrade]:
         return [FakeTrade()] if str(instrument_id) == self.instrument_id else []
 
 
@@ -120,7 +121,7 @@ def test_cache_market_data_provider_converts_nautilus_trade_ns_timestamp() -> No
     instrument_id = "condition-btc-5m-up.POLYMARKET"
     expected = datetime(2026, 7, 5, tzinfo=UTC)
 
-    class NsTrade:
+    class NsTrade(FakeTrade):
         price = 0.51
         size = 2.0
         aggressor_side = "BUYER"

@@ -22,7 +22,7 @@ import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
+from types import FrameType, SimpleNamespace, TracebackType
 from typing import Protocol, cast, runtime_checkable
 
 from polysignal_lab.alpha.types import AlphaCore, TradeView
@@ -871,7 +871,7 @@ def _runtime_intercepts_os_signals(settings: object | None) -> bool:
     return bool(getattr(nautilus_settings, "intercept_os_signals", False))
 
 
-_SignalHandler = signal.Handlers | Callable[..., object] | None
+_SignalHandler = signal.Handlers | int | Callable[..., object] | None
 _SignalHandlerSnapshot = tuple[signal.Signals, _SignalHandler]
 
 
@@ -949,7 +949,7 @@ def _install_crash_logger(log_dir: str) -> None:
     """
     crash_path = f"{log_dir.rstrip('/')}/crash.log"
 
-    def crash_excepthook(typ: type[BaseException], val: BaseException, tb: object | None) -> None:
+    def crash_excepthook(typ: type[BaseException], val: BaseException, tb: TracebackType | None) -> None:
         _dump_thread_stacks(crash_path)
         try:
             with open(crash_path, "a", encoding="utf-8") as fh:

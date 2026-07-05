@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol, Sequence
+from typing import Any, Protocol, Sequence
 
 from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView, TradeView
 from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
@@ -51,7 +51,7 @@ class MarketViewAssembler:
             spot_ms=spot.freshness_ms if spot is not None else None,
             max_ms=max(freshness_values) if freshness_values else None,
         )
-        metrics = {
+        metrics: dict[str, Any] = {
             "up_token_id": pair.up.token_id,
             "down_token_id": pair.down.token_id,
         }

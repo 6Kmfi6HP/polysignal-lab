@@ -363,4 +363,4 @@ def register_polysignal_data_types() -> None:
         PolySignalMarketUniverseData.to_dict,
         PolySignalMarketUniverseData.from_dict,
     )
-    _POLYSIGNAL_DATA_TYPES_REGISTERED = True
+    _POLYSIGNAL_DATA_TYPES_REGISTERED = True  # pyright: ignore[reportConstantRedefinition]

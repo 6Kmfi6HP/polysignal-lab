@@ -528,6 +528,10 @@ class PolySignalNativeStrategy:
         if condition_id is None:
             self._note_runtime_progress("dropped_frame")
             return None
+        token_id = _token_id_for_instrument(self.registry, instrument_id)
+        if token_id is None:
+            self._note_runtime_progress("dropped_frame")
+            return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
         return condition_id
 
