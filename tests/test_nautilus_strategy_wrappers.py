@@ -343,6 +343,20 @@ def test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data(
     assert REQUIRED_DATA_NAMES.issubset(set(strategy.subscribed_data_names))
 
 
+@pytest.mark.parametrize(("strategy_cls", "config_cls"), WRAPPERS)
+def test_each_wrapper_preserves_custom_data_names(strategy_cls, config_cls) -> None:
+    strategy = strategy_cls(
+        config=config_cls(),
+        assembler=FakeAssembler(None),
+        condition_ids=("condition-btc-5m",),
+        data_names=("custom_feed",),
+    )
+
+    strategy.on_start()
+
+    assert strategy.subscribed_data_names == ["custom_feed"]
+
+
 def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved() -> (
     None
 ):

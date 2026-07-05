@@ -20,6 +20,7 @@ class DumpHedgeNautilusStrategy(PolySignalNautilusStrategy):
         policy: DecisionPolicyActor | None = None,
         submitter: Callable[[NautilusOrderSpec], object] | None = None,
         fixed_stake_usdc: float = 10.0,
+        data_names: Sequence[str] = DEFAULT_DATA_NAMES,
     ) -> None:
         cfg = config or DumpHedgeConfig()
         super().__init__(
@@ -27,7 +28,7 @@ class DumpHedgeNautilusStrategy(PolySignalNautilusStrategy):
             assembler=assembler,
             condition_ids=condition_ids,
             strategy_name="dump_hedge",
-            data_names=DEFAULT_DATA_NAMES,
+            data_names=data_names,
             policy=policy,
             submitter=submitter,
             fixed_stake_usdc=fixed_stake_usdc,
