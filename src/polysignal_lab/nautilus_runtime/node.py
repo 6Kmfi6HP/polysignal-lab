@@ -19,7 +19,6 @@ import threading
 import traceback
 from contextlib import suppress
 import sys
-import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -972,92 +971,6 @@ def _install_crash_logger(log_dir: str) -> None:
     atexit.register(_atexit_dump)
 
 
-def _is_polymarket_precision_mismatch(exc: Exception, queue_name: str) -> bool:
-    if not isinstance(exc, RuntimeError):
-        return False
-    message = str(exc)
-    fill_precision_mismatch = (
-        "fill_price.precision=" in message
-        and "did not match instrument price_prec=" in message
-    )
-    if queue_name == "Data":
-        return fill_precision_mismatch or (
-            "precision=" in message
-            and "did not match instrument.price_precision=" in message
-            and (
-                message.startswith("invalid delta price precision=")
-                or message.startswith("invalid tick.bid_price.precision=")
-                or message.startswith("invalid tick.ask_price.precision=")
-                or message.startswith("invalid tick.price.precision=")
-            )
-        )
-    if queue_name in {"Command", "Exec", "Execution"}:
-        return fill_precision_mismatch
-    return False
-
-
-PRECISION_MISMATCH_WARNING_INTERVAL_SEC = 60.0
-
-
-def _polymarket_precision_guarded_queue_exception_handler(
-    original: Callable[[object, Exception, str], None],
-) -> Callable[[object, Exception, str], None]:
-    last_warning_at: dict[str, float] = {}
-
-    def guarded(engine: object, exc: Exception, queue_name: str) -> None:
-        if _is_polymarket_precision_mismatch(exc, queue_name):
-            message = str(exc)
-            now = time.monotonic()
-            last = last_warning_at.get(message)
-            if last is None or now - last >= PRECISION_MISMATCH_WARNING_INTERVAL_SEC:
-                last_warning_at[message] = now
-                engine_logger = getattr(engine, "_log", logger)
-                warning = getattr(engine_logger, "warning", None)
-                if callable(warning):
-                    warning(
-                        f"Dropping Polymarket runtime precision mismatch without shutting down: {exc!r}"
-                    )
-            return
-        original(engine, exc, queue_name)
-
-    return guarded
-
-
-def _install_polymarket_precision_engine_guard(module_name: str, class_name: str) -> bool:
-    try:
-        engine_module = importlib.import_module(module_name)
-        engine_cls = getattr(engine_module, class_name)
-        original = getattr(engine_cls, "_handle_queue_exception")
-    except (ModuleNotFoundError, AttributeError):
-        return False
-    if getattr(original, "_polysignal_precision_guard", False):
-        return True
-    guarded = _polymarket_precision_guarded_queue_exception_handler(original)
-    setattr(guarded, "_polysignal_precision_guard", True)
-    setattr(engine_cls, "_handle_queue_exception", guarded)
-    return True
-
-
-def _install_polymarket_precision_data_engine_guard() -> None:
-    _install_polymarket_precision_engine_guard(
-        "nautilus_trader.live.data_engine",
-        "LiveDataEngine",
-    )
-
-
-def _install_polymarket_precision_exec_engine_guard() -> None:
-    for module_name, class_name in (
-        ("nautilus_trader.live.execution_engine", "LiveExecutionEngine"),
-        ("nautilus_trader.live.execution_engine", "LiveExecEngine"),
-        ("nautilus_trader.live.exec_engine", "LiveExecEngine"),
-    ):
-        if _install_polymarket_precision_engine_guard(module_name, class_name):
-            return
-
-
-def _install_polymarket_precision_runtime_guards() -> None:
-    _install_polymarket_precision_data_engine_guard()
-    _install_polymarket_precision_exec_engine_guard()
 
 
 async def run_nautilus_cli_async(
@@ -1118,7 +1031,6 @@ async def run_nautilus_cli_async(
         except Exception:
             runtime_logger.exception("Nautilus startup notification failed")
         print(f"Nautilus runtime ready — {strategy_count} strategies")
-        _install_polymarket_precision_runtime_guards()
         if stop_event is not None and stop_event.is_set():
             return node
         report_task = asyncio.create_task(
@@ -1218,7 +1130,6 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
             runtime_logger.exception("Nautilus startup notification failed")
         print(f"Nautilus runtime ready — {len(strategy_names)} strategies")
         _install_crash_logger(settings.storage.jsonl_dir)
-        _install_polymarket_precision_runtime_guards()
         run_method = cast(Callable[..., None], getattr(node, "run"))
         if "raise_exception" in inspect.signature(run_method).parameters:
             run_method(raise_exception=True)
