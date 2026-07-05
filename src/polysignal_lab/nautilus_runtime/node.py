@@ -329,10 +329,17 @@ def build_trading_node(
         node.trader.add_strategy(strategy)
     node.build()
 
+    from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
     from polysignal_lab.nautilus_runtime.cache_reader import NautilusCacheReader
+
     kernel = getattr(node, "kernel", None)
+    nautilus_cache = getattr(node, "cache", None) or getattr(kernel, "cache", None)
+    assembler.books = NautilusCacheMarketDataProvider(
+        nautilus_cache,
+        registry=registry,
+    )
     cache_reader = NautilusCacheReader(
-        getattr(node, "cache", None) or getattr(kernel, "cache", None),
+        nautilus_cache,
         portfolio=getattr(node, "portfolio", None) or getattr(kernel, "portfolio", None),
     )
 

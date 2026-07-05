@@ -494,97 +494,79 @@ class PolySignalNativeStrategy:
             self.evaluate_condition(candidate)
 
     def on_order_book_deltas(self, deltas: object) -> None:
-        condition_id = self._update_book_from_deltas(deltas)
+        condition_id = self._condition_from_order_book_deltas(deltas)
         if condition_id is None:
             return
         self._evaluate_market_data_condition(condition_id)
 
-    def _update_book_from_deltas(self, deltas: object) -> str | None:
+    def _condition_from_order_book_deltas(self, deltas: object) -> str | None:
         if self.registry is None:
             return None
-        instrument_id_value = getattr(deltas, "instrument_id", None)
-        instrument_id = _identifier_text(instrument_id_value)
+        instrument_id = _identifier_text(getattr(deltas, "instrument_id", None))
         if instrument_id is None:
             return None
-        token_id = _token_id_for_instrument(self.registry, instrument_id)
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
-        if token_id is None or condition_id is None:
+        if condition_id is None:
             self._note_runtime_progress("dropped_frame")
-            return None
-        cache = cast(object, getattr(self, "cache", None))
-        if _cache_order_book(cache, instrument_id_value) is None:
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
         return condition_id
 
     def on_quote_tick(self, tick: object) -> None:
-        condition_id = self._update_book_from_quote_tick(tick)
+        condition_id = self._condition_from_quote_tick(tick)
         if condition_id is None:
             return
         self._evaluate_market_data_condition(condition_id)
 
-    def _update_book_from_quote_tick(self, tick: object) -> str | None:
+    def _condition_from_quote_tick(self, tick: object) -> str | None:
         if self.registry is None:
             return None
         instrument_id = _identifier_text(getattr(tick, "instrument_id", None))
         if instrument_id is None:
             return None
-        token_id = _token_id_for_instrument(self.registry, instrument_id)
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
-        if token_id is None or condition_id is None:
+        if condition_id is None:
             self._note_runtime_progress("dropped_frame")
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
         return condition_id
 
     def on_order_book(self, book: object) -> None:
-        condition_id = self._update_book_from_order_book(book)
+        condition_id = self._condition_from_order_book(book)
         if condition_id is None:
             return
         self._evaluate_market_data_condition(condition_id)
 
-    def _update_book_from_order_book(self, book: object) -> str | None:
+    def _condition_from_order_book(self, book: object) -> str | None:
         if self.registry is None:
             return None
         instrument_id = _identifier_text(getattr(book, "instrument_id", None))
         if instrument_id is None:
             return None
-        token_id = _token_id_for_instrument(self.registry, instrument_id)
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
-        if token_id is None or condition_id is None:
+        if condition_id is None:
             self._note_runtime_progress("dropped_frame")
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
         return condition_id
 
     def on_trade_tick(self, tick: object) -> None:
-        condition_id = self._update_trade_from_tick(tick)
+        condition_id = self._condition_from_trade_tick(tick)
         if condition_id is None:
             return
         self._evaluate_market_data_condition(condition_id)
 
-    def _update_trade_from_tick(self, tick: object) -> str | None:
+    def _condition_from_trade_tick(self, tick: object) -> str | None:
         if self.registry is None:
             return None
         instrument_id = _identifier_text(getattr(tick, "instrument_id", None))
         if instrument_id is None:
             return None
-        token_id = _token_id_for_instrument(self.registry, instrument_id)
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
-        if token_id is None or condition_id is None:
+        if condition_id is None:
             self._note_runtime_progress("dropped_frame")
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
-        books = getattr(self._require_assembler(), "books", None)
-        updater = getattr(books, "update_trade", None)
-        if callable(updater):
-            _ = updater(
-                token_id,
-                price=float(getattr(tick, "price")),
-                size=float(getattr(tick, "size")),
-                side=_identifier_text(getattr(tick, "aggressor_side", None)),
-                ts=_maybe_datetime(getattr(tick, "ts_event", None)),
-            )
         return condition_id
 
     def _evaluate_market_data_condition(self, condition_id: str) -> None:
@@ -1384,17 +1366,6 @@ def _token_id_for_instrument(
     return registry.token_id_for_instrument(instrument_id)
 
 
-def _cache_order_book(cache: object, instrument_id: object) -> object | None:
-    getter = getattr(cache, "order_book", None)
-    if not callable(getter):
-        return None
-    return cast(Callable[[object], object | None], getter)(instrument_id)
-
-
-
-
-def _maybe_datetime(value: object) -> datetime | None:
-    return value if isinstance(value, datetime) else None
 
 
 

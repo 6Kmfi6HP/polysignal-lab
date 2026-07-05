@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime
+from typing import Callable, cast
+
+from polysignal_lab.alpha.types import SideBookView, TradeView
+from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+
+
+class NautilusCacheMarketDataProvider:
+    """Read current market data from Nautilus Cache without owning book/trade state."""
+
+    def __init__(self, cache: object, *, registry: PolymarketMarketRegistry) -> None:
+        self._cache = cache
+        self._registry = registry
+
+    def book_for_token(self, token_id: str) -> SideBookView | None:
+        meta = self._registry.token_meta(token_id)
+        if meta is None:
+            return None
+        book = self._cache_order_book(meta.instrument_id)
+        if book is None:
+            return None
+        bids = _levels(getattr(book, "bids", ()))
+        asks = _levels(getattr(book, "asks", ()))
+        best_bid = bids[0][0] if bids else None
+        best_ask = asks[0][0] if asks else None
+        spread = round(best_ask - best_bid, 10) if best_bid is not None and best_ask is not None else None
+        received_at = _datetime_or_none(getattr(book, "received_at", None))
+        return SideBookView(
+            token_id=token_id,
+            best_bid=best_bid,
+            best_ask=best_ask,
+            spread=spread,
+            freshness_ms=_freshness_ms(received_at),
+            min_order_size=_maybe_float(getattr(book, "min_order_size", None)),
+            tick_size=_maybe_float(getattr(book, "tick_size", None)),
+            last_trade_price=_maybe_float(getattr(book, "last_trade_price", None)),
+            last_trade_size=_maybe_float(getattr(book, "last_trade_size", None)),
+            last_trade_timestamp=_optional_text(getattr(book, "last_trade_timestamp", None)),
+            received_at=received_at,
+            ask_levels=asks,
+        )
+
+    def trades_for_token(self, token_id: str) -> Sequence[TradeView]:
+        meta = self._registry.token_meta(token_id)
+        if meta is None:
+            return ()
+        getter = getattr(self._cache, "trade_ticks", None)
+        if not callable(getter):
+            return ()
+        rows = cast(Callable[[object], object], getter)(meta.instrument_id)
+        if not isinstance(rows, Iterable) or isinstance(rows, (str, bytes)):
+            return ()
+        return tuple(
+            TradeView(
+                price=_float_attr(row, "price"),
+                size=_float_attr(row, "size"),
+                side=_optional_text(getattr(row, "aggressor_side", getattr(row, "side", None))),
+                ts=_datetime_or_none(getattr(row, "ts_event", getattr(row, "timestamp", None))),
+            )
+            for row in rows
+        )
+
+    def _cache_order_book(self, instrument_id: object) -> object | None:
+        getter = getattr(self._cache, "order_book", None)
+        if not callable(getter):
+            return None
+        return cast(Callable[[object], object | None], getter)(instrument_id)
+
+
+def _levels(raw: object) -> Sequence[tuple[float, float]]:
+    if callable(raw):
+        raw = raw()
+    if not isinstance(raw, Iterable) or isinstance(raw, (str, bytes)):
+        return ()
+    values = []
+    for level in raw:
+        price = _maybe_float(getattr(level, "price", None))
+        size = _maybe_float(getattr(level, "size", None))
+        if price is None or size is None or price <= 0 or size <= 0:
+            continue
+        values.append((price, size))
+    return tuple(values)
+
+
+def _maybe_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if callable(value):
+        value = value()
+    try:
+        return float(value if isinstance(value, (int, float, str, bytes, bytearray)) else str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_attr(source: object, name: str) -> float:
+    value = _maybe_float(getattr(source, name, None))
+    return 0.0 if value is None else value
+
+
+def _datetime_or_none(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, (int, float)) and value > 0:
+        return datetime.fromtimestamp(value / 1_000_000_000, UTC)
+    return None
+
+
+def _optional_text(value: object) -> str | None:
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
+def _freshness_ms(received_at: datetime | None) -> int | None:
+    if received_at is None:
+        return None
+    dt = received_at if received_at.tzinfo is not None else received_at.replace(tzinfo=UTC)
+    return max(0, int((datetime.now(UTC) - dt.astimezone(UTC)).total_seconds() * 1000))

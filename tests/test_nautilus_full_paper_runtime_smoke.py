@@ -122,9 +122,9 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pyte
     assert cache_reader.snapshot_portfolio() is not None
 
 
-def test_build_trading_node_exposes_shared_book_data_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_trading_node_uses_cache_backed_market_data_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
-    from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
+    from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
 
     class FakeTrader:
         def __init__(self) -> None:
@@ -166,9 +166,9 @@ def test_build_trading_node_exposes_shared_book_data_provider(monkeypatch: pytes
 
     runtime = node_mod.build_trading_node(Settings(), markets=(_sample_market(),))
 
-    assert isinstance(runtime["book_data_provider"], NautilusBookDataProvider)
     assembler = cast(SimpleNamespace, runtime["assembler"])
-    assert assembler.books is runtime["book_data_provider"]
+    assert isinstance(assembler.books, NautilusCacheMarketDataProvider)
+    assert "book_data_provider" not in runtime
 
 
 def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -181,7 +181,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
         PolymarketMarketRegistry,
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
-    from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
+    from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
     from polysignal_lab.nautilus_runtime.market_data import (
         PolySignalMarketMetaData,
         PolySignalPriceToBeatData,
@@ -320,7 +320,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
         )
     )
     sidecar = ExternalDataSidecar()
-    books = NautilusBookDataProvider()
+    books = NautilusCacheMarketDataProvider(FakeCache(), registry=registry)
     assembler = MarketViewAssembler(registry=registry, books=books, sidecar=sidecar)
     strategy = FakeStrategy(
         core=FakeCore(),
@@ -402,7 +402,7 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
         PolymarketMarketRegistry,
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
-    from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
+    from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
     from polysignal_lab.nautilus_runtime.market_data import (
         PolySignalMarketMetaData,
         PolySignalMarketUniverseData,
@@ -579,7 +579,7 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
     registry = PolymarketMarketRegistry()
     node_mod._register_markets(registry, (market_a,))
     sidecar = ExternalDataSidecar()
-    books = NautilusBookDataProvider()
+    books = NautilusCacheMarketDataProvider(FakeCache(), registry=registry)
     assembler = MarketViewAssembler(registry=registry, books=books, sidecar=sidecar)
     strategy = FakeStrategy(
         core=FakeCore(),

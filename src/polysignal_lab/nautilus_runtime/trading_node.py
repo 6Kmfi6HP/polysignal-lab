@@ -49,8 +49,8 @@ def build_paper_trading_node_config(
         # Default tick_capacity=10_000 retains up to 10k quote + 10k trade
         # ticks per instrument, and market rotation subscribes ~128 new
         # instruments/hour that the cache never evicts — unbounded RSS growth
-        # over hours. Strategies read market data from NautilusBookDataProvider,
-        # not from cache tick history, so a small capacity is sufficient.
+        # over hours. Strategies read cache-backed market data projections
+        # instead of project-owned book/trade mirrors, so a small capacity is sufficient.
         cache=cache_config(tick_capacity=100, bar_capacity=100),
         data_engine=live_data_engine_config(
             validate_data_sequence=True,

@@ -1301,7 +1301,7 @@ def test_native_strategy_coalesces_wire_subscriptions_across_strategy_instances(
         PolymarketMarketRegistry,
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
-    from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
+    from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
 
@@ -1354,7 +1354,21 @@ def test_native_strategy_coalesces_wire_subscriptions_across_strategy_instances(
             down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
         )
     )
-    books = NautilusBookDataProvider()
+    cache = SimpleNamespace(
+        trade_ticks=lambda instrument_id: (
+            [
+                SimpleNamespace(
+                    price=0.51,
+                    size=7.0,
+                    aggressor_side="BUYER",
+                    ts_event=datetime.now(UTC),
+                )
+            ]
+            if str(instrument_id) == "up-token.POLYMARKET"
+            else []
+        )
+    )
+    books = NautilusCacheMarketDataProvider(cache, registry=registry)
     assembler = MarketViewAssembler(
         registry=registry,
         books=books,
@@ -2846,7 +2860,7 @@ def test_native_strategy_routes_ptb_custom_data_to_matching_active_condition_onl
 
 
 
-def test_native_strategy_trade_tick_callback_updates_shared_trade_history() -> None:
+def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_trade_history_write() -> None:
     from types import SimpleNamespace
 
     from polysignal_lab.alpha.types import SpotView
@@ -2857,7 +2871,7 @@ def test_native_strategy_trade_tick_callback_updates_shared_trade_history() -> N
         PolymarketMarketRegistry,
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
-    from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
+    from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     class FakeLevel:
@@ -2874,6 +2888,12 @@ def test_native_strategy_trade_tick_callback_updates_shared_trade_history() -> N
             self.last_trade_timestamp = None
             self.received_at = datetime.now(UTC)
 
+    class FakeTrade:
+        price = 0.51
+        size = 7.0
+        aggressor_side = "BUYER"
+        ts_event = datetime.now(UTC)
+
     class FakeCache:
         def __init__(self) -> None:
             self.books = {
@@ -2886,9 +2906,13 @@ def test_native_strategy_trade_tick_callback_updates_shared_trade_history() -> N
                     asks=[FakeLevel(0.51, 20.0)],
                 ),
             }
+            self.trades = {"up-token.POLYMARKET": [FakeTrade()]}
 
         def order_book(self, instrument_id):
             return self.books[instrument_id]
+
+        def trade_ticks(self, instrument_id):
+            return self.trades.get(str(instrument_id), [])
 
     registry = PolymarketMarketRegistry()
     registry.register(
@@ -2923,7 +2947,8 @@ def test_native_strategy_trade_tick_callback_updates_shared_trade_history() -> N
         anchor_source="chainlink",
         anchor_lag_ms=5,
     )
-    books = NautilusBookDataProvider()
+    fake_cache = FakeCache()
+    books = NautilusCacheMarketDataProvider(fake_cache, registry=registry)
     assembler = MarketViewAssembler(
         registry=registry,
         books=books,
@@ -2933,7 +2958,7 @@ def test_native_strategy_trade_tick_callback_updates_shared_trade_history() -> N
     class FakeNativeStrategy(PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
-            self.cache = FakeCache()
+            self.cache = fake_cache
             self.evaluated: list[str] = []
 
         def evaluate_condition(self, condition_id: str) -> None:
