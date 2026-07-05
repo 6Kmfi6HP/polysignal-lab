@@ -175,6 +175,55 @@ def test_submit_approved_decision_quantizes_price_before_instrument_converter() 
 
 
 
+def test_submit_approved_decision_preserves_price_precision_when_price_type_available(
+    monkeypatch,
+) -> None:
+    import polysignal_lab.nautilus_runtime.native_order as native_order
+
+    strategy = FakeStrategy()
+
+    class FakePrice:
+        def __init__(self, raw: str) -> None:
+            self.raw = raw
+            self.precision = len(raw.partition(".")[2])
+
+        @classmethod
+        def from_str(cls, value: str) -> "FakePrice":
+            return cls(value)
+
+    class FakeInstrument:
+        id: str = "up-token.POLYMARKET"
+        price_precision = 3
+
+        def make_price(self, value: float) -> FakePrice:
+            return FakePrice(str(value))
+
+    def fake_optional_attr(module_name: str, attr_name: str) -> object | None:
+        if attr_name == "Price":
+            return FakePrice
+        return None
+
+    monkeypatch.setattr(native_order, "_optional_nautilus_attr", fake_optional_attr)
+
+    approved = _approved(OrderIntent.TAKER_IOC)
+    approved = ApprovedDecision(
+        signal=approved.signal.model_copy(update={"max_entry_price": 0.75}),
+    )
+
+    order = submit_approved_decision(
+        cast(OrderSubmittingStrategy[FakeOrder], strategy),
+        approved,
+        fixed_stake_usdc=10.0,
+        best_ask=0.73,
+        available_shares=100.0,
+        instrument_id_resolver=lambda _token_id: FakeInstrument(),
+    )
+
+    assert order.price.raw == "0.730"
+    assert order.price.precision == 3
+
+
+
 def test_submit_approved_decision_maps_passive_gtd_expiry() -> None:
     strategy = FakeStrategy()
 

@@ -1764,6 +1764,45 @@ def test_polymarket_precision_guard_handles_nautilus_logger_signature() -> None:
     assert calls == []
 
 
+def test_polymarket_precision_guard_suppresses_exec_fill_precision_mismatch() -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    calls: list[tuple[Exception, str]] = []
+
+    class FakeEngine:
+        def _handle_queue_exception(self, exc: Exception, queue_name: str) -> None:
+            calls.append((exc, queue_name))
+
+    original = FakeEngine._handle_queue_exception
+    guarded = node_mod._polymarket_precision_guarded_queue_exception_handler(original)
+
+    guarded(
+        FakeEngine(),
+        RuntimeError("fill_price.precision=2 did not match instrument price_prec=3"),
+        "Command",
+    )
+
+    assert calls == []
+
+
+def test_polymarket_precision_guard_preserves_unrelated_exec_runtime_errors() -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    calls: list[tuple[Exception, str]] = []
+
+    class FakeEngine:
+        def _handle_queue_exception(self, exc: Exception, queue_name: str) -> None:
+            calls.append((exc, queue_name))
+
+    original = FakeEngine._handle_queue_exception
+    guarded = node_mod._polymarket_precision_guarded_queue_exception_handler(original)
+    exc = RuntimeError("order state transition failed")
+
+    guarded(FakeEngine(), exc, "Command")
+
+    assert calls == [(exc, "Command")]
+
+
 def test_polymarket_precision_guard_preserves_unrelated_exceptions() -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
 
@@ -1780,6 +1819,32 @@ def test_polymarket_precision_guard_preserves_unrelated_exceptions() -> None:
     guarded(FakeEngine(), exc, "Data")
 
     assert calls == [(exc, "Data")]
+
+
+def test_install_polymarket_precision_exec_engine_guard_patches_live_exec_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+    from types import ModuleType
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    calls: list[tuple[Exception, str]] = []
+
+    class FakeLiveExecEngine:
+        def _handle_queue_exception(self, exc: Exception, queue_name: str) -> None:
+            calls.append((exc, queue_name))
+
+    module = ModuleType("nautilus_trader.live.execution_engine")
+    module.LiveExecutionEngine = FakeLiveExecEngine
+    monkeypatch.setitem(sys.modules, "nautilus_trader.live.execution_engine", module)
+
+    node_mod._install_polymarket_precision_exec_engine_guard()
+    FakeLiveExecEngine()._handle_queue_exception(
+        RuntimeError("fill_price.precision=2 did not match instrument price_prec=3"),
+        "Command",
+    )
+
+    assert calls == []
 
 
 def test_run_nautilus_cli_installs_polymarket_precision_guard(monkeypatch) -> None:
@@ -1827,7 +1892,7 @@ def test_run_nautilus_cli_installs_polymarket_precision_guard(monkeypatch) -> No
     monkeypatch.setattr(node_mod, "_prepare_nautilus_runtime_context", fake_prepare)
     monkeypatch.setattr(node_mod, "_rebind_market_discovery_client", lambda _scheduler: None)
     monkeypatch.setattr(node_mod, "_build_nautilus_runtime_bundle", fake_bundle)
-    monkeypatch.setattr(node_mod, "_install_polymarket_precision_data_engine_guard", fake_install)
+    monkeypatch.setattr(node_mod, "_install_polymarket_precision_runtime_guards", fake_install)
 
     run_nautilus_cli()
 

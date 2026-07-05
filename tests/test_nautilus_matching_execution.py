@@ -574,6 +574,30 @@ def test_matching_price_value_quantizes_before_instrument_converter() -> None:
     assert _price_value({}, FakeInstrument(), 0.832) == "price:0.830"
 
 
+def test_matching_price_value_preserves_instrument_precision_when_price_type_available() -> None:
+    from polysignal_lab.nautilus_runtime.matching import _price_value
+
+    class FakePrice:
+        def __init__(self, raw: str) -> None:
+            self.raw = raw
+            self.precision = len(raw.partition(".")[2])
+
+        @classmethod
+        def from_str(cls, value: str) -> "FakePrice":
+            return cls(value)
+
+    class FakeInstrument:
+        price_precision = 3
+
+        def make_price(self, value: float) -> FakePrice:
+            return FakePrice(str(value))
+
+    price = _price_value({"Price": FakePrice}, FakeInstrument(), 0.73)
+
+    assert price.raw == "0.730"
+    assert price.precision == 3
+
+
 def test_publish_book_preserves_instrument_precision_for_nautilus_deltas() -> None:
     captured: list[object] = []
 
