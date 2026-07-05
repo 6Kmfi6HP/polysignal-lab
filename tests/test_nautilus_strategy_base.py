@@ -928,9 +928,7 @@ def test_native_strategy_unknown_quote_tick_instrument_is_dropped_with_metric() 
     assert "dropped_frame" in phases
 
 
-def test_native_strategy_quote_tick_missing_mapping_value_is_dropped_with_metric() -> None:
-    from types import SimpleNamespace
-
+def test_native_strategy_partial_market_data_mappings_are_dropped_without_evaluation() -> None:
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
         MarketPairMeta,
@@ -948,6 +946,38 @@ def test_native_strategy_quote_tick_missing_mapping_value_is_dropped_with_metric
             _ = instrument_id
             return None
 
+    cases: tuple[tuple[str, Callable[[PolySignalNativeStrategy, object], None], object], ...] = (
+        (
+            "quote_tick",
+            lambda strategy, data: strategy.on_quote_tick(data),
+            SimpleNamespace(
+                instrument_id="up-token.POLYMARKET",
+                bid_price=0.1,
+                ask_price=0.2,
+            ),
+        ),
+        (
+            "order_book",
+            lambda strategy, data: strategy.on_order_book(data),
+            SimpleNamespace(instrument_id="up-token.POLYMARKET", bids=[], asks=[]),
+        ),
+        (
+            "order_book_deltas",
+            lambda strategy, data: strategy.on_order_book_deltas(data),
+            SimpleNamespace(instrument_id="up-token.POLYMARKET"),
+        ),
+        (
+            "trade_tick",
+            lambda strategy, data: strategy.on_trade_tick(data),
+            SimpleNamespace(
+                instrument_id="up-token.POLYMARKET",
+                price=0.2,
+                size=3.0,
+                aggressor_side="BUY",
+            ),
+        ),
+    )
+
     for registry in (MissingTokenRegistry(), MissingConditionRegistry()):
         registry.register(
             MarketPairMeta(
@@ -962,25 +992,27 @@ def test_native_strategy_quote_tick_missing_mapping_value_is_dropped_with_metric
                 down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
             )
         )
-        phases: list[str] = []
-        strategy = PolySignalNativeStrategy(
-            core=FakeCore([]),
-            assembler=_assembler(None),
-            condition_ids=("condition-btc-5m",),
-            strategy_name="ptb_diff",
-            **_native_projections(registry),
-            progress_callback=phases.append,
-        )
-
-        strategy.on_quote_tick(
-            SimpleNamespace(
-                instrument_id="up-token.POLYMARKET",
-                bid_price=0.1,
-                ask_price=0.2,
+        for name, handle, data in cases:
+            phases: list[str] = []
+            evaluated: list[str] = []
+            strategy = PolySignalNativeStrategy(
+                core=FakeCore([]),
+                assembler=_assembler(None),
+                condition_ids=("condition-btc-5m",),
+                strategy_name="ptb_diff",
+                **_native_projections(registry),
+                progress_callback=phases.append,
             )
-        )
+            def record_evaluation(condition_id: str) -> None:
+                evaluated.append(condition_id)
 
-        assert "dropped_frame" in phases
+            strategy.evaluate_condition = record_evaluation  # type: ignore[method-assign]
+
+            handle(strategy, data)
+
+            assert "dropped_frame" in phases, name
+            assert "market_data_evaluation" not in phases, name
+            assert evaluated == [], name
 
 
 def test_native_strategy_unknown_market_data_instruments_are_dropped_with_metric() -> None:

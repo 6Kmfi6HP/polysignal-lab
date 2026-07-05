@@ -495,18 +495,22 @@ class PolySignalNativeStrategy:
             return
         self._evaluate_market_data_condition(condition_id)
 
-    def _condition_from_order_book_deltas(self, deltas: object) -> str | None:
+    def _condition_from_market_data(self, data: object) -> str | None:
         if self.registry is None:
             return None
-        instrument_id = _identifier_text(getattr(deltas, "instrument_id", None))
+        instrument_id = _identifier_text(getattr(data, "instrument_id", None))
         if instrument_id is None:
             return None
         condition_id = _condition_id_for_instrument(self.registry, instrument_id)
-        if condition_id is None:
+        token_id = _token_id_for_instrument(self.registry, instrument_id)
+        if condition_id is None or token_id is None:
             self._note_runtime_progress("dropped_frame")
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
         return condition_id
+
+    def _condition_from_order_book_deltas(self, deltas: object) -> str | None:
+        return self._condition_from_market_data(deltas)
 
     def on_quote_tick(self, tick: object) -> None:
         condition_id = self._condition_from_quote_tick(tick)
@@ -515,21 +519,7 @@ class PolySignalNativeStrategy:
         self._evaluate_market_data_condition(condition_id)
 
     def _condition_from_quote_tick(self, tick: object) -> str | None:
-        if self.registry is None:
-            return None
-        instrument_id = _identifier_text(getattr(tick, "instrument_id", None))
-        if instrument_id is None:
-            return None
-        condition_id = _condition_id_for_instrument(self.registry, instrument_id)
-        if condition_id is None:
-            self._note_runtime_progress("dropped_frame")
-            return None
-        token_id = _token_id_for_instrument(self.registry, instrument_id)
-        if token_id is None:
-            self._note_runtime_progress("dropped_frame")
-            return None
-        self._market_data_subscription_group.mark_confirmed(instrument_id)
-        return condition_id
+        return self._condition_from_market_data(tick)
 
     def on_order_book(self, book: object) -> None:
         condition_id = self._condition_from_order_book(book)
@@ -538,17 +528,7 @@ class PolySignalNativeStrategy:
         self._evaluate_market_data_condition(condition_id)
 
     def _condition_from_order_book(self, book: object) -> str | None:
-        if self.registry is None:
-            return None
-        instrument_id = _identifier_text(getattr(book, "instrument_id", None))
-        if instrument_id is None:
-            return None
-        condition_id = _condition_id_for_instrument(self.registry, instrument_id)
-        if condition_id is None:
-            self._note_runtime_progress("dropped_frame")
-            return None
-        self._market_data_subscription_group.mark_confirmed(instrument_id)
-        return condition_id
+        return self._condition_from_market_data(book)
 
     def on_trade_tick(self, tick: object) -> None:
         condition_id = self._condition_from_trade_tick(tick)
@@ -557,17 +537,7 @@ class PolySignalNativeStrategy:
         self._evaluate_market_data_condition(condition_id)
 
     def _condition_from_trade_tick(self, tick: object) -> str | None:
-        if self.registry is None:
-            return None
-        instrument_id = _identifier_text(getattr(tick, "instrument_id", None))
-        if instrument_id is None:
-            return None
-        condition_id = _condition_id_for_instrument(self.registry, instrument_id)
-        if condition_id is None:
-            self._note_runtime_progress("dropped_frame")
-            return None
-        self._market_data_subscription_group.mark_confirmed(instrument_id)
-        return condition_id
+        return self._condition_from_market_data(tick)
 
     def _evaluate_market_data_condition(self, condition_id: str) -> None:
         self._note_runtime_progress("market_data_evaluation")
