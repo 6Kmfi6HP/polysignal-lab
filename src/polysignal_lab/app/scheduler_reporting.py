@@ -324,6 +324,14 @@ def _projection_float(source: dict[str, object] | None, key: str) -> float | Non
 
 
 def _report_equity_inputs(scheduler: PolySignalScheduler) -> tuple[float, float, int]:
+    starting_equity = float(scheduler.settings.paper_trading.starting_balance_usdc)
+    cache_reader = _nautilus_cache_reader(scheduler)
+    if cache_reader is not None:
+        return _report_equity_inputs_from_nautilus_cache(
+            cache_reader,
+            starting_equity=starting_equity,
+        )
+
     wallet = getattr(scheduler, "wallet", None)
     if wallet is not None:
         return (
@@ -332,12 +340,16 @@ def _report_equity_inputs(scheduler: PolySignalScheduler) -> tuple[float, float,
             int(getattr(wallet, "open_position_count")),
         )
 
-    starting_equity = float(scheduler.settings.paper_trading.starting_balance_usdc)
+    return starting_equity, starting_equity, 0
+
+
+def _report_equity_inputs_from_nautilus_cache(
+    cache_reader: object,
+    *,
+    starting_equity: float,
+) -> tuple[float, float, int]:
     ending_equity = starting_equity
     open_positions = 0
-    cache_reader = _nautilus_cache_reader(scheduler)
-    if cache_reader is None:
-        return starting_equity, ending_equity, open_positions
 
     read_account_projection = getattr(cache_reader, "read_account_projection", None)
     snapshot_portfolio_projection = getattr(cache_reader, "snapshot_portfolio_projection", None)
@@ -377,8 +389,6 @@ def _report_equity_inputs(scheduler: PolySignalScheduler) -> tuple[float, float,
             if isinstance(position, dict) and not bool(position.get("is_closed"))
         )
     return starting_equity, ending_equity, open_positions
-
-
 
 
 async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport | None:
