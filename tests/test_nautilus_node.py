@@ -853,103 +853,32 @@ async def test_prepare_nautilus_runtime_context_does_not_wire_shadow_wallet_mirr
     assert getattr(observability, "paper_fill_mirror", None) is None
 
 
-async def test_run_nautilus_housekeeping_once_settles_mirrored_fill_position(
-    tmp_path,
+async def test_run_nautilus_housekeeping_once_skips_legacy_settlement_with_cache_reader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
     import polysignal_lab.app.scheduler_runtime as runtime_mod
-    from polysignal_lab.domain.enums import Side
-    from polysignal_lab.domain.market import Market, OutcomeToken
-    from polysignal_lab.paper.settlement_sources import ResolutionDecision
 
-    market = Market(
-        market_id="btc-5m",
-        market_slug="btc-updown-5m",
-        condition_id="0x" + "1" * 64,
-        asset="BTC",
-        timeframe="5m",
-        outcome_tokens=[
-            OutcomeToken(token_id="up-token", side=Side.UP, outcome_name="Up", market_id="btc-5m"),
-            OutcomeToken(token_id="down-token", side=Side.DOWN, outcome_name="Down", market_id="btc-5m"),
-        ],
-    )
-    settings = Settings()
-    settings.telegram.enabled = False
-    settings.telegram.send_daily_report = False
-    scheduler = node_mod.PolySignalScheduler(settings, base_dir=tmp_path)
-    scheduler.market_universe.refresh_once = AsyncMock(return_value=[market])
-    scheduler.publisher = _fake_telegram_publisher()
+    calls: list[str] = []
 
-    monkeypatch.setattr(node_mod, "PolySignalScheduler", lambda _settings=None: scheduler)
-    monkeypatch.setattr(
-        runtime_mod,
-        "_generate_iteration_report",
-        AsyncMock(return_value=None),
-    )
+    async def fail_legacy_settlements(_scheduler: object) -> None:
+        calls.append("settlement")
+        raise AssertionError("Nautilus housekeeping must not settle legacy wallet positions")
 
-    sched, _discovered_markets, observability = await node_mod._prepare_nautilus_runtime_context(settings)
-    sched.ctx.markets.upsert_many([market])
-    sched.settlement_resolver.resolve_market = AsyncMock(
-        return_value=ResolutionDecision(
-            market.market_id,
-            market.condition_id,
-            "resolved",
-            "chain",
-            {"up-token": 1.0, "down-token": 0.0},
-            False,
-            (),
-            {
-                "settlement_source": "chain",
-                "condition_id": market.condition_id,
-                "payout_values_by_token": {"up-token": 1.0, "down-token": 0.0},
-                "chain_status": "resolved",
-            },
-        )
-    )
+    async def generate_iteration_report(_scheduler: object, last_report_date: object) -> str:
+        calls.append(f"report:{last_report_date}")
+        return "2026-07-05"
 
-    marker = "runtime-settlement-marker"
-    observability.mirror_nautilus_paper_fill(
-        {
-            "strategy": "probe",
-            "asset": "BTC",
-            "timeframe": "5m",
-            "market_id": market.market_id,
-            "market_slug": market.market_slug,
-            "condition_id": market.condition_id,
-            "token_id": "up-token",
-            "side": "UP",
-            "fill_price": 0.4,
-            "shares": 25.0,
-            "stake_usdc": 10.0,
-            "signal_id": marker,
-            "order_id": "order-1",
-            "client_order_id": "client-1",
-            "paper_fill_id": "fill-1",
-            "liquidity_side": "TAKER",
-            "metrics": {"fill_price": 0.4},
-        }
-    )
+    monkeypatch.setattr(runtime_mod, "_check_iteration_settlements", fail_legacy_settlements)
+    monkeypatch.setattr(runtime_mod, "_generate_iteration_report", generate_iteration_report)
 
-    assert sched.wallet.open_position_count == 1
+    scheduler = SimpleNamespace(nautilus_cache_reader=object())
 
-    await node_mod._run_nautilus_housekeeping_once(sched, None)
+    result = await node_mod._run_nautilus_housekeeping_once(scheduler, "2026-07-04")
 
-    trade_rows = sched.sqlite.query_json(
-        "paper_trade_results",
-        where="WHERE signal_id = ?",
-        params=(marker,),
-    )
-    position_rows = sched.sqlite.query_json(
-        "paper_positions",
-        where="WHERE signal_id = ?",
-        params=(marker,),
-    )
+    assert result == "2026-07-05"
+    assert calls == ["report:2026-07-04"]
 
-    assert [row["result"] for row in trade_rows] == ["WIN"]
-    assert trade_rows[0]["details"]["settlement_source"] == "chain"
-    assert [row["status"] for row in position_rows] == ["CLOSED"]
-    assert sched.wallet.open_position_count == 0
 async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
     class FakeTradingNode:
         def __init__(self):
@@ -1630,6 +1559,34 @@ async def test_stop_nautilus_scheduler_skips_legacy_wallet_persist_without_walle
 
     await node_mod._stop_nautilus_scheduler(scheduler)
 
+    assert calls == ["health"]
+
+async def test_stop_nautilus_scheduler_skips_legacy_stop_for_trading_node_owned_scheduler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polysignal_lab.nautilus_runtime.node as node_mod
+
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        node_mod.scheduler_health,
+        "persist_health_snapshot",
+        lambda scheduler: calls.append("health"),
+    )
+
+    async def legacy_stop() -> None:
+        calls.append("legacy_stop")
+        raise AssertionError("Nautilus TradingNode-owned scheduler must not call legacy stop")
+
+    scheduler = SimpleNamespace(
+        _nautilus_runtime_owned_by_trading_node=True,
+        wallet=object(),
+        stop=legacy_stop,
+    )
+
+    await node_mod._stop_nautilus_scheduler(scheduler)
+
+    assert scheduler._running is False
     assert calls == ["health"]
 
 

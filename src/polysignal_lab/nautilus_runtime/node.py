@@ -487,7 +487,7 @@ def _instrument_id_resolver(registry: PolymarketMarketRegistry) -> Callable[[str
 
 
 async def _stop_nautilus_scheduler(scheduler: object) -> None:
-    if bool(getattr(scheduler, "_nautilus_runtime_compat_only", False)):
+    if bool(getattr(scheduler, "_nautilus_runtime_owned_by_trading_node", False)):
         setattr(scheduler, "_running", False)
         try:
             scheduler_health.persist_health_snapshot(cast(PolySignalScheduler, scheduler))
@@ -914,7 +914,8 @@ async def _run_nautilus_housekeeping_once(
         _generate_iteration_report,
     )
 
-    await _check_iteration_settlements(scheduler)
+    if getattr(scheduler, "nautilus_cache_reader", None) is None:
+        await _check_iteration_settlements(scheduler)
     return await _generate_iteration_report(scheduler, last_report_date)
 
 
