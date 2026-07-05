@@ -44,7 +44,6 @@ from polysignal_lab.domain.enums import MarketStatus, PositionStatus, TradeResul
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperTradeResult
-from polysignal_lab.nautilus_runtime.scheduler_compat import init_scheduler_paper_components
 from polysignal_lab.paper.settlement_sources import ResolutionDecision
 from polysignal_lab.utils import new_id, utc_iso
 
@@ -526,7 +525,14 @@ async def regenerate_reports(scheduler: PolySignalScheduler, config: RepairConfi
 async def build_scheduler(config: RepairConfig) -> PolySignalScheduler:
     settings = load_settings(config.config_path)
     scheduler = PolySignalScheduler(settings, base_dir=config.data_dir)
-    init_scheduler_paper_components(scheduler)
+    from polysignal_lab.paper.wallet import PaperWallet
+    from polysignal_lab.paper.exit_engine import PaperExitEngine
+    from polysignal_lab.paper.settlement import PaperSettlementEngine
+
+    scheduler.wallet = PaperWallet(scheduler.settings.paper_trading.starting_balance_usdc)
+    scheduler.paper = None
+    scheduler.exits = PaperExitEngine(scheduler.settings.paper_trading.exit_model, scheduler.wallet)
+    scheduler.settlement = PaperSettlementEngine(scheduler.wallet)
     await scheduler._restore_wallet_state()
     return scheduler
 

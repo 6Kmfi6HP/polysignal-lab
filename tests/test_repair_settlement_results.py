@@ -18,7 +18,9 @@ from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.domain.paper_order import PaperFill
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperWalletSnapshot
-from polysignal_lab.nautilus_runtime.scheduler_compat import init_scheduler_paper_components
+from polysignal_lab.paper.exit_engine import PaperExitEngine
+from polysignal_lab.paper.settlement import PaperSettlementEngine
+from polysignal_lab.paper.wallet import PaperWallet
 from polysignal_lab.paper.settlement_sources import ResolutionDecision
 from polysignal_lab.utils import utc_now
 from scripts.repair_settlement_results import RepairConfig, audit, backfill, reconcile_wallet, run_repair
@@ -59,7 +61,10 @@ def _scheduler(tmp_path: Path, settings) -> PolySignalScheduler:
     settings.data.polymarket.use_market_ws = False
     settings.telegram.send_paper_results = False
     scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
-    init_scheduler_paper_components(scheduler)
+    scheduler.wallet = PaperWallet(scheduler.settings.paper_trading.starting_balance_usdc)
+    scheduler.paper = None
+    scheduler.exits = PaperExitEngine(scheduler.settings.paper_trading.exit_model, scheduler.wallet)
+    scheduler.settlement = PaperSettlementEngine(scheduler.wallet)
     return scheduler
 
 

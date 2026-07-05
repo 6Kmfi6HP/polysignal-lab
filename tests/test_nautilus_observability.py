@@ -12,15 +12,12 @@ from typing import Any, cast
 import pytest
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.app.services.persistence_service import PersistenceService
-from polysignal_lab.domain.enums import ExitMode, Side, OrderStatus, TradeResultStatus
-from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
-from polysignal_lab.domain.paper_position import PaperPosition
-from polysignal_lab.domain.paper_result import PaperTradeResult
+from polysignal_lab.domain.enums import OrderStatus, Side
+from polysignal_lab.domain.paper_order import PaperOrder
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
-from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
     NautilusEventStoreAdapter,
@@ -170,28 +167,8 @@ def test_observability_actor_isolates_accepted_signal_notifier_failure() -> None
     assert component.metrics["non_critical_side_effect_failures"] == 1
 
 
-def test_observability_actor_isolates_paper_fill_notifier_failure() -> None:
-    actor = ObservabilityActor(
-        paper_fill_notifier=lambda _payload: (_ for _ in ()).throw(RuntimeError("notify failed"))
-    )
-
-    actor.notify_nautilus_paper_fill({"paper_fill_id": "fill-1"})
-
-    component = actor.health.components["observability_actor"]
-    assert component.status == "degraded"
-    assert component.metrics["non_critical_side_effect_failures"] == 1
 
 
-def test_observability_actor_isolates_paper_fill_mirror_failure() -> None:
-    actor = ObservabilityActor(
-        paper_fill_mirror=lambda _payload: (_ for _ in ()).throw(RuntimeError("mirror failed"))
-    )
-
-    actor.mirror_nautilus_paper_fill({"paper_fill_id": "fill-1"})
-
-    component = actor.health.components["observability_actor"]
-    assert component.status == "degraded"
-    assert component.metrics["non_critical_side_effect_failures"] == 1
 
 
 
@@ -556,109 +533,13 @@ def test_accepted_decisions_are_never_suppressed() -> None:
     assert len(store.tables.get("nautilus_decision", [])) == 2
 
 
-def test_record_order_writes_to_orders_table() -> None:
-    store = FakeStore()
-    actor = ObservabilityActor(store=store)
-
-    order = PaperOrder(
-        paper_order_id="order-1", signal_id="sig-1", token_id="t1",
-        side=Side.UP, limit_price=0.82, stake_usdc=10.0,
-        reference_price=0.82, asset="BTC", timeframe="5m", strategy="test",
-        market_id="m1", market_slug="s1",
-    )
-    result = PaperExecutionResult(order=order, status=OrderStatus.FILLED)
-
-    actor.record_order(result)
-
-    rows = store.tables.get("orders", [])
-    assert len(rows) == 1
-    assert rows[0]["status"] == "FILLED"
-    assert rows[0]["paper_order_id"] == "order-1"
-    assert rows[0]["limit_price"] == 0.82
-    assert rows[0]["stake_usdc"] == 10.0
-
-
-def test_record_order_preserves_matching_metadata() -> None:
-    store = FakeStore()
-    actor = ObservabilityActor(store=store)
-
-    order = PaperOrder(
-        paper_order_id="order-1", signal_id="sig-1", token_id="t1",
-        side=Side.UP, limit_price=0.82, stake_usdc=10.0,
-        reference_price=0.82, asset="BTC", timeframe="5m", strategy="test",
-        market_id="m1", market_slug="s1",
-        metrics={"paper_engine": "nautilus_matching", "accuracy_mode": "depth_l2"},
-    )
-    result = PaperExecutionResult(order=order, status=OrderStatus.FILLED)
-
-    actor.record_order(result)
-
-    rows = store.tables.get("orders", [])
-    assert len(rows) == 1
-    assert rows[0]["metrics"]["paper_engine"] == "nautilus_matching"
-    assert rows[0]["metrics"]["accuracy_mode"] == "depth_l2"
-
-
-def test_record_fill_writes_to_fills_table() -> None:
-    store = FakeStore()
-    actor = ObservabilityActor(store=store)
-
-    fill = PaperFill(
-        paper_order_id="order-1", signal_id="sig-1", token_id="t1",
-        side=Side.UP, raw_best_ask=0.82, slippage_bps=0,
-        fill_price=0.82, stake_usdc=10.0, shares=12.0,
-        depth_checked=False, available_depth_usdc=None, fill_ratio=1.0,
-        metrics={"paper_engine": "nautilus_matching", "accuracy_mode": "depth_l2"},
-    )
-    actor.record_fill(fill)
-
-    rows = store.tables.get("fills", [])
-    assert len(rows) == 1
-    assert rows[0]["fill_price"] == 0.82
-    assert rows[0]["metrics"]["paper_engine"] == "nautilus_matching"
-    assert rows[0]["metrics"]["accuracy_mode"] == "depth_l2"
 
 
 
-def test_record_position_preserves_display_metadata() -> None:
-    store = FakeStore()
-    actor = ObservabilityActor(store=store)
 
-    position = PaperPosition(
-        paper_position_id="pos-1",
-        signal_id="sig-1",
-        paper_order_id="order-1",
-        paper_fill_id="fill-1",
-        strategy="ptb_diff",
-        asset="BTC",
-        timeframe="5m",
-        market_id="btc-5m",
-        market_slug="btc-updown-5m",
-        token_id="t1",
-        side=Side.UP,
-        entry_price=0.5,
-        shares=20.0,
-        stake_usdc=10.0,
-        signal_confidence=0.8,
-        signal_metrics={
-            "condition_id": "condition-btc-5m",
-            "paper_engine": "nautilus_matching",
-            "accuracy_mode": "depth_l2",
-        },
-    )
 
-    actor.record_position(position)
 
-    rows = store.tables.get("positions", [])
-    assert len(rows) == 1
-    assert rows[0]["signal_id"] == "sig-1"
-    assert rows[0]["asset"] == "BTC"
-    assert rows[0]["timeframe"] == "5m"
-    assert rows[0]["market_id"] == "btc-5m"
-    assert rows[0]["market_slug"] == "btc-updown-5m"
-    assert rows[0]["signal_confidence"] == 0.8
-    assert rows[0]["signal_metrics"]["paper_engine"] == "nautilus_matching"
-    assert rows[0]["signal_metrics"]["accuracy_mode"] == "depth_l2"
+
 
 def test_record_nautilus_projection_events_write_projected_rows() -> None:
     store = FakeStore()
@@ -768,25 +649,6 @@ def test_nautilus_projection_events_with_integer_timestamps_get_unique_event_ids
     assert second_event["created_at"] != ""
     assert first_event["event_id"] != second_event["event_id"]
 
-def test_record_settlement_writes_to_settlements_table() -> None:
-    store = FakeStore()
-    actor = ObservabilityActor(store=store)
-    now = utc_now()
-
-    result = PaperTradeResult(
-        signal_id="sig-1", paper_position_id="pos-1", strategy="test",
-        asset="BTC", timeframe="5m", market_id="m1", market_slug="s1",
-        side=Side.UP, entry_price=0.5, shares=20.0, stake_usdc=10.0,
-        exit_mode=ExitMode.RESOLUTION, outcome_value=1.0,
-        settlement_value=20.0, pnl_usdc=10.0, roi=1.0,
-        result=TradeResultStatus.WIN,
-        opened_at=now, closed_at=now,
-    )
-    actor.record_settlement(result)
-
-    rows = store.tables.get("settlements", [])
-    assert len(rows) == 1
-    assert rows[0]["result"] == "WIN"
 
 
 def test_event_count_increments() -> None:
@@ -964,48 +826,6 @@ def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
         adapter.insert_json("unknown", {})
 
 
-def test_observability_actor_records_matching_execution_to_sqlite_and_jsonl_streams() -> None:
-    persistence = FakePersistence()
-    actor = ObservabilityActor(store=NautilusEventStoreAdapter(persistence))
-    metadata = {"paper_engine": "nautilus_matching", "accuracy_mode": "depth_l2"}
-    order = PaperOrder(
-        paper_order_id="order-1", signal_id="sig-1", token_id="t1",
-        side=Side.UP, limit_price=0.82, stake_usdc=10.0,
-        reference_price=0.82, asset="BTC", timeframe="5m", strategy="test",
-        market_id="m1", market_slug="s1", metrics=dict(metadata),
-    )
-    fill = PaperFill(
-        paper_fill_id="fill-1", paper_order_id="order-1", signal_id="sig-1",
-        token_id="t1", side=Side.UP, raw_best_ask=0.82, slippage_bps=0,
-        fill_price=0.82, stake_usdc=10.0, shares=12.0,
-        depth_checked=False, available_depth_usdc=None, fill_ratio=1.0,
-        metrics=dict(metadata),
-    )
-    position = PaperPosition(
-        paper_position_id="pos-1", signal_id="sig-1", paper_order_id="order-1",
-        paper_fill_id="fill-1", strategy="test", asset="BTC", timeframe="5m",
-        market_id="m1", market_slug="s1", token_id="t1", side=Side.UP,
-        entry_price=0.82, shares=12.0, stake_usdc=10.0,
-        signal_confidence=0.8, signal_metrics=dict(metadata),
-    )
-
-    actor.record_order(PaperExecutionResult(order=order, status=OrderStatus.FILLED))
-    actor.record_fill(fill)
-    actor.record_position(position)
-
-    assert [name for name, _ in persistence.calls] == [
-        "upsert_paper_order",
-        "insert_paper_fill",
-        "upsert_paper_position",
-    ]
-    assert [stream for stream, _ in persistence.logs] == [
-        "paper_orders",
-        "paper_fills",
-        "paper_positions",
-    ]
-    assert persistence.logs[0][1]["metrics"]["paper_engine"] == "nautilus_matching"
-    assert persistence.logs[1][1]["metrics"]["accuracy_mode"] == "depth_l2"
-    assert persistence.logs[2][1]["signal_metrics"]["paper_engine"] == "nautilus_matching"
 
 
 def test_event_store_upserts_terminal_order_update(tmp_path) -> None:

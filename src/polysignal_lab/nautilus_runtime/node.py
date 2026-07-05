@@ -39,8 +39,6 @@ from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import MarketPairMeta, PolymarketMarketRegistry
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
-from polysignal_lab.nautilus_runtime.book_data import NautilusBookDataProvider
-from polysignal_lab.nautilus_runtime.data_ingestor import NautilusDataIngestor
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
@@ -129,27 +127,6 @@ def _stub_register_factories(node: _FactoryNode) -> None:
 build_paper_trading_node_config: _PaperConfigBuilder = _stub_paper_config
 register_paper_factories: _FactoryRegistrar = _stub_register_factories
 
-class _NoopMatchingSink:
-    """No-op matching sink for the data ingestor when running under TradingNode.
-
-    The Nautilus DataEngine handles its own market feeds; the external data
-    ingestor only needs to update the PolySignal book_data_provider for the
-    assembler. This sink satisfies the MatchingBookSink protocol without
-    duplicating book state into a paper matching client.
-    """
-
-    def update_book(self, token_id: str, book: object) -> None:
-        _ = token_id, book
-
-    def update_trade(
-        self,
-        token_id: str,
-        price: float,
-        size: float,
-        side: str | None,
-        ts_event: object | None,
-    ) -> None:
-        _ = token_id, price, size, side, ts_event
 
 
 class _StaticMarketUniverse:
@@ -211,14 +188,12 @@ def _runtime_progress_callback(settings: Settings) -> Callable[[str], None]:
 
 @dataclass(slots=True)
 class NautilusRuntimeBundle:
-    """Wired runtime components ready for the orchestrator loop."""
+    """Wired Nautilus TradingNode runtime components."""
 
     scheduler: PolySignalScheduler
     components: dict[str, object]
     bridge_registry: PolymarketMarketRegistry
     sidecar: ExternalDataSidecar
-    book_data_provider: NautilusBookDataProvider | None
-    data_ingestor: NautilusDataIngestor | None
     node: _TradingNodeLike
     observability: ObservabilityActor
     websocket_tasks: list[asyncio.Task[object]]
@@ -316,10 +291,10 @@ def build_trading_node(
     registry = PolymarketMarketRegistry()
     _register_markets(registry, configured_markets)
     sidecar = ExternalDataSidecar()
-    book_data_provider = NautilusBookDataProvider()
+    books = _EmptyBookDataProvider()
     assembler = MarketViewAssembler(
         registry=registry,
-        books=book_data_provider,
+        books=books,
         sidecar=sidecar,
     )
     policy = _build_policy(settings)
@@ -367,7 +342,6 @@ def build_trading_node(
         "registry": registry,
         "sidecar": sidecar,
         "market_rotation_actor": market_rotation_actor,
-        "book_data_provider": book_data_provider,
         "assembler": assembler,
         "policy": policy,
         "strategies": strategies,
@@ -567,46 +541,6 @@ def _notify_accepted_signal(
     thread.start()
 
 
-async def _publish_nautilus_paper_fill_once(
-    scheduler: PolySignalScheduler,
-    payload: Mapping[str, object],
-) -> None:
-    publish_service, publisher = _fresh_publish_service(scheduler)
-    try:
-        await publish_service.publish_nautilus_paper_fill(dict(payload))
-    finally:
-        await publisher.client.aclose()
-
-
-def _publish_nautilus_paper_fill_in_background(
-    scheduler: PolySignalScheduler,
-    payload: Mapping[str, object],
-) -> None:
-    try:
-        asyncio.run(_publish_nautilus_paper_fill_once(scheduler, payload))
-    except Exception as exc:
-        scheduler.logger.warning(
-            "Nautilus paper fill publish failed for %s: %s",
-            payload.get("paper_fill_id")
-            or payload.get("client_order_id")
-            or payload.get("order_id")
-            or "unknown",
-            exc,
-        )
-
-
-def _notify_nautilus_paper_fill(
-    scheduler: PolySignalScheduler,
-    payload: Mapping[str, object],
-) -> None:
-    if not getattr(scheduler.settings.telegram, "send_paper_results", False):
-        return
-    thread = threading.Thread(
-        target=_publish_nautilus_paper_fill_in_background,
-        args=(scheduler, dict(payload)),
-        daemon=True,
-    )
-    thread.start()
 
 
 
@@ -742,7 +676,6 @@ async def _prepare_nautilus_runtime_context(
             signal,
             stake_usdc,
         ),
-        paper_fill_notifier=lambda payload: _notify_nautilus_paper_fill(scheduler, payload),
     )
     return scheduler, discovered_markets, observability
 
@@ -794,8 +727,6 @@ def _build_nautilus_runtime_bundle(
         components=components,
         bridge_registry=cast(PolymarketMarketRegistry, components["registry"]),
         sidecar=cast(ExternalDataSidecar, components["sidecar"]),
-        book_data_provider=None,
-        data_ingestor=None,
         node=cast(_TradingNodeLike, components["node"]),
         observability=observability,
         websocket_tasks=[],
@@ -904,13 +835,8 @@ async def _run_nautilus_housekeeping_once(
     scheduler: PolySignalScheduler,
     last_report_date: date | None,
 ) -> date | None:
-    from polysignal_lab.app.scheduler_runtime import (
-        _check_iteration_settlements,
-        _generate_iteration_report,
-    )
+    from polysignal_lab.app.scheduler_runtime import _generate_iteration_report
 
-    if getattr(scheduler, "nautilus_cache_reader", None) is None:
-        await _check_iteration_settlements(scheduler)
     return await _generate_iteration_report(scheduler, last_report_date)
 
 

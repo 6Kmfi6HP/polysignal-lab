@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -21,7 +20,6 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicyActor,
     RejectedDecision,
 )
-from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 from polysignal_lab.utils import utc_now
 
@@ -34,13 +32,6 @@ DEFAULT_DATA_NAMES = (
 
 COMPATIBILITY_ONLY = True
 
-
-@dataclass(frozen=True, slots=True)
-class StrategyEvaluationBatch:
-    strategy: str
-    submitted_specs: tuple[NautilusOrderSpec, ...]
-    rejected_decisions: tuple[RejectedDecision, ...]
-    execution_results: tuple[PaperExecutionResult, ...]
 
 
 class PolySignalNautilusStrategy:
@@ -68,7 +59,7 @@ class PolySignalNautilusStrategy:
         self.subscribed_data_names: list[str] = []
         self.submitted_specs: list[NautilusOrderSpec] = []
         self.rejected_decisions: list[RejectedDecision] = []
-        self.execution_results: list[PaperExecutionResult] = []
+        self.execution_results: list[object] = []
         self._last_views: dict[str, MarketView] = {}
         self._locally_accepted_order_ids: set[str] = set()
         self._approved_signal_metrics: dict[str, dict[str, Any]] = {}
@@ -92,21 +83,6 @@ class PolySignalNautilusStrategy:
             submitted.extend(self.evaluate_condition(candidate))
         return submitted
 
-    def evaluate_all_conditions(
-        self,
-        condition_ids: Sequence[str] | None = None,
-    ) -> StrategyEvaluationBatch:
-        self.submitted_specs.clear()
-        self.rejected_decisions.clear()
-        self.execution_results.clear()
-        for condition_id in tuple(condition_ids) if condition_ids is not None else self.condition_ids:
-            self.evaluate_condition(condition_id)
-        return StrategyEvaluationBatch(
-            strategy=self.strategy_name,
-            submitted_specs=tuple(self.submitted_specs),
-            rejected_decisions=tuple(self.rejected_decisions),
-            execution_results=tuple(self.execution_results),
-        )
 
     def evaluate_condition(self, condition_id: str) -> list[NautilusOrderSpec]:
         view = self.assembler.build(condition_id)
@@ -333,7 +309,7 @@ class PolySignalNautilusStrategy:
         self.submitted_specs.append(spec)
         if self.submitter is not None:
             result = self.submitter(spec)
-            if isinstance(result, PaperExecutionResult):
+            if result is not None:
                 self.execution_results.append(result)
         submitted.append(spec)
 

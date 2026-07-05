@@ -20,7 +20,6 @@ from polysignal_lab.alpha.types import (
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.domain.orderbook import BookLevel, OrderBook
 from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import (
     InstrumentTokenMeta,
@@ -191,8 +190,6 @@ class _Observability(Protocol):
 
     def record_nautilus_position(self, position: object) -> None: ...
 
-    def notify_nautilus_paper_fill(self, payload: dict[str, object]) -> None: ...
-    def mirror_nautilus_paper_fill(self, payload: dict[str, object]) -> None: ...
 
 
 def _identity_instrument_id(token_id: str) -> str:
@@ -515,14 +512,9 @@ class PolySignalNativeStrategy:
             self._note_runtime_progress("dropped_frame")
             return None
         cache = cast(object, getattr(self, "cache", None))
-        order_book = _cache_order_book(cache, instrument_id_value)
-        if order_book is None:
+        if _cache_order_book(cache, instrument_id_value) is None:
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
-        books = getattr(self._require_assembler(), "books", None)
-        updater = getattr(books, "update_book", None)
-        if callable(updater):
-            _ = updater(token_id, _domain_order_book(token_id, order_book))
         return condition_id
 
     def on_quote_tick(self, tick: object) -> None:
@@ -543,22 +535,6 @@ class PolySignalNativeStrategy:
             self._note_runtime_progress("dropped_frame")
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
-        bid_price = _maybe_float(getattr(tick, "bid_price", None))
-        ask_price = _maybe_float(getattr(tick, "ask_price", None))
-        bid_size = _maybe_float(getattr(tick, "bid_size", None))
-        ask_size = _maybe_float(getattr(tick, "ask_size", None))
-        bids = [BookLevel(price=bid_price, size=bid_size)] if bid_price is not None else []
-        asks = [BookLevel(price=ask_price, size=ask_size)] if ask_price is not None else []
-        order_book = OrderBook(
-            token_id=token_id,
-            bids=bids,
-            asks=asks,
-            received_at=_datetime_or_now(getattr(tick, "ts_event", None)),
-        )
-        books = getattr(self._require_assembler(), "books", None)
-        updater = getattr(books, "update_book", None)
-        if callable(updater):
-            _ = updater(token_id, order_book)
         return condition_id
 
     def on_order_book(self, book: object) -> None:
@@ -579,11 +555,6 @@ class PolySignalNativeStrategy:
             self._note_runtime_progress("dropped_frame")
             return None
         self._market_data_subscription_group.mark_confirmed(instrument_id)
-        order_book = _domain_order_book(token_id, book)
-        books = getattr(self._require_assembler(), "books", None)
-        updater = getattr(books, "update_book", None)
-        if callable(updater):
-            _ = updater(token_id, order_book)
         return condition_id
 
     def on_trade_tick(self, tick: object) -> None:
@@ -672,10 +643,6 @@ class PolySignalNativeStrategy:
             if callable(notify):
                 notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
         self._record_nautilus_fill(event, alpha_event.metrics)
-        payload = self._nautilus_paper_fill_payload(event, alpha_event)
-        self._mirror_nautilus_paper_fill(payload)
-        if should_notify:
-            self._notify_nautilus_paper_fill(payload)
         self._forget_approved_metrics(
             event,
             cast(AlphaOrderEvent, cast(object, alpha_event)),
@@ -908,53 +875,8 @@ class PolySignalNativeStrategy:
         except (OSError, sqlite3.Error):
             self._note_runtime_progress("telemetry_side_effect_failed")
 
-    def _nautilus_paper_fill_payload(
-        self,
-        event: object,
-        fill: AlphaFillEvent,
-    ) -> dict[str, object]:
-        tags = _tags(_value(event, "tags", ()))
-        pair = (
-            self.registry.by_condition(fill.condition_id)
-            if self.registry is not None
-            else None
-        )
-        return {
-            "strategy": fill.strategy,
-            "asset": "" if pair is None else pair.asset,
-            "timeframe": "" if pair is None else pair.timeframe,
-            "market_id": fill.market_id or ("" if pair is None else pair.market_id),
-            "market_slug": "" if pair is None else pair.market_slug,
-            "condition_id": fill.condition_id,
-            "token_id": fill.token_id,
-            "side": fill.side.value,
-            "fill_price": fill.fill_price,
-            "shares": fill.shares,
-            "stake_usdc": fill.fill_price * fill.shares,
-            "signal_id": tags.get("signal_id") or str(fill.metrics.get("signal_id") or ""),
-            "order_id": fill.order_id,
-            "client_order_id": fill.client_order_id or fill.order_id,
-            "paper_fill_id": _lookup_id_text(
-                _value(event, "trade_id", _value(event, "fill_id"))
-            )
-            or "",
-            "liquidity_side": fill.liquidity_side or "",
-            "metrics": dict(fill.metrics),
-        }
 
-    def _notify_nautilus_paper_fill(self, payload: dict[str, object]) -> None:
-        if self.observability is None:
-            return
-        notifier = getattr(self.observability, "notify_nautilus_paper_fill", None)
-        if callable(notifier):
-            notifier(dict(payload))
 
-    def _mirror_nautilus_paper_fill(self, payload: dict[str, object]) -> None:
-        if self.observability is None:
-            return
-        mirror = getattr(self.observability, "mirror_nautilus_paper_fill", None)
-        if callable(mirror):
-            mirror(dict(payload))
 
     def _order_event(self, event: object) -> AlphaOrderEvent:
         tags = _tags(_value(event, "tags"))
@@ -1469,44 +1391,12 @@ def _cache_order_book(cache: object, instrument_id: object) -> object | None:
     return cast(Callable[[object], object | None], getter)(instrument_id)
 
 
-def _domain_order_book(token_id: str, book: object) -> OrderBook:
-    raw_bids = getattr(book, "bids", [])
-    if callable(raw_bids):
-        raw_bids = raw_bids()
-    raw_asks = getattr(book, "asks", [])
-    if callable(raw_asks):
-        raw_asks = raw_asks()
-    bids = [
-        BookLevel(price=_float_attr(level, "price"), size=_float_attr(level, "size"))
-        for level in cast(list[object], raw_bids or [])
-    ]
-    asks = [
-        BookLevel(price=_float_attr(level, "price"), size=_float_attr(level, "size"))
-        for level in cast(list[object], raw_asks or [])
-    ]
-    return OrderBook(
-        token_id=token_id,
-        bids=bids,
-        asks=asks,
-        last_trade_price=_maybe_float(getattr(book, "last_trade_price", None)),
-        last_trade_size=_maybe_float(getattr(book, "last_trade_size", None)),
-        last_trade_timestamp=str(getattr(book, "last_trade_timestamp", "") or "")
-        or None,
-        received_at=_datetime_or_now(getattr(book, "received_at", None)),
-    )
 
 
 def _maybe_datetime(value: object) -> datetime | None:
     return value if isinstance(value, datetime) else None
 
 
-def _float_attr(source: object, name: str) -> float:
-    value = getattr(source, name)
-    if callable(value):
-        value = value()
-    return float(
-        value if isinstance(value, (int, float, str, bytes, bytearray)) else str(value)
-    )
 
 
 def _maybe_float(value: object) -> float | None:

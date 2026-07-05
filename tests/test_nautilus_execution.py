@@ -4,7 +4,6 @@ import importlib
 import sys
 from pathlib import Path
 
-from polysignal_lab.nautilus_runtime.execution_types import PaperExecutionResult
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 
 
@@ -33,8 +32,8 @@ def test_execution_import_does_not_load_local_paper_engine_modules() -> None:
 
     execution = importlib.import_module("polysignal_lab.nautilus_runtime.execution")
 
-    assert execution.PaperExecutionResult is PaperExecutionResult
     assert execution.order_spec_from_decision is order_spec_from_decision
+    assert not hasattr(execution, "PaperExecutionResult")
     assert LOCAL_PAPER_ENGINE_MODULES.isdisjoint(sys.modules)
 
 

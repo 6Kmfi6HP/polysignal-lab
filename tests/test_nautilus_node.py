@@ -170,7 +170,7 @@ def test_build_trading_node_injects_shared_projections_and_no_manual_sync_compon
 
     assert "registry" in runtime
     assert "sidecar" in runtime
-    assert "book_data_provider" in runtime
+    assert "book_data_provider" not in runtime
     assert "assembler" in runtime
     assert "market_rotation_actor" in runtime
     assert "data_ingestor" not in runtime
@@ -554,8 +554,6 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert captured["market_universe"] is bundle.scheduler.market_universe
     assert captured["health"] is bundle.scheduler.health
     assert captured["observability"] is not None
-    assert callable(getattr(captured["observability"], "paper_fill_notifier", None))
-    assert getattr(captured["observability"], "paper_fill_mirror", None) is None
     assert callable(getattr(captured["observability"], "accepted_signal_notifier", None))
 
     assert bundle.scheduler is not None
@@ -643,57 +641,6 @@ def test_publish_accepted_signal_in_background_uses_fresh_publish_service(
     assert noted == [{"status": "SENT"}]
     assert closed == [True]
 
-def test_publish_nautilus_paper_fill_in_background_uses_fresh_publish_service(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import polysignal_lab.nautilus_runtime.node as node_mod
-
-    published: list[dict[str, object]] = []
-    closed: list[bool] = []
-
-    class FakeTelegramPublisher:
-        def __init__(self, config) -> None:
-            self.config = config
-            self.client = SimpleNamespace(aclose=self._aclose)
-
-        async def _aclose(self) -> None:
-            closed.append(True)
-
-    class FakePublishService:
-        def __init__(
-            self,
-            formatter,
-            publisher,
-            persistence,
-            *,
-            timeout_sec: float,
-        ) -> None:
-            assert formatter == "formatter"
-            assert persistence == "persistence"
-            assert timeout_sec == 7.0
-            self.publisher = publisher
-
-        async def publish_nautilus_paper_fill(self, payload):
-            published.append(dict(payload))
-            return SimpleNamespace(as_dict=lambda: {"status": "SENT"})
-
-    monkeypatch.setattr(node_mod, "TelegramPublisher", FakeTelegramPublisher, raising=False)
-    monkeypatch.setattr(node_mod, "PublishService", FakePublishService, raising=False)
-    scheduler = SimpleNamespace(
-        settings=_runtime_settings_stub(telegram="telegram-config"),
-        publish_service=SimpleNamespace(
-            formatter="formatter",
-            persistence="persistence",
-            timeout_sec=7.0,
-        ),
-        logger=SimpleNamespace(warning=lambda *_args, **_kwargs: None),
-    )
-    payload = {"signal_id": "sig-1", "paper_fill_id": "fill-1"}
-
-    node_mod._publish_nautilus_paper_fill_in_background(scheduler, payload)
-
-    assert published == [payload]
-    assert closed == [True]
 
 
 def test_prepare_nautilus_runtime_context_rebinds_market_discovery_client_for_later_loop(
@@ -848,8 +795,8 @@ async def test_prepare_nautilus_runtime_context_does_not_wire_shadow_wallet_mirr
     assert discovered_markets == (market,)
     assert getattr(scheduler, "_nautilus_runtime_owned_by_trading_node") is True
     assert not hasattr(scheduler, "_nautilus_runtime_compat_only")
-    assert callable(getattr(observability, "paper_fill_notifier", None))
-    assert getattr(observability, "paper_fill_mirror", None) is None
+    assert not hasattr(observability, "paper_fill_notifier")
+    assert not hasattr(observability, "paper_fill_mirror")
 
 
 async def test_run_nautilus_housekeeping_once_skips_legacy_settlement_with_cache_reader(
