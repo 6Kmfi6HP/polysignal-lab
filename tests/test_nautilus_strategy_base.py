@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import sys
+
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any, Protocol, cast
 
 from polysignal_lab.alpha.types import (
@@ -68,6 +71,17 @@ def _native_projections(
         "registry": registry or PolymarketMarketRegistry(),
         "sidecar": ExternalDataSidecar(),
     }
+
+
+def _install_fake_polymarket_id_helper(monkeypatch) -> None:
+    def helper(condition_id: str, token_id: str) -> str:
+        return f"{condition_id}-{token_id}.POLYMARKET"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "nautilus_trader.adapters.polymarket",
+        SimpleNamespace(get_polymarket_instrument_id=helper),
+    )
 
 
 class _BookViewLike(Protocol):
@@ -855,9 +869,10 @@ def test_native_strategy_drops_unknown_project_owned_data_with_metric() -> None:
     assert ("dropped_frame", None) in observed
 
 
-def test_malformed_project_owned_data_does_not_poison_later_valid_market_metadata() -> None:
+def test_malformed_project_owned_data_does_not_poison_later_valid_market_metadata(monkeypatch) -> None:
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketMetaData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    _install_fake_polymarket_id_helper(monkeypatch)
 
     strategy = PolySignalNativeStrategy(
         core=FakeCore([]),
@@ -1474,17 +1489,7 @@ def test_native_strategy_universe_update_subscribes_entered_market_once(monkeypa
         PolySignalMarketUniverseData,
     )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-    import sys
-    from types import SimpleNamespace
-
-    def helper(condition_id: str, token_id: str) -> str:
-        return f"{condition_id}:{token_id}.POLYMARKET"
-
-    monkeypatch.setitem(
-        sys.modules,
-        "nautilus_trader.adapters.polymarket",
-        SimpleNamespace(get_polymarket_instrument_id=helper),
-    )
+    _install_fake_polymarket_id_helper(monkeypatch)
 
     class FakeNativeStrategy(PolySignalNativeStrategy):
         def __init__(self, **kwargs):

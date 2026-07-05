@@ -19,7 +19,7 @@ from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
 
 def _install_fake_polymarket_id_helper(monkeypatch: pytest.MonkeyPatch) -> None:
     def helper(condition_id: str, token_id: str) -> str:
-        return f"{condition_id}:{token_id}.POLYMARKET"
+        return f"{condition_id}-{token_id}.POLYMARKET"
 
     monkeypatch.setitem(
         sys.modules,
@@ -121,8 +121,8 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pyte
     instrument_config = cast(SimpleNamespace, config.instrument_config)
     assert instrument_config.load_ids == frozenset(
         {
-            f"{_sample_market().condition_id}:up-token.POLYMARKET",
-            f"{_sample_market().condition_id}:down-token.POLYMARKET",
+            f"{_sample_market().condition_id}-up-token.POLYMARKET",
+            f"{_sample_market().condition_id}-down-token.POLYMARKET",
         }
     )
     assert "paper_client" not in runtime

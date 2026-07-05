@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Coroutine
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -37,6 +39,18 @@ def _market(condition_id: str, *, asset: str = "BTC", timeframe: str = "5m") -> 
             OutcomeToken(token_id=f"{condition_id}-up", side=Side.UP, outcome_name="Up", market_id=condition_id),
             OutcomeToken(token_id=f"{condition_id}-down", side=Side.DOWN, outcome_name="Down", market_id=condition_id),
         ],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _install_fake_polymarket_id_helper(monkeypatch) -> None:
+    def helper(condition_id: str, token_id: str) -> str:
+        return f"{condition_id}-{token_id}.POLYMARKET"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "nautilus_trader.adapters.polymarket",
+        SimpleNamespace(get_polymarket_instrument_id=helper),
     )
 
 

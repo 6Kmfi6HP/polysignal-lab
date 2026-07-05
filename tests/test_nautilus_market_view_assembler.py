@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sys
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from polysignal_lab.alpha.types import SideBookView, SpotView, TradeView
 from polysignal_lab.domain.enums import Side
@@ -30,6 +32,17 @@ class FakePublisher:
 
     def publish_data(self, data_type: object, data: object) -> None:
         self.published.append(data)
+
+
+def _install_fake_polymarket_id_helper(monkeypatch) -> None:
+    def helper(condition_id: str, token_id: str) -> str:
+        return f"{condition_id}-{token_id}.POLYMARKET"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "nautilus_trader.adapters.polymarket",
+        SimpleNamespace(get_polymarket_instrument_id=helper),
+    )
 
 
 def _components() -> tuple[MarketViewAssembler, MarketPairMeta, FakeBookProvider, ExternalDataSidecar]:
@@ -108,7 +121,8 @@ def test_assembler_builds_view_when_optional_sidecar_data_missing() -> None:
     assert "price_to_beat_source" not in view.metrics
 
 
-def test_assembler_metadata_ingestion_registers_pair_by_condition_and_token() -> None:
+def test_assembler_metadata_ingestion_registers_pair_by_condition_and_token(monkeypatch) -> None:
+    _install_fake_polymarket_id_helper(monkeypatch)
     registry = PolymarketMarketRegistry()
     actor = SidecarDataActor(publisher=FakePublisher(), registry=registry)
     meta = PolySignalMarketMetaData(

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Coroutine
+from types import SimpleNamespace
 from typing import Any, cast
+
 from polysignal_lab.config import Settings
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatResult
 from polysignal_lab.domain.enums import Side
@@ -17,6 +20,17 @@ class FakePublisher:
 
     def publish_data(self, data_type: object, data: object) -> None:
         self.published.append(data)
+
+
+def _install_fake_polymarket_id_helper(monkeypatch) -> None:
+    def helper(condition_id: str, token_id: str) -> str:
+        return f"{condition_id}-{token_id}.POLYMARKET"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "nautilus_trader.adapters.polymarket",
+        SimpleNamespace(get_polymarket_instrument_id=helper),
+    )
 
 
 def test_sidecar_actor_updates_registry_and_publishes_spot() -> None:
@@ -104,6 +118,7 @@ def test_runtime_sidecar_actor_on_start_publishes_metadata_and_ptb(monkeypatch) 
     from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
 
+    _install_fake_polymarket_id_helper(monkeypatch)
     published: list[object] = []
     created: list[Coroutine[Any, Any, object]] = []
 
