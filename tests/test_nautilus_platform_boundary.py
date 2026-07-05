@@ -174,6 +174,8 @@ def test_nautilus_runtime_duplicate_platform_modules_are_deleted() -> None:
         Path("src/polysignal_lab/nautilus_runtime/scheduler_compat.py"),
         Path("src/polysignal_lab/nautilus_runtime/position_policy.py"),
         Path("src/polysignal_lab/nautilus_runtime/settlement.py"),
+        Path("src/polysignal_lab/nautilus_runtime/book_data.py"),
+        Path("src/polysignal_lab/nautilus_runtime/patch_nautilus_polymarket_autoload.py"),
     )
 
     assert [str(path) for path in duplicate_modules if path.exists()] == []
@@ -238,5 +240,23 @@ def test_nautilus_runtime_does_not_mirror_market_data_outside_nautilus_cache() -
     assert findings == []
 
 
-def test_nautilus_runtime_keeps_installed_source_patch_for_task_6() -> None:
-    assert Path("src/polysignal_lab/nautilus_runtime/patch_nautilus_polymarket_autoload.py").exists()
+def test_nautilus_runtime_does_not_patch_nautilus_installed_sources() -> None:
+    forbidden = (
+        "patch_nautilus_polymarket_autoload",
+        "patch_source(",
+        "EXPECTED_VERSION",
+        "_handle_queue_exception",
+        "_polysignal_precision_guard",
+        "_install_polymarket_precision_runtime_guards",
+        "_polymarket_precision_guarded_queue_exception_handler",
+    )
+    scanned_paths = (
+        Path("Dockerfile"),
+        Path("src/polysignal_lab/nautilus_runtime/node.py"),
+    )
+    findings: list[str] = []
+    for path in scanned_paths:
+        text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []
