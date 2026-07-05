@@ -222,7 +222,9 @@ def test_nautilus_runtime_does_not_mirror_market_data_outside_nautilus_cache() -
         ),
         Path("src/polysignal_lab/nautilus_runtime/native_strategy.py"): (
             ".update_book(",
+            "update_book",
             ".update_trade(",
+            "update_trade",
             "_domain_order_book(",
         ),
         Path("src/polysignal_lab/nautilus_bridge/market_view_assembler.py"): (

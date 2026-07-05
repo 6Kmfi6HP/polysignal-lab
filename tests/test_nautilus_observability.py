@@ -748,10 +748,10 @@ def test_nautilus_persistence_table_classification_separates_telemetry_from_crit
     assert persistence_class_for_table("health_snapshot") is PersistenceClass.BEST_EFFORT_TELEMETRY
     assert persistence_class_for_table("signals") is PersistenceClass.DURABLE_OR_DEGRADED
     assert persistence_class_for_table("rejected_signals") is PersistenceClass.DURABLE_OR_DEGRADED
-    assert persistence_class_for_table("orders") is PersistenceClass.CRITICAL_PAPER_STATE
-    assert persistence_class_for_table("fills") is PersistenceClass.CRITICAL_PAPER_STATE
-    assert persistence_class_for_table("positions") is PersistenceClass.CRITICAL_PAPER_STATE
-    assert persistence_class_for_table("settlements") is PersistenceClass.CRITICAL_PAPER_STATE
+    assert persistence_class_for_table("orders") is PersistenceClass.FATAL_ON_LOSS
+    assert persistence_class_for_table("fills") is PersistenceClass.FATAL_ON_LOSS
+    assert persistence_class_for_table("positions") is PersistenceClass.FATAL_ON_LOSS
+    assert persistence_class_for_table("settlements") is PersistenceClass.FATAL_ON_LOSS
 
 
 def test_unknown_nautilus_persistence_table_remains_fatal() -> None:
