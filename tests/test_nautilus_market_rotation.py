@@ -1015,6 +1015,7 @@ def test_market_rotation_actor_on_stop_stops_feed_without_asyncio_tasks(
     stopped: list[str] = []
     settings = Settings()
     settings.runtime.nautilus.market_rotation.enabled = False
+    settings.runtime.nautilus.sidecar.spot_source = "polymarket_rtds"
     actor = MarketRotationActor(
         settings=settings,
         startup_markets=(),
@@ -1031,7 +1032,6 @@ def test_market_rotation_actor_on_stop_stops_feed_without_asyncio_tasks(
     monkeypatch.setattr(actor.rtds_feed, "stop", lambda: stopped.append("stopped"))
 
     try:
-        actor.on_start()
         actor.on_stop()
 
         assert stopped == ["stopped"]

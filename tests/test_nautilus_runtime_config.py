@@ -75,6 +75,8 @@ def test_yaml_runtime_book_type_values_are_explicit() -> None:
 
     assert production.runtime.nautilus.sandbox_book_type == "L1_MBP"
     assert lab.runtime.nautilus.sandbox_book_type == "L2_MBP"
+    assert production.runtime.nautilus.sidecar.spot_source == "disabled"
+    assert lab.runtime.nautilus.sidecar.spot_source == "disabled"
 
 
 def test_live_polymarket_execution_is_invalid_in_default_runtime() -> None:
@@ -95,7 +97,7 @@ def test_production_yaml_declares_nautilus_runtime_section() -> None:
     assert settings.runtime.nautilus.trader_id == "PolySignal-Nautilus-001"
     assert settings.runtime.nautilus.python == "3.12"
     assert settings.runtime.nautilus.sandbox_book_type == "L1_MBP"
-    assert settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
+    assert settings.runtime.nautilus.sidecar.spot_source == "disabled"
 
 
 def test_health_config_defaults_are_conservative() -> None:

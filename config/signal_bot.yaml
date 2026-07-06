@@ -229,7 +229,7 @@ runtime:
       enabled: true
       ws_max_subscriptions_per_connection: 200
     sidecar:
-      spot_source: polymarket_rtds
+      spot_source: disabled
       price_to_beat_source: anchor_or_gamma
     decision_policy:
       preserve_gate_first_failure_order: true

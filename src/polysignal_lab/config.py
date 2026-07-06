@@ -262,7 +262,7 @@ class HealthConfig(BaseModel):
 
 
 class NautilusSidecarConfig(BaseModel):
-    spot_source: str = "polymarket_rtds"
+    spot_source: str = "disabled"
     price_to_beat_source: str = "anchor_or_gamma"
 
 
