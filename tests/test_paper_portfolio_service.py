@@ -33,5 +33,7 @@ def test_paper_portfolio_service_health_reports_open_positions() -> None:
 
     health = service.health()
 
-    assert health["name"] == "paper_portfolio"
+    assert health["name"] == "paper_portfolio_removed"
+    assert health["status"] == "removed"
     assert health["metrics"]["open_positions"] == 0
+    assert health["metrics"]["equity_source"] == "nautilus_cache_portfolio"

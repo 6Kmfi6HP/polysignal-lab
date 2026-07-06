@@ -71,25 +71,50 @@ def test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given(
     assert calls == ["nautilus:nautilus"]
 
 
-def test_main_explicit_mode_overrides_nautilus_config_default(
+def test_main_scheduler_mode_without_once_aliases_to_nautilus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given: the loaded settings default to Nautilus but the caller forces scheduler mode.
+    # Given: the caller requests scheduler mode without --once.
     calls: list[str] = []
     fake_settings = _FakeSettings("nautilus")
     fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
     setattr(fake_module, "run_nautilus_cli", lambda settings: calls.append("nautilus"))
 
     monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
-    monkeypatch.setattr(app_main, "run_scheduler_cli", lambda settings: calls.append(f"scheduler:{settings.runtime.engine}"))
+    monkeypatch.setattr(app_main, "run_scheduler_cli", lambda settings: calls.append("scheduler"))
     monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
 
-    # When: an explicit runtime mode is provided.
+    # When: scheduler mode is provided without --once.
     exit_code = app_main.main(["--mode", "scheduler"])
 
-    # Then: the explicit selector wins over the config default.
+    # Then: the legacy scheduler selector aliases to Nautilus instead of the scheduler CLI.
     assert exit_code == 0
-    assert calls == ["scheduler:nautilus"]
+    assert calls == ["nautilus"]
+
+
+def test_main_scheduler_mode_with_once_runs_readonly_smoke(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: scheduler mode is requested with bounded --once smoke.
+    calls: list[str] = []
+    fake_settings = _FakeSettings("nautilus")
+    fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
+    setattr(fake_module, "run_nautilus_cli", lambda settings: calls.append("nautilus"))
+
+    def fake_readonly_smoke(settings: object, options: object) -> None:
+        calls.append("readonly_smoke")
+
+    monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
+    monkeypatch.setattr(app_main, "run_scheduler_cli", lambda settings: calls.append("scheduler"))
+    monkeypatch.setattr(app_main, "run_readonly_smoke", fake_readonly_smoke)
+    monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
+
+    # When: scheduler mode is combined with --once.
+    exit_code = app_main.main(["--mode", "scheduler", "--once"])
+
+    # Then: bounded read-only smoke runs instead of Nautilus or the scheduler CLI.
+    assert exit_code == 0
+    assert calls == ["readonly_smoke"]
 
 
 def test_once_readonly_smoke_writes_bounded_evidence(
