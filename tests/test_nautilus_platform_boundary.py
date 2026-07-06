@@ -370,7 +370,6 @@ def test_default_runtime_has_no_shared_external_sidecar_store() -> None:
     assert path_findings == []
     assert token_findings == []
 
-@pytest.mark.xfail(strict=True, reason="Task 5 removes reverse instrument registry")
 def test_market_catalog_has_no_reverse_instrument_truth_source() -> None:
     forbidden = (
         "_by_instrument",

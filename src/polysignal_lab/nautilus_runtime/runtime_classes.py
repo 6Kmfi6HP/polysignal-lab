@@ -10,7 +10,7 @@ from polysignal_lab.alpha.types import AlphaCore
 from polysignal_lab.config import Settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.domain.market import Market
-from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.market_rotation import (
     MarketRotationActor,
@@ -39,7 +39,7 @@ class NautilusPolySignalNativeStrategy(PolySignalNativeStrategy, Strategy):
         data_names: Sequence[str] = DEFAULT_NATIVE_DATA_NAMES,
         book_type: str = "L2_MBP",
         instrument_id_resolver: Callable[[str], object] | None = None,
-        registry: PolymarketMarketRegistry | None = None,
+        registry: MarketCatalog | None = None,
         observability: _Observability | None = None,
         exit_model: object | None = None,
         progress_callback: Callable[[str], None] | None = None,
@@ -74,7 +74,7 @@ class NautilusMarketRotationActor(MarketRotationActor, Actor):
         settings: Settings,
         startup_markets: tuple[Market, ...],
         market_universe: _MarketUniverse,
-        registry: PolymarketMarketRegistry,
+        registry: MarketCatalog,
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
     ) -> None:

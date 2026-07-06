@@ -141,10 +141,10 @@ def _exit_evaluation_fixtures():
     from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView
     from polysignal_lab.config import ExitModelConfig
     from polysignal_lab.domain.enums import Side
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
@@ -187,7 +187,7 @@ def _exit_evaluation_fixtures():
         metrics={},
         freshness=FreshnessView(100, 100, None, 100),
     )
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="mkt-1",
@@ -197,8 +197,8 @@ def _exit_evaluation_fixtures():
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("token-up.POLYMARKET", "token-up", Side.UP),
-            down=InstrumentTokenMeta("token-down.POLYMARKET", "token-down", Side.DOWN),
+            up=InstrumentTokenMeta("token-up", Side.UP),
+            down=InstrumentTokenMeta("token-down", Side.DOWN),
         )
     )
     strategy = PolySignalNativeStrategy(
@@ -208,7 +208,7 @@ def _exit_evaluation_fixtures():
         strategy_name="test",
         registry=registry,
         exit_model=ExitModelConfig(),
-        instrument_id_resolver=lambda value: value,
+        instrument_id_resolver=lambda value: f"{value}.POLYMARKET",
     )
     strategy.cache_reader = SimpleNamespace(
         read_positions=lambda: [

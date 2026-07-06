@@ -19,10 +19,9 @@ from polysignal_lab.alpha.types import (
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.nautilus_bridge.market_registry import (
-    InstrumentTokenMeta,
+from polysignal_lab.nautilus_bridge.market_catalog import (
+    MarketCatalog,
     MarketPairMeta,
-    PolymarketMarketRegistry,
 )
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
@@ -184,7 +183,7 @@ class PolySignalNativeStrategy:
         data_names: Sequence[str] = DEFAULT_NATIVE_DATA_NAMES,
         book_type: str = "L2_MBP",
         instrument_id_resolver: Callable[[str], object] | None = None,
-        registry: PolymarketMarketRegistry | None = None,
+        registry: MarketCatalog | None = None,
         observability: _Observability | None = None,
         exit_model: object | None = None,
         progress_callback: Callable[[str], None] | None = None,
@@ -207,7 +206,7 @@ class PolySignalNativeStrategy:
         self.instrument_id_resolver: Callable[[str], object] = (
             instrument_id_resolver or _identity_instrument_id
         )
-        self.registry: PolymarketMarketRegistry | None = registry
+        self.registry: MarketCatalog | None = registry
         self.observability: _Observability | None = observability
         self.cache_reader: object | None = None
         self.exit_model: object | None = exit_model
@@ -230,7 +229,7 @@ class PolySignalNativeStrategy:
         self.submitted_specs: deque[object] = deque(maxlen=1000)
         self.execution_results: deque[object] = deque(maxlen=1000)
 
-    def _require_registry(self) -> PolymarketMarketRegistry:
+    def _require_registry(self) -> MarketCatalog:
         if self.registry is None:
             raise RuntimeError(MISSING_PROJECTIONS_ERROR)
         return self.registry
@@ -302,13 +301,7 @@ class PolySignalNativeStrategy:
                 return
         if isinstance(data, PolySignalMarketMetaData):
             registry = self._require_registry()
-            registry.register(
-                _pair_from_metadata(
-                    registry,
-                    data,
-                    instrument_id_resolver=self.instrument_id_resolver,
-                )
-            )
+            registry.register(MarketPairMeta.from_metadata(data))
             self._refresh_asset_conditions()
             if data.condition_id in self._active_condition_ids:
                 self._subscribe_market_conditions((data.condition_id,))
@@ -355,11 +348,13 @@ class PolySignalNativeStrategy:
         instrument_id = _identifier_text(getattr(data, "instrument_id", None))
         if instrument_id is None:
             return None
-        condition_id = _condition_id_for_instrument(self.registry, instrument_id)
-        token_id = _token_id_for_instrument(self.registry, instrument_id)
-        if condition_id is None or token_id is None:
+        condition_id = _condition_id_from_catalog_instrument(
+            self.registry,
+            tuple(self._active_condition_ids),
+            instrument_id,
+        )
+        if condition_id is None:
             self._note_runtime_progress("dropped_frame")
-            return None
         return condition_id
 
     def _condition_from_order_book_deltas(self, deltas: object) -> str | None:
@@ -510,21 +505,22 @@ class PolySignalNativeStrategy:
             max_hold_time_sec=int(getattr(raw_config, "max_hold_time_sec", 900)),
         )
         now = view.created_at
-        registry = self.registry
         for position in rows:
             if not isinstance(position, dict):
                 continue
             instrument_id = str(position.get("instrument_id") or "")
             position_condition_id = str(position.get("condition_id") or "")
-            if not position_condition_id and registry is not None and instrument_id:
-                resolved = _condition_id_for_instrument(registry, instrument_id)
-                position_condition_id = resolved or ""
+            if not position_condition_id and instrument_id:
+                position_condition_id = (
+                    condition_id
+                    if self._token_id_from_view_instrument(view, instrument_id) is not None
+                    else ""
+                )
             if position_condition_id != condition_id:
                 continue
             token_id = str(position.get("token_id") or "")
-            if not token_id and registry is not None and instrument_id:
-                resolved = _token_id_for_instrument(registry, instrument_id)
-                token_id = resolved or ""
+            if not token_id and instrument_id:
+                token_id = self._token_id_from_view_instrument(view, instrument_id) or ""
             book = view.up if token_id == view.up.token_id else view.down if token_id == view.down.token_id else None
             if book is None:
                 continue
@@ -617,6 +613,15 @@ class PolySignalNativeStrategy:
                 return cached
         return resolved
 
+    def _token_id_from_view_instrument(self, view: MarketView, instrument_id: str) -> str | None:
+        up_instrument = str(self._resolved_instrument(view.up.token_id))
+        if instrument_id == up_instrument:
+            return view.up.token_id
+        down_instrument = str(self._resolved_instrument(view.down.token_id))
+        if instrument_id == down_instrument:
+            return view.down.token_id
+        return None
+
     def _call_core(self, method_name: str, event: AlphaOrderEvent) -> None:
         handler = getattr(self.core, method_name, None)
         if callable(handler):
@@ -697,13 +702,15 @@ class PolySignalNativeStrategy:
             metrics.get("condition_id")
         )
         if not condition_id and self.registry is not None and instrument_id is not None:
-            condition_id = _condition_id_for_instrument(self.registry, instrument_id)
+            condition_id = _condition_id_from_catalog_instrument(
+                self.registry, tuple(self._active_condition_ids), instrument_id
+            )
         market_id = tags.get("market_id") or _optional_str(metrics.get("market_id"))
         if not market_id and self.registry is not None and condition_id is not None:
             market_id = _market_id_for_condition(self.registry, condition_id)
         token_id = tags.get("token_id") or _optional_str(metrics.get("token_id"))
-        if not token_id and self.registry is not None and instrument_id is not None:
-            token_id = _token_id_for_instrument(self.registry, instrument_id)
+        if not token_id and self.registry is not None and condition_id is not None and instrument_id is not None:
+            token_id = _token_id_from_catalog_instrument(self.registry, condition_id, instrument_id)
         price = _maybe_float(_value(event, "price"))
         if "level_price" not in metrics and price is not None:
             metrics["level_price"] = price
@@ -992,18 +999,19 @@ def _lookup_id_text(value: object) -> str | None:
 
 
 def _market_id_for_condition(
-    registry: PolymarketMarketRegistry, condition_id: str
+    registry: MarketCatalog, condition_id: str
 ) -> str | None:
     pair = registry.by_condition(condition_id)
     return None if pair is None else pair.market_id
 
 
 def _event_side(
-    registry: PolymarketMarketRegistry | None,
+    registry: MarketCatalog | None,
     instrument_id: str | None,
     token_id: str | None,
     value: object,
 ) -> Side:
+    _ = instrument_id
     if isinstance(value, Side):
         return value
     text = _identifier_text(value)
@@ -1013,13 +1021,6 @@ def _event_side(
         meta = registry.token_meta(token_id)
         if meta is not None:
             return meta.side
-    if registry is not None and instrument_id is not None:
-        pair = registry.by_instrument(instrument_id)
-        if pair is not None:
-            if str(pair.up.instrument_id) == instrument_id:
-                return pair.up.side
-            if str(pair.down.instrument_id) == instrument_id:
-                return pair.down.side
     return Side.UP
 
 
@@ -1062,7 +1063,7 @@ def _projection_fill_event(
 
 
 def _instrument_ids(
-    registry: PolymarketMarketRegistry,
+    registry: MarketCatalog,
     condition_ids: Sequence[str],
 ) -> tuple[object, ...]:
     instrument_ids: list[object] = []
@@ -1070,17 +1071,15 @@ def _instrument_ids(
         pair = registry.by_condition(condition_id)
         if pair is None:
             continue
-        instrument_ids.extend(
-            (
-                _nautilus_instrument_id(str(pair.up.instrument_id)),
-                _nautilus_instrument_id(str(pair.down.instrument_id)),
-            )
-        )
+        for token_id in (pair.up.token_id, pair.down.token_id):
+            instrument_id = registry.instrument_id_for_token(token_id)
+            if instrument_id is not None:
+                instrument_ids.append(_nautilus_instrument_id(instrument_id))
     return tuple(instrument_ids)
 
 
 def _asset_conditions(
-    registry: PolymarketMarketRegistry | None,
+    registry: MarketCatalog | None,
     condition_ids: Sequence[str],
 ) -> dict[str, tuple[str, ...]]:
     if registry is None:
@@ -1102,18 +1101,29 @@ def _identifier_text(value: object) -> str | None:
     return text or None
 
 
-def _condition_id_for_instrument(
-    registry: PolymarketMarketRegistry,
+def _token_id_from_catalog_instrument(
+    registry: MarketCatalog,
+    condition_id: str,
     instrument_id: str,
 ) -> str | None:
-    return registry.condition_id_for_instrument(instrument_id)
+    pair = registry.by_condition(condition_id)
+    if pair is None:
+        return None
+    for token_id in (pair.up.token_id, pair.down.token_id):
+        if registry.instrument_id_for_token(token_id) == instrument_id:
+            return token_id
+    return None
 
 
-def _token_id_for_instrument(
-    registry: PolymarketMarketRegistry,
+def _condition_id_from_catalog_instrument(
+    registry: MarketCatalog,
+    condition_ids: Sequence[str],
     instrument_id: str,
 ) -> str | None:
-    return registry.token_id_for_instrument(instrument_id)
+    for condition_id in condition_ids:
+        if _token_id_from_catalog_instrument(registry, condition_id, instrument_id) is not None:
+            return condition_id
+    return None
 
 
 
@@ -1226,64 +1236,6 @@ def _datetime_ns(value: int | None) -> datetime | None:
     return datetime.fromtimestamp(value / 1_000_000_000, UTC)
 
 
-def _metadata_instrument_id(
-    condition_id: str,
-    token_id: str,
-    instrument_id_resolver: Callable[[str], object],
-) -> str:
-    from polysignal_lab.nautilus_runtime.instrument_mapping import (
-        polymarket_instrument_id,
-    )
 
-    try:
-        resolved = instrument_id_resolver(token_id)
-    except (KeyError, TypeError, ValueError):
-        return polymarket_instrument_id(condition_id, token_id)
-    resolved_text = _identifier_text(resolved)
-    if resolved_text is None:
-        return polymarket_instrument_id(condition_id, token_id)
-    if "." in resolved_text:
-        return resolved_text
-    return polymarket_instrument_id(condition_id, token_id)
-
-
-def _pair_from_metadata(
-    registry: PolymarketMarketRegistry,
-    meta: PolySignalMarketMetaData,
-    *,
-    instrument_id_resolver: Callable[[str], object],
-) -> MarketPairMeta:
-    existing = registry.by_condition(meta.condition_id)
-    up_instrument_id = (
-        existing.up.instrument_id
-        if existing is not None
-        else _metadata_instrument_id(
-            meta.condition_id, meta.up_token_id, instrument_id_resolver
-        )
-    )
-    down_instrument_id = (
-        existing.down.instrument_id
-        if existing is not None
-        else _metadata_instrument_id(
-            meta.condition_id, meta.down_token_id, instrument_id_resolver
-        )
-    )
-    return MarketPairMeta(
-        market_id=meta.market_id,
-        market_slug=meta.market_slug,
-        condition_id=meta.condition_id,
-        asset=meta.asset.upper(),
-        timeframe=meta.timeframe,
-        start_ts=_datetime_ns(meta.start_ts_ns),
-        end_ts=_datetime_ns(meta.end_ts_ns),
-        up=InstrumentTokenMeta(
-            instrument_id=up_instrument_id,
-            token_id=meta.up_token_id,
-            side=Side.UP,
-        ),
-        down=InstrumentTokenMeta(
-            instrument_id=down_instrument_id,
-            token_id=meta.down_token_id,
-            side=Side.DOWN,
-        ),
-    )
+def _pair_from_metadata(meta: PolySignalMarketMetaData) -> MarketPairMeta:
+    return MarketPairMeta.from_metadata(meta)

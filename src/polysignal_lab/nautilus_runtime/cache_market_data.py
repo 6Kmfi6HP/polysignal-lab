@@ -5,21 +5,21 @@ from datetime import UTC, datetime
 from typing import Callable, cast
 
 from polysignal_lab.alpha.types import SideBookView, TradeView
-from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 
 
 class NautilusCacheMarketDataProvider:
     """Read current market data from Nautilus Cache without owning book/trade state."""
 
-    def __init__(self, cache: object, *, registry: PolymarketMarketRegistry) -> None:
+    def __init__(self, cache: object, *, catalog: MarketCatalog) -> None:
         self._cache: object = cache
-        self._registry: PolymarketMarketRegistry = registry
+        self._catalog: MarketCatalog = catalog
 
     def book_for_token(self, token_id: str) -> SideBookView | None:
-        meta = self._registry.token_meta(token_id)
-        if meta is None:
+        instrument_id = self._catalog.instrument_id_for_token(token_id)
+        if instrument_id is None:
             return None
-        book = self._cache_order_book(meta.instrument_id)
+        book = self._cache_order_book(instrument_id)
         if book is None:
             return None
         bids = _levels(getattr(book, "bids", ()))
@@ -44,13 +44,13 @@ class NautilusCacheMarketDataProvider:
         )
 
     def trades_for_token(self, token_id: str) -> Sequence[TradeView]:
-        meta = self._registry.token_meta(token_id)
-        if meta is None:
+        instrument_id = self._catalog.instrument_id_for_token(token_id)
+        if instrument_id is None:
             return ()
         getter = getattr(self._cache, "trade_ticks", None)
         if not callable(getter):
             return ()
-        rows = cast(Callable[[object], object], getter)(meta.instrument_id)
+        rows = cast(Callable[[object], object], getter)(instrument_id)
         if not isinstance(rows, Iterable) or isinstance(rows, (str, bytes)):
             return ()
         return tuple(

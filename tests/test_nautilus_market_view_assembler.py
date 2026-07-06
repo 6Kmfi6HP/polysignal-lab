@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from polysignal_lab.alpha.types import SideBookView, TradeView
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.nautilus_bridge.market_registry import MarketPairMeta, PolymarketMarketRegistry
+from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatData, PolySignalSpotData
@@ -26,11 +26,11 @@ class FakeBookProvider:
 def _components() -> tuple[MarketViewAssembler, MarketPairMeta, FakeBookProvider, StrategyCustomDataState]:
     market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m", seconds_to_close=60, price_to_beat=100000.0))
     pair = MarketPairMeta.from_market(market)
-    registry = PolymarketMarketRegistry()
-    registry.register(pair)
+    catalog = MarketCatalog()
+    catalog.register(pair)
     books = FakeBookProvider()
     custom_data = StrategyCustomDataState()
-    assembler = MarketViewAssembler(registry=registry, books=books, custom_data=custom_data)
+    assembler = MarketViewAssembler(catalog=catalog, books=books, custom_data=custom_data)
     return assembler, pair, books, custom_data
 
 

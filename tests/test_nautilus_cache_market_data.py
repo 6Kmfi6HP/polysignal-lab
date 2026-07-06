@@ -6,10 +6,10 @@ from datetime import UTC, datetime, timedelta
 from typing_extensions import override
 
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.nautilus_bridge.market_registry import (
+from polysignal_lab.nautilus_bridge.market_catalog import (
     InstrumentTokenMeta,
+    MarketCatalog,
     MarketPairMeta,
-    PolymarketMarketRegistry,
 )
 from polysignal_lab.nautilus_runtime.cache_market_data import (
     NautilusCacheMarketDataProvider,
@@ -56,9 +56,13 @@ class FakeCache:
         return [FakeTrade()] if str(instrument_id) == self.instrument_id else []
 
 
-def _registry() -> PolymarketMarketRegistry:
-    registry = PolymarketMarketRegistry()
-    registry.register(
+def _catalog(monkeypatch) -> MarketCatalog:
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_bridge.market_catalog.polymarket_instrument_id",
+        lambda condition_id, token_id: f"{condition_id}-{token_id}.POLYMARKET",
+    )
+    catalog = MarketCatalog()
+    catalog.register(
         MarketPairMeta(
             market_id="btc-5m",
             market_slug="btc-updown-5m",
@@ -68,25 +72,23 @@ def _registry() -> PolymarketMarketRegistry:
             start_ts=None,
             end_ts=None,
             up=InstrumentTokenMeta(
-                instrument_id="condition-btc-5m-up.POLYMARKET",
                 token_id="up-token",
                 side=Side.UP,
             ),
             down=InstrumentTokenMeta(
-                instrument_id="condition-btc-5m-down.POLYMARKET",
                 token_id="down-token",
                 side=Side.DOWN,
             ),
         )
     )
-    return registry
+    return catalog
 
 
-def test_cache_market_data_provider_reads_book_without_local_cache() -> None:
-    instrument_id = "condition-btc-5m-up.POLYMARKET"
+def test_cache_market_data_provider_reads_book_without_local_cache(monkeypatch) -> None:
+    instrument_id = "condition-btc-5m-up-token.POLYMARKET"
     provider = NautilusCacheMarketDataProvider(
         FakeCache(instrument_id),
-        registry=_registry(),
+        catalog=_catalog(monkeypatch),
     )
 
     view = provider.book_for_token("up-token")
@@ -104,11 +106,11 @@ def test_cache_market_data_provider_reads_book_without_local_cache() -> None:
     assert view.freshness_ms >= 0
 
 
-def test_cache_market_data_provider_reads_trades_without_trade_deque() -> None:
-    instrument_id = "condition-btc-5m-up.POLYMARKET"
+def test_cache_market_data_provider_reads_trades_without_trade_deque(monkeypatch) -> None:
+    instrument_id = "condition-btc-5m-up-token.POLYMARKET"
     provider = NautilusCacheMarketDataProvider(
         FakeCache(instrument_id),
-        registry=_registry(),
+        catalog=_catalog(monkeypatch),
     )
 
     trades = tuple(provider.trades_for_token("up-token"))
@@ -120,8 +122,8 @@ def test_cache_market_data_provider_reads_trades_without_trade_deque() -> None:
     assert trades[0].ts == datetime(2026, 7, 5, tzinfo=UTC)
 
 
-def test_cache_market_data_provider_converts_nautilus_trade_ns_timestamp() -> None:
-    instrument_id = "condition-btc-5m-up.POLYMARKET"
+def test_cache_market_data_provider_converts_nautilus_trade_ns_timestamp(monkeypatch) -> None:
+    instrument_id = "condition-btc-5m-up-token.POLYMARKET"
     expected = datetime(2026, 7, 5, tzinfo=UTC)
 
     class NsTrade(FakeTrade):
@@ -137,7 +139,7 @@ def test_cache_market_data_provider_converts_nautilus_trade_ns_timestamp() -> No
 
     provider = NautilusCacheMarketDataProvider(
         NsCache(instrument_id),
-        registry=_registry(),
+        catalog=_catalog(monkeypatch),
     )
 
     trades = tuple(provider.trades_for_token("up-token"))
@@ -145,10 +147,10 @@ def test_cache_market_data_provider_converts_nautilus_trade_ns_timestamp() -> No
     assert len(trades) == 1
     assert trades[0].ts == expected
 
-def test_cache_market_data_provider_returns_none_for_unknown_token() -> None:
+def test_cache_market_data_provider_returns_none_for_unknown_token(monkeypatch) -> None:
     provider = NautilusCacheMarketDataProvider(
-        FakeCache("condition-btc-5m-up.POLYMARKET"),
-        registry=_registry(),
+        FakeCache("condition-btc-5m-up-token.POLYMARKET"),
+        catalog=_catalog(monkeypatch),
     )
 
     assert provider.book_for_token("missing-token") is None

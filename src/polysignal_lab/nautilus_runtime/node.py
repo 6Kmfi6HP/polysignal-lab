@@ -36,7 +36,7 @@ from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.market import Market
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
-from polysignal_lab.nautilus_bridge.market_registry import MarketPairMeta, PolymarketMarketRegistry
+from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.observability import (
@@ -179,7 +179,7 @@ class NautilusRuntimeBundle:
 
     scheduler: PolySignalScheduler
     components: dict[str, object]
-    bridge_registry: PolymarketMarketRegistry
+    bridge_registry: MarketCatalog
     node: _TradingNodeLike
     observability: ObservabilityActor
     websocket_tasks: list[asyncio.Task[object]]
@@ -257,21 +257,21 @@ def _create_configured_live_node(
 
 def _create_market_projection_components(
     configured_markets: Sequence[Market],
-) -> tuple[PolymarketMarketRegistry, MarketViewAssembler]:
-    registry = PolymarketMarketRegistry()
-    _register_markets(registry, configured_markets)
+) -> tuple[MarketCatalog, MarketViewAssembler]:
+    catalog = MarketCatalog()
+    _register_markets(catalog, configured_markets)
     custom_data = StrategyCustomDataState()
     assembler = MarketViewAssembler(
-        registry=registry,
+        catalog=catalog,
         books=_EmptyBookDataProvider(),
         custom_data=custom_data,
     )
-    return registry, assembler
+    return catalog, assembler
 
 
 def _attach_cache_projections(
     node: _TradingNodeLike,
-    registry: PolymarketMarketRegistry,
+    registry: MarketCatalog,
     assembler: MarketViewAssembler,
     strategies: Sequence[_NativeStrategyLike],
 ) -> object:
@@ -282,7 +282,7 @@ def _attach_cache_projections(
     nautilus_cache = getattr(node, "cache", None) or getattr(kernel, "cache", None)
     books = NautilusCacheMarketDataProvider(
         nautilus_cache,
-        registry=registry,
+        catalog=registry,
     )
     assembler.books = books
     cache_reader = NautilusCacheReader(
@@ -313,7 +313,7 @@ def _build_market_rotation_actor(
     settings: Settings,
     startup_markets: Sequence[Market],
     market_universe: object,
-    registry: PolymarketMarketRegistry,
+    registry: MarketCatalog,
     store: AnchorPriceStore | None,
     health: object | None,
 ) -> object:
@@ -333,7 +333,7 @@ def _runtime_components(
     *,
     node: _TradingNodeLike,
     config: object,
-    registry: PolymarketMarketRegistry,
+    registry: MarketCatalog,
     market_rotation_actor: object,
     assembler: MarketViewAssembler,
     policy: DecisionPolicyActor,
@@ -425,26 +425,12 @@ def _instrument_load_ids(markets: Sequence[Market]) -> frozenset[str]:
 
 
 def _register_markets(
-    registry: PolymarketMarketRegistry,
+    registry: MarketCatalog,
     markets: Sequence[Market],
 ) -> None:
-    from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
-
     for market in markets:
         try:
-            registry.register(
-                MarketPairMeta.from_market(
-                    market,
-                    up_instrument_id=polymarket_instrument_id(
-                        market.condition_id,
-                        market.token_for(Side.UP).token_id,
-                    ),
-                    down_instrument_id=polymarket_instrument_id(
-                        market.condition_id,
-                        market.token_for(Side.DOWN).token_id,
-                    ),
-                )
-            )
+            registry.register(MarketPairMeta.from_market(market))
         except (KeyError, ValueError) as exc:
             logger.debug("skipping runtime market registration for %s: %s", market.market_id, exc)
 
@@ -454,7 +440,7 @@ def _build_native_strategies(
     assembler: MarketViewAssembler,
     policy: DecisionPolicyActor,
     condition_ids: Sequence[str],
-    registry: PolymarketMarketRegistry,
+    registry: MarketCatalog,
     observability: ObservabilityActor | None,
 ) -> list[_NativeStrategyLike]:
     strategy_cls, _actor_cls = _load_runtime_classes()
@@ -499,12 +485,12 @@ def _build_native_strategies(
     return strategies
 
 
-def _instrument_id_resolver(registry: PolymarketMarketRegistry) -> Callable[[str], object]:
+def _instrument_id_resolver(registry: MarketCatalog) -> Callable[[str], object]:
     def resolve(token_id: str) -> object:
-        meta = registry.token_meta(token_id)
-        if meta is None:
-            raise ValueError(f"token_id {token_id!r} is not registered in the Nautilus runtime registry")
-        return meta.instrument_id
+        instrument_id = registry.instrument_id_for_token(token_id)
+        if instrument_id is None:
+            raise ValueError(f"token_id {token_id!r} is not registered in the Nautilus runtime catalog")
+        return instrument_id
 
     return resolve
 
@@ -774,7 +760,7 @@ def _build_nautilus_runtime_bundle(
     return NautilusRuntimeBundle(
         scheduler=scheduler,
         components=components,
-        bridge_registry=cast(PolymarketMarketRegistry, components["registry"]),
+        bridge_registry=cast(MarketCatalog, components["registry"]),
         node=cast(_TradingNodeLike, components["node"]),
         observability=observability,
         websocket_tasks=[],

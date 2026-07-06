@@ -13,7 +13,7 @@ from polysignal_lab.data.state import SpotRegistry
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.spot import SpotPrice
-from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.market_data import (
     PolySignalMarketUniverseData,
     register_polysignal_data_types,
@@ -53,13 +53,13 @@ class MarketRotationActor:
         settings: Settings,
         startup_markets: tuple[Market, ...],
         market_universe: _MarketUniverse,
-        registry: PolymarketMarketRegistry,
+        registry: MarketCatalog,
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
     ) -> None:
         self.settings: Settings = settings
         self.market_universe: _MarketUniverse = market_universe
-        self.registry: PolymarketMarketRegistry = registry
+        self.registry: MarketCatalog = registry
         self.health: _Health | None = health
         self.publisher: CustomDataPublisher = CustomDataPublisher(publisher=self)
         self.spots: SpotRegistry = SpotRegistry()

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 from typing_extensions import final
 
 from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView, TradeView
-from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.utils import stable_hash, utc_now
 
 if TYPE_CHECKING:
@@ -25,23 +25,23 @@ class MarketViewAssembler:
     def __init__(
         self,
         *,
-        registry: PolymarketMarketRegistry,
+        catalog: MarketCatalog,
         books: BookDataProvider,
         custom_data: CustomDataSnapshotProvider,
     ):
-        self.registry: PolymarketMarketRegistry = registry
+        self.catalog: MarketCatalog = catalog
         self.books: BookDataProvider = books
         self.custom_data: CustomDataSnapshotProvider = custom_data
 
     def with_custom_data(self, custom_data: CustomDataSnapshotProvider) -> MarketViewAssembler:
         return MarketViewAssembler(
-            registry=self.registry,
+            catalog=self.catalog,
             books=self.books,
             custom_data=custom_data,
         )
 
     def build(self, condition_id: str, *, created_at: datetime | None = None) -> MarketView | None:
-        pair = self.registry.by_condition(condition_id)
+        pair = self.catalog.by_condition(condition_id)
         if pair is None:
             return None
         up_book = self.books.book_for_token(pair.up.token_id)

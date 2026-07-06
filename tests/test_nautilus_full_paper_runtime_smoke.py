@@ -218,10 +218,10 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
     import polysignal_lab.nautilus_runtime.market_rotation as rotation_mod
     from polysignal_lab.domain.spot import SpotPrice
     from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
@@ -348,7 +348,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
             self.submitted.append(order)
 
     market = _sample_market()
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id=market.market_id,
@@ -358,13 +358,13 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
             timeframe=market.timeframe,
             start_ts=market.start_ts,
             end_ts=market.end_ts,
-            up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
-            down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
         )
     )
     custom_data = StrategyCustomDataState()
-    books = NautilusCacheMarketDataProvider(FakeCache(), registry=registry)
-    assembler = MarketViewAssembler(registry=registry, books=books, custom_data=custom_data)
+    books = NautilusCacheMarketDataProvider(FakeCache(), catalog=registry)
+    assembler = MarketViewAssembler(catalog=registry, books=books, custom_data=custom_data)
     strategy = FakeStrategy(
         core=FakeCore(),
         assembler=assembler,
@@ -441,8 +441,8 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
     import polysignal_lab.nautilus_runtime.node as node_mod
     from polysignal_lab.domain.spot import SpotPrice
     from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
-    from polysignal_lab.nautilus_bridge.market_registry import (
-        PolymarketMarketRegistry,
+    from polysignal_lab.nautilus_bridge.market_catalog import (
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
@@ -620,11 +620,11 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
     settings = Settings()
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
     settings.runtime.nautilus.market_rotation.enabled = False
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     node_mod._register_markets(registry, (market_a,))
     custom_data = StrategyCustomDataState()
-    books = NautilusCacheMarketDataProvider(FakeCache(), registry=registry)
-    assembler = MarketViewAssembler(registry=registry, books=books, custom_data=custom_data)
+    books = NautilusCacheMarketDataProvider(FakeCache(), catalog=registry)
+    assembler = MarketViewAssembler(catalog=registry, books=books, custom_data=custom_data)
     strategy = FakeStrategy(
         core=FakeCore(),
         assembler=assembler,
@@ -690,8 +690,8 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
         drain_ptb_tasks()
         rotated_meta = registry.by_condition("condition-b")
         assert rotated_meta is not None
-        assert rotated_meta.up.instrument_id == polymarket_instrument_id("condition-b", "up-b")
-        assert rotated_meta.down.instrument_id == polymarket_instrument_id("condition-b", "down-b")
+        assert registry.instrument_id_for_token(rotated_meta.up.token_id) == polymarket_instrument_id("condition-b", "up-b")
+        assert registry.instrument_id_for_token(rotated_meta.down.token_id) == polymarket_instrument_id("condition-b", "down-b")
         actor._on_spot(
             SpotPrice(
                 asset="BTC",

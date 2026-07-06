@@ -15,7 +15,7 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
-from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatData, PolySignalSpotData
@@ -68,10 +68,10 @@ def _assembler(view: object | None) -> MarketViewAssembler:
 
 
 def _native_projections(
-    registry: PolymarketMarketRegistry | None = None,
+    registry: MarketCatalog | None = None,
 ) -> dict[str, Any]:
     return {
-        "registry": registry or PolymarketMarketRegistry(),
+        "registry": registry or MarketCatalog(),
     }
 
 
@@ -499,10 +499,10 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
 def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
     monkeypatch,
 ) -> None:
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
 
     class FakeBase:
@@ -527,7 +527,7 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
 
     strategy_type = _load_static_native_strategy(monkeypatch, FakeBase, "cfg")
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-5m",
@@ -537,8 +537,8 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
-            down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
         )
     )
 
@@ -556,10 +556,10 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
 
 
 def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) -> None:
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import (
         PolySignalMarketMetaData,
@@ -611,7 +611,7 @@ def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) ->
 
     strategy_type = _load_static_native_strategy(monkeypatch, FakeBase, "cfg")
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-5m",
@@ -621,8 +621,8 @@ def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) ->
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
-            down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
         )
     )
 
@@ -737,7 +737,7 @@ def test_native_strategy_constructor_requires_injected_projections() -> None:
 def test_native_strategy_constructor_requires_injected_assembler() -> None:
     import pytest
 
-    from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+    from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     with pytest.raises(
@@ -749,14 +749,14 @@ def test_native_strategy_constructor_requires_injected_assembler() -> None:
             assembler=cast(Any, None),
             condition_ids=(),
             strategy_name="ptb_diff",
-            registry=PolymarketMarketRegistry(),
+            registry=MarketCatalog(),
         )
 
 
 def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_projections() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+    from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
     from polysignal_lab.nautilus_runtime.market_data import (
         PolySignalMarketMetaData,
         PolySignalMarketUniverseData,
@@ -778,7 +778,7 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
         assembler=_assembler(None),
         condition_ids=(),
         strategy_name="ptb_diff",
-        registry=PolymarketMarketRegistry(),
+        registry=MarketCatalog(),
     )
 
     strategy.on_start()
@@ -792,7 +792,7 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
 def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
     from datetime import UTC, datetime, timedelta
 
-    from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+    from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
     from polysignal_lab.nautilus_runtime.native_strategy import (
         EVALUATION_HEARTBEAT_TIMER_NAME,
         PolySignalNativeStrategy,
@@ -827,7 +827,7 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m", "condition-btc-retired"),
         strategy_name="ptb_diff",
-        registry=PolymarketMarketRegistry(),
+        registry=MarketCatalog(),
     )
     strategy._active_condition_ids = {"condition-btc-5m"}
 
@@ -964,21 +964,16 @@ def test_native_strategy_unknown_quote_tick_instrument_is_dropped_with_metric() 
 
 
 def test_native_strategy_partial_market_data_mappings_are_dropped_without_evaluation() -> None:
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class MissingTokenRegistry(PolymarketMarketRegistry):
-        def token_id_for_instrument(self, instrument_id: str) -> str | None:
-            _ = instrument_id
-            return None
-
-    class MissingConditionRegistry(PolymarketMarketRegistry):
-        def condition_id_for_instrument(self, instrument_id: str) -> str | None:
-            _ = instrument_id
+    class MissingInstrumentCatalog(MarketCatalog):
+        def instrument_id_for_token(self, token_id: str) -> str | None:
+            _ = token_id
             return None
 
     cases: tuple[tuple[str, Callable[[PolySignalNativeStrategy, object], None], object], ...] = (
@@ -1013,7 +1008,7 @@ def test_native_strategy_partial_market_data_mappings_are_dropped_without_evalua
         ),
     )
 
-    for registry in (MissingTokenRegistry(), MissingConditionRegistry()):
+    for registry in (MissingInstrumentCatalog(),):
         registry.register(
             MarketPairMeta(
                 market_id="btc-5m",
@@ -1023,8 +1018,8 @@ def test_native_strategy_partial_market_data_mappings_are_dropped_without_evalua
                 timeframe="5m",
                 start_ts=None,
                 end_ts=None,
-                up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
-                down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+                up=InstrumentTokenMeta("up-token", Side.UP),
+                down=InstrumentTokenMeta("down-token", Side.DOWN),
             )
         )
         for name, handle, data in cases:
@@ -1301,10 +1296,10 @@ def test_native_strategy_bounds_submitted_orders_to_prevent_memory_leak() -> Non
 def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
@@ -1329,7 +1324,7 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
         def subscribe_data(self, data_type, *args, **kwargs):
             self.custom_subscriptions.append(data_type)
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-5m",
@@ -1339,8 +1334,8 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
-            down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
         )
     )
 
@@ -1368,10 +1363,10 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
 def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
     from types import SimpleNamespace
 
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 
@@ -1416,7 +1411,7 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
                 return
             seen.append((self.label, condition_id))
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-5m",
@@ -1426,8 +1421,8 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
-            down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
         )
     )
     cache = SimpleNamespace(
@@ -1444,9 +1439,9 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
             else []
         )
     )
-    books = NautilusCacheMarketDataProvider(cache, registry=registry)
+    books = NautilusCacheMarketDataProvider(cache, catalog=registry)
     assembler = MarketViewAssembler(
-        registry=registry,
+        catalog=registry,
         books=books,
         custom_data=StrategyCustomDataState(),
     )
@@ -1528,10 +1523,10 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
 
 
 def test_native_strategy_universe_update_subscribes_entered_market_once(monkeypatch) -> None:
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.instrument_mapping import (
         polymarket_instrument_id,
@@ -1560,7 +1555,7 @@ def test_native_strategy_universe_update_subscribes_entered_market_once(monkeypa
         def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -1570,8 +1565,8 @@ def test_native_strategy_universe_update_subscribes_entered_market_once(monkeypa
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
     strategy = FakeNativeStrategy(
@@ -1643,10 +1638,10 @@ def test_native_strategy_universe_update_subscribes_entered_market_once(monkeypa
 def test_native_strategy_universe_update_recovers_still_active_missing_subscription() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -1663,7 +1658,7 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
         def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -1673,8 +1668,8 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
     strategy = FakeNativeStrategy(
@@ -1715,10 +1710,10 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
 def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -1735,7 +1730,7 @@ def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> (
         def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -1745,8 +1740,8 @@ def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> (
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
     strategy = FakeNativeStrategy(
@@ -1782,10 +1777,10 @@ def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> (
 
 
 def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> None:
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatData
     from datetime import UTC, datetime, timedelta
@@ -1808,7 +1803,7 @@ def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> No
         def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -1818,8 +1813,8 @@ def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> No
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
     strategy = FakeNativeStrategy(
@@ -1853,7 +1848,7 @@ def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> No
 def test_native_strategy_active_market_without_metadata_stays_pending_until_metadata_arrives() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+    from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
     from polysignal_lab.nautilus_runtime.market_data import (
         PolySignalMarketMetaData,
         PolySignalMarketUniverseData,
@@ -1877,7 +1872,7 @@ def test_native_strategy_active_market_without_metadata_stays_pending_until_meta
         assembler=_assembler(None),
         condition_ids=(),
         strategy_name="ptb_diff",
-        registry=PolymarketMarketRegistry(),
+        registry=MarketCatalog(),
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
     )
 
@@ -1940,10 +1935,10 @@ def test_native_strategy_active_market_without_metadata_stays_pending_until_meta
 def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
     from types import SimpleNamespace
 
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -1976,7 +1971,7 @@ def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
             _ = args, kwargs
             self.trade_subscriptions.append(str(instrument_id))
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -1986,8 +1981,8 @@ def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
     strategy = FakeNativeStrategy(
@@ -2024,15 +2019,15 @@ def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
 def test_native_strategy_active_market_without_subscribe_hooks_still_marks_wired() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -2042,8 +2037,8 @@ def test_native_strategy_active_market_without_subscribe_hooks_still_marks_wired
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
     strategy = PolySignalNativeStrategy(
@@ -2231,10 +2226,10 @@ def test_native_strategy_exited_market_fill_follow_up_is_gated() -> None:
 
 
 def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -2259,7 +2254,7 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
         def unsubscribe_trade_ticks(self, instrument_id, *args, **kwargs):
             self.trade_unsubscriptions.append(str(instrument_id))
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -2269,8 +2264,8 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
     strategy = FakeNativeStrategy(
@@ -2327,10 +2322,10 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
 
 
 def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -2355,7 +2350,7 @@ def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
         def unsubscribe_trade_ticks(self, instrument_id, *args, **kwargs):
             self.trade_unsubscriptions.append(str(instrument_id))
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -2365,8 +2360,8 @@ def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
     strategy = FakeNativeStrategy(
@@ -2401,10 +2396,10 @@ def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
 
 
 def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() -> None:
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -2427,7 +2422,7 @@ def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() ->
         def unsubscribe_trade_ticks(self, instrument_id):
             self.trade_unsubscriptions.append(str(instrument_id))
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -2437,8 +2432,8 @@ def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() ->
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
     strategy = FakeNativeStrategy(
@@ -2470,10 +2465,10 @@ def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() ->
 
 
 def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> None:
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -2496,7 +2491,7 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
         def unsubscribe_trade_ticks(self, instrument_id, *args, **kwargs):
             self.trade_unsubscriptions.append(str(instrument_id))
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -2506,8 +2501,8 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
     strategy = FakeNativeStrategy(
@@ -2549,10 +2544,10 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
 def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_state() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -2569,7 +2564,7 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_sta
         def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -2579,8 +2574,8 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_sta
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
     strategy = FakeNativeStrategy(
@@ -2644,10 +2639,10 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_sta
 def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
     from types import SimpleNamespace
 
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -2665,7 +2660,7 @@ def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
             _ = decision
             seen.append(view.condition_id)
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-updown-5m-a",
@@ -2675,8 +2670,8 @@ def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-a.POLYMARKET", "up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a.POLYMARKET", "down-a", Side.DOWN),
+            up=InstrumentTokenMeta("up-a", Side.UP),
+            down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
     )
 
@@ -2723,16 +2718,16 @@ def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
 def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_only() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.market_data import PolySignalSpotData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     seen = []
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-5m",
@@ -2742,8 +2737,8 @@ def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_on
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
-            down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
         )
     )
     registry.register(
@@ -2755,8 +2750,8 @@ def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_on
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("eth-up.POLYMARKET", "eth-up", Side.UP),
-            down=InstrumentTokenMeta("eth-down.POLYMARKET", "eth-down", Side.DOWN),
+            up=InstrumentTokenMeta("eth-up", Side.UP),
+            down=InstrumentTokenMeta("eth-down", Side.DOWN),
         )
     )
 
@@ -2795,7 +2790,7 @@ def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_on
 def test_native_strategy_routes_ptb_custom_data_to_matching_active_condition_only() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
+    from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
     from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
@@ -2821,7 +2816,7 @@ def test_native_strategy_routes_ptb_custom_data_to_matching_active_condition_onl
         assembler=cast(MarketViewAssembler, cast(object, assembler)),
         condition_ids=("condition-active",),
         strategy_name="ptb_diff",
-        registry=PolymarketMarketRegistry(),
+        registry=MarketCatalog(),
     )
 
     _ = cast(_DataHandler, cast(object, strategy)).on_data(
@@ -2866,10 +2861,10 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
     from types import SimpleNamespace
 
     from polysignal_lab.alpha.types import SpotView
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 
@@ -2916,7 +2911,7 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
         def trade_ticks(self, instrument_id):
             return self.trades.get(str(instrument_id), [])
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-5m",
@@ -2926,8 +2921,8 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
-            down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
         )
     )
     sidecar = StrategyCustomDataState()
@@ -2956,9 +2951,9 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
         )
     )
     fake_cache = FakeCache()
-    books = NautilusCacheMarketDataProvider(fake_cache, registry=registry)
+    books = NautilusCacheMarketDataProvider(fake_cache, catalog=registry)
     assembler = MarketViewAssembler(
-        registry=registry,
+        catalog=registry,
         books=books,
         custom_data=sidecar,
     )
@@ -3003,10 +2998,10 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
     from types import SimpleNamespace
 
     from polysignal_lab.alpha.one_cent_buy_core import OneCentBuyAlphaCore
-    from polysignal_lab.nautilus_bridge.market_registry import (
+    from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        PolymarketMarketRegistry,
+        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
     from polysignal_lab.strategies.config import OneCentBuyConfig
@@ -3077,7 +3072,7 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
         def submit_order(self, order: object) -> None:
             self.submitted.append(order)
 
-    registry = PolymarketMarketRegistry()
+    registry = MarketCatalog()
     registry.register(
         MarketPairMeta(
             market_id="btc-5m",
@@ -3087,8 +3082,8 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
             timeframe="5m",
             start_ts=None,
             end_ts=None,
-            up=InstrumentTokenMeta("up-token.POLYMARKET", "up-token", Side.UP),
-            down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
         )
     )
     observability = RecordingObservability()
