@@ -293,3 +293,22 @@ async def test_market_ws_resubscribes_when_token_set_changes(tmp_path: Path) -> 
         tuple(token.token_id for token in first_market.outcome_tokens),
         tuple(token.token_id for token in second_market.outcome_tokens),
     ]
+
+
+# ── Dead code removal verification ──
+
+
+def test_scheduler_runtime_no_tick_resting_orders() -> None:
+    """_tick_resting_orders was a no-op function and has been removed."""
+    import polysignal_lab.app.scheduler_runtime as sr
+    assert not hasattr(sr, "_tick_resting_orders"), (
+        "_tick_resting_orders no-op should have been removed"
+    )
+
+
+def test_scheduler_reporting_no_store_paper_result() -> None:
+    """_store_paper_result was dead code and has been removed."""
+    import polysignal_lab.app.scheduler_reporting as sr
+    assert not hasattr(sr, "_store_paper_result"), (
+        "_store_paper_result dead code should have been removed"
+    )

@@ -201,10 +201,6 @@ async def _process_iteration_signals(
         scheduler.logger.error("process_accepted_signals failed: %s", exc)
 
 
-def _tick_resting_orders(_scheduler: PolySignalScheduler) -> None:
-    return None
-
-
 async def _check_iteration_settlements(scheduler: PolySignalScheduler) -> None:
     try:
         settled = await scheduler.check_settlements()
