@@ -1,7 +1,7 @@
-"""Nautilus runtime package — PolySignal-owned async orchestrator.
+"""Nautilus runtime package.
 
-Wires the scheduler, bridge, book data, data ingestor, observability,
-and the orchestrator loop into a single NautilusRuntimeBundle.
+Provides lazy optional-dependency entry points for LiveNode-owned runtime wiring,
+PolySignal strategy/custom-data components, cache projections, and reporting.
 """
 
 from polysignal_lab.nautilus_runtime.node import (
