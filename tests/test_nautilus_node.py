@@ -47,7 +47,7 @@ def _patch_live_node_config_imports(monkeypatch):
         _fake_import_callable,
     )
 
-def test_live_engine_config_builders_import_configs_from_live_module(monkeypatch) -> None:
+def test_live_engine_config_builders_import_configs_from_config_module(monkeypatch) -> None:
     from polysignal_lab.nautilus_runtime import live_node
 
     calls: list[tuple[str, str]] = []
@@ -66,8 +66,8 @@ def test_live_engine_config_builders_import_configs_from_live_module(monkeypatch
     live_node.build_exec_engine_config()
 
     assert calls == [
-        ("nautilus_trader.live", "LiveDataEngineConfig"),
-        ("nautilus_trader.live", "LiveExecEngineConfig"),
+        ("nautilus_trader.config", "LiveDataEngineConfig"),
+        ("nautilus_trader.config", "LiveExecEngineConfig"),
     ]
 
 
