@@ -83,19 +83,10 @@ class CrossMarketNautilusStrategy:
         book = view.book_for(approved.signal.side)
         best_ask = book.best_ask
         try:
-            max_entry_price = cast("float | None", approved.signal.max_entry_price)
-            available: float | None = None
-            if book.ask_levels and max_entry_price is not None:
-                available = sum(
-                    float(size)
-                    for price, size in book.ask_levels
-                    if float(price) <= float(max_entry_price)
-                )
             spec = order_spec_from_decision(
                 approved,
                 fixed_stake_usdc=self.fixed_stake_usdc,
                 best_ask=best_ask,
-                available_shares=available,
             )
         except ValueError:
             self.rejected_decisions.append(

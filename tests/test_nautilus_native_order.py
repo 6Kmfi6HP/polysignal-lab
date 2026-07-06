@@ -70,6 +70,7 @@ class FakeStrategy:
     def __init__(self) -> None:
         self.order_factory: FakeOrderFactory = FakeOrderFactory()
         self.submitted: list[FakeOrder] = []
+        self.submitted_orders = self.submitted
 
     def submit_order(self, order: FakeOrder) -> None:
         self.submitted.append(order)
@@ -108,7 +109,6 @@ def test_submit_approved_decision_submits_limit_order_through_strategy() -> None
         _approved(OrderIntent.TAKER_IOC),
         fixed_stake_usdc=10.0,
         best_ask=0.50,
-        available_shares=100.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
     )
 
@@ -142,7 +142,6 @@ def test_submit_approved_decision_uses_instrument_value_converters() -> None:
         _approved(OrderIntent.TAKER_IOC),
         fixed_stake_usdc=10.0,
         best_ask=0.50,
-        available_shares=100.0,
         instrument_id_resolver=lambda _token_id: FakeInstrument(),
     )
 
@@ -167,7 +166,6 @@ def test_submit_approved_decision_quantizes_price_before_instrument_converter() 
         _approved(OrderIntent.TAKER_IOC),
         fixed_stake_usdc=10.0,
         best_ask=0.512,
-        available_shares=100.0,
         instrument_id_resolver=lambda _token_id: FakeInstrument(),
     )
 
@@ -215,7 +213,6 @@ def test_submit_approved_decision_preserves_price_precision_when_price_type_avai
         approved,
         fixed_stake_usdc=10.0,
         best_ask=0.73,
-        available_shares=100.0,
         instrument_id_resolver=lambda _token_id: FakeInstrument(),
     )
 
@@ -232,7 +229,6 @@ def test_submit_approved_decision_maps_passive_gtd_expiry() -> None:
         _approved(OrderIntent.PASSIVE_GTD),
         fixed_stake_usdc=10.0,
         best_ask=0.50,
-        available_shares=100.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         now=lambda: datetime(2026, 6, 27, tzinfo=UTC),
     )
@@ -248,7 +244,6 @@ def test_submit_approved_decision_passive_gtd_allows_no_immediate_visible_depth(
         _approved(OrderIntent.PASSIVE_GTD),
         fixed_stake_usdc=10.0,
         best_ask=0.50,
-        available_shares=0.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         now=lambda: datetime(2026, 6, 27, tzinfo=UTC),
     )
@@ -257,24 +252,19 @@ def test_submit_approved_decision_passive_gtd_allows_no_immediate_visible_depth(
     assert strategy.submitted == [order]
 
 
-def test_submit_approved_decision_fok_rejects_insufficient_depth_before_submit() -> None:
+def test_submit_approved_decision_does_not_require_available_shares() -> None:
     strategy = FakeStrategy()
+    approved = _approved(OrderIntent.TAKER_FOK)
 
-    try:
-        _ = submit_approved_decision(
-            cast(OrderSubmittingStrategy[FakeOrder], strategy),
-            _approved(OrderIntent.TAKER_FOK),
-            fixed_stake_usdc=10.0,
-            best_ask=0.50,
-            available_shares=1.0,
-            instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
-        )
-    except ValueError as exc:
-        assert "insufficient depth" in str(exc)
-    else:
-        raise AssertionError("expected insufficient depth rejection")
+    order = submit_approved_decision(
+        cast(OrderSubmittingStrategy[FakeOrder], strategy),
+        approved,
+        fixed_stake_usdc=10.0,
+        best_ask=0.50,
+        instrument_id_resolver=lambda value: value,
+    )
 
-    assert strategy.submitted == []
+    assert order is strategy.submitted_orders[-1]
 
 
 def test_runtime_native_strategy_type_initializes_nautilus_base() -> None:

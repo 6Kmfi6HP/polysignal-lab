@@ -334,8 +334,8 @@ def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     class Book:
-        best_ask: float | None = 0.50
-        ask_levels: tuple[tuple[float, float], ...] = ((0.50, 1.0),)
+        best_ask: float | None = 0.55
+        ask_levels: tuple[tuple[float, float], ...] = ((0.55, 100.0),)
 
     class View(_MockView):
         def book_for(self, side: Side) -> _BookViewLike:

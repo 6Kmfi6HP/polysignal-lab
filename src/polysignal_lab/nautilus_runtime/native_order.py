@@ -42,7 +42,6 @@ def submit_approved_decision(
     *,
     fixed_stake_usdc: float,
     best_ask: float | None,
-    available_shares: float | None,
     instrument_id_resolver: Callable[[str], object],
     now: Callable[[], datetime] | None = None,
 ) -> OrderT:
@@ -52,7 +51,6 @@ def submit_approved_decision(
         approved,
         fixed_stake_usdc=fixed_stake_usdc,
         best_ask=best_ask,
-        available_shares=available_shares,
     )
     instrument = instrument_id_resolver(spec.instrument_id)
     order_side = _order_side(spec.side, reduce_only=spec.reduce_only)

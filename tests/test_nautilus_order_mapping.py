@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import pytest
-
 from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
@@ -50,7 +48,6 @@ def test_taker_fak_maps_to_ioc_limit_at_best_ask_and_checks_depth() -> None:
         _decision(intent=OrderIntent.TAKER_FAK, max_price=0.55),
         fixed_stake_usdc=11.0,
         best_ask=0.50,
-        available_shares=30.0,
     )
 
     assert spec.instrument_id == "up-token"
@@ -66,7 +63,6 @@ def test_order_spec_tags_include_signal_display_metadata() -> None:
         _decision(intent=OrderIntent.TAKER_FAK, max_price=0.55),
         fixed_stake_usdc=11.0,
         best_ask=0.50,
-        available_shares=30.0,
     )
 
     assert spec.tags["asset"] == "BTC"
@@ -77,52 +73,49 @@ def test_order_spec_tags_include_signal_display_metadata() -> None:
     assert spec.tags["confidence"] == "0.8"
 
 
-def test_taker_fak_rejects_when_visible_depth_cannot_fill_any_shares() -> None:
-    try:
-        order_spec_from_decision(
-            _decision(intent=OrderIntent.TAKER_FAK),
-            fixed_stake_usdc=10.0,
-            best_ask=0.50,
-            available_shares=0.0,
-        )
-    except ValueError as exc:
-        assert "insufficient depth" in str(exc)
-    else:  # pragma: no cover - assertion path
-        raise AssertionError("expected insufficient depth rejection")
-
-
-def test_taker_fok_maps_to_fok_and_requires_full_visible_depth() -> None:
+def test_taker_fok_maps_to_fok_without_depth_precheck() -> None:
     spec = order_spec_from_decision(
         _decision(intent=OrderIntent.TAKER_FOK),
         fixed_stake_usdc=10.0,
         best_ask=0.50,
-        available_shares=20.0,
     )
 
     assert spec.quantity == 20.0
     assert spec.tags["time_in_force"] == "FOK"
 
-    try:
-        order_spec_from_decision(
-            _decision(intent=OrderIntent.TAKER_FOK),
-            fixed_stake_usdc=10.0,
-            best_ask=0.50,
-            available_shares=19.99,
-        )
-    except ValueError as exc:
-        assert "full fill" in str(exc)
-    else:  # pragma: no cover - assertion path
-        raise AssertionError("expected FOK depth rejection")
 
+def test_fok_order_mapping_does_not_pre_reject_missing_depth() -> None:
+    signal = SignalCandidate.build(
+        strategy="ptb_diff",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        condition_id="condition-btc-5m",
+        token_id="up-token",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.48,
+        max_entry_price=0.50,
+        seconds_to_close=60,
+        data_freshness_ms=20,
+        reason_codes=["TEST"],
+        metrics={},
+        order_intent=OrderIntent.TAKER_FOK,
+        hedge_leg=False,
+    )
+    approved = ApprovedDecision(signal=signal)
 
-def test_taker_fok_rejects_unknown_visible_depth() -> None:
-    with pytest.raises(ValueError, match="insufficient depth for full fill"):
-        order_spec_from_decision(
-            _decision(intent=OrderIntent.TAKER_FOK),
-            fixed_stake_usdc=10.0,
-            best_ask=0.50,
-            available_shares=None,
-        )
+    spec = order_spec_from_decision(
+        approved,
+        fixed_stake_usdc=10.0,
+        best_ask=0.50,
+    )
+
+    assert spec.intent == OrderIntent.TAKER_FOK
+    assert spec.price == 0.50
+    assert spec.quantity == 20.0
+    assert spec.tags["time_in_force"] == "FOK"
 
 
 def test_passive_gtd_maps_expiry_seconds_to_gtd_tags() -> None:
@@ -195,7 +188,6 @@ def test_late_consensus_maps_to_current_favorite_ask_not_price_ceiling() -> None
         ApprovedDecision(signal=signal),
         fixed_stake_usdc=10.0,
         best_ask=0.82,
-        available_shares=500.0,
     )
 
     assert spec.intent == OrderIntent.TAKER_IOC

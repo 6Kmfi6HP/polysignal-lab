@@ -13,7 +13,6 @@ def order_spec_from_decision(
     decision: ApprovedDecision | AlphaDecision | SignalCandidate,
     fixed_stake_usdc: float,
     best_ask: float | None = None,
-    available_shares: float | None = None,
 ) -> NautilusOrderSpec:
     source = _decision_source(decision)
     max_price = _positive_float(source.max_entry_price, "max_entry_price")
@@ -21,10 +20,6 @@ def order_spec_from_decision(
     expiry_seconds = _expiry_seconds(source)
     pair_id = _pair_id(source)
     metrics = dict(cast(Mapping[str, object], source.metrics))
-    if available_shares is None:
-        available_shares = _metric_float(
-            metrics, "available_ask_shares", "ask_available_shares", "depth_shares"
-        )
 
     explicit_intent = _intent(source)
     if explicit_intent is None:
@@ -53,12 +48,8 @@ def order_spec_from_decision(
         if contracts is not None
         else _positive_float(fixed_stake_usdc, "fixed_stake_usdc") / price
     )
-    if intent == OrderIntent.TAKER_FOK:
-        if available_shares is None or available_shares < quantity:
-            raise ValueError("insufficient depth for full fill")
-    elif intent in {OrderIntent.TAKER_FAK, OrderIntent.TAKER_IOC}:
-        if available_shares is not None and available_shares <= 0:
-            raise ValueError("insufficient depth for taker order")
+    if quantity <= 0:
+        raise ValueError("quantity must be positive")
 
     tags: dict[str, str] = {
         "strategy": str(source.strategy),

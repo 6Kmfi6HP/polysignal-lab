@@ -669,9 +669,6 @@ class PolySignalNativeStrategy:
             approved,
             fixed_stake_usdc=self.fixed_stake_usdc,
             best_ask=book.best_ask,
-            available_shares=_visible_ask_shares(
-                book.ask_levels, signal.max_entry_price
-            ),
             instrument_id_resolver=self._resolved_instrument,
         )
 
@@ -1170,14 +1167,6 @@ def _asset_conditions(
             continue
         grouped.setdefault(pair.asset.upper(), []).append(condition_id)
     return {asset: tuple(ids) for asset, ids in grouped.items()}
-
-
-def _visible_ask_shares(
-    levels: Sequence[tuple[float, float]], limit_price: float | None
-) -> float | None:
-    if not levels or limit_price is None:
-        return None
-    return sum(float(size) for price, size in levels if float(price) <= limit_price)
 
 
 def _identifier_text(value: object) -> str | None:
