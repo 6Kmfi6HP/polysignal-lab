@@ -6,11 +6,11 @@ from polysignal_lab.alpha.one_cent_buy_core import OneCentBuyAlphaCore
 from polysignal_lab.alpha.types import NautilusOrderSpec
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
-from polysignal_lab.nautilus_runtime.strategies.base import DEFAULT_DATA_NAMES, PolySignalNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.base import DEFAULT_DATA_NAMES, CompatPolySignalNautilusStrategy
 from polysignal_lab.strategies.config import OneCentBuyConfig
 
 
-class OneCentBuyNautilusStrategy(PolySignalNautilusStrategy):
+class OneCentBuyNautilusStrategy(CompatPolySignalNautilusStrategy):
     def __init__(
         self,
         *,

@@ -6,11 +6,11 @@ from polysignal_lab.alpha.ninety_nine_cent_sniper_core import NinetyNineCentSnip
 from polysignal_lab.alpha.types import NautilusOrderSpec
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
-from polysignal_lab.nautilus_runtime.strategies.base import DEFAULT_DATA_NAMES, PolySignalNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.base import DEFAULT_DATA_NAMES, CompatPolySignalNautilusStrategy
 from polysignal_lab.strategies.config import NinetyNineCentSniperConfig
 
 
-class NinetyNineCentSniperNautilusStrategy(PolySignalNautilusStrategy):
+class NinetyNineCentSniperNautilusStrategy(CompatPolySignalNautilusStrategy):
     def __init__(
         self,
         *,
