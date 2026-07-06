@@ -106,7 +106,6 @@ def test_evaluate_condition_submits_exit_order_for_qualifying_position(monkeypat
         condition_ids=("condition-1",),
         strategy_name="test",
         registry=Registry(),
-        sidecar=SimpleNamespace(),
         exit_model=ExitModelConfig(),
         instrument_id_resolver=lambda value: value,
     )
@@ -208,7 +207,6 @@ def _exit_evaluation_fixtures():
         condition_ids=("condition-1",),
         strategy_name="test",
         registry=registry,
-        sidecar=SimpleNamespace(),
         exit_model=ExitModelConfig(),
         instrument_id_resolver=lambda value: value,
     )

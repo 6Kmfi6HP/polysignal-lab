@@ -346,7 +346,6 @@ def test_default_runtime_has_no_dynamic_runtime_class_factories() -> None:
 
     assert findings == []
 
-@pytest.mark.xfail(strict=True, reason="Task 4 removes shared external sidecar state")
 def test_default_runtime_has_no_shared_external_sidecar_store() -> None:
     forbidden_paths = (
         Path("src/polysignal_lab/nautilus_bridge/external_data.py"),

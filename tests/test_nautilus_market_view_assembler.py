@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import sys
-from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
+from datetime import UTC, datetime
 
-from polysignal_lab.alpha.types import SideBookView, SpotView, TradeView
+from polysignal_lab.alpha.types import SideBookView, TradeView
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import MarketPairMeta, PolymarketMarketRegistry
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
-from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketMetaData
-from polysignal_lab.nautilus_runtime.sidecar_data import SidecarDataActor
+from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatData, PolySignalSpotData
 from factories import MarketFactoryConfig, sample_market
 
 
@@ -26,52 +23,51 @@ class FakeBookProvider:
         return self.trades.get(token_id, ())
 
 
-class FakePublisher:
-    def __init__(self) -> None:
-        self.published: list[object] = []
-
-    def publish_data(self, data_type: object, data: object) -> None:
-        self.published.append(data)
-
-
-def _install_fake_polymarket_id_helper(monkeypatch) -> None:
-    def helper(condition_id: str, token_id: str) -> str:
-        return f"{condition_id}-{token_id}.POLYMARKET"
-
-    monkeypatch.setitem(
-        sys.modules,
-        "nautilus_trader.adapters.polymarket",
-        SimpleNamespace(get_polymarket_instrument_id=helper),
-    )
-
-
-def _components() -> tuple[MarketViewAssembler, MarketPairMeta, FakeBookProvider, ExternalDataSidecar]:
+def _components() -> tuple[MarketViewAssembler, MarketPairMeta, FakeBookProvider, StrategyCustomDataState]:
     market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m", seconds_to_close=60, price_to_beat=100000.0))
     pair = MarketPairMeta.from_market(market)
     registry = PolymarketMarketRegistry()
     registry.register(pair)
     books = FakeBookProvider()
-    sidecar = ExternalDataSidecar()
-    assembler = MarketViewAssembler(registry=registry, books=books, sidecar=sidecar)
-    return assembler, pair, books, sidecar
+    custom_data = StrategyCustomDataState()
+    assembler = MarketViewAssembler(registry=registry, books=books, custom_data=custom_data)
+    return assembler, pair, books, custom_data
+
+
+def _apply_custom_data(custom_data: StrategyCustomDataState, condition_id: str) -> None:
+    custom_data.apply(
+        PolySignalSpotData(
+            asset="BTC",
+            symbol="BTCUSD",
+            price=100120.0,
+            source="polymarket_rtds",
+            freshness_ms=30,
+            ts_event=1,
+            ts_init=2,
+        )
+    )
+    custom_data.apply(
+        PolySignalPriceToBeatData(
+            condition_id=condition_id,
+            value=100000.0,
+            source="anchor",
+            verified=True,
+            from_anchor_service=True,
+            anchor_source="chainlink",
+            anchor_lag_ms=40,
+            ts_event=3,
+            ts_init=4,
+        )
+    )
 
 
 def test_assembler_builds_coherent_market_view() -> None:
-    assembler, pair, books, sidecar = _components()
+    assembler, pair, books, custom_data = _components()
     now = datetime(2026, 1, 1, tzinfo=UTC)
     books.books[pair.up.token_id] = SideBookView(pair.up.token_id, best_bid=0.81, best_ask=0.82, spread=0.01, freshness_ms=10)
     books.books[pair.down.token_id] = SideBookView(pair.down.token_id, best_bid=0.17, best_ask=0.18, spread=0.01, freshness_ms=20)
     books.trades[pair.up.token_id] = (TradeView(price=0.82, size=5.0, side="BUY", ts=now),)
-    sidecar.update_spot(SpotView(asset="BTC", symbol="BTCUSD", price=100120.0, source="polymarket_rtds", freshness_ms=30))
-    sidecar.update_price_to_beat(
-        condition_id=pair.condition_id,
-        value=100000.0,
-        source="anchor",
-        verified=True,
-        from_anchor_service=True,
-        anchor_source="chainlink",
-        anchor_lag_ms=40,
-    )
+    _apply_custom_data(custom_data, pair.condition_id)
 
     view = assembler.build(pair.condition_id, created_at=now)
 
@@ -90,24 +86,15 @@ def test_assembler_builds_coherent_market_view() -> None:
 
 
 def test_assembler_returns_none_when_down_leg_missing() -> None:
-    assembler, pair, books, sidecar = _components()
+    assembler, pair, books, custom_data = _components()
     books.books[pair.up.token_id] = SideBookView(pair.up.token_id, best_bid=0.81, best_ask=0.82, spread=0.01, freshness_ms=10)
-    sidecar.update_spot(SpotView(asset="BTC", symbol="BTCUSD", price=100120.0, source="polymarket_rtds", freshness_ms=30))
-    sidecar.update_price_to_beat(
-        condition_id=pair.condition_id,
-        value=100000.0,
-        source="anchor",
-        verified=True,
-        from_anchor_service=True,
-        anchor_source="chainlink",
-        anchor_lag_ms=40,
-    )
+    _apply_custom_data(custom_data, pair.condition_id)
 
     assert assembler.build(pair.condition_id) is None
 
 
-def test_assembler_builds_view_when_optional_sidecar_data_missing() -> None:
-    assembler, pair, books, _sidecar = _components()
+def test_assembler_builds_view_when_optional_custom_data_missing() -> None:
+    assembler, pair, books, _custom_data = _components()
     books.books[pair.up.token_id] = SideBookView(pair.up.token_id, best_bid=0.81, best_ask=0.82, spread=0.01, freshness_ms=10)
     books.books[pair.down.token_id] = SideBookView(pair.down.token_id, best_bid=0.17, best_ask=0.18, spread=0.01, freshness_ms=20)
 
@@ -121,29 +108,14 @@ def test_assembler_builds_view_when_optional_sidecar_data_missing() -> None:
     assert "price_to_beat_source" not in view.metrics
 
 
-def test_assembler_metadata_ingestion_registers_pair_by_condition_and_token(monkeypatch) -> None:
-    _install_fake_polymarket_id_helper(monkeypatch)
-    registry = PolymarketMarketRegistry()
-    actor = SidecarDataActor(publisher=FakePublisher(), registry=registry)
-    meta = PolySignalMarketMetaData(
-        market_id="market-1",
-        market_slug="slug-1",
-        condition_id="condition-1",
-        asset="BTC",
-        timeframe="5m",
-        start_ts_ns=1,
-        end_ts_ns=2,
-        up_token_id="up-token",
-        down_token_id="down-token",
-        ts_event=3,
-        ts_init=4,
-    )
+def test_strategy_custom_data_state_applies_snapshots_for_assembler() -> None:
+    state = StrategyCustomDataState()
 
-    actor.publish_market_metadata(meta)
+    _apply_custom_data(state, "condition-1")
 
-    pair = registry.by_condition("condition-1")
-    assert pair is not None
-    assert pair.market_id == "market-1"
-    assert pair.asset == "BTC"
-    assert registry.by_token("up-token") is pair
-    assert registry.by_token("down-token") is pair
+    spot = state.spot_for("btc")
+    ptb = state.ptb_for("condition-1")
+    assert spot is not None
+    assert spot.asset == "BTC"
+    assert ptb is not None
+    assert ptb.verified is True

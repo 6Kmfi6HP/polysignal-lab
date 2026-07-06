@@ -13,14 +13,13 @@ from polysignal_lab.data.state import SpotRegistry
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.spot import SpotPrice
-from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
 from polysignal_lab.nautilus_runtime.market_data import (
     PolySignalMarketUniverseData,
     register_polysignal_data_types,
 )
 from polysignal_lab.nautilus_runtime.sidecar_data import (
-    SidecarDataActor,
+    CustomDataPublisher,
     _market_metadata,  # pyright: ignore[reportPrivateUsage] - shared sidecar serializer has no public equivalent.
     _timestamp_ns,  # pyright: ignore[reportPrivateUsage] - shared sidecar timestamp helper has no public equivalent.
 )
@@ -55,20 +54,14 @@ class MarketRotationActor:
         startup_markets: tuple[Market, ...],
         market_universe: _MarketUniverse,
         registry: PolymarketMarketRegistry,
-        sidecar: ExternalDataSidecar,
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
     ) -> None:
         self.settings: Settings = settings
         self.market_universe: _MarketUniverse = market_universe
         self.registry: PolymarketMarketRegistry = registry
-        self.sidecar: ExternalDataSidecar = sidecar
         self.health: _Health | None = health
-        self.publisher: SidecarDataActor = SidecarDataActor(
-            publisher=self,
-            sidecar=sidecar,
-            registry=registry,
-        )
+        self.publisher: CustomDataPublisher = CustomDataPublisher(publisher=self)
         self.spots: SpotRegistry = SpotRegistry()
         self.anchor_prices: AnchorPriceService | None = (
             AnchorPriceService(self.spots, anchor_store)

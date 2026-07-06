@@ -344,7 +344,6 @@ def test_static_native_strategy_initializes_nautilus_base(
         condition_ids=(),
         strategy_name="ptb_diff",
         registry=FakeRegistry(),
-        sidecar=object(),
     )
 
     assert getattr(strategy, "nautilus_config") == "strategy-config"

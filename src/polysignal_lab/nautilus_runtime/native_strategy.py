@@ -16,11 +16,9 @@ from polysignal_lab.alpha.types import (
     AlphaFillEvent,
     AlphaOrderEvent,
     MarketView,
-    SpotView,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import (
     InstrumentTokenMeta,
     MarketPairMeta,
@@ -31,6 +29,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicyActor,
     RejectedDecision,
 )
+from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.market_data import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
@@ -43,7 +42,7 @@ from polysignal_lab.nautilus_runtime.native_order import (
 )
 
 DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
-MISSING_PROJECTIONS_ERROR = "PolySignalNativeStrategy requires injected registry, sidecar, and assembler projections"
+MISSING_PROJECTIONS_ERROR = "PolySignalNativeStrategy requires injected registry and assembler projections"
 EVALUATION_HEARTBEAT_TIMER_NAME = "polysignal_evaluation_heartbeat"
 EVALUATION_HEARTBEAT_INTERVAL = timedelta(seconds=10)
 DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS = 1000
@@ -157,6 +156,17 @@ def _nautilus_data_type(value: object) -> object:
     return value
 
 
+def _assembler_with_custom_data(
+    assembler: _Assembler,
+    custom_data: StrategyCustomDataState,
+) -> _Assembler:
+    with_custom_data = getattr(assembler, "with_custom_data", None)
+    if callable(with_custom_data):
+        return cast(_Assembler, with_custom_data(custom_data))
+    if hasattr(assembler, "custom_data"):
+        setattr(assembler, "custom_data", custom_data)
+    return assembler
+
 
 
 class PolySignalNativeStrategy:
@@ -175,18 +185,18 @@ class PolySignalNativeStrategy:
         book_type: str = "L2_MBP",
         instrument_id_resolver: Callable[[str], object] | None = None,
         registry: PolymarketMarketRegistry | None = None,
-        sidecar: ExternalDataSidecar | None = None,
         observability: _Observability | None = None,
         exit_model: object | None = None,
         progress_callback: Callable[[str], None] | None = None,
         unsubscribe_exited: bool = True,
         l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
     ) -> None:
-        if registry is None or sidecar is None or assembler is None:
+        if registry is None or assembler is None:
             raise RuntimeError(MISSING_PROJECTIONS_ERROR)
 
         self.core: AlphaCore = core
-        self.assembler: _Assembler = assembler
+        self.custom_data: StrategyCustomDataState = StrategyCustomDataState()
+        self.assembler: _Assembler = _assembler_with_custom_data(assembler, self.custom_data)
         self.condition_ids: tuple[str, ...] = tuple(condition_ids)
         self.strategy_name: str = strategy_name
         self.policy: DecisionPolicyActor = policy or DecisionPolicyActor()
@@ -198,7 +208,6 @@ class PolySignalNativeStrategy:
             instrument_id_resolver or _identity_instrument_id
         )
         self.registry: PolymarketMarketRegistry | None = registry
-        self.sidecar: ExternalDataSidecar | None = sidecar
         self.observability: _Observability | None = observability
         self.cache_reader: object | None = None
         self.exit_model: object | None = exit_model
@@ -226,10 +235,6 @@ class PolySignalNativeStrategy:
             raise RuntimeError(MISSING_PROJECTIONS_ERROR)
         return self.registry
 
-    def _require_sidecar(self) -> ExternalDataSidecar:
-        if self.sidecar is None:
-            raise RuntimeError(MISSING_PROJECTIONS_ERROR)
-        return self.sidecar
 
     def _require_assembler(self) -> _Assembler:
         return self.assembler
@@ -243,7 +248,6 @@ class PolySignalNativeStrategy:
     def on_start(self) -> None:
         self._note_runtime_progress("start")
         _ = self._require_registry()
-        _ = self._require_sidecar()
         _ = self._require_assembler()
         self._subscribe_market_conditions(self._startup_condition_ids)
         _subscribe_custom_data(self, PolySignalSpotData)
@@ -284,36 +288,18 @@ class PolySignalNativeStrategy:
         if classify_project_owned_data(data) is DataBoundaryClassification.DROPPED_FRAME:
             self._note_runtime_progress("dropped_frame")
             return
-        if isinstance(data, PolySignalSpotData):
-            sidecar = self._require_sidecar()
-            sidecar.update_spot(
-                SpotView(
-                    asset=data.asset,
-                    symbol=data.symbol,
-                    price=data.price,
-                    source=data.source,
-                    freshness_ms=data.freshness_ms,
+        if isinstance(data, (PolySignalSpotData, PolySignalPriceToBeatData)):
+            result = self.custom_data.apply(data)
+            if result.spot_asset is not None:
+                for candidate in self._asset_condition_ids.get(result.spot_asset, ()):
+                    self.evaluate_condition(candidate)
+                return
+            if result.price_to_beat_condition_id is not None:
+                self._retry_market_instrument_requests(
+                    (result.price_to_beat_condition_id,), retry_after=timedelta(seconds=10)
                 )
-            )
-            for candidate in self._asset_condition_ids.get(data.asset.upper(), ()):
-                self.evaluate_condition(candidate)
-            return
-        if isinstance(data, PolySignalPriceToBeatData):
-            sidecar = self._require_sidecar()
-            sidecar.update_price_to_beat(
-                condition_id=data.condition_id,
-                value=data.value,
-                source=data.source,
-                verified=data.verified,
-                from_anchor_service=data.from_anchor_service,
-                anchor_source=data.anchor_source,
-                anchor_lag_ms=data.anchor_lag_ms,
-            )
-            self._retry_market_instrument_requests(
-                (data.condition_id,), retry_after=timedelta(seconds=10)
-            )
-            self.evaluate_condition(data.condition_id)
-            return
+                self.evaluate_condition(result.price_to_beat_condition_id)
+                return
         if isinstance(data, PolySignalMarketMetaData):
             registry = self._require_registry()
             registry.register(

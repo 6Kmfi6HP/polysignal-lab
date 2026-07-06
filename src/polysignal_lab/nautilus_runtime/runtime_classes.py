@@ -10,7 +10,6 @@ from polysignal_lab.alpha.types import AlphaCore
 from polysignal_lab.config import Settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.domain.market import Market
-from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.market_rotation import (
@@ -41,7 +40,6 @@ class NautilusPolySignalNativeStrategy(PolySignalNativeStrategy, Strategy):
         book_type: str = "L2_MBP",
         instrument_id_resolver: Callable[[str], object] | None = None,
         registry: PolymarketMarketRegistry | None = None,
-        sidecar: ExternalDataSidecar | None = None,
         observability: _Observability | None = None,
         exit_model: object | None = None,
         progress_callback: Callable[[str], None] | None = None,
@@ -61,7 +59,6 @@ class NautilusPolySignalNativeStrategy(PolySignalNativeStrategy, Strategy):
             book_type=book_type,
             instrument_id_resolver=instrument_id_resolver,
             registry=registry,
-            sidecar=sidecar,
             observability=observability,
             exit_model=exit_model,
             progress_callback=progress_callback,
@@ -78,7 +75,6 @@ class NautilusMarketRotationActor(MarketRotationActor, Actor):
         startup_markets: tuple[Market, ...],
         market_universe: _MarketUniverse,
         registry: PolymarketMarketRegistry,
-        sidecar: ExternalDataSidecar,
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
     ) -> None:
@@ -89,7 +85,6 @@ class NautilusMarketRotationActor(MarketRotationActor, Actor):
             startup_markets=startup_markets,
             market_universe=market_universe,
             registry=registry,
-            sidecar=sidecar,
             anchor_store=anchor_store,
             health=health,
         )

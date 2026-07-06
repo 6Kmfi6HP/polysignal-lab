@@ -140,6 +140,14 @@ def _patch_live_node_builder_fakes(monkeypatch: pytest.MonkeyPatch) -> SimpleNam
     monkeypatch.setattr(live_node_mod, "Environment", SimpleNamespace(SANDBOX="SANDBOX"))
     monkeypatch.setattr(live_node_mod, "PolymarketLiveDataClientFactory", FakePolymarketLiveDataClientFactory)
     monkeypatch.setattr(live_node_mod, "SandboxLiveExecClientFactory", FakeSandboxLiveExecClientFactory)
+    from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    monkeypatch.setattr(
+        node_mod,
+        "_load_runtime_classes",
+        lambda: (PolySignalNativeStrategy, MarketRotationActor),
+    )
 
     return SimpleNamespace(
         node_mod=node_mod,
@@ -207,9 +215,9 @@ def test_build_trading_node_uses_cache_backed_market_data_provider(monkeypatch: 
 
 
 def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkeypatch: pytest.MonkeyPatch) -> None:
-    import polysignal_lab.nautilus_runtime.sidecar_data as sidecar_mod
+    import polysignal_lab.nautilus_runtime.market_rotation as rotation_mod
     from polysignal_lab.domain.spot import SpotPrice
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
+    from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
         MarketPairMeta,
@@ -223,7 +231,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
         PolySignalSpotData,
     )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-    from polysignal_lab.nautilus_runtime.sidecar_data import PolySignalRuntimeSidecarActor
+    from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
 
     published: list[object] = []
     ptb_ran = False
@@ -354,9 +362,9 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
             down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
         )
     )
-    sidecar = ExternalDataSidecar()
+    custom_data = StrategyCustomDataState()
     books = NautilusCacheMarketDataProvider(FakeCache(), registry=registry)
-    assembler = MarketViewAssembler(registry=registry, books=books, sidecar=sidecar)
+    assembler = MarketViewAssembler(registry=registry, books=books, custom_data=custom_data)
     strategy = FakeStrategy(
         core=FakeCore(),
         assembler=assembler,
@@ -366,14 +374,14 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
         fixed_stake_usdc=10.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         registry=registry,
-        sidecar=sidecar,
     )
 
-    actor = PolySignalRuntimeSidecarActor(
-        settings=Settings(),
-        markets=(market,),
+    settings = Settings()
+    actor = MarketRotationActor(
+        settings=settings,
+        startup_markets=(market,),
+        market_universe=SimpleNamespace(refresh_once=lambda: []),
         registry=registry,
-        sidecar=sidecar,
         anchor_store=None,
     )
     def publish_and_route(data_type: object, data: object) -> None:
@@ -394,7 +402,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
         )
 
     monkeypatch.setattr("asyncio.create_task", fake_create_task)
-    monkeypatch.setattr(sidecar_mod, "register_polysignal_data_types", lambda: None)
+    monkeypatch.setattr(rotation_mod, "_register_polysignal_data_types_if_available", lambda: None)
     monkeypatch.setattr(actor.ptb_provider, "get", fake_get)
 
     actor.on_start()
@@ -432,7 +440,7 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
     import polysignal_lab.nautilus_runtime.market_rotation as rotation_mod
     import polysignal_lab.nautilus_runtime.node as node_mod
     from polysignal_lab.domain.spot import SpotPrice
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
+    from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
     from polysignal_lab.nautilus_bridge.market_registry import (
         PolymarketMarketRegistry,
     )
@@ -614,9 +622,9 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
     settings.runtime.nautilus.market_rotation.enabled = False
     registry = PolymarketMarketRegistry()
     node_mod._register_markets(registry, (market_a,))
-    sidecar = ExternalDataSidecar()
+    custom_data = StrategyCustomDataState()
     books = NautilusCacheMarketDataProvider(FakeCache(), registry=registry)
-    assembler = MarketViewAssembler(registry=registry, books=books, sidecar=sidecar)
+    assembler = MarketViewAssembler(registry=registry, books=books, custom_data=custom_data)
     strategy = FakeStrategy(
         core=FakeCore(),
         assembler=assembler,
@@ -626,14 +634,12 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
         fixed_stake_usdc=10.0,
         instrument_id_resolver=node_mod._instrument_id_resolver(registry),
         registry=registry,
-        sidecar=sidecar,
     )
     actor = MarketRotationActor(
         settings=settings,
         startup_markets=(market_a,),
         market_universe=FakeUniverse(),
         registry=registry,
-        sidecar=sidecar,
         anchor_store=None,
     )
 

@@ -15,9 +15,11 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
-from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatData, PolySignalSpotData
+
 from polysignal_lab.nautilus_bridge.state import state_key
 from polysignal_lab.nautilus_bridge.strategies.ptb_diff import PTBDiffNautilusStrategy
 from polysignal_lab.nautilus_bridge.strategy_base import (
@@ -70,7 +72,6 @@ def _native_projections(
 ) -> dict[str, Any]:
     return {
         "registry": registry or PolymarketMarketRegistry(),
-        "sidecar": ExternalDataSidecar(),
     }
 
 
@@ -498,7 +499,6 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
 def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
     monkeypatch,
 ) -> None:
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
         MarketPairMeta,
@@ -548,7 +548,6 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -557,7 +556,6 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
 
 
 def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) -> None:
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
         MarketPairMeta,
@@ -628,14 +626,13 @@ def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) ->
         )
     )
 
-    sidecar = ExternalDataSidecar()
+    sidecar = StrategyCustomDataState()
     strategy = strategy_type(
         core=FakeCore([]),
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=sidecar,
     )
 
     strategy.on_start()
@@ -663,7 +660,7 @@ def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) ->
         )
     )
 
-    spot = sidecar.spot_for("BTC")
+    spot = strategy.custom_data.spot_for("BTC")
     assert spot is not None
     assert spot.price == 100000.0
 
@@ -727,7 +724,7 @@ def test_native_strategy_constructor_requires_injected_projections() -> None:
 
     with pytest.raises(
         RuntimeError,
-        match="requires injected registry, sidecar, and assembler projections",
+        match="requires injected registry and assembler projections",
     ):
         PolySignalNativeStrategy(
             core=FakeCore([]),
@@ -740,13 +737,12 @@ def test_native_strategy_constructor_requires_injected_projections() -> None:
 def test_native_strategy_constructor_requires_injected_assembler() -> None:
     import pytest
 
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     with pytest.raises(
         RuntimeError,
-        match="requires injected registry, sidecar, and assembler projections",
+        match="requires injected registry and assembler projections",
     ):
         PolySignalNativeStrategy(
             core=FakeCore([]),
@@ -754,14 +750,12 @@ def test_native_strategy_constructor_requires_injected_assembler() -> None:
             condition_ids=(),
             strategy_name="ptb_diff",
             registry=PolymarketMarketRegistry(),
-            sidecar=ExternalDataSidecar(),
         )
 
 
 def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_projections() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
     from polysignal_lab.nautilus_runtime.market_data import (
         PolySignalMarketMetaData,
@@ -785,7 +779,6 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
         condition_ids=(),
         strategy_name="ptb_diff",
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -799,7 +792,6 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
 def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
     from datetime import UTC, datetime, timedelta
 
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
     from polysignal_lab.nautilus_runtime.native_strategy import (
         EVALUATION_HEARTBEAT_TIMER_NAME,
@@ -836,7 +828,6 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         condition_ids=("condition-btc-5m", "condition-btc-retired"),
         strategy_name="ptb_diff",
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
     )
     strategy._active_condition_ids = {"condition-btc-5m"}
 
@@ -1258,19 +1249,17 @@ def test_native_strategy_readiness_gate_skips_real_market_view_with_empty_quote_
 def test_native_strategy_constructor_without_registry_fails_clearly() -> None:
     import pytest
 
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     with pytest.raises(
         RuntimeError,
-        match="requires injected registry, sidecar, and assembler projections",
+        match="requires injected registry and assembler projections",
     ):
         PolySignalNativeStrategy(
             core=FakeCore([]),
             assembler=_assembler(None),
             condition_ids=(),
             strategy_name="ptb_diff",
-            sidecar=ExternalDataSidecar(),
             instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         )
 
@@ -1312,7 +1301,6 @@ def test_native_strategy_bounds_submitted_orders_to_prevent_memory_leak() -> Non
 def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
         MarketPairMeta,
@@ -1362,7 +1350,6 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -1381,13 +1368,13 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
 def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
     from types import SimpleNamespace
 
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
         MarketPairMeta,
         PolymarketMarketRegistry,
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
     from polysignal_lab.nautilus_runtime.market_data import PolySignalMarketUniverseData
@@ -1461,7 +1448,7 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
     assembler = MarketViewAssembler(
         registry=registry,
         books=books,
-        sidecar=ExternalDataSidecar(),
+        custom_data=StrategyCustomDataState(),
     )
     first = FakeNativeStrategy(
         label="first",
@@ -1470,7 +1457,6 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
     second = FakeNativeStrategy(
         label="second",
@@ -1479,7 +1465,6 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
         condition_ids=("condition-btc-5m",),
         strategy_name="late_consensus",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     first.on_start()
@@ -1595,7 +1580,6 @@ def test_native_strategy_universe_update_subscribes_entered_market_once(monkeypa
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_data(
@@ -1699,7 +1683,6 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -1772,7 +1755,6 @@ def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> (
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -1846,7 +1828,6 @@ def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> No
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -1898,7 +1879,6 @@ def test_native_strategy_active_market_without_metadata_stays_pending_until_meta
         strategy_name="ptb_diff",
         registry=PolymarketMarketRegistry(),
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_data(
@@ -2016,7 +1996,6 @@ def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
         condition_ids=(),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     universe = PolySignalMarketUniverseData(
@@ -2073,7 +2052,6 @@ def test_native_strategy_active_market_without_subscribe_hooks_still_marks_wired
         condition_ids=(),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_data(
@@ -2301,7 +2279,6 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -2399,7 +2376,6 @@ def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
         strategy_name="ptb_diff",
         book_type="L1_MBP",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -2471,7 +2447,6 @@ def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() ->
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -2542,7 +2517,6 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
         strategy_name="ptb_diff",
         registry=registry,
         unsubscribe_exited=False,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -2615,7 +2589,6 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_sta
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -2715,7 +2688,6 @@ def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.on_start()
@@ -2751,7 +2723,6 @@ def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
 def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_only() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
         MarketPairMeta,
@@ -2796,14 +2767,13 @@ def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_on
         def evaluate_condition(self, condition_id: str) -> None:
             seen.append(condition_id)
 
-    sidecar = ExternalDataSidecar()
+    sidecar = StrategyCustomDataState()
     strategy = FakeNativeStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m", "condition-eth-5m"),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=sidecar,
     )
 
     _ = cast(_DataHandler, cast(object, strategy)).on_data(
@@ -2819,13 +2789,12 @@ def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_on
     )
 
     assert seen == ["condition-btc-5m"]
-    assert sidecar.spot_for("BTC") is not None
+    assert strategy.custom_data.spot_for("BTC") is not None
 
 
 def test_native_strategy_routes_ptb_custom_data_to_matching_active_condition_only() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
     from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -2846,14 +2815,13 @@ def test_native_strategy_routes_ptb_custom_data_to_matching_active_condition_onl
             return None
 
     assembler = RecordingAssembler()
-    sidecar = ExternalDataSidecar()
+    sidecar = StrategyCustomDataState()
     strategy = PolySignalNativeStrategy(
         core=FakeCore([]),
         assembler=cast(MarketViewAssembler, cast(object, assembler)),
         condition_ids=("condition-active",),
         strategy_name="ptb_diff",
         registry=PolymarketMarketRegistry(),
-        sidecar=sidecar,
     )
 
     _ = cast(_DataHandler, cast(object, strategy)).on_data(
@@ -2884,8 +2852,8 @@ def test_native_strategy_routes_ptb_custom_data_to_matching_active_condition_onl
     )
 
     assert assembler.seen == ["condition-active"]
-    active_ptb = sidecar.ptb_for("condition-active")
-    inactive_ptb = sidecar.ptb_for("condition-inactive")
+    active_ptb = strategy.custom_data.ptb_for("condition-active")
+    inactive_ptb = strategy.custom_data.ptb_for("condition-inactive")
     assert active_ptb is not None
     assert active_ptb.value == 99950.0
     assert inactive_ptb is not None
@@ -2898,13 +2866,13 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
     from types import SimpleNamespace
 
     from polysignal_lab.alpha.types import SpotView
-    from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
         MarketPairMeta,
         PolymarketMarketRegistry,
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
@@ -2962,31 +2930,37 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
             down=InstrumentTokenMeta("down-token.POLYMARKET", "down-token", Side.DOWN),
         )
     )
-    sidecar = ExternalDataSidecar()
-    sidecar.update_spot(
-        SpotView(
+    sidecar = StrategyCustomDataState()
+    sidecar.apply(
+        PolySignalSpotData(
             asset="BTC",
             symbol="BTCUSD",
             price=100000.0,
             source="polymarket_rtds",
             freshness_ms=10,
+            ts_event=0,
+            ts_init=0,
         )
     )
-    sidecar.update_price_to_beat(
-        condition_id="condition-btc-5m",
-        value=99950.0,
-        source="anchor",
-        verified=True,
-        from_anchor_service=True,
-        anchor_source="chainlink",
-        anchor_lag_ms=5,
+    sidecar.apply(
+        PolySignalPriceToBeatData(
+            condition_id="condition-btc-5m",
+            value=99950.0,
+            source="anchor",
+            verified=True,
+            from_anchor_service=True,
+            anchor_source="chainlink",
+            anchor_lag_ms=5,
+            ts_event=0,
+            ts_init=0,
+        )
     )
     fake_cache = FakeCache()
     books = NautilusCacheMarketDataProvider(fake_cache, registry=registry)
     assembler = MarketViewAssembler(
         registry=registry,
         books=books,
-        sidecar=sidecar,
+        custom_data=sidecar,
     )
 
     class FakeNativeStrategy(PolySignalNativeStrategy):
@@ -3005,7 +2979,6 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         registry=registry,
-        sidecar=sidecar,
     )
 
     strategy.on_order_book_deltas(SimpleNamespace(instrument_id="up-token.POLYMARKET"))
@@ -3132,7 +3105,6 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         registry=registry,
         observability=observability,
-        sidecar=ExternalDataSidecar(),
     )
 
     strategy.evaluate_condition("condition-btc-5m")

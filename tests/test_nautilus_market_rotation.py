@@ -16,7 +16,6 @@ from polysignal_lab.data.price_to_beat_provider import PriceToBeatResult
 from polysignal_lab.data.state import MarketRegistry
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import JsonObject, Market, OutcomeToken
-from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
 from polysignal_lab.nautilus_runtime.market_data import (
     PolySignalMarketMetaData,
@@ -267,7 +266,6 @@ def test_market_rotation_actor_initial_publish_and_diff_executes_intercepted_ptb
         startup_markets=(_market("condition-a"),),
         market_universe=universe,
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=health,
     )
@@ -349,7 +347,6 @@ def test_market_rotation_actor_refresh_publishes_changed_ptb_for_still_active_ma
         startup_markets=(market,),
         market_universe=_Universe([[market]]),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -418,7 +415,6 @@ def test_market_rotation_actor_refresh_skips_unchanged_ptb_for_still_active_mark
         startup_markets=(market,),
         market_universe=_Universe([[market]]),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -499,7 +495,6 @@ def test_market_rotation_actor_refresh_continues_after_single_market_ptb_failure
         startup_markets=markets,
         market_universe=_Universe([list(markets)]),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -578,7 +573,6 @@ def test_market_rotation_actor_refresh_checks_still_active_ptb_sequentially(
         startup_markets=markets,
         market_universe=_Universe([list(markets)]),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -647,7 +641,6 @@ def test_market_rotation_actor_keeps_last_good_state_on_publish_failure(
         startup_markets=(_market("condition-a"),),
         market_universe=universe,
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -708,7 +701,6 @@ async def test_market_rotation_actor_run_loop_surfaces_refresh_failures(
         startup_markets=(),
         market_universe=_Universe([RuntimeError("refresh failed")]),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=health,
     )
@@ -770,7 +762,6 @@ async def test_market_rotation_actor_refresh_preloads_next_period_via_market_uni
             settings=settings,
         ),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -854,7 +845,6 @@ async def test_market_rotation_actor_refresh_applies_stale_grace_via_market_univ
             settings=settings,
         ),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -909,7 +899,6 @@ def test_market_rotation_actor_on_start_uses_clock_timer_when_available(
         startup_markets=(),
         market_universe=_Universe([[]]),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -962,7 +951,6 @@ def test_market_rotation_actor_refresh_timer_runs_sync_after_removing_async_offl
         startup_markets=(),
         market_universe=_Universe([[]]),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -986,7 +974,6 @@ def test_market_rotation_actor_refresh_timer_skips_when_refresh_in_flight(
         startup_markets=(),
         market_universe=_Universe([[]]),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -1012,7 +999,6 @@ def test_market_rotation_actor_refresh_timer_applies_result_when_asyncio_run_clo
         startup_markets=(),
         market_universe=_Universe([[_market("condition-a")]]),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -1055,7 +1041,6 @@ def test_market_rotation_actor_refresh_preserves_result_when_fresh_client_close_
         startup_markets=(),
         market_universe=FakeUniverse(discovery),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -1120,7 +1105,6 @@ def test_market_rotation_actor_refresh_market_universe_sync_uses_fresh_client_ea
         startup_markets=(),
         market_universe=universe,
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -1146,7 +1130,6 @@ def test_market_rotation_actor_refresh_timer_without_running_loop_publishes_ptb_
         startup_markets=(),
         market_universe=_Universe([[_market("condition-a")]]),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )
@@ -1180,7 +1163,6 @@ def test_market_rotation_actor_on_stop_cancels_refresh_and_rtds_tasks(
         startup_markets=(),
         market_universe=_Universe([[]]),
         registry=PolymarketMarketRegistry(),
-        sidecar=ExternalDataSidecar(),
         anchor_store=None,
         health=None,
     )

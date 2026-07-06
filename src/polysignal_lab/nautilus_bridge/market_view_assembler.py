@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime
 from collections.abc import Sequence
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from typing_extensions import final
 
 from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView, TradeView
-from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
 from polysignal_lab.nautilus_bridge.market_registry import PolymarketMarketRegistry
 from polysignal_lab.utils import stable_hash, utc_now
+
+if TYPE_CHECKING:
+    from polysignal_lab.nautilus_runtime.custom_data_state import CustomDataSnapshotProvider
 
 
 class BookDataProvider(Protocol):
@@ -20,10 +22,23 @@ class BookDataProvider(Protocol):
 
 @final
 class MarketViewAssembler:
-    def __init__(self, *, registry: PolymarketMarketRegistry, books: BookDataProvider, sidecar: ExternalDataSidecar):
+    def __init__(
+        self,
+        *,
+        registry: PolymarketMarketRegistry,
+        books: BookDataProvider,
+        custom_data: CustomDataSnapshotProvider,
+    ):
         self.registry: PolymarketMarketRegistry = registry
         self.books: BookDataProvider = books
-        self.sidecar: ExternalDataSidecar = sidecar
+        self.custom_data: CustomDataSnapshotProvider = custom_data
+
+    def with_custom_data(self, custom_data: CustomDataSnapshotProvider) -> MarketViewAssembler:
+        return MarketViewAssembler(
+            registry=self.registry,
+            books=self.books,
+            custom_data=custom_data,
+        )
 
     def build(self, condition_id: str, *, created_at: datetime | None = None) -> MarketView | None:
         pair = self.registry.by_condition(condition_id)
@@ -31,8 +46,8 @@ class MarketViewAssembler:
             return None
         up_book = self.books.book_for_token(pair.up.token_id)
         down_book = self.books.book_for_token(pair.down.token_id)
-        spot = self.sidecar.spot_for(pair.asset)
-        ptb = self.sidecar.ptb_for(pair.condition_id)
+        spot = self.custom_data.spot_for(pair.asset)
+        ptb = self.custom_data.ptb_for(pair.condition_id)
         if up_book is None or down_book is None:
             return None
 

@@ -35,7 +35,7 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.market import Market
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
-from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
+from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_bridge.market_registry import MarketPairMeta, PolymarketMarketRegistry
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
@@ -180,7 +180,6 @@ class NautilusRuntimeBundle:
     scheduler: PolySignalScheduler
     components: dict[str, object]
     bridge_registry: PolymarketMarketRegistry
-    sidecar: ExternalDataSidecar
     node: _TradingNodeLike
     observability: ObservabilityActor
     websocket_tasks: list[asyncio.Task[object]]
@@ -258,16 +257,16 @@ def _create_configured_live_node(
 
 def _create_market_projection_components(
     configured_markets: Sequence[Market],
-) -> tuple[PolymarketMarketRegistry, ExternalDataSidecar, MarketViewAssembler]:
+) -> tuple[PolymarketMarketRegistry, MarketViewAssembler]:
     registry = PolymarketMarketRegistry()
     _register_markets(registry, configured_markets)
-    sidecar = ExternalDataSidecar()
+    custom_data = StrategyCustomDataState()
     assembler = MarketViewAssembler(
         registry=registry,
         books=_EmptyBookDataProvider(),
-        sidecar=sidecar,
+        custom_data=custom_data,
     )
-    return registry, sidecar, assembler
+    return registry, assembler
 
 
 def _attach_cache_projections(
@@ -281,15 +280,19 @@ def _attach_cache_projections(
 
     kernel = getattr(node, "kernel", None)
     nautilus_cache = getattr(node, "cache", None) or getattr(kernel, "cache", None)
-    assembler.books = NautilusCacheMarketDataProvider(
+    books = NautilusCacheMarketDataProvider(
         nautilus_cache,
         registry=registry,
     )
+    assembler.books = books
     cache_reader = NautilusCacheReader(
         nautilus_cache,
         portfolio=getattr(node, "portfolio", None) or getattr(kernel, "portfolio", None),
     )
     for strategy in strategies:
+        strategy_assembler = getattr(strategy, "assembler", None)
+        if hasattr(strategy_assembler, "books"):
+            setattr(strategy_assembler, "books", books)
         setattr(strategy, "cache_reader", cache_reader)
     return cache_reader
 
@@ -311,7 +314,6 @@ def _build_market_rotation_actor(
     startup_markets: Sequence[Market],
     market_universe: object,
     registry: PolymarketMarketRegistry,
-    sidecar: ExternalDataSidecar,
     store: AnchorPriceStore | None,
     health: object | None,
 ) -> object:
@@ -322,7 +324,6 @@ def _build_market_rotation_actor(
         startup_markets=tuple(startup_markets),
         market_universe=market_universe,
         registry=registry,
-        sidecar=sidecar,
         anchor_store=store,
         health=health,
     )
@@ -333,7 +334,6 @@ def _runtime_components(
     node: _TradingNodeLike,
     config: object,
     registry: PolymarketMarketRegistry,
-    sidecar: ExternalDataSidecar,
     market_rotation_actor: object,
     assembler: MarketViewAssembler,
     policy: DecisionPolicyActor,
@@ -344,7 +344,6 @@ def _runtime_components(
         "node": node,
         "config": config,
         "registry": registry,
-        "sidecar": sidecar,
         "market_rotation_actor": market_rotation_actor,
         "assembler": assembler,
         "policy": policy,
@@ -374,14 +373,13 @@ def build_trading_node(
         market_universe if market_universe is not None else _StaticMarketUniverse(configured_markets)
     )
     node, config = _create_configured_live_node(settings, configured_markets)
-    registry, sidecar, assembler = _create_market_projection_components(configured_markets)
+    registry, assembler = _create_market_projection_components(configured_markets)
     policy = _build_policy(settings)
     market_rotation_actor = _build_market_rotation_actor(
         settings=settings,
         startup_markets=configured_markets,
         market_universe=runtime_market_universe,
         registry=registry,
-        sidecar=sidecar,
         store=store,
         health=health,
     )
@@ -391,7 +389,6 @@ def build_trading_node(
         policy,
         configured_condition_ids,
         registry,
-        sidecar,
         observability,
     )
     _register_runtime_trader_components(node, market_rotation_actor, strategies)
@@ -400,7 +397,6 @@ def build_trading_node(
         node=node,
         config=config,
         registry=registry,
-        sidecar=sidecar,
         market_rotation_actor=market_rotation_actor,
         assembler=assembler,
         policy=policy,
@@ -459,7 +455,6 @@ def _build_native_strategies(
     policy: DecisionPolicyActor,
     condition_ids: Sequence[str],
     registry: PolymarketMarketRegistry,
-    sidecar: ExternalDataSidecar,
     observability: ObservabilityActor | None,
 ) -> list[_NativeStrategyLike]:
     strategy_cls, _actor_cls = _load_runtime_classes()
@@ -493,7 +488,6 @@ def _build_native_strategies(
             book_type=strategy_book_type,
             instrument_id_resolver=instrument_id_resolver,
             registry=registry,
-            sidecar=sidecar,
             observability=observability,
             exit_model=settings.paper_trading.exit_model,
             progress_callback=_runtime_progress_callback(settings),
@@ -781,7 +775,6 @@ def _build_nautilus_runtime_bundle(
         scheduler=scheduler,
         components=components,
         bridge_registry=cast(PolymarketMarketRegistry, components["registry"]),
-        sidecar=cast(ExternalDataSidecar, components["sidecar"]),
         node=cast(_TradingNodeLike, components["node"]),
         observability=observability,
         websocket_tasks=[],
