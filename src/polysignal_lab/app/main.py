@@ -148,6 +148,8 @@ def run_readonly_smoke(settings: Settings, options: CliOptions) -> None:
 def _resolve_runtime_mode(settings: Settings, options: CliOptions) -> RuntimeMode:
     if options.use_config_default_runtime:
         return RuntimeMode.NAUTILUS if settings.runtime.engine == "nautilus" else RuntimeMode.SCHEDULER
+    if options.mode is RuntimeMode.SCHEDULER and not options.once and not options.real_readonly_smoke:
+        return RuntimeMode.NAUTILUS
     return options.mode
 
 

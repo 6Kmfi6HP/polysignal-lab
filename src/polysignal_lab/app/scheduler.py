@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,7 +15,6 @@ from polysignal_lab.app.services.book_feed_service import BookFeedService
 from polysignal_lab.app.services.health_service import HealthService
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.app.services.market_universe_service import MarketUniverseService
-from polysignal_lab.app.services.paper_portfolio_service import PaperPortfolioService
 from polysignal_lab.app.services.spot_feed_service import SpotFeedService
 from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.app.services.signal_pipeline import SignalPipeline
@@ -37,10 +35,6 @@ from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.paper.exit_engine import PaperExitEngine
-from polysignal_lab.paper.settlement import PaperSettlementEngine
-from polysignal_lab.paper.simulator import PaperSimulator
-from polysignal_lab.paper.wallet import PaperWallet
 from polysignal_lab.data.ctf_resolution_client import CtfResolutionClient
 from polysignal_lab.data.gamma_resolution_client import GammaResolutionClient
 from polysignal_lab.paper.settlement_resolver import SettlementResolver
@@ -60,25 +54,9 @@ from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
 from polysignal_lab.strategies.execution import build_strategy_schedule
 
-from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
-from polysignal_lab.strategies.base import BaseStrategy
 
-
-def _make_fill_notifier(scheduler: "PolySignalScheduler", strategies: list[BaseStrategy]) -> Callable[..., None]:
-    """Create a callback that notifies strategies when paper fills/cancels occur."""
-    def notify(order: PaperOrder, event: str, fill: PaperFill | None = None, pair_id: str | None = None) -> None:
-        for strat in strategies:
-            if not hasattr(strat, "name") or strat.name != order.strategy:
-                continue
-            if event == "filled" and fill is not None:
-                strat.notify_fill(order.market_id, order.side, fill.fill_price, fill.shares)
-                scheduler._follow_up_signals.extend(strat.follow_up_signals(order, fill))
-            elif event == "cancelled":
-                strat.notify_cancel(order.market_id, order.side, order.reject_reason or "GTD_EXPIRED")
-            elif event == "leg_failed" and pair_id is not None:
-                strat.notify_leg_failure(pair_id, order.market_id, order.side)
-
-    return notify
+def _make_fill_notifier(_scheduler: object, _strategies: object) -> None:
+    raise RuntimeError("Local paper fill notifier was removed; Nautilus emits order/fill callbacks")
 
 @dataclass
 class ServiceContext:
@@ -190,14 +168,6 @@ class PolySignalScheduler:
             self.persistence,
             timeout_sec=settings.telegram.publish_timeout_sec,
         )
-        self.paper_portfolio = PaperPortfolioService(
-            settings=settings,
-            markets=self.ctx.markets,
-            books=self.ctx.books,
-            persistence=self.persistence,
-            scheduler=self,
-            logger=self.logger,
-        )
         core_services = [
             self.persistence,
             self.market_universe,
@@ -205,7 +175,6 @@ class PolySignalScheduler:
             self.spot_feed,
             self.snapshot_service,
             self.signal_pipeline,
-            self.paper_portfolio,
             self.publish_service,
         ]
         self.telegram_bot = None
@@ -257,25 +226,6 @@ class PolySignalScheduler:
             if name in known_strategy_names:
                 self.signal_pipeline.set_strategy_enabled(str(name), False)
         self.arbiter = SignalArbiter()
-        self.wallet = PaperWallet(self.settings.paper_trading.starting_balance_usdc)
-        self.paper = PaperSimulator(
-            self.settings.paper_trading,
-            self.settings.data.polymarket,
-            self.wallet,
-            self.ctx.books,
-        )
-        self.paper.fill_notifier = _make_fill_notifier(self, self.strategies)
-        self.exits = PaperExitEngine(self.settings.paper_trading.exit_model, self.wallet)
-        self.settlement = PaperSettlementEngine(self.wallet)
-        self.paper_portfolio.configure(
-            wallet=self.wallet,
-            paper=self.paper,
-            exits=self.exits,
-            settlement=self.settlement,
-            markets=self.ctx.markets,
-            books=self.ctx.books,
-            persistence=self.persistence,
-        )
         self._trading_components_initialized = True
 
     def _validate_telegram_startup(self) -> None:
@@ -355,10 +305,14 @@ class PolySignalScheduler:
         return await scheduler_processing.process_accepted_signals(self, signals)
 
     async def check_settlements(self) -> list[PaperTradeResult]:
-        return await self.paper_portfolio.check_settlements()
+        from polysignal_lab.app.scheduler_reporting import check_settlements
+
+        return await check_settlements(self)
 
     async def generate_daily_report(self) -> DailyReport | None:
-        return await self.paper_portfolio.generate_daily_report()
+        from polysignal_lab.app.scheduler_reporting import generate_daily_report
+
+        return await generate_daily_report(self)
 
     async def run(self) -> None:
         await scheduler_runtime.run(self)

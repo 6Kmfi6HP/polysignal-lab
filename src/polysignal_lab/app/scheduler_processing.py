@@ -7,15 +7,12 @@ from typing import TYPE_CHECKING, TypedDict
 
 from polysignal_lab.app import scheduler_health
 from polysignal_lab.domain.market import Market
-from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
-from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.domain.snapshot_batch import (
     CrossMarketEvaluationContext,
     SnapshotBatch,
 )
-from polysignal_lab.paper.simulator import SimulationResult
 from polysignal_lab.strategies.execution import (
     StrategyScheduleEntry,
     order_strategy_schedule,
@@ -100,9 +97,6 @@ class ProcessSignalResult(TypedDict):
     stored: bool
     published: bool
     publish_status: str | None
-    paper_order: PaperOrder | None
-    paper_fill: PaperFill | None
-    paper_position: PaperPosition | None
 
 
 class AcceptedSignalSummary(TypedDict):
@@ -619,9 +613,6 @@ async def process_signal(
         stored=False,
         published=False,
         publish_status=None,
-        paper_order=None,
-        paper_fill=None,
-        paper_position=None,
     )
 
     try:
@@ -649,71 +640,7 @@ async def process_signal(
                 exc,
             )
 
-    try:
-        scheduler.paper_portfolio.process_signal(signal, result)
-    except Exception:
-        scheduler.logger.exception(
-            "Failed to paper-trade signal %s token %s",
-            signal.signal_id,
-            signal.token_id,
-        )
-
-    while getattr(scheduler, "_follow_up_signals", []):
-        follow_ups = list(scheduler._follow_up_signals)
-        scheduler._follow_up_signals.clear()
-        for follow_up in follow_ups:
-            await process_signal(scheduler, follow_up)
     return result
-
-
-def _store_simulation_result(
-    scheduler: PolySignalScheduler,
-    sim: SimulationResult,
-    result: ProcessSignalResult,
-) -> None:
-    _append_persistence_log(scheduler, "paper_orders", sim.order)
-    _write_persistence_sqlite(scheduler, scheduler.persistence.insert_paper_order, sim.order)
-    wallet_snapshot = scheduler.wallet.snapshot()
-    _append_persistence_log(scheduler, "paper_wallet_snapshots", wallet_snapshot)
-    _write_persistence_sqlite(
-        scheduler, scheduler.persistence.insert_wallet_snapshot, wallet_snapshot
-    )
-    scheduler.health.inc_metric("paper_simulator", "wallet_snapshot_count")
-    result["paper_order"] = sim.order
-    if sim.fill and sim.position:
-        _append_persistence_log(scheduler, "paper_fills", sim.fill)
-        _append_persistence_log(scheduler, "paper_positions", sim.position)
-        _write_persistence_sqlite(scheduler, scheduler.persistence.insert_paper_fill, sim.fill)
-        _write_persistence_sqlite(
-            scheduler, scheduler.persistence.upsert_paper_position, sim.position
-        )
-        result["paper_fill"] = sim.fill
-        result["paper_position"] = sim.position
-        scheduler.health.inc_metric("paper_simulator", "fills")
-        scheduler.health.mark_ok("paper_simulator")
-        scheduler.logger.info(
-            "Paper order %s filled for signal %s at %.4f",
-            sim.order.paper_order_id,
-            sim.order.signal_id,
-            sim.fill.fill_price,
-        )
-        # Notify the originating strategy of the fill
-        if scheduler.paper.fill_notifier:
-            scheduler.paper.fill_notifier(sim.order, "filled", sim.fill)
-    elif sim.order.reject_reason:
-        scheduler.health.inc_metric(
-            "paper_simulator", f"rejects_{sim.order.reject_reason}"
-        )
-        scheduler.health.mark_degraded("paper_simulator", sim.order.reject_reason)
-        scheduler.logger.info(
-            "Paper order %s rejected for signal %s: %s",
-            sim.order.paper_order_id,
-            sim.order.signal_id,
-            sim.order.reject_reason,
-        )
-        # Notify strategy of rejection/cancellation
-        if scheduler.paper.fill_notifier:
-            scheduler.paper.fill_notifier(sim.order, "cancelled", None)
 
 
 async def process_accepted_signals(
@@ -727,73 +654,5 @@ async def process_accepted_signals(
         total=len(signals),
         stored=sum(1 for result in results if result["stored"]),
         published=sum(1 for result in results if result["published"]),
-        filled=sum(1 for result in results if result["paper_fill"]),
+        filled=0,
     )
-
-
-def tick_resting_orders(scheduler: PolySignalScheduler) -> list:
-    """Poll resting GTD orders for fills/expiry each scheduler cycle."""
-    from polysignal_lab.domain.enums import OrderStatus
-    from polysignal_lab.paper.preflight import normalize_paper_reject_reason
-    def _risk_check(order):
-        """Check paper trading risk limits before filling a resting order."""
-        cfg = scheduler.settings.paper_trading
-        if scheduler.wallet.open_position_count >= cfg.max_open_positions:
-            return False
-        if scheduler.wallet.exposure_by_market(order.market_id) + order.stake_usdc > cfg.max_market_exposure_usdc:
-            return False
-        if scheduler.wallet.exposure_by_strategy(order.strategy) + order.stake_usdc > cfg.max_strategy_exposure_usdc:
-            return False
-        return True
-    results = scheduler.paper.passive.tick(scheduler.ctx.books, scheduler.wallet, risk_check=_risk_check)
-    for result in results:
-        if result.fills:
-            for fill in result.fills:
-                _append_persistence_log(scheduler, "paper_fills", fill)
-                _write_persistence_sqlite(scheduler, scheduler.persistence.insert_paper_fill, fill)
-            for position in result.positions:
-                _append_persistence_log(scheduler, "paper_positions", position)
-                _write_persistence_sqlite(
-                    scheduler, scheduler.persistence.upsert_paper_position, position
-                )
-            scheduler.health.inc_metric("paper_simulator", "fills", len(result.fills))
-            scheduler.health.mark_ok("paper_simulator")
-            if scheduler.paper.fill_notifier:
-                scheduler.paper.fill_notifier(result.order, "filled", result.fills[0] if result.fills else None)
-        elif result.status == OrderStatus.REJECTED or (
-            result.status == OrderStatus.CANCELLED
-            and (result.reject_reason or result.order.reject_reason)
-        ):
-            original_reason = result.reject_reason or result.order.reject_reason
-            normalized_reason = normalize_paper_reject_reason(original_reason)
-            result.reject_reason = normalized_reason
-            result.order.reject_reason = normalized_reason
-            result.order.metrics["paper_original_reason"] = original_reason
-            result.order.metrics["paper_normalized_reason"] = normalized_reason
-            result.order.metrics["paper_terminal_at"] = utc_now()
-            _append_persistence_log(scheduler, "paper_orders", result.order)
-            _write_persistence_sqlite(
-                scheduler, scheduler.persistence.upsert_paper_order, result.order
-            )
-            wallet_snapshot = scheduler.wallet.snapshot()
-            _append_persistence_log(scheduler, "paper_wallet_snapshots", wallet_snapshot)
-            _write_persistence_sqlite(
-                scheduler, scheduler.persistence.insert_wallet_snapshot, wallet_snapshot
-            )
-            scheduler.health.inc_metric(
-                "paper_simulator", f"rejects_{normalized_reason}"
-            )
-            scheduler.health.inc_metric("paper_simulator", "wallet_snapshot_count")
-            scheduler.health.mark_degraded("paper_simulator", normalized_reason)
-            scheduler.logger.info(
-                "Resting paper order %s %s: %s",
-                result.order.paper_order_id,
-                result.order.status.lower(),
-                result.reject_reason or result.order.reject_reason,
-            )
-            if scheduler.paper.fill_notifier:
-                scheduler.paper.fill_notifier(result.order, "cancelled", None)
-        elif result.status == OrderStatus.CANCELLED:
-            if scheduler.paper.fill_notifier:
-                scheduler.paper.fill_notifier(result.order, "cancelled", None)
-    return results

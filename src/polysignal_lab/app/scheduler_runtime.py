@@ -143,7 +143,6 @@ async def run(scheduler: PolySignalScheduler) -> None:
 
             accepted = await _evaluate_iteration(scheduler, active_markets)
             await _process_iteration_signals(scheduler, accepted)
-            await asyncio.to_thread(_tick_resting_orders, scheduler)
             await _check_iteration_settlements(scheduler)
             last_report_date = await _generate_iteration_report(
                 scheduler, last_report_date
@@ -203,16 +202,8 @@ async def _process_iteration_signals(
         scheduler.logger.error("process_accepted_signals failed: %s", exc)
 
 
-def _tick_resting_orders(scheduler: PolySignalScheduler) -> None:
-    """Poll resting GTD orders for fills/expiry."""
-    try:
-        results = scheduler.paper_portfolio.tick_resting_orders()
-        if results:
-            filled = sum(1 for r in results if r.fills)
-            cancelled = sum(1 for r in results if not r.fills)
-            scheduler.logger.info("Resting orders: %d filled, %d cancelled", filled, cancelled)
-    except Exception as exc:
-        scheduler.logger.error("tick_resting_orders failed: %s", exc)
+def _tick_resting_orders(_scheduler: PolySignalScheduler) -> None:
+    return None
 
 
 async def _check_iteration_settlements(scheduler: PolySignalScheduler) -> None:
