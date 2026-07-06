@@ -217,7 +217,26 @@ def test_build_trading_node_injects_shared_projections_and_no_manual_sync_compon
     first_strategy = strategies[0]
     assert getattr(first_strategy, "registry") is runtime["registry"]
     assert getattr(first_strategy, "sidecar") is runtime["sidecar"]
-    assert getattr(first_strategy, "assembler") is runtime["assembler"]
+    assert getattr(first_strategy, "assembler").catalog is runtime["registry"]
+
+
+def test_build_trading_node_gives_each_strategy_own_custom_data_state(monkeypatch) -> None:
+    from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+
+    _patch_nautilus_placeholders(monkeypatch)
+
+    runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+    shared_assembler = runtime["assembler"]
+    strategies = cast(list[object], runtime["strategies"])
+
+    assert strategies
+    for strategy in strategies:
+        custom_data = getattr(strategy, "custom_data", None)
+        strategy_assembler = getattr(strategy, "assembler")
+
+        assert isinstance(custom_data, StrategyCustomDataState)
+        assert strategy_assembler is not shared_assembler
+        assert getattr(strategy_assembler, "custom_data") is custom_data
 
 def test_build_trading_node_uses_static_runtime_classes(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)

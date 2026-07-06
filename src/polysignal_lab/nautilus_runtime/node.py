@@ -480,6 +480,16 @@ def _build_native_strategies(
             unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
             l1_book_snapshot_interval_ms=settings.runtime.nautilus.l1_book_snapshot_interval_ms,
         )
+        custom_data = getattr(strategy, "custom_data", None)
+        if not isinstance(custom_data, StrategyCustomDataState):
+            custom_data = StrategyCustomDataState()
+            setattr(strategy, "custom_data", custom_data)
+        strategy_assembler = getattr(strategy, "assembler", assembler)
+        with_custom_data = getattr(strategy_assembler, "with_custom_data", None)
+        if callable(with_custom_data):
+            setattr(strategy, "assembler", with_custom_data(custom_data))
+        elif hasattr(strategy_assembler, "custom_data"):
+            setattr(strategy_assembler, "custom_data", custom_data)
         strategies.append(strategy)
 
     return strategies
