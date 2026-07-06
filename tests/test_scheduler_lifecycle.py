@@ -39,12 +39,12 @@ async def test_scheduler_stops_started_services_when_startup_fails(settings, tmp
     scheduler.services = [started]
     scheduler.supervisor = ServiceSupervisor(scheduler.services)
 
-    async def fail_restore() -> None:
-        raise RuntimeError("restore failed")
+    async def fail_refresh() -> None:
+        raise RuntimeError("refresh failed")
 
-    scheduler._restore_wallet_state = fail_restore
+    scheduler.refresh_markets_once = fail_refresh
 
-    with pytest.raises(RuntimeError, match="restore failed"):
+    with pytest.raises(RuntimeError, match="refresh failed"):
         await scheduler.run()
 
     assert started.events == ["start", "stop"]

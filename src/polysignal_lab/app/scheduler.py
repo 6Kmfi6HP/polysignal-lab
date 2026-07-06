@@ -263,9 +263,6 @@ class PolySignalScheduler:
     def _token_ids_for_markets(markets: list[Market]) -> tuple[str, ...]:
         return scheduler_market_data.token_ids_for_markets(markets)
 
-    async def _restore_wallet_state(self) -> None:
-        await scheduler_state.restore_wallet_state(self)
-
     async def refresh_markets_once(self) -> None:
         await scheduler_market_data.refresh_markets_once(self)
 

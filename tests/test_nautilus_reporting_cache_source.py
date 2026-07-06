@@ -108,10 +108,10 @@ def test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equ
     assert _report_equity_inputs(scheduler) == (1_000.0, 987.65, 0)
 
 
-def test_report_equity_inputs_keeps_legacy_wallet_fallback_without_cache_reader() -> None:
+def test_report_equity_inputs_ignores_shadow_wallet_without_cache_reader() -> None:
     scheduler = SimpleNamespace(
         settings=_settings(),
         wallet=SimpleNamespace(starting_balance=1_000.0, equity=1_025.0, open_position_count=3),
     )
 
-    assert _report_equity_inputs(scheduler) == (1_000.0, 1_025.0, 3)
+    assert _report_equity_inputs(scheduler) == (1_000.0, 1_000.0, 0)

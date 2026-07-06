@@ -85,13 +85,19 @@ async def refresh_markets_once(scheduler: PolySignalScheduler) -> None:
 
 
 async def fetch_resolved_markets(scheduler: PolySignalScheduler) -> None:
-    wallet = getattr(scheduler, "wallet", None)
-    if wallet is None:
+    cache_reader = getattr(scheduler, "nautilus_cache_reader", None)
+    read_positions = getattr(cache_reader, "read_positions", None)
+    if not callable(read_positions):
+        return
+    raw_positions = read_positions()
+    if not isinstance(raw_positions, list):
         return
     open_market_ids = {
-        pos.market_id
-        for pos in wallet.open_positions.values()
-        if pos.market_id
+        str(position.get("market_id") or "")
+        for position in raw_positions
+        if isinstance(position, dict)
+        and not bool(position.get("is_closed"))
+        and position.get("market_id")
     }
     if not open_market_ids:
         return

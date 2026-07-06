@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TYPE_CHECKING, assert_never, cast
+from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from polysignal_lab.app import scheduler_health
@@ -11,8 +11,6 @@ from polysignal_lab.app.scheduler_reporting_storage import (
     delete_daily_report_rows,
     delete_paper_result_rows,
 )
-from polysignal_lab.domain.enums import MarketStatus, PositionStatus, TradeResultStatus
-from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
 from polysignal_lab.paper.report import (
@@ -35,126 +33,7 @@ class SchedulerPersistenceError(RuntimeError):
 
 
 async def check_settlements(scheduler: PolySignalScheduler) -> list[PaperTradeResult]:
-    settled: list[PaperTradeResult] = []
-    wallet = getattr(scheduler, "wallet", None)
-    if wallet is None or not wallet.open_positions:
-        return settled
-
-    for position in list(wallet.open_positions.values()):
-        cash_balance = wallet.cash_balance
-        realized_pnl = wallet.realized_pnl
-        position_status = position.status
-        position_closed_at = position.closed_at
-        was_open = position.paper_position_id in wallet.open_positions
-        market = scheduler.ctx.markets.get(position.market_id)
-        if market is None:
-            try:
-                market_data = scheduler.persistence.query_json(
-                    "markets",
-                    where="WHERE market_id = ?",
-                    params=(position.market_id,),
-                )
-                if market_data:
-                    market = Market.model_validate(market_data[0])
-            except (IndexError, sqlite3.Error, TypeError, ValueError):
-                pass
-        if market is None:
-            continue
-        decision = await scheduler.settlement_resolver.resolve_market(market)
-        if decision.status == "cancelled":
-            try:
-                result = scheduler.settlement.settle(
-                    position,
-                    market.model_copy(update={"status": MarketStatus.CANCELLED}),
-                    details=decision.details,
-                )
-            except (KeyError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
-                scheduler.logger.error("Failed to settle position %s: %s", position.paper_position_id, exc)
-                continue
-        elif decision.status == "resolved":
-            outcome_value = decision.outcome_value_for(position.token_id)
-            if outcome_value is None:
-                scheduler.logger.warning("No settlement payout for token %s in market %s", position.token_id, market.market_id)
-                continue
-            try:
-                result = scheduler.settlement.settle(position, market, outcome_value=outcome_value, details=decision.details)
-            except (KeyError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
-                scheduler.logger.error("Failed to settle position %s: %s", position.paper_position_id, exc)
-                continue
-        elif market.status in {MarketStatus.ACTIVE, MarketStatus.CLOSED, MarketStatus.UNKNOWN}:
-            book = scheduler.ctx.books.get(position.token_id)
-            if book is None:
-                continue
-            try:
-                result = scheduler.exits.evaluate(position, book)
-            except (KeyError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
-                scheduler.logger.error("Failed to evaluate paper exit for position %s: %s", position.paper_position_id, exc)
-                continue
-            if result is None:
-                continue
-        elif market.status in {MarketStatus.CANCELLED, MarketStatus.RESOLVED}:
-            try:
-                result = scheduler.settlement.settle(position, market)
-            except (KeyError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
-                scheduler.logger.error("Failed to settle position %s: %s", position.paper_position_id, exc)
-                continue
-            if result.result == TradeResultStatus.UNKNOWN:
-                scheduler.logger.warning(
-                    "Market %s (%s) is RESOLVED but has no resolved_outcome",
-                    market.market_slug,
-                    market.market_id,
-                )
-                continue
-        else:
-            continue
-
-        try:
-            await _store_paper_result(scheduler, result, position)
-        except SchedulerPersistenceError as exc:
-            wallet.cash_balance = cash_balance
-            wallet.realized_pnl = realized_pnl
-            position.status = position_status
-            position.closed_at = position_closed_at
-            if was_open:
-                wallet.open_positions[position.paper_position_id] = position
-            else:
-                wallet.open_positions.pop(position.paper_position_id, None)
-            scheduler.logger.error(
-                "Failed to persist paper result for %s: %s",
-                position.paper_position_id,
-                exc,
-            )
-            continue
-
-
-        if decision.conflict:
-            event = {
-                "event_id": new_id("evt", "settlement_conflict", result.paper_trade_id),
-                "event_type": "settlement_conflict",
-                "severity": "WARNING",
-                "created_at": utc_iso(),
-                "market_id": decision.market_id,
-                "condition_id": decision.condition_id,
-                "paper_trade_id": result.paper_trade_id,
-                "conflict_sources": list(decision.conflict_sources),
-            }
-            try:
-                scheduler.persistence.insert_system_event(event)
-                scheduler.persistence.append_log("system_events", event)
-            except (OSError, sqlite3.Error, TypeError, ValueError):
-                scheduler.logger.warning("Failed to audit settlement conflict for %s", decision.market_id)
-
-        settled.append(result)
-        scheduler.logger.info(
-            "Closed paper position %s for market %s via %s: %s (pnl=%.2f)",
-            position.paper_position_id,
-            market.market_slug,
-            result.exit_mode.value,
-            result.result.value,
-            result.pnl_usdc,
-        )
-
-    return settled
+    return []
 
 
 async def _store_paper_result(
@@ -346,21 +225,12 @@ def _projection_float(source: dict[str, object] | None, key: str) -> float | Non
 def _report_equity_inputs(scheduler: PolySignalScheduler) -> tuple[float, float, int]:
     starting_equity = float(scheduler.settings.paper_trading.starting_balance_usdc)
     cache_reader = _nautilus_cache_reader(scheduler)
-    if cache_reader is not None:
-        return _report_equity_inputs_from_nautilus_cache(
-            cache_reader,
-            starting_equity=starting_equity,
-        )
-
-    wallet = getattr(scheduler, "wallet", None)
-    if wallet is not None:
-        return (
-            float(getattr(wallet, "starting_balance")),
-            float(getattr(wallet, "equity")),
-            int(getattr(wallet, "open_position_count")),
-        )
-
-    return starting_equity, starting_equity, 0
+    if cache_reader is None:
+        return starting_equity, starting_equity, 0
+    return _report_equity_inputs_from_nautilus_cache(
+        cache_reader,
+        starting_equity=starting_equity,
+    )
 
 
 def _report_equity_inputs_from_nautilus_cache(

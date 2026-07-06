@@ -109,7 +109,6 @@ async def run(scheduler: PolySignalScheduler) -> None:
         await scheduler.supervisor.start_all()
         await _notify_startup(scheduler)
 
-        await scheduler._restore_wallet_state()
         await scheduler.refresh_markets_once()
         await scheduler._fetch_resolved_markets()
         await scheduler.start_websockets()

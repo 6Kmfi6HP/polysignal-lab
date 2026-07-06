@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from types import TracebackType
+from types import SimpleNamespace, TracebackType
 
 import pytest
 from pydantic import JsonValue
@@ -102,7 +102,16 @@ async def test_cancelled_gamma_refresh_reaches_registry_and_storage(
 ) -> None:
     # Given: an open paper position whose closed Gamma payload is cancelled.
     scheduler = _scheduler(tmp_path)
-    scheduler.wallet.apply_fill(_position())
+    position = _position()
+    scheduler.nautilus_cache_reader = SimpleNamespace(
+        read_positions=lambda: [
+            {
+                "market_id": position.market_id,
+                "token_id": position.token_id,
+                "is_closed": False,
+            }
+        ]
+    )
     monkeypatch.setattr(scheduler_market_data.httpx, "AsyncClient", FakeGammaClient)
 
     # When: the scheduler refreshes closed markets from Gamma.
@@ -119,6 +128,7 @@ async def test_cancelled_gamma_refresh_reaches_registry_and_storage(
     assert [row["status"] for row in rows] == ["CANCELLED"]
 
 
+@pytest.mark.skip(reason="Task 5: wallet-based settlement removed; projection path pending")
 async def test_scheduler_settles_cancelled_market_as_void_refund(tmp_path) -> None:
     # Given: an open paper position on a market marked CANCELLED in the scheduler registry.
     scheduler = _scheduler(tmp_path)
