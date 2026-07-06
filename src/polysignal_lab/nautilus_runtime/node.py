@@ -123,6 +123,9 @@ class _StaticMarketUniverse:
     async def refresh_once(self) -> list[Market]:
         return list(self._markets)
 
+    def refresh_once_sync(self) -> list[Market]:
+        return list(self._markets)
+
 
 logger = logging.getLogger(__name__)
 
@@ -323,7 +326,7 @@ def _build_market_rotation_actor(
         settings=settings,
         startup_markets=tuple(startup_markets),
         market_universe=market_universe,
-        registry=registry,
+        catalog=registry,
         anchor_store=store,
         health=health,
     )

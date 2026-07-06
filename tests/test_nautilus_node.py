@@ -261,7 +261,7 @@ def test_build_trading_node_uses_static_runtime_classes(monkeypatch) -> None:
     assert runtime["strategies"][0].strategy_name == "vwap_momentum"
     assert runtime["market_rotation_actor"] is runtime["node"].trader.actors[0]
     assert "registry" in captured["strategy_kwargs"]
-    assert "registry" in captured["actor_kwargs"]
+    assert "catalog" in captured["actor_kwargs"]
 
 
 def test_build_trading_node_registers_market_rotation_actor(monkeypatch) -> None:

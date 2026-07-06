@@ -379,13 +379,10 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
     )
 
     settings = Settings()
-    actor = MarketRotationActor(
-        settings=settings,
-        startup_markets=(market,),
-        market_universe=SimpleNamespace(refresh_once=lambda: []),
-        registry=registry,
-        anchor_store=None,
-    )
+    settings.runtime.nautilus.market_rotation.enabled = False
+    actor = MarketRotationActor(settings=settings,
+    startup_markets=(market,),
+    market_universe=SimpleNamespace(refresh_once=lambda: []), catalog=registry, anchor_store=None,)
     def publish_and_route(data_type: object, data: object) -> None:
         _ = data_type
         published.append(data)
@@ -393,7 +390,9 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
 
     actor.publish_data = publish_and_route
 
-    async def fake_get(_market):
+    def fake_get(_market):
+        nonlocal ptb_ran
+        ptb_ran = True
         return PriceToBeatResult(
             value=99950.0,
             source="anchor",
@@ -405,7 +404,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
 
     monkeypatch.setattr("asyncio.create_task", fake_create_task)
     monkeypatch.setattr(rotation_mod, "_register_polysignal_data_types_if_available", lambda: None)
-    monkeypatch.setattr(actor.ptb_provider, "get", fake_get)
+    monkeypatch.setattr(actor.ptb_provider, "get_sync", fake_get)
 
     actor.on_start()
     actor._on_spot(
@@ -637,20 +636,16 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
         instrument_id_resolver=node_mod._instrument_id_resolver(registry),
         registry=registry,
     )
-    actor = MarketRotationActor(
-        settings=settings,
-        startup_markets=(market_a,),
-        market_universe=FakeUniverse(),
-        registry=registry,
-        anchor_store=None,
-    )
+    actor = MarketRotationActor(settings=settings,
+    startup_markets=(market_a,),
+    market_universe=FakeUniverse(), catalog=registry, anchor_store=None,)
 
     def publish_and_route(data_type: object, data: object) -> None:
         _ = data_type
         published.append(data)
         strategy.on_data(data)
 
-    async def fake_get(market: Market) -> PriceToBeatResult:
+    def fake_get(market: Market) -> PriceToBeatResult:
         return PriceToBeatResult(
             value=99950.0 if market.condition_id == "condition-a" else 100050.0,
             source="anchor",
@@ -662,7 +657,7 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
 
     monkeypatch.setattr("asyncio.create_task", fake_create_task)
     monkeypatch.setattr(rotation_mod, "register_polysignal_data_types", lambda: None)
-    monkeypatch.setattr(actor.ptb_provider, "get", fake_get)
+    monkeypatch.setattr(actor.ptb_provider, "get_sync", fake_get)
     actor.publish_data = publish_and_route
 
     try:

@@ -74,7 +74,7 @@ class NautilusMarketRotationActor(MarketRotationActor, Actor):
         settings: Settings,
         startup_markets: tuple[Market, ...],
         market_universe: _MarketUniverse,
-        registry: MarketCatalog,
+        catalog: MarketCatalog,
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
     ) -> None:
@@ -84,7 +84,7 @@ class NautilusMarketRotationActor(MarketRotationActor, Actor):
             settings=settings,
             startup_markets=startup_markets,
             market_universe=market_universe,
-            registry=registry,
+            catalog=catalog,
             anchor_store=anchor_store,
             health=health,
         )

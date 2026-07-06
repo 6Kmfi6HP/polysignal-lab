@@ -80,3 +80,46 @@ def test_custom_data_publisher_publishes_market_metadata_without_registering_sta
 
     assert isinstance(publisher.published[-1], PolySignalMarketMetaData)
     assert not hasattr(actor, "registry")
+
+
+def test_market_rotation_actor_uses_clock_timer_for_startup(monkeypatch) -> None:
+    from datetime import timedelta
+
+    from polysignal_lab.config import Settings
+    from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+    from polysignal_lab.nautilus_runtime.market_rotation import (
+        REFRESH_TIMER_NAME,
+        MarketRotationActor,
+    )
+
+    timers: list[tuple[str, timedelta, object]] = []
+
+    class FakeClock:
+        def set_timer(self, name, interval, callback):
+            timers.append((name, interval, callback))
+
+        def cancel_timer(self, name):
+            timers.append((f"cancel:{name}", timedelta(seconds=0), None))
+
+    class FakeUniverse:
+        async def refresh_once(self):
+            return []
+
+    settings = Settings()
+    settings.runtime.nautilus.market_rotation.enabled = True
+    actor = MarketRotationActor(
+        settings=settings,
+        startup_markets=(),
+        market_universe=FakeUniverse(),
+        catalog=MarketCatalog(),
+    )
+    actor.clock = FakeClock()
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.market_rotation.register_polysignal_data_types",
+        lambda: None,
+    )
+
+    actor.on_start()
+
+    assert timers[0][0] == REFRESH_TIMER_NAME
+    assert callable(timers[0][2])

@@ -81,6 +81,36 @@ class MarketUniverseService:
         self.refresh_completed = True
         return markets
 
+    def refresh_once_sync(self) -> list[Market]:
+        discover_active = cast(
+            Callable[[], list[Market]] | None,
+            getattr(self.discovery, "active_markets_sync", None),
+        )
+        if callable(discover_active):
+            markets = discover_active()
+        else:
+            discover = cast(
+                Callable[..., list[Market]],
+                getattr(self.discovery, "discover_sync"),
+            )
+            markets = discover(**self._discover_kwargs(discover))
+        changed_ids = {
+            market.market_id
+            for market in markets
+            if self.markets.get(market.market_id) != market
+        }
+        self.markets.upsert_many(markets)
+        for market in markets:
+            try:
+                self.persistence.upsert_market(market)
+                if market.market_id in changed_ids:
+                    self.persistence.append_log("markets", market)
+            except (OSError, sqlite3.Error, TypeError, ValueError):
+                pass
+        self.latest_token_ids = token_ids_for_markets(markets)
+        self.refresh_completed = True
+        return markets
+
     async def fetch_resolved(self, open_market_ids: set[str] | None = None) -> list[Market]:
         resolved_markets = cast(
             Callable[[], Awaitable[list[Market]]] | None,
@@ -135,7 +165,7 @@ class MarketUniverseService:
 
     def _discover_kwargs(
         self,
-        discover: Callable[..., Awaitable[list[Market]]],
+        discover: Callable[..., object],
     ) -> dict[str, int]:
         if self.settings is None or self.settings.runtime.engine != "nautilus":
             return {}

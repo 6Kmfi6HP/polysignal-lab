@@ -66,6 +66,13 @@ class _Universe:
         return result
 
 
+    def refresh_once_sync(self) -> list[Market]:
+        result = self.rounds[self.calls]
+        self.calls += 1
+        if isinstance(result, Exception):
+            raise result
+        return result
+
 class _HealthRecorder:
     def __init__(self) -> None:
         self.ok: list[tuple[str, dict[str, object]]] = []
@@ -255,23 +262,20 @@ def test_market_rotation_actor_initial_publish_and_diff_executes_intercepted_ptb
     created: list[_RecordedTask] = []
     settings = Settings()
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
+    settings.runtime.nautilus.market_rotation.enabled = False
     health = _HealthRecorder()
     universe = _Universe(
         [
             [_market("condition-a"), _market("condition-b")],
         ]
     )
-    actor = MarketRotationActor(
-        settings=settings,
-        startup_markets=(_market("condition-a"),),
-        market_universe=universe,
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=health,
-    )
+    actor = MarketRotationActor(settings=settings,
+    startup_markets=(_market("condition-a"),),
+    market_universe=universe, catalog=MarketCatalog(), anchor_store=None,
+    health=health,)
     actor.publish_data = lambda data_type, data: published.append(data)
 
-    async def fake_ptb(market: Market) -> PriceToBeatResult:
+    def fake_ptb(market: Market) -> PriceToBeatResult:
         _ = market
         return PriceToBeatResult(
             value=100000.0,
@@ -282,7 +286,7 @@ def test_market_rotation_actor_initial_publish_and_diff_executes_intercepted_ptb
             from_anchor_service=True,
         )
 
-    monkeypatch.setattr(actor.ptb_provider, "get", fake_ptb)
+    monkeypatch.setattr(actor.ptb_provider, "get_sync", fake_ptb)
     monkeypatch.setattr(
         "asyncio.create_task",
         lambda coro: _record_task(created, cast(Coroutine[Any, Any, object], coro)),
@@ -291,13 +295,7 @@ def test_market_rotation_actor_initial_publish_and_diff_executes_intercepted_ptb
     try:
         actor.on_start()
 
-        ptb_tasks = [task for task in created if _recorded_task_name(task) == "_publish_price_to_beat"]
-        refresh_tasks = [task for task in created if _recorded_task_name(task) == "_run_loop"]
-
-        assert len(ptb_tasks) == 1
-        assert len(refresh_tasks) == 1
-
-        asyncio.run(ptb_tasks[0].coro)
+        assert created == []
         asyncio.run(actor.refresh_once())
 
         epochs = [item for item in published if isinstance(item, PolySignalMarketUniverseData)]
@@ -342,14 +340,10 @@ def test_market_rotation_actor_refresh_publishes_changed_ptb_for_still_active_ma
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
     settings.runtime.nautilus.market_rotation.enabled = False
     market = _market("condition-a")
-    actor = MarketRotationActor(
-        settings=settings,
-        startup_markets=(market,),
-        market_universe=_Universe([[market]]),
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=None,
-    )
+    actor = MarketRotationActor(settings=settings,
+    startup_markets=(market,),
+    market_universe=_Universe([[market]]), catalog=MarketCatalog(), anchor_store=None,
+    health=None,)
     actor.publish_data = lambda data_type, data: published.append(data)
     results = iter(
         (
@@ -372,10 +366,10 @@ def test_market_rotation_actor_refresh_publishes_changed_ptb_for_still_active_ma
         )
     )
 
-    async def fake_ptb(_market: Market) -> PriceToBeatResult:
+    def fake_ptb(_market: Market) -> PriceToBeatResult:
         return next(results)
 
-    monkeypatch.setattr(actor.ptb_provider, "get", fake_ptb)
+    monkeypatch.setattr(actor.ptb_provider, "get_sync", fake_ptb)
     monkeypatch.setattr(
         "asyncio.create_task",
         lambda coro: _record_task(created, cast(Coroutine[Any, Any, object], coro)),
@@ -383,13 +377,8 @@ def test_market_rotation_actor_refresh_publishes_changed_ptb_for_still_active_ma
 
     try:
         actor.on_start()
-        startup_tasks = [
-            task for task in created if _recorded_task_name(task) == "_publish_price_to_beat"
-        ]
-        assert len(startup_tasks) == 1
-        asyncio.run(startup_tasks[0].coro)
+        assert created == []
         published.clear()
-        created.clear()
 
         asyncio.run(actor.refresh_once())
 
@@ -410,14 +399,10 @@ def test_market_rotation_actor_refresh_skips_unchanged_ptb_for_still_active_mark
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
     settings.runtime.nautilus.market_rotation.enabled = False
     market = _market("condition-a")
-    actor = MarketRotationActor(
-        settings=settings,
-        startup_markets=(market,),
-        market_universe=_Universe([[market]]),
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=None,
-    )
+    actor = MarketRotationActor(settings=settings,
+    startup_markets=(market,),
+    market_universe=_Universe([[market]]), catalog=MarketCatalog(), anchor_store=None,
+    health=None,)
 
     def record_publish(data_type: object, data: object) -> None:
         nonlocal on_data_calls
@@ -448,10 +433,10 @@ def test_market_rotation_actor_refresh_skips_unchanged_ptb_for_still_active_mark
         )
     )
 
-    async def fake_ptb(_market: Market) -> PriceToBeatResult:
+    def fake_ptb(_market: Market) -> PriceToBeatResult:
         return next(results)
 
-    monkeypatch.setattr(actor.ptb_provider, "get", fake_ptb)
+    monkeypatch.setattr(actor.ptb_provider, "get_sync", fake_ptb)
     monkeypatch.setattr(
         "asyncio.create_task",
         lambda coro: _record_task(created, cast(Coroutine[Any, Any, object], coro)),
@@ -459,17 +444,11 @@ def test_market_rotation_actor_refresh_skips_unchanged_ptb_for_still_active_mark
 
     try:
         actor.on_start()
-        startup_tasks = [
-            task for task in created if _recorded_task_name(task) == "_publish_price_to_beat"
-        ]
-        assert len(startup_tasks) == 1
-        asyncio.run(startup_tasks[0].coro)
+        assert created == []
         initial_publish_count = len(
             [item for item in published if isinstance(item, PolySignalPriceToBeatData)]
         )
         initial_on_data_calls = on_data_calls
-        created.clear()
-
         asyncio.run(actor.refresh_once())
 
         assert created == []
@@ -490,18 +469,14 @@ def test_market_rotation_actor_refresh_continues_after_single_market_ptb_failure
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
     settings.runtime.nautilus.market_rotation.enabled = False
     markets = (_market("condition-a"), _market("condition-b"))
-    actor = MarketRotationActor(
-        settings=settings,
-        startup_markets=markets,
-        market_universe=_Universe([list(markets)]),
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=None,
-    )
+    actor = MarketRotationActor(settings=settings,
+    startup_markets=markets,
+    market_universe=_Universe([list(markets)]), catalog=MarketCatalog(), anchor_store=None,
+    health=None,)
     actor.publish_data = lambda data_type, data: published.append(data)
     calls: dict[str, int] = {}
 
-    async def fake_ptb(market: Market) -> PriceToBeatResult:
+    def fake_ptb(market: Market) -> PriceToBeatResult:
         count = calls.get(market.condition_id, 0) + 1
         calls[market.condition_id] = count
         if market.condition_id == "condition-a":
@@ -533,7 +508,7 @@ def test_market_rotation_actor_refresh_continues_after_single_market_ptb_failure
             from_anchor_service=True,
         )
 
-    monkeypatch.setattr(actor.ptb_provider, "get", fake_ptb)
+    monkeypatch.setattr(actor.ptb_provider, "get_sync", fake_ptb)
     monkeypatch.setattr(
         "asyncio.create_task",
         lambda coro: _record_task(created, cast(Coroutine[Any, Any, object], coro)),
@@ -541,14 +516,8 @@ def test_market_rotation_actor_refresh_continues_after_single_market_ptb_failure
 
     try:
         actor.on_start()
-        startup_tasks = [
-            task for task in created if _recorded_task_name(task) == "_publish_price_to_beat"
-        ]
-        assert len(startup_tasks) == 2
-        for task in startup_tasks:
-            asyncio.run(task.coro)
+        assert created == []
         published.clear()
-        created.clear()
 
         asyncio.run(actor.refresh_once())
 
@@ -568,24 +537,19 @@ def test_market_rotation_actor_refresh_checks_still_active_ptb_sequentially(
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
     settings.runtime.nautilus.market_rotation.enabled = False
     markets = (_market("condition-a"), _market("condition-b"), _market("condition-c"))
-    actor = MarketRotationActor(
-        settings=settings,
-        startup_markets=markets,
-        market_universe=_Universe([list(markets)]),
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=None,
-    )
+    actor = MarketRotationActor(settings=settings,
+    startup_markets=markets,
+    market_universe=_Universe([list(markets)]), catalog=MarketCatalog(), anchor_store=None,
+    health=None,)
     in_flight = 0
     max_in_flight = 0
     calls: list[str] = []
 
-    async def fake_ptb(market: Market) -> PriceToBeatResult:
+    def fake_ptb(market: Market) -> PriceToBeatResult:
         nonlocal in_flight, max_in_flight
         in_flight += 1
         max_in_flight = max(max_in_flight, in_flight)
         calls.append(market.condition_id)
-        await asyncio.sleep(0)
         in_flight -= 1
         return PriceToBeatResult(
             value=100000.0,
@@ -596,7 +560,7 @@ def test_market_rotation_actor_refresh_checks_still_active_ptb_sequentially(
             from_anchor_service=True,
         )
 
-    monkeypatch.setattr(actor.ptb_provider, "get", fake_ptb)
+    monkeypatch.setattr(actor.ptb_provider, "get_sync", fake_ptb)
     monkeypatch.setattr(
         "asyncio.create_task",
         lambda coro: _record_task(created, cast(Coroutine[Any, Any, object], coro)),
@@ -604,12 +568,7 @@ def test_market_rotation_actor_refresh_checks_still_active_ptb_sequentially(
 
     try:
         actor.on_start()
-        startup_tasks = [
-            task for task in created if _recorded_task_name(task) == "_publish_price_to_beat"
-        ]
-        for task in startup_tasks:
-            asyncio.run(task.coro)
-        created.clear()
+        assert created == []
         calls.clear()
         in_flight = 0
         max_in_flight = 0
@@ -636,14 +595,10 @@ def test_market_rotation_actor_keeps_last_good_state_on_publish_failure(
             [_market("condition-a"), _market("condition-b")],
         ]
     )
-    actor = MarketRotationActor(
-        settings=settings,
-        startup_markets=(_market("condition-a"),),
-        market_universe=universe,
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=None,
-    )
+    actor = MarketRotationActor(settings=settings,
+    startup_markets=(_market("condition-a"),),
+    market_universe=universe, catalog=MarketCatalog(), anchor_store=None,
+    health=None,)
     actor.publish_data = lambda data_type, data: published.append(data)
 
     async def fake_none_ptb(market: Market) -> PriceToBeatResult:
@@ -688,31 +643,22 @@ def test_market_rotation_actor_keeps_last_good_state_on_publish_failure(
         _close_recorded_tasks(created)
 
 
-@pytest.mark.anyio
-async def test_market_rotation_actor_run_loop_surfaces_refresh_failures(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_market_rotation_actor_refresh_timer_marks_down_refresh_failures() -> None:
     settings = Settings()
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
-    settings.runtime.nautilus.market_rotation.interval_sec = 1
     health = _HealthRecorder()
     actor = MarketRotationActor(
         settings=settings,
         startup_markets=(),
         market_universe=_Universe([RuntimeError("refresh failed")]),
-        registry=MarketCatalog(),
+        catalog=MarketCatalog(),
         anchor_store=None,
         health=health,
     )
 
-    async def no_sleep(_interval: int) -> None:
-        return None
+    actor._on_refresh_timer()
 
-    monkeypatch.setattr("asyncio.sleep", no_sleep)
-
-    with pytest.raises(RuntimeError, match="refresh failed"):
-        await actor._run_loop()
-
+    assert actor._refresh_in_flight is False
     assert health.down == [
         ("market_rotation", "refresh failed", {"epoch": 0, "phase": "refresh"}),
     ]
@@ -752,19 +698,15 @@ async def test_market_rotation_actor_refresh_preloads_next_period_via_market_uni
     settings.runtime.nautilus.market_rotation.enabled = False
     settings.runtime.nautilus.market_rotation.include_next_periods = 1
     settings.runtime.nautilus.market_rotation.stale_grace_sec = 0
-    actor = MarketRotationActor(
+    actor = MarketRotationActor(settings=settings,
+    startup_markets=(current_market,),
+    market_universe=MarketUniverseService(
+        discovery,
+        MarketRegistry(),
+        _NoopPersistence(),
         settings=settings,
-        startup_markets=(current_market,),
-        market_universe=MarketUniverseService(
-            discovery,
-            MarketRegistry(),
-            _NoopPersistence(),
-            settings=settings,
-        ),
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=None,
-    )
+    ), catalog=MarketCatalog(), anchor_store=None,
+    health=None,)
     actor.publish_data = lambda data_type, data: published.append(data)
 
     async def fake_none_ptb(market: Market) -> PriceToBeatResult:
@@ -835,19 +777,15 @@ async def test_market_rotation_actor_refresh_applies_stale_grace_via_market_univ
     settings.runtime.nautilus.market_rotation.enabled = False
     settings.runtime.nautilus.market_rotation.include_next_periods = 0
     settings.runtime.nautilus.market_rotation.stale_grace_sec = 5
-    actor = MarketRotationActor(
+    actor = MarketRotationActor(settings=settings,
+    startup_markets=(grace_market,),
+    market_universe=MarketUniverseService(
+        discovery,
+        MarketRegistry(),
+        _NoopPersistence(),
         settings=settings,
-        startup_markets=(grace_market,),
-        market_universe=MarketUniverseService(
-            discovery,
-            MarketRegistry(),
-            _NoopPersistence(),
-            settings=settings,
-        ),
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=None,
-    )
+    ), catalog=MarketCatalog(), anchor_store=None,
+    health=None,)
     actor.publish_data = lambda data_type, data: published.append(data)
 
     async def fake_none_ptb(market: Market) -> PriceToBeatResult:
@@ -894,14 +832,10 @@ def test_market_rotation_actor_on_start_uses_clock_timer_when_available(
     scheduled: list[dict[str, object]] = []
     settings = Settings()
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
-    actor = MarketRotationActor(
-        settings=settings,
-        startup_markets=(),
-        market_universe=_Universe([[]]),
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=None,
-    )
+    actor = MarketRotationActor(settings=settings,
+    startup_markets=(),
+    market_universe=_Universe([[]]), catalog=MarketCatalog(), anchor_store=None,
+    health=None,)
 
     class FakeClock:
         def set_timer(
@@ -949,174 +883,94 @@ def test_market_rotation_actor_refresh_timer_runs_sync_after_removing_async_offl
     actor = MarketRotationActor(
         settings=Settings(),
         startup_markets=(),
-        market_universe=_Universe([[]]),
-        registry=MarketCatalog(),
+        market_universe=_Universe([[_market("condition-a")]]),
+        catalog=MarketCatalog(),
         anchor_store=None,
         health=None,
     )
 
-    monkeypatch.setattr(actor, "_refresh_market_universe_sync", lambda: calls.append("refresh"))
-    monkeypatch.setattr(actor, "_apply_refreshed_markets", lambda markets: calls.append("apply"))
-    monkeypatch.setattr(actor, "_run_refresh_price_to_beat_batch_sync", lambda markets: calls.append("ptb"))
+    def apply(markets: tuple[Market, ...]) -> tuple[Market, ...]:
+        calls.append("apply")
+        return markets
+
+    def publish(markets: tuple[Market, ...]) -> None:
+        calls.append("ptb")
+        assert [market.condition_id for market in markets] == ["condition-a"]
+
+    monkeypatch.setattr(actor, "_apply_refreshed_markets", apply)
+    monkeypatch.setattr(actor, "_publish_price_to_beat_batch_sync", publish)
 
     actor._on_refresh_timer()
 
-    assert calls == ["refresh", "apply", "ptb"]
+    assert calls == ["apply", "ptb"]
     assert actor._refresh_in_flight is False
 
 
-def test_market_rotation_actor_refresh_timer_skips_when_refresh_in_flight(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    scheduled: list[object] = []
+def test_market_rotation_actor_refresh_timer_skips_when_refresh_in_flight() -> None:
     actor = MarketRotationActor(
         settings=Settings(),
         startup_markets=(),
         market_universe=_Universe([[]]),
-        registry=MarketCatalog(),
+        catalog=MarketCatalog(),
         anchor_store=None,
         health=None,
     )
     actor._refresh_in_flight = True
 
-    class FakeLoop:
-        def create_task(self, coro: object) -> None:
-            scheduled.append(coro)
-
-    monkeypatch.setattr("asyncio.get_running_loop", lambda: FakeLoop())
-
     actor._on_refresh_timer()
 
-    assert scheduled == []
+    assert actor.market_universe.calls == 0
 
 
-def test_market_rotation_actor_refresh_timer_applies_result_when_asyncio_run_close_fails(
+def test_market_universe_service_refresh_once_sync_uses_sync_discovery_and_closes_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_run = asyncio.run
-    actor = MarketRotationActor(
-        settings=Settings(),
-        startup_markets=(),
-        market_universe=_Universe([[_market("condition-a")]]),
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=None,
+    payload = _gamma_market_payload(
+        slug="btc-updown-5m-1782254400",
+        market_id="market-current",
+        start="2026-06-23T22:40:00Z",
+        end="2026-06-23T22:45:00Z",
     )
+    clients: list[FakeSyncClient] = []
 
-    def run_then_fail(coro: Coroutine[Any, Any, object]) -> object:
-        _ = original_run(coro)
-        raise RuntimeError("Set changed size during iteration")
+    class FakeSyncClient:
+        def __init__(self, *, timeout: float) -> None:
+            _ = timeout
+            self.calls: list[str] = []
+            self.closed = False
+            clients.append(self)
 
-    monkeypatch.setattr(asyncio, "run", run_then_fail)
+        def __enter__(self) -> FakeSyncClient:
+            return self
 
-    actor._on_refresh_timer()
+        def __exit__(self, *exc_info: object) -> None:
+            self.closed = True
 
-    assert [market.condition_id for market in actor.active_markets()] == ["condition-a"]
-    assert actor._refresh_in_flight is False
-
-
-def test_market_rotation_actor_refresh_preserves_result_when_fresh_client_close_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class ClosingClient:
-        async def aclose(self) -> None:
-            raise RuntimeError("Set changed size during iteration")
-
-    class FakeDiscovery:
-        def __init__(self) -> None:
-            self.client = object()
-
-    class FakeUniverse:
-        def __init__(self, discovery: FakeDiscovery) -> None:
-            self.discovery = discovery
-
-        async def refresh_once(self) -> list[Market]:
-            return [_market("condition-a")]
-
-    monkeypatch.setattr("httpx.AsyncClient", lambda *, timeout: ClosingClient())
-    discovery = FakeDiscovery()
-    original_client = discovery.client
-    actor = MarketRotationActor(
-        settings=Settings(),
-        startup_markets=(),
-        market_universe=FakeUniverse(discovery),
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=None,
-    )
-
-    refreshed = actor._refresh_market_universe_sync()
-
-    assert [market.condition_id for market in refreshed] == ["condition-a"]
-    assert discovery.client is original_client
-
-
-def test_market_rotation_actor_refresh_market_universe_sync_uses_fresh_client_each_call(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class LoopBoundClient:
-        def __init__(self, label: str) -> None:
-            self.label = label
-            self.bound_loop = None
-
-        async def get(self, _url: str, params: object | None = None) -> object:
+        def get(self, url: str, params: object | None = None) -> _FakeResponse:
             _ = params
-            loop = asyncio.get_running_loop()
-            if self.bound_loop is None:
-                self.bound_loop = loop
-            elif loop is not self.bound_loop:
-                raise RuntimeError("client reused across event loops")
-            return object()
+            self.calls.append(url)
+            return _FakeResponse(payload if len(self.calls) == 1 else [])
 
-        async def aclose(self) -> None:
-            return None
-
-    class FakeDiscovery:
-        def __init__(self) -> None:
-            self.client = LoopBoundClient("original")
-
-    class FakeUniverse:
-        def __init__(self, discovery: FakeDiscovery) -> None:
-            self.discovery = discovery
-            self.calls = 0
-            self.seen_clients: list[object] = []
-
-        async def refresh_once(self) -> list[Market]:
-            self.calls += 1
-            self.seen_clients.append(self.discovery.client)
-            await self.discovery.client.get("https://example.invalid")
-            return [_market("condition-a")]
-
-
-    replacement_count = 0
-
-    def fake_async_client(*, timeout: float) -> LoopBoundClient:
-        _ = timeout
-        nonlocal replacement_count
-        replacement_count += 1
-        return LoopBoundClient(f"fresh-{replacement_count}")
-
-    monkeypatch.setattr("httpx.AsyncClient", fake_async_client)
-    discovery = FakeDiscovery()
-    original_client = discovery.client
-    universe = FakeUniverse(discovery)
-    actor = MarketRotationActor(
-        settings=Settings(),
-        startup_markets=(),
-        market_universe=universe,
-        registry=MarketCatalog(),
-        anchor_store=None,
-        health=None,
+    monkeypatch.setattr("httpx.Client", FakeSyncClient)
+    discovery = MarketDiscovery(
+        PolymarketDataConfig(),
+        MarketConfig(assets=["BTC"], timeframes=["5m"], active_only=False, closed=False),
+        client=cast(Any, _FakeAsyncClient([])),
+    )
+    settings = Settings()
+    settings.runtime.engine = "nautilus"
+    service = MarketUniverseService(
+        discovery,
+        MarketRegistry(),
+        _NoopPersistence(),
+        settings=settings,
     )
 
-    actor._refresh_market_universe_sync()
-    actor._refresh_market_universe_sync()
+    markets = service.refresh_once_sync()
 
-    assert universe.calls == 2
-    assert discovery.client is original_client
-    assert universe.seen_clients[0] is not original_client
-    assert universe.seen_clients[1] is not original_client
-    assert universe.seen_clients[0] is not universe.seen_clients[1]
+    assert [market.condition_id for market in markets] == ["condition-market-current"]
+    assert clients and clients[0].closed is True
+    assert service.refresh_completed is True
 
 
 def test_market_rotation_actor_refresh_timer_without_running_loop_publishes_ptb_sync(
@@ -1129,13 +983,13 @@ def test_market_rotation_actor_refresh_timer_without_running_loop_publishes_ptb_
         settings=settings,
         startup_markets=(),
         market_universe=_Universe([[_market("condition-a")]]),
-        registry=MarketCatalog(),
+        catalog=MarketCatalog(),
         anchor_store=None,
         health=None,
     )
     actor.publish_data = lambda data_type, data: published.append(data)
 
-    async def fake_ptb(_market: Market) -> PriceToBeatResult:
+    def fake_ptb(_market: Market) -> PriceToBeatResult:
         return PriceToBeatResult(
             value=100000.0,
             source="anchor",
@@ -1145,7 +999,7 @@ def test_market_rotation_actor_refresh_timer_without_running_loop_publishes_ptb_
             from_anchor_service=True,
         )
 
-    monkeypatch.setattr(actor.ptb_provider, "get", fake_ptb)
+    monkeypatch.setattr(actor.ptb_provider, "get_sync", fake_ptb)
 
     actor._on_refresh_timer()
 
@@ -1153,16 +1007,19 @@ def test_market_rotation_actor_refresh_timer_without_running_loop_publishes_ptb_
     assert any(isinstance(item, PolySignalMarketMetaData) for item in published)
     assert any(isinstance(item, PolySignalPriceToBeatData) for item in published)
 
-def test_market_rotation_actor_on_stop_cancels_refresh_and_rtds_tasks(
+
+def test_market_rotation_actor_on_stop_stops_feed_without_asyncio_tasks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     created: list[_RecordedTask] = []
     stopped: list[str] = []
+    settings = Settings()
+    settings.runtime.nautilus.market_rotation.enabled = False
     actor = MarketRotationActor(
-        settings=Settings(),
+        settings=settings,
         startup_markets=(),
         market_universe=_Universe([[]]),
-        registry=MarketCatalog(),
+        catalog=MarketCatalog(),
         anchor_store=None,
         health=None,
     )
@@ -1178,7 +1035,6 @@ def test_market_rotation_actor_on_stop_cancels_refresh_and_rtds_tasks(
         actor.on_stop()
 
         assert stopped == ["stopped"]
-        assert {_recorded_task_name(task) for task in created} == {"run", "_run_loop"}
-        assert all(task.cancelled for task in created)
+        assert created == []
     finally:
         _close_recorded_tasks(created)

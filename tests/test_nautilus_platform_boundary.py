@@ -389,7 +389,6 @@ def test_market_catalog_has_no_reverse_instrument_truth_source() -> None:
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
-@pytest.mark.xfail(strict=True, reason="Task 6 removes bare asyncio actor scheduling fallbacks")
 def test_default_runtime_has_no_asyncio_actor_scheduling_fallbacks() -> None:
     forbidden_by_file = {
         Path("src/polysignal_lab/nautilus_runtime/market_rotation.py"): (

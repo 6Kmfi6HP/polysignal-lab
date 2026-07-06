@@ -41,6 +41,40 @@ class MarketDiscovery:
                 stale_grace_sec=stale_grace_sec,
             )
         )
+        return self._markets_from_payloads(
+            payloads,
+            include_next_periods=include_next_periods,
+            stale_grace_sec=stale_grace_sec,
+        )
+
+    def discover_sync(
+        self,
+        *,
+        include_next_periods: int = 0,
+        stale_grace_sec: int = 0,
+    ) -> list[Market]:
+        with httpx.Client(timeout=15.0) as client:
+            payloads = self._fetch_gamma_events_sync(client)
+            payloads.extend(
+                self._fetch_current_slot_payloads_sync(
+                    client,
+                    include_next_periods=include_next_periods,
+                    stale_grace_sec=stale_grace_sec,
+                )
+            )
+        return self._markets_from_payloads(
+            payloads,
+            include_next_periods=include_next_periods,
+            stale_grace_sec=stale_grace_sec,
+        )
+
+    def _markets_from_payloads(
+        self,
+        payloads: list[JsonObject],
+        *,
+        include_next_periods: int = 0,
+        stale_grace_sec: int = 0,
+    ) -> list[Market]:
         candidates = self._flatten_markets(payloads)
         markets: list[Market] = []
         seen: set[str] = set()
@@ -81,6 +115,30 @@ class MarketDiscovery:
                 return events
             offset += GAMMA_PAGE_LIMIT
 
+
+    def _fetch_gamma_events_sync(self, client: httpx.Client) -> list[JsonObject]:
+        events: list[JsonObject] = []
+        offset = 0
+        while True:
+            page = self._fetch_gamma_events_page_sync(client, offset)
+            events.extend(page)
+            if len(page) < GAMMA_PAGE_LIMIT:
+                return events
+            offset += GAMMA_PAGE_LIMIT
+
+    def _fetch_gamma_events_page_sync(self, client: httpx.Client, offset: int) -> list[JsonObject]:
+        params = {
+            "active": str(self.market_config.active_only).lower(),
+            "closed": str(self.market_config.closed).lower(),
+            "order": "startDate",
+            "ascending": "false",
+            "limit": str(GAMMA_PAGE_LIMIT),
+            "offset": str(offset),
+        }
+        response = client.get(f"{self.config.gamma_base_url}/events", params=params)
+        response.raise_for_status()
+        return _gamma_events_from_json(JSON_VALUE_ADAPTER.validate_python(response.json()))
+
     async def _fetch_gamma_events_page(self, offset: int) -> list[JsonObject]:
         params = {
             "active": str(self.market_config.active_only).lower(),
@@ -113,6 +171,28 @@ class MarketDiscovery:
             if payload is not None:
                 payloads.append(payload)
         return payloads
+
+    def _fetch_current_slot_payloads_sync(
+        self,
+        client: httpx.Client,
+        *,
+        include_next_periods: int = 0,
+        stale_grace_sec: int = 0,
+    ) -> list[JsonObject]:
+        if not (self.market_config.active_only and not self.market_config.closed):
+            return []
+        payloads: list[JsonObject] = []
+        for slug in self._current_slot_slugs(
+            include_next_periods=include_next_periods,
+            stale_grace_sec=stale_grace_sec,
+        ):
+            payload = self._fetch_gamma_event_by_slug_sync(client, slug)
+            if payload is None:
+                payload = self._fetch_gamma_market_by_slug_sync(client, slug)
+            if payload is not None:
+                payloads.append(payload)
+        return payloads
+
 
     def _current_slot_slugs(
         self,
@@ -163,6 +243,30 @@ class MarketDiscovery:
     async def _fetch_gamma_slug_payload(self, url: str) -> JsonObject | None:
         try:
             response = await self.client.get(url)
+            response.raise_for_status()
+            payload = JSON_VALUE_ADAPTER.validate_python(response.json())
+        except (httpx.HTTPError, TypeError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _fetch_gamma_event_by_slug_sync(self, client: httpx.Client, slug: str) -> JsonObject | None:
+        return self._fetch_gamma_slug_payload_sync(client, f"{self.config.gamma_base_url}/events/slug/{slug}")
+
+    def _fetch_gamma_market_by_slug_sync(self, client: httpx.Client, slug: str) -> JsonObject | None:
+        try:
+            response = client.get(
+                f"{self.config.gamma_base_url}/markets",
+                params={"slug": slug},
+            )
+            response.raise_for_status()
+            payloads = _gamma_events_from_json(JSON_VALUE_ADAPTER.validate_python(response.json()))
+        except (httpx.HTTPError, TypeError, ValueError):
+            return None
+        return payloads[0] if payloads else None
+
+    def _fetch_gamma_slug_payload_sync(self, client: httpx.Client, url: str) -> JsonObject | None:
+        try:
+            response = client.get(url)
             response.raise_for_status()
             payload = JSON_VALUE_ADAPTER.validate_python(response.json())
         except (httpx.HTTPError, TypeError, ValueError):
