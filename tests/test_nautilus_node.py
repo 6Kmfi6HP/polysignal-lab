@@ -47,6 +47,29 @@ def _patch_live_node_config_imports(monkeypatch):
         _fake_import_callable,
     )
 
+def test_live_engine_config_builders_import_configs_from_live_module(monkeypatch) -> None:
+    from polysignal_lab.nautilus_runtime import live_node
+
+    calls: list[tuple[str, str]] = []
+
+    def _recording_import_callable(module_name: str, attr_name: str):
+        calls.append((module_name, attr_name))
+
+        def _factory(**kwargs):
+            return SimpleNamespace(module_name=module_name, attr_name=attr_name, **kwargs)
+
+        return _factory
+
+    monkeypatch.setattr(live_node, "_import_callable", _recording_import_callable)
+
+    live_node.build_data_engine_config()
+    live_node.build_exec_engine_config()
+
+    assert calls == [
+        ("nautilus_trader.live", "LiveDataEngineConfig"),
+        ("nautilus_trader.live", "LiveExecEngineConfig"),
+    ]
+
 
 def _patch_nautilus_placeholders(monkeypatch):
     """Monkeypatch LiveNode builder placeholders so tests run without Nautilus."""

@@ -76,7 +76,7 @@ def build_cache_config() -> object:
 
 
 def build_data_engine_config() -> object:
-    live_data_engine_config = _import_callable("nautilus_trader.config", "LiveDataEngineConfig")
+    live_data_engine_config = _import_callable("nautilus_trader.live", "LiveDataEngineConfig")
     return live_data_engine_config(
         validate_data_sequence=True,
         graceful_shutdown_on_exception=True,
@@ -84,7 +84,7 @@ def build_data_engine_config() -> object:
 
 
 def build_exec_engine_config() -> object:
-    live_exec_engine_config = _import_callable("nautilus_trader.config", "LiveExecEngineConfig")
+    live_exec_engine_config = _import_callable("nautilus_trader.live", "LiveExecEngineConfig")
     return live_exec_engine_config(
         reconciliation=False,
         graceful_shutdown_on_exception=True,
