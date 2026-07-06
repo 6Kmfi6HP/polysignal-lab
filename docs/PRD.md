@@ -802,10 +802,12 @@ data:
   polymarket:
     use_market_ws: true
     max_book_staleness_ms: 1500
-  spot:
-    runtime_actor_source: disabled
-    explicit_polymarket_rtds: unsupported_fail_fast_until_managed_nautilus_data_client
-    max_price_staleness_ms: 1500
+
+runtime:
+  nautilus:
+    sidecar:
+      spot_source: disabled
+      price_to_beat_source: anchor_or_gamma
 
 signal:
   min_confidence_to_publish: 0.50
