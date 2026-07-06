@@ -78,6 +78,13 @@ async def check_settlements(scheduler: PolySignalScheduler) -> list[PaperTradeRe
             continue
         if outcome_value is None:
             continue
+        paper_position_id = str(
+            projection.get("paper_position_id") or projection.get("position_id") or ""
+        )
+        if not paper_position_id:
+            continue
+        if _existing_result_for_position(scheduler, paper_position_id):
+            continue
         result = _paper_trade_result_from_projection(
             projection,
             market=market,
@@ -106,6 +113,16 @@ async def check_settlements(scheduler: PolySignalScheduler) -> list[PaperTradeRe
                 )
         settled.append(result)
     return settled
+
+
+def _existing_result_for_position(
+    scheduler: PolySignalScheduler, paper_position_id: str
+) -> dict[str, object] | None:
+    rows = scheduler.persistence.query_json("paper_trade_results", limit=100_000)
+    for row in rows:
+        if row.get("paper_position_id") == paper_position_id:
+            return row
+    return None
 
 
 def _paper_trade_result_from_projection(

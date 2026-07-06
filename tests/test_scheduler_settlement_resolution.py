@@ -60,6 +60,7 @@ def _scheduler(market: Market, decision: ResolutionDecision) -> Mock:
     scheduler.persistence.insert_paper_trade_result.return_value = None
     scheduler.persistence.append_log.return_value = None
     scheduler.persistence.insert_system_event.return_value = None
+    scheduler.persistence.query_json.return_value = []
     scheduler.settings.telegram.send_paper_results = False
     return scheduler
 
@@ -130,6 +131,43 @@ async def test_cancelled_decision_uses_refund_path() -> None:
     assert results[0].result == TradeResultStatus.VOID
     assert results[0].outcome_value == 0.40
     assert results[0].settlement_value == 10.0
+
+
+@pytest.mark.anyio
+async def test_check_settlements_is_idempotent_per_position() -> None:
+    stored: list[dict[str, object]] = []
+
+    def query_json(table: str, **kwargs: object) -> list[dict[str, object]]:
+        if table == "paper_trade_results":
+            return list(stored)
+        return []
+
+    def insert_paper_trade_result(result: object) -> None:
+        stored.append(result.model_dump())  # type: ignore[union-attr]
+
+    scheduler = _scheduler(
+        _market(),
+        ResolutionDecision(
+            "market-1",
+            "0x" + "1" * 64,
+            "resolved",
+            "chain",
+            {"token-up": 1.0, "token-down": 0.0},
+            False,
+            (),
+            {"settlement_source": "chain"},
+        ),
+    )
+    scheduler.persistence.query_json = query_json
+    scheduler.persistence.insert_paper_trade_result = insert_paper_trade_result
+
+    first = await check_settlements(scheduler)
+    second = await check_settlements(scheduler)
+
+    assert len(first) == 1
+    assert second == []
+    assert len(stored) == 1
+    assert stored[0]["paper_position_id"] == "pos-1"
 
 
 @pytest.mark.anyio
