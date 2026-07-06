@@ -306,9 +306,9 @@ def test_scheduler_runtime_no_tick_resting_orders() -> None:
     )
 
 
-def test_scheduler_reporting_no_store_paper_result() -> None:
-    """_store_paper_result was dead code and has been removed."""
+def test_scheduler_reporting_has_store_paper_result() -> None:
+    """_store_paper_result exists for scripts/repair_settlement_results.py."""
     import polysignal_lab.app.scheduler_reporting as sr
-    assert not hasattr(sr, "_store_paper_result"), (
-        "_store_paper_result dead code should have been removed"
+    assert hasattr(sr, "_store_paper_result"), (
+        "_store_paper_result is required by scripts/repair_settlement_results.py"
     )

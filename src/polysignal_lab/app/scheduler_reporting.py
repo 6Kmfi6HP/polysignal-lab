@@ -199,6 +199,16 @@ async def _store_projection_result(
     await _publish_paper_result_best_effort(scheduler, result)
 
 
+async def _store_paper_result(
+    scheduler: PolySignalScheduler,
+    result: PaperTradeResult,
+    position: PaperPosition,
+) -> None:
+    """Legacy wrapper — used by scripts/repair_settlement_results.py."""
+    scheduler.persistence.upsert_paper_position(position)
+    await _store_projection_result(scheduler, result)
+
+
 async def _publish_paper_result_best_effort(
     scheduler: PolySignalScheduler, result: PaperTradeResult
 ) -> None:
