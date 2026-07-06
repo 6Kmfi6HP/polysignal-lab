@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import sys
 import tomllib
+import pytest
 from pathlib import Path
 from typing import cast
 
@@ -303,3 +304,141 @@ def test_nautilus_observability_has_no_paper_model_recording_api() -> None:
     )
 
     assert [token for token in forbidden if token in source] == []
+
+@pytest.mark.xfail(strict=True, reason="Task 2 removes legacy TradingNode surface")
+
+def test_default_runtime_uses_livenode_builder_not_legacy_trading_node() -> None:
+    forbidden = (
+        "nautilus_trader.live.node",
+        "TradingNodeConfig",
+        "TradingNode(",
+        "TradingNode =",
+    )
+    scanned_paths = (
+        Path("src/polysignal_lab/nautilus_runtime/node.py"),
+        Path("src/polysignal_lab/nautilus_runtime/trading_node.py"),
+        Path("src/polysignal_lab/nautilus_runtime/live_node.py"),
+    )
+    findings: list[str] = []
+    for path in scanned_paths:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []
+@pytest.mark.xfail(strict=True, reason="Task 3 removes dynamic runtime class factories")
+def test_default_runtime_has_no_dynamic_runtime_class_factories() -> None:
+    forbidden = (
+        "new_class(",
+        "runtime_native_strategy_type",
+        "runtime_sidecar_actor_type",
+        "runtime_market_rotation_actor_type",
+    )
+    scanned_paths = (
+        Path("src/polysignal_lab/nautilus_runtime/native_strategy.py"),
+        Path("src/polysignal_lab/nautilus_runtime/sidecar_data.py"),
+        Path("src/polysignal_lab/nautilus_runtime/market_rotation.py"),
+        Path("src/polysignal_lab/nautilus_runtime/node.py"),
+    )
+    findings: list[str] = []
+    for path in scanned_paths:
+        text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []
+
+@pytest.mark.xfail(strict=True, reason="Task 4 removes shared external sidecar state")
+def test_default_runtime_has_no_shared_external_sidecar_store() -> None:
+    forbidden_paths = (
+        Path("src/polysignal_lab/nautilus_bridge/external_data.py"),
+    )
+    forbidden_tokens = (
+        "ExternalDataSidecar",
+        "update_spot(",
+        "update_price_to_beat(",
+        "self.sidecar",
+    )
+    scanned_roots = (
+        Path("src/polysignal_lab/nautilus_runtime"),
+        Path("src/polysignal_lab/nautilus_bridge"),
+    )
+    path_findings = [str(path) for path in forbidden_paths if path.exists()]
+    token_findings: list[str] = []
+    for root in scanned_roots:
+        for path in root.rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            token_findings.extend(f"{path}:{token}" for token in forbidden_tokens if token in text)
+
+    assert path_findings == []
+    assert token_findings == []
+
+@pytest.mark.xfail(strict=True, reason="Task 5 removes reverse instrument registry")
+def test_market_catalog_has_no_reverse_instrument_truth_source() -> None:
+    forbidden = (
+        "_by_instrument",
+        "by_instrument(",
+        "condition_id_for_instrument(",
+        "token_id_for_instrument(",
+    )
+    scanned_paths = (
+        Path("src/polysignal_lab/nautilus_bridge/market_registry.py"),
+        Path("src/polysignal_lab/nautilus_bridge/market_catalog.py"),
+    )
+    findings: list[str] = []
+    for path in scanned_paths:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []
+@pytest.mark.xfail(strict=True, reason="Task 6 removes bare asyncio actor scheduling fallbacks")
+def test_default_runtime_has_no_asyncio_actor_scheduling_fallbacks() -> None:
+    forbidden_by_file = {
+        Path("src/polysignal_lab/nautilus_runtime/market_rotation.py"): (
+            "asyncio.create_task(",
+            "asyncio.sleep(",
+            "asyncio.new_event_loop(",
+            "asyncio.run(",
+            "asyncio.to_thread(",
+        ),
+        Path("src/polysignal_lab/nautilus_runtime/sidecar_data.py"): (
+            "asyncio.create_task(",
+            "asyncio.sleep(",
+            "asyncio.new_event_loop(",
+            "asyncio.run(",
+            "asyncio.to_thread(",
+        ),
+    }
+    findings: list[str] = []
+    for path, forbidden in forbidden_by_file.items():
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+
+    assert findings == []
+@pytest.mark.xfail(strict=True, reason="Task 7 splits large Nautilus runtime functions")
+def test_large_nautilus_runtime_functions_stay_under_limit() -> None:
+    import ast
+
+    roots = (
+        Path("src/polysignal_lab/nautilus_runtime"),
+        Path("src/polysignal_lab/nautilus_bridge"),
+    )
+    findings: list[str] = []
+    for root in roots:
+        for path in root.rglob("*.py"):
+            if path.name == "__init__.py":
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.end_lineno is None:
+                        continue
+                    line_count = node.end_lineno - node.lineno + 1
+                    if line_count > 45:
+                        findings.append(f"{path}:{node.lineno}-{node.end_lineno}:{node.name}:{line_count}")
+
+    assert findings == []
