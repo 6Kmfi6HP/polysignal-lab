@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from importlib import import_module
-from types import new_class
 from typing import Callable, Protocol, cast
 
 from polysignal_lab.alpha.types import SpotView
@@ -131,45 +130,6 @@ class SidecarDataActor:
         self.publisher.publish_data(_data_type(PolySignalMarketUniverseData), data)
 
 
-def runtime_sidecar_actor_type(
-    nautilus_base: type[object] | None,
-    config_factory: Callable[[], object] | None,
-) -> type["PolySignalRuntimeSidecarActor"]:
-    if nautilus_base is None:
-        return PolySignalRuntimeSidecarActor
-
-    def exec_body(namespace: dict[str, object]) -> None:
-        def __init__(
-            self: PolySignalRuntimeSidecarActor,
-            *,
-            settings: Settings,
-            markets: tuple[Market, ...],
-            registry: PolymarketMarketRegistry,
-            sidecar: ExternalDataSidecar,
-            anchor_store: AnchorPriceStore | None = None,
-        ) -> None:
-            base_init = cast(Callable[..., None], nautilus_base.__init__)
-            if config_factory is None:
-                base_init(self)
-            else:
-                base_init(self, config=config_factory())
-            PolySignalRuntimeSidecarActor.__init__(
-                self,
-                settings=settings,
-                markets=markets,
-                registry=registry,
-                sidecar=sidecar,
-                anchor_store=anchor_store,
-            )
-
-        namespace["__init__"] = __init__
-
-    actor_cls = new_class(
-        "NautilusPolySignalRuntimeSidecarActor",
-        (PolySignalRuntimeSidecarActor, nautilus_base),
-        exec_body=exec_body,
-    )
-    return cast(type[PolySignalRuntimeSidecarActor], actor_cls)
 
 
 class PolySignalRuntimeSidecarActor:

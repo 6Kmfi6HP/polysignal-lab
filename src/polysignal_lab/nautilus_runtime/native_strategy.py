@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from importlib import import_module
 import sqlite3
-from types import SimpleNamespace, new_class
+from types import SimpleNamespace
 from typing import Protocol, cast
 
 from polysignal_lab.alpha.types import (
@@ -157,67 +157,6 @@ def _nautilus_data_type(value: object) -> object:
     return value
 
 
-def runtime_native_strategy_type(
-    nautilus_base: type[object] | None,
-    config_factory: Callable[[], object] | None,
-) -> type["PolySignalNativeStrategy"]:
-    if nautilus_base is None:
-        return PolySignalNativeStrategy
-
-    def exec_body(namespace: dict[str, object]) -> None:
-        def __init__(
-            self: PolySignalNativeStrategy,
-            *,
-            core: AlphaCore,
-            assembler: _Assembler | None,
-            condition_ids: Sequence[str],
-            strategy_name: str,
-            policy: DecisionPolicyActor | None = None,
-            fixed_stake_usdc: float = 10.0,
-            data_names: Sequence[str] = DEFAULT_NATIVE_DATA_NAMES,
-            book_type: str = "L2_MBP",
-            instrument_id_resolver: Callable[[str], object] | None = None,
-            registry: PolymarketMarketRegistry | None = None,
-            sidecar: ExternalDataSidecar | None = None,
-            observability: _Observability | None = None,
-            exit_model: object | None = None,
-            progress_callback: Callable[[str], None] | None = None,
-            unsubscribe_exited: bool = True,
-            l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
-        ) -> None:
-            base_init = cast(Callable[..., None], nautilus_base.__init__)
-            if config_factory is None:
-                base_init(self)
-            else:
-                base_init(self, config=config_factory())
-            PolySignalNativeStrategy.__init__(
-                self,
-                core=core,
-                assembler=assembler,
-                condition_ids=condition_ids,
-                strategy_name=strategy_name,
-                policy=policy,
-                fixed_stake_usdc=fixed_stake_usdc,
-                data_names=data_names,
-                book_type=book_type,
-                instrument_id_resolver=instrument_id_resolver,
-                registry=registry,
-                sidecar=sidecar,
-                observability=observability,
-                exit_model=exit_model,
-                progress_callback=progress_callback,
-                unsubscribe_exited=unsubscribe_exited,
-                l1_book_snapshot_interval_ms=l1_book_snapshot_interval_ms,
-            )
-
-        namespace["__init__"] = __init__
-
-    strategy_cls = new_class(
-        "NautilusPolySignalNativeStrategy",
-        (PolySignalNativeStrategy, nautilus_base),
-        exec_body=exec_body,
-    )
-    return cast(type[PolySignalNativeStrategy], strategy_cls)
 
 
 class PolySignalNativeStrategy:

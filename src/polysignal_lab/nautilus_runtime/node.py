@@ -230,6 +230,16 @@ def _ensure_nautilus_imports() -> None:
     NautilusStrategy = cast(type[object], getattr(strategy_mod, "Strategy"))
     NautilusStrategyConfig = cast(Callable[[], object], getattr(config_mod, "StrategyConfig"))
 
+
+def _load_runtime_classes() -> tuple[type[object], type[object]]:
+    from polysignal_lab.nautilus_runtime.runtime_classes import (
+        NautilusMarketRotationActor,
+        NautilusPolySignalNativeStrategy,
+    )
+
+    return NautilusPolySignalNativeStrategy, NautilusMarketRotationActor
+
+
 def _create_configured_live_node(
     settings: Settings,
     configured_markets: Sequence[Market],
@@ -305,15 +315,11 @@ def _build_market_rotation_actor(
     store: AnchorPriceStore | None,
     health: object | None,
 ) -> object:
-    from polysignal_lab.nautilus_runtime.market_rotation import runtime_market_rotation_actor_type
-
-    actor_factory = cast(
-        Callable[..., object],
-        runtime_market_rotation_actor_type(NautilusActor, NautilusActorConfig),
-    )
+    _strategy_cls, actor_cls = _load_runtime_classes()
+    actor_factory = cast(Callable[..., object], actor_cls)
     return actor_factory(
         settings=settings,
-        startup_markets=startup_markets,
+        startup_markets=tuple(startup_markets),
         market_universe=market_universe,
         registry=registry,
         sidecar=sidecar,
@@ -456,9 +462,8 @@ def _build_native_strategies(
     sidecar: ExternalDataSidecar,
     observability: ObservabilityActor | None,
 ) -> list[_NativeStrategyLike]:
-    from polysignal_lab.nautilus_runtime.native_strategy import runtime_native_strategy_type
-
-    strategy_type = runtime_native_strategy_type(NautilusStrategy, NautilusStrategyConfig)
+    strategy_cls, _actor_cls = _load_runtime_classes()
+    strategy_type = cast(Callable[..., _NativeStrategyLike], strategy_cls)
     instrument_id_resolver = _instrument_id_resolver(registry)
     strategy_book_type = settings.runtime.nautilus.sandbox_book_type
     strategies: list[_NativeStrategyLike] = []

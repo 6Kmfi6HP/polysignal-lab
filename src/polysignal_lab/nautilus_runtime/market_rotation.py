@@ -3,8 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from types import new_class
-from typing import Callable, Protocol, cast
+from typing import Protocol, cast
 
 from polysignal_lab.config import Settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceService, AnchorPriceStore
@@ -392,49 +391,6 @@ class MarketRotationActor:
             self.health.mark_down("market_rotation", str(exc), epoch=self._epoch, **metrics)
 
 
-def runtime_market_rotation_actor_type(
-    nautilus_base: type[object] | None,
-    config_factory: Callable[[], object] | None,
-) -> type["MarketRotationActor"]:
-    if nautilus_base is None:
-        return MarketRotationActor
-
-    def exec_body(namespace: dict[str, object]) -> None:
-        def __init__(
-            self: MarketRotationActor,
-            *,
-            settings: Settings,
-            startup_markets: tuple[Market, ...],
-            market_universe: _MarketUniverse,
-            registry: PolymarketMarketRegistry,
-            sidecar: ExternalDataSidecar,
-            anchor_store: AnchorPriceStore | None = None,
-            health: _Health | None = None,
-        ) -> None:
-            base_init = cast(Callable[..., None], nautilus_base.__init__)
-            if config_factory is None:
-                base_init(self)
-            else:
-                base_init(self, config=config_factory())
-            MarketRotationActor.__init__(
-                self,
-                settings=settings,
-                startup_markets=startup_markets,
-                market_universe=market_universe,
-                registry=registry,
-                sidecar=sidecar,
-                anchor_store=anchor_store,
-                health=health,
-            )
-
-        namespace["__init__"] = __init__
-
-    actor_cls = new_class(
-        "NautilusMarketRotationActor",
-        (MarketRotationActor, nautilus_base),
-        exec_body=exec_body,
-    )
-    return cast(type[MarketRotationActor], actor_cls)
 
 
 def _markets_by_condition(markets: tuple[Market, ...] | list[Market]) -> dict[str, Market]:

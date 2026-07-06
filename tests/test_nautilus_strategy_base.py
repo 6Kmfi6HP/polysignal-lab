@@ -4,7 +4,8 @@ import sys
 
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
+from importlib import import_module
+from types import ModuleType, SimpleNamespace
 from typing import Any, Protocol, cast
 
 from polysignal_lab.alpha.types import (
@@ -82,6 +83,55 @@ def _install_fake_polymarket_id_helper(monkeypatch) -> None:
         "nautilus_trader.adapters.polymarket",
         SimpleNamespace(get_polymarket_instrument_id=helper),
     )
+
+def _load_static_native_strategy(
+    monkeypatch,
+    strategy_base: type[object],
+    strategy_config: object,
+) -> type[Any]:
+    runtime_module_name = "polysignal_lab.nautilus_runtime.runtime_classes"
+    missing = object()
+    previous_runtime_module = sys.modules.get(runtime_module_name, missing)
+    _ = sys.modules.pop(runtime_module_name, None)
+
+    nautilus_module = ModuleType("nautilus_trader")
+    common_module = ModuleType("nautilus_trader.common")
+    actor_module = ModuleType("nautilus_trader.common.actor")
+    config_module = ModuleType("nautilus_trader.config")
+    strategy_module = ModuleType("nautilus_trader.trading.strategy")
+    trading_module = ModuleType("nautilus_trader.trading")
+
+    class FakeActor:
+        def __init__(self, *, config: object) -> None:
+            self.actor_config = config
+
+    actor_module.Actor = FakeActor
+    config_module.ActorConfig = lambda: "actor-config"
+    config_module.StrategyConfig = lambda: strategy_config
+    strategy_module.Strategy = strategy_base
+
+    nautilus_module.common = common_module
+    nautilus_module.config = config_module
+    nautilus_module.trading = trading_module
+    common_module.actor = actor_module
+    trading_module.strategy = strategy_module
+
+    monkeypatch.setitem(sys.modules, "nautilus_trader", nautilus_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.common", common_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.common.actor", actor_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.config", config_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.trading", trading_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.trading.strategy", strategy_module)
+
+    try:
+        module = import_module(runtime_module_name)
+        return cast(type[Any], module.NautilusPolySignalNativeStrategy)
+    finally:
+        if previous_runtime_module is missing:
+            _ = sys.modules.pop(runtime_module_name, None)
+        else:
+            sys.modules[runtime_module_name] = previous_runtime_module
+
 
 
 class _BookViewLike(Protocol):
@@ -445,17 +495,14 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
         "BTC:5m:btc-5m:UP:ptb_diff",
     ]
 
-def test_runtime_native_strategy_type_uses_nautilus_subscribe_data_for_custom_data() -> (
-    None
-):
+def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
+    monkeypatch,
+) -> None:
     from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
         MarketPairMeta,
         PolymarketMarketRegistry,
-    )
-    from polysignal_lab.nautilus_runtime.native_strategy import (
-        runtime_native_strategy_type,
     )
 
     class FakeBase:
@@ -478,7 +525,7 @@ def test_runtime_native_strategy_type_uses_nautilus_subscribe_data_for_custom_da
         ) -> None:
             self.custom_subscriptions.append(data_type)
 
-    strategy_type = runtime_native_strategy_type(FakeBase, lambda: "cfg")
+    strategy_type = _load_static_native_strategy(monkeypatch, FakeBase, "cfg")
 
     registry = PolymarketMarketRegistry()
     registry.register(
@@ -509,7 +556,7 @@ def test_runtime_native_strategy_type_uses_nautilus_subscribe_data_for_custom_da
     assert cast(list[object], getattr(strategy, "custom_subscriptions")) != []
 
 
-def test_runtime_native_strategy_type_subscribes_custom_data_on_msgbus() -> None:
+def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) -> None:
     from polysignal_lab.nautilus_bridge.external_data import ExternalDataSidecar
     from polysignal_lab.nautilus_bridge.market_registry import (
         InstrumentTokenMeta,
@@ -521,9 +568,6 @@ def test_runtime_native_strategy_type_subscribes_custom_data_on_msgbus() -> None
         PolySignalMarketUniverseData,
         PolySignalPriceToBeatData,
         PolySignalSpotData,
-    )
-    from polysignal_lab.nautilus_runtime.native_strategy import (
-        runtime_native_strategy_type,
     )
 
     class FakeMsgBus:
@@ -567,7 +611,7 @@ def test_runtime_native_strategy_type_subscribes_custom_data_on_msgbus() -> None
         def handle_data(self, data: object) -> None:
             _ = cast(_DataHandler, cast(object, self)).on_data(data)
 
-    strategy_type = runtime_native_strategy_type(FakeBase, lambda: "cfg")
+    strategy_type = _load_static_native_strategy(monkeypatch, FakeBase, "cfg")
 
     registry = PolymarketMarketRegistry()
     registry.register(

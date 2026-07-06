@@ -124,6 +124,20 @@ def _patch_nautilus_placeholders(monkeypatch):
         def build(self):
             self.built = True
 
+    class FakeRuntimeStrategy:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.strategy_name = kwargs["strategy_name"]
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    class FakeRuntimeActor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+
     monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.LiveNode", FakeLiveNode)
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node.PolymarketInstrumentProviderConfig",
@@ -148,6 +162,10 @@ def _patch_nautilus_placeholders(monkeypatch):
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.live_node.SandboxLiveExecClientFactory",
         object(),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
+        lambda: (FakeRuntimeStrategy, FakeRuntimeActor),
     )
     return FakeLiveNode
 
@@ -201,6 +219,33 @@ def test_build_trading_node_injects_shared_projections_and_no_manual_sync_compon
     assert getattr(first_strategy, "sidecar") is runtime["sidecar"]
     assert getattr(first_strategy, "assembler") is runtime["assembler"]
 
+def test_build_trading_node_uses_static_runtime_classes(monkeypatch) -> None:
+    _patch_nautilus_placeholders(monkeypatch)
+    captured: dict[str, object] = {}
+
+    class FakeStaticStrategy:
+        strategy_name = "vwap_momentum"
+
+        def __init__(self, **kwargs):
+            captured["strategy_kwargs"] = kwargs
+
+    class FakeStaticActor:
+        def __init__(self, **kwargs):
+            captured["actor_kwargs"] = kwargs
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
+        lambda: (FakeStaticStrategy, FakeStaticActor),
+    )
+
+    runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+
+    assert runtime["strategies"][0].strategy_name == "vwap_momentum"
+    assert runtime["market_rotation_actor"] is runtime["node"].trader.actors[0]
+    assert "registry" in captured["strategy_kwargs"]
+    assert "registry" in captured["actor_kwargs"]
+
+
 def test_build_trading_node_registers_market_rotation_actor(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
@@ -208,13 +253,14 @@ def test_build_trading_node_registers_market_rotation_actor(monkeypatch) -> None
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
+    class FakeStrategy:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.strategy_name = kwargs["strategy_name"]
+
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.market_rotation.runtime_market_rotation_actor_type",
-        lambda _base, _config: FakeRotationActor,
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.sidecar_data.runtime_sidecar_actor_type",
-        lambda _base, _config: pytest.fail("build_trading_node should register MarketRotationActor"),
+        "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor),
     )
 
     universe = object()
@@ -267,12 +313,8 @@ def test_build_trading_node_forwards_unsubscribe_exited_to_native_strategy(
             self.strategy_name = kwargs["strategy_name"]
 
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.market_rotation.runtime_market_rotation_actor_type",
-        lambda _base, _config: FakeRotationActor,
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.native_strategy.runtime_native_strategy_type",
-        lambda _base, _config: FakeStrategy,
+        "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
@@ -313,12 +355,8 @@ def test_build_trading_node_passes_l1_snapshot_interval_to_native_strategies(
             self.strategy_name = kwargs["strategy_name"]
 
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.market_rotation.runtime_market_rotation_actor_type",
-        lambda _base, _config: FakeRotationActor,
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.native_strategy.runtime_native_strategy_type",
-        lambda _base, _config: FakeStrategy,
+        "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
@@ -360,9 +398,13 @@ def test_build_trading_node_injects_runtime_progress_callback(monkeypatch, tmp_p
     settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
     settings.storage.state_dir = str(tmp_path / "state")
     _patch_nautilus_placeholders(monkeypatch)
+    class FakeRotationActor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.native_strategy.runtime_native_strategy_type",
-        lambda _base, _config: FakeStrategy,
+        "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor),
     )
 
     runtime = build_trading_node(settings=settings, condition_ids=("condition-btc-5m",))

@@ -326,7 +326,6 @@ def test_default_runtime_uses_livenode_builder_not_legacy_trading_node() -> None
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
-@pytest.mark.xfail(strict=True, reason="Task 3 removes dynamic runtime class factories")
 def test_default_runtime_has_no_dynamic_runtime_class_factories() -> None:
     forbidden = (
         "new_class(",
