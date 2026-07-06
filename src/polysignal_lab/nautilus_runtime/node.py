@@ -361,6 +361,8 @@ def build_trading_node(
         nautilus_cache,
         portfolio=getattr(node, "portfolio", None) or getattr(kernel, "portfolio", None),
     )
+    for strategy in strategies:
+        setattr(strategy, "cache_reader", cache_reader)
 
     return {
         "node": node,
@@ -463,6 +465,7 @@ def _build_native_strategies(
             registry=registry,
             sidecar=sidecar,
             observability=observability,
+            exit_model=settings.paper_trading.exit_model,
             progress_callback=_runtime_progress_callback(settings),
             unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
             l1_book_snapshot_interval_ms=settings.runtime.nautilus.l1_book_snapshot_interval_ms,

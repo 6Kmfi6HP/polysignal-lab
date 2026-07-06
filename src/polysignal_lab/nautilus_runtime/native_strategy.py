@@ -255,6 +255,7 @@ def runtime_native_strategy_type(
             registry: PolymarketMarketRegistry | None = None,
             sidecar: ExternalDataSidecar | None = None,
             observability: _Observability | None = None,
+            exit_model: object | None = None,
             progress_callback: Callable[[str], None] | None = None,
             unsubscribe_exited: bool = True,
             l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
@@ -278,6 +279,7 @@ def runtime_native_strategy_type(
                 registry=registry,
                 sidecar=sidecar,
                 observability=observability,
+                exit_model=exit_model,
                 progress_callback=progress_callback,
                 unsubscribe_exited=unsubscribe_exited,
                 l1_book_snapshot_interval_ms=l1_book_snapshot_interval_ms,
@@ -311,6 +313,7 @@ class PolySignalNativeStrategy:
         registry: PolymarketMarketRegistry | None = None,
         sidecar: ExternalDataSidecar | None = None,
         observability: _Observability | None = None,
+        exit_model: object | None = None,
         progress_callback: Callable[[str], None] | None = None,
         unsubscribe_exited: bool = True,
         l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
@@ -333,6 +336,8 @@ class PolySignalNativeStrategy:
         self.registry: PolymarketMarketRegistry | None = registry
         self.sidecar: ExternalDataSidecar | None = sidecar
         self.observability: _Observability | None = observability
+        self.cache_reader: object | None = None
+        self.exit_model: object | None = exit_model
         self.progress_callback: Callable[[str], None] | None = progress_callback
         self._startup_condition_ids: tuple[str, ...] = self.condition_ids
         self._active_condition_ids: set[str] = set(self.condition_ids)
@@ -630,6 +635,48 @@ class PolySignalNativeStrategy:
             return
         for decision in self.core.evaluate(view):
             self._handle_decision(decision, view)
+        self.evaluate_exit_positions(condition_id, view)
+
+    def evaluate_exit_positions(self, condition_id: str, view: MarketView) -> None:
+        cache_reader = getattr(self, "cache_reader", None)
+        read_positions = getattr(cache_reader, "read_positions", None)
+        if not callable(read_positions):
+            return
+        rows = read_positions()
+        if not isinstance(rows, list):
+            return
+        from polysignal_lab.nautilus_runtime.exit_policy import ExitPolicyConfig, evaluate_exit_decision
+        from polysignal_lab.nautilus_runtime.native_exit import submit_exit_decision
+
+        raw_config = self.exit_model
+        if raw_config is None:
+            return
+        config = ExitPolicyConfig(
+            mode=str(getattr(raw_config, "mode", "hold_to_resolution_with_optional_tp_sl")),
+            take_profit_enabled=bool(getattr(raw_config, "take_profit_enabled", True)),
+            stop_loss_enabled=bool(getattr(raw_config, "stop_loss_enabled", True)),
+            take_profit_price=float(getattr(raw_config, "take_profit_price", 0.90)),
+            stop_loss_price=float(getattr(raw_config, "stop_loss_price", 0.35)),
+            max_hold_time_sec=int(getattr(raw_config, "max_hold_time_sec", 900)),
+        )
+        now = view.created_at
+        for position in rows:
+            if not isinstance(position, dict):
+                continue
+            if str(position.get("condition_id") or "") != condition_id:
+                continue
+            token_id = str(position.get("token_id") or "")
+            book = view.up if token_id == view.up.token_id else view.down if token_id == view.down.token_id else None
+            if book is None:
+                continue
+            decision = evaluate_exit_decision(position, book, now, config)
+            if decision is None:
+                continue
+            submit_exit_decision(
+                self,
+                decision,
+                instrument_id_resolver=self.instrument_id_resolver,
+            )
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
         if not _market_view_ready(view):
