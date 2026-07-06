@@ -280,14 +280,12 @@ def build_trading_node(
     markets: Sequence[Market] = (),
     market_universe: object | None = None,
     store: AnchorPriceStore | None = None,
-    wallet: object | None = None,
     health: object | None = None,
     observability: ObservabilityActor | None = None,
 ) -> dict[str, object]:
     """Build the Nautilus-owned paper runtime wiring."""
     if settings is None:
         settings = load_settings()
-    _ = wallet
 
     configured_markets = tuple(markets)
     configured_condition_ids = _configured_condition_ids(condition_ids, configured_markets)
@@ -495,11 +493,6 @@ async def _stop_nautilus_scheduler(scheduler: object) -> None:
                 "Failed to persist Nautilus health snapshot: %s",
                 exc,
             )
-        return
-
-    stop = getattr(scheduler, "stop", None)
-    if hasattr(scheduler, "wallet") and callable(stop):
-        _ = await cast(Callable[[], Awaitable[object]], stop)()
         return
 
     setattr(scheduler, "_running", False)

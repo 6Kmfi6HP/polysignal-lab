@@ -38,14 +38,14 @@ from zoneinfo import ZoneInfo
 
 from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.app.scheduler_reporting import _store_paper_result
-from polysignal_lab.app.scheduler_state import persist_state
 from polysignal_lab.config import load_settings
 from polysignal_lab.domain.enums import MarketStatus, PositionStatus, TradeResultStatus
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_position import PaperPosition
-from polysignal_lab.domain.paper_result import PaperTradeResult
+from polysignal_lab.domain.paper_result import PaperTradeResult, PaperWalletSnapshot
+from polysignal_lab.paper.settlement import PaperSettlementEngine
 from polysignal_lab.paper.settlement_sources import ResolutionDecision
-from polysignal_lab.utils import new_id, utc_iso
+from polysignal_lab.utils import new_id, utc_iso, utc_now
 
 WALLET_EPSILON = 1e-6
 LOGGER = logging.getLogger("polysignal_lab.repair_settlement")
@@ -343,7 +343,6 @@ async def backfill(scheduler: PolySignalScheduler, config: RepairConfig) -> dict
             raise ValueError("--backup is required when applying")
         _backup_sqlite(scheduler, config.backup_path)
 
-    await scheduler._restore_wallet_state()
     applied = 0
     skipped = 0
     skipped_unknown: list[dict[str, str]] = []
@@ -355,7 +354,9 @@ async def backfill(scheduler: PolySignalScheduler, config: RepairConfig) -> dict
         scheduler.settings.telegram.send_paper_results = True
 
     try:
-        for position_id, position in list(scheduler.wallet.open_positions.items()):
+        open_rows = scheduler.persistence.restore_open_positions()
+        for row in open_rows:
+            position = PaperPosition.model_validate(row)
             if config.position_id and position.paper_position_id != config.position_id:
                 continue
             if config.market_id and position.market_id != config.market_id:
@@ -385,21 +386,12 @@ async def backfill(scheduler: PolySignalScheduler, config: RepairConfig) -> dict
             if decision.status not in {"resolved", "cancelled"}:
                 continue
 
-            cash_before = scheduler.wallet.cash_balance
-            pnl_before = scheduler.wallet.realized_pnl
-            status_before = position.status
-            closed_at_before = position.closed_at
-            was_open = position.paper_position_id in scheduler.wallet.open_positions
-
-            result = _settle_for_repair(scheduler, position, market, decision)
+            work_position = position if not config.dry_run else position.model_copy(deep=True)
+            result = _settle_for_repair(scheduler, work_position, market, decision)
             if result is None:
                 skipped_unknown.append(
                     {"paper_position_id": position.paper_position_id, "reason": "NO_PAYOUT_FOR_TOKEN"}
                 )
-                if was_open:
-                    scheduler.wallet.open_positions[position.paper_position_id] = position
-                position.status = status_before
-                position.closed_at = closed_at_before
                 continue
 
             if config.dry_run:
@@ -409,24 +401,12 @@ async def backfill(scheduler: PolySignalScheduler, config: RepairConfig) -> dict
                     position.paper_position_id,
                     result.result.value,
                 )
-                scheduler.wallet.cash_balance = cash_before
-                scheduler.wallet.realized_pnl = pnl_before
-                position.status = status_before
-                position.closed_at = closed_at_before
-                if was_open:
-                    scheduler.wallet.open_positions[position.paper_position_id] = position
                 continue
 
             try:
-                await _store_paper_result(scheduler, result, position)
+                await _store_paper_result(scheduler, result, work_position)
             except Exception as exc:
                 failures += 1
-                scheduler.wallet.cash_balance = cash_before
-                scheduler.wallet.realized_pnl = pnl_before
-                position.status = status_before
-                position.closed_at = closed_at_before
-                if was_open:
-                    scheduler.wallet.open_positions[position.paper_position_id] = position
                 LOGGER.error("Failed to persist repair for %s: %s", position.paper_position_id, exc)
                 continue
 
@@ -473,17 +453,18 @@ def reconcile_wallet(scheduler: PolySignalScheduler, config: RepairConfig) -> di
 
     _backup_sqlite(scheduler, config.backup_path)
     replay_cash, replay_pnl, open_count = _replay_wallet(scheduler)
-    scheduler.wallet.cash_balance = replay_cash
-    scheduler.wallet.realized_pnl = replay_pnl
-    for row in scheduler.persistence.restore_open_positions():
-        position = PaperPosition.model_validate(row)
-        scheduler.wallet.open_positions[position.paper_position_id] = position
-    if open_count != scheduler.wallet.open_position_count:
-        scheduler.wallet.open_positions = {
-            position.paper_position_id: position
-            for position in scheduler.wallet.open_positions.values()
-        }
-    persist_state(scheduler)
+    starting = float(scheduler.settings.paper_trading.starting_balance_usdc)
+    open_rows = scheduler.persistence.restore_open_positions()
+    open_stake = sum(float(row.get("stake_usdc") or 0.0) for row in open_rows)
+    snapshot = PaperWalletSnapshot(
+        starting_balance=starting,
+        cash_balance=replay_cash,
+        realized_pnl=replay_pnl,
+        equity=replay_cash + open_stake,
+        open_position_count=open_count,
+        created_at=utc_now(),
+    )
+    scheduler.persistence.insert_wallet_snapshot(snapshot)
     return {"applied": True, "drift": drift}
 
 
@@ -525,15 +506,7 @@ async def regenerate_reports(scheduler: PolySignalScheduler, config: RepairConfi
 async def build_scheduler(config: RepairConfig) -> PolySignalScheduler:
     settings = load_settings(config.config_path)
     scheduler = PolySignalScheduler(settings, base_dir=config.data_dir)
-    from polysignal_lab.paper.wallet import PaperWallet
-    from polysignal_lab.paper.exit_engine import PaperExitEngine
-    from polysignal_lab.paper.settlement import PaperSettlementEngine
-
-    scheduler.wallet = PaperWallet(scheduler.settings.paper_trading.starting_balance_usdc)
-    scheduler.paper = None
-    scheduler.exits = PaperExitEngine(scheduler.settings.paper_trading.exit_model, scheduler.wallet)
-    scheduler.settlement = PaperSettlementEngine(scheduler.wallet)
-    await scheduler._restore_wallet_state()
+    scheduler.settlement = PaperSettlementEngine()
     return scheduler
 
 

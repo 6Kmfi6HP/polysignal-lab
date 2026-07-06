@@ -26,45 +26,6 @@ from scripts.repair_settlement_results import RepairConfig, audit, backfill, rec
 from factories import MarketFactoryConfig, sample_market
 
 
-class _LedgerWallet:
-    def __init__(self, starting_balance: float) -> None:
-        self.starting_balance = starting_balance
-        self.cash_balance = starting_balance
-        self.realized_pnl = 0.0
-        self.open_positions: dict[str, PaperPosition] = {}
-
-    def apply_fill(self, position: PaperPosition) -> None:
-        self.open_positions[position.paper_position_id] = position
-        self.cash_balance -= position.stake_usdc
-
-    @property
-    def open_position_count(self) -> int:
-        return len(self.open_positions)
-
-    def close_position(self, position_id: str, settlement_value: float, pnl: float) -> None:
-        self.open_positions.pop(position_id, None)
-        self.cash_balance += settlement_value
-        self.realized_pnl += pnl
-
-    def snapshot(self) -> PaperWalletSnapshot:
-        equity = self.cash_balance + sum(
-            position.stake_usdc for position in self.open_positions.values()
-        )
-        return PaperWalletSnapshot(
-            starting_balance=self.starting_balance,
-            cash_balance=self.cash_balance,
-            realized_pnl=self.realized_pnl,
-            equity=equity,
-            open_position_count=self.open_position_count,
-            created_at=utc_now(),
-        )
-
-
-class _NoopExitEngine:
-    def evaluate(self, position: PaperPosition, book: object) -> None:
-        return None
-
-
 def _resolved_market() -> Market:
     market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m", seconds_to_close=-60))
     return market.model_copy(update={"status": MarketStatus.CLOSED})
@@ -98,9 +59,6 @@ def _scheduler(tmp_path: Path, settings) -> PolySignalScheduler:
     settings.data.polymarket.use_market_ws = False
     settings.telegram.send_paper_results = False
     scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
-    scheduler.wallet = _LedgerWallet(scheduler.settings.paper_trading.starting_balance_usdc)
-    scheduler.paper = None
-    scheduler.exits = _NoopExitEngine()
     scheduler.settlement = PaperSettlementEngine()
     return scheduler
 
@@ -218,7 +176,6 @@ async def test_audit_finds_open_position_on_resolved_market(tmp_path, settings) 
     scheduler, position, market = _seed_open_position(tmp_path, settings)
     scheduler.settlement_resolver = AsyncMock()
     scheduler.settlement_resolver.resolve_market.return_value = _win_decision(market)
-    await scheduler._restore_wallet_state()
 
     report = await audit(scheduler, _repair_config(tmp_path))
 
@@ -234,7 +191,6 @@ async def test_backfill_closes_position_and_inserts_result(tmp_path, settings) -
     scheduler, position, market = _seed_open_position(tmp_path, settings)
     scheduler.settlement_resolver = AsyncMock()
     scheduler.settlement_resolver.resolve_market.return_value = _win_decision(market)
-    await scheduler._restore_wallet_state()
     backup = tmp_path / "backup.sqlite3"
     config = _repair_config(tmp_path, mode="backfill", apply=True, backup=backup)
 
@@ -254,7 +210,6 @@ async def test_backfill_idempotent_skips_existing_result(tmp_path, settings) -> 
     scheduler, _, market = _seed_open_position(tmp_path, settings)
     scheduler.settlement_resolver = AsyncMock()
     scheduler.settlement_resolver.resolve_market.return_value = _win_decision(market)
-    await scheduler._restore_wallet_state()
     backup = tmp_path / "backup.sqlite3"
     config = _repair_config(tmp_path, mode="backfill", apply=True, backup=backup)
 
@@ -271,7 +226,6 @@ async def test_backfill_unknown_leaves_position_open(tmp_path, settings) -> None
     scheduler, position, market = _seed_open_position(tmp_path, settings)
     scheduler.settlement_resolver = AsyncMock()
     scheduler.settlement_resolver.resolve_market.return_value = _unknown_decision(market)
-    await scheduler._restore_wallet_state()
     backup = tmp_path / "backup.sqlite3"
     config = _repair_config(tmp_path, mode="backfill", apply=True, backup=backup)
 
@@ -289,7 +243,6 @@ async def test_wallet_reconcile_fixes_cash_after_backfill(tmp_path, settings) ->
     scheduler, _, market = _seed_open_position(tmp_path, settings, wallet_cash=500.0)
     scheduler.settlement_resolver = AsyncMock()
     scheduler.settlement_resolver.resolve_market.return_value = _win_decision(market)
-    await scheduler._restore_wallet_state()
     backup = tmp_path / "backup.sqlite3"
     config = _repair_config(tmp_path, mode="backfill", apply=True, backup=backup)
     await backfill(scheduler, config)
@@ -330,7 +283,6 @@ async def test_cancelled_market_refunds_stake(tmp_path, settings) -> None:
     scheduler, position, market = _seed_open_position(tmp_path, settings)
     scheduler.settlement_resolver = AsyncMock()
     scheduler.settlement_resolver.resolve_market.return_value = _cancelled_decision(market)
-    await scheduler._restore_wallet_state()
     backup = tmp_path / "backup.sqlite3"
     config = _repair_config(tmp_path, mode="backfill", apply=True, backup=backup)
 
