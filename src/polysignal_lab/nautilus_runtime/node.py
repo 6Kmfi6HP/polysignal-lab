@@ -1,6 +1,6 @@
-"""TradingNode assembly and entry point for the Nautilus runtime mode.
+"""LiveNode assembly and entry point for the Nautilus runtime mode.
 
-Wires all actors, assemblers, wrappers, and data paths from Tasks 3-12
+Wires actors, assemblers, strategy wrappers, and data paths
 into a credential-free paper-safe runtime.  No live Polymarket execution,
 no private key/env-var reading, no allowance scripts.
 """
@@ -178,7 +178,7 @@ def _runtime_progress_callback(settings: Settings) -> Callable[[str], None]:
 
 @dataclass(slots=True)
 class NautilusRuntimeBundle:
-    """Wired Nautilus TradingNode runtime components."""
+    """Wired Nautilus LiveNode runtime components."""
 
     scheduler: PolySignalScheduler
     components: dict[str, object]
@@ -1258,7 +1258,7 @@ def _run_sync_cli_main(
     if strategy_names:
         _dump_thread_stacks(f"{settings.storage.jsonl_dir.rstrip('/')}/crash.log")
         runtime_logger.warning(
-            "TradingNode.run returned unexpectedly with %d strategies active",
+            "LiveNode.run returned unexpectedly with %d strategies active",
             len(strategy_names),
         )
     return telegram_bot_thread, report_loop_thread
