@@ -36,7 +36,7 @@ COMPATIBILITY_ONLY = True
 
 
 class PolySignalNautilusStrategy:
-    """Compatibility wrapper for pre-TradingNode tests; default runtime uses PolySignalNativeStrategy."""
+    """Compatibility wrapper for legacy unit tests; default runtime uses the static Nautilus strategy class."""
     def __init__(
         self,
         *,

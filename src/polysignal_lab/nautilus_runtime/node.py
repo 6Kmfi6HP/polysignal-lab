@@ -63,7 +63,7 @@ class _Disposable(Protocol):
     def dispose(self) -> None: ...
 
 
-class _TradingNodeLike(Protocol):
+class _NautilusNodeLike(Protocol):
     trader: _TraderLike
 
     def build(self) -> None: ...
@@ -183,7 +183,7 @@ class NautilusRuntimeBundle:
     scheduler: PolySignalScheduler
     components: dict[str, object]
     bridge_registry: MarketCatalog
-    node: _TradingNodeLike
+    node: _NautilusNodeLike
     observability: ObservabilityActor
     websocket_tasks: list[asyncio.Task[object]]
 
@@ -245,7 +245,7 @@ def _load_runtime_classes() -> tuple[type[object], type[object]]:
 def _create_configured_live_node(
     settings: Settings,
     configured_markets: Sequence[Market],
-) -> tuple[_TradingNodeLike, object]:
+) -> tuple[_NautilusNodeLike, object]:
     _ensure_nautilus_imports()
     if PolymarketInstrumentProviderConfig is None:
         raise RuntimeError("Nautilus PolymarketInstrumentProviderConfig is unavailable")
@@ -255,7 +255,7 @@ def _create_configured_live_node(
     from polysignal_lab.nautilus_runtime.live_node import build_paper_live_node
 
     node = build_paper_live_node(settings, instrument_config=instrument_config)
-    return cast(_TradingNodeLike, node), instrument_config
+    return cast(_NautilusNodeLike, node), instrument_config
 
 
 def _create_market_projection_components(
@@ -273,7 +273,7 @@ def _create_market_projection_components(
 
 
 def _attach_cache_projections(
-    node: _TradingNodeLike,
+    node: _NautilusNodeLike,
     registry: MarketCatalog,
     assembler: MarketViewAssembler,
     strategies: Sequence[_NativeStrategyLike],
@@ -301,7 +301,7 @@ def _attach_cache_projections(
 
 
 def _register_runtime_trader_components(
-    node: _TradingNodeLike,
+    node: _NautilusNodeLike,
     market_rotation_actor: object,
     strategies: Sequence[_NativeStrategyLike],
 ) -> None:
@@ -334,7 +334,7 @@ def _build_market_rotation_actor(
 
 def _runtime_components(
     *,
-    node: _TradingNodeLike,
+    node: _NautilusNodeLike,
     config: object,
     registry: MarketCatalog,
     market_rotation_actor: object,
@@ -566,7 +566,7 @@ def _instrument_id_resolver(registry: MarketCatalog) -> Callable[[str], object]:
 
 
 async def _stop_nautilus_scheduler(scheduler: object) -> None:
-    if bool(getattr(scheduler, "_nautilus_runtime_owned_by_trading_node", False)):
+    if bool(getattr(scheduler, "_nautilus_runtime_owned_by_live_node", False)):
         setattr(scheduler, "_running", False)
         try:
             scheduler_health.persist_health_snapshot(cast(PolySignalScheduler, scheduler))
@@ -770,7 +770,7 @@ async def _prepare_nautilus_runtime_context(
 ) -> tuple[PolySignalScheduler, tuple[Market, ...], ObservabilityActor]:
     scheduler = PolySignalScheduler(settings)
     _initialize_nautilus_scheduler_components(scheduler)
-    setattr(scheduler, "_nautilus_runtime_owned_by_trading_node", True)
+    setattr(scheduler, "_nautilus_runtime_owned_by_live_node", True)
     discovered_markets = tuple(await scheduler.market_universe.refresh_once())
     observability = ObservabilityActor(
         health=scheduler.health,
@@ -831,7 +831,7 @@ def _build_nautilus_runtime_bundle(
         scheduler=scheduler,
         components=components,
         bridge_registry=cast(MarketCatalog, components["registry"]),
-        node=cast(_TradingNodeLike, components["node"]),
+        node=cast(_NautilusNodeLike, components["node"]),
         observability=observability,
         websocket_tasks=[],
     )
@@ -1109,7 +1109,7 @@ async def _notify_async_cli_startup(
 
 
 async def _run_async_node_with_report_loop(
-    node: _TradingNodeLike,
+    node: _NautilusNodeLike,
     scheduler: PolySignalScheduler,
     event: asyncio.Event,
 ) -> None:
@@ -1165,7 +1165,7 @@ async def _finalize_async_cli_runtime(
 async def run_nautilus_cli_async(
     settings: Settings | None = None,
     stop_event: asyncio.Event | None = None,
-) -> _TradingNodeLike:
+) -> _NautilusNodeLike:
     """Run the Nautilus CLI with async orchestration and signal handling."""
     event = stop_event or asyncio.Event()
     if settings is None:
@@ -1229,7 +1229,7 @@ def _prepare_sync_cli_bundle(settings: Settings) -> NautilusRuntimeBundle:
 
 def _run_sync_cli_main(
     bundle: NautilusRuntimeBundle,
-    node: _TradingNodeLike,
+    node: _NautilusNodeLike,
     settings: Settings,
     strategy_names: list[str],
     runtime_logger: logging.Logger,
@@ -1266,7 +1266,7 @@ def _run_sync_cli_main(
 
 def _finalize_sync_cli_runtime(
     bundle: NautilusRuntimeBundle,
-    node: _TradingNodeLike,
+    node: _NautilusNodeLike,
     telegram_bot_thread: _InteractiveTelegramBotThread | None,
     report_loop_thread: _NautilusReportLoopThread | None,
     runtime_logger: logging.Logger,

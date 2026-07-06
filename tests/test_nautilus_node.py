@@ -795,7 +795,7 @@ async def test_prepare_nautilus_runtime_context_does_not_wire_shadow_wallet_mirr
 
     assert sched is scheduler
     assert discovered_markets == (market,)
-    assert getattr(scheduler, "_nautilus_runtime_owned_by_trading_node") is True
+    assert getattr(scheduler, "_nautilus_runtime_owned_by_live_node") is True
     assert not hasattr(scheduler, "_nautilus_runtime_compat_only")
     assert not hasattr(observability, "paper_fill_notifier")
     assert not hasattr(observability, "paper_fill_mirror")
@@ -1499,7 +1499,7 @@ async def test_stop_nautilus_scheduler_skips_legacy_wallet_persist_without_walle
 
     assert calls == ["health"]
 
-async def test_stop_nautilus_scheduler_skips_legacy_stop_for_trading_node_owned_scheduler(
+async def test_stop_nautilus_scheduler_skips_legacy_stop_for_live_node_owned_scheduler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
@@ -1514,10 +1514,10 @@ async def test_stop_nautilus_scheduler_skips_legacy_stop_for_trading_node_owned_
 
     async def legacy_stop() -> None:
         calls.append("legacy_stop")
-        raise AssertionError("Nautilus TradingNode-owned scheduler must not call legacy stop")
+        raise AssertionError("Nautilus LiveNode-owned scheduler must not call legacy stop")
 
     scheduler = SimpleNamespace(
-        _nautilus_runtime_owned_by_trading_node=True,
+        _nautilus_runtime_owned_by_live_node=True,
         wallet=object(),
         stop=legacy_stop,
     )
