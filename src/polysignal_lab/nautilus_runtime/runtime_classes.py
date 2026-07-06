@@ -25,7 +25,6 @@ from polysignal_lab.nautilus_runtime.native_strategy import (
     _Assembler,
     _Observability,
 )
-from polysignal_lab.nautilus_runtime.sidecar_data import PolySignalRuntimeSidecarActor
 
 
 class NautilusPolySignalNativeStrategy(PolySignalNativeStrategy, Strategy):
@@ -96,29 +95,9 @@ class NautilusMarketRotationActor(MarketRotationActor, Actor):
         )
 
 
-class NautilusPolySignalRuntimeSidecarActor(PolySignalRuntimeSidecarActor, Actor):
-    def __init__(
-        self,
-        *,
-        settings: Settings,
-        markets: tuple[Market, ...],
-        registry: PolymarketMarketRegistry,
-        sidecar: ExternalDataSidecar,
-        anchor_store: AnchorPriceStore | None = None,
-    ) -> None:
-        Actor.__init__(self, config=ActorConfig())
-        PolySignalRuntimeSidecarActor.__init__(
-            self,
-            settings=settings,
-            markets=markets,
-            registry=registry,
-            sidecar=sidecar,
-            anchor_store=anchor_store,
-        )
 
 
 __all__ = (
     "NautilusMarketRotationActor",
     "NautilusPolySignalNativeStrategy",
-    "NautilusPolySignalRuntimeSidecarActor",
 )
