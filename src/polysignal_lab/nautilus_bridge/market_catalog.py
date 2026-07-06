@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
@@ -73,9 +74,14 @@ class MarketPairMeta:
 
 
 class MarketCatalog:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        instrument_id_resolver: Callable[[str, str], str] | None = None,
+    ) -> None:
         self._by_condition: dict[str, MarketPairMeta] = {}
         self._condition_by_token: dict[str, str] = {}
+        self._instrument_id_resolver = instrument_id_resolver
 
     def register(self, pair: MarketPairMeta) -> None:
         self._by_condition[pair.condition_id] = pair
@@ -108,4 +114,5 @@ class MarketCatalog:
         pair = self.by_token(token_id)
         if pair is None:
             return None
-        return polymarket_instrument_id(pair.condition_id, token_id)
+        resolver = self._instrument_id_resolver or polymarket_instrument_id
+        return resolver(pair.condition_id, token_id)

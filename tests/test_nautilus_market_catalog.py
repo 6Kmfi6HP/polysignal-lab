@@ -62,3 +62,21 @@ def test_market_catalog_derives_instrument_id_from_condition_and_token(monkeypat
 
     assert catalog.instrument_id_for_token(pair.up.token_id) == f"{pair.condition_id}-{pair.up.token_id}.POLYMARKET"
     assert catalog.instrument_id_for_token("missing") is None
+
+
+def test_market_catalog_uses_injected_instrument_id_resolver() -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    pair = MarketPairMeta.from_market(market)
+    seen: list[tuple[str, str]] = []
+
+    def resolver(condition_id: str, token_id: str) -> str:
+        seen.append((condition_id, token_id))
+        return f"test-{condition_id}-{token_id}.POLYMARKET"
+
+    catalog = MarketCatalog(instrument_id_resolver=resolver)
+    catalog.register(pair)
+
+    assert catalog.instrument_id_for_token(pair.up.token_id) == (
+        f"test-{pair.condition_id}-{pair.up.token_id}.POLYMARKET"
+    )
+    assert seen == [(pair.condition_id, pair.up.token_id)]

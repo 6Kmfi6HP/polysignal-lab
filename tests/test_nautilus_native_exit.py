@@ -6,6 +6,10 @@ from polysignal_lab.nautilus_runtime.exit_policy import ExitReason, NautilusExit
 from polysignal_lab.nautilus_runtime.native_exit import submit_exit_decision
 
 
+
+def _test_instrument_id(_condition_id: str, token_id: str) -> str:
+    return f"{token_id}.POLYMARKET"
+
 class FakeOrderFactory:
     def limit(self, **kwargs):
         return kwargs
@@ -187,7 +191,7 @@ def _exit_evaluation_fixtures():
         metrics={},
         freshness=FreshnessView(100, 100, None, 100),
     )
-    registry = MarketCatalog()
+    registry = MarketCatalog(instrument_id_resolver=_test_instrument_id)
     registry.register(
         MarketPairMeta(
             market_id="mkt-1",
