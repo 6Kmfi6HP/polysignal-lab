@@ -26,6 +26,7 @@ refs/*
 .superpowers/
 # AI coding tool local LSP configs (per-developer)
 .codex/
+.cursor/
 .opencode/
 .omo/lsp.json
 data/*
