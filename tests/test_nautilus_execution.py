@@ -18,8 +18,16 @@ LOCAL_PAPER_FORBIDDEN_TEXT = (
     "BestAskTakerExecutor",
     "PassiveGtdExecutor",
     "PaperSimulator",
-    "PolySignalPaperExecutionClient",
-    "create_paper_execution_client",
+    "from polysignal_lab.paper.wallet import",
+    "PaperWallet(",
+    "BestAskTakerFillModel",
+    "PaperExecutionPreflight",
+    "PaperExitEngine",
+    "PaperSettlementEngine(self.wallet)",
+    "scheduler.wallet",
+    "scheduler.paper",
+    "paper_portfolio.process_signal",
+    "paper_portfolio.tick_resting_orders",
 )
 
 
@@ -44,7 +52,17 @@ def test_execution_module_does_not_export_legacy_local_paper_client() -> None:
     assert not hasattr(execution, "create_paper_execution_client")
 
 
-def test_execution_source_contains_no_local_paper_symbols() -> None:
-    text = Path("src/polysignal_lab/nautilus_runtime/execution.py").read_text(encoding="utf-8")
+def test_project_source_contains_no_local_paper_symbols() -> None:
+    findings: list[str] = []
+    source_root = Path("src/polysignal_lab")
+    for path in source_root.rglob("*.py"):
+        if path.name == "safety.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        findings.extend(
+            f"{path}:{symbol}"
+            for symbol in LOCAL_PAPER_FORBIDDEN_TEXT
+            if symbol in text
+        )
 
-    assert [token for token in LOCAL_PAPER_FORBIDDEN_TEXT if token in text] == []
+    assert findings == []

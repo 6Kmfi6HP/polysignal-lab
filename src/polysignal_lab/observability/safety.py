@@ -35,8 +35,16 @@ LOCAL_PAPER_ISOLATION_SYMBOLS: Final = (
     "BestAskTakerExecutor",
     "PassiveGtdExecutor",
     "PaperSimulator",
-    "PolySignalPaperExecutionClient",
-    "create_paper_execution_client",
+    "from polysignal_lab.paper.wallet import",
+    "PaperWallet(",
+    "BestAskTakerFillModel",
+    "PaperExecutionPreflight",
+    "PaperExitEngine",
+    "PaperSettlementEngine(self.wallet)",
+    "scheduler.wallet",
+    "scheduler.paper",
+    "paper_portfolio.process_signal",
+    "paper_portfolio.tick_resting_orders",
 )
 
 
@@ -67,7 +75,7 @@ def scan(root: str | Path) -> list[tuple[str, str]]:
         text = path.read_text(encoding="utf-8", errors="ignore")
         report_path = path.name if base_is_file else str(path.relative_to(base))
         symbols = list(blocked_symbols())
-        if _is_default_nautilus_runtime_source(path):
+        if _is_project_source(path):
             symbols.extend(LOCAL_PAPER_ISOLATION_SYMBOLS)
         for symbol in symbols:
             if symbol in text:
@@ -90,15 +98,13 @@ def skip_path(base: Path, path: Path) -> bool:
     return any(part in SKIP_DIR_NAMES or part.endswith(".egg-info") for part in rel.parts)
 
 
-def _is_default_nautilus_runtime_source(path: Path) -> bool:
+def _is_project_source(path: Path) -> bool:
     if path.suffix != ".py":
         return False
     parts = path.parts
     for idx, part in enumerate(parts[:-1]):
-        if part != "polysignal_lab":
-            continue
-        if idx + 1 < len(parts) and parts[idx + 1] == "nautilus_runtime":
-            return "tests" not in parts[:idx]
+        if part == "polysignal_lab" and "tests" not in parts[:idx]:
+            return True
     return False
 
 
