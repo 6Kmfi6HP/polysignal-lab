@@ -100,81 +100,6 @@ class MarketSubscriptionState:
     retained_wire_condition_ids: set[str] = field(default_factory=set)
 
 
-class _MarketDataSubscriptionGroup:
-    def __init__(self) -> None:
-        self._strategies: list[object] = []
-        self._instrument_owners: dict[str, list[object]] = {}
-        self._wire_owners: dict[str, object] = {}
-        self._requested_instruments: dict[str, datetime] = {}
-        self._confirmed_instruments: set[str] = set()
-
-    def register(self, strategy: object) -> None:
-        if strategy not in self._strategies:
-            self._strategies.append(strategy)
-
-    def acquire(self, instrument_id: str, strategy: object) -> bool:
-        owners = self._instrument_owners.setdefault(instrument_id, [])
-        wire_owner = self._wire_owners.get(instrument_id)
-        if strategy in owners:
-            return strategy is wire_owner
-        if wire_owner is None:
-            self._wire_owners[instrument_id] = strategy
-            owners.append(strategy)
-            return True
-        owners.append(strategy)
-        return False
-
-    def release(self, instrument_id: str, strategy: object) -> object | None:
-        owners = self._instrument_owners.get(instrument_id)
-        if not owners or strategy not in owners:
-            return None
-        owners.remove(strategy)
-        if owners:
-            return None
-        _ = self._instrument_owners.pop(instrument_id, None)
-        return self._wire_owners.pop(instrument_id, None)
-
-    def should_request(
-        self, instrument_id: str, *, retry_after: timedelta | None = None
-    ) -> bool:
-        if instrument_id in self._confirmed_instruments:
-            return False
-        now = datetime.now(UTC)
-        last = self._requested_instruments.get(instrument_id)
-        if last is not None:
-            if retry_after is None or now - last < retry_after:
-                return False
-        self._requested_instruments[instrument_id] = now
-        return True
-
-    def mark_confirmed(self, instrument_id: str) -> None:
-        self._confirmed_instruments.add(instrument_id)
-
-    def needs_retry_request(self, instrument_id: str, strategy: object) -> bool:
-        return (
-            instrument_id not in self._confirmed_instruments
-            and self._wire_owners.get(instrument_id) is strategy
-        )
-
-    def active_strategies(self, condition_id: str) -> tuple["PolySignalNativeStrategy", ...]:
-        return tuple(
-            cast("PolySignalNativeStrategy", strategy)
-            for strategy in self._strategies
-            if condition_id in getattr(strategy, "_active_condition_ids", ())
-        )
-
-
-def _market_data_subscription_group(
-    registry: PolymarketMarketRegistry,
-) -> _MarketDataSubscriptionGroup:
-    group = getattr(registry, "_polysignal_market_data_subscription_group", None)
-    if isinstance(group, _MarketDataSubscriptionGroup):
-        return group
-    group = _MarketDataSubscriptionGroup()
-    setattr(registry, "_polysignal_market_data_subscription_group", group)
-    return group
-
-
 class _Assembler(Protocol):
     def build(self, condition_id: str) -> MarketView | None: ...
 
@@ -344,8 +269,6 @@ class PolySignalNativeStrategy:
         self._market_epoch: int | None = None
         self.unsubscribe_exited: bool = unsubscribe_exited
         self._subscription_state: MarketSubscriptionState = MarketSubscriptionState()
-        self._market_data_subscription_group: _MarketDataSubscriptionGroup = _market_data_subscription_group(registry)
-        self._market_data_subscription_group.register(self)
         self._asset_condition_ids: dict[str, tuple[str, ...]] = _asset_conditions(
             registry,
             self._startup_condition_ids,
@@ -512,7 +435,6 @@ class PolySignalNativeStrategy:
         if condition_id is None or token_id is None:
             self._note_runtime_progress("dropped_frame")
             return None
-        self._market_data_subscription_group.mark_confirmed(instrument_id)
         return condition_id
 
     def _condition_from_order_book_deltas(self, deltas: object) -> str | None:
@@ -547,9 +469,8 @@ class PolySignalNativeStrategy:
 
     def _evaluate_market_data_condition(self, condition_id: str) -> None:
         self._note_runtime_progress("market_data_evaluation")
-        for strategy in self._market_data_subscription_group.active_strategies(condition_id):
-            strategy._last_market_data_evaluation_at[condition_id] = datetime.now(UTC)
-            strategy.evaluate_condition(condition_id)
+        self._last_market_data_evaluation_at[condition_id] = datetime.now(UTC)
+        self.evaluate_condition(condition_id)
 
     def on_order_submitted(self, event: object) -> None:
         self._note_runtime_progress("order_event")
@@ -773,53 +694,6 @@ class PolySignalNativeStrategy:
             if cached is not None:
                 return cached
         return resolved
-
-    def _instrument_is_cached(self, instrument_id: object) -> bool:
-        cache = getattr(self, "cache", None)
-        getter = getattr(cache, "instrument", None)
-        if not callable(getter):
-            return True
-        cache_lookup = cast(Callable[[object], object | None], getter)
-        try:
-            cached = cache_lookup(instrument_id)
-        except TypeError:
-            cached = None
-        if cached is None:
-            try:
-                cached = cache_lookup(_nautilus_instrument_id(str(instrument_id)))
-            except TypeError:
-                cached = None
-        return cached is not None
-
-    def _is_l1_book_mode(self) -> bool:
-        return self.book_type == "L1_MBP"
-
-    def _l1_book_snapshot_interval_ms(self) -> int:
-        return int(getattr(self, "l1_book_snapshot_interval_ms", DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS))
-
-    def _subscribe_l1_book_feed(self, instrument_id: object) -> bool:
-        subscribe_quote_ticks = getattr(self, "subscribe_quote_ticks", None)
-        if callable(subscribe_quote_ticks):
-            _ = subscribe_quote_ticks(instrument_id)
-            return True
-        subscribe_order_book_at_interval = getattr(self, "subscribe_order_book_at_interval", None)
-        if callable(subscribe_order_book_at_interval):
-            _ = subscribe_order_book_at_interval(
-                instrument_id=instrument_id,
-                interval_ms=self._l1_book_snapshot_interval_ms(),
-            )
-            return True
-        return False
-
-    def _subscribe_raw_delta_feed(self, instrument_id: object) -> bool:
-        subscribe_order_book_deltas = getattr(self, "subscribe_order_book_deltas", None)
-        if not callable(subscribe_order_book_deltas):
-            return False
-        _ = subscribe_order_book_deltas(
-            instrument_id=instrument_id,
-            book_type=_nautilus_book_type(self.book_type),
-        )
-        return True
 
     def _call_core(self, method_name: str, event: AlphaOrderEvent) -> None:
         handler = getattr(self.core, method_name, None)
@@ -1064,6 +938,21 @@ class PolySignalNativeStrategy:
             self.registry, tracked_condition_ids
         )
 
+    def _retry_market_instrument_requests(
+        self,
+        condition_ids: Sequence[str],
+        *,
+        retry_after: timedelta | None = None,
+    ) -> None:
+        _ = retry_after
+        if self.registry is None:
+            return
+        request_instrument = getattr(self, "request_instrument", None)
+        if not callable(request_instrument):
+            return
+        for instrument_id in _instrument_ids(self.registry, condition_ids):
+            _ = request_instrument(instrument_id)
+
     def _subscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
         if self.registry is None:
             return
@@ -1080,9 +969,6 @@ class PolySignalNativeStrategy:
                 self._subscription_state.retained_wire_condition_ids.discard(
                     condition_id
                 )
-                self._retry_market_instrument_requests(
-                    (condition_id,), retry_after=timedelta(0)
-                )
                 continue
             instrument_ids = _instrument_ids(self.registry, (condition_id,))
             if not instrument_ids:
@@ -1096,135 +982,49 @@ class PolySignalNativeStrategy:
             self._subscription_state.pending_metadata_condition_ids.discard(
                 condition_id
             )
-            subscribed = True
             for instrument_id in instrument_ids:
-                subscribed = (
-                    self._subscribe_market_instrument(instrument_id) and subscribed
-                )
-            if not subscribed:
-                self._subscription_state.pending_subscribe_condition_ids.add(
-                    condition_id
-                )
-                continue
+                instrument_text = _identifier_text(instrument_id)
+                if instrument_text is not None:
+                    self._subscribe_market_instrument(instrument_text)
             self._subscription_state.pending_subscribe_condition_ids.discard(
                 condition_id
             )
             self._subscription_state.retained_wire_condition_ids.discard(condition_id)
             self._subscription_state.wire_condition_ids.add(condition_id)
 
-    def _retry_market_instrument_requests(
-        self,
-        condition_ids: Sequence[str],
-        *,
-        retry_after: timedelta | None = None,
-    ) -> None:
-        if self.registry is None:
-            return
-        request_instrument = getattr(self, "request_instrument", None)
-        if not callable(request_instrument):
-            return
-        for instrument_id in _instrument_ids(self.registry, condition_ids):
-            instrument_text = _identifier_text(instrument_id)
-            if instrument_text is None:
-                continue
-            if not self._market_data_subscription_group.needs_retry_request(
-                instrument_text, self
-            ):
-                continue
-            if not self._market_data_subscription_group.should_request(
-                instrument_text, retry_after=retry_after
-            ):
-                continue
-            _ = request_instrument(instrument_id)
-
-    def _subscribe_market_instrument(self, instrument_id: object) -> bool:
-        instrument_text = _identifier_text(instrument_id)
-        if instrument_text is None:
-            return False
-        if instrument_text in self._subscription_state.wire_instrument_ids:
-            return True
-        request_instrument = getattr(self, "request_instrument", None)
-        if callable(request_instrument) and self._market_data_subscription_group.should_request(
-            instrument_text
-        ):
-            _ = request_instrument(instrument_id)
-        if not self._instrument_is_cached(instrument_id):
-            return False
-        subscribe_trade_ticks = getattr(self, "subscribe_trade_ticks", None)
-        if not callable(subscribe_trade_ticks):
-            return False
-        if self._market_data_subscription_group.acquire(instrument_text, self):
-            book_feed_subscribed = False
-            if self._is_l1_book_mode():
-                book_feed_subscribed = self._subscribe_l1_book_feed(instrument_id)
-                if not book_feed_subscribed:
-                    self._note_runtime_progress(L1_RAW_DELTA_FALLBACK_PHASE)
-            if not book_feed_subscribed:
-                book_feed_subscribed = self._subscribe_raw_delta_feed(instrument_id)
-            if not book_feed_subscribed:
-                return False
-            _ = subscribe_trade_ticks(instrument_id)
-        self._subscription_state.wire_instrument_ids.add(instrument_text)
-        return True
+    def _subscribe_market_instrument(self, instrument_id: str) -> None:
+        for data_name in self.data_names:
+            method = getattr(self, f"subscribe_{data_name}", None)
+            if callable(method):
+                _ = method(instrument_id)
+        if self.book_type == "L1_MBP":
+            request_l1 = getattr(self, "request_order_book_snapshot", None)
+            if callable(request_l1):
+                _ = request_l1(instrument_id)
 
     def _unsubscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
         if self.registry is None:
             return
         for condition_id in condition_ids:
-            self._subscription_state.pending_metadata_condition_ids.discard(
-                condition_id
-            )
+            instrument_ids = _instrument_ids(self.registry, (condition_id,))
+            for instrument_id in instrument_ids:
+                instrument_text = _identifier_text(instrument_id)
+                if instrument_text is not None:
+                    self._unsubscribe_market_instrument(instrument_text)
+            self._subscription_state.wire_condition_ids.discard(condition_id)
+            self._subscription_state.retained_wire_condition_ids.discard(condition_id)
             self._subscription_state.pending_subscribe_condition_ids.discard(
                 condition_id
             )
-            if condition_id not in self._subscription_state.wire_condition_ids:
-                self._subscription_state.retained_wire_condition_ids.discard(
-                    condition_id
-                )
-                continue
-            instrument_ids = _instrument_ids(self.registry, (condition_id,))
-            if not instrument_ids:
-                self._subscription_state.retained_wire_condition_ids.add(condition_id)
-                continue
-            unsubscribed = True
-            for instrument_id in instrument_ids:
-                unsubscribed = (
-                    self._unsubscribe_market_instrument(instrument_id) and unsubscribed
-                )
-            if not unsubscribed:
-                self._subscription_state.retained_wire_condition_ids.add(condition_id)
-                continue
-            self._subscription_state.retained_wire_condition_ids.discard(condition_id)
-            self._subscription_state.wire_condition_ids.discard(condition_id)
+            self._subscription_state.pending_metadata_condition_ids.discard(
+                condition_id
+            )
 
-    def _unsubscribe_market_instrument(self, instrument_id: object) -> bool:
-        instrument_text = _identifier_text(instrument_id)
-        if instrument_text is None:
-            return False
-        if instrument_text not in self._subscription_state.wire_instrument_ids:
-            return True
-        wire_owner = self._market_data_subscription_group.release(instrument_text, self)
-        if wire_owner is not None:
-            sender = cast(PolySignalNativeStrategy, wire_owner)
-            if not sender._send_market_unsubscription(instrument_id):
-                return False
-            sender._subscription_state.wire_instrument_ids.discard(instrument_text)
-        self._subscription_state.wire_instrument_ids.discard(instrument_text)
-        return True
-
-    def _send_market_unsubscription(self, instrument_id: object) -> bool:
-        unsubscribe_trade_ticks = getattr(self, "unsubscribe_trade_ticks", None)
-        if not callable(unsubscribe_trade_ticks):
-            return False
-        if self._is_l1_book_mode():
-            unsubscribe_book_feed = getattr(self, "unsubscribe_quote_ticks", None)
-        else:
-            unsubscribe_book_feed = getattr(self, "unsubscribe_order_book_deltas", None)
-        if not callable(unsubscribe_book_feed):
-            return False
-        _ = unsubscribe_book_feed(instrument_id)
-        _ = unsubscribe_trade_ticks(instrument_id)
-        return True
+    def _unsubscribe_market_instrument(self, instrument_id: str) -> None:
+        for data_name in self.data_names:
+            method = getattr(self, f"unsubscribe_{data_name}", None)
+            if callable(method):
+                _ = method(instrument_id)
 
     def subscribe_data(self, data_type: object) -> None:
         method = getattr(self, f"subscribe_{data_type}", None)
