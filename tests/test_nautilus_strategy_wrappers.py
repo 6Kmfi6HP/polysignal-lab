@@ -430,7 +430,7 @@ def test_approved_decision_binds_and_accepts_before_submit() -> None:
 
 
 def test_approved_fok_with_unknown_depth_rolls_back_before_accepting() -> None:
-    view = _view()
+    view = replace(_view(), up=replace(_view().up, best_ask=None))
     decision = _decision(order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK))
     core = RollbackCore([decision])
     policy = FakePolicy([True])
