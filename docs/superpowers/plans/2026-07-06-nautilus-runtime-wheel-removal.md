@@ -76,11 +76,19 @@
   - `test_default_runtime_has_no_asyncio_actor_scheduling_fallbacks() -> None`
   - `test_large_nautilus_runtime_functions_stay_under_limit() -> None`
 
-- [ ] **Step 1: Write failing boundary tests**
+- [ ] **Step 1: Write xfail boundary characterization tests**
 
-Append this exact code to `tests/test_nautilus_platform_boundary.py`:
+First add this import near the top of `tests/test_nautilus_platform_boundary.py` if it is not already present:
 
 ```python
+import pytest
+```
+
+Append this exact code to `tests/test_nautilus_platform_boundary.py`. These tests are strict xfail characterizations in Task 1 so the task can commit a green suite; the implementation tasks remove the relevant `xfail` marker when they make each boundary pass:
+
+```python
+
+@pytest.mark.xfail(strict=True, reason="Task 2 removes legacy TradingNode surface")
 
 def test_default_runtime_uses_livenode_builder_not_legacy_trading_node() -> None:
     forbidden = (
@@ -102,8 +110,7 @@ def test_default_runtime_uses_livenode_builder_not_legacy_trading_node() -> None
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
-
-
+@pytest.mark.xfail(strict=True, reason="Task 3 removes dynamic runtime class factories")
 def test_default_runtime_has_no_dynamic_runtime_class_factories() -> None:
     forbidden = (
         "new_class(",
@@ -124,7 +131,7 @@ def test_default_runtime_has_no_dynamic_runtime_class_factories() -> None:
 
     assert findings == []
 
-
+@pytest.mark.xfail(strict=True, reason="Task 4 removes shared external sidecar state")
 def test_default_runtime_has_no_shared_external_sidecar_store() -> None:
     forbidden_paths = (
         Path("src/polysignal_lab/nautilus_bridge/external_data.py"),
@@ -149,7 +156,7 @@ def test_default_runtime_has_no_shared_external_sidecar_store() -> None:
     assert path_findings == []
     assert token_findings == []
 
-
+@pytest.mark.xfail(strict=True, reason="Task 5 removes reverse instrument registry")
 def test_market_catalog_has_no_reverse_instrument_truth_source() -> None:
     forbidden = (
         "_by_instrument",
@@ -169,8 +176,7 @@ def test_market_catalog_has_no_reverse_instrument_truth_source() -> None:
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
-
-
+@pytest.mark.xfail(strict=True, reason="Task 6 removes bare asyncio actor scheduling fallbacks")
 def test_default_runtime_has_no_asyncio_actor_scheduling_fallbacks() -> None:
     forbidden_by_file = {
         Path("src/polysignal_lab/nautilus_runtime/market_rotation.py"): (
@@ -196,8 +202,7 @@ def test_default_runtime_has_no_asyncio_actor_scheduling_fallbacks() -> None:
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
-
-
+@pytest.mark.xfail(strict=True, reason="Task 7 splits large Nautilus runtime functions")
 def test_large_nautilus_runtime_functions_stay_under_limit() -> None:
     import ast
 
@@ -222,7 +227,7 @@ def test_large_nautilus_runtime_functions_stay_under_limit() -> None:
     assert findings == []
 ```
 
-- [ ] **Step 2: Run boundary tests to verify they fail**
+- [ ] **Step 2: Run boundary tests to verify existing violations are characterized as xfail**
 
 Run:
 
@@ -230,13 +235,13 @@ Run:
 uv run python -m pytest tests/test_nautilus_platform_boundary.py -q
 ```
 
-Expected: FAIL. The failure list must include legacy `TradingNode`, `new_class`, `ExternalDataSidecar`, `_by_instrument`, `asyncio.create_task` or large functions over 45 lines.
+Expected: PASS with six strict xfails for the new boundary tests.
 
-- [ ] **Step 3: Commit failing tests**
+- [ ] **Step 3: Commit characterization tests**
 
 ```bash
 git add tests/test_nautilus_platform_boundary.py
-git commit -m "test: lock Nautilus runtime wheel removal boundaries"
+git commit -m "test: characterize Nautilus runtime wheel removal boundaries"
 ```
 
 ---
@@ -600,7 +605,16 @@ uv run python -m pytest tests/test_nautilus_node.py -q
 
 Expected: PASS for updated tests. If legacy monkeypatch tests fail, update their monkeypatch targets from `TradingNode`/`register_paper_factories` to `LiveNode`/`build_paper_live_node` with the helper from Step 1.
 
-- [ ] **Step 7: Run boundary test for LiveNode**
+
+- [ ] **Step 7: Remove Task 2 xfail marker**
+
+In `tests/test_nautilus_platform_boundary.py`, remove only this decorator:
+
+```python
+@pytest.mark.xfail(strict=True, reason="Task 2 removes legacy TradingNode surface")
+```
+
+- [ ] **Step 8: Run boundary test for LiveNode**
 
 Run:
 
@@ -610,7 +624,7 @@ uv run python -m pytest tests/test_nautilus_platform_boundary.py::test_default_r
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit LiveNode cutover**
+- [ ] **Step 9: Commit LiveNode cutover**
 
 ```bash
 git add src/polysignal_lab/nautilus_runtime/live_node.py src/polysignal_lab/nautilus_runtime/node.py src/polysignal_lab/nautilus_runtime/trading_node.py tests/test_nautilus_node.py tests/test_nautilus_platform_boundary.py
@@ -833,6 +847,16 @@ Remove these imports where present:
 ```python
 from types import new_class
 ```
+
+- [ ] **Step 6: Remove Task 3 xfail marker**
+
+In `tests/test_nautilus_platform_boundary.py`, remove only this decorator:
+
+```python
+@pytest.mark.xfail(strict=True, reason="Task 3 removes dynamic runtime class factories")
+```
+
+Then run the runtime class tests.
 
 - [ ] **Step 6: Run runtime class tests**
 
@@ -1208,6 +1232,16 @@ uv run python -m pytest tests/test_nautilus_sidecar_actor.py tests/test_nautilus
 
 Expected: PASS after tests use `StrategyCustomDataState` and `CustomDataPublisher`.
 
+- [ ] **Step 9: Remove Task 4 xfail marker**
+
+In `tests/test_nautilus_platform_boundary.py`, remove only this decorator:
+
+```python
+@pytest.mark.xfail(strict=True, reason="Task 4 removes shared external sidecar state")
+```
+
+Then run the sidecar boundary test.
+
 - [ ] **Step 9: Run sidecar boundary test**
 
 Run:
@@ -1570,6 +1604,16 @@ uv run python -m pytest tests/test_nautilus_market_catalog.py tests/test_nautilu
 
 Expected: PASS.
 
+- [ ] **Step 9: Remove Task 5 xfail marker**
+
+In `tests/test_nautilus_platform_boundary.py`, remove only this decorator:
+
+```python
+@pytest.mark.xfail(strict=True, reason="Task 5 removes reverse instrument registry")
+```
+
+Then run the reverse registry boundary test.
+
 - [ ] **Step 9: Run reverse registry boundary test**
 
 Run:
@@ -1788,6 +1832,16 @@ def _on_refresh_timer(self, _event: object = None) -> None:
 ```
 
 Add `refresh_once_sync() -> list[Market]` to the concrete market universe class used by node startup. It must call the existing Polymarket discovery client synchronously and must close the client in the same call.
+
+- [ ] **Step 7: Remove Task 6 xfail marker**
+
+In `tests/test_nautilus_platform_boundary.py`, remove only this decorator:
+
+```python
+@pytest.mark.xfail(strict=True, reason="Task 6 removes bare asyncio actor scheduling fallbacks")
+```
+
+Then run the scheduling boundary tests.
 
 - [ ] **Step 7: Run scheduling boundary tests**
 
@@ -2172,6 +2226,16 @@ uv run python -m pytest tests/test_nautilus_native_order.py tests/test_nautilus_
 ```
 
 Expected: PASS.
+
+- [ ] **Step 7: Remove Task 7 xfail marker**
+
+In `tests/test_nautilus_platform_boundary.py`, remove only this decorator:
+
+```python
+@pytest.mark.xfail(strict=True, reason="Task 7 splits large Nautilus runtime functions")
+```
+
+Then run the large function boundary test.
 
 - [ ] **Step 7: Run large function boundary test**
 
