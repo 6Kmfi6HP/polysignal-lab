@@ -6,7 +6,6 @@ from typing import Protocol
 
 from polysignal_lab.config import Settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceService, AnchorPriceStore
-from polysignal_lab.data.polymarket_rtds_ws import PolymarketRtdsPriceFeed
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.data.state import SpotRegistry
 from polysignal_lab.domain.enums import Side
@@ -55,6 +54,12 @@ class MarketRotationActor:
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
     ) -> None:
+        spot_source = settings.runtime.nautilus.sidecar.spot_source
+        if spot_source != "disabled":
+            raise RuntimeError(
+                "Nautilus sidecar spot sources require a managed Nautilus data-client lifecycle; "
+                "set runtime.nautilus.sidecar.spot_source=disabled until that seam is implemented"
+            )
         self.settings: Settings = settings
         self.market_universe: _MarketUniverse = market_universe
         self.catalog: MarketCatalog = catalog
@@ -70,15 +75,6 @@ class MarketRotationActor:
             use_crypto_price_api=settings.data.polymarket.use_crypto_price_api,
             anchor_store=anchor_store,
         )
-        self.rtds_feed: PolymarketRtdsPriceFeed | None = (
-            PolymarketRtdsPriceFeed(
-                self.spots,
-                settings.data.polymarket,
-                on_spot=self._on_spot,
-            )
-            if settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
-            else None
-        )
         self._active_by_condition: dict[str, Market] = _markets_by_condition(startup_markets)
         self._epoch: int = 0
         self._refresh_in_flight: bool = False
@@ -91,11 +87,6 @@ class MarketRotationActor:
 
     def on_start(self) -> None:
         _register_polysignal_data_types_if_available()
-        if self.rtds_feed is not None:
-            raise RuntimeError(
-                "Nautilus RTDS spot source requires a managed Nautilus data-client lifecycle; "
-                "set runtime.nautilus.sidecar.spot_source=disabled until that seam is implemented"
-            )
         if self._epoch == 0:
             next_epoch = self._epoch + 1
             self._publish_market_universe(
@@ -136,8 +127,6 @@ class MarketRotationActor:
             )
 
     def on_stop(self) -> None:
-        if self.rtds_feed is not None:
-            self.rtds_feed.stop()
         clock = getattr(self, "clock", None)
         cancel_timer = getattr(clock, "cancel_timer", None)
         if callable(cancel_timer):

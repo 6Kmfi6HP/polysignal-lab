@@ -12,6 +12,9 @@ from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.decision_policy_actor import (
+    NautilusDecisionPolicyActor as PolySignalDecisionPolicyActor,
+)
 from polysignal_lab.nautilus_runtime.market_rotation import (
     MarketRotationActor,
     _Health,
@@ -89,10 +92,18 @@ class NautilusMarketRotationActor(MarketRotationActor, Actor):
             health=health,
         )
 
+class NautilusDecisionPolicyActor(PolySignalDecisionPolicyActor, Actor):
+    def __init__(self, **kwargs: object) -> None:
+        Actor.__init__(self, config=ActorConfig())
+        PolySignalDecisionPolicyActor.__init__(self, **kwargs)
+
+
+
 
 
 
 __all__ = (
+    "NautilusDecisionPolicyActor",
     "NautilusMarketRotationActor",
     "NautilusPolySignalNativeStrategy",
 )

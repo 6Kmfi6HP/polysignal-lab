@@ -7,13 +7,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, assert_never
+from typing import Final, cast, assert_never
 
 import anyio
 import uvicorn
 
-from polysignal_lab.app.readonly_smoke import ReadonlySmokeRequest, collect_readonly_smoke
-from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.dashboard.app import create_dashboard_app
 from polysignal_lab.observability.logger import configure_logging
@@ -37,6 +35,7 @@ class CliOptions:
     use_config_default_runtime: bool
     once: bool
     real_readonly_smoke: bool
+    allow_legacy_scheduler: bool
     evidence: Path | None
 
 
@@ -73,6 +72,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run bounded public read-only market, scheduler, dashboard, and safety checks.",
     )
     parser.add_argument(
+        "--allow-legacy-scheduler",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--evidence",
         help="Optional path for bounded smoke evidence JSON.",
     )
@@ -98,6 +102,12 @@ def parse_cli(argv: Sequence[str] | None = None) -> CliOptions:
         parser.error("dashboard mode cannot be combined with --once or smoke flags")
     if args.real_readonly_smoke and not args.once and mode is not RuntimeMode.SMOKE:
         parser.error("--real-readonly-smoke requires --once outside smoke mode")
+    if args.allow_legacy_scheduler and not (mode_arg or command):
+        parser.error("--allow-legacy-scheduler requires an explicit scheduler selector")
+    if args.allow_legacy_scheduler and mode is not RuntimeMode.SCHEDULER:
+        parser.error("--allow-legacy-scheduler requires scheduler mode")
+    if args.allow_legacy_scheduler and (args.once or args.real_readonly_smoke):
+        parser.error("--allow-legacy-scheduler cannot be combined with bounded smoke")
 
     return CliOptions(
         config=Path(args.config),
@@ -105,6 +115,7 @@ def parse_cli(argv: Sequence[str] | None = None) -> CliOptions:
         use_config_default_runtime=not runtime_selected and not args.once and not args.real_readonly_smoke,
         once=bool(args.once or mode is RuntimeMode.SMOKE),
         real_readonly_smoke=bool(args.real_readonly_smoke or mode is RuntimeMode.SMOKE),
+        allow_legacy_scheduler=bool(args.allow_legacy_scheduler),
         evidence=Path(args.evidence) if args.evidence else None,
     )
 
@@ -122,33 +133,46 @@ def run_scheduler_cli(settings: Settings) -> None:
     # asyncio translates into task cancellation → finally block executes.
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
+    from polysignal_lab.app.scheduler import PolySignalScheduler
+
     scheduler = PolySignalScheduler(settings)
     anyio.run(scheduler.run)
 
 
 def run_dashboard_cli(settings: Settings) -> None:
     configure_logging(settings.app.log_level)
+
     store = SQLiteStore(settings.storage.sqlite_path)
     app = create_dashboard_app(store)
     uvicorn.run(app, host=settings.dashboard.host, port=settings.dashboard.port)
 
 
+async def _collect_readonly_smoke(request: object) -> dict[str, object]:
+    from polysignal_lab.app.readonly_smoke import collect_readonly_smoke
+
+    return cast(dict[str, object], await collect_readonly_smoke(request))
+
+
 def run_readonly_smoke(settings: Settings, options: CliOptions) -> None:
     configure_logging(settings.app.log_level)
+    from polysignal_lab.app.readonly_smoke_types import ReadonlySmokeRequest
+
     request = ReadonlySmokeRequest(
         settings=settings,
         config_path=options.config,
         evidence_path=options.evidence,
         base_dir=Path(".omo/evidence/readonly-smoke-runtime"),
     )
-    evidence = anyio.run(collect_readonly_smoke, request)
+    evidence = anyio.run(_collect_readonly_smoke, request)
     status = "passed" if evidence["passed"] else f"completed with {evidence['failure_count']} degraded surface(s)"
     print(f"Bounded read-only smoke {status}")
 
 def _resolve_runtime_mode(settings: Settings, options: CliOptions) -> RuntimeMode:
     if options.use_config_default_runtime:
-        return RuntimeMode.NAUTILUS if settings.runtime.engine == "nautilus" else RuntimeMode.SCHEDULER
-    if options.mode is RuntimeMode.SCHEDULER and not options.once and not options.real_readonly_smoke:
+        return RuntimeMode.NAUTILUS
+    if options.mode is RuntimeMode.SCHEDULER and not options.allow_legacy_scheduler:
+        if options.once or options.real_readonly_smoke:
+            return RuntimeMode.SCHEDULER
         return RuntimeMode.NAUTILUS
     return options.mode
 

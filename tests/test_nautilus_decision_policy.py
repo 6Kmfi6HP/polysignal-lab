@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import importlib
+import sys
 from dataclasses import replace
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -133,6 +137,119 @@ def test_approved_decision_includes_consensus_signal_when_engine_merges() -> Non
         first.signal.signal_id,
         second.signal.signal_id,
     ]
+
+
+def test_decision_policy_module_imports_without_nautilus_dependency() -> None:
+    source = Path("src/polysignal_lab/nautilus_runtime/decision_policy.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "nautilus_trader" not in source
+    module = importlib.import_module("polysignal_lab.nautilus_runtime.decision_policy")
+    assert module.DecisionPolicyActor is DecisionPolicyActor
+
+
+def test_decision_policy_actor_exposes_domain_state_not_nautilus_lifecycle() -> None:
+    actor = DecisionPolicyActor(disabled_strategies={"manual"})
+
+    assert callable(actor.save_state)
+    assert callable(actor.load_state)
+    assert not hasattr(actor, "on_save")
+    assert not hasattr(actor, "on_load")
+
+
+def test_nautilus_decision_policy_actor_constructs_without_nautilus_installed() -> None:
+    from polysignal_lab.nautilus_runtime.decision_policy_actor import (
+        NautilusDecisionPolicyActor,
+    )
+
+    actor = NautilusDecisionPolicyActor(disabled_strategies={"manual"})
+
+    assert isinstance(actor, DecisionPolicyActor)
+    assert actor.save_state()["disabled_strategies"] == ["manual"]
+
+
+def test_nautilus_decision_policy_actor_on_save_on_load_delegate_to_policy_state() -> None:
+    from polysignal_lab.nautilus_bridge.state import decode_state, state_key
+    from polysignal_lab.nautilus_runtime.decision_policy_actor import (
+        NautilusDecisionPolicyActor,
+    )
+
+    actor = NautilusDecisionPolicyActor(
+        disabled_strategies={"base", "manual"},
+        dependencies={"dependent": ("base", "other")},
+    )
+    restored = NautilusDecisionPolicyActor()
+
+    saved = actor.on_save()
+    restored.on_load(saved)
+
+    assert state_key("decision_policy") in saved
+    assert decode_state("decision_policy", saved) == {
+        "disabled_strategies": ["base", "manual"],
+        "strategy_dependencies": {"dependent": ["base", "other"]},
+    }
+    assert restored.save_state() == actor.save_state()
+    assert restored.evaluate(_decision(strategy="dependent"), _view()).reason_code == (
+        "dependency_disabled:base"
+    )
+
+
+def test_runtime_classes_expose_registerable_nautilus_policy_actor(monkeypatch) -> None:
+    runtime_module_name = "polysignal_lab.nautilus_runtime.runtime_classes"
+    missing = object()
+    previous_runtime_module = sys.modules.get(runtime_module_name, missing)
+    _ = sys.modules.pop(runtime_module_name, None)
+
+    nautilus_module = ModuleType("nautilus_trader")
+    common_module = ModuleType("nautilus_trader.common")
+    actor_module = ModuleType("nautilus_trader.common.actor")
+    config_module = ModuleType("nautilus_trader.config")
+    trading_module = ModuleType("nautilus_trader.trading")
+    strategy_module = ModuleType("nautilus_trader.trading.strategy")
+
+    class FakeActor:
+        def __init__(self, *, config: object) -> None:
+            self.actor_config = config
+
+    class FakeStrategy:
+        def __init__(self, *, config: object) -> None:
+            self.strategy_config = config
+
+    actor_module.Actor = FakeActor
+    config_module.ActorConfig = lambda: "actor-config"
+    config_module.StrategyConfig = lambda: "strategy-config"
+    strategy_module.Strategy = FakeStrategy
+    nautilus_module.common = common_module
+    nautilus_module.config = config_module
+    nautilus_module.trading = trading_module
+    common_module.actor = actor_module
+    trading_module.strategy = strategy_module
+
+    monkeypatch.setitem(sys.modules, "nautilus_trader", nautilus_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.common", common_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.common.actor", actor_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.config", config_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.trading", trading_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.trading.strategy", strategy_module)
+
+    try:
+        module = importlib.import_module(runtime_module_name)
+        actor = module.NautilusDecisionPolicyActor(disabled_strategies={"manual"})
+        node = SimpleNamespace(trader=SimpleNamespace(actors=[]))
+        node.trader.add_actor = node.trader.actors.append
+
+        node.trader.add_actor(actor)
+
+        assert isinstance(actor, FakeActor)
+        assert isinstance(actor, DecisionPolicyActor)
+        assert actor.actor_config == "actor-config"
+        assert node.trader.actors == [actor]
+    finally:
+        if previous_runtime_module is missing:
+            _ = sys.modules.pop(runtime_module_name, None)
+        else:
+            sys.modules[runtime_module_name] = previous_runtime_module
 
 
 def test_state_round_trips_disabled_strategies_and_dependencies() -> None:

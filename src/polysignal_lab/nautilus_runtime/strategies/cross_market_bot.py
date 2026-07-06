@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import cast
 
 from polysignal_lab.alpha.cross_market_core import CrossMarketAlphaCore
 from polysignal_lab.alpha.types import (
@@ -58,7 +57,7 @@ class CrossMarketNautilusStrategy:
             view = group.views_by_condition_id.get(decision.condition_id)
             if view is None:
                 continue
-            policy_result = self.policy.evaluate(decision, view)
+            policy_result = self.policy.decide(decision, view)
             if isinstance(policy_result, ApprovedDecision):
                 specs = self._submit_approved(
                     policy_result, decision=decision, view=view

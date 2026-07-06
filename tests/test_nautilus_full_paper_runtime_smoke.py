@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec, SpotView
+from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec
 from polysignal_lab.config import Settings
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatResult
 from polysignal_lab.domain.enums import OrderIntent, Side
@@ -312,7 +312,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
             ]
 
     class FakePolicy:
-        def evaluate(self, decision, view):
+        def decide(self, decision, view):
             from polysignal_lab.domain.signal import SignalCandidate
             from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 
@@ -547,7 +547,7 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
             ]
 
     class FakePolicy:
-        def evaluate(self, decision, view):
+        def decide(self, decision, view):
             from polysignal_lab.domain.signal import SignalCandidate
             from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 

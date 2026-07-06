@@ -92,7 +92,7 @@ class CompatPolySignalNautilusStrategy:
         self._last_views[condition_id] = view
         submitted: list[NautilusOrderSpec] = []
         for decision in self.core.evaluate(view):
-            policy_result = self.policy.evaluate(decision, view)
+            policy_result = self.policy.decide(decision, view)
             if isinstance(policy_result, ApprovedDecision):
                 specs = self.submit_approved(
                     policy_result, decision=decision, view=view
@@ -204,7 +204,7 @@ class CompatPolySignalNautilusStrategy:
             view = self._view_for_decision(decision)
             if view is None:
                 continue
-            policy_result = self.policy.evaluate(decision, view)
+            policy_result = self.policy.decide(decision, view)
             if isinstance(policy_result, ApprovedDecision):
                 specs = self.submit_approved(
                     policy_result, decision=decision, view=view

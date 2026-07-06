@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-UTC = timezone.utc
 import asyncio
 import atexit
 import inspect
@@ -58,7 +57,7 @@ from polysignal_lab.nautilus_runtime.signal_sidecar import (
     _stop_nautilus_scheduler,
 )
 from polysignal_lab.nautilus_runtime.node_cli import (
-    run_nautilus_cli_async,
+    run_nautilus_cli_async as run_nautilus_cli_async,
 )
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
@@ -70,6 +69,8 @@ from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
 from polysignal_lab.strategies.execution import build_strategy_schedule
+
+UTC = timezone.utc
 
 class _TraderLike(Protocol):
     def add_actor(self, actor: object) -> None: ...
@@ -186,13 +187,29 @@ def _ensure_nautilus_imports() -> None:
     NautilusStrategyConfig = cast(Callable[[], object], getattr(config_mod, "StrategyConfig"))
 
 
-def _load_runtime_classes() -> tuple[type[object], type[object]]:
+def _load_runtime_classes() -> tuple[type[object], ...]:
     from polysignal_lab.nautilus_runtime.runtime_classes import (
+        NautilusDecisionPolicyActor,
         NautilusMarketRotationActor,
         NautilusPolySignalNativeStrategy,
     )
 
-    return NautilusPolySignalNativeStrategy, NautilusMarketRotationActor
+    return (
+        NautilusPolySignalNativeStrategy,
+        NautilusMarketRotationActor,
+        NautilusDecisionPolicyActor,
+    )
+
+
+def _runtime_class_triple() -> tuple[type[object], type[object], type[object]]:
+    classes = _load_runtime_classes()
+    if len(classes) == 2:
+        strategy_cls, rotation_actor_cls = classes
+        return strategy_cls, rotation_actor_cls, DecisionPolicyActor
+    if len(classes) == 3:
+        strategy_cls, rotation_actor_cls, policy_actor_cls = classes
+        return strategy_cls, rotation_actor_cls, policy_actor_cls
+    raise RuntimeError(f"Expected 2 or 3 Nautilus runtime classes, got {len(classes)}")
 
 
 def _create_configured_live_node(
@@ -256,12 +273,23 @@ def _attach_cache_projections(
 def _register_runtime_trader_components(
     node: _NautilusNodeLike,
     market_rotation_actor: object,
+    policy: DecisionPolicyActor,
     strategies: Sequence[_NativeStrategyLike],
 ) -> None:
     node.trader.add_actor(market_rotation_actor)
+    if _is_runtime_policy_actor(policy):
+        node.trader.add_actor(policy)
     for strategy in strategies:
         node.trader.add_strategy(strategy)
     node.build()
+
+
+def _is_runtime_policy_actor(policy: DecisionPolicyActor) -> bool:
+    return (
+        type(policy) is not DecisionPolicyActor
+        and callable(getattr(policy, "on_save", None))
+        and callable(getattr(policy, "on_load", None))
+    )
 
 
 def _build_market_rotation_actor(
@@ -273,7 +301,7 @@ def _build_market_rotation_actor(
     store: AnchorPriceStore | None,
     health: object | None,
 ) -> object:
-    _strategy_cls, actor_cls = _load_runtime_classes()
+    _strategy_cls, actor_cls, _policy_cls = _runtime_class_triple()
     actor_factory = cast(Callable[..., object], actor_cls)
     return actor_factory(
         settings=settings,
@@ -339,7 +367,7 @@ def build_trading_node(
         registry,
         observability,
     )
-    _register_runtime_trader_components(node, market_rotation_actor, strategies)
+    _register_runtime_trader_components(node, market_rotation_actor, policy, strategies)
     cache_reader = _attach_cache_projections(node, registry, assembler, strategies)
     return _runtime_components(
         node=node,
@@ -367,7 +395,7 @@ def _build_runtime_context(
     )
     node, config = _create_configured_live_node(settings, configured_markets)
     registry, assembler = _create_market_projection_components(configured_markets)
-    policy = _build_policy(settings)
+    policy = _build_policy(settings, policy_type=_runtime_class_triple()[2])
     return (
         settings,
         configured_markets,
@@ -420,7 +448,7 @@ def _build_native_strategies(
     registry: MarketCatalog,
     observability: ObservabilityActor | None,
 ) -> list[_NativeStrategyLike]:
-    strategy_cls, _actor_cls = _load_runtime_classes()
+    strategy_cls, _actor_cls, _policy_cls = _runtime_class_triple()
     strategy_type = cast(Callable[..., _NativeStrategyLike], strategy_cls)
     instrument_id_resolver = _instrument_id_resolver(registry)
     strategy_book_type = settings.runtime.nautilus.sandbox_book_type
@@ -641,8 +669,13 @@ def _fixed_stake_for(cfg: object) -> float:
     return 10.0
 
 
-def _build_policy(settings: Settings) -> DecisionPolicyActor:
-    return DecisionPolicyActor(
+def _build_policy(
+    settings: Settings,
+    *,
+    policy_type: type[object] = DecisionPolicyActor,
+) -> DecisionPolicyActor:
+    policy_factory = cast(Callable[..., DecisionPolicyActor], policy_type)
+    return policy_factory(
         gate=SignalGate(
             settings.signal,
             settings.data.polymarket,
@@ -945,7 +978,8 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
             return
         raise KeyboardInterrupt
 
-    cleanup_signals: Callable[[], None] = lambda: None
+    def cleanup_signals() -> None:
+        return None
     if _runtime_intercepts_os_signals(getattr(bundle.scheduler, "settings", settings)):
         cleanup_signals = _install_sync_os_signal_handlers(request_stop)
     runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))

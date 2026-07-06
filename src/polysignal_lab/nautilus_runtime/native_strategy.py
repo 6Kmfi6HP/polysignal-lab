@@ -23,6 +23,7 @@ from polysignal_lab.nautilus_bridge.market_catalog import (
     MarketCatalog,
     MarketPairMeta,
 )
+from polysignal_lab.nautilus_bridge.state import JsonValue, StateSchemaError, decode_state, encode_state
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     DecisionPolicyActor,
@@ -278,6 +279,19 @@ class PolySignalNativeStrategy:
         cancel_timer = getattr(clock, "cancel_timer", None)
         if callable(cancel_timer):
             _ = cancel_timer(EVALUATION_HEARTBEAT_TIMER_NAME)
+
+    def on_save(self) -> dict[str, bytes]:
+        saver = getattr(self.core, "save_state", None)
+        raw_payload = saver() if callable(saver) else {}
+        return encode_state(self.strategy_name, _json_state_payload(raw_payload))
+
+    def on_load(self, state: Mapping[str, bytes]) -> None:
+        loader = getattr(self.core, "load_state", None)
+        if not callable(loader):
+            return
+        payload = cast(Mapping[str, object], decode_state(self.strategy_name, state))
+        _ = loader(payload)
+
 
     def _on_evaluation_heartbeat(self, _event: object) -> None:
         self._note_runtime_progress("evaluation_heartbeat")
@@ -610,7 +624,7 @@ class PolySignalNativeStrategy:
             return
         if decision.condition_id not in self._active_condition_ids:
             return
-        policy_result = self.policy.evaluate(decision, view)
+        policy_result = self.policy.decide(decision, view)
         if isinstance(policy_result, ApprovedDecision):
             signal_key = policy_result.signal.dedupe_key
             if signal_key in self._submitted_signal_keys:
@@ -1293,6 +1307,7 @@ def _subscribe_custom_data_on_bus(strategy: object, data_type: object) -> bool:
     subscribe = getattr(msgbus, "subscribe", None)
     topic_cache = getattr(strategy, "_topic_cache", None)
     topic_getter = getattr(topic_cache, "get_custom_data_topic", None)
+
     if not callable(topic_getter):
         try:
             topic_module = import_module("nautilus_trader.common.data_topics")
@@ -1305,6 +1320,14 @@ def _subscribe_custom_data_on_bus(strategy: object, data_type: object) -> bool:
         return False
     _ = subscribe(topic=topic_getter(data_type, None), handler=handler)
     return True
+
+
+def _json_state_payload(value: object) -> Mapping[str, JsonValue]:
+    if not isinstance(value, Mapping):
+        raise StateSchemaError(
+            f"{type(value).__name__} core save_state() returned non-mapping state"
+        )
+    return {str(key): cast(JsonValue, item) for key, item in value.items()}
 
 
 def _datetime_ns(value: int | None) -> datetime | None:

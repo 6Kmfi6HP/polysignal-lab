@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 
 from polysignal_lab.nautilus_runtime.market_data import (
     PolySignalMarketMetaData,
@@ -82,7 +81,7 @@ def test_custom_data_publisher_publishes_market_metadata_without_registering_sta
     assert not hasattr(actor, "registry")
 
 
-def test_market_rotation_actor_fails_fast_for_unmanaged_rtds_source(monkeypatch) -> None:
+def test_market_rotation_actor_fails_fast_for_unmanaged_rtds_source() -> None:
     import pytest
 
     from polysignal_lab.config import Settings
@@ -98,20 +97,41 @@ def test_market_rotation_actor_fails_fast_for_unmanaged_rtds_source(monkeypatch)
 
     settings = Settings()
     settings.runtime.nautilus.sidecar.spot_source = "polymarket_rtds"
-    actor = MarketRotationActor(
-        settings=settings,
-        startup_markets=(),
-        market_universe=FakeUniverse(),
-        catalog=MarketCatalog(),
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.market_rotation.register_polysignal_data_types",
-        lambda: None,
-    )
-
     with pytest.raises(RuntimeError, match="managed Nautilus data-client lifecycle"):
-        actor.on_start()
+        MarketRotationActor(
+            settings=settings,
+            startup_markets=(),
+            market_universe=FakeUniverse(),
+            catalog=MarketCatalog(),
+        )
 
+
+def test_market_rotation_actor_does_not_construct_unmanaged_rtds_feed() -> None:
+    import pytest
+
+    from polysignal_lab.config import Settings
+    from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+    from polysignal_lab.nautilus_runtime import market_rotation
+    from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
+
+    class FakeUniverse:
+        async def refresh_once(self):
+            return []
+
+        def refresh_once_sync(self):
+            return []
+
+
+    settings = Settings()
+    settings.runtime.nautilus.sidecar.spot_source = "polymarket_rtds"
+    assert not hasattr(market_rotation, "PolymarketRtdsPriceFeed")
+    with pytest.raises(RuntimeError, match="managed Nautilus data-client lifecycle"):
+        MarketRotationActor(
+            settings=settings,
+            startup_markets=(),
+            market_universe=FakeUniverse(),
+            catalog=MarketCatalog(),
+        )
 
 def test_market_rotation_actor_uses_clock_timer_for_startup(monkeypatch) -> None:
     from datetime import timedelta

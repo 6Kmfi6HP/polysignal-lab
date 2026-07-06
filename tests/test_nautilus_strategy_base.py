@@ -20,7 +20,7 @@ from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssem
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatData, PolySignalSpotData
 
-from polysignal_lab.nautilus_bridge.state import state_key
+from polysignal_lab.nautilus_bridge.state import decode_state, state_key
 from polysignal_lab.nautilus_bridge.strategies.ptb_diff import PTBDiffNautilusStrategy
 from polysignal_lab.nautilus_bridge.strategy_base import (
     LegacyPolySignalNautilusStrategy,
@@ -63,6 +63,29 @@ class FakeCore:
         return self.decisions
 
 
+class StatefulFakeCore(FakeCore):
+    def __init__(
+        self,
+        decisions: list[AlphaDecision],
+        *,
+        state: Mapping[str, object] | None = None,
+    ) -> None:
+        super().__init__(decisions)
+        self.state: dict[str, object] = dict(
+            state or {"alpha_marker": 42, "trades": {"condition-btc-5m": []}}
+        )
+        self.loaded_payload: dict[str, object] | None = None
+        self.save_calls = 0
+
+    def save_state(self) -> Mapping[str, object]:
+        self.save_calls += 1
+        return dict(self.state)
+
+    def load_state(self, payload: Mapping[str, object]) -> None:
+        self.loaded_payload = dict(payload)
+        self.state = dict(payload)
+
+
 def _assembler(view: object | None) -> MarketViewAssembler:
     return cast(MarketViewAssembler, cast(object, FakeAssembler(view)))
 
@@ -81,6 +104,22 @@ def _native_projections(
     return {
         "registry": registry or _test_market_catalog(),
     }
+
+
+def _minimal_native_strategy(
+    *,
+    core: object,
+    strategy_name: str = "ptb_diff",
+) -> object:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    return PolySignalNativeStrategy(
+        core=core,
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name=strategy_name,
+        **_native_projections(),
+    )
 
 
 def _load_static_native_strategy(
@@ -239,6 +278,83 @@ def test_strategy_base_save_load_uses_versioned_bytes() -> None:
 
     assert set(state) == {state_key("ptb_diff")}
     assert restored.accepted_state == {"condition-btc-5m": "accepted"}
+
+
+def test_native_strategy_on_save_load_delegates_to_core_via_encode_decode() -> None:
+    core = StatefulFakeCore([])
+    strategy = _minimal_native_strategy(core=core, strategy_name="ptb_diff")
+
+    state = strategy.on_save()
+    restored_core = StatefulFakeCore([])
+    restored = _minimal_native_strategy(core=restored_core, strategy_name="ptb_diff")
+    restored.on_load(state)
+
+    assert core.save_calls == 1
+    assert set(state) == {state_key("ptb_diff")}
+    assert decode_state("ptb_diff", state) == {
+        "alpha_marker": 42,
+        "trades": {"condition-btc-5m": []},
+    }
+    assert restored_core.loaded_payload == {
+        "alpha_marker": 42,
+        "trades": {"condition-btc-5m": []},
+    }
+    assert restored_core.state == restored_core.loaded_payload
+
+
+def test_native_strategy_on_save_persists_only_core_state() -> None:
+    from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
+
+    core = StatefulFakeCore([])
+    strategy = _minimal_native_strategy(core=core, strategy_name="vwap_momentum")
+    strategy._approved_signal_metrics["client-1"] = {
+        "dedupe_key": "dedupe-1",
+        "level_price": 0.82,
+    }
+    strategy._submitted_signal_keys.add("dedupe-1")
+    strategy.submitted_orders.append(SimpleNamespace(client_order_id="client-1"))
+    strategy.rejected_decisions.append(
+        RejectedDecision(reason_code="TEST", detail={}, candidate=None)
+    )
+
+    payload = decode_state("vwap_momentum", strategy.on_save())
+
+    assert payload == dict(core.save_state())
+    assert "submitted_orders" not in payload
+    assert "approved_signal_metrics" not in payload
+    assert "submitted_signal_keys" not in payload
+    assert "rejected_decisions" not in payload
+    assert "fill_state" not in payload
+    assert "accepted_state" not in payload
+
+
+def test_native_strategy_on_load_restores_core_without_runtime_order_truth() -> None:
+    from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
+
+    core = StatefulFakeCore([])
+    strategy = _minimal_native_strategy(core=core, strategy_name="ptb_diff")
+    strategy._approved_signal_metrics["client-1"] = {"dedupe_key": "dedupe-1"}
+    strategy._submitted_signal_keys.add("dedupe-1")
+    strategy.submitted_orders.append(SimpleNamespace(client_order_id="client-1"))
+    strategy.rejected_decisions.append(
+        RejectedDecision(reason_code="TEST", detail={}, candidate=None)
+    )
+
+    state = strategy.on_save()
+
+    restored_core = StatefulFakeCore([])
+    restored = _minimal_native_strategy(core=restored_core, strategy_name="ptb_diff")
+    restored._approved_signal_metrics["preexisting"] = {"dedupe_key": "keep-me"}
+    restored.on_load(state)
+
+    assert restored_core.loaded_payload == {
+        "alpha_marker": 42,
+        "trades": {"condition-btc-5m": []},
+    }
+    assert restored._approved_signal_metrics == {"preexisting": {"dedupe_key": "keep-me"}}
+    assert len(restored.submitted_orders) == 0
+    assert restored._submitted_signal_keys == set()
+    assert len(restored.rejected_decisions) == 0
 
 
 def test_ptb_nautilus_strategy_constructs_with_core_without_nautilus_dependency() -> (
@@ -1140,6 +1256,36 @@ def test_native_strategy_readiness_gate_skips_missing_required_market_view_input
     assert "readiness_miss" in phases
 
 
+def test_native_strategy_routes_decisions_through_policy_actor_decide() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    decision = _decision()
+    approved_decision = RuntimeFakePolicy().evaluate(decision, _MockView())
+    submitted: list[object] = []
+    decided: list[tuple[AlphaDecision, object]] = []
+
+    class ActorPolicy:
+        def decide(self, decision: AlphaDecision, view: object) -> object:
+            decided.append((decision, view))
+            return approved_decision
+
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        **_native_projections(),
+    )
+    strategy.policy = ActorPolicy()  # type: ignore[assignment]
+    strategy._submit_approved = lambda approved, *, view: submitted.append((approved, view))  # type: ignore[method-assign]
+    view = _MockView()
+
+    strategy._handle_decision(decision, view)
+
+    assert decided == [(decision, view)]
+    assert submitted == [(approved_decision, view)]
+
+
 def test_native_strategy_does_not_submit_when_approved_decision_view_lacks_book() -> None:
     from types import SimpleNamespace
 
@@ -1157,7 +1303,7 @@ def test_native_strategy_does_not_submit_when_approved_decision_view_lacks_book(
         **_native_projections(),
         progress_callback=phases.append,
     )
-    strategy.policy.evaluate = lambda decision, view: approved_decision  # type: ignore[method-assign]
+    strategy.policy.decide = lambda decision, view: approved_decision  # type: ignore[method-assign]
     strategy._submit_approved = lambda approved, *, view: submitted.append((approved, view))  # type: ignore[method-assign]
     view = SimpleNamespace(
         book_for=lambda _side: (_ for _ in ()).throw(

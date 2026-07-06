@@ -196,7 +196,7 @@ class FakePolicy:
         self.approvals = approvals or [True]
         self.calls: list[tuple[AlphaDecision, MarketView]] = []
 
-    def evaluate(self, decision: AlphaDecision, view: MarketView):
+    def decide(self, decision: AlphaDecision, view: MarketView):
         self.calls.append((decision, view))
         approve = self.approvals[min(len(self.calls) - 1, len(self.approvals) - 1)]
         if approve:
@@ -567,7 +567,7 @@ def test_candidate_less_policy_rejection_rolls_back_transient_state() -> None:
     core = RollbackCore([decision])
 
     class CandidateLessRejectPolicy:
-        def evaluate(self, decision: AlphaDecision, view: MarketView):
+        def decide(self, decision: AlphaDecision, view: MarketView):
             return RejectedDecision(
                 reason_code="manual_disabled", detail={}, candidate=None
             )
@@ -823,7 +823,7 @@ def test_approved_decision_with_consensus_submits_without_second_core_acceptance
     submitter = FakeSubmitter()
 
     class ConsensusPolicy:
-        def evaluate(self, policy_decision: AlphaDecision, policy_view: MarketView):
+        def decide(self, policy_decision: AlphaDecision, policy_view: MarketView):
             return ApprovedDecision(
                 signal=_signal_from_decision(policy_decision), consensus=consensus
             )
@@ -865,7 +865,7 @@ def test_consensus_submitted_alias_fill_skips_source_core_lifecycle() -> None:
     submitter = FakeSubmitter()
 
     class ConsensusPolicy:
-        def evaluate(self, policy_decision: AlphaDecision, policy_view: MarketView):
+        def decide(self, policy_decision: AlphaDecision, policy_view: MarketView):
             return ApprovedDecision(
                 signal=_signal_from_decision(policy_decision), consensus=consensus
             )

@@ -157,6 +157,11 @@ class DecisionPolicyActor:
         )
         self.strategy_dependencies = _string_tuple_mapping(dependencies)
 
+    def decide(
+        self, decision: AlphaDecision, view: MarketView
+    ) -> ApprovedDecision | RejectedDecision:
+        return self.evaluate(decision, view)
+
     def evaluate(
         self, decision: AlphaDecision, view: MarketView
     ) -> ApprovedDecision | RejectedDecision:

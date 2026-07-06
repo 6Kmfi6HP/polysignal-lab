@@ -120,7 +120,7 @@ class AllowAllPolicy:
     def __init__(self):
         self.group_decisions: list[AlphaDecision] = []
 
-    def evaluate(
+    def decide(
         self, decision: AlphaDecision, view: MarketView
     ) -> ApprovedDecision:
         from polysignal_lab.domain.signal import SignalCandidate
@@ -308,7 +308,7 @@ def test_cross_market_wrapper_fok_depth_counts_asks_through_max_entry() -> None:
             ]
 
     class PreserveIntentPolicy:
-        def evaluate(self, decision, view):
+        def decide(self, decision, view):
             from polysignal_lab.domain.signal import SignalCandidate
 
             intent = decision.order_intent

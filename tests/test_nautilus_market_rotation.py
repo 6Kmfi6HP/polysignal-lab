@@ -1008,14 +1008,11 @@ def test_market_rotation_actor_refresh_timer_without_running_loop_publishes_ptb_
     assert any(isinstance(item, PolySignalPriceToBeatData) for item in published)
 
 
-def test_market_rotation_actor_on_stop_stops_feed_without_asyncio_tasks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    created: list[_RecordedTask] = []
-    stopped: list[str] = []
+def test_market_rotation_actor_on_stop_cancels_clock_without_feed_lifecycle() -> None:
+    cancelled: list[str] = []
     settings = Settings()
     settings.runtime.nautilus.market_rotation.enabled = False
-    settings.runtime.nautilus.sidecar.spot_source = "polymarket_rtds"
+    settings.runtime.nautilus.sidecar.spot_source = "disabled"
     actor = MarketRotationActor(
         settings=settings,
         startup_markets=(),
@@ -1024,17 +1021,9 @@ def test_market_rotation_actor_on_stop_stops_feed_without_asyncio_tasks(
         anchor_store=None,
         health=None,
     )
+    actor.clock = SimpleNamespace(cancel_timer=lambda name: cancelled.append(str(name)))
 
-    monkeypatch.setattr(
-        "asyncio.create_task",
-        lambda coro: _record_task(created, cast(Coroutine[Any, Any, object], coro)),
-    )
-    monkeypatch.setattr(actor.rtds_feed, "stop", lambda: stopped.append("stopped"))
+    actor.on_stop()
 
-    try:
-        actor.on_stop()
-
-        assert stopped == ["stopped"]
-        assert created == []
-    finally:
-        _close_recorded_tasks(created)
+    assert cancelled == ["market_rotation_refresh"]
+    assert not hasattr(actor, "rtds_feed")

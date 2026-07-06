@@ -307,6 +307,43 @@ def test_build_trading_node_registers_market_rotation_actor(monkeypatch) -> None
     assert runtime["market_rotation_actor"].kwargs["market_universe"] is universe
     assert runtime["market_rotation_actor"].kwargs["health"] is health
 
+
+def test_build_trading_node_registers_policy_actor_when_runtime_class_exists(monkeypatch) -> None:
+    _patch_nautilus_placeholders(monkeypatch)
+
+    from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+
+    class FakeRotationActor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakePolicyActor(DecisionPolicyActor):
+        def on_save(self) -> dict[str, bytes]:
+            return {}
+
+        def on_load(self, state: dict[str, bytes]) -> None:
+            _ = state
+
+    class FakeStrategy:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.strategy_name = kwargs["strategy_name"]
+            self.policy = kwargs["policy"]
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor, FakePolicyActor),
+    )
+
+    runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+    node = runtime["node"]
+
+    assert len(node.trader.actors) == 2
+    assert node.trader.actors[0] is runtime["market_rotation_actor"]
+    assert node.trader.actors[1] is runtime["policy"]
+    assert isinstance(runtime["policy"], FakePolicyActor)
+    assert runtime["strategies"][0].policy is runtime["policy"]
+
 def test_build_trading_node_uses_sandbox_execution_not_matching_client(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
@@ -1645,10 +1682,6 @@ def test_run_nautilus_cli_exits_cleanly_when_live_node_returns(
 
 
 def test_run_nautilus_cli_logs_warning_on_unexpected_return(monkeypatch, tmp_path) -> None:
-    from polysignal_lab.observability.runtime_health import (
-        read_runtime_heartbeat,
-        read_runtime_startup_started_at,
-    )
 
     class FakeNode:
         def run(self, raise_exception=False):
