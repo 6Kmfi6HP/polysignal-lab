@@ -12,8 +12,7 @@ from typing import Any, cast
 import pytest
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.app.services.persistence_service import PersistenceService
-from polysignal_lab.domain.enums import OrderStatus, Side
-from polysignal_lab.domain.paper_order import PaperOrder
+from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
@@ -769,7 +768,7 @@ class LockingSystemEventPersistence(FakePersistence):
 
 
 class LockingCriticalPersistence(FakePersistence):
-    def upsert_paper_order(self, order: object) -> None:
+    def insert_paper_trade_result(self, result: object) -> None:
         raise sqlite3.OperationalError("database is locked")
 
 
@@ -777,7 +776,7 @@ def test_event_store_raises_on_critical_paper_state_sqlite_lock() -> None:
     adapter = NautilusEventStoreAdapter(LockingCriticalPersistence())
 
     with pytest.raises(sqlite3.OperationalError, match="database is locked"):
-        adapter.insert_json("orders", {"paper_order_id": "order-1"})
+        adapter.insert_json("settlements", {"paper_trade_id": "trade-1"})
 
 
 def test_nautilus_event_store_keeps_runtime_callbacks_alive_when_observability_sqlite_is_locked() -> None:
@@ -798,61 +797,56 @@ def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
 
     adapter.insert_json("signals", {"signal_id": "s1"})
     adapter.insert_json("rejected_signals", {"rejected_id": "r1"})
-    adapter.insert_json("orders", {"paper_order_id": "o1"})
-    adapter.insert_json("fills", {"paper_fill_id": "f1"})
-    adapter.insert_json("positions", {"paper_position_id": "p1"})
     adapter.insert_json("settlements", {"paper_trade_id": "t1"})
     adapter.insert_json("health_snapshot", {"event_id": "h1", "event_type": "health_snapshot", "severity": "info", "created_at": "now"})
 
     assert [name for name, _ in persistence.calls] == [
         "insert_signal",
         "insert_rejected_signal",
-        "upsert_paper_order",
-        "insert_paper_fill",
-        "upsert_paper_position",
         "insert_paper_trade_result",
         "insert_system_event",
     ]
     assert [stream for stream, _ in persistence.logs] == [
         "signals",
         "rejected_signals",
-        "paper_orders",
-        "paper_fills",
-        "paper_positions",
         "paper_trade_results",
         "system_events",
     ]
     with pytest.raises(ValueError, match="Unknown Nautilus event table"):
         adapter.insert_json("unknown", {})
+    with pytest.raises(ValueError, match="Unknown Nautilus event table"):
+        adapter.insert_json("orders", {})
+    with pytest.raises(ValueError, match="Unknown Nautilus event table"):
+        adapter.insert_json("fills", {})
+    with pytest.raises(ValueError, match="Unknown Nautilus event table"):
+        adapter.insert_json("positions", {})
 
 
 
 
-def test_event_store_upserts_terminal_order_update(tmp_path) -> None:
+def test_event_store_writes_nautilus_order_to_system_events(tmp_path) -> None:
     persistence = PersistenceService(
         JSONLStore(tmp_path / "logs"),
         SQLiteStore(tmp_path / "paper.sqlite"),
         StateStore(tmp_path / "state"),
     )
     adapter = NautilusEventStoreAdapter(persistence)
-    order = PaperOrder(
-        paper_order_id="order-1", signal_id="sig-1", token_id="t1",
-        side=Side.UP, limit_price=0.82, stake_usdc=10.0,
-        reference_price=0.82, asset="BTC", timeframe="5m", strategy="test",
-        market_id="m1", market_slug="s1", status=OrderStatus.RESTING,
-    )
 
-    adapter.insert_json("orders", order.model_dump(mode="json"))
-    adapter.insert_json(
-        "orders",
-        order.model_copy(update={"status": OrderStatus.REJECTED}).model_dump(mode="json"),
-    )
+    adapter.insert_json("nautilus_order", {
+        "client_order_id": "order-1", "event_type": "nautilus_order", "severity": "info",
+        "status": "FILLED", "ts": "2026-07-01T00:00:00Z",
+    })
+    adapter.insert_json("nautilus_order", {
+        "client_order_id": "order-2", "event_type": "nautilus_order", "severity": "info",
+        "status": "REJECTED", "ts": "2026-07-01T00:01:00Z",
+    })
 
-    rows = persistence.query_json("paper_orders")
-    persistence.close()
-    assert len(rows) == 1
-    assert rows[0]["paper_order_id"] == "order-1"
-    assert rows[0]["status"] == "REJECTED"
+    rows = persistence.query_json("system_events", where="WHERE event_type = ? ORDER BY created_at ASC", params=("nautilus_order",))
+    assert len(rows) == 2
+    assert rows[0]["client_order_id"] == "order-1"
+    assert rows[0]["status"] == "FILLED"
+    assert rows[1]["client_order_id"] == "order-2"
+    assert rows[1]["status"] == "REJECTED"
 
 
 def test_notifier_adapter_sends_in_thread() -> None:
