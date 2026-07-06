@@ -185,6 +185,17 @@ def test_build_trading_node_uses_livenode_builder(monkeypatch) -> None:
     assert node.built is True
 
 
+def test_build_trading_node_uses_configured_non_default_trader_id(monkeypatch) -> None:
+    _patch_nautilus_placeholders(monkeypatch)
+    settings = Settings()
+    settings.runtime.nautilus.trader_id = "PolySignal-Regression-Trader"
+
+    runtime = build_trading_node(settings=settings, condition_ids=("condition-btc-5m",))
+    builder = runtime["node"].builder
+
+    assert builder.trader_id_text == "PolySignal-Regression-Trader"
+    assert builder.trader_id == "TraderId:PolySignal-Regression-Trader"
+
 def test_build_trading_node_returns_nautilus_runtime_components(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
