@@ -205,7 +205,7 @@ def test_build_trading_node_injects_shared_projections_and_no_manual_sync_compon
     strategies = cast(list[object], runtime["strategies"])
 
     assert "registry" in runtime
-    assert "sidecar" in runtime
+    assert "sidecar" not in runtime
     assert "book_data_provider" not in runtime
     assert "assembler" in runtime
     assert "market_rotation_actor" in runtime
@@ -216,7 +216,6 @@ def test_build_trading_node_injects_shared_projections_and_no_manual_sync_compon
     assert strategies
     first_strategy = strategies[0]
     assert getattr(first_strategy, "registry") is runtime["registry"]
-    assert getattr(first_strategy, "sidecar") is runtime["sidecar"]
     assert getattr(first_strategy, "assembler").catalog is runtime["registry"]
 
 

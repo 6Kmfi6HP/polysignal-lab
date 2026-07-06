@@ -703,7 +703,7 @@ class PolySignalNativeStrategy:
         )
         if not condition_id and self.registry is not None and instrument_id is not None:
             condition_id = _condition_id_from_catalog_instrument(
-                self.registry, tuple(self._active_condition_ids), instrument_id
+                self.registry, self.registry.condition_ids(), instrument_id
             )
         market_id = tags.get("market_id") or _optional_str(metrics.get("market_id"))
         if not market_id and self.registry is not None and condition_id is not None:
@@ -1011,16 +1011,25 @@ def _event_side(
     token_id: str | None,
     value: object,
 ) -> Side:
-    _ = instrument_id
     if isinstance(value, Side):
         return value
     text = _identifier_text(value)
     if text in {Side.UP.value, Side.DOWN.value}:
         return Side(text)
-    if registry is not None and token_id is not None:
-        meta = registry.token_meta(token_id)
-        if meta is not None:
-            return meta.side
+    if registry is not None:
+        resolved_token_id = token_id
+        if resolved_token_id is None and instrument_id is not None:
+            condition_id = _condition_id_from_catalog_instrument(
+                registry, registry.condition_ids(), instrument_id
+            )
+            if condition_id is not None:
+                resolved_token_id = _token_id_from_catalog_instrument(
+                    registry, condition_id, instrument_id
+                )
+        if resolved_token_id is not None:
+            meta = registry.token_meta(resolved_token_id)
+            if meta is not None:
+                return meta.side
     return Side.UP
 
 

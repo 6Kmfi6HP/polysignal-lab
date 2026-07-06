@@ -85,6 +85,9 @@ class MarketCatalog:
     def by_condition(self, condition_id: str) -> MarketPairMeta | None:
         return self._by_condition.get(condition_id)
 
+    def condition_ids(self) -> tuple[str, ...]:
+        return tuple(self._by_condition)
+
     def by_token(self, token_id: str) -> MarketPairMeta | None:
         condition_id = self._condition_by_token.get(token_id)
         if condition_id is None:

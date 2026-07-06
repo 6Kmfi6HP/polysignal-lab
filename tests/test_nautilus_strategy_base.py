@@ -3127,6 +3127,85 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
     assert accepted_order.metrics["level_price"] == 0.01
     assert observability.rejections == []
 
+def test_native_strategy_attributes_inactive_registered_down_order_and_fill_from_catalog(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_bridge.market_catalog import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+    )
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    _install_fake_polymarket_id_helper(monkeypatch)
+
+    class CapturingCore(FakeCore):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.orders: list[object] = []
+            self.fills: list[object] = []
+
+        def on_order_submitted(self, event: object) -> None:
+            self.orders.append(event)
+
+        def on_order_filled(self, event: object) -> list[AlphaDecision]:
+            self.fills.append(event)
+            return []
+
+    registry = MarketCatalog()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-exited-5m",
+            market_slug="btc-exited-updown-5m",
+            condition_id="condition-btc-exited-5m",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-exited-token", Side.UP),
+            down=InstrumentTokenMeta("down-exited-token", Side.DOWN),
+        )
+    )
+    core = CapturingCore()
+    strategy = PolySignalNativeStrategy(
+        core=core,
+        assembler=_assembler(None),
+        condition_ids=(),
+        strategy_name="ptb_diff",
+        registry=registry,
+    )
+    down_instrument_id = "condition-btc-exited-5m-down-exited-token.POLYMARKET"
+    event = SimpleNamespace(
+        order_id="inactive-order-1",
+        client_order_id="inactive-client-1",
+        instrument_id=down_instrument_id,
+        quantity=3.0,
+        price=0.37,
+        last_qty=3.0,
+        last_px=0.37,
+        trade_id="inactive-trade-1",
+        liquidity_side="TAKER",
+        tags=[],
+        ts_event=datetime.now(UTC),
+    )
+
+    strategy.on_order_submitted(event)
+    strategy.on_order_filled(event)
+
+    assert len(core.orders) == 1
+    order = core.orders[0]
+    assert getattr(order, "market_id") == "btc-exited-5m"
+    assert getattr(order, "condition_id") == "condition-btc-exited-5m"
+    assert getattr(order, "token_id") == "down-exited-token"
+    assert getattr(order, "side") is Side.DOWN
+    assert len(core.fills) == 1
+    fill = core.fills[0]
+    assert getattr(fill, "market_id") == "btc-exited-5m"
+    assert getattr(fill, "condition_id") == "condition-btc-exited-5m"
+    assert getattr(fill, "token_id") == "down-exited-token"
+    assert getattr(fill, "side") is Side.DOWN
+
 
 def test_native_strategy_on_order_denied_records_event_and_forgets_metrics() -> None:
     from types import SimpleNamespace

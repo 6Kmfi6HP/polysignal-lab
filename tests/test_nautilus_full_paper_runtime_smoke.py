@@ -233,6 +233,8 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
     from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
 
+    _install_fake_polymarket_id_helper(monkeypatch)
+
     published: list[object] = []
     ptb_ran = False
 
@@ -268,11 +270,11 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
     class FakeCache:
         def __init__(self) -> None:
             self.books = {
-                "up-token.POLYMARKET": FakeOrderBook(
+                "condition-btc-5m-up-token.POLYMARKET": FakeOrderBook(
                     bids=[FakeLevel(0.49, 20.0)],
                     asks=[FakeLevel(0.50, 20.0), FakeLevel(0.52, 20.0)],
                 ),
-                "down-token.POLYMARKET": FakeOrderBook(
+                "condition-btc-5m-down-token.POLYMARKET": FakeOrderBook(
                     bids=[FakeLevel(0.48, 20.0)],
                     asks=[FakeLevel(0.51, 20.0), FakeLevel(0.53, 20.0)],
                 ),
@@ -372,7 +374,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
         strategy_name="ptb_diff",
         policy=FakePolicy(),
         fixed_stake_usdc=10.0,
-        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        instrument_id_resolver=lambda token_id: registry.instrument_id_for_token(token_id) or token_id,
         registry=registry,
     )
 
@@ -416,11 +418,11 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
             received_at=datetime.now(UTC),
         )
     )
-    strategy.on_order_book_deltas(SimpleNamespace(instrument_id="down-token.POLYMARKET"))
-    strategy.on_order_book_deltas(SimpleNamespace(instrument_id="up-token.POLYMARKET"))
+    strategy.on_order_book_deltas(SimpleNamespace(instrument_id="condition-btc-5m-down-token.POLYMARKET"))
+    strategy.on_order_book_deltas(SimpleNamespace(instrument_id="condition-btc-5m-up-token.POLYMARKET"))
     strategy.on_trade_tick(
         SimpleNamespace(
-            instrument_id="up-token.POLYMARKET",
+            instrument_id="condition-btc-5m-up-token.POLYMARKET",
             price=0.51,
             size=7.0,
             aggressor_side="BUYER",
@@ -432,7 +434,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
     assert any(isinstance(item, PolySignalPriceToBeatData) for item in published)
     assert any(isinstance(item, PolySignalSpotData) for item in published)
     assert strategy.submitted != []
-    assert str(strategy.submitted[-1]["instrument_id"]) == "up-token.POLYMARKET"
+    assert str(strategy.submitted[-1]["instrument_id"]) == "condition-btc-5m-up-token.POLYMARKET"
 
 def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
     monkeypatch: pytest.MonkeyPatch,
