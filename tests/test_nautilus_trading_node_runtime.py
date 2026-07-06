@@ -1,36 +1,28 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from types import ModuleType, SimpleNamespace
-from typing import cast
+from types import SimpleNamespace
 
 import pytest
 
 from polysignal_lab.config import Settings
+from polysignal_lab.nautilus_runtime import live_node
+from polysignal_lab.nautilus_runtime.live_node import (
+    build_paper_live_node,
+    build_polymarket_data_client_config,
+    build_sandbox_exec_client_config,
+)
 from polysignal_lab.nautilus_runtime.node import run_nautilus_cli_async
 from polysignal_lab.nautilus_runtime.trading_node import (
     PAPER_EXEC_CLIENT_ID,
+    POLYMARKET_CLIENT_ID,
     assert_no_live_polymarket_execution,
-    build_paper_trading_node_config,
-    register_paper_factories,
 )
 
 
-class FakeNode:
-    def __init__(self) -> None:
-        self.data_factories: list[tuple[str, object]] = []
-        self.exec_factories: list[tuple[str, object]] = []
-
-    def add_data_client_factory(self, name: str, factory: object) -> None:
-        self.data_factories.append((name, factory))
-
-    def add_exec_client_factory(self, name: str, factory: object) -> None:
-        self.exec_factories.append((name, factory))
-
-
 class FakeConfig:
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.args = args
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -43,95 +35,129 @@ class FakeSandboxLiveExecClientFactory:
     pass
 
 
-def _install_fake_nautilus(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_module(name: str, **attrs: object) -> ModuleType:
-        module = ModuleType(name)
-        for attr_name, value in attrs.items():
-            setattr(module, attr_name, value)
-        monkeypatch.setitem(sys.modules, name, module)
-        return module
-
-    _ = fake_module("nautilus_trader")
-    _ = fake_module("nautilus_trader.adapters")
-    _ = fake_module(
-        "nautilus_trader.adapters.polymarket",
-        PolymarketDataClientConfig=FakeConfig,
-        PolymarketLiveDataClientFactory=FakePolymarketLiveDataClientFactory,
-    )
-    _ = fake_module("nautilus_trader.adapters.sandbox")
-    _ = fake_module("nautilus_trader.adapters.sandbox.config", SandboxExecutionClientConfig=FakeConfig)
-    _ = fake_module(
-        "nautilus_trader.adapters.sandbox.factory",
-        SandboxLiveExecClientFactory=FakeSandboxLiveExecClientFactory,
-    )
-    _ = fake_module(
-        "nautilus_trader.config",
-        CacheConfig=FakeConfig,
-        LiveDataEngineConfig=FakeConfig,
-        LiveExecEngineConfig=FakeConfig,
-        LoggingConfig=FakeConfig,
-        RoutingConfig=FakeConfig,
-        TradingNodeConfig=FakeConfig,
-    )
-    _ = fake_module("nautilus_trader.model")
-    _ = fake_module("nautilus_trader.model.identifiers", TraderId=str)
+class FakeBuiltLiveNode:
+    def __init__(self, builder: "FakeBuilder") -> None:
+        self.builder = builder
 
 
-def _dict_attr(source: object, name: str) -> dict[str, object]:
-    value = cast(object, getattr(source, name))
-    assert isinstance(value, dict)
-    return cast(dict[str, object], value)
+class FakeBuilder:
+    def __init__(self, trader_id_text: str, trader_id: object, environment: object) -> None:
+        self.trader_id_text = trader_id_text
+        self.trader_id = trader_id
+        self.environment = environment
+        self.cache_config: object | None = None
+        self.data_engine_config: object | None = None
+        self.exec_engine_config: object | None = None
+        self.data_clients: list[tuple[str | None, object, object]] = []
+        self.exec_clients: list[tuple[str | None, object, object]] = []
+
+    def with_cache_config(self, config: object) -> "FakeBuilder":
+        self.cache_config = config
+        return self
+
+    def with_data_engine_config(self, config: object) -> "FakeBuilder":
+        self.data_engine_config = config
+        return self
+
+    def with_exec_engine_config(self, config: object) -> "FakeBuilder":
+        self.exec_engine_config = config
+        return self
+
+    def add_data_client(self, name: str | None, factory: object, config: object) -> "FakeBuilder":
+        self.data_clients.append((name, factory, config))
+        return self
+
+    def add_exec_client(self, name: str | None, factory: object, config: object) -> "FakeBuilder":
+        self.exec_clients.append((name, factory, config))
+        return self
+
+    def build(self) -> FakeBuiltLiveNode:
+        return FakeBuiltLiveNode(self)
+
+
+class FakeLiveNode:
+    @classmethod
+    def builder(cls, trader_id_text: str, trader_id: object, environment: object) -> FakeBuilder:
+        return FakeBuilder(trader_id_text, trader_id, environment)
+
+
+def _fake_import_callable(module_name: str, attr_name: str):
+    def _factory(*args: object, **kwargs: object) -> FakeConfig:
+        return FakeConfig(*args, module_name=module_name, attr_name=attr_name, **kwargs)
+
+    return _factory
+
+
+def _patch_live_node_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(live_node, "_import_callable", _fake_import_callable)
+    monkeypatch.setattr(live_node, "LiveNode", FakeLiveNode)
+    monkeypatch.setattr(live_node, "TraderId", lambda value: f"TraderId:{value}")
+    monkeypatch.setattr(live_node, "Environment", SimpleNamespace(SANDBOX="SANDBOX"))
+    monkeypatch.setattr(
+        live_node,
+        "PolymarketLiveDataClientFactory",
+        FakePolymarketLiveDataClientFactory,
+    )
+    monkeypatch.setattr(
+        live_node,
+        "SandboxLiveExecClientFactory",
+        FakeSandboxLiveExecClientFactory,
+    )
+
+
+def test_trading_node_exposes_expected_client_ids() -> None:
+    assert POLYMARKET_CLIENT_ID == "POLYMARKET"
+    assert PAPER_EXEC_CLIENT_ID == "POLYSIGNAL_PM_PAPER"
 
 
 def test_live_polymarket_execution_is_rejected() -> None:
     """Does NOT require nautilus_trader — tests pure Python logic."""
-    config = SimpleNamespace(exec_clients={"POLYMARKET": object()})
+    config = SimpleNamespace(exec_clients={POLYMARKET_CLIENT_ID: object()})
 
     with pytest.raises(RuntimeError, match="live Polymarket execution"):
         assert_no_live_polymarket_execution(config)
 
 
-def test_build_paper_trading_node_config_uses_polymarket_data_and_sandbox_exec(
+def test_build_paper_live_node_uses_polymarket_data_and_sandbox_exec(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_fake_nautilus(monkeypatch)
+    _patch_live_node_fakes(monkeypatch)
     settings = Settings()
     settings.paper_trading.starting_balance_usdc = 1234.0
+    instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 
-    config = build_paper_trading_node_config(
-        settings,
-        instrument_config=SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"})),
-    )
+    node = build_paper_live_node(settings, instrument_config=instrument_config)
 
-    data_clients = _dict_attr(config, "data_clients")
-    exec_clients = _dict_attr(config, "exec_clients")
-    sandbox_config = exec_clients[PAPER_EXEC_CLIENT_ID]
+    builder = node.builder
+    assert builder.trader_id_text == "POLYSIGNAL-001"
+    assert builder.trader_id == "TraderId:POLYSIGNAL-001"
+    assert builder.environment == "SANDBOX"
+    assert builder.data_clients[0][0] == POLYMARKET_CLIENT_ID
+    assert builder.data_clients[0][1] is FakePolymarketLiveDataClientFactory
+    assert builder.exec_clients[0][0] == PAPER_EXEC_CLIENT_ID
+    assert builder.exec_clients[0][1] is FakeSandboxLiveExecClientFactory
+    assert builder.exec_clients[0][0] != POLYMARKET_CLIENT_ID
 
-    assert "POLYMARKET" in data_clients
-    assert getattr(data_clients["POLYMARKET"], "venue", "POLYMARKET") == "POLYMARKET"
-    assert PAPER_EXEC_CLIENT_ID in exec_clients
-    assert getattr(sandbox_config, "venue") == "POLYMARKET"
-    assert getattr(sandbox_config, "account_type") == "CASH"
-    assert getattr(sandbox_config, "oms_type") == "NETTING"
-    assert getattr(sandbox_config, "starting_balances") == ["1234.0 USDC"]
-    assert "POLYMARKET" not in exec_clients
+    data_config = builder.data_clients[0][2]
+    exec_config = builder.exec_clients[0][2]
+    assert getattr(data_config, "instrument_config") is instrument_config
+    assert getattr(exec_config, "venue") == POLYMARKET_CLIENT_ID
+    assert getattr(exec_config, "account_type") == "CASH"
+    assert getattr(exec_config, "oms_type") == "NETTING"
+    assert getattr(exec_config, "starting_balances") == ["1234.0 USDC"]
 
 
-def test_build_paper_trading_node_config_enables_dynamic_instrument_loading(
+def test_build_polymarket_data_client_config_enables_dynamic_instrument_loading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_fake_nautilus(monkeypatch)
+    _patch_live_node_fakes(monkeypatch)
     settings = Settings()
     settings.runtime.nautilus.market_rotation.allow_adapter_new_market_events = True
+    instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 
-    config = build_paper_trading_node_config(
-        settings,
-        instrument_config=SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"})),
-    )
+    polymarket = build_polymarket_data_client_config(settings, instrument_config=instrument_config)
 
-    data_clients = _dict_attr(config, "data_clients")
-    polymarket = data_clients["POLYMARKET"]
-
+    assert getattr(polymarket, "instrument_config") is instrument_config
     assert getattr(polymarket, "auto_load_missing_instruments") is True
     assert getattr(polymarket, "auto_load_debounce_ms") == 100
     assert getattr(polymarket, "auto_load_max_retries") == 12
@@ -139,32 +165,38 @@ def test_build_paper_trading_node_config_enables_dynamic_instrument_loading(
     assert getattr(polymarket, "ws_max_subscriptions_per_connection") == 200
     assert getattr(polymarket, "update_instruments_interval_mins") == 1
 
-def test_build_paper_trading_node_config_bounds_cache_tick_capacity(
+
+def test_build_paper_live_node_bounds_cache_tick_capacity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_fake_nautilus(monkeypatch)
+    _patch_live_node_fakes(monkeypatch)
 
-    config = build_paper_trading_node_config(
+    node = build_paper_live_node(
         Settings(),
         instrument_config=SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"})),
     )
 
-    cache = getattr(config, "cache")
+    cache = node.builder.cache_config
     assert getattr(cache, "tick_capacity") == 100
     assert getattr(cache, "bar_capacity") == 100
 
 
-def test_register_paper_factories_registers_data_and_sandbox_exec_only(
+def test_build_sandbox_exec_client_config_uses_paper_venue_and_routes_to_polymarket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_fake_nautilus(monkeypatch)
-    node = FakeNode()
+    _patch_live_node_fakes(monkeypatch)
+    settings = Settings()
+    settings.paper_trading.starting_balance_usdc = 4321.0
 
-    register_paper_factories(node)
+    sandbox_config = build_sandbox_exec_client_config(settings)
 
-    assert node.data_factories == [("POLYMARKET", FakePolymarketLiveDataClientFactory)]
-    assert node.exec_factories == [(PAPER_EXEC_CLIENT_ID, FakeSandboxLiveExecClientFactory)]
-    assert all(name != "POLYMARKET" for name, _factory in node.exec_factories)
+    assert getattr(sandbox_config, "venue") == POLYMARKET_CLIENT_ID
+    assert getattr(sandbox_config, "account_type") == "CASH"
+    assert getattr(sandbox_config, "oms_type") == "NETTING"
+    assert getattr(sandbox_config, "starting_balances") == ["4321.0 USDC"]
+    assert getattr(sandbox_config, "book_type") == settings.runtime.nautilus.sandbox_book_type
+    routing = getattr(sandbox_config, "routing")
+    assert getattr(routing, "venues") == frozenset({POLYMARKET_CLIENT_ID})
 
 async def test_run_nautilus_cli_async_starts_and_stops_observability_writer(monkeypatch, tmp_path) -> None:
     calls: list[str] = []
