@@ -52,40 +52,6 @@ class MarketViewAssembler:
             return None
 
         now = created_at or utc_now()
-        seconds_to_close = None
-        if pair.end_ts is not None and hasattr(pair.end_ts, "__sub__"):
-            seconds_to_close = max(0, int((pair.end_ts - now).total_seconds()))
-        freshness_values = [
-            value
-            for value in (
-                up_book.freshness_ms,
-                down_book.freshness_ms,
-                spot.freshness_ms if spot is not None else None,
-            )
-            if value is not None
-        ]
-        freshness = FreshnessView(
-            up_book_ms=up_book.freshness_ms,
-            down_book_ms=down_book.freshness_ms,
-            spot_ms=spot.freshness_ms if spot is not None else None,
-            max_ms=max(freshness_values) if freshness_values else None,
-        )
-        metrics: dict[str, object] = {
-            "up_token_id": pair.up.token_id,
-            "down_token_id": pair.down.token_id,
-        }
-        if ptb is not None:
-            metrics.update(
-                {
-                    "price_to_beat_source": ptb.source,
-                    "price_to_beat_verified": ptb.verified,
-                    "price_to_beat_from_anchor_service": ptb.from_anchor_service,
-                    "anchor_price_source": ptb.anchor_source,
-                    "anchor_price_lag_ms": ptb.anchor_lag_ms,
-                }
-            )
-        if spot is not None:
-            metrics["spot_source"] = spot.source
         return MarketView(
             view_id=f"view_{stable_hash(pair.condition_id, now.isoformat())}",
             market_id=pair.market_id,
@@ -96,13 +62,58 @@ class MarketViewAssembler:
             start_ts=pair.start_ts,
             end_ts=pair.end_ts,
             created_at=now,
-            seconds_to_close=seconds_to_close,
+            seconds_to_close=_seconds_to_close(pair.end_ts, now),
             up=up_book,
             down=down_book,
             spot=spot,
             price_to_beat=ptb.value if ptb is not None else None,
             up_trades=tuple(self.books.trades_for_token(pair.up.token_id)),
             down_trades=tuple(self.books.trades_for_token(pair.down.token_id)),
-            metrics=metrics,
-            freshness=freshness,
+            metrics=_view_metrics(pair, spot, ptb),
+            freshness=_freshness_view(up_book, down_book, spot),
         )
+
+
+def _seconds_to_close(end_ts: object | None, now: datetime) -> int | None:
+    if end_ts is not None and hasattr(end_ts, "__sub__"):
+        return max(0, int((end_ts - now).total_seconds()))
+    return None
+
+
+def _freshness_view(
+    up_book: SideBookView,
+    down_book: SideBookView,
+    spot: object | None,
+) -> FreshnessView:
+    spot_freshness = getattr(spot, "freshness_ms", None) if spot is not None else None
+    freshness_values = [
+        value
+        for value in (up_book.freshness_ms, down_book.freshness_ms, spot_freshness)
+        if value is not None
+    ]
+    return FreshnessView(
+        up_book_ms=up_book.freshness_ms,
+        down_book_ms=down_book.freshness_ms,
+        spot_ms=spot_freshness,
+        max_ms=max(freshness_values) if freshness_values else None,
+    )
+
+
+def _view_metrics(pair: object, spot: object | None, ptb: object | None) -> dict[str, object]:
+    metrics: dict[str, object] = {
+        "up_token_id": pair.up.token_id,
+        "down_token_id": pair.down.token_id,
+    }
+    if ptb is not None:
+        metrics.update(
+            {
+                "price_to_beat_source": ptb.source,
+                "price_to_beat_verified": ptb.verified,
+                "price_to_beat_from_anchor_service": ptb.from_anchor_service,
+                "anchor_price_source": ptb.anchor_source,
+                "anchor_price_lag_ms": ptb.anchor_lag_ms,
+            }
+        )
+    if spot is not None:
+        metrics["spot_source"] = spot.source
+    return metrics

@@ -106,6 +106,32 @@ def _approved(intent: OrderIntent = OrderIntent.TAKER_IOC) -> ApprovedDecision:
     )
     return ApprovedDecision(signal=signal)
 
+def test_order_plan_resolves_taker_price_from_best_ask() -> None:
+    from polysignal_lab.nautilus_runtime.order_plan import build_order_spec
+
+    spec = build_order_spec(
+        _approved(OrderIntent.TAKER_IOC).signal,
+        fixed_stake_usdc=10.0,
+        best_ask=0.50,
+    )
+
+    assert spec.price == 0.50
+    assert spec.quantity == 20.0
+    assert spec.tags["time_in_force"] == "IOC"
+
+
+def test_order_plan_rejects_taker_without_best_ask() -> None:
+    from polysignal_lab.nautilus_runtime.order_plan import build_order_spec
+
+    approved = _approved(OrderIntent.TAKER_FOK)
+
+    try:
+        build_order_spec(approved.signal, fixed_stake_usdc=10.0, best_ask=None)
+    except ValueError as exc:
+        assert "taker_fok requires best ask depth" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
 
 def test_submit_approved_decision_submits_limit_order_through_strategy() -> None:
     strategy = FakeStrategy()

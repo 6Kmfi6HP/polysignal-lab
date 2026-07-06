@@ -98,25 +98,30 @@ class CrossMarketNautilusStrategy:
             )
             return []
 
-        # Preserve pair_id from the decision's order_intent
-        pair_id = getattr(
-            getattr(decision, "order_intent", None), "pair_id", None
-        )
-        if pair_id:
-            spec = NautilusOrderSpec(
-                instrument_id=spec.instrument_id,
-                side=spec.side,
-                price=spec.price,
-                quantity=spec.quantity,
-                intent=spec.intent,
-                expiry_seconds=spec.expiry_seconds,
-                pair_id=spec.pair_id or pair_id,
-                reduce_only=spec.reduce_only,
-                hedge_leg=spec.hedge_leg,
-                tags={**spec.tags, "pair_id": pair_id},
-            )
+        spec = _with_decision_pair_id(spec, decision)
 
         self.submitted_specs.append(spec)
         if self.submitter is not None:
             _ = self.submitter(spec)
         return [spec]
+
+
+def _with_decision_pair_id(
+    spec: NautilusOrderSpec,
+    decision: AlphaDecision,
+) -> NautilusOrderSpec:
+    pair_id = getattr(getattr(decision, "order_intent", None), "pair_id", None)
+    if not pair_id:
+        return spec
+    return NautilusOrderSpec(
+        instrument_id=spec.instrument_id,
+        side=spec.side,
+        price=spec.price,
+        quantity=spec.quantity,
+        intent=spec.intent,
+        expiry_seconds=spec.expiry_seconds,
+        pair_id=spec.pair_id or pair_id,
+        reduce_only=spec.reduce_only,
+        hedge_leg=spec.hedge_leg,
+        tags={**spec.tags, "pair_id": pair_id},
+    )

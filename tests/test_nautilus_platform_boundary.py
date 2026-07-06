@@ -414,7 +414,7 @@ def test_default_runtime_has_no_asyncio_actor_scheduling_fallbacks() -> None:
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
-@pytest.mark.xfail(strict=True, reason="Task 7 splits large Nautilus runtime functions")
+
 def test_large_nautilus_runtime_functions_stay_under_limit() -> None:
     import ast
 

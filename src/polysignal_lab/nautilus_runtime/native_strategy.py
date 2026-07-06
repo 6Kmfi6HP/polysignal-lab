@@ -211,6 +211,14 @@ class PolySignalNativeStrategy:
         self.cache_reader: object | None = None
         self.exit_model: object | None = exit_model
         self.progress_callback: Callable[[str], None] | None = progress_callback
+        self._initialize_runtime_state(registry, unsubscribe_exited=unsubscribe_exited)
+
+    def _initialize_runtime_state(
+        self,
+        registry: MarketCatalog,
+        *,
+        unsubscribe_exited: bool,
+    ) -> None:
         self._startup_condition_ids: tuple[str, ...] = self.condition_ids
         self._active_condition_ids: set[str] = set(self.condition_ids)
         self._market_epoch: int | None = None
@@ -287,46 +295,57 @@ class PolySignalNativeStrategy:
         if classify_project_owned_data(data) is DataBoundaryClassification.DROPPED_FRAME:
             self._note_runtime_progress("dropped_frame")
             return
-        if isinstance(data, (PolySignalSpotData, PolySignalPriceToBeatData)):
-            result = self.custom_data.apply(data)
-            if result.spot_asset is not None:
-                for candidate in self._asset_condition_ids.get(result.spot_asset, ()):
-                    self.evaluate_condition(candidate)
-                return
-            if result.price_to_beat_condition_id is not None:
-                self._retry_market_instrument_requests(
-                    (result.price_to_beat_condition_id,), retry_after=timedelta(seconds=10)
-                )
-                self.evaluate_condition(result.price_to_beat_condition_id)
-                return
+        if self._handle_custom_data(data):
+            return
         if isinstance(data, PolySignalMarketMetaData):
-            registry = self._require_registry()
-            registry.register(MarketPairMeta.from_metadata(data))
-            self._refresh_asset_conditions()
-            if data.condition_id in self._active_condition_ids:
-                self._subscribe_market_conditions((data.condition_id,))
-            return
-        if isinstance(data, PolySignalMarketUniverseData):
-            if self._market_epoch is not None and data.epoch <= self._market_epoch:
+            if self._handle_market_metadata(data):
                 return
-            self._market_epoch = data.epoch
-            self._active_condition_ids = set(data.active_condition_ids)
-            self._refresh_asset_conditions()
-            for condition_id in data.exited_condition_ids:
-                self._subscription_state.pending_metadata_condition_ids.discard(
-                    condition_id
-                )
-                self._subscription_state.pending_subscribe_condition_ids.discard(
-                    condition_id
-                )
-            if self.unsubscribe_exited:
-                self._unsubscribe_market_conditions(data.exited_condition_ids)
-            self._subscribe_market_conditions(tuple(self._active_condition_ids))
-            return
+        if isinstance(data, PolySignalMarketUniverseData):
+            if self._handle_market_universe(data):
+                return
+        self._handle_generic_data(data)
+
+    def _handle_custom_data(self, data: object) -> bool:
+        if not isinstance(data, (PolySignalSpotData, PolySignalPriceToBeatData)):
+            return False
+        result = self.custom_data.apply(data)
+        if result.spot_asset is not None:
+            for candidate in self._asset_condition_ids.get(result.spot_asset, ()):
+                self.evaluate_condition(candidate)
+            return True
+        if result.price_to_beat_condition_id is not None:
+            self._retry_market_instrument_requests(
+                (result.price_to_beat_condition_id,), retry_after=timedelta(seconds=10)
+            )
+            self.evaluate_condition(result.price_to_beat_condition_id)
+            return True
+        return True
+
+    def _handle_market_metadata(self, data: PolySignalMarketMetaData) -> bool:
+        registry = self._require_registry()
+        registry.register(MarketPairMeta.from_metadata(data))
+        self._refresh_asset_conditions()
+        if data.condition_id in self._active_condition_ids:
+            self._subscribe_market_conditions((data.condition_id,))
+        return True
+
+    def _handle_market_universe(self, data: PolySignalMarketUniverseData) -> bool:
+        if self._market_epoch is not None and data.epoch <= self._market_epoch:
+            return True
+        self._market_epoch = data.epoch
+        self._active_condition_ids = set(data.active_condition_ids)
+        self._refresh_asset_conditions()
+        for condition_id in data.exited_condition_ids:
+            self._subscription_state.pending_metadata_condition_ids.discard(condition_id)
+            self._subscription_state.pending_subscribe_condition_ids.discard(condition_id)
+        if self.unsubscribe_exited:
+            self._unsubscribe_market_conditions(data.exited_condition_ids)
+        self._subscribe_market_conditions(tuple(self._active_condition_ids))
+        return True
+
+    def _handle_generic_data(self, data: object) -> None:
         assembler = self._require_assembler()
-        updater = getattr(assembler, "on_data", None) or getattr(
-            assembler, "update", None
-        )
+        updater = getattr(assembler, "on_data", None) or getattr(assembler, "update", None)
         if callable(updater):
             _ = updater(data)
         condition_id = cast(object, getattr(data, "condition_id", None))
@@ -490,13 +509,24 @@ class PolySignalNativeStrategy:
         rows = read_positions()
         if not isinstance(rows, list):
             return
+        config = self._exit_policy_config()
+        if config is None:
+            return
+        for position in rows:
+            if not isinstance(position, dict):
+                continue
+            book = self._position_book_for_exit(position, condition_id, view)
+            if book is None:
+                continue
+            self._submit_exit_position(position, book, view.created_at, config)
+
+    def _exit_policy_config(self) -> object | None:
         raw_config = self.exit_model
         if raw_config is None:
-            return
-        from polysignal_lab.nautilus_runtime.exit_policy import ExitPolicyConfig, evaluate_exit_decision
-        from polysignal_lab.nautilus_runtime.native_exit import submit_exit_decision
+            return None
+        from polysignal_lab.nautilus_runtime.exit_policy import ExitPolicyConfig
 
-        config = ExitPolicyConfig(
+        return ExitPolicyConfig(
             mode=str(getattr(raw_config, "mode", "hold_to_resolution_with_optional_tp_sl")),
             take_profit_enabled=bool(getattr(raw_config, "take_profit_enabled", True)),
             stop_loss_enabled=bool(getattr(raw_config, "stop_loss_enabled", True)),
@@ -504,37 +534,75 @@ class PolySignalNativeStrategy:
             stop_loss_price=float(getattr(raw_config, "stop_loss_price", 0.35)),
             max_hold_time_sec=int(getattr(raw_config, "max_hold_time_sec", 900)),
         )
-        now = view.created_at
-        for position in rows:
-            if not isinstance(position, dict):
-                continue
-            instrument_id = str(position.get("instrument_id") or "")
-            position_condition_id = str(position.get("condition_id") or "")
-            if not position_condition_id and instrument_id:
-                position_condition_id = (
-                    condition_id
-                    if self._token_id_from_view_instrument(view, instrument_id) is not None
-                    else ""
-                )
-            if position_condition_id != condition_id:
-                continue
-            token_id = str(position.get("token_id") or "")
-            if not token_id and instrument_id:
-                token_id = self._token_id_from_view_instrument(view, instrument_id) or ""
-            book = view.up if token_id == view.up.token_id else view.down if token_id == view.down.token_id else None
-            if book is None:
-                continue
-            decision = evaluate_exit_decision(position, book, now, config)
-            if decision is None:
-                continue
-            if decision.position_id in self._pending_exit_position_ids:
-                continue
-            self._pending_exit_position_ids.add(decision.position_id)
-            submit_exit_decision(
-                self,
-                decision,
-                instrument_id_resolver=self._resolved_instrument,
-            )
+
+    def _position_book_for_exit(
+        self,
+        position: Mapping[str, object],
+        condition_id: str,
+        view: MarketView,
+    ) -> object | None:
+        instrument_id = str(position.get("instrument_id") or "")
+        position_condition_id = self._position_condition_id_for_exit(
+            instrument_id,
+            position,
+            condition_id,
+            view,
+        )
+        if position_condition_id != condition_id:
+            return None
+        token_id = self._position_token_id_for_exit(instrument_id, position, view)
+        if token_id == view.up.token_id:
+            return view.up
+        if token_id == view.down.token_id:
+            return view.down
+        return None
+
+    def _position_condition_id_for_exit(
+        self,
+        instrument_id: str,
+        position: Mapping[str, object],
+        condition_id: str,
+        view: MarketView,
+    ) -> str:
+        position_condition_id = str(position.get("condition_id") or "")
+        if position_condition_id or not instrument_id:
+            return position_condition_id
+        if self._token_id_from_view_instrument(view, instrument_id) is not None:
+            return condition_id
+        return ""
+
+    def _position_token_id_for_exit(
+        self,
+        instrument_id: str,
+        position: Mapping[str, object],
+        view: MarketView,
+    ) -> str:
+        token_id = str(position.get("token_id") or "")
+        if token_id or not instrument_id:
+            return token_id
+        return self._token_id_from_view_instrument(view, instrument_id) or ""
+
+    def _submit_exit_position(
+        self,
+        position: Mapping[str, object],
+        book: object,
+        now: datetime,
+        config: object,
+    ) -> None:
+        from polysignal_lab.nautilus_runtime.exit_policy import evaluate_exit_decision
+        from polysignal_lab.nautilus_runtime.native_exit import submit_exit_decision
+
+        decision = evaluate_exit_decision(position, book, now, config)
+        if decision is None:
+            return
+        if decision.position_id in self._pending_exit_position_ids:
+            return
+        self._pending_exit_position_ids.add(decision.position_id)
+        submit_exit_decision(
+            self,
+            decision,
+            instrument_id_resolver=self._resolved_instrument,
+        )
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
         if not _market_view_ready(view):

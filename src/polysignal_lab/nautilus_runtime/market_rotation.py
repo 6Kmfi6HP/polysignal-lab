@@ -161,20 +161,7 @@ class MarketRotationActor:
         current = _markets_by_condition(refreshed_markets)
         previous = self._active_by_condition
         if _universe_signature(current) == _universe_signature(previous):
-            self._active_by_condition = current
-            self._mark_ok(
-                active_count=len(current),
-                entered_count=0,
-                exited_count=0,
-                epoch=self._epoch,
-                phase="refresh",
-            )
-            logger.info(
-                "market_rotation phase=refresh epoch=%s active=%s entered=0 exited=0",
-                self._epoch,
-                len(current),
-            )
-            return tuple(current.values())
+            return self._finish_unchanged_refresh(current)
 
         entered_condition_ids = tuple(
             condition_id for condition_id in current if condition_id not in previous
@@ -189,10 +176,8 @@ class MarketRotationActor:
             entered_condition_ids=entered_condition_ids,
             exited_condition_ids=exited_condition_ids,
         )
-        for condition_id in entered_condition_ids:
-            self.publisher.publish_market_metadata(_market_metadata(current[condition_id]))
-        for condition_id in exited_condition_ids:
-            _ = self._last_published_ptb.pop(condition_id, None)
+        self._publish_entered_market_metadata(current, entered_condition_ids)
+        self._clear_exited_price_to_beat(exited_condition_ids)
         self._active_by_condition = current
         self._epoch = next_epoch
         self._mark_ok(
@@ -210,6 +195,40 @@ class MarketRotationActor:
             len(exited_condition_ids),
         )
         return tuple(current.values())
+
+    def _finish_unchanged_refresh(
+        self,
+        current: dict[str, Market],
+    ) -> tuple[Market, ...]:
+        self._active_by_condition = current
+        self._mark_ok(
+            active_count=len(current),
+            entered_count=0,
+            exited_count=0,
+            epoch=self._epoch,
+            phase="refresh",
+        )
+        logger.info(
+            "market_rotation phase=refresh epoch=%s active=%s entered=0 exited=0",
+            self._epoch,
+            len(current),
+        )
+        return tuple(current.values())
+
+    def _publish_entered_market_metadata(
+        self,
+        current: dict[str, Market],
+        entered_condition_ids: tuple[str, ...],
+    ) -> None:
+        for condition_id in entered_condition_ids:
+            self.publisher.publish_market_metadata(_market_metadata(current[condition_id]))
+
+    def _clear_exited_price_to_beat(
+        self,
+        exited_condition_ids: tuple[str, ...],
+    ) -> None:
+        for condition_id in exited_condition_ids:
+            _ = self._last_published_ptb.pop(condition_id, None)
 
     def _on_refresh_timer(self, _event: object = None) -> None:
         if self._refresh_in_flight:

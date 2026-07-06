@@ -367,17 +367,9 @@ def build_trading_node(
     observability: ObservabilityActor | None = None,
 ) -> dict[str, object]:
     """Build the Nautilus-owned paper runtime wiring."""
-    if settings is None:
-        settings = load_settings()
-
-    configured_markets = tuple(markets)
-    configured_condition_ids = _configured_condition_ids(condition_ids, configured_markets)
-    runtime_market_universe = (
-        market_universe if market_universe is not None else _StaticMarketUniverse(configured_markets)
-    )
-    node, config = _create_configured_live_node(settings, configured_markets)
-    registry, assembler = _create_market_projection_components(configured_markets)
-    policy = _build_policy(settings)
+    context = _build_runtime_context(settings, condition_ids, markets, market_universe)
+    settings, configured_markets, configured_condition_ids = context[:3]
+    runtime_market_universe, node, config, registry, assembler, policy = context[3:]
     market_rotation_actor = _build_market_rotation_actor(
         settings=settings,
         startup_markets=configured_markets,
@@ -406,6 +398,35 @@ def build_trading_node(
         strategies=strategies,
         cache_reader=cache_reader,
     )
+
+def _build_runtime_context(
+    settings: Settings | None,
+    condition_ids: Sequence[str],
+    markets: Sequence[Market],
+    market_universe: object | None,
+) -> tuple[object, ...]:
+    if settings is None:
+        settings = load_settings()
+    configured_markets = tuple(markets)
+    configured_condition_ids = _configured_condition_ids(condition_ids, configured_markets)
+    runtime_market_universe = (
+        market_universe if market_universe is not None else _StaticMarketUniverse(configured_markets)
+    )
+    node, config = _create_configured_live_node(settings, configured_markets)
+    registry, assembler = _create_market_projection_components(configured_markets)
+    policy = _build_policy(settings)
+    return (
+        settings,
+        configured_markets,
+        configured_condition_ids,
+        runtime_market_universe,
+        node,
+        config,
+        registry,
+        assembler,
+        policy,
+    )
+
 def _configured_condition_ids(
     condition_ids: Sequence[str],
     markets: Sequence[Market],
@@ -452,7 +473,6 @@ def _build_native_strategies(
     strategy_book_type = settings.runtime.nautilus.sandbox_book_type
     strategies: list[_NativeStrategyLike] = []
     strategy_names: set[str] = set()
-
     for name in settings.strategies.explicit_strategy_names():
         if name in strategy_names:
             continue
@@ -466,36 +486,73 @@ def _build_native_strategies(
             logger.warning("no native alpha core for strategy %s", name)
             continue
 
-        fixed_stake = _fixed_stake_for(cfg)
-        strategy = strategy_type(
-            core=core,
-            assembler=assembler,
-            condition_ids=tuple(condition_ids),
+        strategy = _create_native_strategy(
+            strategy_type,
+            settings,
+            assembler,
+            policy,
+            configured_condition_ids=condition_ids,
             strategy_name=name,
-            policy=policy,
-            fixed_stake_usdc=fixed_stake,
-            book_type=strategy_book_type,
+            core=core,
+            fixed_stake=_fixed_stake_for(cfg),
+            strategy_book_type=strategy_book_type,
             instrument_id_resolver=instrument_id_resolver,
             registry=registry,
             observability=observability,
-            exit_model=settings.paper_trading.exit_model,
-            progress_callback=_runtime_progress_callback(settings),
-            unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
-            l1_book_snapshot_interval_ms=settings.runtime.nautilus.l1_book_snapshot_interval_ms,
         )
-        custom_data = getattr(strategy, "custom_data", None)
-        if not isinstance(custom_data, StrategyCustomDataState):
-            custom_data = StrategyCustomDataState()
-            setattr(strategy, "custom_data", custom_data)
-        strategy_assembler = getattr(strategy, "assembler", assembler)
-        with_custom_data = getattr(strategy_assembler, "with_custom_data", None)
-        if callable(with_custom_data):
-            setattr(strategy, "assembler", with_custom_data(custom_data))
-        elif hasattr(strategy_assembler, "custom_data"):
-            setattr(strategy_assembler, "custom_data", custom_data)
+        _attach_strategy_custom_data(strategy, assembler)
         strategies.append(strategy)
 
     return strategies
+
+
+def _create_native_strategy(
+    strategy_type: Callable[..., _NativeStrategyLike],
+    settings: Settings,
+    assembler: MarketViewAssembler,
+    policy: DecisionPolicyActor,
+    *,
+    configured_condition_ids: Sequence[str],
+    strategy_name: str,
+    core: AlphaCore,
+    fixed_stake: float,
+    strategy_book_type: str,
+    instrument_id_resolver: Callable[[str], object],
+    registry: MarketCatalog,
+    observability: ObservabilityActor | None,
+) -> _NativeStrategyLike:
+    return strategy_type(
+        core=core,
+        assembler=assembler,
+        condition_ids=tuple(configured_condition_ids),
+        strategy_name=strategy_name,
+        policy=policy,
+        fixed_stake_usdc=fixed_stake,
+        book_type=strategy_book_type,
+        instrument_id_resolver=instrument_id_resolver,
+        registry=registry,
+        observability=observability,
+        exit_model=settings.paper_trading.exit_model,
+        progress_callback=_runtime_progress_callback(settings),
+        unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
+        l1_book_snapshot_interval_ms=settings.runtime.nautilus.l1_book_snapshot_interval_ms,
+    )
+
+
+def _attach_strategy_custom_data(
+    strategy: _NativeStrategyLike,
+    assembler: MarketViewAssembler,
+) -> None:
+    custom_data = getattr(strategy, "custom_data", None)
+    if not isinstance(custom_data, StrategyCustomDataState):
+        custom_data = StrategyCustomDataState()
+        setattr(strategy, "custom_data", custom_data)
+    strategy_assembler = getattr(strategy, "assembler", assembler)
+    with_custom_data = getattr(strategy_assembler, "with_custom_data", None)
+    if callable(with_custom_data):
+        setattr(strategy, "assembler", with_custom_data(custom_data))
+    elif hasattr(strategy_assembler, "custom_data"):
+        setattr(strategy_assembler, "custom_data", custom_data)
 
 
 def _instrument_id_resolver(registry: MarketCatalog) -> Callable[[str], object]:
@@ -1122,9 +1179,7 @@ async def run_nautilus_cli_async(
     node = bundle.node
     loop = asyncio.get_running_loop()
 
-    def request_stop() -> None:
-        event.set()
-
+    request_stop: Callable[[], None] = event.set
     runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))
     cleanup_signals: Callable[[], None] = lambda: None
     runtime_settings = getattr(bundle.scheduler, "settings", settings)
