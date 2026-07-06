@@ -2,57 +2,41 @@ from __future__ import annotations
 
 from datetime import date
 
-from factories import BookFactoryConfig, MarketFactoryConfig, sample_book, sample_market
-from polysignal_lab.config import PaperTradingConfig, PolymarketDataConfig
+from factories import MarketFactoryConfig, sample_market
 from polysignal_lab.domain.enums import MarketStatus, Side
-from polysignal_lab.domain.market import Market
-from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.paper.report import PaperReportService
 from polysignal_lab.paper.settlement import PaperSettlementEngine
-from polysignal_lab.paper.simulator import PaperSimulator
-from polysignal_lab.paper.wallet import PaperWallet
 
 
-def _signal(market: Market, confidence: float) -> SignalCandidate:
+def _paper_result_from_confidence(confidence: float, resolved_outcome: Side):
+    market = sample_market(MarketFactoryConfig(asset="ETH", timeframe="5m"))
     token = market.token_for(Side.UP)
-    return SignalCandidate.build(
+    position = PaperPosition(
+        signal_id=f"sig-{confidence}",
+        paper_order_id=f"order-{confidence}",
+        paper_fill_id=f"fill-{confidence}",
         strategy="ptb_diff",
         asset=market.asset,
         timeframe=market.timeframe,
         market_id=market.market_id,
         market_slug=market.market_slug,
-        condition_id=market.condition_id,
         token_id=token.token_id,
         side=Side.UP,
-        confidence=confidence,
-        entry_reference_price=0.50,
-        max_entry_price=0.70,
-        seconds_to_close=120,
-        data_freshness_ms=10,
-        reason_codes=["TEST_SIGNAL"],
-        metrics={"source": "test"},
+        entry_price=0.50,
+        shares=20.0,
+        stake_usdc=10.0,
+        signal_confidence=confidence,
     )
-
-
-def _paper_result_from_real_flow(confidence: float, resolved_outcome: Side):
-    market = sample_market(MarketFactoryConfig(asset="ETH", timeframe="5m"))
-    signal = _signal(market, confidence)
-    book = sample_book(signal.token_id, BookFactoryConfig(ask=0.50, bid=0.49, size=100.0))
-    wallet = PaperWallet(starting_balance=1000.0)
-    simulator = PaperSimulator(PaperTradingConfig(), PolymarketDataConfig(), wallet)
-
-    simulated = simulator.process_signal(signal, book)
-    assert simulated.position is not None
-
     resolved_market = market.model_copy(
         update={"status": MarketStatus.RESOLVED, "resolved_outcome": resolved_outcome}
     )
-    return PaperSettlementEngine(wallet).settle(simulated.position, resolved_market)
+    return PaperSettlementEngine().settle(position, resolved_market)
 
 
 def test_calibration_buckets_use_signal_confidence_from_paper_flow() -> None:
-    high_result = _paper_result_from_real_flow(0.82, Side.UP)
-    medium_result = _paper_result_from_real_flow(0.60, Side.DOWN)
+    high_result = _paper_result_from_confidence(0.82, Side.UP)
+    medium_result = _paper_result_from_confidence(0.60, Side.DOWN)
 
     report = PaperReportService().build_daily_report(
         report_date=date(2026, 6, 24),

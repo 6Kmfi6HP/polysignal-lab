@@ -11,8 +11,32 @@ from polysignal_lab.config import Settings
 from polysignal_lab.domain.enums import MarketStatus, PositionStatus, Side, TradeResultStatus
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.paper.settlement import PaperSettlementEngine
-from polysignal_lab.paper.wallet import PaperWallet
 from factories import MarketFactoryConfig, sample_market
+
+
+class _LedgerWallet:
+    def __init__(self, starting_balance: float) -> None:
+        self.starting_balance = starting_balance
+        self.cash_balance = starting_balance
+        self.realized_pnl = 0.0
+        self.open_positions: dict[str, PaperPosition] = {}
+
+    def apply_fill(self, position: PaperPosition) -> None:
+        self.open_positions[position.paper_position_id] = position
+        self.cash_balance -= position.stake_usdc
+
+
+def _scheduler(tmp_path) -> PolySignalScheduler:
+    settings = Settings()
+    settings.telegram.enabled = False
+    settings.telegram.send_paper_results = False
+    settings.telegram.send_daily_report = False
+    settings.data.binance.enabled = False
+    settings.data.polymarket.use_market_ws = False
+    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    scheduler.wallet = _LedgerWallet(starting_balance=1000.0)
+    scheduler.settlement = PaperSettlementEngine()
+    return scheduler
 
 
 class FakeGammaResponse:
@@ -53,19 +77,6 @@ class FakeGammaClient:
             "clobTokenIds": '["token-up", "token-down"]',
         }
         return FakeGammaResponse([payload])
-
-
-def _scheduler(tmp_path) -> PolySignalScheduler:
-    settings = Settings()
-    settings.telegram.enabled = False
-    settings.telegram.send_paper_results = False
-    settings.telegram.send_daily_report = False
-    settings.data.binance.enabled = False
-    settings.data.polymarket.use_market_ws = False
-    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
-    scheduler.wallet = PaperWallet(starting_balance=1000.0)
-    scheduler.settlement = PaperSettlementEngine(scheduler.wallet)
-    return scheduler
 
 
 def _position(market_id: str = "gamma-cancelled-1") -> PaperPosition:
@@ -127,7 +138,7 @@ async def test_scheduler_settles_cancelled_market_as_void_refund(tmp_path) -> No
     assert [result.result for result in results] == [TradeResultStatus.VOID]
     assert results[0].settlement_value == 10.0
     assert position.status == PositionStatus.CLOSED
-    assert scheduler.wallet.open_position_count == 0
+    assert len(scheduler.wallet.open_positions) == 0
     assert scheduler.wallet.cash_balance == 1000.0
     assert [row["result"] for row in result_rows] == ["VOID"]
     assert [row["status"] for row in position_rows] == ["CLOSED"]

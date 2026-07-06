@@ -89,3 +89,16 @@ def test_safety_scan_enforces_project_wide_local_paper_isolation(tmp_path: Path)
             "scheduler.wallet",
         ),
     ]
+
+
+def test_local_paper_execution_modules_are_deleted() -> None:
+    deleted_paths = [
+        Path("src/polysignal_lab/paper/fill_model.py"),
+        Path("src/polysignal_lab/paper/order_intent_executor.py"),
+        Path("src/polysignal_lab/paper/simulator.py"),
+        Path("src/polysignal_lab/paper/wallet.py"),
+        Path("src/polysignal_lab/paper/exit_engine.py"),
+        Path("src/polysignal_lab/paper/preflight.py"),
+    ]
+
+    assert [str(path) for path in deleted_paths if path.exists()] == []

@@ -85,9 +85,12 @@ async def refresh_markets_once(scheduler: PolySignalScheduler) -> None:
 
 
 async def fetch_resolved_markets(scheduler: PolySignalScheduler) -> None:
+    wallet = getattr(scheduler, "wallet", None)
+    if wallet is None:
+        return
     open_market_ids = {
         pos.market_id
-        for pos in scheduler.wallet.open_positions.values()
+        for pos in wallet.open_positions.values()
         if pos.market_id
     }
     if not open_market_ids:

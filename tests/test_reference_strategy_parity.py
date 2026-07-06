@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import timedelta
 
 from polysignal_lab.config import (
-    FillModelConfig,
-    PaperTradingConfig,
     PolymarketDataConfig,
     load_settings,
 )
@@ -12,15 +10,11 @@ from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
 from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
 from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
-from polysignal_lab.domain.enums import ExitMode, OrderIntent, OrderStatus, Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
-from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.paper.exit_engine import PaperExitEngine
 from polysignal_lab.signal_layer.deduper import SignalDeduper
-from polysignal_lab.paper.simulator import PaperSimulator
-from polysignal_lab.paper.wallet import PaperWallet
 from polysignal_lab.strategies.config import LateConsensusConfig, PTBDiffConfig, VWAPMomentumConfig
 from polysignal_lab.strategies.late_consensus import LateConsensusStrategy
 from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
@@ -83,73 +77,6 @@ def test_vwap_momentum_prefers_reference_last_trade_price_over_best_ask() -> Non
     assert signals[0].metrics["fav_price"] == 0.80
 
 
-def test_late_consensus_paper_uses_reference_contract_sizing() -> None:
-    strategy = LateConsensusStrategy(LateConsensusConfig(entry_frequency_sec=0))
-    snapshot = _snapshot(seconds_to_close=100, up_ask=0.82, down_ask=0.18)
-    signal = strategy.evaluate(snapshot)[0]
-    assert signal.metrics["contracts"] == 8
-
-    paper_config = PaperTradingConfig(
-        fixed_stake_usdc=10.0,
-        fill_model=FillModelConfig(slippage_bps=0.0, require_depth_check=False),
-    )
-    wallet = PaperWallet(starting_balance=1000.0)
-    simulator = PaperSimulator(paper_config, PolymarketDataConfig(max_book_staleness_ms=60_000), wallet)
-
-    result = simulator.process_signal(signal, snapshot.book_for(signal.side))
-
-    assert result.position is not None
-    assert result.position.shares == 8
-    assert result.position.stake_usdc == 8 * 0.82
-
-
-def test_late_contract_sizing_revalidates_depth_with_contract_stake() -> None:
-    strategy = LateConsensusStrategy(LateConsensusConfig(entry_frequency_sec=0))
-    snapshot = _snapshot(seconds_to_close=100, up_ask=0.82, down_ask=0.18)
-    signal = strategy.evaluate(snapshot)[0]
-    shallow_but_sufficient_book = sample_book(
-        signal.token_id,
-        BookFactoryConfig(ask=0.82, bid=0.81, size=8.6),
-    )
-    shallow_but_sufficient_book = shallow_but_sufficient_book.model_copy(
-        update={"asks": [shallow_but_sufficient_book.asks[0]]}
-    )
-    paper_config = PaperTradingConfig(
-        fixed_stake_usdc=10.0,
-        fill_model=FillModelConfig(slippage_bps=0.0, require_depth_check=True),
-    )
-    simulator = PaperSimulator(
-        paper_config,
-        PolymarketDataConfig(max_book_staleness_ms=60_000),
-        PaperWallet(starting_balance=1000.0),
-    )
-
-    result = simulator.process_signal(signal, shallow_but_sufficient_book)
-
-    assert result.position is not None
-    assert result.position.shares == 8
-
-
-
-def test_late_contract_sizing_preserves_contract_count_with_slippage() -> None:
-    strategy = LateConsensusStrategy(LateConsensusConfig(entry_frequency_sec=0))
-    snapshot = _snapshot(seconds_to_close=100, up_ask=0.82, down_ask=0.18)
-    signal = strategy.evaluate(snapshot)[0]
-    simulator = PaperSimulator(
-        PaperTradingConfig(
-            fixed_stake_usdc=10.0,
-            fill_model=FillModelConfig(slippage_bps=25.0, require_depth_check=False),
-        ),
-        PolymarketDataConfig(max_book_staleness_ms=60_000),
-        PaperWallet(starting_balance=1000.0),
-    )
-
-    result = simulator.process_signal(signal, snapshot.book_for(signal.side))
-
-    assert result.position is not None
-    assert result.position.shares == 8
-    assert result.position.stake_usdc == result.position.entry_price * 8
-
 def test_runtime_ptb_config_matches_reference_c1_rule() -> None:
     settings = load_settings("config/signal_bot.yaml")
     strategy = PTBDiffStrategy(settings.strategies.ptb_diff)
@@ -166,62 +93,6 @@ def test_runtime_ptb_config_matches_reference_c1_rule() -> None:
 
 def test_ptb_crypto_price_variant_matches_reference_for_5m() -> None:
     assert PriceToBeatProvider()._variant_for("5m") == "fifteen"
-
-
-def test_paper_exit_engine_uses_ptb_reference_probability_targets() -> None:
-    wallet = PaperWallet(starting_balance=1000.0)
-    position = PaperPosition(
-        signal_id="sig-ptb",
-        paper_order_id="order-ptb",
-        paper_fill_id="fill-ptb",
-        strategy="ptb_diff",
-        asset="BTC",
-        timeframe="5m",
-        market_id="btc-5m-test",
-        market_slug="btc-updown-5m-test",
-        token_id="btc-5m-test-UP",
-        side=Side.UP,
-        entry_price=0.80,
-        shares=10.0,
-        stake_usdc=8.0,
-        opened_at=utc_now() - timedelta(seconds=30),
-        signal_metrics={"tp_sl_stop_prob": 0.68, "tp_sl_tp_prob": 0.88},
-    )
-    wallet.apply_fill(position)
-    engine = PaperExitEngine(PaperTradingConfig().exit_model, wallet)
-
-    result = engine.evaluate(position, sample_book(position.token_id, BookFactoryConfig(ask=0.90, bid=0.88)))
-
-    assert result is not None
-    assert result.exit_mode == ExitMode.TAKE_PROFIT
-    assert result.details["exit_threshold_source"] == "signal_metrics"
-
-
-def test_signal_specific_exit_metrics_bypass_global_take_profit() -> None:
-    wallet = PaperWallet(starting_balance=1000.0)
-    position = PaperPosition(
-        signal_id="sig-late",
-        paper_order_id="order-late",
-        paper_fill_id="fill-late",
-        strategy="late_consensus",
-        asset="BTC",
-        timeframe="5m",
-        market_id="btc-5m-test",
-        market_slug="btc-updown-5m-test",
-        token_id="btc-5m-test-UP",
-        side=Side.UP,
-        entry_price=0.82,
-        shares=8.0,
-        stake_usdc=6.56,
-        opened_at=utc_now() - timedelta(seconds=30),
-        signal_metrics={"flip_stop_enabled": True, "flip_stop_price": 0.48},
-    )
-    wallet.apply_fill(position)
-    engine = PaperExitEngine(PaperTradingConfig().exit_model, wallet)
-
-    result = engine.evaluate(position, sample_book(position.token_id, BookFactoryConfig(ask=0.92, bid=0.91)))
-
-    assert result is None
 
 
 def test_clob_last_trade_size_reaches_vwap_weighted_history() -> None:
@@ -251,47 +122,6 @@ def test_clob_last_trade_size_reaches_vwap_weighted_history() -> None:
     assert book is not None
     assert book.last_trade_price == 0.80
     assert book.last_trade_size == 25.0
-
-
-def test_passive_gtd_buy_fills_when_best_ask_reaches_limit() -> None:
-    signal = SignalCandidate.build(
-        strategy="vwap_momentum",
-        asset="BTC",
-        timeframe="5m",
-        market_id="m",
-        market_slug="btc-updown-5m-test",
-        condition_id="c",
-        token_id="token-down",
-        side=Side.DOWN,
-        confidence=0.7,
-        entry_reference_price=0.02,
-        max_entry_price=0.02,
-        seconds_to_close=100,
-        data_freshness_ms=0,
-        reason_codes=["VWAP_GTD_HEDGE"],
-        metrics={"contracts": 10},
-        order_intent=OrderIntent.PASSIVE_GTD,
-        expiry_seconds=3600,
-        pair_id="m:vwap",
-        hedge_leg=True,
-    )
-    wallet = PaperWallet(starting_balance=1000.0)
-    simulator = PaperSimulator(
-        PaperTradingConfig(),
-        PolymarketDataConfig(max_book_staleness_ms=60_000),
-        wallet,
-    )
-    resting = simulator.process_signal(signal, sample_book("token-down", BookFactoryConfig(ask=0.20, bid=0.18)))
-    assert resting.order.status == OrderStatus.RESTING
-
-    result = simulator.passive.tick(
-        {"token-down": sample_book("token-down", BookFactoryConfig(ask=0.02, bid=0.01, size=20))},
-        wallet,
-    )[0]
-
-    assert result.status == OrderStatus.FILLED
-    assert result.positions[0].shares == 10
-    assert result.positions[0].stake_usdc == 0.20
 
 
 def test_vwap_fill_schedules_opposite_token_gtd_hedge() -> None:

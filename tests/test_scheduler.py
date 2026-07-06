@@ -7,10 +7,8 @@ import pytest
 
 from polysignal_lab.app import scheduler as scheduler_module
 from polysignal_lab.app.scheduler import PolySignalScheduler, TelegramStartupConfigError
-from polysignal_lab.config import PaperTradingConfig, PolymarketDataConfig, Settings, StrategyConfig
+from polysignal_lab.config import Settings, StrategyConfig
 from polysignal_lab.domain.market import Market
-from polysignal_lab.paper.simulator import PaperSimulator
-from polysignal_lab.paper.wallet import PaperWallet
 from factories import MarketFactoryConfig, sample_market
 
 
@@ -201,26 +199,11 @@ async def test_live_telegram_validation_runs_before_strategy_and_paper_initializ
         events.append("strategy_load")
         return []
 
-    class RecordingPaperWallet(PaperWallet):
-        def __init__(self, starting_balance: float = 1000.0) -> None:
-            events.append("wallet_init")
-            super().__init__(starting_balance)
-
-    def record_paper_simulator(
-        config: PaperTradingConfig,
-        data_config: PolymarketDataConfig,
-        wallet: PaperWallet,
-    ) -> PaperSimulator:
-        events.append("paper_init")
-        return PaperSimulator(config, data_config, wallet)
-
     def validate_telegram_startup(self: PolySignalScheduler) -> None:
         events.append("telegram_validate")
         raise TelegramStartupConfigError(("TELEGRAM_BOT_TOKEN",))
 
     monkeypatch.setattr(scheduler_module, "build_strategy_schedule", record_build_strategy_schedule)
-    monkeypatch.setattr(scheduler_module, "PaperWallet", RecordingPaperWallet)
-    monkeypatch.setattr(scheduler_module, "PaperSimulator", record_paper_simulator)
     monkeypatch.setattr(PolySignalScheduler, "_validate_telegram_startup", validate_telegram_startup)
     scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
 

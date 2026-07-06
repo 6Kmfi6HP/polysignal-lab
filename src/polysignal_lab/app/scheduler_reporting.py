@@ -36,15 +36,16 @@ class SchedulerPersistenceError(RuntimeError):
 
 async def check_settlements(scheduler: PolySignalScheduler) -> list[PaperTradeResult]:
     settled: list[PaperTradeResult] = []
-    if not scheduler.wallet.open_positions:
+    wallet = getattr(scheduler, "wallet", None)
+    if wallet is None or not wallet.open_positions:
         return settled
 
-    for position in list(scheduler.wallet.open_positions.values()):
-        cash_balance = scheduler.wallet.cash_balance
-        realized_pnl = scheduler.wallet.realized_pnl
+    for position in list(wallet.open_positions.values()):
+        cash_balance = wallet.cash_balance
+        realized_pnl = wallet.realized_pnl
         position_status = position.status
         position_closed_at = position.closed_at
-        was_open = position.paper_position_id in scheduler.wallet.open_positions
+        was_open = position.paper_position_id in wallet.open_positions
         market = scheduler.ctx.markets.get(position.market_id)
         if market is None:
             try:
@@ -110,14 +111,14 @@ async def check_settlements(scheduler: PolySignalScheduler) -> list[PaperTradeRe
         try:
             await _store_paper_result(scheduler, result, position)
         except SchedulerPersistenceError as exc:
-            scheduler.wallet.cash_balance = cash_balance
-            scheduler.wallet.realized_pnl = realized_pnl
+            wallet.cash_balance = cash_balance
+            wallet.realized_pnl = realized_pnl
             position.status = position_status
             position.closed_at = position_closed_at
             if was_open:
-                scheduler.wallet.open_positions[position.paper_position_id] = position
+                wallet.open_positions[position.paper_position_id] = position
             else:
-                scheduler.wallet.open_positions.pop(position.paper_position_id, None)
+                wallet.open_positions.pop(position.paper_position_id, None)
             scheduler.logger.error(
                 "Failed to persist paper result for %s: %s",
                 position.paper_position_id,

@@ -17,7 +17,7 @@ class PaperPortfolioService:
     ) -> None:
         self.settings = settings
         self.scheduler = scheduler
-        self.logger = logger or logging.getLogger("polysignal_lab.scheduler.paper_portfolio_removed")
+        self.logger = logger or logging.getLogger("polysignal_lab.legacy_portfolio_removed")
 
     async def start(self) -> None:
         return None

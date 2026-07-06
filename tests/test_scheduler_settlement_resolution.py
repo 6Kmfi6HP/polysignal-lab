@@ -10,7 +10,22 @@ from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.paper.settlement import PaperSettlementEngine
 from polysignal_lab.paper.settlement_sources import ResolutionDecision
-from polysignal_lab.paper.wallet import PaperWallet
+
+
+class _LedgerWallet:
+    def __init__(self, starting_balance: float) -> None:
+        self.starting_balance = starting_balance
+        self.cash_balance = starting_balance
+        self.realized_pnl = 0.0
+        self.open_positions: dict[str, PaperPosition] = {}
+
+    def apply_fill(self, position: PaperPosition) -> None:
+        self.open_positions[position.paper_position_id] = position
+        self.cash_balance -= position.stake_usdc
+
+    @property
+    def open_position_count(self) -> int:
+        return len(self.open_positions)
 
 
 def _market(status: MarketStatus = MarketStatus.ACTIVE) -> Market:
@@ -46,10 +61,10 @@ def _position(token_id: str = "token-up", side: Side = Side.UP) -> PaperPosition
     )
 
 
-def _scheduler(wallet: PaperWallet, market: Market, decision: ResolutionDecision) -> Mock:
+def _scheduler(wallet: _LedgerWallet, market: Market, decision: ResolutionDecision) -> Mock:
     scheduler = Mock()
     scheduler.wallet = wallet
-    scheduler.settlement = PaperSettlementEngine(wallet)
+    scheduler.settlement = PaperSettlementEngine()
     scheduler.settlement_resolver = AsyncMock()
     scheduler.settlement_resolver.resolve_market.return_value = decision
     scheduler.ctx.markets.get.return_value = market
@@ -63,7 +78,7 @@ def _scheduler(wallet: PaperWallet, market: Market, decision: ResolutionDecision
 
 @pytest.mark.anyio
 async def test_resolved_numeric_half_payout_closes_as_void_with_provenance() -> None:
-    wallet = PaperWallet(1000.0)
+    wallet = _LedgerWallet(1000.0)
     position = _position()
     wallet.apply_fill(position)
     scheduler = _scheduler(
@@ -84,7 +99,7 @@ async def test_resolved_numeric_half_payout_closes_as_void_with_provenance() -> 
 
 @pytest.mark.anyio
 async def test_unknown_settlement_preserves_existing_active_exit_evaluation() -> None:
-    wallet = PaperWallet(1000.0)
+    wallet = _LedgerWallet(1000.0)
     position = _position()
     wallet.apply_fill(position)
     decision = ResolutionDecision("market-1", "0x" + "1" * 64, "unknown", "none", {}, False, (), {"reason": "NO_RESOLVED_EVIDENCE"})
@@ -101,7 +116,7 @@ async def test_unknown_settlement_preserves_existing_active_exit_evaluation() ->
 
 @pytest.mark.anyio
 async def test_cancelled_decision_uses_refund_path() -> None:
-    wallet = PaperWallet(1000.0)
+    wallet = _LedgerWallet(1000.0)
     position = _position()
     wallet.apply_fill(position)
     decision = ResolutionDecision("market-1", "0x" + "1" * 64, "cancelled", "gamma", {}, False, (), {"settlement_source": "gamma"})
@@ -116,7 +131,7 @@ async def test_cancelled_decision_uses_refund_path() -> None:
 
 @pytest.mark.anyio
 async def test_chain_conflict_settlement_logs_system_event() -> None:
-    wallet = PaperWallet(1000.0)
+    wallet = _LedgerWallet(1000.0)
     position = _position()
     wallet.apply_fill(position)
     decision = ResolutionDecision("market-1", "0x" + "1" * 64, "resolved", "chain", {"token-up": 1.0, "token-down": 0.0}, True, ("gamma",), {"settlement_source": "chain", "settlement_conflict": True})
