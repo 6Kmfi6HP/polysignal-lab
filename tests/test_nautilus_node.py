@@ -177,7 +177,7 @@ def test_build_trading_node_uses_livenode_builder(monkeypatch) -> None:
     node = runtime["node"]
     builder = node.builder
 
-    assert builder.trader_id_text == "POLYSIGNAL-001"
+    assert builder.trader_id_text == "PolySignal-Nautilus-001"
     assert builder.environment == "SANDBOX"
     assert builder.data_clients[0][0] == "POLYMARKET"
     assert builder.exec_clients[0][0] == PAPER_EXEC_CLIENT_ID

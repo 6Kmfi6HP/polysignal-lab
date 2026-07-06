@@ -171,8 +171,8 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pyte
     node = runtime["node"]
     builder = node.builder
     assert runtime["node"] is node
-    assert builder.trader_id_text == "POLYSIGNAL-001"
-    assert builder.trader_id == "TraderId:POLYSIGNAL-001"
+    assert builder.trader_id_text == "PolySignal-Nautilus-001"
+    assert builder.trader_id == "TraderId:PolySignal-Nautilus-001"
     assert builder.environment == "SANDBOX"
     assert builder.data_clients[0][0] == POLYMARKET_CLIENT_ID
     assert builder.data_clients[0][1] is fakes.polymarket_factory

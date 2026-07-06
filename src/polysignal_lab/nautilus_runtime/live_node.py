@@ -38,12 +38,13 @@ def build_paper_live_node(
     live_node = _required(LiveNode, "LiveNode")
     trader_id_cls = cast(Callable[[str], object], _required(TraderId, "TraderId"))
     environment = _required(Environment, "Environment")
-    trader_id = trader_id_cls("POLYSIGNAL-001")
+    trader_id_text = settings.runtime.nautilus.trader_id
+    trader_id = trader_id_cls(trader_id_text)
     builder_factory = cast(object, live_node)
     builder = cast(
         _Builder,
         getattr(builder_factory, "builder")(
-            "POLYSIGNAL-001",
+            trader_id_text,
             trader_id,
             getattr(environment, "SANDBOX"),
         ),

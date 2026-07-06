@@ -129,8 +129,8 @@ def test_build_paper_live_node_uses_polymarket_data_and_sandbox_exec(
     node = build_paper_live_node(settings, instrument_config=instrument_config)
 
     builder = node.builder
-    assert builder.trader_id_text == "POLYSIGNAL-001"
-    assert builder.trader_id == "TraderId:POLYSIGNAL-001"
+    assert builder.trader_id_text == "PolySignal-Nautilus-001"
+    assert builder.trader_id == "TraderId:PolySignal-Nautilus-001"
     assert builder.environment == "SANDBOX"
     assert builder.data_clients[0][0] == POLYMARKET_CLIENT_ID
     assert builder.data_clients[0][1] is FakePolymarketLiveDataClientFactory
