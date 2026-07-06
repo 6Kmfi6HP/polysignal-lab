@@ -21,7 +21,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     RejectedDecision,
 )
-from polysignal_lab.nautilus_runtime.strategies.base import PolySignalNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.base import CompatPolySignalNautilusStrategy as PolySignalNautilusStrategy
 from polysignal_lab.nautilus_runtime.strategies.binary_momentum import (
     BinaryMomentumNautilusStrategy,
 )

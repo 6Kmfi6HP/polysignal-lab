@@ -23,7 +23,7 @@ from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatDat
 from polysignal_lab.nautilus_bridge.state import state_key
 from polysignal_lab.nautilus_bridge.strategies.ptb_diff import PTBDiffNautilusStrategy
 from polysignal_lab.nautilus_bridge.strategy_base import (
-    PolySignalNautilusStrategy,
+    LegacyPolySignalNautilusStrategy,
     is_nautilus_available,
 )
 from polysignal_lab.strategies.config import PTBDiffConfig, PTBTriggerConfig
@@ -190,7 +190,7 @@ def test_strategy_base_imports_without_nautilus_installed() -> None:
 
 
 def test_strategy_base_returns_no_intents_when_view_not_ready() -> None:
-    strategy = PolySignalNautilusStrategy(
+    strategy = LegacyPolySignalNautilusStrategy(
         core=FakeCore([_decision()]),
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
@@ -202,7 +202,7 @@ def test_strategy_base_returns_no_intents_when_view_not_ready() -> None:
 
 
 def test_strategy_base_records_decision_order_intents() -> None:
-    strategy = PolySignalNautilusStrategy(
+    strategy = LegacyPolySignalNautilusStrategy(
         core=FakeCore([_decision()]),
         assembler=_assembler(object()),
         condition_ids=("condition-btc-5m",),
@@ -220,7 +220,7 @@ def test_strategy_base_records_decision_order_intents() -> None:
 
 
 def test_strategy_base_save_load_uses_versioned_bytes() -> None:
-    strategy = PolySignalNautilusStrategy(
+    strategy = LegacyPolySignalNautilusStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
@@ -229,7 +229,7 @@ def test_strategy_base_save_load_uses_versioned_bytes() -> None:
     strategy.accepted_state["condition-btc-5m"] = "accepted"
 
     state = strategy.on_save()
-    restored = PolySignalNautilusStrategy(
+    restored = LegacyPolySignalNautilusStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
@@ -274,7 +274,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (  # noqa: E402
     DecisionPolicyActor,
 )
 from polysignal_lab.nautilus_runtime.strategies.base import (  # noqa: E402
-    PolySignalNautilusStrategy as RuntimeStrategy,
+    CompatPolySignalNautilusStrategy as RuntimeStrategy,
 )
 
 
