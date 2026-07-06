@@ -181,14 +181,15 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
     def paper_orders(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
         if status:
             return store.query_json(
-                "paper_orders",
-                where="WHERE status=? ORDER BY created_at DESC",
-                params=(status.upper(),),
+                "system_events",
+                where="WHERE event_type=? AND json_extract(payload_json, '$.status')=? ORDER BY created_at DESC",
+                params=("nautilus_order", status.upper()),
                 limit=_bounded_limit(limit),
             )
         return store.query_json(
-            "paper_orders",
-            where="ORDER BY created_at DESC",
+            "system_events",
+            where="WHERE event_type=? ORDER BY created_at DESC",
+            params=("nautilus_order",),
             limit=_bounded_limit(limit),
         )
 
@@ -196,14 +197,15 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
     def positions(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
         if status:
             return store.query_json(
-                "paper_positions",
-                where="WHERE status=? ORDER BY opened_at DESC",
-                params=(status.upper(),),
+                "system_events",
+                where="WHERE event_type=? AND json_extract(payload_json, '$.status')=? ORDER BY created_at DESC",
+                params=("nautilus_position", status.upper()),
                 limit=_bounded_limit(limit),
             )
         return store.query_json(
-            "paper_positions",
-            where="ORDER BY opened_at DESC",
+            "system_events",
+            where="WHERE event_type=? ORDER BY created_at DESC",
+            params=("nautilus_position",),
             limit=_bounded_limit(limit),
         )
 

@@ -446,7 +446,7 @@ def test_build_trading_node_injects_runtime_progress_callback(monkeypatch, tmp_p
     assert runtime["strategies"][0].strategy_name == "vwap_momentum"
 
 def test_runtime_progress_callback_suppresses_heartbeat_write_failures(monkeypatch, tmp_path) -> None:
-    import polysignal_lab.nautilus_runtime.node as node_mod
+    import polysignal_lab.nautilus_runtime.node_probes as probes_mod
 
     settings = Settings()
     settings.storage.state_dir = str(tmp_path / "state")
@@ -454,9 +454,10 @@ def test_runtime_progress_callback_suppresses_heartbeat_write_failures(monkeypat
     def fail_write(*_args, **_kwargs):
         raise OSError("state directory unavailable")
 
-    monkeypatch.setattr(node_mod, "write_runtime_heartbeat", fail_write)
+    monkeypatch.setattr(probes_mod, "write_runtime_heartbeat", fail_write)
 
-    node_mod._runtime_progress_callback(settings)("evaluation_heartbeat")
+    from polysignal_lab.nautilus_runtime.node import _runtime_progress_callback
+    _runtime_progress_callback(settings)("evaluation_heartbeat")
 
 def test_build_control_adapts_policy() -> None:
     from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
@@ -580,7 +581,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
 def test_publish_accepted_signal_in_background_uses_fresh_publish_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import polysignal_lab.nautilus_runtime.node as node_mod
+    import polysignal_lab.nautilus_runtime.signal_sidecar as sidecar_mod
     from polysignal_lab.domain.enums import Side
     from polysignal_lab.domain.signal import SignalCandidate
 
@@ -614,10 +615,10 @@ def test_publish_accepted_signal_in_background_uses_fresh_publish_service(
             published.append((signal.signal_id, stake_usdc))
             return SimpleNamespace(as_dict=lambda: {"status": "SENT"})
 
-    monkeypatch.setattr(node_mod, "TelegramPublisher", FakeTelegramPublisher, raising=False)
-    monkeypatch.setattr(node_mod, "PublishService", FakePublishService, raising=False)
+    monkeypatch.setattr(sidecar_mod, "TelegramPublisher", FakeTelegramPublisher, raising=False)
+    monkeypatch.setattr(sidecar_mod, "PublishService", FakePublishService, raising=False)
     monkeypatch.setattr(
-        node_mod.scheduler_health,
+        sidecar_mod.scheduler_health,
         "note_publish_result",
         lambda _scheduler, publish: noted.append(publish),
     )
@@ -648,7 +649,7 @@ def test_publish_accepted_signal_in_background_uses_fresh_publish_service(
         metrics={"edge": 0.1},
     )
 
-    node_mod._publish_accepted_signal_in_background(scheduler, signal, 10.0)
+    sidecar_mod._publish_accepted_signal_in_background(scheduler, signal, 10.0)
 
     assert published == [(signal.signal_id, 10.0)]
     assert noted == [{"status": "SENT"}]
@@ -815,7 +816,7 @@ async def test_prepare_nautilus_runtime_context_does_not_wire_shadow_wallet_mirr
 async def test_run_nautilus_housekeeping_once_skips_legacy_settlement_with_cache_reader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import polysignal_lab.nautilus_runtime.node as node_mod
+    from polysignal_lab.nautilus_runtime.signal_sidecar import _run_nautilus_housekeeping_once
     import polysignal_lab.app.scheduler_runtime as runtime_mod
 
     calls: list[str] = []
@@ -833,7 +834,7 @@ async def test_run_nautilus_housekeeping_once_skips_legacy_settlement_with_cache
 
     scheduler = SimpleNamespace(nautilus_cache_reader=object())
 
-    result = await node_mod._run_nautilus_housekeeping_once(scheduler, "2026-07-04")
+    result = await _run_nautilus_housekeeping_once(scheduler, "2026-07-04")
 
     assert result == "2026-07-05"
     assert calls == ["report:2026-07-04"]
@@ -933,12 +934,11 @@ async def test_run_nautilus_cli_async_refreshes_startup_marker_before_runtime_bu
             components={"strategies": []},
         )
 
-    monkeypatch.setattr(node_mod, "load_settings", lambda: settings)
     monkeypatch.setattr(node_mod, "build_nautilus_runtime", fake_build)
 
     stop_event = asyncio.Event()
     stop_event.set()
-    await run_nautilus_cli_async(stop_event=stop_event)
+    await run_nautilus_cli_async(settings=settings, stop_event=stop_event)
 
     assert observed["settings"] is settings
 
@@ -946,6 +946,7 @@ async def test_run_nautilus_cli_async_suppresses_probe_write_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
+    import polysignal_lab.nautilus_runtime.node_probes as probes_mod
 
     settings = Settings()
 
@@ -979,8 +980,8 @@ async def test_run_nautilus_cli_async_suppresses_probe_write_failures(
         raise OSError("state directory unavailable")
 
     monkeypatch.setattr(node_mod, "build_nautilus_runtime", fake_build)
-    monkeypatch.setattr(node_mod, "write_runtime_startup_marker", fail_write)
-    monkeypatch.setattr(node_mod, "write_runtime_heartbeat", fail_write)
+    monkeypatch.setattr(probes_mod, "write_runtime_startup_marker", fail_write)
+    monkeypatch.setattr(probes_mod, "write_runtime_heartbeat", fail_write)
 
     stop_event = asyncio.Event()
     stop_event.set()
@@ -1488,6 +1489,7 @@ async def test_stop_nautilus_scheduler_skips_legacy_wallet_persist_without_walle
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
+    import polysignal_lab.nautilus_runtime.signal_sidecar as sidecar_mod
 
     calls: list[str] = []
 
@@ -1499,7 +1501,7 @@ async def test_stop_nautilus_scheduler_skips_legacy_wallet_persist_without_walle
             calls.append(f"exception:{message}")
 
     monkeypatch.setattr(
-        node_mod.scheduler_health,
+        sidecar_mod.scheduler_health,
         "persist_health_snapshot",
         lambda scheduler: calls.append("health"),
     )
@@ -1514,11 +1516,12 @@ async def test_stop_nautilus_scheduler_skips_legacy_stop_for_live_node_owned_sch
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
+    import polysignal_lab.nautilus_runtime.signal_sidecar as sidecar_mod
 
     calls: list[str] = []
 
     monkeypatch.setattr(
-        node_mod.scheduler_health,
+        sidecar_mod.scheduler_health,
         "persist_health_snapshot",
         lambda scheduler: calls.append("health"),
     )
@@ -1684,6 +1687,7 @@ def test_run_nautilus_cli_suppresses_heartbeat_write_failures_when_node_returns(
     tmp_path,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
+    import polysignal_lab.nautilus_runtime.node_probes as probes_mod
 
     class FakeNode:
         def run(self, raise_exception=False):
@@ -1713,7 +1717,7 @@ def test_run_nautilus_cli_suppresses_heartbeat_write_failures_when_node_returns(
     monkeypatch.setattr(node_mod, "_rebind_market_discovery_client", lambda _scheduler: None)
     monkeypatch.setattr(node_mod, "_build_nautilus_runtime_bundle", lambda *_args: bundle)
     monkeypatch.setattr(node_mod, "_stop_nautilus_scheduler", AsyncMock(return_value=None))
-    monkeypatch.setattr(node_mod, "write_runtime_heartbeat", fail_write)
+    monkeypatch.setattr(probes_mod, "write_runtime_heartbeat", fail_write)
 
     # Should exit cleanly — heartbeat write failures are suppressed.
     run_nautilus_cli(settings)
@@ -2053,7 +2057,7 @@ def test_start_nautilus_report_loop_thread_runs_housekeeping_until_stop(
         return last_report_date
 
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node._run_nautilus_housekeeping_once",
+        "polysignal_lab.nautilus_runtime.signal_sidecar._run_nautilus_housekeeping_once",
         fake_housekeeping,
     )
 

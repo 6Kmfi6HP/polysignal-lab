@@ -35,7 +35,7 @@ COMPATIBILITY_ONLY = True
 
 
 
-class PolySignalNautilusStrategy:
+class CompatPolySignalNautilusStrategy:
     """Compatibility wrapper for legacy unit tests; default runtime uses the static Nautilus strategy class."""
     def __init__(
         self,

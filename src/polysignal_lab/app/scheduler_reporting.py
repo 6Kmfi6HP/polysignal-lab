@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from polysignal_lab.app import scheduler_health
 from polysignal_lab.app.scheduler_reporting_storage import (
     delete_daily_report_rows,
-    delete_paper_result_rows,
 )
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
 from polysignal_lab.domain.market import Market
@@ -23,15 +22,6 @@ from polysignal_lab.utils import new_id, parse_dt, redact_text, utc_iso, utc_now
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
-
-
-@dataclass(frozen=True, slots=True)
-class SchedulerPersistenceError(RuntimeError):
-    operation: str
-    reason: str
-
-    def __str__(self) -> str:
-        return f"{self.operation} failed: {self.reason}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,27 +196,6 @@ async def _store_projection_result(
 ) -> None:
     scheduler.persistence.insert_paper_trade_result(result)
     scheduler.persistence.append_log("paper_trade_results", result)
-    await _publish_paper_result_best_effort(scheduler, result)
-
-
-async def _store_paper_result(
-    scheduler: PolySignalScheduler, result: PaperTradeResult, position: PaperPosition
-) -> None:
-    try:
-        scheduler.persistence.insert_paper_trade_result(result)
-        scheduler.persistence.upsert_paper_position(position)
-        scheduler_health.note_storage_success(scheduler, "sqlite")
-    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
-        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
-        delete_paper_result_rows(scheduler, result, None)
-        raise SchedulerPersistenceError("paper result persistence", str(exc)) from exc
-
-    try:
-        scheduler.persistence.append_log("paper_trade_results", result)
-        scheduler_health.note_storage_success(scheduler, "jsonl")
-    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
-        scheduler_health.note_storage_failure(scheduler, "jsonl", exc)
-        raise SchedulerPersistenceError("paper result log persistence", str(exc)) from exc
     await _publish_paper_result_best_effort(scheduler, result)
 
 

@@ -32,7 +32,7 @@ else:
     _NautilusBase = _NautilusBaseRuntime
 
 
-class PolySignalNautilusStrategy(_NautilusBase):
+class LegacyPolySignalNautilusStrategy(_NautilusBase):
     def __init__(
         self,
         *,

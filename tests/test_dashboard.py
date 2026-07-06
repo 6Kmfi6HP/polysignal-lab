@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from polysignal_lab.dashboard.app import create_dashboard_app
-from polysignal_lab.domain.enums import OrderStatus, Side
+from polysignal_lab.domain.enums import OrderStatus, PositionStatus, Side
 from polysignal_lab.domain.paper_order import PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport
@@ -44,6 +44,17 @@ def _client_with_store(tmp_path, snapshot, settings) -> tuple[TestClient, SQLite
     store.insert_daily_report(lifecycle.report)
     store.insert_telegram_publish(lifecycle.publish)
     store.insert_system_event(lifecycle.event)
+    store.insert_system_event({
+        "event_id": "evt-nautilus-pos-1",
+        "event_type": "nautilus_position",
+        "severity": "info",
+        "created_at": lifecycle.position.opened_at.isoformat(),
+        "paper_position_id": lifecycle.position.paper_position_id,
+        "position_id": lifecycle.position.paper_position_id,
+        "status": lifecycle.position.status.value,
+        "is_closed": lifecycle.position.status != PositionStatus.OPEN,
+        "ts": lifecycle.position.opened_at.isoformat(),
+    })
     return TestClient(create_dashboard_app(store)), store
 
 
@@ -118,8 +129,18 @@ def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> None:
         stake_usdc=7.2,
         opened_at=datetime(2026, 6, 26, tzinfo=timezone.utc),
     )
-    store.upsert_paper_position(old)
-    store.upsert_paper_position(latest)
+    for pos in (old, latest):
+        store.insert_system_event({
+            "event_id": f"evt-{pos.paper_position_id}",
+            "event_type": "nautilus_position",
+            "severity": "info",
+            "created_at": pos.opened_at.isoformat(),
+            "paper_position_id": pos.paper_position_id,
+            "position_id": pos.paper_position_id,
+            "is_closed": False,
+            "status": "OPEN",
+            "ts": pos.opened_at.isoformat(),
+        })
     client = TestClient(create_dashboard_app(store))
 
     response = client.get("/api/positions")
@@ -127,8 +148,9 @@ def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> None:
     assert response.status_code == 200
     rows = response.json()
     assert rows[0]["paper_position_id"] == "latest-pos"
-    assert rows[0]["asset"] == "BTC"
-    assert rows[0]["timeframe"] == "5m"
+    assert rows[0]["status"] == "OPEN"
+    assert rows[0]["is_closed"] is False
+    assert rows[0]["position_id"] == "latest-pos"
 
 def test_dashboard_health_returns_component_snapshot_from_system_events(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
@@ -210,7 +232,20 @@ async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
         paper_rejects_by_reason={"PAPER_ENTRY_PRICE_MOVED": 1},
         average_execution_staleness_ms=25.0,
     )
-    store.insert_paper_order(order)
+    store.insert_system_event({
+        "event_id": "evt-po-rejected",
+        "event_type": "nautilus_order",
+        "severity": "info",
+        "created_at": order.created_at.isoformat(),
+        "paper_order_id": order.paper_order_id,
+        "client_order_id": order.paper_order_id,
+        "status": order.status.value,
+        "reject_reason": order.reject_reason,
+        "strategy": order.strategy,
+        "market_id": order.market_id,
+        "signal_id": order.signal_id,
+        "ts": order.created_at.isoformat(),
+    })
     store.insert_daily_report(report)
     client = TestClient(create_dashboard_app(store))
 

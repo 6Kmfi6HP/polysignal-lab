@@ -1,4 +1,4 @@
-from polysignal_lab.nautilus_runtime.strategies.base import DEFAULT_DATA_NAMES, PolySignalNautilusStrategy
+from polysignal_lab.nautilus_runtime.strategies.base import DEFAULT_DATA_NAMES, CompatPolySignalNautilusStrategy
 from polysignal_lab.nautilus_runtime.strategies.binary_momentum import BinaryMomentumNautilusStrategy
 from polysignal_lab.nautilus_runtime.strategies.dump_hedge import DumpHedgeNautilusStrategy
 from polysignal_lab.nautilus_runtime.strategies.fibonacci_bot import FibonacciBotNautilusStrategy
@@ -27,7 +27,7 @@ __all__ = [
     "OneCentBuyNautilusStrategy",
     "PTBDiffNautilusStrategy",
     "PolySignalNativeStrategy",
-    "PolySignalNautilusStrategy",
+    "CompatPolySignalNautilusStrategy",
     "PreOrderMarketNautilusStrategy",
     "SkewMeanReversionNautilusStrategy",
     "VWAPMomentumNautilusStrategy",

@@ -119,9 +119,6 @@ class NautilusEventStoreAdapter:
         self._routes: dict[str, Callable[[dict[str, object]], None]] = {
             "signals": persistence.insert_signal,
             "rejected_signals": persistence.insert_rejected_signal,
-            "orders": persistence.upsert_paper_order,
-            "fills": persistence.insert_paper_fill,
-            "positions": persistence.upsert_paper_position,
             "settlements": persistence.insert_paper_trade_result,
             "health_snapshot": persistence.insert_system_event,
             "system_events": persistence.insert_system_event,
@@ -133,9 +130,6 @@ class NautilusEventStoreAdapter:
         self._streams: dict[str, str] = {
             "signals": "signals",
             "rejected_signals": "rejected_signals",
-            "orders": "paper_orders",
-            "fills": "paper_fills",
-            "positions": "paper_positions",
             "settlements": "paper_trade_results",
             "health_snapshot": "system_events",
             "system_events": "system_events",
