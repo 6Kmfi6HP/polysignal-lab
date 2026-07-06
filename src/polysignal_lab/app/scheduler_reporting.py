@@ -11,13 +11,15 @@ from polysignal_lab.app.scheduler_reporting_storage import (
     delete_daily_report_rows,
     delete_paper_result_rows,
 )
+from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
+from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
 from polysignal_lab.paper.report import (
     PaperReportService,
     is_rejected_paper_order_payload,
 )
-from polysignal_lab.utils import new_id, parse_dt, redact_text, utc_iso
+from polysignal_lab.utils import new_id, parse_dt, redact_text, utc_iso, utc_now
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
@@ -33,7 +35,150 @@ class SchedulerPersistenceError(RuntimeError):
 
 
 async def check_settlements(scheduler: PolySignalScheduler) -> list[PaperTradeResult]:
-    return []
+    cache_reader = _nautilus_cache_reader(scheduler)
+    if cache_reader is None:
+        return []
+    read_positions = getattr(cache_reader, "read_positions", None)
+    if not callable(read_positions):
+        return []
+    raw_positions = read_positions()
+    if not isinstance(raw_positions, list):
+        return []
+
+    settled: list[PaperTradeResult] = []
+    for projection in raw_positions:
+        if not isinstance(projection, dict):
+            continue
+        if bool(projection.get("is_closed")):
+            continue
+        market_id = str(projection.get("market_id") or "")
+        token_id = str(projection.get("token_id") or projection.get("instrument_id") or "")
+        if not market_id or not token_id:
+            continue
+        market = scheduler.ctx.markets.get(market_id)
+        if market is None:
+            rows = scheduler.persistence.query_json(
+                "markets",
+                where="WHERE market_id = ?",
+                params=(market_id,),
+            )
+            if not rows:
+                continue
+            try:
+                market = Market.model_validate(rows[0])
+            except (TypeError, ValueError):
+                continue
+        decision = await scheduler.settlement_resolver.resolve_market(market)
+        outcome_value: float | None
+        if decision.status == "resolved":
+            outcome_value = decision.outcome_value_for(token_id)
+        elif decision.status == "cancelled":
+            outcome_value = _projection_float(projection, "avg_entry_price")
+        else:
+            continue
+        if outcome_value is None:
+            continue
+        result = _paper_trade_result_from_projection(
+            projection,
+            market=market,
+            outcome_value=outcome_value,
+            details=decision.details,
+        )
+        await _store_projection_result(scheduler, result)
+        if decision.conflict:
+            event = {
+                "event_id": new_id("evt", "settlement_conflict", result.paper_trade_id),
+                "event_type": "settlement_conflict",
+                "severity": "WARNING",
+                "created_at": utc_iso(),
+                "market_id": decision.market_id,
+                "condition_id": decision.condition_id,
+                "paper_trade_id": result.paper_trade_id,
+                "conflict_sources": list(decision.conflict_sources),
+            }
+            try:
+                scheduler.persistence.insert_system_event(event)
+                scheduler.persistence.append_log("system_events", event)
+            except (OSError, sqlite3.Error, TypeError, ValueError):
+                scheduler.logger.warning(
+                    "Failed to audit settlement conflict for %s",
+                    decision.market_id,
+                )
+        settled.append(result)
+    return settled
+
+
+def _paper_trade_result_from_projection(
+    projection: dict[str, object],
+    *,
+    market: Market,
+    outcome_value: float,
+    details: dict[str, object],
+) -> PaperTradeResult:
+    quantity = _projection_float(projection, "quantity") or 0.0
+    entry_price = _projection_float(projection, "avg_entry_price") or 0.0
+    stake = quantity * entry_price
+    settlement_value = quantity * float(outcome_value)
+    pnl = settlement_value - stake
+    token_id = str(projection.get("token_id") or projection.get("instrument_id") or "")
+    side = _projection_side(projection, market, token_id)
+    if outcome_value == 1.0:
+        result_status = TradeResultStatus.WIN
+    elif outcome_value == 0.0:
+        result_status = TradeResultStatus.LOSS
+    elif 0.0 < outcome_value < 1.0:
+        result_status = TradeResultStatus.VOID
+    else:
+        result_status = TradeResultStatus.WIN if pnl > 0 else TradeResultStatus.LOSS
+    ts_raw = projection.get("ts")
+    opened_at = parse_dt(cast(str | datetime | None, ts_raw)) if ts_raw else None
+    return PaperTradeResult(
+        paper_trade_id=new_id("ptr"),
+        signal_id=str(projection.get("signal_id") or ""),
+        paper_position_id=str(
+            projection.get("paper_position_id") or projection.get("position_id") or ""
+        ),
+        strategy=str(projection.get("strategy") or market.asset),
+        asset=str(projection.get("asset") or market.asset),
+        timeframe=str(projection.get("timeframe") or market.timeframe),
+        market_id=market.market_id,
+        market_slug=market.market_slug,
+        side=side,
+        entry_price=entry_price,
+        shares=quantity,
+        stake_usdc=stake,
+        exit_mode=ExitMode.RESOLUTION,
+        outcome_value=float(outcome_value),
+        settlement_value=settlement_value,
+        pnl_usdc=pnl,
+        roi=pnl / stake if stake else 0.0,
+        result=result_status,
+        opened_at=opened_at or utc_now(),
+        closed_at=utc_now(),
+        details=details,
+    )
+
+
+def _projection_side(projection: dict[str, object], market: Market, token_id: str) -> Side:
+    raw_side = projection.get("side")
+    if raw_side is not None:
+        try:
+            return Side(str(raw_side).upper())
+        except ValueError:
+            pass
+    for token in market.outcome_tokens:
+        if token.token_id == token_id:
+            return token.side
+    return Side.UP
+
+
+async def _store_projection_result(
+    scheduler: PolySignalScheduler,
+    result: PaperTradeResult,
+) -> None:
+    scheduler.persistence.insert_paper_trade_result(result)
+    scheduler.persistence.append_log("paper_trade_results", result)
+    await _publish_paper_result_best_effort(scheduler, result)
 
 
 async def _store_paper_result(

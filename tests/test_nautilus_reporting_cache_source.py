@@ -108,6 +108,14 @@ def test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equ
     assert _report_equity_inputs(scheduler) == (1_000.0, 987.65, 0)
 
 
+def test_report_equity_inputs_requires_nautilus_cache_reader() -> None:
+    scheduler = SimpleNamespace(
+        settings=_settings(),
+    )
+
+    assert _report_equity_inputs(scheduler) == (1_000.0, 1_000.0, 0)
+
+
 def test_report_equity_inputs_ignores_shadow_wallet_without_cache_reader() -> None:
     scheduler = SimpleNamespace(
         settings=_settings(),
