@@ -273,6 +273,125 @@ def _ensure_nautilus_imports() -> None:
         getattr(runtime_config_mod, "register_paper_factories"),
     )
 
+def _create_configured_trading_node(
+    settings: Settings,
+    configured_markets: Sequence[Market],
+) -> tuple[_TradingNodeLike, object]:
+    _ensure_nautilus_imports()
+    trading_node_factory = TradingNode
+    if trading_node_factory is None:
+        raise RuntimeError("Nautilus TradingNode is unavailable")
+    instrument_config = PolymarketInstrumentProviderConfig(
+        load_ids=_instrument_load_ids(configured_markets),
+    )
+    config = build_paper_trading_node_config(settings, instrument_config=instrument_config)
+    node = trading_node_factory(config=config)
+    register_paper_factories(node)
+    return cast(_TradingNodeLike, node), config
+
+
+def _create_market_projection_components(
+    configured_markets: Sequence[Market],
+) -> tuple[PolymarketMarketRegistry, ExternalDataSidecar, MarketViewAssembler]:
+    registry = PolymarketMarketRegistry()
+    _register_markets(registry, configured_markets)
+    sidecar = ExternalDataSidecar()
+    assembler = MarketViewAssembler(
+        registry=registry,
+        books=_EmptyBookDataProvider(),
+        sidecar=sidecar,
+    )
+    return registry, sidecar, assembler
+
+
+def _attach_cache_projections(
+    node: _TradingNodeLike,
+    registry: PolymarketMarketRegistry,
+    assembler: MarketViewAssembler,
+    strategies: Sequence[_NativeStrategyLike],
+) -> object:
+    from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
+    from polysignal_lab.nautilus_runtime.cache_reader import NautilusCacheReader
+
+    kernel = getattr(node, "kernel", None)
+    nautilus_cache = getattr(node, "cache", None) or getattr(kernel, "cache", None)
+    assembler.books = NautilusCacheMarketDataProvider(
+        nautilus_cache,
+        registry=registry,
+    )
+    cache_reader = NautilusCacheReader(
+        nautilus_cache,
+        portfolio=getattr(node, "portfolio", None) or getattr(kernel, "portfolio", None),
+    )
+    for strategy in strategies:
+        setattr(strategy, "cache_reader", cache_reader)
+    return cache_reader
+
+
+def _register_runtime_trader_components(
+    node: _TradingNodeLike,
+    market_rotation_actor: object,
+    strategies: Sequence[_NativeStrategyLike],
+) -> None:
+    node.trader.add_actor(market_rotation_actor)
+    for strategy in strategies:
+        node.trader.add_strategy(strategy)
+    node.build()
+
+
+def _build_market_rotation_actor(
+    *,
+    settings: Settings,
+    startup_markets: Sequence[Market],
+    market_universe: object,
+    registry: PolymarketMarketRegistry,
+    sidecar: ExternalDataSidecar,
+    store: AnchorPriceStore | None,
+    health: object | None,
+) -> object:
+    from polysignal_lab.nautilus_runtime.market_rotation import runtime_market_rotation_actor_type
+
+    actor_factory = cast(
+        Callable[..., object],
+        runtime_market_rotation_actor_type(NautilusActor, NautilusActorConfig),
+    )
+    return actor_factory(
+        settings=settings,
+        startup_markets=startup_markets,
+        market_universe=market_universe,
+        registry=registry,
+        sidecar=sidecar,
+        anchor_store=store,
+        health=health,
+    )
+
+
+def _runtime_components(
+    *,
+    node: _TradingNodeLike,
+    config: object,
+    registry: PolymarketMarketRegistry,
+    sidecar: ExternalDataSidecar,
+    market_rotation_actor: object,
+    assembler: MarketViewAssembler,
+    policy: DecisionPolicyActor,
+    strategies: Sequence[_NativeStrategyLike],
+    cache_reader: object,
+) -> dict[str, object]:
+    return {
+        "node": node,
+        "config": config,
+        "registry": registry,
+        "sidecar": sidecar,
+        "market_rotation_actor": market_rotation_actor,
+        "assembler": assembler,
+        "policy": policy,
+        "strategies": list(strategies),
+        "strategy_names": [strategy.strategy_name for strategy in strategies],
+        "cache_reader": cache_reader,
+    }
+
+
 def build_trading_node(
     settings: Settings | None = None,
     *,
@@ -292,47 +411,18 @@ def build_trading_node(
     runtime_market_universe = (
         market_universe if market_universe is not None else _StaticMarketUniverse(configured_markets)
     )
-
-    _ensure_nautilus_imports()
-    trading_node_factory = TradingNode
-    if trading_node_factory is None:
-        raise RuntimeError("Nautilus TradingNode is unavailable")
-
-    instrument_config = PolymarketInstrumentProviderConfig(
-        load_ids=_instrument_load_ids(configured_markets),
-    )
-    config = build_paper_trading_node_config(settings, instrument_config=instrument_config)
-    node = trading_node_factory(config=config)
-    register_paper_factories(node)
-
-    registry = PolymarketMarketRegistry()
-    _register_markets(registry, configured_markets)
-    sidecar = ExternalDataSidecar()
-    books = _EmptyBookDataProvider()
-    assembler = MarketViewAssembler(
-        registry=registry,
-        books=books,
-        sidecar=sidecar,
-    )
+    node, config = _create_configured_trading_node(settings, configured_markets)
+    registry, sidecar, assembler = _create_market_projection_components(configured_markets)
     policy = _build_policy(settings)
-
-    from polysignal_lab.nautilus_runtime.market_rotation import runtime_market_rotation_actor_type
-
-    actor_factory = cast(
-        Callable[..., object],
-        runtime_market_rotation_actor_type(NautilusActor, NautilusActorConfig),
-    )
-    market_rotation_actor = actor_factory(
+    market_rotation_actor = _build_market_rotation_actor(
         settings=settings,
         startup_markets=configured_markets,
         market_universe=runtime_market_universe,
         registry=registry,
         sidecar=sidecar,
-        anchor_store=store,
+        store=store,
         health=health,
     )
-    node.trader.add_actor(market_rotation_actor)
-
     strategies = _build_native_strategies(
         settings,
         assembler,
@@ -342,38 +432,19 @@ def build_trading_node(
         sidecar,
         observability,
     )
-    for strategy in strategies:
-        node.trader.add_strategy(strategy)
-    node.build()
-
-    from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
-    from polysignal_lab.nautilus_runtime.cache_reader import NautilusCacheReader
-
-    kernel = getattr(node, "kernel", None)
-    nautilus_cache = getattr(node, "cache", None) or getattr(kernel, "cache", None)
-    assembler.books = NautilusCacheMarketDataProvider(
-        nautilus_cache,
+    _register_runtime_trader_components(node, market_rotation_actor, strategies)
+    cache_reader = _attach_cache_projections(node, registry, assembler, strategies)
+    return _runtime_components(
+        node=node,
+        config=config,
         registry=registry,
+        sidecar=sidecar,
+        market_rotation_actor=market_rotation_actor,
+        assembler=assembler,
+        policy=policy,
+        strategies=strategies,
+        cache_reader=cache_reader,
     )
-    cache_reader = NautilusCacheReader(
-        nautilus_cache,
-        portfolio=getattr(node, "portfolio", None) or getattr(kernel, "portfolio", None),
-    )
-    for strategy in strategies:
-        setattr(strategy, "cache_reader", cache_reader)
-
-    return {
-        "node": node,
-        "config": config,
-        "registry": registry,
-        "sidecar": sidecar,
-        "market_rotation_actor": market_rotation_actor,
-        "assembler": assembler,
-        "policy": policy,
-        "strategies": strategies,
-        "strategy_names": [strategy.strategy_name for strategy in strategies],
-        "cache_reader": cache_reader,
-    }
 def _configured_condition_ids(
     condition_ids: Sequence[str],
     markets: Sequence[Market],
@@ -989,6 +1060,96 @@ def _install_crash_logger(log_dir: str) -> None:
     _ = atexit.register(_atexit_dump)
 
 
+def _strategy_names_from_bundle(bundle: NautilusRuntimeBundle) -> list[str]:
+    strategies = bundle.components.get("strategies", ())
+    strategy_sequence: Sequence[object] = (
+        strategies
+        if isinstance(strategies, Sequence)
+        else ()
+    )
+    return [str(getattr(strategy, "strategy_name", "")) for strategy in strategy_sequence]
+
+
+async def _start_async_cli_sidecars(
+    bundle: NautilusRuntimeBundle,
+    telegram_stop: asyncio.Event,
+) -> asyncio.Task[None] | None:
+    starter = getattr(bundle.observability, "start", None)
+    if callable(starter):
+        _ = starter()
+    bot = cast(object | None, getattr(bundle.scheduler, "telegram_bot", None))
+    if bot is None:
+        return None
+    return asyncio.create_task(_run_interactive_telegram_bot_until_stop(bot, telegram_stop))
+
+
+async def _notify_async_cli_startup(
+    bundle: NautilusRuntimeBundle,
+    strategy_names: Sequence[str],
+    runtime_logger: logging.Logger,
+) -> None:
+    await asyncio.to_thread(_rebind_market_discovery_client, bundle.scheduler)
+    try:
+        await bundle.observability.notify_startup(
+            strategy_names,
+            sandbox_book_type=bundle.scheduler.settings.runtime.nautilus.sandbox_book_type,
+        )
+    except Exception:
+        runtime_logger.exception("Nautilus startup notification failed")
+
+
+async def _run_async_node_with_report_loop(
+    node: _TradingNodeLike,
+    scheduler: PolySignalScheduler,
+    event: asyncio.Event,
+) -> None:
+    report_task = asyncio.create_task(_run_nautilus_report_loop(scheduler, event))
+    try:
+        run_task = asyncio.create_task(asyncio.to_thread(node.run))
+        stop_waiter = asyncio.create_task(event.wait())
+        done, pending = await asyncio.wait(
+            [run_task, stop_waiter],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if run_task in done:
+            if stop_waiter in pending:
+                _ = stop_waiter.cancel()
+            await run_task
+        elif stop_waiter in done:
+            stopper = getattr(node, "stop", None)
+            if callable(stopper):
+                _ = stopper()
+            await run_task
+    finally:
+        _ = report_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await report_task
+
+
+async def _finalize_async_cli_runtime(
+    bundle: NautilusRuntimeBundle,
+    event: asyncio.Event,
+    telegram_stop: asyncio.Event,
+    telegram_task: asyncio.Task[None] | None,
+    runtime_logger: logging.Logger,
+    cleanup_signals: Callable[[], None],
+) -> None:
+    try:
+        event.set()
+        telegram_stop.set()
+        if telegram_task is not None:
+            with suppress(asyncio.CancelledError):
+                await telegram_task
+        try:
+            await bundle.observability.notify_shutdown()
+        except Exception:
+            runtime_logger.exception("Nautilus shutdown notification failed")
+        stopper = getattr(bundle.observability, "stop", None)
+        if callable(stopper):
+            _ = stopper()
+        await _stop_nautilus_scheduler(bundle.scheduler)
+    finally:
+        cleanup_signals()
 
 
 async def run_nautilus_cli_async(
@@ -1012,92 +1173,34 @@ async def run_nautilus_cli_async(
         event.set()
 
     runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))
-
     cleanup_signals: Callable[[], None] = lambda: None
     runtime_settings = getattr(bundle.scheduler, "settings", settings)
     if _runtime_intercepts_os_signals(runtime_settings):
         cleanup_signals = _install_async_os_signal_handlers(loop, request_stop)
 
-    report_task: asyncio.Task[None] | None = None
-    run_task: asyncio.Task[None] | None = None
-    stop_waiter: asyncio.Task[bool] | None = None
     telegram_stop = asyncio.Event()
     telegram_task: asyncio.Task[None] | None = None
     try:
-        starter = getattr(bundle.observability, "start", None)
-        if callable(starter):
-            _ = starter()
-        bot = cast(object | None, getattr(bundle.scheduler, "telegram_bot", None))
-        if bot is not None:
-            telegram_task = asyncio.create_task(
-                _run_interactive_telegram_bot_until_stop(bot, telegram_stop)
-            )
-        strategies = bundle.components.get("strategies", ())
-        strategy_sequence: Sequence[object] = (
-            strategies
-            if isinstance(strategies, Sequence)
-            else ()
-        )
-        strategy_count = len(strategy_sequence)
-        strategy_names = [str(getattr(strategy, "strategy_name", "")) for strategy in strategy_sequence]
-        await asyncio.to_thread(_rebind_market_discovery_client, bundle.scheduler)
-
-        try:
-            await bundle.observability.notify_startup(
-                strategy_names,
-                sandbox_book_type=bundle.scheduler.settings.runtime.nautilus.sandbox_book_type,
-            )
-        except Exception:
-            runtime_logger.exception("Nautilus startup notification failed")
-        print(f"Nautilus runtime ready — {strategy_count} strategies")
+        telegram_task = await _start_async_cli_sidecars(bundle, telegram_stop)
+        strategy_names = _strategy_names_from_bundle(bundle)
+        await _notify_async_cli_startup(bundle, strategy_names, runtime_logger)
+        print(f"Nautilus runtime ready — {len(strategy_names)} strategies")
         if stop_event is not None and stop_event.is_set():
             return node
-        report_task = asyncio.create_task(
-            _run_nautilus_report_loop(bundle.scheduler, event)
-        )
-        run_task = asyncio.create_task(asyncio.to_thread(node.run))
-        stop_waiter = asyncio.create_task(event.wait())
-        done, pending = await asyncio.wait(
-            [run_task, stop_waiter],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if run_task in done:
-            if stop_waiter in pending:
-                _ = stop_waiter.cancel()
-            await run_task
-        elif stop_waiter in done:
-            stopper = getattr(node, "stop", None)
-            if callable(stopper):
-                _ = stopper()
-            await run_task
+        await _run_async_node_with_report_loop(node, bundle.scheduler, event)
     finally:
-        try:
-            event.set()
-            telegram_stop.set()
-            if telegram_task is not None:
-                with suppress(asyncio.CancelledError):
-                    await telegram_task
-            if report_task is not None:
-                _ = report_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await report_task
-            try:
-                await bundle.observability.notify_shutdown()
-            except Exception:
-                runtime_logger.exception("Nautilus shutdown notification failed")
-            stopper = getattr(bundle.observability, "stop", None)
-            if callable(stopper):
-                _ = stopper()
-            await _stop_nautilus_scheduler(bundle.scheduler)
-        finally:
-            cleanup_signals()
+        await _finalize_async_cli_runtime(
+            bundle,
+            event,
+            telegram_stop,
+            telegram_task,
+            runtime_logger,
+            cleanup_signals,
+        )
     return node
 
 
-def run_nautilus_cli(settings: Settings | None = None) -> None:
-    """Entry point for the ``nautilus`` CLI mode — sync wrapper."""
-    if settings is None:
-        settings = load_settings()
+def _prepare_sync_cli_bundle(settings: Settings) -> NautilusRuntimeBundle:
     _write_runtime_startup_marker_best_effort(_runtime_startup_marker_path(settings))
     scheduler, discovered_markets, observability = asyncio.run(
         _prepare_nautilus_runtime_context(settings)
@@ -1109,8 +1212,80 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
         discovered_markets,
         observability,
     )
-    heartbeat_path = _runtime_heartbeat_path(bundle.scheduler.settings)
-    _write_runtime_heartbeat_best_effort(heartbeat_path, phase="starting")
+    _write_runtime_heartbeat_best_effort(
+        _runtime_heartbeat_path(bundle.scheduler.settings),
+        phase="starting",
+    )
+    return bundle
+
+
+def _run_sync_cli_main(
+    bundle: NautilusRuntimeBundle,
+    node: _TradingNodeLike,
+    settings: Settings,
+    strategy_names: list[str],
+    runtime_logger: logging.Logger,
+) -> tuple[_InteractiveTelegramBotThread | None, _NautilusReportLoopThread | None]:
+    starter = getattr(bundle.observability, "start", None)
+    if callable(starter):
+        _ = starter()
+    telegram_bot_thread = _start_interactive_telegram_bot_thread(bundle.scheduler)
+    report_loop_thread = _start_nautilus_report_loop_thread(bundle.scheduler)
+    try:
+        asyncio.run(
+            bundle.observability.notify_startup(
+                strategy_names,
+                sandbox_book_type=bundle.scheduler.settings.runtime.nautilus.sandbox_book_type,
+            )
+        )
+    except Exception:
+        runtime_logger.exception("Nautilus startup notification failed")
+    print(f"Nautilus runtime ready — {len(strategy_names)} strategies")
+    _install_crash_logger(settings.storage.jsonl_dir)
+    run_method = cast(Callable[..., None], getattr(node, "run"))
+    if "raise_exception" in inspect.signature(run_method).parameters:
+        run_method(raise_exception=True)
+    else:
+        run_method()
+    if strategy_names:
+        _dump_thread_stacks(f"{settings.storage.jsonl_dir.rstrip('/')}/crash.log")
+        runtime_logger.warning(
+            "TradingNode.run returned unexpectedly with %d strategies active",
+            len(strategy_names),
+        )
+    return telegram_bot_thread, report_loop_thread
+
+
+def _finalize_sync_cli_runtime(
+    bundle: NautilusRuntimeBundle,
+    node: _TradingNodeLike,
+    telegram_bot_thread: _InteractiveTelegramBotThread | None,
+    report_loop_thread: _NautilusReportLoopThread | None,
+    runtime_logger: logging.Logger,
+    cleanup_signals: Callable[[], None],
+) -> None:
+    _stop_nautilus_report_loop_thread(report_loop_thread)
+    _stop_interactive_telegram_bot_thread(telegram_bot_thread)
+    try:
+        try:
+            asyncio.run(bundle.observability.notify_shutdown())
+        except Exception:
+            runtime_logger.exception("Nautilus shutdown notification failed")
+        stopper = getattr(bundle.observability, "stop", None)
+        if callable(stopper):
+            _ = stopper()
+        asyncio.run(_stop_nautilus_scheduler(bundle.scheduler))
+        if isinstance(node, _Disposable):
+            node.dispose()
+    finally:
+        cleanup_signals()
+
+
+def run_nautilus_cli(settings: Settings | None = None) -> None:
+    """Entry point for the ``nautilus`` CLI mode — sync wrapper."""
+    if settings is None:
+        settings = load_settings()
+    bundle = _prepare_sync_cli_bundle(settings)
     node = bundle.node
 
     def request_stop() -> None:
@@ -1124,59 +1299,26 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
     if _runtime_intercepts_os_signals(getattr(bundle.scheduler, "settings", settings)):
         cleanup_signals = _install_sync_os_signal_handlers(request_stop)
     runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))
-    strategies = bundle.components.get("strategies", ())
-    strategy_sequence: Sequence[object] = (
-        strategies
-        if isinstance(strategies, Sequence)
-        else ()
-    )
-    strategy_names = [str(getattr(strategy, "strategy_name", "")) for strategy in strategy_sequence]
+    strategy_names = _strategy_names_from_bundle(bundle)
     telegram_bot_thread: _InteractiveTelegramBotThread | None = None
     report_loop_thread: _NautilusReportLoopThread | None = None
     try:
-        starter = getattr(bundle.observability, "start", None)
-        if callable(starter):
-            _ = starter()
-        telegram_bot_thread = _start_interactive_telegram_bot_thread(bundle.scheduler)
-        report_loop_thread = _start_nautilus_report_loop_thread(bundle.scheduler)
-        try:
-            asyncio.run(
-                bundle.observability.notify_startup(
-                    strategy_names,
-                    sandbox_book_type=bundle.scheduler.settings.runtime.nautilus.sandbox_book_type,
-                )
-            )
-        except Exception:
-            runtime_logger.exception("Nautilus startup notification failed")
-        print(f"Nautilus runtime ready — {len(strategy_names)} strategies")
-        _install_crash_logger(settings.storage.jsonl_dir)
-        run_method = cast(Callable[..., None], getattr(node, "run"))
-        if "raise_exception" in inspect.signature(run_method).parameters:
-            run_method(raise_exception=True)
-        else:
-            run_method()
-        if strategy_names:
-            _dump_thread_stacks(f"{settings.storage.jsonl_dir.rstrip('/')}/crash.log")
-            runtime_logger.warning(
-                "TradingNode.run returned unexpectedly with %d strategies active",
-                len(strategy_names),
-            )
+        telegram_bot_thread, report_loop_thread = _run_sync_cli_main(
+            bundle,
+            node,
+            settings,
+            strategy_names,
+            runtime_logger,
+        )
     finally:
-        _stop_nautilus_report_loop_thread(report_loop_thread)
-        _stop_interactive_telegram_bot_thread(telegram_bot_thread)
-        try:
-            try:
-                asyncio.run(bundle.observability.notify_shutdown())
-            except Exception:
-                runtime_logger.exception("Nautilus shutdown notification failed")
-            stopper = getattr(bundle.observability, "stop", None)
-            if callable(stopper):
-                _ = stopper()
-            asyncio.run(_stop_nautilus_scheduler(bundle.scheduler))
-            if isinstance(node, _Disposable):
-                node.dispose()
-        finally:
-            cleanup_signals()
+        _finalize_sync_cli_runtime(
+            bundle,
+            node,
+            telegram_bot_thread,
+            report_loop_thread,
+            runtime_logger,
+            cleanup_signals,
+        )
 
 
 def main() -> int:

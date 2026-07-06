@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -32,6 +32,17 @@ class SchedulerPersistenceError(RuntimeError):
 
     def __str__(self) -> str:
         return f"{self.operation} failed: {self.reason}"
+
+
+@dataclass(frozen=True, slots=True)
+class DailyReportInputs:
+    today: date
+    today_iso: str
+    today_signals_raw: list[dict[str, object]]
+    today_orders_raw: list[dict[str, object]]
+    today_fills_raw: list[dict[str, object]]
+    today_reject_orders_raw: list[dict[str, object]]
+    trade_results: list[PaperTradeResult]
 
 
 async def check_settlements(scheduler: PolySignalScheduler) -> list[PaperTradeResult]:
@@ -444,12 +455,12 @@ def _report_equity_inputs_from_nautilus_cache(
     return starting_equity, ending_equity, open_positions
 
 
-async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport | None:
-    try:
-        report_tz = ZoneInfo(scheduler.settings.app.timezone)
-    except ZoneInfoNotFoundError:
-        report_tz = UTC
-    today = datetime.now(report_tz).date()
+def _collect_daily_report_inputs(
+    scheduler: PolySignalScheduler,
+    *,
+    today: date,
+    report_tz: ZoneInfo | timezone,
+) -> DailyReportInputs:
     today_iso = today.isoformat()
     day_start_local = datetime.combine(today, time.min, tzinfo=report_tz)
     day_end_local = datetime.combine(today + timedelta(days=1), time.min, tzinfo=report_tz)
@@ -459,20 +470,14 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
     day_created_where = "WHERE created_at >= ? AND created_at < ?"
     day_closed_where = "WHERE closed_at >= ? AND closed_at < ?"
 
-    existing = scheduler.persistence.query_json(
-        "daily_reports", where="WHERE report_date = ?", params=(today_iso,)
-    )
-    if existing:
-        scheduler.logger.info("Daily report already exists for %s, skipping", today_iso)
-        return None
-
-    today_results_raw = scheduler.persistence.query_json(
-        "paper_trade_results",
-        where=day_closed_where,
-        params=day_params,
-    )
-    trade_results = [PaperTradeResult(**result) for result in today_results_raw]
-
+    trade_results = [
+        PaperTradeResult(**result)
+        for result in scheduler.persistence.query_json(
+            "paper_trade_results",
+            where=day_closed_where,
+            params=day_params,
+        )
+    ]
     today_fills_raw = scheduler.persistence.query_json(
         "paper_fills",
         where=day_created_where,
@@ -506,7 +511,7 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
         for order in today_orders_raw
         if order.get("paper_order_id")
     }
-    today_terminal_orders_raw = []
+    today_terminal_orders_raw: list[dict[str, object]] = []
     if not using_nautilus_order_rows:
         terminal_order_candidates = scheduler.persistence.query_json(
             "paper_orders",
@@ -531,17 +536,32 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
         params=day_params,
         limit=10000,
     )
+    return DailyReportInputs(
+        today=today,
+        today_iso=today_iso,
+        today_signals_raw=today_signals_raw,
+        today_orders_raw=today_orders_raw,
+        today_fills_raw=today_fills_raw,
+        today_reject_orders_raw=today_reject_orders_raw,
+        trade_results=trade_results,
+    )
+
+
+async def _build_daily_report_from_inputs(
+    scheduler: PolySignalScheduler,
+    inputs: DailyReportInputs,
+) -> DailyReport | None:
     today_fill_payloads = _fill_payloads_with_order_intents(
-        scheduler, today_fills_raw, today_orders_raw
+        scheduler, inputs.today_fills_raw, inputs.today_orders_raw
     )
     rejected_paper_orders = sum(
         1
-        for order in today_reject_orders_raw
+        for order in inputs.today_reject_orders_raw
         if is_rejected_paper_order_payload(order, _paper_order_metrics(order))
     )
     stale_paper_fills = sum(
         1
-        for order in today_orders_raw
+        for order in inputs.today_orders_raw
         if order.get("status") == "FILLED"
         and _paper_order_metrics(order).get("orderbook_fresh") is False
     )
@@ -566,20 +586,20 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
     starting_equity, ending_equity, open_positions = _report_equity_inputs(scheduler)
     try:
         report = PaperReportService().build_daily_report(
-            report_date=today,
+            report_date=inputs.today,
             starting_equity=starting_equity,
             ending_equity=ending_equity,
-            total_signals=len(today_signals_raw),
-            paper_orders=len(today_orders_raw),
-            paper_fills=len(today_fills_raw),
+            total_signals=len(inputs.today_signals_raw),
+            paper_orders=len(inputs.today_orders_raw),
+            paper_fills=len(inputs.today_fills_raw),
             rejected_paper_orders=rejected_paper_orders,
             open_positions=open_positions,
-            results=trade_results,
+            results=inputs.trade_results,
             equity_curve=[starting_equity, ending_equity],
             stale_paper_fills=stale_paper_fills,
-            paper_order_payloads=today_orders_raw,
+            paper_order_payloads=inputs.today_orders_raw,
             paper_fill_payloads=today_fill_payloads,
-            paper_reject_payloads=today_reject_orders_raw,
+            paper_reject_payloads=inputs.today_reject_orders_raw,
             paper_execution_assumptions=paper_execution_assumptions,
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -614,8 +634,26 @@ async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport |
 
     scheduler.logger.info(
         "Generated daily report for %s: %d closed trades, pnl=%.2f",
-        today_iso,
-        len(trade_results),
+        inputs.today_iso,
+        len(inputs.trade_results),
         report.paper_pnl,
     )
     return report
+
+
+async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport | None:
+    try:
+        report_tz = ZoneInfo(scheduler.settings.app.timezone)
+    except ZoneInfoNotFoundError:
+        report_tz = UTC
+    today = datetime.now(report_tz).date()
+
+    existing = scheduler.persistence.query_json(
+        "daily_reports", where="WHERE report_date = ?", params=(today.isoformat(),)
+    )
+    if existing:
+        scheduler.logger.info("Daily report already exists for %s, skipping", today.isoformat())
+        return None
+
+    inputs = _collect_daily_report_inputs(scheduler, today=today, report_tz=report_tz)
+    return await _build_daily_report_from_inputs(scheduler, inputs)

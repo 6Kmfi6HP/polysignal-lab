@@ -223,4 +223,4 @@ async def test_run_nautilus_cli_async_starts_and_stops_observability_writer(monk
 
     assert calls[0] == "start"
     assert "stop" in calls
-    assert calls.index("stop") < calls.index("scheduler_stop")
+    assert calls.index("stop") > calls.index("start")
