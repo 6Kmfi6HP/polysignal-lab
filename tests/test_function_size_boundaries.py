@@ -7,8 +7,10 @@ from pathlib import Path
 LIMITS = {
     "src/polysignal_lab/nautilus_runtime/node.py": {
         "build_trading_node": 55,
-        "run_nautilus_cli_async": 70,
         "run_nautilus_cli": 70,
+    },
+    "src/polysignal_lab/nautilus_runtime/node_cli.py": {
+        "run_nautilus_cli_async": 70,
     },
     "src/polysignal_lab/app/scheduler_reporting.py": {
         "generate_daily_report": 80,

@@ -6,7 +6,7 @@ no private key/env-var reading, no allowance scripts.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 UTC = timezone.utc
 import asyncio
@@ -15,11 +15,10 @@ import inspect
 import importlib
 import logging
 import signal
-import threading
 import traceback
 from contextlib import suppress
 import sys
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
@@ -27,18 +26,40 @@ from typing import Protocol, cast, runtime_checkable
 
 from polysignal_lab.alpha.types import AlphaCore, TradeView
 from polysignal_lab.app.scheduler import PolySignalScheduler
-from polysignal_lab.app import scheduler_health
-from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.config import Settings, load_settings
-from polysignal_lab.domain.enums import Side
-from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.market import Market
-from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.node_probes import (
+    _runtime_heartbeat_path,
+    _runtime_startup_marker_path,
+    _write_runtime_startup_marker_best_effort,
+    _write_runtime_heartbeat_best_effort,
+    _runtime_progress_callback,
+)
+from polysignal_lab.nautilus_runtime.node_signals import (
+    _restore_os_signal_handlers,
+    _runtime_intercepts_os_signals,
+    _SignalHandlerSnapshot,
+)
+from polysignal_lab.nautilus_runtime.signal_sidecar import (
+    _InteractiveTelegramBotThread,
+    _NautilusReportLoopThread,
+    _notify_accepted_signal,
+    _run_interactive_telegram_bot_until_stop,
+    _run_nautilus_report_loop,
+    _start_interactive_telegram_bot_thread,
+    _start_nautilus_report_loop_thread,
+    _stop_interactive_telegram_bot_thread,
+    _stop_nautilus_report_loop_thread,
+    _stop_nautilus_scheduler,
+)
+from polysignal_lab.nautilus_runtime.node_cli import (
+    run_nautilus_cli_async,
+)
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
     NautilusEventStoreAdapter,
@@ -48,10 +69,6 @@ from polysignal_lab.nautilus_runtime.observability import (
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
-from polysignal_lab.observability.runtime_health import (
-    write_runtime_heartbeat,
-    write_runtime_startup_marker,
-)
 from polysignal_lab.strategies.execution import build_strategy_schedule
 
 class _TraderLike(Protocol):
@@ -76,25 +93,6 @@ class _NativeStrategyLike(Protocol):
     strategy_name: str
 
 
-class _PublishResultLike(Protocol):
-    def as_dict(self) -> dict[str, str | None]: ...
-
-
-class _PublishServiceLike(Protocol):
-    formatter: object
-    persistence: object
-    timeout_sec: float
-
-    async def publish_signal(
-        self,
-        signal: SignalCandidate,
-        stake_usdc: float,
-    ) -> _PublishResultLike: ...
-
-
-class _InteractiveBotLike(Protocol):
-    async def start(self) -> object: ...
-    async def stop(self) -> object: ...
 
 class _EmptyBookDataProvider:
     def book_for_token(self, token_id: str) -> None:
@@ -128,51 +126,6 @@ class _StaticMarketUniverse:
 
 
 logger = logging.getLogger(__name__)
-
-def _runtime_heartbeat_path(settings: Settings) -> Path:
-    return Path(settings.storage.state_dir) / "runtime_heartbeat.json"
-
-
-def _runtime_startup_marker_path(settings: Settings) -> Path:
-    return Path(settings.storage.state_dir) / "runtime_startup.json"
-
-
-def _log_probe_write_failure(path: Path) -> None:
-    logger.warning("Failed to write runtime probe state: %s", path, exc_info=True)
-
-
-def _write_runtime_startup_marker_best_effort(path: Path) -> None:
-    try:
-        _ = write_runtime_startup_marker(path)
-    except OSError:
-        _log_probe_write_failure(path)
-
-
-def _write_runtime_heartbeat_best_effort(
-    path: Path,
-    *,
-    phase: str,
-    fatal: bool = False,
-    fatal_reason: str | None = None,
-) -> None:
-    try:
-        _ = write_runtime_heartbeat(
-            path,
-            phase=phase,
-            fatal=fatal,
-            fatal_reason=fatal_reason,
-        )
-    except OSError:
-        _log_probe_write_failure(path)
-
-
-def _runtime_progress_callback(settings: Settings) -> Callable[[str], None]:
-    path = _runtime_heartbeat_path(settings)
-
-    def note_progress(phase: str) -> None:
-        _write_runtime_heartbeat_best_effort(path, phase=phase)
-
-    return note_progress
 
 
 
@@ -565,204 +518,6 @@ def _instrument_id_resolver(registry: MarketCatalog) -> Callable[[str], object]:
     return resolve
 
 
-async def _stop_nautilus_scheduler(scheduler: object) -> None:
-    if bool(getattr(scheduler, "_nautilus_runtime_owned_by_live_node", False)):
-        setattr(scheduler, "_running", False)
-        try:
-            scheduler_health.persist_health_snapshot(cast(PolySignalScheduler, scheduler))
-        except Exception as exc:
-            cast(logging.Logger, getattr(scheduler, "logger", logger)).warning(
-                "Failed to persist Nautilus health snapshot: %s",
-                exc,
-            )
-        return
-
-    setattr(scheduler, "_running", False)
-    try:
-        scheduler_health.persist_health_snapshot(cast(PolySignalScheduler, scheduler))
-    except Exception as exc:
-        cast(logging.Logger, getattr(scheduler, "logger", logger)).warning(
-            "Failed to persist Nautilus health snapshot: %s",
-            exc,
-        )
-
-
-def _fresh_publish_service(
-    scheduler: PolySignalScheduler,
-) -> tuple[PublishService, TelegramPublisher]:
-    base_service = cast(_PublishServiceLike, scheduler.publish_service)
-    publisher = TelegramPublisher(scheduler.settings.telegram)
-    publish_service = PublishService(
-        base_service.formatter,
-        publisher,
-        base_service.persistence,
-        timeout_sec=base_service.timeout_sec,
-    )
-    return publish_service, publisher
-
-
-async def _publish_accepted_signal_once(
-    scheduler: PolySignalScheduler,
-    signal: SignalCandidate,
-    stake_usdc: float,
-) -> dict[str, str | None]:
-    publish_service, publisher = _fresh_publish_service(scheduler)
-    try:
-        publish = await cast(_PublishServiceLike, publish_service).publish_signal(signal, stake_usdc)
-        return publish.as_dict()
-    finally:
-        await publisher.client.aclose()
-
-
-def _publish_accepted_signal_in_background(
-    scheduler: PolySignalScheduler,
-    signal: SignalCandidate,
-    stake_usdc: float,
-) -> None:
-    try:
-        publish = asyncio.run(_publish_accepted_signal_once(scheduler, signal, stake_usdc))
-        scheduler_health.note_publish_result(scheduler, publish)
-    except Exception as exc:
-        scheduler.logger.warning(
-            "Nautilus accepted signal publish failed for %s: %s",
-            signal.signal_id,
-            exc,
-        )
-
-
-def _notify_accepted_signal(
-    scheduler: PolySignalScheduler,
-    signal: SignalCandidate,
-    stake_usdc: float,
-) -> None:
-    if not getattr(scheduler.settings.telegram, "send_signals", False):
-        return
-    thread = threading.Thread(
-        target=_publish_accepted_signal_in_background,
-        args=(scheduler, signal, stake_usdc),
-        daemon=True,
-    )
-    thread.start()
-
-
-
-
-
-
-_InteractiveTelegramBotThread = tuple[threading.Thread, threading.Event]
-
-
-async def _run_interactive_telegram_bot_until_stop(
-    bot: object,
-    stop: asyncio.Event,
-) -> None:
-    start = getattr(bot, "start", None)
-    stop_bot = getattr(bot, "stop", None)
-    if not callable(start) or not callable(stop_bot):
-        return
-    try:
-        _ = await cast(Callable[[], Awaitable[object]], start)()
-        _ = await stop.wait()
-    finally:
-        _ = await cast(Callable[[], Awaitable[object]], stop_bot)()
-
-
-def _start_interactive_telegram_bot_thread(
-    scheduler: PolySignalScheduler,
-) -> _InteractiveTelegramBotThread | None:
-    bot = cast(object | None, getattr(scheduler, "telegram_bot", None))
-    if bot is None:
-        return None
-    stop_event = threading.Event()
-    runtime_logger = cast(logging.Logger, getattr(scheduler, "logger", logger))
-
-    def _run() -> None:
-        async def _main() -> None:
-            try:
-                typed_bot = cast(_InteractiveBotLike, bot)
-                _ = await typed_bot.start()
-                while not stop_event.is_set():
-                    await asyncio.sleep(0.5)
-            finally:
-                _ = await cast(_InteractiveBotLike, bot).stop()
-
-        try:
-            asyncio.run(_main())
-        except Exception:
-            runtime_logger.exception("Interactive Telegram bot thread exited with error")
-
-    thread = threading.Thread(
-        target=_run,
-        name="telegram-interactive-bot",
-        daemon=True,
-    )
-    thread.start()
-    return thread, stop_event
-
-
-def _stop_interactive_telegram_bot_thread(
-    handle: _InteractiveTelegramBotThread | None,
-    *,
-    timeout_sec: float = 15.0,
-) -> None:
-    if handle is None:
-        return
-    thread, stop_event = handle
-    stop_event.set()
-    thread.join(timeout=timeout_sec)
-
-
-_NautilusReportLoopThread = tuple[threading.Thread, threading.Event]
-
-
-def _start_nautilus_report_loop_thread(
-    scheduler: PolySignalScheduler,
-) -> _NautilusReportLoopThread:
-    stop_event = threading.Event()
-    runtime_logger = cast(logging.Logger, getattr(scheduler, "logger", logger))
-
-    def _run() -> None:
-        async def _main() -> None:
-            asyncio_stop = asyncio.Event()
-
-            async def _watch_stop() -> None:
-                while not stop_event.is_set():
-                    await asyncio.sleep(0.5)
-                asyncio_stop.set()
-
-            watcher = asyncio.create_task(_watch_stop())
-            try:
-                await _run_nautilus_report_loop(scheduler, asyncio_stop)
-            finally:
-                _ = watcher.cancel()
-                with suppress(asyncio.CancelledError):
-                    await watcher
-
-        try:
-            asyncio.run(_main())
-        except Exception:
-            runtime_logger.exception("Nautilus report loop thread exited with error")
-
-    thread = threading.Thread(
-        target=_run,
-        name="nautilus-report-loop",
-        daemon=True,
-    )
-    thread.start()
-    return thread, stop_event
-
-
-def _stop_nautilus_report_loop_thread(
-    handle: _NautilusReportLoopThread | None,
-    *,
-    timeout_sec: float = 15.0,
-) -> None:
-    if handle is None:
-        return
-    thread, stop_event = handle
-    stop_event.set()
-    thread.join(timeout=timeout_sec)
-
 
 
 async def _prepare_nautilus_runtime_context(
@@ -935,76 +690,8 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
 
     scheduler, discovered_markets, observability = await _prepare_nautilus_runtime_context(settings)
     return _build_nautilus_runtime_bundle(settings, scheduler, discovered_markets, observability)
-async def _run_nautilus_housekeeping_once(
-    scheduler: PolySignalScheduler,
-    last_report_date: date | None,
-) -> date | None:
-    from polysignal_lab.app.scheduler_runtime import _generate_iteration_report  # pyright: ignore[reportPrivateUsage] - runtime reuses scheduler's existing report generator.
-
-    return await _generate_iteration_report(scheduler, last_report_date)
 
 
-async def _run_nautilus_report_loop(
-    scheduler: PolySignalScheduler,
-    stop_event: asyncio.Event,
-) -> None:
-    last_report_date = None
-    interval_sec = max(float(scheduler.settings.markets.refresh_interval_sec), 1.0)
-    while not stop_event.is_set():
-        last_report_date = await _run_nautilus_housekeeping_once(
-            scheduler,
-            last_report_date,
-        )
-        try:
-            _ = await asyncio.wait_for(stop_event.wait(), timeout=interval_sec)
-        except asyncio.TimeoutError:
-            continue
-
-
-
-
-def _runtime_intercepts_os_signals(settings: object | None) -> bool:
-    runtime_settings = getattr(settings, "runtime", None)
-    nautilus_settings = getattr(runtime_settings, "nautilus", None)
-    return bool(getattr(nautilus_settings, "intercept_os_signals", False))
-
-
-_SignalHandler = signal.Handlers | int | Callable[..., object] | None
-_SignalHandlerSnapshot = tuple[signal.Signals, _SignalHandler]
-
-
-def _restore_os_signal_handlers(
-    previous_handlers: Sequence[_SignalHandlerSnapshot],
-) -> None:
-    for sig, previous in reversed(previous_handlers):
-        with suppress(ValueError, OSError, RuntimeError):
-            _ = signal.signal(sig, previous)
-
-
-def _install_async_os_signal_handlers(
-    loop: asyncio.AbstractEventLoop,
-    request_stop: Callable[[], None],
-) -> Callable[[], None]:
-    loop_handlers: list[_SignalHandlerSnapshot] = []
-    sync_handlers: list[_SignalHandlerSnapshot] = []
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        previous = signal.getsignal(sig)
-        try:
-            loop.add_signal_handler(sig, request_stop)
-        except (NotImplementedError, RuntimeError):
-            _ = signal.signal(sig, lambda _signum, _frame: request_stop())
-            sync_handlers.append((sig, previous))
-        else:
-            loop_handlers.append((sig, previous))
-
-    def cleanup() -> None:
-        for sig, previous in reversed(loop_handlers):
-            with suppress(NotImplementedError, RuntimeError):
-                _ = loop.remove_signal_handler(sig)
-            _restore_os_signal_handlers(((sig, previous),))
-        _restore_os_signal_handlers(sync_handlers)
-
-    return cleanup
 
 
 def _install_sync_os_signal_handlers(
@@ -1161,51 +848,6 @@ async def _finalize_async_cli_runtime(
     finally:
         cleanup_signals()
 
-
-async def run_nautilus_cli_async(
-    settings: Settings | None = None,
-    stop_event: asyncio.Event | None = None,
-) -> _NautilusNodeLike:
-    """Run the Nautilus CLI with async orchestration and signal handling."""
-    event = stop_event or asyncio.Event()
-    if settings is None:
-        settings = load_settings()
-    _write_runtime_startup_marker_best_effort(_runtime_startup_marker_path(settings))
-    bundle = await build_nautilus_runtime(settings)
-    _write_runtime_heartbeat_best_effort(
-        _runtime_heartbeat_path(bundle.scheduler.settings),
-        phase="starting",
-    )
-    node = bundle.node
-    loop = asyncio.get_running_loop()
-
-    request_stop: Callable[[], None] = event.set
-    runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))
-    cleanup_signals: Callable[[], None] = lambda: None
-    runtime_settings = getattr(bundle.scheduler, "settings", settings)
-    if _runtime_intercepts_os_signals(runtime_settings):
-        cleanup_signals = _install_async_os_signal_handlers(loop, request_stop)
-
-    telegram_stop = asyncio.Event()
-    telegram_task: asyncio.Task[None] | None = None
-    try:
-        telegram_task = await _start_async_cli_sidecars(bundle, telegram_stop)
-        strategy_names = _strategy_names_from_bundle(bundle)
-        await _notify_async_cli_startup(bundle, strategy_names, runtime_logger)
-        print(f"Nautilus runtime ready — {len(strategy_names)} strategies")
-        if stop_event is not None and stop_event.is_set():
-            return node
-        await _run_async_node_with_report_loop(node, bundle.scheduler, event)
-    finally:
-        await _finalize_async_cli_runtime(
-            bundle,
-            event,
-            telegram_stop,
-            telegram_task,
-            runtime_logger,
-            cleanup_signals,
-        )
-    return node
 
 
 def _prepare_sync_cli_bundle(settings: Settings) -> NautilusRuntimeBundle:
