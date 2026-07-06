@@ -305,7 +305,6 @@ def test_nautilus_observability_has_no_paper_model_recording_api() -> None:
 
     assert [token for token in forbidden if token in source] == []
 
-@pytest.mark.xfail(strict=True, reason="Task 2 removes legacy TradingNode surface")
 
 def test_default_runtime_uses_livenode_builder_not_legacy_trading_node() -> None:
     forbidden = (

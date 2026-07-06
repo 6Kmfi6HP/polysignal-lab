@@ -34,136 +34,131 @@ def _runtime_settings_stub(**kwargs):
         **kwargs,
     )
 
+@pytest.fixture(autouse=True)
+def _patch_live_node_config_imports(monkeypatch):
+    def _fake_import_callable(module_name: str, attr_name: str):
+        def _factory(**kwargs):
+            return SimpleNamespace(module_name=module_name, attr_name=attr_name, **kwargs)
+
+        return _factory
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.live_node._import_callable",
+        _fake_import_callable,
+    )
+
 
 def _patch_nautilus_placeholders(monkeypatch):
-    """Monkeypatch all 4 module-level nautilus placeholders so tests on py3.11
-    can call build_trading_node without importing nautilus_trader."""
+    """Monkeypatch LiveNode builder placeholders so tests run without Nautilus."""
 
-    class _FakeTradingNode:
-        def __init__(self, config):
-            self.config = config
+    class FakeLiveNode:
+        @classmethod
+        def builder(cls, trader_id_text, trader_id, environment):
+            return FakeBuilder(trader_id_text, trader_id, environment)
+
+    class FakeBuilder:
+        def __init__(self, trader_id_text, trader_id, environment):
+            self.trader_id_text = trader_id_text
+            self.trader_id = trader_id
+            self.environment = environment
+            self.data_engine_config = None
+            self.exec_engine_config = None
+            self.cache_config = None
+            self.data_clients = []
+            self.exec_clients = []
+
+        def with_data_engine_config(self, config):
+            self.data_engine_config = config
+            return self
+
+        def with_exec_engine_config(self, config):
+            self.exec_engine_config = config
+            return self
+
+        def with_cache_config(self, config):
+            self.cache_config = config
+            return self
+
+        def add_data_client(self, name, factory, config):
+            self.data_clients.append((name, factory, config))
+            return self
+
+        def add_exec_client(self, name, factory, config):
+            self.exec_clients.append((name, factory, config))
+            return self
+
+        def build(self):
+            return FakeBuiltNode(self)
+
+    class FakeBuiltNode:
+        def __init__(self, builder):
+            self.builder = builder
             self.trader = SimpleNamespace(strategies=[], actors=[])
             self.trader.add_strategy = self.trader.strategies.append
             self.trader.add_actor = self.trader.actors.append
             self.built = False
-            self.exec_factory_name: str | None = None
-
-        def add_data_client_factory(self, name, factory):
-            pass
-
-        def add_exec_client_factory(self, name, factory):
-            self.exec_factory_name = name
 
         def build(self):
             self.built = True
 
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.TradingNode",
-        _FakeTradingNode,
-    )
+    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.LiveNode", FakeLiveNode)
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node.PolymarketInstrumentProviderConfig",
         lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
     )
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.build_paper_trading_node_config",
-        lambda settings, **kwargs: SimpleNamespace(**kwargs),
+        "polysignal_lab.nautilus_runtime.live_node.LiveNode",
+        FakeLiveNode,
     )
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.register_paper_factories",
-        lambda node: (
-            node.add_data_client_factory("POLYMARKET", object()),
-            node.add_exec_client_factory(PAPER_EXEC_CLIENT_ID, object()),
-        ),
+        "polysignal_lab.nautilus_runtime.live_node.TraderId",
+        lambda value: f"TraderId:{value}",
     )
-    return _FakeTradingNode
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.live_node.Environment",
+        SimpleNamespace(SANDBOX="SANDBOX"),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.live_node.PolymarketLiveDataClientFactory",
+        object(),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.live_node.SandboxLiveExecClientFactory",
+        object(),
+    )
+    return FakeLiveNode
+
+
+def test_build_trading_node_uses_livenode_builder(monkeypatch) -> None:
+    _patch_nautilus_placeholders(monkeypatch)
+
+    runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+    node = runtime["node"]
+    builder = node.builder
+
+    assert builder.trader_id_text == "POLYSIGNAL-001"
+    assert builder.environment == "SANDBOX"
+    assert builder.data_clients[0][0] == "POLYMARKET"
+    assert builder.exec_clients[0][0] == PAPER_EXEC_CLIENT_ID
+    assert builder.exec_clients[0][0] != "POLYMARKET"
+    assert node.built is True
 
 
 def test_build_trading_node_returns_nautilus_runtime_components(monkeypatch) -> None:
-    built = {}
-
-    class FakeTradingNode:
-        def __init__(self, config):
-            self.config = config
-            self.trader = SimpleNamespace(strategies=[], actors=[])
-            self.trader.add_strategy = self.trader.strategies.append
-            self.trader.add_actor = self.trader.actors.append
-            self.built = False
-            built["node"] = self
-
-        def add_data_client_factory(self, name, factory):
-            built.setdefault("data_factories", []).append((name, factory))
-
-        def add_exec_client_factory(self, name, factory):
-            built.setdefault("exec_factories", []).append((name, factory))
-
-        def build(self):
-            self.built = True
-
-    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.TradingNode", FakeTradingNode)
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.PolymarketInstrumentProviderConfig",
-        lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.build_paper_trading_node_config",
-        lambda settings, **kwargs: SimpleNamespace(**kwargs),
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.register_paper_factories",
-        lambda node: (
-            node.add_data_client_factory("POLYMARKET", object()),
-            node.add_exec_client_factory(PAPER_EXEC_CLIENT_ID, object()),
-        ),
-    )
+    _patch_nautilus_placeholders(monkeypatch)
 
     runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+    node = runtime["node"]
 
-    assert runtime["node"] is built["node"]
-    assert built["node"].built is True
-    assert built["exec_factories"][0][0] != "POLYMARKET"
-    assert len(built["node"].trader.actors) == 1
+    assert node.built is True
+    assert node.builder.exec_clients[0][0] != "POLYMARKET"
+    assert len(node.trader.actors) == 1
     assert "paper_client" not in runtime
 
 
 
 def test_build_trading_node_injects_shared_projections_and_no_manual_sync_components(monkeypatch) -> None:
-    built = {}
-
-    class FakeTradingNode:
-        def __init__(self, config):
-            self.config = config
-            self.trader = SimpleNamespace(strategies=[], actors=[])
-            self.trader.add_strategy = self.trader.strategies.append
-            self.trader.add_actor = self.trader.actors.append
-            self.built = False
-            built["node"] = self
-
-        def add_data_client_factory(self, name, factory):
-            built.setdefault("data_factories", []).append((name, factory))
-
-        def add_exec_client_factory(self, name, factory):
-            built.setdefault("exec_factories", []).append((name, factory))
-
-        def build(self):
-            self.built = True
-
-    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.TradingNode", FakeTradingNode)
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.PolymarketInstrumentProviderConfig",
-        lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.build_paper_trading_node_config",
-        lambda settings, **kwargs: SimpleNamespace(**kwargs),
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.register_paper_factories",
-        lambda node: (
-            node.add_data_client_factory("POLYMARKET", object()),
-            node.add_exec_client_factory(PAPER_EXEC_CLIENT_ID, object()),
-        ),
-    )
+    _patch_nautilus_placeholders(monkeypatch)
 
     runtime = build_trading_node(condition_ids=("condition-btc-5m",))
     strategies = cast(list[object], runtime["strategies"])
@@ -184,42 +179,12 @@ def test_build_trading_node_injects_shared_projections_and_no_manual_sync_compon
     assert getattr(first_strategy, "assembler") is runtime["assembler"]
 
 def test_build_trading_node_registers_market_rotation_actor(monkeypatch) -> None:
-    built = {}
-
-    class FakeTradingNode:
-        def __init__(self, config):
-            self.config = config
-            self.trader = SimpleNamespace(strategies=[], actors=[])
-            self.trader.add_strategy = self.trader.strategies.append
-            self.trader.add_actor = self.trader.actors.append
-            built["node"] = self
-
-        def add_data_client_factory(self, name, factory):
-            pass
-
-        def add_exec_client_factory(self, name, factory):
-            pass
-
-        def build(self):
-            return None
+    _patch_nautilus_placeholders(monkeypatch)
 
     class FakeRotationActor:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.TradingNode", FakeTradingNode)
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.PolymarketInstrumentProviderConfig",
-        lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.build_paper_trading_node_config",
-        lambda settings, **kwargs: SimpleNamespace(**kwargs),
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.register_paper_factories",
-        lambda node: None,
-    )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.market_rotation.runtime_market_rotation_actor_type",
         lambda _base, _config: FakeRotationActor,
@@ -236,51 +201,21 @@ def test_build_trading_node_registers_market_rotation_actor(monkeypatch) -> None
         market_universe=universe,
         health=health,
     )
+    node = runtime["node"]
 
-    assert len(built["node"].trader.actors) == 1
-    assert built["node"].trader.actors[0] is runtime["market_rotation_actor"]
+    assert len(node.trader.actors) == 1
+    assert node.trader.actors[0] is runtime["market_rotation_actor"]
     assert isinstance(runtime["market_rotation_actor"], FakeRotationActor)
     assert runtime["market_rotation_actor"].kwargs["market_universe"] is universe
     assert runtime["market_rotation_actor"].kwargs["health"] is health
 
 def test_build_trading_node_uses_sandbox_execution_not_matching_client(monkeypatch) -> None:
-    class FakeTradingNode:
-        def __init__(self, config):
-            self.config = config
-            self.trader = SimpleNamespace(strategies=[], actors=[])
-            self.trader.add_strategy = self.trader.strategies.append
-            self.trader.add_actor = self.trader.actors.append
-            self.exec_factory_name: str | None = None
-
-        def add_data_client_factory(self, name, factory):
-            pass
-
-        def add_exec_client_factory(self, name, factory):
-            self.exec_factory_name = name
-
-        def build(self):
-            pass
-
-    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.TradingNode", FakeTradingNode)
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.PolymarketInstrumentProviderConfig",
-        lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.build_paper_trading_node_config",
-        lambda settings, **kwargs: SimpleNamespace(**kwargs),
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node.register_paper_factories",
-        lambda node: (
-            node.add_data_client_factory("POLYMARKET", object()),
-            node.add_exec_client_factory(PAPER_EXEC_CLIENT_ID, object()),
-        ),
-    )
+    _patch_nautilus_placeholders(monkeypatch)
 
     runtime = build_trading_node()
+    builder = runtime["node"].builder
 
-    assert getattr(runtime["node"], "exec_factory_name") != "POLYMARKET"
+    assert builder.exec_clients[0][0] != "POLYMARKET"
     assert "paper_client" not in runtime
     assert "matching_client" not in runtime
 
@@ -391,33 +326,17 @@ def test_build_trading_node_injects_runtime_progress_callback(monkeypatch, tmp_p
 
     captured: dict[str, object] = {}
 
-    class FakeTradingNode:
-        def __init__(self, config):
-            self.config = config
-            self.trader = SimpleNamespace(strategies=[], actors=[])
-            self.trader.add_strategy = self.trader.strategies.append
-            self.trader.add_actor = self.trader.actors.append
-
-        def add_data_client_factory(self, name, factory):
-            return None
-
-        def add_exec_client_factory(self, name, factory):
-            return None
-
-        def build(self):
-            return None
-
     class FakeStrategy:
         strategy_name = "vwap_momentum"
 
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
+
     settings = Settings()
     settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
     settings.storage.state_dir = str(tmp_path / "state")
     _patch_nautilus_placeholders(monkeypatch)
-    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.TradingNode", FakeTradingNode)
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.native_strategy.runtime_native_strategy_type",
         lambda _base, _config: FakeStrategy,

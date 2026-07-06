@@ -48,17 +48,11 @@ from polysignal_lab.nautilus_runtime.observability import (
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
-from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
 from polysignal_lab.observability.runtime_health import (
     write_runtime_heartbeat,
     write_runtime_startup_marker,
 )
 from polysignal_lab.strategies.execution import build_strategy_schedule
-
-class _FactoryNode(Protocol):
-    def add_data_client_factory(self, name: str, factory: object) -> None: ...
-    def add_exec_client_factory(self, name: str, factory: object) -> None: ...
-
 
 class _TraderLike(Protocol):
     def add_actor(self, actor: object) -> None: ...
@@ -69,23 +63,11 @@ class _Disposable(Protocol):
     def dispose(self) -> None: ...
 
 
-class _TradingNodeLike(_FactoryNode, Protocol):
+class _TradingNodeLike(Protocol):
     trader: _TraderLike
 
     def build(self) -> None: ...
     def run(self) -> None: ...
-
-
-class _TradingNodeFactory(Protocol):
-    def __call__(self, *, config: object) -> _TradingNodeLike: ...
-
-
-class _PaperConfigBuilder(Protocol):
-    def __call__(self, settings: Settings | None = None, *, instrument_config: object) -> object: ...
-
-
-class _FactoryRegistrar(Protocol):
-    def __call__(self, node: _FactoryNode) -> None: ...
 
 
 
@@ -125,26 +107,12 @@ class _EmptyBookDataProvider:
 
 
 # Stub placeholders — _ensure_nautilus_imports() overwrites them at runtime.
-# Tests that monkeypatch TradingNode use these stubs directly (no nautilus_trader).
-TradingNode: _TradingNodeFactory | None = None
+LiveNode: object | None = None
 PolymarketInstrumentProviderConfig: Callable[..., object] = SimpleNamespace
 NautilusActor: type[object] | None = None
 NautilusActorConfig: Callable[[], object] | None = None
 NautilusStrategy: type[object] | None = None
 NautilusStrategyConfig: Callable[[], object] | None = None
-
-def _stub_paper_config(settings: Settings | None = None, *, instrument_config: object) -> SimpleNamespace:
-    _ = settings, instrument_config
-    return SimpleNamespace(data_clients={})
-
-
-def _stub_register_factories(node: _FactoryNode) -> None:
-    node.add_data_client_factory("POLYMARKET", object())
-    node.add_exec_client_factory(PAPER_EXEC_CLIENT_ID, object())
-
-
-build_paper_trading_node_config: _PaperConfigBuilder = _stub_paper_config
-register_paper_factories: _FactoryRegistrar = _stub_register_factories
 
 
 
@@ -220,7 +188,7 @@ class NautilusRuntimeBundle:
 
 
 def _ensure_nautilus_imports() -> None:
-    """Lazy-import Nautilus TradingNode and Polymarket helpers into module globals.
+    """Lazy-import Nautilus LiveNode and runtime helpers into module globals.
 
     Uses module-level placeholders so tests on py3.11 can monkeypatch before
     the first real call triggers the import chain.  Reads the guard from
@@ -228,34 +196,31 @@ def _ensure_nautilus_imports() -> None:
     takes effect even if this function's ``__globals__`` references a stale
     module object.
     """
-    global TradingNode, PolymarketInstrumentProviderConfig, NautilusActor, NautilusStrategy
-    global NautilusActorConfig, NautilusStrategyConfig, build_paper_trading_node_config, register_paper_factories
+    global LiveNode, PolymarketInstrumentProviderConfig, NautilusActor, NautilusStrategy
+    global NautilusActorConfig, NautilusStrategyConfig
 
     mod = sys.modules.get(__name__)
-    module_node = getattr(mod, "TradingNode", None) if mod is not None else None
-    current_node = module_node or TradingNode
-    if current_node is not None:
+    module_live_node = getattr(mod, "LiveNode", None) if mod is not None else None
+    current_live_node = module_live_node or LiveNode
+    if current_live_node is not None:
         # Sync our __globals__ from the live module entry so subsequent
         # calls that reach this function use patched values together.
-        TradingNode = cast(_TradingNodeFactory, current_node)
+        LiveNode = current_live_node
         if mod is not None:
             PolymarketInstrumentProviderConfig = cast(Callable[..., object], getattr(mod, "PolymarketInstrumentProviderConfig", PolymarketInstrumentProviderConfig))
             NautilusActor = cast(type[object] | None, getattr(mod, "NautilusActor", NautilusActor))
             NautilusActorConfig = cast(Callable[[], object] | None, getattr(mod, "NautilusActorConfig", NautilusActorConfig))
             NautilusStrategy = cast(type[object] | None, getattr(mod, "NautilusStrategy", NautilusStrategy))
             NautilusStrategyConfig = cast(Callable[[], object] | None, getattr(mod, "NautilusStrategyConfig", NautilusStrategyConfig))
-            build_paper_trading_node_config = cast(_PaperConfigBuilder, getattr(mod, "build_paper_trading_node_config", build_paper_trading_node_config))
-            register_paper_factories = cast(_FactoryRegistrar, getattr(mod, "register_paper_factories", register_paper_factories))
         return
 
-    trading_node_mod = importlib.import_module("nautilus_trader.live.node")
+    live_mod = importlib.import_module("nautilus_trader.live")
     provider_mod = importlib.import_module("nautilus_trader.adapters.polymarket.providers")
     actor_mod = importlib.import_module("nautilus_trader.common.actor")
     strategy_mod = importlib.import_module("nautilus_trader.trading.strategy")
     config_mod = importlib.import_module("nautilus_trader.config")
-    runtime_config_mod = importlib.import_module("polysignal_lab.nautilus_runtime.trading_node")
 
-    TradingNode = cast(_TradingNodeFactory, getattr(trading_node_mod, "TradingNode"))
+    LiveNode = getattr(live_mod, "LiveNode")
     PolymarketInstrumentProviderConfig = cast(
         Callable[..., object],
         getattr(provider_mod, "PolymarketInstrumentProviderConfig"),
@@ -264,30 +229,21 @@ def _ensure_nautilus_imports() -> None:
     NautilusActorConfig = cast(Callable[[], object], getattr(config_mod, "ActorConfig"))
     NautilusStrategy = cast(type[object], getattr(strategy_mod, "Strategy"))
     NautilusStrategyConfig = cast(Callable[[], object], getattr(config_mod, "StrategyConfig"))
-    build_paper_trading_node_config = cast(
-        _PaperConfigBuilder,
-        getattr(runtime_config_mod, "build_paper_trading_node_config"),
-    )
-    register_paper_factories = cast(
-        _FactoryRegistrar,
-        getattr(runtime_config_mod, "register_paper_factories"),
-    )
 
-def _create_configured_trading_node(
+def _create_configured_live_node(
     settings: Settings,
     configured_markets: Sequence[Market],
 ) -> tuple[_TradingNodeLike, object]:
     _ensure_nautilus_imports()
-    trading_node_factory = TradingNode
-    if trading_node_factory is None:
-        raise RuntimeError("Nautilus TradingNode is unavailable")
+    if PolymarketInstrumentProviderConfig is None:
+        raise RuntimeError("Nautilus PolymarketInstrumentProviderConfig is unavailable")
     instrument_config = PolymarketInstrumentProviderConfig(
         load_ids=_instrument_load_ids(configured_markets),
     )
-    config = build_paper_trading_node_config(settings, instrument_config=instrument_config)
-    node = trading_node_factory(config=config)
-    register_paper_factories(node)
-    return cast(_TradingNodeLike, node), config
+    from polysignal_lab.nautilus_runtime.live_node import build_paper_live_node
+
+    node = build_paper_live_node(settings, instrument_config=instrument_config)
+    return cast(_TradingNodeLike, node), instrument_config
 
 
 def _create_market_projection_components(
@@ -411,7 +367,7 @@ def build_trading_node(
     runtime_market_universe = (
         market_universe if market_universe is not None else _StaticMarketUniverse(configured_markets)
     )
-    node, config = _create_configured_trading_node(settings, configured_markets)
+    node, config = _create_configured_live_node(settings, configured_markets)
     registry, sidecar, assembler = _create_market_projection_components(configured_markets)
     policy = _build_policy(settings)
     market_rotation_actor = _build_market_rotation_actor(
