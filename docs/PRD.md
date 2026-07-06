@@ -172,17 +172,14 @@ Nautilus Data / Custom Data Callback
 
 ### 9.3 纸面交易流程
 
-1. 通过 gate 的信号由 strategy wrapper 映射为 Nautilus native order。
-2. Nautilus sandbox 根据当前 instrument、book、trade 数据处理 paper order。
-3. 如果可成交，Nautilus 生成 fill、position、account/portfolio state。
-4. PolySignal 只读投影 Nautilus cache/portfolio，用于 SQLite、JSONL、Telegram、日报和 dashboard。
-5. 持仓直到：
-   - 市场结束后按最终结果结算；或
-   - paper take-profit 触发；或
-   - paper stop-loss 触发；或
-   - paper max-hold-time 触发。
-6. 写入 PaperTradeResult projection。
-7. 更新统计报表。
+1. 通过 gate 的信号由 Nautilus strategy wrapper 映射为 Nautilus native order。
+2. Strategy wrapper 调用 Nautilus `order_factory.limit(...)` 和 `submit_order(...)`。
+3. Nautilus sandbox 根据当前 instrument、book、trade 数据处理 paper order。
+4. 如果可成交，Nautilus 生成 fill、position、account/portfolio state。
+5. PolySignal 只读投影 Nautilus cache/portfolio，用于 SQLite、JSONL、Telegram、日报和 dashboard。
+6. 市场结束后的 win/loss 计算只读取 Nautilus position projection 和 Polymarket outcome resolution，不维护本地 PaperWallet。
+7. 写入 PaperTradeResult projection。
+8. 更新统计报表。
 
 ## 10. 策略模块
 

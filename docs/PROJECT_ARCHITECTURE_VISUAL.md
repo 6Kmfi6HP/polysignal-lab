@@ -88,7 +88,7 @@ flowchart LR
   Src --> Data["data/<br/>外部行情/市场数据"]
   Src --> Domain["domain/<br/>领域模型"]
   Src --> Signal["signal_layer/<br/>信号过滤/共识"]
-  Src --> Paper["paper/<br/>legacy scheduler 纸面交易/结算兼容"]
+  Src --> Paper["paper/<br/>settlement / reporting projections"]
   Src --> Storage["storage/<br/>SQLite/JSONL/state"]
   Src --> Dashboard["dashboard/<br/>FastAPI 只读面板"]
   Src --> Publish["publish/<br/>Telegram"]
@@ -209,7 +209,7 @@ flowchart TD
 当前架构已经是完整产品化骨架，不是临时脚本：
 
 - 入口清楚：`app/main.py`。
-- 调度主线清楚：market discovery → snapshot → strategies → gate → consensus → paper/storage/publish。
+- 调度主线清楚：Nautilus data callbacks → alpha cores → gate → consensus → Nautilus sandbox order/fill → cache/portfolio projection → storage/publish。
 - 安全边界清楚：只读、无 secret、无真实交易客户端、无下单/撤单/赎回。
 - 审计链路完整：SQLite canonical storage + JSONL audit + state snapshots。
 - Dashboard 明确只读。

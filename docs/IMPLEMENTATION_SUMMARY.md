@@ -13,7 +13,7 @@
 | Telegram | Dry-run default publisher, retry-capable HTTP sender, publish audit record, real Telegram QA command with redacted evidence |
 | Paper trading | Nautilus node, native order submission, Nautilus sandbox execution, cache/portfolio projections |
 | Node surface | Current default uses legacy Nautilus `TradingNode`; this is tracked as a non-wheel design deviation with a separate `LiveNode.builder` migration gate |
-| Exits/settlement | Prediction-market resolution remains business logic; runtime positions come from Nautilus portfolio projection |
+| Exits/settlement | Prediction-market resolution remains business logic; runtime positions and account state come from Nautilus portfolio/cache projection |
 | Reporting | Daily report, PnL, ROI, win rate, drawdown, profit factor, breakdowns over projected Nautilus state |
 | Storage | SQLite tables, JSONL audit logs, atomic state files |
 | Dashboard | Read-only FastAPI dashboard and JSON endpoints backed by SQLite data |

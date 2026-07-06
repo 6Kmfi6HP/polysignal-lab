@@ -108,15 +108,15 @@ http://127.0.0.1:8081/health?fresh=nautilus_bridge
 - `test_nautilus_execution.py`: 9/20 pass (11 auto-generated `AlphaOrderEvent` mocks misaligned with `PaperExecutionResult` API — framework scaffolding, not regression).
 - Pre-existing known failure: `test_telegram_interactive_yaml_defaults_load` (unrelated).
 - 27 commits from plan baseline (aa04094..bb1a6c2), plus 8 pre-existing Task 9 commits.
-- Implemented components after duplicate-platform cleanup:
+- Implemented components after final duplicate-platform cleanup:
   * Default runtime: Nautilus node owns lifecycle, data engine, execution engine, cache, portfolio, and sandbox execution.
   * Node surface: current default still uses legacy Nautilus `TradingNode`; this is a non-wheel design deviation tracked behind a separate `LiveNode.builder` migration gate.
   * Data: Polymarket market data uses `PolymarketLiveDataClientFactory`; business spot/PTB/market metadata uses Nautilus custom data.
-  * Execution: paper execution uses Nautilus `SandboxLiveExecClientFactory`; no PolySignal-owned matching client, `PaperWallet`, or `PaperExecutionResult` remains under `nautilus_runtime`.
-  * Strategy: `PolySignalNativeStrategy` submits orders through Nautilus `order_factory` and `submit_order`.
+  * Execution: paper execution uses `SandboxLiveExecClientFactory`; no PolySignal-owned simulator, wallet, FAK/FOK/GTD executor, fill model, exit engine, or local resting-order store remains.
+  * Strategy: `PolySignalNativeStrategy` submits orders through Nautilus `order_factory` and `submit_order`; fillability and order lifecycle are delegated to Nautilus sandbox/cache/portfolio.
   * Market views: alpha views are read-only projections from Nautilus cache plus business custom data.
   * Observability: dashboard/report rows are read-only projections from Nautilus events/cache/portfolio; no local paper ledger drives runtime state.
-  * Safety: no live Polymarket execution client, no installed Nautilus source patch, no private engine monkeypatch.
+  * Safety: project-wide source scan blocks live Polymarket execution symbols and legacy paper wheel symbols.
 
 Worktree branch: `nautilus-full-runtime-migration` (now merged — see below).
 
