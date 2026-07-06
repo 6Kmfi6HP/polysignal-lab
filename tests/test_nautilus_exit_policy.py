@@ -7,6 +7,8 @@ from polysignal_lab.alpha.types import SideBookView
 from polysignal_lab.nautilus_runtime.exit_policy import (
     ExitPolicyConfig,
     ExitReason,
+    TaggedBracketOrder,
+    bracket_attachments_for,
     evaluate_exit_decision,
 )
 
@@ -88,3 +90,51 @@ def test_no_exit_when_thresholds_not_met() -> None:
     now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
 
     assert evaluate_exit_decision(_position(now), _book(0.53), now, _config()) is None
+
+
+def test_bracket_attachment_for_take_profit() -> None:
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+
+    brackets = bracket_attachments_for(_position(now), _book(0.91), now, _config())
+
+    assert len(brackets) == 1
+    br = brackets[0]
+    assert br.order_type == "TAKE_PROFIT"
+    assert br.position_id == "pos-1"
+    assert br.instrument_id == "token-up.POLYMARKET"
+    assert br.quantity == 20.0
+    assert br.price == 0.90
+    assert br.trigger_price is None
+    assert br.ts_event == now.astimezone(UTC)
+
+
+def test_bracket_attachment_for_stop_loss() -> None:
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+
+    brackets = bracket_attachments_for(_position(now), _book(0.34), now, _config())
+
+    assert len(brackets) == 1
+    br = brackets[0]
+    assert br.order_type == "STOP_LIMIT"
+    assert br.position_id == "pos-1"
+    assert br.instrument_id == "token-up.POLYMARKET"
+    assert br.quantity == 20.0
+    assert br.price == 0.35
+    assert br.trigger_price == 0.35
+    assert br.ts_event == now.astimezone(UTC)
+
+
+def test_bracket_attachment_no_exit_when_disabled() -> None:
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    config = ExitPolicyConfig(
+        mode="hold_to_resolution_with_optional_tp_sl",
+        take_profit_enabled=False,
+        stop_loss_enabled=False,
+        take_profit_price=0.90,
+        stop_loss_price=0.35,
+        max_hold_time_sec=900,
+    )
+
+    brackets = bracket_attachments_for(_position(now), _book(0.91), now, config)
+
+    assert brackets == []

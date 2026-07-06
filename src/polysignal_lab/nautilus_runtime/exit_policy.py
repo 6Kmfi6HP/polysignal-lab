@@ -35,6 +35,17 @@ class NautilusExitDecision:
     ts_event: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class TaggedBracketOrder:
+    order_type: str
+    position_id: str
+    instrument_id: str
+    quantity: float
+    price: float
+    trigger_price: float | None
+    ts_event: datetime
+
+
 def evaluate_exit_decision(
     position: Mapping[str, object],
     book: SideBookView,
@@ -60,6 +71,50 @@ def evaluate_exit_decision(
     if opened_at is not None and (now - opened_at).total_seconds() >= config.max_hold_time_sec:
         return _decision(ExitReason.MAX_HOLD_TIME, position_id, instrument_id, quantity, best_bid, now)
     return None
+
+
+def bracket_attachments_for(
+    position: Mapping[str, object],
+    book: SideBookView,
+    now: datetime,
+    config: ExitPolicyConfig,
+) -> list[TaggedBracketOrder]:
+    if bool(position.get("is_closed")):
+        return []
+    best_bid = book.best_bid
+    if best_bid is None or best_bid <= 0:
+        return []
+    entry_price = _float(position.get("avg_entry_price"))
+    quantity = abs(_float(position.get("quantity")))
+    instrument_id = str(position.get("instrument_id") or "")
+    position_id = str(position.get("position_id") or position.get("paper_position_id") or "")
+    if entry_price <= 0 or quantity <= 0 or not instrument_id or not position_id:
+        return []
+
+    result: list[TaggedBracketOrder] = []
+    now_utc = now.astimezone(UTC)
+
+    if config.take_profit_enabled and best_bid >= config.take_profit_price:
+        result.append(TaggedBracketOrder(
+            order_type="TAKE_PROFIT",
+            position_id=position_id,
+            instrument_id=instrument_id,
+            quantity=quantity,
+            price=config.take_profit_price,
+            trigger_price=None,
+            ts_event=now_utc,
+        ))
+    if config.stop_loss_enabled and best_bid <= config.stop_loss_price:
+        result.append(TaggedBracketOrder(
+            order_type="STOP_LIMIT",
+            position_id=position_id,
+            instrument_id=instrument_id,
+            quantity=quantity,
+            price=config.stop_loss_price,
+            trigger_price=config.stop_loss_price,
+            ts_event=now_utc,
+        ))
+    return result
 
 
 def _decision(
