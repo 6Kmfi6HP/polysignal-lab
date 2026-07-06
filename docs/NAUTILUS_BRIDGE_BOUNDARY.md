@@ -9,21 +9,22 @@ PolySignal Lab remains read-only and paper-safe by default. The default Python 3
 - Default import check: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -c "import polysignal_lab"`.
 - Default Docker path: `docker compose up -d --build --force-recreate`.
 - Default runtime does not register live Polymarket execution clients.
+- Checked-in runtime config disables actor-owned RTDS spot publishing (`runtime.nautilus.sidecar.spot_source: disabled`); explicitly setting `polymarket_rtds` is an unsupported fail-fast path until a Nautilus-managed data-client lifecycle owns that source.
 
 ## Bridge Runtime
 
 ## Node Surface Status
 
-The current default Nautilus bridge enters through `nautilus_trader.live.node.TradingNode`. This is an active default-path design deviation from the newer `LiveNode.builder` surface documented by Nautilus, but it is not a duplicated PolySignal platform implementation.
+The default Nautilus bridge enters through `nautilus_trader.live.LiveNode.builder(...)`.
+Legacy `nautilus_trader.live.node.TradingNode` and `TradingNodeConfig` are not used by the default runtime.
 
-This cleanup does not delete or rename `TradingNode` wiring. A future `LiveNode` migration is accepted only when all of these conditions are true:
+The default runtime boundary is:
 
-- `build_trading_node()` constructs the Nautilus node through `LiveNode.builder` or the exact supported builder API in the installed Nautilus version.
-- Polymarket data remains registered through the Nautilus Polymarket data client factory.
-- Paper execution remains registered through the Nautilus sandbox execution client factory.
-- Strategy order submission still uses Nautilus `order_factory` and `submit_order`.
-- Market views still read from Nautilus cache projections plus PolySignal business custom data.
-- No `NautilusMatchingPaperExecutionClient`, `NautilusOrchestrator`, `NautilusDataIngestor`, `PaperWallet` runtime ledger, installed-source patch, or private engine monkeypatch is reintroduced.
+- Polymarket data is registered through the Nautilus Polymarket data client factory.
+- Paper execution is registered through the Nautilus sandbox execution client factory.
+- Strategy order submission uses Nautilus `order_factory` and `submit_order`.
+- Market views read from Nautilus cache projections plus strategy-local custom data derived from Nautilus `CustomData` callbacks.
+- No `NautilusMatchingPaperExecutionClient`, `NautilusOrchestrator`, `NautilusDataIngestor`, `PaperWallet` runtime ledger, installed-source patch, private engine monkeypatch, shared external sidecar store, dynamic runtime class factory, or reverse instrument registry is allowed.
 
 NautilusTrader is isolated behind the optional dependency group:
 
@@ -108,15 +109,14 @@ http://127.0.0.1:8081/health?fresh=nautilus_bridge
 - `test_nautilus_execution.py`: 9/20 pass (11 auto-generated `AlphaOrderEvent` mocks misaligned with `PaperExecutionResult` API — framework scaffolding, not regression).
 - Pre-existing known failure: `test_telegram_interactive_yaml_defaults_load` (unrelated).
 - 27 commits from plan baseline (aa04094..bb1a6c2), plus 8 pre-existing Task 9 commits.
-- Implemented components after final duplicate-platform cleanup:
-  * Default runtime: Nautilus node owns lifecycle, data engine, execution engine, cache, portfolio, and sandbox execution.
-  * Node surface: current default still uses legacy Nautilus `TradingNode`; this is a non-wheel design deviation tracked behind a separate `LiveNode.builder` migration gate.
-  * Data: Polymarket market data uses `PolymarketLiveDataClientFactory`; business spot/PTB/market metadata uses Nautilus custom data.
-  * Execution: paper execution uses `SandboxLiveExecClientFactory`; no PolySignal-owned simulator, wallet, FAK/FOK/GTD executor, fill model, exit engine, or local resting-order store remains.
-  * Strategy: `PolySignalNativeStrategy` submits orders through Nautilus `order_factory` and `submit_order`; fillability and order lifecycle are delegated to Nautilus sandbox/cache/portfolio.
-  * Market views: alpha views are read-only projections from Nautilus cache plus business custom data.
-  * Observability: dashboard/report rows are read-only projections from Nautilus events/cache/portfolio; no local paper ledger drives runtime state.
-  * Safety: project-wide source scan blocks live Polymarket execution symbols and legacy paper wheel symbols.
+- Default runtime: Nautilus `LiveNode` owns lifecycle, data engine, execution engine, cache, portfolio, and sandbox execution.
+- Node surface: default path uses `LiveNode.builder(...)`; legacy `TradingNode` is absent from runtime source.
+- Data: Polymarket market data uses `PolymarketLiveDataClientFactory`; spot/PTB/market metadata uses Nautilus `CustomData` and strategy-local derived state.
+- Execution: paper execution uses `SandboxLiveExecClientFactory`; no PolySignal-owned simulator, wallet, FAK/FOK/GTD executor, fill model, exit engine, or local resting-order store remains.
+- Strategy: `PolySignalNativeStrategy` submits orders through Nautilus `order_factory` and `submit_order`; fillability and order lifecycle are delegated to Nautilus sandbox/cache/portfolio.
+- Market views: alpha views are read-only projections from Nautilus cache plus strategy-local custom data state.
+- Observability: dashboard/report rows are read-only projections from Nautilus events/cache/portfolio; no local paper ledger drives runtime state.
+- Safety: project-wide source scan blocks live Polymarket execution symbols, legacy paper wheel symbols, legacy TradingNode surface, dynamic runtime class factories, shared external sidecar store, reverse instrument registry, and bare asyncio actor scheduling fallbacks.
 
 Worktree branch: `nautilus-full-runtime-migration` (now merged — see below).
 
@@ -135,4 +135,4 @@ After fixing 11 execution test failures, safety scan, and adding the blocking lo
 - Docker runtime: `polysignal-nautilus` now blocks on SIGTERM/SIGINT (container stays alive instead of restart-looping).
 - `docker compose up -d --force-recreate`: both polysignal-lab (Nautilus) and dashboard containers healthy.
 - `docker compose ps`: `Up 37 seconds (healthy)`.
-- `curl http://127.0.0.1:8081/health`: responds (dashboard reads legacy SQLite data; Nautilus-specific health components will appear when TradingNode integration completes).
+- `curl http://127.0.0.1:8081/health`: responds (dashboard reads legacy SQLite data; Nautilus-specific health components will appear when LiveNode runtime projections are active).

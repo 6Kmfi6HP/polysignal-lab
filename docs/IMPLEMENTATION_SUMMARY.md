@@ -5,14 +5,14 @@
 | Area | Delivered |
 |---|---|
 | Config and safety | Pydantic settings, YAML config, disallowed environment key detection, `scripts/safety_scan.py`, CI workflow |
-| Polymarket data | Nautilus Polymarket data factory plus business market rotation custom data |
-| Sidecar data | Spot, price-to-beat, anchor, and market metadata custom data for Nautilus strategies |
-| Snapshots | Market view assembly from Nautilus cache projections and business custom data |
-| Strategies | PolySignal alpha cores wrapped by Nautilus strategy callbacks |
+| Polymarket data | Nautilus Polymarket data factory plus Nautilus `CustomData` business market rotation payloads |
+| Custom data | Spot, price-to-beat, anchor, and market metadata flow through Nautilus custom data; latest values are strategy-local derived state only |
+| Snapshots | Market view assembly from Nautilus cache projections and strategy-local custom data |
+| Strategies | PolySignal alpha cores wrapped by static Nautilus strategy subclasses |
 | Signal layer | SignalCandidate schema, gate, dedupe, channel rate limiter, consensus engine, formatter |
 | Telegram | Dry-run default publisher, retry-capable HTTP sender, publish audit record, real Telegram QA command with redacted evidence |
-| Paper trading | Nautilus node, native order submission, Nautilus sandbox execution, cache/portfolio projections |
-| Node surface | Current default uses legacy Nautilus `TradingNode`; this is tracked as a non-wheel design deviation with a separate `LiveNode.builder` migration gate |
+| Paper trading | Nautilus LiveNode, native order submission, Nautilus sandbox execution, cache/portfolio projections |
+| Node surface | Default runtime uses `LiveNode.builder(...)`; legacy `TradingNode` is absent from runtime source |
 | Exits/settlement | Prediction-market resolution remains business logic; runtime positions and account state come from Nautilus portfolio/cache projection |
 | Reporting | Daily report, PnL, ROI, win rate, drawdown, profit factor, breakdowns over projected Nautilus state |
 | Storage | SQLite tables, JSONL audit logs, atomic state files |

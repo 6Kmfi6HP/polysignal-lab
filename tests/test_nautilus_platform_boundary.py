@@ -97,10 +97,11 @@ def test_default_source_keeps_forbidden_live_symbols_out_of_runtime() -> None:
         if not root.exists():
             continue
         for path in root.rglob("*.py"):
-            if path.name == "trading_node.py":
-                continue  # exec_clients is a sandbox config key, guarded by assert_no_live_polymarket_execution
             text = path.read_text(encoding="utf-8")
-            findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+            tokens = forbidden
+            if path.name in {"trading_node.py", "live_node.py"}:
+                tokens = tuple(token for token in forbidden if token != "exec_clients")
+            findings.extend(f"{path}:{token}" for token in tokens if token in text)
     assert findings == []
 
 

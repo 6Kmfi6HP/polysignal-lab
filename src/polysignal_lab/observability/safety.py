@@ -45,7 +45,22 @@ LOCAL_PAPER_ISOLATION_SYMBOLS: Final = (
     "scheduler." + "paper",
     "paper_portfolio.process_signal",
     "paper_portfolio.tick_resting_orders",
+    "nautilus_trader.live.node",
+    "TradingNodeConfig",
+    "new_class(",
+    "ExternalDataSidecar",
+    "runtime_native_strategy_type",
+    "runtime_sidecar_actor_type",
+    "runtime_market_rotation_actor_type",
+    "_by_instrument",
+    "condition_id_for_instrument",
+    "token_id_for_instrument",
 )
+ACTOR_SCHEDULING_FALLBACK_SYMBOLS: Final = ("asyncio.create_task(",)
+ACTOR_SCHEDULING_FALLBACK_PATHS: Final = {
+    Path("src/polysignal_lab/nautilus_runtime/market_rotation.py"),
+    Path("src/polysignal_lab/nautilus_runtime/sidecar_data.py"),
+}
 
 
 def blocked_symbols() -> list[str]:
@@ -77,6 +92,8 @@ def scan(root: str | Path) -> list[tuple[str, str]]:
         symbols = list(blocked_symbols())
         if _is_project_source(path):
             symbols.extend(LOCAL_PAPER_ISOLATION_SYMBOLS)
+        if _is_actor_scheduling_fallback_path(base, path):
+            symbols.extend(ACTOR_SCHEDULING_FALLBACK_SYMBOLS)
         for symbol in symbols:
             if symbol in text:
                 if _is_submit_order_allowed_for_nautilus_strategy(path) and symbol == "submit_order":
@@ -106,6 +123,16 @@ def _is_project_source(path: Path) -> bool:
         if part == "polysignal_lab" and "tests" not in parts[:idx]:
             return True
     return False
+
+
+def _is_actor_scheduling_fallback_path(base: Path, path: Path) -> bool:
+    rel = path if base.is_file() else path.relative_to(base)
+    rel_text = rel.as_posix()
+    path_text = path.as_posix()
+    return any(
+        rel_text.endswith(target.as_posix()) or path_text.endswith(target.as_posix())
+        for target in ACTOR_SCHEDULING_FALLBACK_PATHS
+    )
 
 
 def _is_submit_order_allowed_for_nautilus_strategy(path: Path) -> bool:

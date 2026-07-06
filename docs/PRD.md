@@ -108,11 +108,11 @@ PolySignal Lab 是一个后台常驻服务，第一版不要求完整 Web UI。
 ```
 ┌────────────────────────────┐
 │ Public Polymarket Data      │
-│ Spot / PTB Sidecar Data     │
+│ Nautilus CustomData Payloads│
 └──────────────┬─────────────┘
                ↓
 ┌────────────────────────────┐
-│ Nautilus TradingNode        │
+│ Nautilus LiveNode          │
 │ - DataEngine callbacks      │
 │ - Strategy lifecycle        │
 └──────────────┬─────────────┘
@@ -145,10 +145,10 @@ Signal Channel                Nautilus Cache / Portfolio Projection
 1. 读取配置文件。
 2. 校验 Telegram bot token 和 channel id。
 3. 加载启用资产、周期、策略。
-4. 初始化 Nautilus `TradingNode` 纸面 runtime。
+4. 初始化 Nautilus `LiveNode.builder(...)` paper runtime。
 5. 发现当前 Polymarket crypto Up/Down 市场。
 6. Nautilus data path 接收 Polymarket market data。
-7. PolySignal sidecar 发布 spot、price-to-beat、market metadata。
+7. Nautilus `CustomData` callbacks 接收 spot、price-to-beat、market metadata；默认配置禁用 actor-owned RTDS spot source。
 8. Nautilus strategy callbacks 构造 market view 并运行 alpha core。
 9. 信号通过 `DecisionPolicyActor` 的 gate / dedupe / consensus。
 10. 通过 gate 后发送 Telegram。
@@ -172,11 +172,11 @@ Nautilus Data / Custom Data Callback
 
 ### 9.3 纸面交易流程
 
-1. 通过 gate 的信号由 Nautilus strategy wrapper 映射为 Nautilus native order。
+1. 通过 gate 的信号由 Nautilus strategy wrapper 映射为 Nautilus native order 参数。
 2. Strategy wrapper 调用 Nautilus `order_factory.limit(...)` 和 `submit_order(...)`。
 3. Nautilus sandbox 根据当前 instrument、book、trade 数据处理 paper order。
-4. 如果可成交，Nautilus 生成 fill、position、account/portfolio state。
-5. PolySignal 只读投影 Nautilus cache/portfolio，用于 SQLite、JSONL、Telegram、日报和 dashboard。
+4. 订单状态、成交、持仓、账户状态来自 Nautilus cache/portfolio。
+5. PolySignal 将 Nautilus events/projected cache rows 写入 SQLite/JSONL、Telegram、日报和 dashboard。
 6. 市场结束后的 win/loss 计算只读取 Nautilus position projection 和 Polymarket outcome resolution，不维护本地 PaperWallet。
 7. 写入 PaperTradeResult projection。
 8. 更新统计报表。
@@ -203,7 +203,7 @@ Nautilus Data / Custom Data Callback
 | UP / DOWN best bid ask | Polymarket CLOB |
 | last trade price | Polymarket CLOB |
 | orderbook depth | Polymarket CLOB |
-| BTC spot | Polymarket RTDS crypto price feed（Binance source；Chainlink 可作 fallback） |
+| BTC spot | Nautilus `CustomData` spot payload；checked-in default disables actor-owned `polymarket_rtds` until a managed Nautilus data-client lifecycle exists |
 | market start / end | Polymarket metadata |
 
 **指标：**
@@ -251,7 +251,7 @@ Nautilus Data / Custom Data Callback
 | ask sum | Derived |
 | ask skew | Derived |
 | spread | Derived |
-| asset spot movement | Polymarket RTDS crypto price feed（Binance source；Chainlink 可作 fallback） |
+| asset spot movement | Nautilus `CustomData` spot payload；actor-owned RTDS source is disabled by default and explicit `polymarket_rtds` is fail-fast |
 | seconds_to_close | Derived |
 
 **触发规则：**
@@ -282,7 +282,7 @@ Nautilus Data / Custom Data Callback
 
 | 输入 | 来源 |
 |------|------|
-| BTC spot price | Polymarket RTDS crypto price feed（Binance source；Chainlink 可作 fallback） |
+| BTC spot price | Nautilus `CustomData` spot payload；actor-owned RTDS source is disabled by default and explicit `polymarket_rtds` is fail-fast |
 | price_to_beat | 本地 market window anchor；若使用 Polymarket price-to-beat endpoint，必须标记为未正式 API ref 依赖 |
 | UP / DOWN implied price | Polymarket CLOB |
 | seconds_to_close | Derived |
@@ -413,7 +413,7 @@ Nautilus 纸面验证系统用于回答：
 
 | 原则 | 说明 |
 |------|------|
-| 真实公开行情 | 使用 Polymarket public market data 和 spot/PTB sidecar data |
+| 真实公开行情 | 使用 Polymarket public market data 和 Nautilus `CustomData` spot/PTB/market metadata payloads |
 | Nautilus 纸面账户 | 使用 Nautilus sandbox/cache/portfolio state，不接触真实资金 |
 | 可解释成交 | 每笔 paper fill 必须能追溯到 Nautilus order/fill/position 投影 |
 | 保守标注 | 不承诺 paper result 可复制到真实交易 |
@@ -493,14 +493,11 @@ runtime:
     execution_mode: paper_sandbox
     allow_live_polymarket_execution: false
     sidecar:
-      spot_source:
-        primary: polymarket_rtds.crypto_prices
-        vendor: binance
-        fallback: polymarket_rtds.crypto_prices_chainlink
-      price_to_beat_source:
-        primary: local_market_window_anchor
-        external_endpoint_status: undocumented_for_crypto_up_down
+      spot_source: disabled
+      price_to_beat_source: anchor_or_gamma
 ```
+
+默认 checked-in Nautilus runtime 禁用 actor-owned RTDS spot source。显式配置 `runtime.nautilus.sidecar.spot_source: polymarket_rtds` 会 fail fast；该路径直到存在 Nautilus-managed data-client lifecycle 后才可启用。
 
 **成交拒绝原因示例：**
 
@@ -769,7 +766,7 @@ polysignal-lab/
 | 模块 | 职责 |
 |------|------|
 | MarketDiscovery | 发现当前 Polymarket crypto Up/Down 市场 |
-| NautilusTradingNode | 拥有 strategy lifecycle、market data dispatch、order lifecycle |
+| NautilusLiveNode | 拥有 strategy lifecycle、market data dispatch、order lifecycle |
 | NautilusStrategyWrapper | 在 Nautilus callbacks 中运行 alpha core |
 | AlphaCore | 产生 engine-agnostic AlphaDecision |
 | DecisionPolicyActor | stale、spread、price、confidence、时间窗口、dedupe、consensus 检查 |
@@ -806,11 +803,8 @@ data:
     use_market_ws: true
     max_book_staleness_ms: 1500
   spot:
-    primary_feed: polymarket_rtds.crypto_prices
-    source_vendor: binance
-    fallback_feed: polymarket_rtds.crypto_prices_chainlink
-    binance_symbol_format: btcusdt
-    chainlink_symbol_format: btc/usd
+    runtime_actor_source: disabled
+    explicit_polymarket_rtds: unsupported_fail_fast_until_managed_nautilus_data_client
     max_price_staleness_ms: 1500
 
 signal:
@@ -982,7 +976,7 @@ roi = pnl / stake_usdc
 | AC-001 | 能启动服务 | 无钱包密钥也可启动 |
 | AC-002 | 能发现市场 | 当前 BTC 5m/15m market cache 包含 active、未 closed、enableOrderBook、accepting_orders、UP/DOWN token ids |
 | AC-003 | 能接收 orderbook | 通过 UP/DOWN asset ids 订阅后 best bid ask 持续更新 |
-| AC-004 | 能接收 spot | Polymarket RTDS crypto price feed 持续更新，并记录 Binance/Chainlink source |
+| AC-004 | 能处理 spot 边界 | 默认 actor-owned RTDS spot source 为 disabled；显式 `polymarket_rtds` 配置 fail fast，直到 Nautilus-managed data-client lifecycle 存在 |
 | AC-005 | 能生成信号 | 至少一个策略可输出 SignalCandidate |
 | AC-006 | 能发送 Telegram | 频道收到格式化信号 |
 | AC-007 | 能创建 paper order | 信号发布后生成 paper order |
@@ -1057,7 +1051,7 @@ roi = pnl / stake_usdc
 ### Phase 5：Nautilus Paper Runtime
 
 交付：
-- Nautilus TradingNode runtime。
+- Nautilus LiveNode runtime。
 - Nautilus native order submission。
 - Nautilus sandbox paper execution。
 - Nautilus order/fill/position/account projections。
