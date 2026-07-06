@@ -1,7 +1,6 @@
 """Runtime state surface — strategy ``on_save``/``on_load`` codec.
 
-Wired into the TradingNode in later tasks (9, 13). For now this module simply
-re-exports the existing versioned-JSON state codec from
+Re-exports the existing versioned-JSON state codec from
 ``nautilus_bridge.state`` so the runtime package exposes a stable state entry
 point without duplicating logic.
 """
