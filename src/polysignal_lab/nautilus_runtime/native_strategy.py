@@ -352,6 +352,7 @@ class PolySignalNativeStrategy:
         )
         self._approved_signal_metrics: dict[str, dict[str, object]] = {}
         self._submitted_signal_keys: set[str] = set()
+        self._pending_exit_position_ids: set[str] = set()
         self._last_market_data_evaluation_at: dict[str, datetime] = {}
         self.rejected_decisions: deque[RejectedDecision] = deque(maxlen=1000)
         self.submitted_orders: deque[object] = deque(maxlen=1000)
@@ -623,6 +624,9 @@ class PolySignalNativeStrategy:
 
     def on_position_closed(self, position: object) -> None:
         self._record_nautilus_position(position)
+        position_id = _identifier_text(getattr(position, "id", None))
+        if position_id is not None:
+            self._pending_exit_position_ids.discard(position_id)
 
     def evaluate_condition(self, condition_id: str) -> None:
         if condition_id not in self._active_condition_ids:
@@ -645,12 +649,12 @@ class PolySignalNativeStrategy:
         rows = read_positions()
         if not isinstance(rows, list):
             return
-        from polysignal_lab.nautilus_runtime.exit_policy import ExitPolicyConfig, evaluate_exit_decision
-        from polysignal_lab.nautilus_runtime.native_exit import submit_exit_decision
-
         raw_config = self.exit_model
         if raw_config is None:
             return
+        from polysignal_lab.nautilus_runtime.exit_policy import ExitPolicyConfig, evaluate_exit_decision
+        from polysignal_lab.nautilus_runtime.native_exit import submit_exit_decision
+
         config = ExitPolicyConfig(
             mode=str(getattr(raw_config, "mode", "hold_to_resolution_with_optional_tp_sl")),
             take_profit_enabled=bool(getattr(raw_config, "take_profit_enabled", True)),
@@ -660,22 +664,34 @@ class PolySignalNativeStrategy:
             max_hold_time_sec=int(getattr(raw_config, "max_hold_time_sec", 900)),
         )
         now = view.created_at
+        registry = self.registry
         for position in rows:
             if not isinstance(position, dict):
                 continue
-            if str(position.get("condition_id") or "") != condition_id:
+            instrument_id = str(position.get("instrument_id") or "")
+            position_condition_id = str(position.get("condition_id") or "")
+            if not position_condition_id and registry is not None and instrument_id:
+                resolved = _condition_id_for_instrument(registry, instrument_id)
+                position_condition_id = resolved or ""
+            if position_condition_id != condition_id:
                 continue
             token_id = str(position.get("token_id") or "")
+            if not token_id and registry is not None and instrument_id:
+                resolved = _token_id_for_instrument(registry, instrument_id)
+                token_id = resolved or ""
             book = view.up if token_id == view.up.token_id else view.down if token_id == view.down.token_id else None
             if book is None:
                 continue
             decision = evaluate_exit_decision(position, book, now, config)
             if decision is None:
                 continue
+            if decision.position_id in self._pending_exit_position_ids:
+                continue
+            self._pending_exit_position_ids.add(decision.position_id)
             submit_exit_decision(
                 self,
                 decision,
-                instrument_id_resolver=self.instrument_id_resolver,
+                instrument_id_resolver=self._resolved_instrument,
             )
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
