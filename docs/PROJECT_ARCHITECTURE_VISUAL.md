@@ -83,7 +83,7 @@ flowchart LR
 
   Src --> App["app/<br/>入口 + legacy scheduler facade"]
   Src --> NautilusRuntime["nautilus_runtime/<br/>LiveNode / strategy / order / projections"]
-  Src --> NautilusBridge["nautilus_bridge/<br/>market registry / view assembly / state"]
+  Src --> NautilusBridge["nautilus_bridge/<br/>MarketCatalog / view assembly / state codec"]
   Src --> Alpha["alpha/<br/>策略核心逻辑"]
   Src --> Data["data/<br/>外部行情/市场数据"]
   Src --> Domain["domain/<br/>领域模型"]
@@ -157,7 +157,7 @@ flowchart TB
 | Nautilus 策略 | `src/polysignal_lab/nautilus_runtime/native_strategy.py` | 在 Nautilus callbacks 中运行 alpha core、处理 order/fill/position events |
 | Nautilus 下单 | `src/polysignal_lab/nautilus_runtime/native_order.py` | 将 approved decision 映射为 Nautilus native limit order |
 | Nautilus 投影 | `src/polysignal_lab/nautilus_runtime/cache_reader.py` | 只读读取 Nautilus orders/fills/positions/account/portfolio |
-| Bridge | `src/polysignal_lab/nautilus_bridge/` | market registry、market view assembly、state codec |
+| Bridge | `src/polysignal_lab/nautilus_bridge/` | `MarketCatalog` business-key lookup、market view assembly、state codec |
 | Alpha core | `src/polysignal_lab/alpha/` | engine-agnostic 策略判断 |
 | 报告/结算 | `src/polysignal_lab/app/scheduler_reporting.py` | settlement、daily report、leaderboard；读取 Nautilus projections |
 | 配置模型 | `src/polysignal_lab/config.py` | Pydantic 配置、安全环境校验、YAML/env override |

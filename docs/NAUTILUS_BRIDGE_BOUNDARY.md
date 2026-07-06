@@ -16,7 +16,7 @@ PolySignal Lab remains read-only and paper-safe by default. The default Python 3
 ## Node Surface Status
 
 The default Nautilus bridge enters through `nautilus_trader.live.LiveNode.builder(...)`.
-Legacy `nautilus_trader.live.node.TradingNode` and `TradingNodeConfig` are not used by the default runtime.
+The legacy `nautilus_trader.live.node.TradingNode` import path and `TradingNodeConfig` construction surface are absent from the default runtime.
 
 The default runtime boundary is:
 
@@ -24,6 +24,7 @@ The default runtime boundary is:
 - Paper execution is registered through the Nautilus sandbox execution client factory.
 - Strategy order submission uses Nautilus `order_factory` and `submit_order`.
 - Market views read from Nautilus cache projections plus strategy-local custom data derived from Nautilus `CustomData` callbacks.
+- Market identity uses a `MarketCatalog` business-key boundary keyed by condition/token; no reverse instrument truth source is kept outside Nautilus.
 - No `NautilusMatchingPaperExecutionClient`, `NautilusOrchestrator`, `NautilusDataIngestor`, `PaperWallet` runtime ledger, installed-source patch, private engine monkeypatch, shared external sidecar store, dynamic runtime class factory, or reverse instrument registry is allowed.
 
 NautilusTrader is isolated behind the optional dependency group:
@@ -110,13 +111,14 @@ http://127.0.0.1:8081/health?fresh=nautilus_bridge
 - Pre-existing known failure: `test_telegram_interactive_yaml_defaults_load` (unrelated).
 - 27 commits from plan baseline (aa04094..bb1a6c2), plus 8 pre-existing Task 9 commits.
 - Default runtime: Nautilus `LiveNode` owns lifecycle, data engine, execution engine, cache, portfolio, and sandbox execution.
-- Node surface: default path uses `LiveNode.builder(...)`; legacy `TradingNode` is absent from runtime source.
+- Node surface: default path uses `LiveNode.builder(...)`; the legacy `TradingNode` import/config construction surface is absent from runtime source.
 - Data: Polymarket market data uses `PolymarketLiveDataClientFactory`; spot/PTB/market metadata uses Nautilus `CustomData` and strategy-local derived state.
+- Market identity: `MarketCatalog` is the business-key boundary for condition/token lookup; Nautilus/cache remains the instrument truth source.
 - Execution: paper execution uses `SandboxLiveExecClientFactory`; no PolySignal-owned simulator, wallet, FAK/FOK/GTD executor, fill model, exit engine, or local resting-order store remains.
 - Strategy: `PolySignalNativeStrategy` submits orders through Nautilus `order_factory` and `submit_order`; fillability and order lifecycle are delegated to Nautilus sandbox/cache/portfolio.
-- Market views: alpha views are read-only projections from Nautilus cache plus strategy-local custom data state.
+- Market views: alpha views are read-only projections from Nautilus cache plus strategy-local custom data state and `MarketCatalog` condition/token lookup.
 - Observability: dashboard/report rows are read-only projections from Nautilus events/cache/portfolio; no local paper ledger drives runtime state.
-- Safety: project-wide source scan blocks live Polymarket execution symbols, legacy paper wheel symbols, legacy TradingNode surface, dynamic runtime class factories, shared external sidecar store, reverse instrument registry, and bare asyncio actor scheduling fallbacks.
+- Safety: project-wide source scan blocks live Polymarket execution symbols, legacy paper wheel symbols, legacy TradingNode import/config construction surface, dynamic runtime class factories, shared external sidecar store, reverse instrument registry, and actor-owned asyncio scheduling fallbacks.
 
 Worktree branch: `nautilus-full-runtime-migration` (now merged — see below).
 
