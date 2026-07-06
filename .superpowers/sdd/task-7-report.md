@@ -1,23 +1,56 @@
-# Task 7 Report: Nautilus observability/reporting projection-only boundary
+# Task 7 Report
 
-## Status
-DONE
+## Result
 
-## Scope Completed
-- Added `test_nautilus_observability_has_no_paper_model_recording_api` to `tests/test_nautilus_platform_boundary.py` with the Task 7 forbidden-token boundary assertions.
-- Verified `src/polysignal_lab/nautilus_runtime/observability.py` has no remaining paper model recording API imports, methods, or mirror/notifier symbols covered by the Task 7 boundary.
-- Verified `tests/test_nautilus_observability.py` has no remaining tests calling removed local paper recording APIs.
-- Replaced `generate_daily_report()` Nautilus order/fill fallback so it reads `scheduler.nautilus_cache_reader.read_orders()` / `read_fills()` and filters projection rows to the report day using `ts`/`created_at` timestamps.
-- Left existing `scheduler.nautilus_cache_reader.read_positions()` reporting path in place for open-position/equity projection reporting.
-- Removed the persisted `system_events` `_query_nautilus_projection_rows()` fallback from `scheduler_reporting.py`.
-- Retargeted the scheduler report test to prove report-day order/fill counts and intent buckets come from live Nautilus cache reader projections, that prior-day projection rows are filtered out, and that drained same-day persisted `system_events` Nautilus events are ignored.
+DONE_WITH_CONCERNS
 
-## Verification
-- RED check before implementation: `uv run pytest tests/test_scheduler_reports.py::test_daily_report_uses_nautilus_cache_reader_projection_rows -q` failed with `assert report.paper_orders == 1` while the old persisted-system-events fallback ignored `scheduler.nautilus_cache_reader` rows.
-- Boundary test: `uv run pytest tests/test_nautilus_platform_boundary.py::test_nautilus_observability_has_no_paper_model_recording_api -q` passed.
-- Task 7 test command: `uv run pytest tests/test_nautilus_platform_boundary.py::test_nautilus_observability_has_no_paper_model_recording_api tests/test_nautilus_observability.py tests/test_scheduler_reports.py -q` passed: `47 passed`.
-- Compile command: `uv run python -m py_compile src/polysignal_lab/nautilus_runtime/observability.py src/polysignal_lab/app/scheduler_reporting.py` passed with no output.
-- Targeted grep checks found no Task 7 forbidden observability tokens, no removed paper recording API calls in `tests/test_nautilus_observability.py`, and no `_query_nautilus_projection_rows` / deleted Nautilus execution/matching/orchestrator imports in `scheduler_reporting.py`.
+## Commit
 
-## Concerns
-- Worktree contains pre-existing unrelated changes outside Task 7 scope (`.superpowers/sdd/progress.md`, task 1/4/5/6 reports, and an untracked plan file). They were not modified for Task 7 and should not be included in the Task 7 commit.
+- `912e8e0c810f47cc9d01ba3d8d556178e42f8e9b` (`refactor: split Nautilus order and data callback planning`)
+
+## Files changed in commit
+
+- `src/polysignal_lab/nautilus_runtime/order_plan.py`
+- `src/polysignal_lab/nautilus_runtime/order_mapping.py`
+- `src/polysignal_lab/nautilus_runtime/native_strategy.py`
+- `tests/test_nautilus_native_order.py`
+- `tests/test_nautilus_platform_boundary.py`
+- `src/polysignal_lab/nautilus_runtime/market_rotation.py`
+- `src/polysignal_lab/nautilus_runtime/node.py`
+- `src/polysignal_lab/nautilus_runtime/strategies/cross_market_bot.py`
+- `src/polysignal_lab/nautilus_bridge/market_view_assembler.py`
+
+## Tests and checks run
+
+1. Red test before implementation:
+   - Command: `uv run python -m pytest tests/test_nautilus_native_order.py::test_order_plan_resolves_taker_price_from_best_ask tests/test_nautilus_native_order.py::test_order_plan_rejects_taker_without_best_ask -q`
+   - Observed summary: failed as expected with `ModuleNotFoundError: No module named 'polysignal_lab.nautilus_runtime.order_plan'` for both new tests.
+
+2. Brief order/native strategy test command:
+   - Command: `uv run python -m pytest tests/test_nautilus_native_order.py tests/test_nautilus_strategy_base.py -q`
+   - Observed summary: `........................................................................ [ 98%]` then `. [100%]`.
+
+3. Large function boundary test:
+   - Command: `uv run python -m pytest tests/test_nautilus_platform_boundary.py::test_large_nautilus_runtime_functions_stay_under_limit -q`
+   - Observed summary: `. [100%]`.
+
+4. Order mapping focused test:
+   - Command: `uv run python -m pytest tests/test_nautilus_order_mapping.py -q`
+   - Observed summary: `......... [100%]`.
+
+5. Impacted tests for boundary-driven helper splits outside the brief's primary file list:
+   - Command: `uv run python -m pytest tests/test_nautilus_node.py tests/test_nautilus_market_rotation.py tests/test_nautilus_market_view_assembler.py tests/test_nautilus_cross_market.py -q`
+   - Observed summary: `........................................................................ [ 94%]` then `.... [100%]`.
+
+6. Whitespace check before commit:
+   - Command: `git diff --check`
+   - Observed summary: no output after removing the extra blank line at EOF in `order_mapping.py`.
+
+## Self-review notes
+
+- Added the requested order-plan tests first and observed the expected missing-module failure before creating `order_plan.py`.
+- Moved order-spec planning logic into `order_plan.py`; `order_mapping.order_spec_from_decision` now delegates to `build_order_spec` after resolving `ApprovedDecision` to its source signal/decision.
+- Split `PolySignalNativeStrategy.on_data` into `_handle_custom_data`, `_handle_market_metadata`, `_handle_market_universe`, and `_handle_generic_data`, using the existing `_require_registry()` method for metadata registration.
+- Removed only the Task 7 xfail marker from `test_large_nautilus_runtime_functions_stay_under_limit`.
+- Concern: after removing the xfail marker, the boundary test exposed additional pre-existing >45-line functions in `native_strategy.py`, `market_rotation.py`, `node.py`, `cross_market_bot.py`, and `market_view_assembler.py`. To satisfy the acceptance criterion that the large-function boundary test pass, I made minimal local helper extractions in those functions and ran their impacted focused tests. No public interfaces or intended behavior were changed.
+- Existing unstaged `.superpowers/sdd/progress.md` and prior task report modifications were present before this task and were not staged or committed.
