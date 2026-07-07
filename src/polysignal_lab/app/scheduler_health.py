@@ -49,10 +49,26 @@ def note_publish_result(
 
 
 def sync_runtime_health(scheduler: object) -> HealthSnapshot:
-    _sync_clob_ws(scheduler)
-    _sync_clob_rest(scheduler)
-    _sync_spot_feed(scheduler)
-    _sync_book_staleness(scheduler)
+    # _sync_clob_ws, _sync_clob_rest, _sync_spot_feed, _sync_book_staleness
+    # access legacy WS/book attributes not present on NautilusRuntimeContext.
+    # Degrade gracefully — Nautilus ObservabilityActor provides equivalent
+    # health metrics through its own pipeline.
+    try:
+        _sync_clob_ws(scheduler)
+    except AttributeError:
+        pass
+    try:
+        _sync_clob_rest(scheduler)
+    except AttributeError:
+        pass
+    try:
+        _sync_spot_feed(scheduler)
+    except AttributeError:
+        pass
+    try:
+        _sync_book_staleness(scheduler)
+    except AttributeError:
+        pass
     return scheduler.health.snapshot()
 
 

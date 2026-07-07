@@ -79,7 +79,10 @@ async def check_settlements(scheduler: object) -> list[PaperTradeResult]:
                 market = Market.model_validate(rows[0])
             except (TypeError, ValueError):
                 continue
-        decision = await scheduler.settlement_resolver.resolve_market(market)
+        settlement_resolver = getattr(scheduler, "settlement_resolver", None)
+        if settlement_resolver is None:
+            continue
+        decision = await settlement_resolver.resolve_market(market)
         outcome_value: float | None
         if decision.status == "resolved":
             outcome_value = decision.outcome_value_for(token_id)

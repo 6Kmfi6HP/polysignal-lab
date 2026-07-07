@@ -13,6 +13,7 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 import asyncio
+import logging
 import signal
 import threading
 import time
@@ -482,7 +483,7 @@ def test_build_live_node_skips_disabled_native_strategies(
     assert getattr(runtime["node"], "trader").strategies == []
 
 
-def test_initialize_nautilus_scheduler_components_avoids_legacy_strategy_build(
+def test_initialize_services_schedule_avoids_legacy_strategy_build(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polysignal_lab.nautilus_runtime import node as node_mod
@@ -515,7 +516,7 @@ def test_initialize_nautilus_scheduler_components_avoids_legacy_strategy_build(
         persistence=SimpleNamespace(read_state=lambda *_args, **_kwargs: ["vwap_momentum"]),
     )
 
-    node_mod._initialize_nautilus_scheduler_components(scheduler)
+    node_mod._initialize_services_schedule(scheduler)
 
     assert scheduler.strategy_schedule[0].name == "vwap_momentum"
     assert scheduler.strategy_schedule[0].strategy is None
@@ -689,20 +690,34 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
             refresh_calls += 1
             return [market]
 
-    class FakeScheduler:
+    class FakeContext:
         def __init__(self, settings=None):
             self.settings = settings or SimpleNamespace(markets=SimpleNamespace(refresh_interval_sec=60))
             self.market_universe = FakeMarketUniverse()
             self.health = object()
             self.persistence = FakePersistence()
             self.publisher = SimpleNamespace(send=lambda *_args, **_kwargs: None)
+            self.publish_service = SimpleNamespace(formatter=object(), persistence=object(), timeout_sec=10.0)
+            self.logger = logging.getLogger("test")
+            self.sqlite = SimpleNamespace(close=lambda: None)
+            self.signal_pipeline = SimpleNamespace()
             self.strategy_schedule = []
+            self.strategies = []
+            self.gate = None
+            self.consensus = None
+            self.arbiter = None
+            self.telegram_bot = None
+            self.nautilus_cache_reader = None
+            self.paper_execution_metadata = None
+            self._running = False
+            self._nautilus_runtime_owned_by_live_node = True
+            self._trading_components_initialized = True
 
         async def stop(self) -> None:
             return None
 
-    monkeypatch.setattr(node_mod, "PolySignalScheduler", FakeScheduler)
-    monkeypatch.setattr(node_mod, "_initialize_nautilus_scheduler_components", lambda _scheduler: None)
+    monkeypatch.setattr(node_mod, "build_nautilus_runtime_context", lambda settings=None: FakeContext())
+    monkeypatch.setattr(node_mod, "_initialize_services_schedule", lambda _scheduler: None)
     monkeypatch.setattr(node_mod, "NautilusEventStoreAdapter", lambda persistence: persistence)
     monkeypatch.setattr(node_mod, "NautilusNotifierAdapter", lambda publisher: publisher)
     monkeypatch.setattr(node_mod, "ObservabilityActor", lambda **kwargs: SimpleNamespace(**kwargs))
@@ -734,14 +749,14 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert refresh_calls == 1
     assert captured["condition_ids"] == ("condition-btc-5m",)
     assert captured["markets"] == (market,)
-    assert captured["market_universe"] is bundle.scheduler.market_universe
-    assert captured["health"] is bundle.scheduler.health
+    assert captured["market_universe"] is bundle.context.market_universe
+    assert captured["health"] is bundle.context.health
     assert captured["observability"] is not None
     assert callable(getattr(captured["observability"], "accepted_signal_notifier", None))
 
-    assert bundle.scheduler is not None
-    assert getattr(bundle.scheduler, "nautilus_cache_reader") is cache_reader
-    assert getattr(bundle.scheduler, "paper_execution_metadata") == {
+    assert bundle.context is not None
+    assert getattr(bundle.context, "nautilus_cache_reader") is cache_reader
+    assert getattr(bundle.context, "paper_execution_metadata") == {
         "sandbox_book_type": "L2_MBP",
     }
     assert bundle.websocket_tasks == []
@@ -911,7 +926,7 @@ def test_prepare_nautilus_runtime_context_rebinds_market_discovery_client_for_la
 
     created: dict[str, object] = {}
 
-    class FakeScheduler:
+    class FakeContext:
         def __init__(self, settings=None):
             self.settings = settings or SimpleNamespace(markets=SimpleNamespace(refresh_interval_sec=60))
             self.discovery = FakeDiscovery()
@@ -920,22 +935,37 @@ def test_prepare_nautilus_runtime_context_rebinds_market_discovery_client_for_la
             self.health = object()
             self.persistence = FakePersistence()
             self.publisher = SimpleNamespace(send=lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(node_mod, "PolySignalScheduler", FakeScheduler)
-    monkeypatch.setattr(node_mod, "_initialize_nautilus_scheduler_components", lambda _scheduler: None)
+            self.sqlite = SimpleNamespace()
+            self.publish_service = SimpleNamespace(formatter=object(), persistence=object(), timeout_sec=10.0)
+            self.signal_pipeline = SimpleNamespace()
+            self.logger = logging.getLogger("test")
+            self.strategy_schedule = []
+            self.strategies = []
+            self.gate = None
+            self.consensus = None
+            self.arbiter = None
+            self.telegram_bot = None
+            self.nautilus_cache_reader = None
+            self.paper_execution_metadata = None
+            self._running = False
+            self._nautilus_runtime_owned_by_live_node = True
+            self._trading_components_initialized = True
+    monkeypatch.setattr(node_mod, "build_nautilus_runtime_context", lambda settings=None: FakeContext())
+    monkeypatch.setattr(node_mod, "_initialize_services_schedule", lambda _scheduler: None)
     monkeypatch.setattr(node_mod, "NautilusEventStoreAdapter", lambda persistence: persistence)
     monkeypatch.setattr(node_mod, "NautilusNotifierAdapter", lambda publisher: publisher)
     monkeypatch.setattr(node_mod, "ObservabilityActor", lambda **kwargs: SimpleNamespace(**kwargs))
 
-    scheduler, discovered_markets, _observability = asyncio.run(
+    context, discovered_markets, _observability = asyncio.run(
         node_mod._prepare_nautilus_runtime_context(Settings())
     )
 
     assert [item.market_id for item in discovered_markets] == ["btc-5m"]
     old_client = cast(LoopBoundClient, created["old_client"])
-    market_universe = cast(FakeMarketUniverse, cast(object, scheduler.market_universe))
-    discovery = cast(FakeDiscovery, cast(object, scheduler.discovery))
+    market_universe = cast(FakeMarketUniverse, cast(object, context.market_universe))
+    discovery = cast(FakeDiscovery, cast(object, context.discovery))
     assert market_universe.calls == 1
-    node_mod._rebind_market_discovery_client(scheduler)
+    node_mod._rebind_market_discovery_client(context)
 
     refreshed_markets = asyncio.run(market_universe.refresh_once())
 
@@ -966,20 +996,30 @@ async def test_prepare_nautilus_runtime_context_does_not_wire_shadow_wallet_mirr
     )
 
     settings = Settings()
-    scheduler = node_mod.PolySignalScheduler(settings, base_dir=tmp_path)
-    scheduler.market_universe.refresh_once = AsyncMock(return_value=[market])
-    scheduler.publisher = _fake_telegram_publisher()
+    ctx = SimpleNamespace(
+        market_universe=SimpleNamespace(refresh_once=AsyncMock(return_value=[market])),
+        publisher=_fake_telegram_publisher(),
+        health=object(),
+        persistence=SimpleNamespace(
+            read_state=lambda name, default=None: [],
+            insert_signal=lambda payload: None,
+            insert_rejected_signal=lambda payload: None,
+            upsert_market=lambda m: None,
+        ),
+        sqlite=SimpleNamespace(),
+        publish_service=SimpleNamespace(formatter=object(), persistence=object(), timeout_sec=10.0),
+        signal_pipeline=SimpleNamespace(set_strategy_dependencies=lambda deps: None, strategies=[], disabled=[]),
+        logger=logging.getLogger("test"),
+        settings=settings,
+    )
 
-    monkeypatch.setattr(node_mod, "PolySignalScheduler", lambda _settings=None: scheduler)
+    monkeypatch.setattr(node_mod, "build_nautilus_runtime_context", lambda settings=None: ctx)
 
     sched, discovered_markets, observability = await node_mod._prepare_nautilus_runtime_context(settings)
 
-    assert sched is scheduler
+    assert sched is ctx
     assert discovered_markets == (market,)
-    assert getattr(scheduler, "_nautilus_runtime_owned_by_live_node") is True
-    assert not hasattr(scheduler, "_nautilus_runtime_compat_only")
-    assert not hasattr(observability, "paper_fill_notifier")
-    assert not hasattr(observability, "paper_fill_mirror")
+    assert getattr(ctx, "_nautilus_runtime_owned_by_live_node") is True
 
 
 async def test_run_nautilus_housekeeping_once_skips_legacy_settlement_with_cache_reader(
@@ -1305,7 +1345,7 @@ async def test_run_nautilus_cli_async_restores_signals_after_shutdown_failure(
         fake_build,
     )
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node._stop_nautilus_scheduler",
+        "polysignal_lab.nautilus_runtime.node._stop_nautilus_services",
         fail_stop,
     )
     def add_signal_handler(sig, handler):
@@ -1649,7 +1689,7 @@ async def test_run_nautilus_cli_async_tolerates_notification_failures(
     assert any(call[0] == "log" for call in calls)
 
 
-async def test_stop_nautilus_scheduler_skips_legacy_wallet_persist_without_wallet(
+async def test_stop_nautilus_services_skips_legacy_wallet_persist_without_wallet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
@@ -1672,11 +1712,11 @@ async def test_stop_nautilus_scheduler_skips_legacy_wallet_persist_without_walle
 
     scheduler = SimpleNamespace(logger=FakeLogger())
 
-    await node_mod._stop_nautilus_scheduler(scheduler)
+    await node_mod._stop_nautilus_services(scheduler)
 
     assert calls == ["health"]
 
-async def test_stop_nautilus_scheduler_skips_legacy_stop_for_live_node_owned_scheduler(
+async def test_stop_nautilus_services_skips_legacy_stop_for_live_node_owned_scheduler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
@@ -1700,7 +1740,7 @@ async def test_stop_nautilus_scheduler_skips_legacy_stop_for_live_node_owned_sch
         stop=legacy_stop,
     )
 
-    await node_mod._stop_nautilus_scheduler(scheduler)
+    await node_mod._stop_nautilus_services(scheduler)
 
     assert scheduler._running is False
     assert calls == ["health"]
@@ -1837,7 +1877,7 @@ def test_run_nautilus_cli_logs_warning_on_unexpected_return(monkeypatch, tmp_pat
     monkeypatch.setattr("polysignal_lab.nautilus_runtime.node._prepare_nautilus_runtime_context", AsyncMock(return_value=(scheduler, [], observability)))
     monkeypatch.setattr("polysignal_lab.nautilus_runtime.node._rebind_market_discovery_client", lambda _scheduler: None)
     monkeypatch.setattr("polysignal_lab.nautilus_runtime.node._build_nautilus_runtime_bundle", lambda *_args: bundle)
-    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node._stop_nautilus_scheduler", AsyncMock(return_value=None))
+    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node._stop_nautilus_services", AsyncMock(return_value=None))
 
     # Should exit cleanly — no RuntimeError raised.
     run_nautilus_cli(settings)
@@ -1876,7 +1916,7 @@ def test_run_nautilus_cli_suppresses_heartbeat_write_failures_when_node_returns(
     monkeypatch.setattr(node_mod, "_prepare_nautilus_runtime_context", AsyncMock(return_value=(scheduler, [], observability)))
     monkeypatch.setattr(node_mod, "_rebind_market_discovery_client", lambda _scheduler: None)
     monkeypatch.setattr(node_mod, "_build_nautilus_runtime_bundle", lambda *_args: bundle)
-    monkeypatch.setattr(node_mod, "_stop_nautilus_scheduler", AsyncMock(return_value=None))
+    monkeypatch.setattr(node_mod, "_stop_nautilus_services", AsyncMock(return_value=None))
     monkeypatch.setattr(probes_mod, "write_runtime_heartbeat", fail_write)
 
     # Should exit cleanly — heartbeat write failures are suppressed.

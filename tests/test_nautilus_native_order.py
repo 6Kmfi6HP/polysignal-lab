@@ -352,7 +352,7 @@ def _load_static_native_strategy(
 
     try:
         module = import_module(runtime_module_name)
-        return cast(type[object], module.NautilusPolySignalNativeStrategy)
+        return cast(type[object], module.PolySignalNativeStrategy)
     finally:
         if previous_runtime_module is missing:
             _ = sys.modules.pop(runtime_module_name, None)

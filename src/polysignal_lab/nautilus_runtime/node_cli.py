@@ -56,16 +56,16 @@ async def run_nautilus_cli_async(
     _write_runtime_startup_marker_best_effort(_runtime_startup_marker_path(settings))
     bundle = await build_nautilus_runtime(settings)
     _write_runtime_heartbeat_best_effort(
-        _runtime_heartbeat_path(bundle.scheduler.settings),
+        _runtime_heartbeat_path(bundle.context.settings),
         phase="starting",
     )
     node = bundle.node
     loop = asyncio.get_running_loop()
 
     request_stop: Callable[[], None] = event.set
-    runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))
+    runtime_logger = cast(logging.Logger, getattr(bundle.context, "logger", logger))
     cleanup_signals: Callable[[], None] = lambda: None
-    runtime_settings = getattr(bundle.scheduler, "settings", settings)
+    runtime_settings = getattr(bundle.context, "settings", settings)
     if _runtime_intercepts_os_signals(runtime_settings):
         cleanup_signals = _install_async_os_signal_handlers(loop, request_stop)
 
@@ -78,7 +78,7 @@ async def run_nautilus_cli_async(
         print(f"Nautilus runtime ready - {len(strategy_names)} strategies")
         if stop_event is not None and stop_event.is_set():
             return node
-        await _run_async_node_with_report_loop(node, bundle.scheduler, event)
+        await _run_async_node_with_report_loop(node, bundle.context, event)
     finally:
         await _finalize_async_cli_runtime(
             bundle,

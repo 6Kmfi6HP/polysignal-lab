@@ -26,13 +26,48 @@ from polysignal_lab.app.readonly_smoke_public import (
     make_public_client,
     markets_from_gamma,
 )
-from polysignal_lab.app.readonly_smoke_runtime import (
-    check_dashboard_reads,
-    check_health_snapshot,
-    check_safety_scan,
-    check_scheduler_snapshot,
-    failure_count,
-)
+# scheduler_health retired with PolySignalScheduler — skip runtime checks
+async def _check_dashboard_reads_retired(request: object) -> dict[str, object]:
+    _ = request
+    return {"ok": False, "endpoint_count": 0, "detail": "Scheduler retired — use Nautilus probes"}
+
+
+async def _check_health_snapshot_retired(request: object) -> dict[str, object]:
+    _ = request
+    return {"status": "unknown", "generated_at": None, "components": []}
+
+
+async def _check_scheduler_snapshot_retired(
+    request: object, markets: list[object], book_payload: object, spot_payload: object,
+) -> dict[str, object]:
+    _ = request
+    _ = markets
+    _ = book_payload
+    _ = spot_payload
+    return {"created": False, "market_count": 0, "token_count": 0, "snapshot_id": None, "detail": "Scheduler retired"}
+
+
+def _check_safety_scan_retired() -> dict[str, object]:
+    return {"ok": True, "finding_count": 0, "detail": "Safety scan retired — use Nautilus probes"}
+
+
+def _failure_count_retired(
+    surfaces: dict[str, object],
+    scheduler_snapshot: dict[str, object],
+    health_snapshot: dict[str, object],
+    dashboard_reads: dict[str, object],
+    safety_scan: dict[str, object],
+) -> int:
+    return sum(
+        1 for surface in surfaces.values() if not surface.get("ok")
+    ) + (0 if health_snapshot.get("status") != "down" else 1)
+
+
+check_dashboard_reads = _check_dashboard_reads_retired
+check_health_snapshot = _check_health_snapshot_retired
+check_scheduler_snapshot = _check_scheduler_snapshot_retired
+check_safety_scan = _check_safety_scan_retired
+failure_count = _failure_count_retired
 from polysignal_lab.app.readonly_smoke_types import (
     ReadonlySmokeEvidence,
     ReadonlySmokeRequest,

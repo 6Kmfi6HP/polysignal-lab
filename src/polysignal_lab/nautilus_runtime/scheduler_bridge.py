@@ -61,7 +61,9 @@ def _seed_policy_control_from_services(
     policy.arbiter = getattr(services, "arbiter", None) or policy.arbiter
     policy.consensus = getattr(services, "consensus", None) or policy.consensus
 
-    schedule = cast(Sequence[StrategyScheduleEntry], getattr(services, "strategy_schedule", ()))
+    schedule = cast(Sequence[StrategyScheduleEntry], getattr(services, "strategy_schedule", None))
+    if schedule is None:
+        return
     policy.strategy_dependencies = {
         entry.name: tuple(entry.depends_on) for entry in schedule
     }

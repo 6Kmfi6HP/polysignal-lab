@@ -18,8 +18,6 @@ from graphlib import CycleError, TopologicalSorter
 from typing import Iterable, Literal
 
 from polysignal_lab.config import StrategyConfig
-from polysignal_lab.strategies.base import BaseStrategy
-from polysignal_lab.strategies.factory import build_strategy
 
 ExecutionMode = Literal["stateless", "stateful", "cross_market"]
 
@@ -113,20 +111,13 @@ def validate_strategy_dag(items: Iterable[tuple[str, Iterable[str]]]) -> tuple[s
 
 
 def build_strategy_schedule(config: StrategyConfig) -> list[StrategyScheduleEntry]:
-    entries: list[StrategyScheduleEntry] = []
-    for index, name in enumerate(config.explicit_strategy_names()):
-        cfg = getattr(config, name)
-        if not getattr(cfg, "enabled", False):
-            continue
-        execution = cfg.execution
-        entries.append(
-            StrategyScheduleEntry(
-                strategy=build_strategy(cfg),
-                name=cfg.name,
-                priority=execution.priority,
-                depends_on=tuple(execution.depends_on),
-                execution_mode=execution.execution_mode,
-                strategy_config_index=index,
-            )
-        )
-    return order_strategy_schedule(entries)
+    """Legacy strategy schedule builder — retired with BaseStrategy subclasses.
+
+    The Nautilus runtime uses ``_build_nautilus_config_strategy_schedule``
+    in ``strategy_builder.py`` which builds ``StrategyScheduleEntry``
+    entries directly from alpha cores.
+    """
+    raise RuntimeError(
+        "build_strategy_schedule is retired. "
+        "Use _build_nautilus_config_strategy_schedule for Nautilus runtime."
+    )

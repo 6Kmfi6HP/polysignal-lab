@@ -29,9 +29,7 @@ from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.app.services.signal_pipeline import SignalPipeline
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
-from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
 from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
-from polysignal_lab.data.public_market_data_client import PublicMarketDataClient
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
@@ -133,7 +131,6 @@ class NautilusRuntimeContext:
 def build_nautilus_runtime_context(
     settings: Settings,
     base_dir: str | Path = '.',
-    market_data_client: PublicMarketDataClient | None = None,
 ) -> NautilusRuntimeContext:
     """Build the services needed by the Nautilus runtime path.
 
@@ -151,11 +148,6 @@ def build_nautilus_runtime_context(
         spots: SpotRegistry = field(default_factory=SpotRegistry)
 
     ctx = ServiceContext(settings=settings)
-    _market_data: PublicMarketDataClient = (
-        market_data_client
-        if market_data_client is not None
-        else PolymarketCLOBRestClient(settings.data.polymarket)
-    )
     gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
     consensus = ConsensusEngine(
         settings.signal.consensus_window_sec,
