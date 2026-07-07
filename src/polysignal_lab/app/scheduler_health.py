@@ -13,30 +13,26 @@ Pos: Application code
 from __future__ import annotations
 
 import sqlite3
-from typing import TYPE_CHECKING
 
 from pydantic import JsonValue
 
 from polysignal_lab.observability.health import HealthSnapshot
 from polysignal_lab.utils import new_id, utc_iso, utc_now
 
-if TYPE_CHECKING:
-    from polysignal_lab.app.scheduler import PolySignalScheduler
 
-
-def note_storage_success(scheduler: PolySignalScheduler, store_name: str) -> None:
+def note_storage_success(scheduler: object, store_name: str) -> None:
     scheduler.health.mark_ok(f"{store_name}_storage", last_successful_write=utc_iso())
 
 
 def note_storage_failure(
-    scheduler: PolySignalScheduler, store_name: str, exc: BaseException
+    scheduler: object, store_name: str, exc: BaseException
 ) -> None:
     scheduler.health.inc_metric(f"{store_name}_storage", "write_failures")
     scheduler.health.mark_down(f"{store_name}_storage", str(exc))
 
 
 def note_publish_result(
-    scheduler: PolySignalScheduler, publish: dict[str, str | None]
+    scheduler: object, publish: dict[str, str | None]
 ) -> None:
     status = str(publish.get("status") or "")
     if status == "SENT":
@@ -52,7 +48,7 @@ def note_publish_result(
         )
 
 
-def sync_runtime_health(scheduler: PolySignalScheduler) -> HealthSnapshot:
+def sync_runtime_health(scheduler: object) -> HealthSnapshot:
     _sync_clob_ws(scheduler)
     _sync_clob_rest(scheduler)
     _sync_spot_feed(scheduler)
@@ -60,7 +56,7 @@ def sync_runtime_health(scheduler: PolySignalScheduler) -> HealthSnapshot:
     return scheduler.health.snapshot()
 
 
-def persist_health_snapshot(scheduler: PolySignalScheduler) -> None:
+def persist_health_snapshot(scheduler: object) -> None:
     snapshot = sync_runtime_health(scheduler)
     payload = {
         "event_id": new_id("health_snapshot"),
@@ -81,7 +77,7 @@ def persist_health_snapshot(scheduler: PolySignalScheduler) -> None:
         scheduler.logger.warning("Failed to persist health snapshot: %s", exc)
 
 
-def _sync_clob_ws(scheduler: PolySignalScheduler) -> None:
+def _sync_clob_ws(scheduler: object) -> None:
     metrics = scheduler.ctx.books.metrics.snapshot()["counters"]
     stale_count = _stale_clob_token_count(scheduler)
     idle_without_active_tokens = (
@@ -120,7 +116,7 @@ def _sync_clob_ws(scheduler: PolySignalScheduler) -> None:
         )
 
 
-def _sync_clob_rest(scheduler: PolySignalScheduler) -> None:
+def _sync_clob_rest(scheduler: object) -> None:
     rest_metrics = getattr(scheduler.rest, "metrics", None)
     if rest_metrics is None:
         scheduler.health.mark_degraded(
@@ -159,7 +155,7 @@ def _sync_clob_rest(scheduler: PolySignalScheduler) -> None:
         scheduler.health.mark_ok("clob_rest", **payload)
 
 
-def _sync_spot_feed(scheduler: PolySignalScheduler) -> None:
+def _sync_spot_feed(scheduler: object) -> None:
     now = utc_now()
     if scheduler.settings.data.polymarket.use_rtds_ws:
         name = "polymarket_rtds_ws"
@@ -218,12 +214,12 @@ def _sync_spot_feed(scheduler: PolySignalScheduler) -> None:
         scheduler.health.mark_ok(name, **metrics)
 
 
-def _sync_book_staleness(scheduler: PolySignalScheduler) -> None:
+def _sync_book_staleness(scheduler: object) -> None:
     stale_count = _stale_clob_token_count(scheduler)
     scheduler.health.set_metric("clob_ws", "stale_token_count", stale_count)
 
 
-def _stale_clob_token_count(scheduler: PolySignalScheduler) -> int:
+def _stale_clob_token_count(scheduler: object) -> int:
     if scheduler._market_refresh_completed and not scheduler._latest_market_token_ids:
         return 0
     if scheduler._market_ws_token_ids:

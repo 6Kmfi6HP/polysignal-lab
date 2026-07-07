@@ -12,10 +12,12 @@ Pos: Application code
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
+
+from nautilus_trader.common.actor import Actor
+from nautilus_trader.config import ActorConfig
 
 from polysignal_lab.config import Settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceService, AnchorPriceStore
@@ -56,7 +58,7 @@ class _Health(Protocol):
 
 
 
-class MarketRotationActor:
+class MarketRotationActor(Actor):
     def __init__(
         self,
         *,
@@ -67,6 +69,7 @@ class MarketRotationActor:
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
     ) -> None:
+        Actor.__init__(self, config=ActorConfig())
         spot_source = settings.runtime.nautilus.sidecar.spot_source
         if spot_source != "disabled":
             raise RuntimeError(
@@ -90,14 +93,11 @@ class MarketRotationActor:
         )
         self._active_by_condition: dict[str, Market] = _markets_by_condition(startup_markets)
         self._epoch: int = 0
-        self._refresh_in_flight: bool = False
-        self._refresh_task: asyncio.Task[None] | None = None
         self._last_published_ptb: dict[str, _PriceToBeatSignature] = {}
 
     def publish_data(self, data_type: object, data: object) -> None:
-        base_publish = getattr(super(MarketRotationActor, self), "publish_data", None)
-        if callable(base_publish):
-            _ = base_publish(data_type, data)
+        # Calls Actor.publish_data via MRO — Actor is now a direct base class.
+        super().publish_data(data_type, data)
 
     def on_start(self) -> None:
         _register_polysignal_data_types_if_available()
@@ -234,33 +234,24 @@ class MarketRotationActor:
             _ = self._last_published_ptb.pop(condition_id, None)
 
     def _on_refresh_timer(self, _event: object = None) -> None:
-        if self._refresh_in_flight:
-            return
-        self._refresh_in_flight = True
+        """Nautilus Timer callback — runs on the event loop thread.
 
-        async def _refresh_with_timeout():
-            try:
-                await asyncio.wait_for(self._refresh_async(), timeout=30)
-            except asyncio.TimeoutError:
-                logger.warning("market refresh timed out after 30s")
-                self._mark_down(TimeoutError("refresh timeout"), phase="refresh")
-            finally:
-                self._refresh_task = None
-
-        self._refresh_task = asyncio.create_task(_refresh_with_timeout())
+        Schedules the refresh work as a fire-and-forget coroutine. Since Nautilus
+        Timer callbacks are serialized on the event loop, no manual concurrency
+        guard is needed.
+        """
+        _ = asyncio.create_task(self._refresh_async())
 
     async def _refresh_async(self) -> None:
         try:
             refreshed_markets = tuple(
                 await asyncio.to_thread(self.market_universe.refresh_once_sync)
             )
-            markets = self._apply_refreshed_markets(refreshed_markets)
-            self._publish_price_to_beat_batch_sync(markets)
+            _ = self._apply_refreshed_markets(refreshed_markets)
+            self._publish_price_to_beat_batch_sync(self.active_markets())
         except Exception as exc:
             logger.exception("market_rotation phase=refresh failed epoch=%s", self._epoch)
             self._mark_down(exc, phase="refresh")
-        finally:
-            self._refresh_in_flight = False
 
     def _on_spot(self, spot: SpotPrice) -> None:
         self.publisher.publish_spot(

@@ -16,11 +16,9 @@ from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-if TYPE_CHECKING:
-    from polysignal_lab.app.scheduler import PolySignalScheduler
 
 
-def _configured_report_date(scheduler: PolySignalScheduler) -> date:
+def _configured_report_date(scheduler: object) -> date:
     try:
         report_tz = ZoneInfo(scheduler.settings.app.timezone)
     except ZoneInfoNotFoundError:
@@ -29,7 +27,7 @@ def _configured_report_date(scheduler: PolySignalScheduler) -> date:
 
 
 async def _generate_iteration_report(
-    scheduler: PolySignalScheduler, last_report_date: date | None
+    scheduler: object, last_report_date: date | None
 ) -> date | None:
     report_date = _configured_report_date(scheduler)
     if last_report_date == report_date:

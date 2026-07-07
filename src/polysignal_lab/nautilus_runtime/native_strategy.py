@@ -16,6 +16,9 @@ from datetime import UTC, datetime, timedelta
 import sqlite3
 from typing import cast
 
+from nautilus_trader.config import StrategyConfig
+from nautilus_trader.trading.strategy import Strategy
+
 from polysignal_lab.alpha.types import (
     AlphaCore,
     AlphaDecision,
@@ -191,7 +194,7 @@ class _SubscriptionManager:
             base_subscribe(self._strategy, data_type)
 
 
-class PolySignalNativeStrategy:
+class PolySignalNativeStrategy(Strategy):
     """Nautilus callback-shaped strategy wrapper around a PolySignal alpha core."""
 
     def __init__(
@@ -211,7 +214,10 @@ class PolySignalNativeStrategy:
         progress_callback: Callable[[str], None] | None = None,
         unsubscribe_exited: bool = True,
         l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
+        config: StrategyConfig | None = None,
     ) -> None:
+        Strategy.__init__(self, config=config or StrategyConfig())
+
         if registry is None or assembler is None:
             raise RuntimeError(MISSING_PROJECTIONS_ERROR)
 

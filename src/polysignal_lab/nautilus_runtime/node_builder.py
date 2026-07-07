@@ -19,16 +19,33 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Protocol, cast, runtime_checkable
 
+import logging
+from pathlib import Path
+
 from polysignal_lab.alpha.types import AlphaCore, TradeView
-from polysignal_lab.app.scheduler import PolySignalScheduler
+from polysignal_lab.app.services.persistence_service import PersistenceService
+from polysignal_lab.app.services.market_universe_service import MarketUniverseService
+from polysignal_lab.app.services.publish_service import PublishService
+from polysignal_lab.app.services.signal_pipeline import SignalPipeline
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
+from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
+from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
+from polysignal_lab.data.public_market_data_client import PublicMarketDataClient
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.observability import ObservabilityActor
+from polysignal_lab.observability.health import HealthRegistry
+from polysignal_lab.publish.telegram_publisher import TelegramPublisher
+from polysignal_lab.signal_layer.consensus import ConsensusEngine
+from polysignal_lab.signal_layer.formatter import MessageFormatter
+from polysignal_lab.signal_layer.gate import SignalGate
+from polysignal_lab.storage.jsonl_store import JSONLStore
+from polysignal_lab.storage.sqlite_store import SQLiteStore
+from polysignal_lab.storage.state_store import StateStore
 
 
 class _TraderLike(Protocol):
@@ -86,10 +103,114 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
+class NautilusRuntimeContext:
+    """Services needed by the Nautilus runtime path — replaces PolySignalScheduler."""
+
+    settings: Settings
+    market_universe: MarketUniverseService
+    health: HealthRegistry
+    persistence: PersistenceService
+    publisher: TelegramPublisher
+    publish_service: PublishService
+    sqlite: SQLiteStore
+    signal_pipeline: SignalPipeline
+    gate: SignalGate
+    consensus: ConsensusEngine
+    discovery: MarketDiscovery
+    logger: logging.Logger
+
+    # Runtime state bag (mutable)
+    nautilus_cache_reader: object | None = None
+    telegram_bot: object | None = None
+    paper_execution_metadata: object | None = None
+    strategy_schedule: object | None = None
+    strategies: object | None = None
+    arbiter: object | None = None
+    _running: bool = False
+    _nautilus_runtime_owned_by_live_node: bool = False
+
+
+def build_nautilus_runtime_context(
+    settings: Settings,
+    base_dir: str | Path = '.',
+    market_data_client: PublicMarketDataClient | None = None,
+) -> NautilusRuntimeContext:
+    """Build the services needed by the Nautilus runtime path.
+
+    Replaces ``build_nautilus_service_context`` + ``PolySignalScheduler``
+    from the legacy scheduler module.
+    """
+    from dataclasses import dataclass, field
+    from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry, SpotRegistry
+
+    @dataclass
+    class ServiceContext:
+        settings: Settings | None = None
+        markets: MarketRegistry = field(default_factory=MarketRegistry)
+        books: OrderBookRegistry = field(default_factory=OrderBookRegistry)
+        spots: SpotRegistry = field(default_factory=SpotRegistry)
+
+    ctx = ServiceContext(settings=settings)
+    _market_data: PublicMarketDataClient = (
+        market_data_client
+        if market_data_client is not None
+        else PolymarketCLOBRestClient(settings.data.polymarket)
+    )
+    gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
+    consensus = ConsensusEngine(
+        settings.signal.consensus_window_sec,
+        settings.signal.consensus_enabled,
+    )
+    formatter = MessageFormatter(settings.telegram.max_message_chars)
+    publisher = TelegramPublisher(settings.telegram)
+    health = HealthRegistry()
+    discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
+    base = Path(base_dir)
+    logs = JSONLStore(base / settings.storage.jsonl_dir)
+    state = StateStore(base / settings.storage.state_dir)
+    sqlite = SQLiteStore(base / settings.storage.sqlite_path)
+    persistence = PersistenceService(logs, sqlite, state)
+    market_universe = MarketUniverseService(
+        discovery,
+        ctx.markets,
+        persistence,
+        settings=settings,
+        logger=logging.getLogger('polysignal_lab.scheduler'),
+    )
+    signal_pipeline = SignalPipeline(
+        [],
+        gate,
+        consensus,
+        persistence,
+        logger=logging.getLogger('polysignal_lab.scheduler'),
+    )
+    publish_service = PublishService(
+        formatter,
+        publisher,
+        persistence,
+        timeout_sec=settings.telegram.publish_timeout_sec,
+    )
+    return NautilusRuntimeContext(
+        settings=settings,
+        market_universe=market_universe,
+        health=health,
+        persistence=persistence,
+        publisher=publisher,
+        publish_service=publish_service,
+        sqlite=sqlite,
+        signal_pipeline=signal_pipeline,
+        gate=gate,
+        consensus=consensus,
+        discovery=discovery,
+        logger=logging.getLogger('polysignal_lab.scheduler'),
+    )
+
+
+@dataclass(slots=True)
 class NautilusRuntimeBundle:
     """Wired Nautilus LiveNode runtime components."""
 
-    scheduler: PolySignalScheduler
+    context: NautilusRuntimeContext
     components: dict[str, object]
     bridge_registry: MarketCatalog
     node: _NautilusNodeLike
@@ -337,7 +458,7 @@ def build_live_node(
 
 
 async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRuntimeBundle:
-    """Build the default Nautilus runtime without PolySignal market-data ownership."""
+    """Build the default Nautilus runtime."""
     from polysignal_lab.nautilus_runtime.node import (
         _build_nautilus_runtime_bundle,
         _prepare_nautilus_runtime_context,
@@ -346,5 +467,5 @@ async def build_nautilus_runtime(settings: Settings | None = None) -> NautilusRu
     if settings is None:
         settings = load_settings()
 
-    scheduler, discovered_markets, observability = await _prepare_nautilus_runtime_context(settings)
-    return _build_nautilus_runtime_bundle(settings, scheduler, discovered_markets, observability)
+    context, discovered_markets, observability = await _prepare_nautilus_runtime_context(settings)
+    return _build_nautilus_runtime_bundle(settings, context, discovered_markets, observability)

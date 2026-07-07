@@ -20,11 +20,21 @@ from typing import Any, cast
 
 import httpx
 
-from polysignal_lab.app.scheduler_market_data import token_ids_for_markets
 from polysignal_lab.config import Settings
 from polysignal_lab.data.state import MarketRegistry
 from polysignal_lab.domain.enums import MarketStatus
 from polysignal_lab.domain.market import Market
+
+
+def token_ids_for_markets(markets: list[Market]) -> tuple[str, ...]:
+    """Extract unique token IDs from a list of markets."""
+    token_ids = (
+        token.token_id
+        for market in markets
+        for token in market.outcome_tokens
+        if token.token_id
+    )
+    return tuple(dict.fromkeys(token_ids))
 
 
 class MarketUniverseService:

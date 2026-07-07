@@ -32,8 +32,6 @@ from polysignal_lab.paper.report import (
 )
 from polysignal_lab.utils import new_id, parse_dt, redact_text, utc_iso, utc_now
 
-if TYPE_CHECKING:
-    from polysignal_lab.app.scheduler import PolySignalScheduler
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +45,7 @@ class DailyReportInputs:
     trade_results: list[PaperTradeResult]
 
 
-async def check_settlements(scheduler: PolySignalScheduler) -> list[PaperTradeResult]:
+async def check_settlements(scheduler: object) -> list[PaperTradeResult]:
     cache_reader = _nautilus_cache_reader(scheduler)
     if cache_reader is None:
         return []
@@ -129,7 +127,7 @@ async def check_settlements(scheduler: PolySignalScheduler) -> list[PaperTradeRe
 
 
 def _existing_result_for_position(
-    scheduler: PolySignalScheduler, paper_position_id: str
+    scheduler: object, paper_position_id: str
 ) -> dict[str, object] | None:
     rows = scheduler.persistence.query_json("paper_trade_results", limit=100_000)
     for row in rows:
@@ -203,7 +201,7 @@ def _projection_side(projection: dict[str, object], market: Market, token_id: st
 
 
 async def _store_projection_result(
-    scheduler: PolySignalScheduler,
+    scheduler: object,
     result: PaperTradeResult,
 ) -> None:
     scheduler.persistence.insert_paper_trade_result(result)
@@ -212,7 +210,7 @@ async def _store_projection_result(
 
 
 async def _store_paper_result(
-    scheduler: PolySignalScheduler,
+    scheduler: object,
     result: PaperTradeResult,
     position: PaperPosition,
 ) -> None:
@@ -222,7 +220,7 @@ async def _store_paper_result(
 
 
 async def _publish_paper_result_best_effort(
-    scheduler: PolySignalScheduler, result: PaperTradeResult
+    scheduler: object, result: PaperTradeResult
 ) -> None:
     if not scheduler.settings.telegram.send_paper_results:
         return
@@ -288,7 +286,7 @@ def _paper_order_intent(order: dict[str, object]) -> str:
 
 
 def _fill_payloads_with_order_intents(
-    scheduler: PolySignalScheduler,
+    scheduler: object,
     fills: list[dict[str, object]],
     orders: list[dict[str, object]],
 ) -> list[dict[str, object]]:
@@ -338,7 +336,7 @@ def _fill_payloads_with_order_intents(
 
 
 def _nautilus_projection_rows(
-    scheduler: PolySignalScheduler,
+    scheduler: object,
     name: str,
 ) -> list[dict[str, object]]:
     reader = getattr(scheduler, "nautilus_cache_reader", None)
@@ -352,7 +350,7 @@ def _nautilus_projection_rows(
 
 
 def _nautilus_projection_rows_for_day(
-    scheduler: PolySignalScheduler,
+    scheduler: object,
     name: str,
     *,
     day_start: datetime,
@@ -370,7 +368,7 @@ def _nautilus_projection_rows_for_day(
             rows.append(row)
     return rows
 
-def _nautilus_cache_reader(scheduler: PolySignalScheduler) -> object | None:
+def _nautilus_cache_reader(scheduler: object) -> object | None:
     return getattr(scheduler, "nautilus_cache_reader", None)
 
 
@@ -386,7 +384,7 @@ def _projection_float(source: dict[str, object] | None, key: str) -> float | Non
         return None
 
 
-def _report_equity_inputs(scheduler: PolySignalScheduler) -> tuple[float, float, int]:
+def _report_equity_inputs(scheduler: object) -> tuple[float, float, int]:
     starting_equity = float(scheduler.settings.paper_trading.starting_balance_usdc)
     cache_reader = _nautilus_cache_reader(scheduler)
     if cache_reader is None:
@@ -447,7 +445,7 @@ def _report_equity_inputs_from_nautilus_cache(
 
 
 def _collect_daily_report_inputs(
-    scheduler: PolySignalScheduler,
+    scheduler: object,
     *,
     today: date,
     report_tz: ZoneInfo | timezone,
@@ -539,7 +537,7 @@ def _collect_daily_report_inputs(
 
 
 async def _build_daily_report_from_inputs(
-    scheduler: PolySignalScheduler,
+    scheduler: object,
     inputs: DailyReportInputs,
 ) -> DailyReport | None:
     today_fill_payloads = _fill_payloads_with_order_intents(
@@ -632,7 +630,7 @@ async def _build_daily_report_from_inputs(
     return report
 
 
-async def generate_daily_report(scheduler: PolySignalScheduler) -> DailyReport | None:
+async def generate_daily_report(scheduler: object) -> DailyReport | None:
     try:
         report_tz = ZoneInfo(scheduler.settings.app.timezone)
     except ZoneInfoNotFoundError:

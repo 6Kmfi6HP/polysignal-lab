@@ -27,13 +27,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, cast
 
-from polysignal_lab.app.scheduler import (
-    PolySignalScheduler,
-    SchedulerServiceContext,
-    build_nautilus_service_context,
-)
-from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.config import Settings, load_settings
+from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
@@ -59,7 +54,7 @@ from polysignal_lab.nautilus_runtime.signal_sidecar import (
     _start_nautilus_report_loop_thread,
     _stop_interactive_telegram_bot_thread,
     _stop_nautilus_report_loop_thread,
-    _stop_nautilus_scheduler,
+    _stop_nautilus_services,
 )
 from polysignal_lab.nautilus_runtime.node_cli import (
     run_nautilus_cli_async as run_nautilus_cli_async,
@@ -72,6 +67,8 @@ from polysignal_lab.nautilus_runtime.observability import (
 from polysignal_lab.nautilus_runtime.node_builder import (
     LiveNode,
     NautilusRuntimeBundle,
+    NautilusRuntimeContext,
+    build_nautilus_runtime_context,
     PolymarketInstrumentProviderConfig,
     NautilusActor,
     NautilusActorConfig,
@@ -104,8 +101,8 @@ from polysignal_lab.nautilus_runtime.strategy_builder import (
     build_control,
 )
 from polysignal_lab.nautilus_runtime.scheduler_bridge import (
-    _initialize_nautilus_scheduler_components,
-    _seed_policy_control_from_scheduler,
+    _initialize_services_schedule,
+    _seed_policy_control_from_services,
 )
 
 UTC = timezone.utc
@@ -188,28 +185,30 @@ def _build_market_rotation_actor(
 
 async def _prepare_nautilus_runtime_context(
     settings: Settings,
-) -> tuple[PolySignalScheduler, tuple[Market, ...], ObservabilityActor]:
-    scheduler = PolySignalScheduler(settings, _context=build_nautilus_service_context(settings))
-    _initialize_nautilus_scheduler_components(scheduler)
-    scheduler._nautilus_runtime_owned_by_live_node = True
-    discovered_markets = tuple(await scheduler.market_universe.refresh_once())
+) -> tuple[NautilusRuntimeContext, tuple[Market, ...], ObservabilityActor]:
+    context = build_nautilus_runtime_context(settings)
+    _initialize_services_schedule(context)
+    context._nautilus_runtime_owned_by_live_node = True
+    discovered_markets = tuple(await context.market_universe.refresh_once())
     observability = ObservabilityActor(
-        health=scheduler.health,
-        store=NautilusEventStoreAdapter(scheduler.persistence),
-        notifier=NautilusNotifierAdapter(scheduler.publisher),
+        health=context.health,
+        store=NautilusEventStoreAdapter(context.persistence),
+        notifier=NautilusNotifierAdapter(context.publisher),
         accepted_signal_notifier=lambda signal, stake_usdc: _notify_accepted_signal(
-            scheduler,
+            context,
             signal,
             stake_usdc,
         ),
     )
-    return scheduler, discovered_markets, observability
+    return context, discovered_markets, observability
 
 
-def _rebind_market_discovery_client(scheduler: PolySignalScheduler) -> None:
-    discovery = cast(object, getattr(scheduler, "discovery", None))
-    client = getattr(discovery, "client", None)
-    if client is None:
+def _rebind_market_discovery_client(context: NautilusRuntimeContext) -> None:
+    """Replace the startup-phase HTTP client with a fresh connection for live runtime."""
+    if context.market_universe is None:
+        return
+    discovery = getattr(context.market_universe, "discovery", None)
+    if discovery is None:
         return
     replace_client = getattr(discovery, "replace_client", None)
     if callable(replace_client):
@@ -217,10 +216,9 @@ def _rebind_market_discovery_client(scheduler: PolySignalScheduler) -> None:
         return
     try:
         import httpx
-
         discovery.client = httpx.AsyncClient(timeout=15.0)
     except Exception:
-        scheduler.logger.warning(
+        context.logger.warning(
             "Failed to replace startup market discovery client before live runtime handoff",
             exc_info=True,
         )
@@ -228,7 +226,7 @@ def _rebind_market_discovery_client(scheduler: PolySignalScheduler) -> None:
 
 def _build_nautilus_runtime_bundle(
     settings: Settings,
-    scheduler: PolySignalScheduler,
+    context: NautilusRuntimeContext,
     discovered_markets: tuple[Market, ...],
     observability: ObservabilityActor,
 ) -> NautilusRuntimeBundle:
@@ -237,25 +235,25 @@ def _build_nautilus_runtime_bundle(
         settings,
         condition_ids=condition_ids,
         markets=discovered_markets,
-        market_universe=scheduler.market_universe,
-        store=getattr(scheduler, "sqlite", None),
-        health=scheduler.health,
+        market_universe=context.market_universe,
+        store=context.sqlite,
+        health=context.health,
         observability=observability,
     )
     paper_execution_metadata = {
         "sandbox_book_type": settings.runtime.nautilus.sandbox_book_type,
     }
-    scheduler.nautilus_cache_reader = components.get("cache_reader")
-    scheduler.paper_execution_metadata = paper_execution_metadata
+    context.nautilus_cache_reader = components.get("cache_reader")
+    context.paper_execution_metadata = paper_execution_metadata
     policy = cast(DecisionPolicyActor, components["policy"])
-    _seed_policy_control_from_scheduler(policy, scheduler)
-    bot = getattr(scheduler, "telegram_bot", None)
+    _seed_policy_control_from_services(policy, context)
+    bot = context.telegram_bot
     if bot is not None:
         bot.strategy_control = build_control(policy)
 
 
     return NautilusRuntimeBundle(
-        scheduler=scheduler,
+        context=context,
         components=components,
         bridge_registry=cast(MarketCatalog, components["registry"]),
         node=cast(_NautilusNodeLike, components["node"]),
@@ -279,7 +277,7 @@ def _dump_thread_stacks(log_path: str) -> None:
     try:
         _crash_dir = Path(log_path).parent
         _crash_dir.mkdir(parents=True, exist_ok=True)
-        frames = sys._current_frames()  # pyright: ignore[reportPrivateUsage] - crash diagnostics need live thread frames.
+        frames = sys._current_frames()  # pyright: ignore[reportPrivateUsage]
         lines: list[str] = [
             f"=== crash dump {datetime.now(UTC).isoformat()} ===",
             f"threads={len(frames)}",
@@ -298,11 +296,6 @@ def _dump_thread_stacks(log_path: str) -> None:
 
 
 def _install_crash_logger(log_dir: str) -> None:
-    """Install hooks that capture crash context before exit.
-
-    Writes to ``log_dir/crash.log`` which survives container restarts
-    when ``log_dir`` is a mounted volume.
-    """
     crash_path = f"{log_dir.rstrip('/')}/crash.log"
 
     def crash_excepthook(typ: type[BaseException], val: BaseException, tb: TracebackType | None) -> None:
@@ -344,7 +337,7 @@ async def _start_async_cli_sidecars(
     starter = getattr(bundle.observability, "start", None)
     if callable(starter):
         _ = starter()
-    bot = cast(object | None, getattr(bundle.scheduler, "telegram_bot", None))
+    bot = bundle.context.telegram_bot
     if bot is None:
         return None
     return asyncio.create_task(_run_interactive_telegram_bot_until_stop(bot, telegram_stop))
@@ -355,11 +348,11 @@ async def _notify_async_cli_startup(
     strategy_names: Sequence[str],
     runtime_logger: logging.Logger,
 ) -> None:
-    await asyncio.to_thread(_rebind_market_discovery_client, bundle.scheduler)
+    await asyncio.to_thread(_rebind_market_discovery_client, bundle.context)
     try:
         await bundle.observability.notify_startup(
             strategy_names,
-            sandbox_book_type=bundle.scheduler.settings.runtime.nautilus.sandbox_book_type,
+            sandbox_book_type=bundle.context.settings.runtime.nautilus.sandbox_book_type,
         )
     except Exception:
         runtime_logger.exception("Nautilus startup notification failed")
@@ -367,10 +360,10 @@ async def _notify_async_cli_startup(
 
 async def _run_async_node_with_report_loop(
     node: _NautilusNodeLike,
-    scheduler: PolySignalScheduler,
+    context: NautilusRuntimeContext,
     event: asyncio.Event,
 ) -> None:
-    report_task = asyncio.create_task(_run_nautilus_report_loop(scheduler, event))
+    report_task = asyncio.create_task(_run_nautilus_report_loop(context, event))
     try:
         run_task = asyncio.create_task(asyncio.to_thread(node.run))
         stop_waiter = asyncio.create_task(event.wait())
@@ -414,7 +407,7 @@ async def _finalize_async_cli_runtime(
         stopper = getattr(bundle.observability, "stop", None)
         if callable(stopper):
             _ = stopper()
-        await _stop_nautilus_scheduler(bundle.scheduler)
+        await _stop_nautilus_services(bundle.context)
     finally:
         cleanup_signals()
 
@@ -422,18 +415,18 @@ async def _finalize_async_cli_runtime(
 
 def _prepare_sync_cli_bundle(settings: Settings) -> NautilusRuntimeBundle:
     _write_runtime_startup_marker_best_effort(_runtime_startup_marker_path(settings))
-    scheduler, discovered_markets, observability = asyncio.run(
+    context, discovered_markets, observability = asyncio.run(
         _prepare_nautilus_runtime_context(settings)
     )
-    _rebind_market_discovery_client(scheduler)
+    _rebind_market_discovery_client(context)
     bundle = _build_nautilus_runtime_bundle(
         settings,
-        scheduler,
+        context,
         discovered_markets,
         observability,
     )
     _write_runtime_heartbeat_best_effort(
-        _runtime_heartbeat_path(bundle.scheduler.settings),
+        _runtime_heartbeat_path(bundle.context.settings),
         phase="starting",
     )
     return bundle
@@ -449,13 +442,13 @@ def _run_sync_cli_main(
     starter = getattr(bundle.observability, "start", None)
     if callable(starter):
         _ = starter()
-    telegram_bot_thread = _start_interactive_telegram_bot_thread(bundle.scheduler)
-    report_loop_thread = _start_nautilus_report_loop_thread(bundle.scheduler)
+    telegram_bot_thread = _start_interactive_telegram_bot_thread(bundle.context)
+    report_loop_thread = _start_nautilus_report_loop_thread(bundle.context)
     try:
         asyncio.run(
             bundle.observability.notify_startup(
                 strategy_names,
-                sandbox_book_type=bundle.scheduler.settings.runtime.nautilus.sandbox_book_type,
+                sandbox_book_type=bundle.context.settings.runtime.nautilus.sandbox_book_type,
             )
         )
     except Exception:
@@ -494,7 +487,7 @@ def _finalize_sync_cli_runtime(
         stopper = getattr(bundle.observability, "stop", None)
         if callable(stopper):
             _ = stopper()
-        asyncio.run(_stop_nautilus_scheduler(bundle.scheduler))
+        asyncio.run(_stop_nautilus_services(bundle.context))
         if isinstance(node, _Disposable):
             node.dispose()
     finally:
@@ -517,9 +510,9 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
 
     def cleanup_signals() -> None:
         return None
-    if _runtime_intercepts_os_signals(getattr(bundle.scheduler, "settings", settings)):
+    if _runtime_intercepts_os_signals(bundle.context.settings):
         cleanup_signals = _install_sync_os_signal_handlers(request_stop)
-    runtime_logger = cast(logging.Logger, getattr(bundle.scheduler, "logger", logger))
+    runtime_logger = cast(logging.Logger, bundle.context.logger)
     strategy_names = _strategy_names_from_bundle(bundle)
     telegram_bot_thread: _InteractiveTelegramBotThread | None = None
     report_loop_thread: _NautilusReportLoopThread | None = None

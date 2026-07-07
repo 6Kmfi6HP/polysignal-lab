@@ -13,16 +13,12 @@ Pos: Application code
 from __future__ import annotations
 
 import sqlite3
-from typing import TYPE_CHECKING
 
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
 
-if TYPE_CHECKING:
-    from polysignal_lab.app.scheduler import PolySignalScheduler
-
 
 def delete_paper_result_rows(
-    scheduler: PolySignalScheduler,
+    scheduler: object,
     result: PaperTradeResult,
     publish_payload: dict[str, str | None] | None,
 ) -> None:
@@ -39,7 +35,7 @@ def delete_paper_result_rows(
 
 
 def delete_daily_report_rows(
-    scheduler: PolySignalScheduler,
+    scheduler: object,
     report: DailyReport,
     publish_payload: dict[str, str | None] | None,
 ) -> None:
