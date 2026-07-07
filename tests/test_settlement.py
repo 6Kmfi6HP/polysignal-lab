@@ -2,92 +2,77 @@ from __future__ import annotations
 
 from datetime import date
 
+from factories import MarketFactoryConfig, sample_market
+from polysignal_lab.app.scheduler_reporting import _paper_trade_result_from_projection
 from polysignal_lab.domain.enums import (
     ExitMode,
     MarketStatus,
-    PositionStatus,
     Side,
     TradeResultStatus,
 )
-from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperTradeResult
 from polysignal_lab.paper.report import PaperReportService
-from polysignal_lab.paper.settlement import PaperSettlementEngine
-from factories import MarketFactoryConfig, sample_market
 
 
-def _open_position(side: Side) -> PaperPosition:
-    return PaperPosition(
-        signal_id=f"sig-{side.value.lower()}",
-        paper_order_id=f"order-{side.value.lower()}",
-        paper_fill_id=f"fill-{side.value.lower()}",
-        strategy="ptb_diff",
-        asset="BTC",
-        timeframe="5m",
-        market_id="btc-5m-test",
-        market_slug="btc-updown-5m-test",
-        token_id=f"token-{side.value.lower()}",
-        side=side,
-        entry_price=0.40,
-        shares=25.0,
-        stake_usdc=10.0,
-    )
-
-
-def _resolved_market(outcome: Side | None, status: MarketStatus = MarketStatus.RESOLVED) -> Market:
+def _resolved_market(outcome: Side | None, status: MarketStatus = MarketStatus.RESOLVED):
     return sample_market(
         MarketFactoryConfig(asset="BTC", timeframe="5m", seconds_to_close=-1)
     ).model_copy(update={"status": status, "resolved_outcome": outcome})
 
 
-def test_resolved_up_and_down_positions_settle_win_loss() -> None:
-    engine = PaperSettlementEngine()
-    up_position = _open_position(Side.UP)
-    down_position = _open_position(Side.DOWN)
+def test_paper_settlement_engine_module_is_removed() -> None:
+    from pathlib import Path
 
-    up_result = engine.settle(up_position, _resolved_market(Side.UP))
-    down_result = engine.settle(down_position, _resolved_market(Side.UP))
-
-    assert up_result.result == TradeResultStatus.WIN
-    assert up_result.outcome_value == 1.0
-    assert up_result.settlement_value == 25.0
-    assert down_result.result == TradeResultStatus.LOSS
-    assert down_result.outcome_value == 0.0
-    assert down_result.settlement_value == 0.0
-    assert up_position.status == PositionStatus.CLOSED
-    assert down_position.status == PositionStatus.CLOSED
+    assert not Path("src/polysignal_lab/paper/settlement.py").exists()
 
 
-def test_void_market_refunds_position_without_split_result_state() -> None:
-    position = _open_position(Side.UP)
+def test_projection_settlement_builds_result_from_nautilus_position_row() -> None:
+    market = _resolved_market(Side.UP)
 
-    result = PaperSettlementEngine().settle(
-        position, _resolved_market(None, MarketStatus.CANCELLED)
+    result = _paper_trade_result_from_projection(
+        {
+            "position_id": "pos-1",
+            "signal_id": "sig-up",
+            "strategy": "ptb_diff",
+            "asset": "BTC",
+            "timeframe": "5m",
+            "quantity": 25.0,
+            "avg_entry_price": 0.40,
+            "token_id": market.token_for(Side.UP).token_id,
+            "ts": date(2026, 6, 21).isoformat(),
+        },
+        market=market,
+        outcome_value=1.0,
+        details={"source": "test"},
     )
 
-    assert result.result == TradeResultStatus.VOID
-    assert result.outcome_value == position.entry_price
-    assert result.settlement_value == position.stake_usdc
-    assert position.status == PositionStatus.CLOSED
-    assert "SPLIT" not in {state.value for state in TradeResultStatus}
+    assert result.result == TradeResultStatus.WIN
+    assert result.outcome_value == 1.0
+    assert result.settlement_value == 25.0
+    assert result.pnl_usdc == 15.0
+    assert result.paper_position_id == "pos-1"
 
 
-def test_missing_resolved_outcome_stays_unknown_and_retriable() -> None:
-    position = _open_position(Side.UP)
-
-    result = PaperSettlementEngine().settle(position, _resolved_market(None))
-
-    assert result.result == TradeResultStatus.UNKNOWN
-    assert result.outcome_value == 0.0
-    assert result.settlement_value == 0.0
-    assert position.status == PositionStatus.OPEN
-    assert position.closed_at is None
-
-
-def test_unknown_outcome_does_not_inflate_win_rate() -> None:
-    unknown_position = _open_position(Side.UP)
-    unknown = PaperSettlementEngine().settle(
-        unknown_position, _resolved_market(None)
+def test_unknown_projection_does_not_inflate_win_rate() -> None:
+    unknown = PaperTradeResult(
+        signal_id="sig-unknown",
+        paper_position_id="pos-unknown",
+        strategy="ptb_diff",
+        asset="BTC",
+        timeframe="5m",
+        market_id="market-unknown",
+        market_slug="market-unknown",
+        side=Side.UP,
+        entry_price=0.50,
+        shares=20.0,
+        stake_usdc=10.0,
+        exit_mode=ExitMode.RESOLUTION,
+        outcome_value=0.0,
+        settlement_value=0.0,
+        pnl_usdc=0.0,
+        roi=0.0,
+        result=TradeResultStatus.UNKNOWN,
+        opened_at=date(2026, 6, 21),
     )
     win = PaperTradeResult(
         signal_id="sig-win",
@@ -122,8 +107,6 @@ def test_unknown_outcome_does_not_inflate_win_rate() -> None:
         results=[unknown, win],
     )
 
-    assert unknown.result == TradeResultStatus.UNKNOWN
-    assert unknown_position.status == PositionStatus.OPEN
     assert report.closed_positions == 1
     assert report.win_count == 1
     assert report.win_rate == 1.0

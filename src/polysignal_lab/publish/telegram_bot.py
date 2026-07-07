@@ -4,7 +4,7 @@ import html
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, time, timedelta, timezone
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -30,6 +30,12 @@ from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.utils import new_id, utc_iso
 
 
+class StrategyControl(Protocol):
+    def set_strategy_enabled(self, name: str, enabled: bool) -> None: ...
+    def is_strategy_enabled(self, name: str) -> bool: ...
+    def status_payload(self) -> dict[str, object]: ...
+
+
 class TelegramBotService:
     name = "telegram_bot"
 
@@ -45,10 +51,12 @@ class TelegramBotService:
         scheduler: Any | None = None,
         application: Application | None = None,
         logger: logging.Logger | None = None,
+        strategy_control: StrategyControl | None = None,
     ) -> None:
         self.config = config
         self.persistence = persistence
         self.signal_pipeline = signal_pipeline
+        self.strategy_control = strategy_control
         self.books = books
         self.markets = markets
         self.formatter = formatter
@@ -458,10 +466,32 @@ class TelegramBotService:
         data = f"tg:{name}"
         return data if len(data.encode("utf-8")) <= 64 else None
 
+    def _is_strategy_enabled(self, name: str) -> bool:
+        control = self.strategy_control
+        if control is not None:
+            return control.is_strategy_enabled(name)
+        return self.signal_pipeline.is_strategy_enabled(name)
+
+    def _set_strategy_enabled(self, name: str, enabled: bool) -> None:
+        self.signal_pipeline.set_strategy_enabled(name, enabled)
+        control = self.strategy_control
+        if control is not None:
+            control.set_strategy_enabled(name, enabled)
+
+    def _disabled_strategy_names(self) -> list[str]:
+        control = self.strategy_control
+        if control is not None:
+            payload = control.status_payload()
+            disabled = payload.get("disabled_strategies", ())
+            if isinstance(disabled, list):
+                return sorted(str(name) for name in disabled)
+        return sorted(self.signal_pipeline.disabled_strategies)
+
+
     def _format_strategies(self) -> str:
         lines = ["⚙️ Strategies"]
         for name in self._strategy_names():
-            enabled = self.signal_pipeline.is_strategy_enabled(name)
+            enabled = self._is_strategy_enabled(name)
             prefix = "✅" if enabled else "⏸"
             suffix = ""
             if self._toggle_callback_for(name) is None:
@@ -478,7 +508,7 @@ class TelegramBotService:
             callback_data = self._toggle_callback_for(name)
             if callback_data is None:
                 continue
-            enabled = self.signal_pipeline.is_strategy_enabled(name)
+            enabled = self._is_strategy_enabled(name)
             label = f"{'⏸' if enabled else '▶️'} {name}"
             rows.append([InlineKeyboardButton(label, callback_data=callback_data)])
         rows.append([InlineKeyboardButton("⬅️ 返回", callback_data="bk")])
@@ -491,9 +521,9 @@ class TelegramBotService:
         names = set(self._strategy_names())
         if name not in names:
             raise ValueError("Unknown strategy")
-        enabled = not self.signal_pipeline.is_strategy_enabled(name)
-        self.signal_pipeline.set_strategy_enabled(name, enabled)
-        disabled = sorted(self.signal_pipeline.disabled_strategies)
+        enabled = not self._is_strategy_enabled(name)
+        self._set_strategy_enabled(name, enabled)
+        disabled = self._disabled_strategy_names()
         self.persistence.write_state("telegram_disabled_strategies", disabled)
         self.persistence.insert_system_event(
             {
@@ -601,7 +631,7 @@ class TelegramBotService:
         status = str(health.get("status") or "unknown")
         emoji = "🟢" if status == "ok" else "🟡" if status == "degraded" else "🔴"
         strategies = [getattr(strategy, "name", "?") for strategy in self.signal_pipeline.strategies]
-        enabled_count = sum(1 for name in strategies if self.signal_pipeline.is_strategy_enabled(name))
+        enabled_count = sum(1 for name in strategies if self._is_strategy_enabled(name))
         total_count = len(strategies)
         equity = float(wallet.get("equity", 0.0) or 0.0)
         health_age = self._format_age(health.get("created_at")) if health else "n/a"

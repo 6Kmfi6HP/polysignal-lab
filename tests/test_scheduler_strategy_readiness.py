@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+
+import pytest
 from types import SimpleNamespace
 
 from factories import BookFactoryConfig, MarketFactoryConfig, sample_book, sample_market
@@ -79,6 +81,13 @@ def _snapshot(asset: str = "ETH", timeframe: str = "5m") -> MarketSnapshot:
         down_book=sample_book(market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=0.49)),
         freshness=FreshnessState(max_ms=1),
     )
+
+
+async def test_nautilus_owned_scheduler_cannot_run_legacy_evaluate_once() -> None:
+    scheduler = SimpleNamespace(_nautilus_runtime_owned_by_live_node=True)
+
+    with pytest.raises(RuntimeError, match="Nautilus strategy callbacks"):
+        await scheduler_processing.evaluate_once(scheduler)
 
 
 async def test_unsupported_strategy_is_skipped_before_evaluate() -> None:

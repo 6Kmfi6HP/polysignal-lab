@@ -59,6 +59,34 @@ def test_safety_scan_repo_root_exempts_only_deliberate_fixture_path(tmp_path: Pa
 
     assert scan(tmp_path) == [("src/forbidden_polymarket_sdk_import.py", "ClobClient(")]
 
+
+def test_safety_scan_skips_agent_worktrees_but_not_source(tmp_path: Path) -> None:
+    agent_dir = tmp_path / ".claude" / "worktrees" / "wf" / "tests" / "fixtures"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "forbidden_polymarket_sdk_import.py").write_text(
+        "def make_client():\n    return ClobClient(host='scratch')\n",
+        encoding="utf-8",
+    )
+    src = tmp_path / "src"
+    src.mkdir()
+    offender = src / "forbidden_polymarket_sdk_import.py"
+    offender.write_text("def make_client():\n    return ClobClient(host='x')\n", encoding="utf-8")
+
+    assert scan(tmp_path) == [("src/forbidden_polymarket_sdk_import.py", "ClobClient(")]
+
+
+def test_safety_scan_checks_hidden_claude_dirs_outside_agent_worktrees(
+    tmp_path: Path,
+) -> None:
+    hidden_source = tmp_path / "src" / "polysignal_lab" / ".claude"
+    hidden_source.mkdir(parents=True)
+    offender = hidden_source / "forbidden.py"
+    offender.write_text("def make_client():\n    return ClobClient(host='x')\n", encoding="utf-8")
+
+    assert scan(tmp_path) == [
+        ("src/polysignal_lab/.claude/forbidden.py", "ClobClient(")
+    ]
+
 def test_safety_scan_blocks_create_task_in_nautilus_actor_fallback_paths(tmp_path: Path) -> None:
     runtime_dir = tmp_path / "src" / "polysignal_lab" / "nautilus_runtime"
     runtime_dir.mkdir(parents=True)

@@ -149,13 +149,15 @@ class DecisionPolicyActor:
 
     def load_state(self, payload: Mapping[str, object]) -> None:
         disabled = payload.get("disabled_strategies", ()) or ()
-        dependencies = cast(object, payload.get("strategy_dependencies", {}) or {})
-        self.disabled_strategies = (
+        dependencies = _string_tuple_mapping(payload.get("strategy_dependencies", {}))
+        saved_disabled = (
             {str(name) for name in cast(Iterable[object], disabled)}
             if isinstance(disabled, Iterable) and not isinstance(disabled, (str, bytes))
             else set()
         )
-        self.strategy_dependencies = _string_tuple_mapping(dependencies)
+        self.disabled_strategies = self.disabled_strategies | saved_disabled
+        if dependencies:
+            self.strategy_dependencies = {**self.strategy_dependencies, **dependencies}
 
     def decide(
         self, decision: AlphaDecision, view: MarketView

@@ -1,3 +1,5 @@
+import pytest
+
 from polysignal_lab.app.services.signal_pipeline import SignalPipeline
 
 
@@ -5,7 +7,7 @@ class _Strategy:
     name = "fake"
 
     def evaluate(self, snapshot):
-        return []
+        raise AssertionError("legacy pipeline must not evaluate strategies")
 
 
 class _Gate:
@@ -16,9 +18,8 @@ class _Consensus:
     pass
 
 
-def test_signal_pipeline_returns_no_candidates_for_empty_strategy_result() -> None:
+def test_signal_pipeline_evaluate_snapshot_is_removed() -> None:
     pipeline = SignalPipeline([_Strategy()], _Gate(), _Consensus(), persistence=None)
 
-    accepted = pipeline.evaluate_snapshot(snapshot=object())
-
-    assert accepted == []
+    with pytest.raises(RuntimeError, match="Nautilus strategy callbacks"):
+        pipeline.evaluate_snapshot(snapshot=object())

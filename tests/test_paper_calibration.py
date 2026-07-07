@@ -3,35 +3,36 @@ from __future__ import annotations
 from datetime import date
 
 from factories import MarketFactoryConfig, sample_market
-from polysignal_lab.domain.enums import MarketStatus, Side
-from polysignal_lab.domain.paper_position import PaperPosition
+
+from polysignal_lab.app.scheduler_reporting import _paper_trade_result_from_projection
+from polysignal_lab.domain.enums import Side
 from polysignal_lab.paper.report import PaperReportService
-from polysignal_lab.paper.settlement import PaperSettlementEngine
 
 
 def _paper_result_from_confidence(confidence: float, resolved_outcome: Side):
     market = sample_market(MarketFactoryConfig(asset="ETH", timeframe="5m"))
     token = market.token_for(Side.UP)
-    position = PaperPosition(
-        signal_id=f"sig-{confidence}",
-        paper_order_id=f"order-{confidence}",
-        paper_fill_id=f"fill-{confidence}",
-        strategy="ptb_diff",
-        asset=market.asset,
-        timeframe=market.timeframe,
-        market_id=market.market_id,
-        market_slug=market.market_slug,
-        token_id=token.token_id,
-        side=Side.UP,
-        entry_price=0.50,
-        shares=20.0,
-        stake_usdc=10.0,
-        signal_confidence=confidence,
+    outcome_value = 1.0 if resolved_outcome is Side.UP else 0.0
+    return _paper_trade_result_from_projection(
+        {
+            "position_id": f"pos-{confidence}",
+            "signal_id": f"sig-{confidence}",
+            "strategy": "ptb_diff",
+            "asset": market.asset,
+            "timeframe": market.timeframe,
+            "market_id": market.market_id,
+            "market_slug": market.market_slug,
+            "token_id": token.token_id,
+            "side": Side.UP.value,
+            "quantity": 20.0,
+            "avg_entry_price": 0.50,
+            "signal_confidence": confidence,
+            "ts": date(2026, 6, 24).isoformat(),
+        },
+        market=market,
+        outcome_value=outcome_value,
+        details={"confidence": confidence},
     )
-    resolved_market = market.model_copy(
-        update={"status": MarketStatus.RESOLVED, "resolved_outcome": resolved_outcome}
-    )
-    return PaperSettlementEngine().settle(position, resolved_market)
 
 
 def test_calibration_buckets_use_signal_confidence_from_paper_flow() -> None:

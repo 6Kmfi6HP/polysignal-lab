@@ -273,6 +273,23 @@ def test_state_round_trips_disabled_strategies_and_dependencies() -> None:
     )
 
 
+
+def test_load_state_preserves_preseeded_disabled_strategies_and_dependencies() -> None:
+    actor = DecisionPolicyActor(
+        disabled_strategies={"vwap_momentum"},
+        dependencies={"dependent": ("vwap_momentum",)},
+    )
+
+    actor.load_state({"disabled_strategies": [], "strategy_dependencies": {}})
+
+    assert actor.save_state() == {
+        "disabled_strategies": ["vwap_momentum"],
+        "strategy_dependencies": {"dependent": ["vwap_momentum"]},
+    }
+    assert actor.evaluate(_decision(strategy="vwap_momentum"), _view()).reason_code == (
+        "manual_disabled"
+    )
+
 @pytest.mark.parametrize(
     ("policy", "view_kwargs", "expected_reason"),
     [

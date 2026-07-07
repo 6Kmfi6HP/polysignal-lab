@@ -337,6 +337,23 @@ from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport
 
 
+class _FakeStrategyControl:
+    def __init__(self, disabled: list[str] | None = None) -> None:
+        self.disabled = set(disabled or [])
+
+    def set_strategy_enabled(self, name: str, enabled: bool) -> None:
+        if enabled:
+            self.disabled.discard(name)
+        else:
+            self.disabled.add(name)
+
+    def is_strategy_enabled(self, name: str) -> bool:
+        return name not in self.disabled
+
+    def status_payload(self) -> dict[str, object]:
+        return {"disabled_strategies": sorted(self.disabled)}
+
+
 class _FormattingPersistence(_FakePersistence):
     def __init__(self) -> None:
         super().__init__()
@@ -608,6 +625,23 @@ def test_telegram_bot_strategy_toggle_persists_state_and_event() -> None:
     assert event["event_type"] == "strategy_toggle"
     assert event["strategy"] == "vwap_momentum"
     assert event["enabled"] is False
+    assert isinstance(keyboard, InlineKeyboardMarkup)
+
+
+def test_telegram_bot_strategy_control_updates_policy_and_pipeline() -> None:
+    persistence = _FormattingPersistence()
+    service = _formatting_service(persistence)
+    control = _FakeStrategyControl(["vwap_momentum"])
+    service.strategy_control = control
+    service.signal_pipeline.strategies = [SimpleNamespace(name="vwap_momentum")]
+
+    text, keyboard = service._toggle_strategy("tg:vwap_momentum")
+
+    assert "✅ vwap_momentum" in text
+    assert control.is_strategy_enabled("vwap_momentum") is True
+    assert service.signal_pipeline.is_strategy_enabled("vwap_momentum") is True
+    assert persistence.state["telegram_disabled_strategies"] == []
+    assert persistence.state["last_event"]["enabled"] is True
     assert isinstance(keyboard, InlineKeyboardMarkup)
 
 

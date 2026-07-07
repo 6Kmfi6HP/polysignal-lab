@@ -21,7 +21,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
-from typing import Protocol, cast, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from polysignal_lab.alpha.types import AlphaCore, TradeView
 from polysignal_lab.app.scheduler import PolySignalScheduler
@@ -68,7 +68,10 @@ from polysignal_lab.nautilus_runtime.observability import (
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
-from polysignal_lab.strategies.execution import build_strategy_schedule
+from polysignal_lab.strategies.execution import (
+    StrategyScheduleEntry,
+    order_strategy_schedule,
+)
 
 UTC = timezone.utc
 
@@ -454,12 +457,13 @@ def _build_native_strategies(
     strategy_book_type = settings.runtime.nautilus.sandbox_book_type
     strategies: list[_NativeStrategyLike] = []
     strategy_names: set[str] = set()
-    for name in settings.strategies.explicit_strategy_names():
+    for entry in _build_nautilus_config_strategy_schedule(settings):
+        name = entry.name
         if name in strategy_names:
             continue
         strategy_names.add(name)
         cfg = cast(object | None, getattr(settings.strategies, name, None))
-        if cfg is None:
+        if cfg is None or not bool(getattr(cfg, "enabled", False)):
             continue
 
         core = _native_core_for(name, cfg)
@@ -513,7 +517,6 @@ def _create_native_strategy(
         instrument_id_resolver=instrument_id_resolver,
         registry=registry,
         observability=observability,
-        exit_model=settings.paper_trading.exit_model,
         progress_callback=_runtime_progress_callback(settings),
         unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
         l1_book_snapshot_interval_ms=settings.runtime.nautilus.l1_book_snapshot_interval_ms,
@@ -609,6 +612,12 @@ def _build_nautilus_runtime_bundle(
     }
     setattr(scheduler, "nautilus_cache_reader", components.get("cache_reader"))
     setattr(scheduler, "paper_execution_metadata", paper_execution_metadata)
+    policy = cast(DecisionPolicyActor, components["policy"])
+    _seed_policy_control_from_scheduler(policy, scheduler)
+    bot = getattr(scheduler, "telegram_bot", None)
+    if bot is not None:
+        setattr(bot, "strategy_control", build_control(policy))
+
 
     return NautilusRuntimeBundle(
         scheduler=scheduler,
@@ -675,6 +684,7 @@ def _build_policy(
     policy_type: type[object] = DecisionPolicyActor,
 ) -> DecisionPolicyActor:
     policy_factory = cast(Callable[..., DecisionPolicyActor], policy_type)
+    schedule = _build_nautilus_config_strategy_schedule(settings)
     return policy_factory(
         gate=SignalGate(
             settings.signal,
@@ -686,6 +696,7 @@ def _build_policy(
             window_sec=settings.signal.consensus_window_sec,
             enabled=settings.signal.consensus_enabled,
         ),
+        dependencies={entry.name: tuple(entry.depends_on) for entry in schedule},
     )
 
 
@@ -694,25 +705,72 @@ def build_control(policy: DecisionPolicyActor) -> DecisionPolicyControl:
     return DecisionPolicyControl(policy)
 
 
+def _build_nautilus_config_strategy_schedule(settings: Settings) -> list[StrategyScheduleEntry]:
+    entries: list[StrategyScheduleEntry] = []
+    for index, name in enumerate(settings.strategies.explicit_strategy_names()):
+        cfg = cast(object | None, getattr(settings.strategies, name, None))
+        if cfg is None or not bool(getattr(cfg, "enabled", False)):
+            continue
+        execution = getattr(cfg, "execution")
+        entries.append(
+            StrategyScheduleEntry(
+                strategy=cast(Any, None),
+                name=str(getattr(cfg, "name", name)),
+                priority=int(getattr(execution, "priority")),
+                depends_on=tuple(str(dep) for dep in getattr(execution, "depends_on")),
+                execution_mode=cast(Any, str(getattr(execution, "execution_mode"))),
+                strategy_config_index=index,
+            )
+        )
+    return order_strategy_schedule(entries)
+
+
+def _disabled_strategy_names_from_scheduler(
+    scheduler: PolySignalScheduler,
+    known_strategy_names: set[str],
+) -> tuple[str, ...]:
+    disabled_raw = cast(
+        object,
+        scheduler.persistence.read_state("telegram_disabled_strategies", default=[]),
+    )
+    if not isinstance(disabled_raw, list):
+        return ()
+    return tuple(
+        name
+        for name in (str(raw_name) for raw_name in cast(list[object], disabled_raw))
+        if name in known_strategy_names
+    )
+
+
+def _seed_policy_control_from_scheduler(
+    policy: DecisionPolicyActor,
+    scheduler: PolySignalScheduler,
+) -> None:
+    schedule = cast(Sequence[StrategyScheduleEntry], scheduler.strategy_schedule)
+    policy.strategy_dependencies = {
+        entry.name: tuple(entry.depends_on) for entry in schedule
+    }
+    known_strategy_names = {entry.name for entry in schedule}
+    for name in _disabled_strategy_names_from_scheduler(scheduler, known_strategy_names):
+        policy.set_strategy_enabled(name, False)
+
+
 def _initialize_nautilus_scheduler_components(scheduler: PolySignalScheduler) -> None:
     """Initialize scheduler state needed by Nautilus without legacy local paper."""
     initialized = cast(object, getattr(scheduler, "_trading_components_initialized", False))
     if initialized is True:
         return
-    scheduler.strategy_schedule = build_strategy_schedule(scheduler.settings.strategies)
-    scheduler.strategies = [entry.strategy for entry in scheduler.strategy_schedule]
+    scheduler.strategy_schedule = _build_nautilus_config_strategy_schedule(
+        scheduler.settings
+    )
+    scheduler.strategies = list(scheduler.strategy_schedule)
     scheduler.signal_pipeline.strategies = scheduler.strategies
     scheduler.signal_pipeline.set_strategy_dependencies(
         {entry.name: tuple(entry.depends_on) for entry in scheduler.strategy_schedule}
     )
     known_strategy_names = {entry.name for entry in scheduler.strategy_schedule}
-    disabled_raw = cast(object, scheduler.persistence.read_state("telegram_disabled_strategies", default=[]))
-    disabled_names: tuple[str, ...] = ()
-    if isinstance(disabled_raw, list):
-        disabled_names = tuple(str(name) for name in cast(list[object], disabled_raw))
-    for name in disabled_names:
-        if name in known_strategy_names:
-            scheduler.signal_pipeline.set_strategy_enabled(name, False)
+    for name in _disabled_strategy_names_from_scheduler(scheduler, known_strategy_names):
+        scheduler.signal_pipeline.set_strategy_enabled(name, False)
     scheduler.arbiter = SignalArbiter()
     setattr(scheduler, "_trading_components_initialized", True)
 

@@ -5,7 +5,6 @@ from collections.abc import Iterable
 from typing import Any
 
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.strategies.readiness import check_strategy_market
 
 
 class SignalPipeline:
@@ -64,36 +63,10 @@ class SignalPipeline:
         return None
 
     def evaluate_snapshot(self, snapshot: Any) -> list[SignalCandidate]:
-        accepted: list[SignalCandidate] = []
-        for strategy in self.strategies:
-            strategy_name = strategy.name if hasattr(strategy, "name") else "?"
-            skip_reason = self.skip_reason_for(strategy_name)
-            if skip_reason is not None:
-                self._persist_inactive_strategy(snapshot, strategy_name, skip_reason)
-                continue
-            readiness = getattr(strategy, "readiness", None)
-            if readiness is not None:
-                status = check_strategy_market(readiness, snapshot)
-                if status.status != "active":
-                    self._persist_strategy_status(status, snapshot, strategy_name)
-                    continue
-            try:
-                for candidate in strategy.evaluate(snapshot):
-                    decision = self.gate.evaluate(candidate, snapshot)
-                    if decision.accepted and decision.signal:
-                        strategy.notify_signal_accepted(decision.signal)
-                        accepted.append(decision.signal)
-                        consensus = self.consensus.add(decision.signal)
-                        if consensus:
-                            accepted.append(consensus)
-                    elif decision.rejected:
-                        strategy.notify_signal_rejected(
-                            decision.rejected.candidate, decision.rejected
-                        )
-                        self._persist_rejection(decision.rejected, snapshot, strategy_name)
-            except Exception:
-                self.logger.exception("Strategy %s evaluate failed", strategy_name)
-        return accepted
+        _ = snapshot
+        raise RuntimeError(
+            "SignalPipeline.evaluate_snapshot was removed; use Nautilus strategy callbacks"
+        )
 
     def _persist_rejection(self, rejected: Any, snapshot: Any, strategy_name: str) -> None:
         if self.persistence is None:

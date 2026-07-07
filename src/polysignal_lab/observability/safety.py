@@ -106,6 +106,8 @@ def skip_path(base: Path, path: Path) -> bool:
     rel = path.relative_to(base)
     if rel.parts == ("tests", "fixtures", "forbidden_polymarket_sdk_import.py"):
         return True
+    if len(rel.parts) >= 2 and rel.parts[:2] == (".claude", "worktrees"):
+        return True
     if path.name in SKIP_FILE_NAMES or path.name.startswith(".env."):
         return True
     if path.suffix in {".sqlite", ".sqlite3", ".pyc"}:

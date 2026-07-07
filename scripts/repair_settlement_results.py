@@ -39,11 +39,10 @@ from zoneinfo import ZoneInfo
 from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.app.scheduler_reporting import _store_paper_result
 from polysignal_lab.config import load_settings
-from polysignal_lab.domain.enums import MarketStatus, PositionStatus, TradeResultStatus
+from polysignal_lab.domain.enums import ExitMode, PositionStatus, TradeResultStatus
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import PaperTradeResult, PaperWalletSnapshot
-from polysignal_lab.paper.settlement import PaperSettlementEngine
 from polysignal_lab.paper.settlement_sources import ResolutionDecision
 from polysignal_lab.utils import new_id, utc_iso, utc_now
 
@@ -118,14 +117,18 @@ def _position_in_range(position: PaperPosition, since: date | None, until: date 
     return True
 
 
+def _existing_results_for_position(
+    scheduler: PolySignalScheduler, paper_position_id: str
+) -> list[dict[str, Any]]:
+    rows = scheduler.persistence.query_json("paper_trade_results", limit=100_000)
+    return [row for row in rows if row.get("paper_position_id") == paper_position_id]
+
+
 def _existing_result_for_position(
     scheduler: PolySignalScheduler, paper_position_id: str
 ) -> dict[str, Any] | None:
-    rows = scheduler.persistence.query_json("paper_trade_results", limit=100_000)
-    for row in rows:
-        if row.get("paper_position_id") == paper_position_id:
-            return row
-    return None
+    rows = _existing_results_for_position(scheduler, paper_position_id)
+    return rows[0] if rows else None
 
 
 def _load_market(scheduler: PolySignalScheduler, market_id: str) -> Market | None:
@@ -146,28 +149,63 @@ def _load_market(scheduler: PolySignalScheduler, market_id: str) -> Market | Non
 
 
 def _settle_for_repair(
-    scheduler: PolySignalScheduler,
     position: PaperPosition,
     market: Market,
     decision: ResolutionDecision,
 ) -> PaperTradeResult | None:
     if decision.status == "cancelled":
-        return scheduler.settlement.settle(
-            position,
-            market.model_copy(update={"status": MarketStatus.CANCELLED}),
-            details=decision.details,
-        )
-    if decision.status == "resolved":
+        outcome_value = position.entry_price
+        settlement_value = position.stake_usdc
+        pnl = 0.0
+        roi = 0.0
+        result_status = TradeResultStatus.VOID
+    elif decision.status == "resolved":
         outcome_value = decision.outcome_value_for(position.token_id)
         if outcome_value is None:
             return None
-        return scheduler.settlement.settle(
-            position,
-            market,
-            outcome_value=outcome_value,
-            details=decision.details,
-        )
-    return None
+        settlement_value = position.shares * float(outcome_value)
+        pnl = settlement_value - position.stake_usdc
+        roi = pnl / position.stake_usdc if position.stake_usdc else 0.0
+        if outcome_value == 1.0:
+            result_status = TradeResultStatus.WIN
+        elif outcome_value == 0.0:
+            result_status = TradeResultStatus.LOSS
+        elif 0.0 < outcome_value < 1.0:
+            result_status = TradeResultStatus.VOID
+        else:
+            result_status = TradeResultStatus.WIN if pnl > 0 else TradeResultStatus.LOSS
+    else:
+        return None
+    closed_at = utc_now()
+    result = PaperTradeResult(
+        signal_id=position.signal_id,
+        paper_position_id=position.paper_position_id,
+        strategy=position.strategy,
+        asset=position.asset,
+        timeframe=position.timeframe,
+        market_id=market.market_id,
+        market_slug=market.market_slug,
+        side=position.side,
+        entry_price=position.entry_price,
+        shares=position.shares,
+        stake_usdc=position.stake_usdc,
+        exit_mode=ExitMode.RESOLUTION,
+        outcome_value=float(outcome_value),
+        settlement_value=settlement_value,
+        pnl_usdc=pnl,
+        roi=roi,
+        result=result_status,
+        opened_at=position.opened_at,
+        closed_at=closed_at,
+        details={
+            "resolved_outcome": market.resolved_outcome.value if market.resolved_outcome else None,
+            "confidence": position.signal_confidence,
+            **decision.details,
+        },
+    )
+    position.status = PositionStatus.CLOSED
+    position.closed_at = closed_at
+    return result
 
 
 def _replay_wallet(scheduler: PolySignalScheduler) -> tuple[float, float, int]:
@@ -387,12 +425,24 @@ async def backfill(scheduler: PolySignalScheduler, config: RepairConfig) -> dict
                 continue
 
             work_position = position if not config.dry_run else position.model_copy(deep=True)
-            result = _settle_for_repair(scheduler, work_position, market, decision)
+            result = _settle_for_repair(work_position, market, decision)
             if result is None:
                 skipped_unknown.append(
                     {"paper_position_id": position.paper_position_id, "reason": "NO_PAYOUT_FOR_TOKEN"}
                 )
                 continue
+
+            if config.force_correct and not config.dry_run:
+                for stale in _existing_results_for_position(
+                    scheduler, position.paper_position_id
+                ):
+                    paper_trade_id = stale.get("paper_trade_id")
+                    if isinstance(paper_trade_id, str):
+                        publish_id = stale.get("publish_id")
+                        scheduler.persistence.delete_paper_result_rows(
+                            paper_trade_id,
+                            publish_id if isinstance(publish_id, str) else None,
+                        )
 
             if config.dry_run:
                 applied += 1
@@ -506,7 +556,6 @@ async def regenerate_reports(scheduler: PolySignalScheduler, config: RepairConfi
 async def build_scheduler(config: RepairConfig) -> PolySignalScheduler:
     settings = load_settings(config.config_path)
     scheduler = PolySignalScheduler(settings, base_dir=config.data_dir)
-    scheduler.settlement = PaperSettlementEngine()
     return scheduler
 
 

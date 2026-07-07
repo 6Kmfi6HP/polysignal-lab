@@ -498,6 +498,11 @@ def commit_candidates_serial(
 
 
 async def evaluate_once(scheduler: PolySignalScheduler) -> list[SignalCandidate]:
+    if bool(getattr(scheduler, "_nautilus_runtime_owned_by_live_node", False)):
+        raise RuntimeError(
+            "Legacy scheduler evaluate_once cannot run inside Nautilus runtime; "
+            "use Nautilus strategy callbacks"
+        )
     markets = scheduler.ctx.markets.active()
     snapshots = await build_snapshots_bounded(scheduler, markets)
     envelopes = await evaluate_candidates_ordered(scheduler, snapshots)

@@ -21,12 +21,6 @@ from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomData
 from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatData, PolySignalSpotData
 
 from polysignal_lab.nautilus_bridge.state import decode_state, state_key
-from polysignal_lab.nautilus_bridge.strategies.ptb_diff import PTBDiffNautilusStrategy
-from polysignal_lab.nautilus_bridge.strategy_base import (
-    LegacyPolySignalNautilusStrategy,
-    is_nautilus_available,
-)
-from polysignal_lab.strategies.config import PTBDiffConfig, PTBTriggerConfig
 
 
 class _FloatLike:
@@ -224,62 +218,6 @@ def _decision() -> AlphaDecision:
     )
 
 
-def test_strategy_base_imports_without_nautilus_installed() -> None:
-    assert isinstance(is_nautilus_available(), bool)
-
-
-def test_strategy_base_returns_no_intents_when_view_not_ready() -> None:
-    strategy = LegacyPolySignalNautilusStrategy(
-        core=FakeCore([_decision()]),
-        assembler=_assembler(None),
-        condition_ids=("condition-btc-5m",),
-        strategy_name="ptb_diff",
-    )
-
-    assert strategy.evaluate_condition("condition-btc-5m") == []
-    assert strategy.submitted_intents == []
-
-
-def test_strategy_base_records_decision_order_intents() -> None:
-    strategy = LegacyPolySignalNautilusStrategy(
-        core=FakeCore([_decision()]),
-        assembler=_assembler(object()),
-        condition_ids=("condition-btc-5m",),
-        strategy_name="ptb_diff",
-    )
-
-    intents = strategy.evaluate_condition("condition-btc-5m")
-
-    assert intents == [
-        OrderIntentSpec(
-            intent=OrderIntent.PASSIVE_GTD, expiry_seconds=45, pair_id="pair-1"
-        )
-    ]
-    assert strategy.submitted_intents == intents
-
-
-def test_strategy_base_save_load_uses_versioned_bytes() -> None:
-    strategy = LegacyPolySignalNautilusStrategy(
-        core=FakeCore([]),
-        assembler=_assembler(None),
-        condition_ids=("condition-btc-5m",),
-        strategy_name="ptb_diff",
-    )
-    strategy.accepted_state["condition-btc-5m"] = "accepted"
-
-    state = strategy.on_save()
-    restored = LegacyPolySignalNautilusStrategy(
-        core=FakeCore([]),
-        assembler=_assembler(None),
-        condition_ids=("condition-btc-5m",),
-        strategy_name="ptb_diff",
-    )
-    restored.on_load(state)
-
-    assert set(state) == {state_key("ptb_diff")}
-    assert restored.accepted_state == {"condition-btc-5m": "accepted"}
-
-
 def test_native_strategy_on_save_load_delegates_to_core_via_encode_decode() -> None:
     core = StatefulFakeCore([])
     strategy = _minimal_native_strategy(core=core, strategy_name="ptb_diff")
@@ -355,30 +293,6 @@ def test_native_strategy_on_load_restores_core_without_runtime_order_truth() -> 
     assert len(restored.submitted_orders) == 0
     assert restored._submitted_signal_keys == set()
     assert len(restored.rejected_decisions) == 0
-
-
-def test_ptb_nautilus_strategy_constructs_with_core_without_nautilus_dependency() -> (
-    None
-):
-    config = PTBDiffConfig(
-        triggers=[
-            PTBTriggerConfig(
-                name="test_up",
-                side=Side.UP,
-                min_diff_usd=80.0,
-                max_token_price=0.92,
-                min_token_price=0.80,
-                min_seconds_to_close=0,
-                max_seconds_to_close=120,
-            )
-        ]
-    )
-
-    strategy = PTBDiffNautilusStrategy(
-        config=config, assembler=_assembler(None), condition_ids=("condition-btc-5m",)
-    )
-
-    assert strategy.strategy_name == "ptb_diff"
 
 
 # ── Batch evaluation tests (nautilus runtime) ─────────────────────────────────

@@ -186,7 +186,6 @@ class PolySignalNativeStrategy:
         instrument_id_resolver: Callable[[str], object] | None = None,
         registry: MarketCatalog | None = None,
         observability: _Observability | None = None,
-        exit_model: object | None = None,
         progress_callback: Callable[[str], None] | None = None,
         unsubscribe_exited: bool = True,
         l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
@@ -210,7 +209,6 @@ class PolySignalNativeStrategy:
         self.registry: MarketCatalog | None = registry
         self.observability: _Observability | None = observability
         self.cache_reader: object | None = None
-        self.exit_model: object | None = exit_model
         self.progress_callback: Callable[[str], None] | None = progress_callback
         self._initialize_runtime_state(registry, unsubscribe_exited=unsubscribe_exited)
 
@@ -231,7 +229,6 @@ class PolySignalNativeStrategy:
         )
         self._approved_signal_metrics: dict[str, dict[str, object]] = {}
         self._submitted_signal_keys: set[str] = set()
-        self._pending_exit_position_ids: set[str] = set()
         self._last_market_data_evaluation_at: dict[str, datetime] = {}
         self.rejected_decisions: deque[RejectedDecision] = deque(maxlen=1000)
         self.submitted_orders: deque[object] = deque(maxlen=1000)
@@ -498,9 +495,6 @@ class PolySignalNativeStrategy:
 
     def on_position_closed(self, position: object) -> None:
         self._record_nautilus_position(position)
-        position_id = _identifier_text(getattr(position, "id", None))
-        if position_id is not None:
-            self._pending_exit_position_ids.discard(position_id)
 
     def evaluate_condition(self, condition_id: str) -> None:
         if condition_id not in self._active_condition_ids:
@@ -513,110 +507,6 @@ class PolySignalNativeStrategy:
             return
         for decision in self.core.evaluate(view):
             self._handle_decision(decision, view)
-        self.evaluate_exit_positions(condition_id, view)
-
-    def evaluate_exit_positions(self, condition_id: str, view: MarketView) -> None:
-        cache_reader = getattr(self, "cache_reader", None)
-        read_positions = getattr(cache_reader, "read_positions", None)
-        if not callable(read_positions):
-            return
-        rows = read_positions()
-        if not isinstance(rows, list):
-            return
-        config = self._exit_policy_config()
-        if config is None:
-            return
-        for position in rows:
-            if not isinstance(position, dict):
-                continue
-            book = self._position_book_for_exit(position, condition_id, view)
-            if book is None:
-                continue
-            self._submit_exit_position(position, book, view.created_at, config)
-
-    def _exit_policy_config(self) -> object | None:
-        raw_config = self.exit_model
-        if raw_config is None:
-            return None
-        from polysignal_lab.nautilus_runtime.exit_policy import ExitPolicyConfig
-
-        return ExitPolicyConfig(
-            mode=str(getattr(raw_config, "mode", "hold_to_resolution_with_optional_tp_sl")),
-            take_profit_enabled=bool(getattr(raw_config, "take_profit_enabled", True)),
-            stop_loss_enabled=bool(getattr(raw_config, "stop_loss_enabled", True)),
-            take_profit_price=float(getattr(raw_config, "take_profit_price", 0.90)),
-            stop_loss_price=float(getattr(raw_config, "stop_loss_price", 0.35)),
-            max_hold_time_sec=int(getattr(raw_config, "max_hold_time_sec", 900)),
-        )
-
-    def _position_book_for_exit(
-        self,
-        position: Mapping[str, object],
-        condition_id: str,
-        view: MarketView,
-    ) -> object | None:
-        instrument_id = str(position.get("instrument_id") or "")
-        position_condition_id = self._position_condition_id_for_exit(
-            instrument_id,
-            position,
-            condition_id,
-            view,
-        )
-        if position_condition_id != condition_id:
-            return None
-        token_id = self._position_token_id_for_exit(instrument_id, position, view)
-        if token_id == view.up.token_id:
-            return view.up
-        if token_id == view.down.token_id:
-            return view.down
-        return None
-
-    def _position_condition_id_for_exit(
-        self,
-        instrument_id: str,
-        position: Mapping[str, object],
-        condition_id: str,
-        view: MarketView,
-    ) -> str:
-        position_condition_id = str(position.get("condition_id") or "")
-        if position_condition_id or not instrument_id:
-            return position_condition_id
-        if self._token_id_from_view_instrument(view, instrument_id) is not None:
-            return condition_id
-        return ""
-
-    def _position_token_id_for_exit(
-        self,
-        instrument_id: str,
-        position: Mapping[str, object],
-        view: MarketView,
-    ) -> str:
-        token_id = str(position.get("token_id") or "")
-        if token_id or not instrument_id:
-            return token_id
-        return self._token_id_from_view_instrument(view, instrument_id) or ""
-
-    def _submit_exit_position(
-        self,
-        position: Mapping[str, object],
-        book: object,
-        now: datetime,
-        config: object,
-    ) -> None:
-        from polysignal_lab.nautilus_runtime.exit_policy import evaluate_exit_decision
-        from polysignal_lab.nautilus_runtime.native_exit import submit_exit_decision
-
-        decision = evaluate_exit_decision(position, book, now, config)
-        if decision is None:
-            return
-        if decision.position_id in self._pending_exit_position_ids:
-            return
-        self._pending_exit_position_ids.add(decision.position_id)
-        submit_exit_decision(
-            self,
-            decision,
-            instrument_id_resolver=self._resolved_instrument,
-        )
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
         if not _market_view_ready(view):

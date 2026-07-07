@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from polysignal_lab.config import Settings
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.node import (
     build_trading_node,
     build_control,
@@ -405,6 +406,82 @@ def test_build_trading_node_forwards_unsubscribe_exited_to_native_strategy(
     assert captured_kwargs["strategy_name"] == "vwap_momentum"
 
 
+def test_build_trading_node_skips_disabled_native_strategies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_nautilus_placeholders(monkeypatch)
+
+    class FakeRotationActor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeStrategy:
+        def __init__(self, **kwargs):
+            self.strategy_name = kwargs["strategy_name"]
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._native_core_for",
+        lambda _name, _cfg: object(),
+    )
+
+    settings = Settings()
+    settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
+    settings.strategies.vwap_momentum.enabled = False
+
+    runtime = build_trading_node(
+        settings=settings,
+        condition_ids=("condition-btc-5m",),
+    )
+
+    assert runtime["strategies"] == []
+    assert getattr(runtime["node"], "trader").strategies == []
+
+
+def test_initialize_nautilus_scheduler_components_avoids_legacy_strategy_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.nautilus_runtime import node as node_mod
+
+    def fail_build_strategy_schedule(_settings):
+        raise AssertionError("Nautilus startup must not instantiate legacy strategies")
+
+    monkeypatch.setattr(node_mod, "build_strategy_schedule", fail_build_strategy_schedule, raising=False)
+
+    class Pipeline:
+        def __init__(self) -> None:
+            self.strategies = None
+            self.dependencies = None
+            self.disabled: list[str] = []
+
+        def set_strategy_dependencies(self, dependencies):
+            self.dependencies = dependencies
+
+        def set_strategy_enabled(self, name, enabled):
+            if not enabled:
+                self.disabled.append(name)
+
+    settings = Settings()
+    settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
+    scheduler = SimpleNamespace(
+        _trading_components_initialized=False,
+        settings=settings,
+        strategies=None,
+        signal_pipeline=Pipeline(),
+        persistence=SimpleNamespace(read_state=lambda *_args, **_kwargs: ["vwap_momentum"]),
+    )
+
+    node_mod._initialize_nautilus_scheduler_components(scheduler)
+
+    assert scheduler.strategy_schedule[0].name == "vwap_momentum"
+    assert scheduler.strategy_schedule[0].strategy is None
+    assert scheduler.strategies == scheduler.signal_pipeline.strategies
+    assert scheduler.signal_pipeline.disabled == ["vwap_momentum"]
+
+
 def test_build_trading_node_passes_l1_snapshot_interval_to_native_strategies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -553,6 +630,10 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
         def append_log(self, stream, payload):
             _ = stream, payload
 
+        def read_state(self, name, default=None):
+            _ = name
+            return default
+
     class FakeMarketUniverse:
         async def refresh_once(self) -> list[Market]:
             nonlocal refresh_calls
@@ -566,6 +647,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
             self.health = object()
             self.persistence = FakePersistence()
             self.publisher = SimpleNamespace(send=lambda *_args, **_kwargs: None)
+            self.strategy_schedule = []
 
         async def stop(self) -> None:
             return None
@@ -594,6 +676,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
             "sidecar": object(),
             "node": SimpleNamespace(),
             "strategies": [],
+            "policy": DecisionPolicyActor(),
         },
     )
 

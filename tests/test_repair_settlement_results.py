@@ -17,8 +17,7 @@ from polysignal_lab.domain.enums import MarketStatus, PositionStatus, Side, Trad
 from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.domain.paper_order import PaperFill
 from polysignal_lab.domain.paper_position import PaperPosition
-from polysignal_lab.domain.paper_result import PaperWalletSnapshot
-from polysignal_lab.paper.settlement import PaperSettlementEngine
+from polysignal_lab.domain.paper_result import PaperTradeResult, PaperWalletSnapshot
 from polysignal_lab.paper.settlement_sources import ResolutionDecision
 from polysignal_lab.utils import utc_now
 from scripts.repair_settlement_results import RepairConfig, audit, backfill, reconcile_wallet, run_repair
@@ -59,7 +58,6 @@ def _scheduler(tmp_path: Path, settings) -> PolySignalScheduler:
     settings.data.polymarket.use_market_ws = False
     settings.telegram.send_paper_results = False
     scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
-    scheduler.settlement = PaperSettlementEngine()
     return scheduler
 
 
@@ -155,6 +153,7 @@ def _repair_config(
     mode: str = "audit",
     apply: bool = False,
     backup: Path | None = None,
+    force_correct: bool = False,
 ) -> RepairConfig:
     return RepairConfig(
         config_path=None,
@@ -167,7 +166,7 @@ def _repair_config(
         market_id=None,
         position_id=None,
         publish_telegram=False,
-        force_correct=False,
+        force_correct=force_correct,
     )
 
 
@@ -220,6 +219,106 @@ async def test_backfill_idempotent_skips_existing_result(tmp_path, settings) -> 
     assert second["applied"] == 0
     assert len(scheduler.sqlite.query_json("paper_trade_results")) == 1
 
+
+
+@pytest.mark.anyio
+async def test_force_correct_replaces_existing_result_once(tmp_path, settings) -> None:
+    scheduler, _, market = _seed_open_position(tmp_path, settings)
+    scheduler.settlement_resolver = AsyncMock()
+    scheduler.settlement_resolver.resolve_market.return_value = _unknown_decision(market)
+    backup = tmp_path / "backup.sqlite3"
+
+    existing = await backfill(
+        scheduler,
+        _repair_config(tmp_path, mode="backfill", apply=True, backup=backup),
+    )
+    assert existing["applied"] == 0
+    scheduler.persistence.insert_paper_trade_result(
+        PaperTradeResult(
+            signal_id="sig-repair-1",
+            paper_position_id="pp-repair-1",
+            strategy="ptb_diff",
+            asset="BTC",
+            timeframe="5m",
+            market_id=market.market_id,
+            market_slug=market.market_slug,
+            side=Side.UP,
+            entry_price=0.40,
+            shares=25.0,
+            stake_usdc=10.0,
+            exit_mode="RESOLUTION",
+            outcome_value=0.0,
+            settlement_value=0.0,
+            pnl_usdc=0.0,
+            roi=0.0,
+            result=TradeResultStatus.UNKNOWN,
+            opened_at=utc_now(),
+        )
+    )
+    scheduler.settlement_resolver.resolve_market.return_value = _win_decision(market)
+
+    report = await backfill(
+        scheduler,
+        _repair_config(
+            tmp_path,
+            mode="backfill",
+            apply=True,
+            backup=backup,
+            force_correct=True,
+        ),
+    )
+
+    rows = scheduler.sqlite.query_json("paper_trade_results")
+    assert report["applied"] == 1
+    assert len(rows) == 1
+    assert rows[0]["result"] == "WIN"
+    assert rows[0]["paper_position_id"] == "pp-repair-1"
+
+
+@pytest.mark.anyio
+async def test_backfill_preserves_stored_position_stake(tmp_path, settings) -> None:
+    market = _resolved_market()
+    scheduler, position, _ = _seed_open_position(tmp_path, settings, market=market)
+    position.shares = 3.0
+    position.entry_price = 0.33
+    position.stake_usdc = 1.00
+    scheduler.persistence.upsert_paper_position(position)
+    scheduler.settlement_resolver = AsyncMock()
+    scheduler.settlement_resolver.resolve_market.return_value = _win_decision(market)
+    backup = tmp_path / "backup.sqlite3"
+
+    await backfill(
+        scheduler,
+        _repair_config(tmp_path, mode="backfill", apply=True, backup=backup),
+    )
+
+    row = scheduler.sqlite.query_json("paper_trade_results")[0]
+    assert row["stake_usdc"] == pytest.approx(1.00)
+    assert row["pnl_usdc"] == pytest.approx(row["settlement_value"] - 1.00)
+
+
+@pytest.mark.anyio
+async def test_backfill_cancelled_refunds_stake_as_void(tmp_path, settings) -> None:
+    scheduler, position, market = _seed_open_position(tmp_path, settings)
+    position.entry_price = 1.0
+    position.shares = 25.0
+    position.stake_usdc = 10.0
+    scheduler.persistence.upsert_paper_position(position)
+    scheduler.settlement_resolver = AsyncMock()
+    scheduler.settlement_resolver.resolve_market.return_value = _cancelled_decision(market)
+    backup = tmp_path / "backup.sqlite3"
+
+    report = await backfill(
+        scheduler,
+        _repair_config(tmp_path, mode="backfill", apply=True, backup=backup),
+    )
+
+    row = scheduler.sqlite.query_json("paper_trade_results")[0]
+    assert report["applied"] == 1
+    assert row["result"] == "VOID"
+    assert row["settlement_value"] == pytest.approx(10.0)
+    assert row["pnl_usdc"] == pytest.approx(0.0)
+    assert row["roi"] == pytest.approx(0.0)
 
 @pytest.mark.anyio
 async def test_backfill_unknown_leaves_position_open(tmp_path, settings) -> None:
