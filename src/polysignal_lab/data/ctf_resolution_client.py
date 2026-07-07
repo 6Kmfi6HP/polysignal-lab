@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, re, httpx, polysignal_lab.paper.settlement_sources, polysignal_lab.paper.settlement_sources.SettlementEvidence
+Output: CtfResolutionClient
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

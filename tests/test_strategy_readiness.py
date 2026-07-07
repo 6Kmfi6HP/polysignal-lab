@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.strategies.readiness, polysignal_lab.strategies.readiness.StrategyReadiness, polysignal_lab.strategies.readiness.check_strategy_market, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.strategies.factory, polysignal_lab.strategies.factory.build_strategies
+Output: test_readiness_rejects_unsupported_asset_before_evaluate, test_readiness_reports_missing_data, test_all_loaded_strategies_expose_readiness, test_production_vwap_readiness_does_not_require_snapshot_spot_history_metric, _Market, _Snapshot, _VwapMarket, _VwapSnapshot
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.strategies.readiness import StrategyReadiness, check_strategy_market

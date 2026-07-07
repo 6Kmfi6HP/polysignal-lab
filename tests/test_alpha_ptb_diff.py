@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.timedelta, typing, typing.Final, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.PTBDiffAlphaCore
+Output: test_ptb_alpha_core_matches_legacy_strategy_for_equivalent_up_input, test_ptb_alpha_core_matches_legacy_strategy_for_equivalent_down_input, test_ptb_alpha_core_rejects_missing_verified_anchor_source, test_ptb_alpha_core_rejects_missing_market_data, test_legacy_ptb_strategy_rejects_snapshot_without_outcome_tokens, CoreScenario
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

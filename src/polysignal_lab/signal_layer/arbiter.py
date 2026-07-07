@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections, collections.defaultdict, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate
+Output: SignalArbiter
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections import defaultdict

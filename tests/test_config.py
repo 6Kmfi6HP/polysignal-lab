@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, pathlib, pathlib.Path, pytest, pydantic, pydantic.ValidationError, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.config.load_settings
+Output: test_load_settings_records_explicit_strategy_names, test_settings_model_validate_has_no_explicit_strategy_names, test_default_rtds_assets_cover_default_market_assets, test_strategy_factory_builds_default_configured_strategies, test_explicit_restored_strategy_can_be_built, test_disabled_explicit_strategy_is_skipped, test_unknown_strategy_config_rejected, test_late_consensus_stop_loss_config_rejects_malformed_entry, test_late_consensus_policy_uses_model_defaults_when_yaml_omits_fields, test_ptb_diff_policy_uses_exit_lag_default_when_yaml_omits_fields
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 from pathlib import Path
 

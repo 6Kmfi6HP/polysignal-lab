@@ -1,3 +1,15 @@
+"""
+Input: dataclasses, dataclasses.dataclass, datetime, datetime.datetime
+Output: BookEpochState
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from dataclasses import dataclass
 from datetime import datetime
 

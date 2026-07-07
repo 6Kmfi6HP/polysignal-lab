@@ -1,3 +1,15 @@
+/**
+ * Input: path from 'path', { defineConfig } from 'vite', react from '@vitejs/plugin-react', tailwindcss from '@tailwindcss/vite', { tanstackRouter } from '@tanstack/router-plugin/vite', path, vite, @vitejs/plugin-react, @tailwindcss/vite, @tanstack/router-plugin/vite
+ * Output: None
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 /// <reference types="vitest/config" />
 import path from 'path'
 import { defineConfig } from 'vite'

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, typing, typing.Any, pydantic, pydantic.BaseModel, pydantic.Field
+Output: PaperTradeResult, PaperWalletSnapshot, DailyReport
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import date, datetime

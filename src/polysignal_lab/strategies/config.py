@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Iterator, collections.abc.Mapping, enum, enum.StrEnum, typing, typing.Literal
+Output: StrategyExecutionConfig, VWAPMomentumConfig, FixedStopLossConfig, StopLossPerCoinConfig, LateConsensusConfig, PTBTriggerConfig, PTBExitConfig, PTBDiffConfig, BinaryMomentumConfig, CrossMarketBotConfig
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping

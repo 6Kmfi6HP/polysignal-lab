@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, sqlite3, dataclasses, dataclasses.dataclass, typing, typing.Final
+Output: validate_sqlite_schema, SchemaValidationError
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import sqlite3

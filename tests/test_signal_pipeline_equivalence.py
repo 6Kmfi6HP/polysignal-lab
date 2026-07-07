@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, types, types.SimpleNamespace, factories, factories.BookFactoryConfig, factories.MarketFactoryConfig, factories.sample_book
+Output: test_stage_split_preserves_serial_accepted_signals, test_parallel_generation_ordered_commit_matches_serial_state, _FakeMarkets, _FakeSnapshotBuilder, _FakeLogger, _FakeGate, _FakeConsensus, _FakeLogs, _FakeSQLite, _FakeWallet
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

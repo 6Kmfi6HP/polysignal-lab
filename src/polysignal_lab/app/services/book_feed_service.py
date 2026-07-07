@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, asyncio, logging, typing, typing.Any, polysignal_lab.config, polysignal_lab.config.PolymarketDataConfig
+Output: BookFeedService
+Pos: Service Layer - Business logic
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio

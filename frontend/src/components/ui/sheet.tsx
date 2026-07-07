@@ -1,3 +1,15 @@
+/**
+ * Input: * as React from 'react', * as SheetPrimitive from '@radix-ui/react-dialog', { XIcon } from 'lucide-react', { cn } from '@/lib/utils', react, @radix-ui/react-dialog, lucide-react, @/lib/utils
+ * Output: Sheet, SheetTrigger, SheetClose, SheetPortal, SheetOverlay, SheetContent, SheetHeader, SheetFooter, SheetTitle, SheetDescription
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import * as React from 'react'
 import * as SheetPrimitive from '@radix-ui/react-dialog'
 import { XIcon } from 'lucide-react'

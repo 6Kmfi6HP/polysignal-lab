@@ -1,3 +1,15 @@
+/**
+ * Input: { describe, expect, it } from 'vitest', { render } from '@testing-library/react', userEvent from '@testing-library/user-event', { PasswordInput } from './password-input', vitest, @testing-library/react, @testing-library/user-event, ./password-input
+ * Output: None
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, datetime, datetime.datetime, datetime.timezone, types, types.SimpleNamespace, polysignal_lab.alpha.cross_market_core
+Output: test_group_assembler_rejects_excessive_skew, test_group_assembler_accepts_acceptable_skew, test_cross_market_wrapper_evaluate_group_returns_decisions, test_cross_market_wrapper_submits_via_callback, test_cross_market_basket_tags_present, test_cross_market_leg_failure_marks_basket, test_cross_market_state_roundtrip, test_cross_market_wrapper_matches_legacy_alpha_output, test_cross_market_wrapper_fok_depth_counts_asks_through_max_entry, AllowAllPolicy
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import replace

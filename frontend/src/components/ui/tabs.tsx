@@ -1,3 +1,15 @@
+/**
+ * Input: * as React from 'react', * as TabsPrimitive from '@radix-ui/react-tabs', { cn } from '@/lib/utils', react, @radix-ui/react-tabs, @/lib/utils
+ * Output: Tabs, TabsList, TabsTrigger, TabsContent
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import * as React from 'react'
 import * as TabsPrimitive from '@radix-ui/react-tabs'
 import { cn } from '@/lib/utils'

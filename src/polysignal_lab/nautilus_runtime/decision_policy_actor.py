@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, typing, typing.cast, polysignal_lab.nautilus_bridge.state, polysignal_lab.nautilus_bridge.state.JsonValue, polysignal_lab.nautilus_bridge.state.decode_state, polysignal_lab.nautilus_bridge.state.encode_state
+Output: NautilusDecisionPolicyActor
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections.abc import Mapping

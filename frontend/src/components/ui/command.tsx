@@ -1,3 +1,15 @@
+/**
+ * Input: * as React from 'react', { Command as CommandPrimitive } from 'cmdk', { SearchIcon } from 'lucide-react', { cn } from '@/lib/utils', {, react, cmdk, lucide-react, @/lib/utils, @/components/ui/dialog
+ * Output: Command, CommandDialog, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandSeparator, CommandItem, CommandShortcut
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import * as React from 'react'
 import { Command as CommandPrimitive } from 'cmdk'
 import { SearchIcon } from 'lucide-react'

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, pytest, polysignal_lab.nautilus_bridge.state, polysignal_lab.nautilus_bridge.state.StateSchemaError, polysignal_lab.nautilus_bridge.state.decode_state, polysignal_lab.nautilus_bridge.state.encode_state, polysignal_lab.nautilus_bridge.state.state_key
+Output: test_state_key_uses_polysignal_strategy_version_format, test_encode_decode_state_round_trip_json_bytes, test_decode_missing_state_returns_empty_payload_with_reason, test_decode_unknown_version_fails_closed, test_decode_mixed_current_and_future_versions_fails_closed
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import pytest

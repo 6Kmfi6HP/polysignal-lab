@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, asyncio, time
+Output: AsyncRateLimiter
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio

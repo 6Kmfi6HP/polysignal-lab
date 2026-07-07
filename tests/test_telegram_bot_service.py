@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, types, types.SimpleNamespace, pytest, telegram.ext, telegram.ext.CallbackQueryHandler, telegram.ext.CommandHandler, polysignal_lab.app.services.signal_pipeline, polysignal_lab.app.services.signal_pipeline.SignalPipeline
+Output: test_telegram_bot_registers_ptb_handlers, test_telegram_bot_start_uses_embedded_ptb_lifecycle, test_telegram_bot_start_polling_uses_drop_pending_updates, test_telegram_bot_stop_uses_ptb_shutdown_order, test_telegram_bot_rejects_group_chat, test_telegram_bot_rejects_private_chat_not_in_allowlist, test_telegram_bot_uses_ptb_inline_keyboard_markup, test_telegram_bot_callback_always_answers, test_telegram_bot_callback_answers_before_rendering, test_telegram_bot_status_replies_before_rendering
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from types import SimpleNamespace

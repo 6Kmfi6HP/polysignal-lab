@@ -1,3 +1,15 @@
+/**
+ * Input: { Bar, BarChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis } from 'recharts', { Header } from '@/components/layout/header', { Main } from '@/components/layout/main', { Search } from '@/components/search', { ThemeSwitch } from '@/components/theme-switch', { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card', { Skeleton } from '@/components/ui/skeleton', {, { useLeaderboardQuery } from '@/lib/api/hooks', type { LeaderboardRow } from '@/lib/api/types'
+ * Output: LeaderboardPage, PnlByStrategyChart, LeaderboardTable
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'

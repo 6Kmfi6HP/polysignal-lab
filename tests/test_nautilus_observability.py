@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, asyncio, sqlite3, threading, collections.abc, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.UTC
+Output: test_startup_message_includes_sandbox_book_type, test_record_decision_writes_to_nautilus_decision_stream, test_observability_actor_isolates_best_effort_telemetry_write_failure, test_observability_actor_isolates_accepted_signal_notifier_failure, test_best_effort_telemetry_queue_drops_when_full_and_marks_health, test_best_effort_telemetry_writer_drains_queued_events, test_telemetry_writer_retries_transient_sqlite_lock, test_telemetry_writer_stops_after_bounded_sqlite_lock_retries, test_telemetry_writer_does_not_retry_non_lock_sqlite_operational_error, test_stop_returns_without_sync_drain_when_best_effort_store_blocks
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio

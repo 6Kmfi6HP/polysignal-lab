@@ -1,10 +1,15 @@
-"""Alpha core tests for the callback-heavy ``late_consensus`` strategy.
-
-Verifies, at the CORE level, that the ``entry_sequence`` (derived from
-``_accepted_counts``) is NOT incremented by repeated candidate generation —
-only ``on_order_accepted`` advances it — plus the adapter's dedupe-suffix
-contract, semantic equivalence to the legacy adapter, and state round-trip.
 """
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, polysignal_lab.alpha.late_consensus_core, polysignal_lab.alpha.late_consensus_core.LateConsensusAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.domain.enums
+Output: test_late_consensus_core_matches_legacy_candidate, test_late_consensus_sequence_not_incremented_until_acceptance, test_late_consensus_flip_guard_advances_only_on_acceptance, test_late_consensus_adapter_applies_dedupe_suffix_from_sequence, test_late_consensus_core_state_roundtrip
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

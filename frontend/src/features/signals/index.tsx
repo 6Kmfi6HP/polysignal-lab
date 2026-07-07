@@ -1,3 +1,15 @@
+/**
+ * Input: { Header } from '@/components/layout/header', { Main } from '@/components/layout/main', { Search } from '@/components/search', { ThemeSwitch } from '@/components/theme-switch', { Skeleton } from '@/components/ui/skeleton', {, { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs', { useRejectedSignalsQuery, useSignalsQuery } from '@/lib/api/hooks', type { RejectedSignal, SignalCandidate } from '@/lib/api/types', @/components/layout/header
+ * Output: SignalsPage, SignalsTable, RejectedSignalsTable
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { Search } from '@/components/search'

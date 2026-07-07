@@ -1,3 +1,15 @@
+/**
+ * Input: * as React from 'react', * as SeparatorPrimitive from '@radix-ui/react-separator', { cn } from '@/lib/utils', react, @radix-ui/react-separator, @/lib/utils
+ * Output: Separator
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import * as React from 'react'
 import * as SeparatorPrimitive from '@radix-ui/react-separator'
 import { cn } from '@/lib/utils'

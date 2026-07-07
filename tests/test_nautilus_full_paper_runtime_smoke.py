@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, asyncio, sys, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, typing
+Output: test_full_paper_runtime_builds_node_without_live_execution, test_build_live_node_uses_cache_backed_market_data_provider, test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit, test_market_rotation_actor_rotates_single_native_strategy_without_rebuild
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio
@@ -14,7 +26,7 @@ from polysignal_lab.data.price_to_beat_provider import PriceToBeatResult
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
-from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID, POLYMARKET_CLIENT_ID
+from polysignal_lab.nautilus_runtime.live_node import PAPER_EXEC_CLIENT_ID, POLYMARKET_CLIENT_ID
 
 
 def _install_fake_polymarket_id_helper(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,6 +64,7 @@ def _fake_live_config_import_callable(module_name: str, attr_name: str):
 def _patch_live_node_builder_fakes(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     import polysignal_lab.nautilus_runtime.live_node as live_node_mod
     import polysignal_lab.nautilus_runtime.node as node_mod
+    import polysignal_lab.nautilus_runtime.node_builder as node_builder_mod
 
     def empty_rows() -> list[object]:
         return []
@@ -129,8 +142,14 @@ def _patch_live_node_builder_fakes(monkeypatch: pytest.MonkeyPatch) -> SimpleNam
             return FakeBuilder(trader_id_text, trader_id, environment)
 
     monkeypatch.setattr(node_mod, "LiveNode", FakeLiveNode)
+    monkeypatch.setattr(node_builder_mod, "LiveNode", FakeLiveNode)
     monkeypatch.setattr(
         node_mod,
+        "PolymarketInstrumentProviderConfig",
+        lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
+    )
+    monkeypatch.setattr(
+        node_builder_mod,
         "PolymarketInstrumentProviderConfig",
         lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
     )
@@ -148,6 +167,11 @@ def _patch_live_node_builder_fakes(monkeypatch: pytest.MonkeyPatch) -> SimpleNam
         "_load_runtime_classes",
         lambda: (PolySignalNativeStrategy, MarketRotationActor),
     )
+    monkeypatch.setattr(
+        node_builder_mod,
+        "_load_runtime_classes",
+        lambda: (PolySignalNativeStrategy, MarketRotationActor),
+    )
 
     return SimpleNamespace(
         node_mod=node_mod,
@@ -162,7 +186,7 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pyte
     _install_fake_polymarket_id_helper(monkeypatch)
     fakes = _patch_live_node_builder_fakes(monkeypatch)
 
-    runtime = fakes.node_mod.build_trading_node(
+    runtime = fakes.node_mod.build_live_node(
         Settings(),
         condition_ids=("condition-btc-5m",),
         markets=(_sample_market(),),
@@ -201,13 +225,13 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pyte
     assert cache_reader.snapshot_portfolio() is not None
 
 
-def test_build_trading_node_uses_cache_backed_market_data_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_live_node_uses_cache_backed_market_data_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
 
     _install_fake_polymarket_id_helper(monkeypatch)
     fakes = _patch_live_node_builder_fakes(monkeypatch)
 
-    runtime = fakes.node_mod.build_trading_node(Settings(), markets=(_sample_market(),))
+    runtime = fakes.node_mod.build_live_node(Settings(), markets=(_sample_market(),))
 
     assembler = cast(SimpleNamespace, runtime["assembler"])
     assert isinstance(assembler.books, NautilusCacheMarketDataProvider)

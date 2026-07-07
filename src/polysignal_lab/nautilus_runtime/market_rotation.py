@@ -1,5 +1,18 @@
+"""
+Input: __future__, __future__.annotations, asyncio, logging, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, typing, typing.Protocol
+Output: _MarketUniverse, _Health, MarketRotationActor
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -18,8 +31,8 @@ from polysignal_lab.nautilus_runtime.market_data import (
 )
 from polysignal_lab.nautilus_runtime.sidecar_data import (
     CustomDataPublisher,
-    _market_metadata,  # pyright: ignore[reportPrivateUsage] - shared sidecar serializer has no public equivalent.
-    _timestamp_ns,  # pyright: ignore[reportPrivateUsage] - shared sidecar timestamp helper has no public equivalent.
+    market_metadata,
+    timestamp_ns,
 )
 
 logger = logging.getLogger("polysignal_lab.nautilus.market_rotation")
@@ -78,6 +91,7 @@ class MarketRotationActor:
         self._active_by_condition: dict[str, Market] = _markets_by_condition(startup_markets)
         self._epoch: int = 0
         self._refresh_in_flight: bool = False
+        self._refresh_task: asyncio.Task[None] | None = None
         self._last_published_ptb: dict[str, _PriceToBeatSignature] = {}
 
     def publish_data(self, data_type: object, data: object) -> None:
@@ -112,7 +126,7 @@ class MarketRotationActor:
             )
         markets = self.active_markets()
         for market in markets:
-            self.publisher.publish_market_metadata(_market_metadata(market))
+            self.publisher.publish_market_metadata(market_metadata(market))
         self._publish_price_to_beat_batch_sync(markets)
         if self.settings.runtime.nautilus.market_rotation.enabled:
             interval = max(int(self.settings.runtime.nautilus.market_rotation.interval_sec), 1)
@@ -210,7 +224,7 @@ class MarketRotationActor:
         entered_condition_ids: tuple[str, ...],
     ) -> None:
         for condition_id in entered_condition_ids:
-            self.publisher.publish_market_metadata(_market_metadata(current[condition_id]))
+            self.publisher.publish_market_metadata(market_metadata(current[condition_id]))
 
     def _clear_exited_price_to_beat(
         self,
@@ -223,8 +237,23 @@ class MarketRotationActor:
         if self._refresh_in_flight:
             return
         self._refresh_in_flight = True
+
+        async def _refresh_with_timeout():
+            try:
+                await asyncio.wait_for(self._refresh_async(), timeout=30)
+            except asyncio.TimeoutError:
+                logger.warning("market refresh timed out after 30s")
+                self._mark_down(TimeoutError("refresh timeout"), phase="refresh")
+            finally:
+                self._refresh_task = None
+
+        self._refresh_task = asyncio.create_task(_refresh_with_timeout())
+
+    async def _refresh_async(self) -> None:
         try:
-            refreshed_markets = tuple(self.market_universe.refresh_once_sync())
+            refreshed_markets = tuple(
+                await asyncio.to_thread(self.market_universe.refresh_once_sync)
+            )
             markets = self._apply_refreshed_markets(refreshed_markets)
             self._publish_price_to_beat_batch_sync(markets)
         except Exception as exc:
@@ -240,8 +269,8 @@ class MarketRotationActor:
             price=spot.price,
             source=spot.source,
             freshness_ms=spot.freshness_ms(),
-            ts_event=_timestamp_ns(spot.event_time),
-            ts_init=_timestamp_ns(spot.received_at),
+            ts_event=timestamp_ns(spot.event_time),
+            ts_init=timestamp_ns(spot.received_at),
         )
         if self.anchor_prices is None:
             return
@@ -276,8 +305,8 @@ class MarketRotationActor:
             from_anchor_service=result.from_anchor_service,
             anchor_source=result.anchor_source,
             anchor_lag_ms=result.anchor_lag_ms,
-            ts_event=_timestamp_ns(now),
-            ts_init=_timestamp_ns(now),
+            ts_event=timestamp_ns(now),
+            ts_init=timestamp_ns(now),
         )
         self._last_published_ptb[market.condition_id] = signature
 
@@ -324,8 +353,8 @@ class MarketRotationActor:
                     condition_id: market.timeframe
                     for condition_id, market in active_by_condition.items()
                 },
-                ts_event=_timestamp_ns(now),
-                ts_init=_timestamp_ns(now),
+                ts_event=timestamp_ns(now),
+                ts_init=timestamp_ns(now),
             )
         )
 

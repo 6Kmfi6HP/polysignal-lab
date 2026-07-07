@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, typing, typing.Any, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.AlphaFillEvent
+Output: LowSideDualReversionAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

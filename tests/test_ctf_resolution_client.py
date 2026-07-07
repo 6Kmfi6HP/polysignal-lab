@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, httpx, pytest, polysignal_lab.data.ctf_resolution_client, polysignal_lab.data.ctf_resolution_client.CtfResolutionClient
+Output: test_denominator_zero_returns_unresolved_without_numerators, test_maps_one_zero_and_zero_one_and_half_half_vectors, test_invalid_condition_id_does_not_call_rpc, test_rpc_error_returns_error_evidence
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import httpx

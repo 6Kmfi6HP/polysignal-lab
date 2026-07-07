@@ -1,3 +1,15 @@
+/**
+ * Input: { makeStrategyStatusRow } from '@/test-utils/fixtures', { renderWithQueryClient } from '@/test-utils/render-with-query-client', { within } from '@testing-library/react', { afterEach, describe, expect, it, vi } from 'vitest', * as client from '@/lib/api/client', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', { SidebarProvider } from '@/components/ui/sidebar', { StrategyStatusPage } from './index', @/test-utils/fixtures
+ * Output: renderStrategyStatusPage
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { makeStrategyStatusRow } from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
 import { within } from '@testing-library/react'

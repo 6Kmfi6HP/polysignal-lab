@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections, collections.deque, datetime, datetime.UTC, datetime.datetime, enum, enum.Enum, typing
+Output: json_safe_state, restore_utc_datetime
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections import deque

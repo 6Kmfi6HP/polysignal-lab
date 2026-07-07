@@ -1,19 +1,15 @@
-"""Pure alpha core for the callback-heavy ``late_consensus`` strategy.
-
-Decision logic (the 8-step Meridian Late Entry V3 flow) is moved verbatim from
-``strategies/late_consensus.py``. The strategy's mutable callback state lives
-on this core:
-
-* ``_last_favorite``  — flip-guard memory (read by ``evaluate`` side-change guard).
-* ``_last_entry_at``  — entry-frequency gate memory (read by ``evaluate``).
-* ``_accepted_counts``— per-market accepted-signal counter; ``evaluate`` READS
-  it to derive ``metrics["entry_sequence"]`` but does NOT increment it. Only
-  ``on_order_accepted`` increments it (and writes the other two fields).
-
-The dedupe-suffix (``:{sequence}``) is a CANDIDATE concern — ``AlphaDecision``
-has no ``dedupe_key`` — so the adapter applies it from
-``decision.metrics["entry_sequence"]`` after ``decision_to_signal``.
 """
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, typing, typing.TYPE_CHECKING, typing.Any, typing.Mapping, polysignal_lab.alpha.state
+Output: LateConsensusAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

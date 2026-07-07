@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections, collections.defaultdict, datetime, datetime.datetime, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.utils, polysignal_lab.utils.utc_now
+Output: ConsensusEngine
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections import defaultdict

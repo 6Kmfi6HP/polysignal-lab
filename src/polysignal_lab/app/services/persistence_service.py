@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, typing, typing.Any, typing.Iterable, polysignal_lab.storage.jsonl_store, polysignal_lab.storage.jsonl_store.JSONLStore
+Output: PersistenceService
+Pos: Service Layer - Business logic
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

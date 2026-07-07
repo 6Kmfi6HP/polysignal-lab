@@ -1,3 +1,15 @@
+/**
+ * Input: { SearchProvider } from '@/context/search-provider', * as client from '@/lib/api/client', { makeHealthResponse } from '@/test-utils/fixtures', { renderWithQueryClient } from '@/test-utils/render-with-query-client', { SidebarProvider } from '@/components/ui/sidebar', { ThemeProvider } from '@/context/theme-provider', { afterEach, describe, expect, it, vi } from 'vitest', { SystemHealthPage } from './index', @/context/search-provider, @/lib/api/client
+ * Output: renderSystemHealthPage
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { SearchProvider } from '@/context/search-provider'
 import * as client from '@/lib/api/client'
 import { makeHealthResponse } from '@/test-utils/fixtures'

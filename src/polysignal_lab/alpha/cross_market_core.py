@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, enum, enum.StrEnum, typing, typing.Any, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
+Output: RelationType, MarketRelation, CrossMarketAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

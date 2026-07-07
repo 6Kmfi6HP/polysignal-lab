@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, asyncio, signal, threading, time, types, types.SimpleNamespace, typing, typing.TYPE_CHECKING
+Output: test_live_engine_config_builders_import_configs_from_config_module, test_build_live_node_uses_livenode_builder, test_build_live_node_uses_configured_non_default_trader_id, test_build_live_node_returns_nautilus_runtime_components, test_build_live_node_injects_shared_projections_and_no_manual_sync_components, test_build_live_node_gives_each_strategy_own_custom_data_state, test_build_live_node_uses_static_runtime_classes, test_build_live_node_registers_market_rotation_actor, test_build_live_node_registers_policy_actor_when_runtime_class_exists, test_build_live_node_uses_sandbox_execution_not_matching_client
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio
@@ -12,14 +24,14 @@ import pytest
 from polysignal_lab.config import Settings
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.node import (
-    build_trading_node,
+    build_live_node,
     build_control,
     run_nautilus_cli,
     run_nautilus_cli_async,
     _start_interactive_telegram_bot_thread,
     _stop_interactive_telegram_bot_thread,
 )
-from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
+from polysignal_lab.nautilus_runtime.live_node import PAPER_EXEC_CLIENT_ID
 
 if TYPE_CHECKING:
     from polysignal_lab.publish.telegram_publisher import TelegramPublisher
@@ -140,8 +152,13 @@ def _patch_nautilus_placeholders(monkeypatch):
 
 
     monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.LiveNode", FakeLiveNode)
+    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node_builder.LiveNode", FakeLiveNode)
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node.PolymarketInstrumentProviderConfig",
+        lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node_builder.PolymarketInstrumentProviderConfig",
         lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
     )
     monkeypatch.setattr(
@@ -168,13 +185,17 @@ def _patch_nautilus_placeholders(monkeypatch):
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
         lambda: (FakeRuntimeStrategy, FakeRuntimeActor),
     )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
+        lambda: (FakeRuntimeStrategy, FakeRuntimeActor),
+    )
     return FakeLiveNode
 
 
-def test_build_trading_node_uses_livenode_builder(monkeypatch) -> None:
+def test_build_live_node_uses_livenode_builder(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
-    runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+    runtime = build_live_node(condition_ids=("condition-btc-5m",))
     node = runtime["node"]
     builder = node.builder
 
@@ -186,21 +207,21 @@ def test_build_trading_node_uses_livenode_builder(monkeypatch) -> None:
     assert node.built is True
 
 
-def test_build_trading_node_uses_configured_non_default_trader_id(monkeypatch) -> None:
+def test_build_live_node_uses_configured_non_default_trader_id(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
     settings = Settings()
     settings.runtime.nautilus.trader_id = "PolySignal-Regression-Trader"
 
-    runtime = build_trading_node(settings=settings, condition_ids=("condition-btc-5m",))
+    runtime = build_live_node(settings=settings, condition_ids=("condition-btc-5m",))
     builder = runtime["node"].builder
 
     assert builder.trader_id_text == "PolySignal-Regression-Trader"
     assert builder.trader_id == "TraderId:PolySignal-Regression-Trader"
 
-def test_build_trading_node_returns_nautilus_runtime_components(monkeypatch) -> None:
+def test_build_live_node_returns_nautilus_runtime_components(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
-    runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+    runtime = build_live_node(condition_ids=("condition-btc-5m",))
     node = runtime["node"]
 
     assert node.built is True
@@ -210,10 +231,10 @@ def test_build_trading_node_returns_nautilus_runtime_components(monkeypatch) -> 
 
 
 
-def test_build_trading_node_injects_shared_projections_and_no_manual_sync_components(monkeypatch) -> None:
+def test_build_live_node_injects_shared_projections_and_no_manual_sync_components(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
-    runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+    runtime = build_live_node(condition_ids=("condition-btc-5m",))
     strategies = cast(list[object], runtime["strategies"])
 
     assert "registry" in runtime
@@ -231,12 +252,12 @@ def test_build_trading_node_injects_shared_projections_and_no_manual_sync_compon
     assert getattr(first_strategy, "assembler").catalog is runtime["registry"]
 
 
-def test_build_trading_node_gives_each_strategy_own_custom_data_state(monkeypatch) -> None:
+def test_build_live_node_gives_each_strategy_own_custom_data_state(monkeypatch) -> None:
     from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 
     _patch_nautilus_placeholders(monkeypatch)
 
-    runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+    runtime = build_live_node(condition_ids=("condition-btc-5m",))
     shared_assembler = runtime["assembler"]
     strategies = cast(list[object], runtime["strategies"])
 
@@ -249,7 +270,7 @@ def test_build_trading_node_gives_each_strategy_own_custom_data_state(monkeypatc
         assert strategy_assembler is not shared_assembler
         assert getattr(strategy_assembler, "custom_data") is custom_data
 
-def test_build_trading_node_uses_static_runtime_classes(monkeypatch) -> None:
+def test_build_live_node_uses_static_runtime_classes(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
     captured: dict[str, object] = {}
 
@@ -267,8 +288,12 @@ def test_build_trading_node_uses_static_runtime_classes(monkeypatch) -> None:
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
         lambda: (FakeStaticStrategy, FakeStaticActor),
     )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
+        lambda: (FakeStaticStrategy, FakeStaticActor),
+    )
 
-    runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+    runtime = build_live_node(condition_ids=("condition-btc-5m",))
 
     assert runtime["strategies"][0].strategy_name == "vwap_momentum"
     assert runtime["market_rotation_actor"] is runtime["node"].trader.actors[0]
@@ -276,7 +301,7 @@ def test_build_trading_node_uses_static_runtime_classes(monkeypatch) -> None:
     assert "catalog" in captured["actor_kwargs"]
 
 
-def test_build_trading_node_registers_market_rotation_actor(monkeypatch) -> None:
+def test_build_live_node_registers_market_rotation_actor(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
     class FakeRotationActor:
@@ -292,10 +317,14 @@ def test_build_trading_node_registers_market_rotation_actor(monkeypatch) -> None
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
         lambda: (FakeStrategy, FakeRotationActor),
     )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor),
+    )
 
     universe = object()
     health = object()
-    runtime = build_trading_node(
+    runtime = build_live_node(
         condition_ids=("condition-btc-5m",),
         market_universe=universe,
         health=health,
@@ -309,7 +338,7 @@ def test_build_trading_node_registers_market_rotation_actor(monkeypatch) -> None
     assert runtime["market_rotation_actor"].kwargs["health"] is health
 
 
-def test_build_trading_node_registers_policy_actor_when_runtime_class_exists(monkeypatch) -> None:
+def test_build_live_node_registers_policy_actor_when_runtime_class_exists(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
     from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
@@ -335,8 +364,12 @@ def test_build_trading_node_registers_policy_actor_when_runtime_class_exists(mon
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
         lambda: (FakeStrategy, FakeRotationActor, FakePolicyActor),
     )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor, FakePolicyActor),
+    )
 
-    runtime = build_trading_node(condition_ids=("condition-btc-5m",))
+    runtime = build_live_node(condition_ids=("condition-btc-5m",))
     node = runtime["node"]
 
     assert len(node.trader.actors) == 2
@@ -345,10 +378,10 @@ def test_build_trading_node_registers_policy_actor_when_runtime_class_exists(mon
     assert isinstance(runtime["policy"], FakePolicyActor)
     assert runtime["strategies"][0].policy is runtime["policy"]
 
-def test_build_trading_node_uses_sandbox_execution_not_matching_client(monkeypatch) -> None:
+def test_build_live_node_uses_sandbox_execution_not_matching_client(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
-    runtime = build_trading_node()
+    runtime = build_live_node()
     builder = runtime["node"].builder
 
     assert builder.exec_clients[0][0] != "POLYMARKET"
@@ -356,15 +389,15 @@ def test_build_trading_node_uses_sandbox_execution_not_matching_client(monkeypat
     assert "matching_client" not in runtime
 
 
-def test_build_trading_node_strategies_is_list(monkeypatch) -> None:
+def test_build_live_node_strategies_is_list(monkeypatch) -> None:
     """Strategy list is a list even when no strategies configured."""
     _patch_nautilus_placeholders(monkeypatch)
 
-    runtime = build_trading_node()
+    runtime = build_live_node()
     assert isinstance(runtime["strategies"], list)
 
 
-def test_build_trading_node_forwards_unsubscribe_exited_to_native_strategy(
+def test_build_live_node_forwards_unsubscribe_exited_to_native_strategy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_nautilus_placeholders(monkeypatch)
@@ -384,6 +417,10 @@ def test_build_trading_node_forwards_unsubscribe_exited_to_native_strategy(
         lambda: (FakeStrategy, FakeRotationActor),
     )
     monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor),
+    )
+    monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
         lambda _name, _cfg: object(),
     )
@@ -392,7 +429,7 @@ def test_build_trading_node_forwards_unsubscribe_exited_to_native_strategy(
     settings.runtime.nautilus.market_rotation.unsubscribe_exited = False
     settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
 
-    runtime = build_trading_node(
+    runtime = build_live_node(
         settings=settings,
         condition_ids=("condition-btc-5m",),
     )
@@ -406,7 +443,7 @@ def test_build_trading_node_forwards_unsubscribe_exited_to_native_strategy(
     assert captured_kwargs["strategy_name"] == "vwap_momentum"
 
 
-def test_build_trading_node_skips_disabled_native_strategies(
+def test_build_live_node_skips_disabled_native_strategies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_nautilus_placeholders(monkeypatch)
@@ -424,6 +461,10 @@ def test_build_trading_node_skips_disabled_native_strategies(
         lambda: (FakeStrategy, FakeRotationActor),
     )
     monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor),
+    )
+    monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
         lambda _name, _cfg: object(),
     )
@@ -432,7 +473,7 @@ def test_build_trading_node_skips_disabled_native_strategies(
     settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
     settings.strategies.vwap_momentum.enabled = False
 
-    runtime = build_trading_node(
+    runtime = build_live_node(
         settings=settings,
         condition_ids=("condition-btc-5m",),
     )
@@ -482,7 +523,7 @@ def test_initialize_nautilus_scheduler_components_avoids_legacy_strategy_build(
     assert scheduler.signal_pipeline.disabled == ["vwap_momentum"]
 
 
-def test_build_trading_node_passes_l1_snapshot_interval_to_native_strategies(
+def test_build_live_node_passes_l1_snapshot_interval_to_native_strategies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_nautilus_placeholders(monkeypatch)
@@ -502,6 +543,10 @@ def test_build_trading_node_passes_l1_snapshot_interval_to_native_strategies(
         lambda: (FakeStrategy, FakeRotationActor),
     )
     monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor),
+    )
+    monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
         lambda _name, _cfg: object(),
     )
@@ -511,7 +556,7 @@ def test_build_trading_node_passes_l1_snapshot_interval_to_native_strategies(
     settings.runtime.nautilus.l1_book_snapshot_interval_ms = 250
     settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
 
-    runtime = build_trading_node(
+    runtime = build_live_node(
         settings=settings,
         condition_ids=("condition-btc-5m",),
     )
@@ -525,7 +570,7 @@ def test_build_trading_node_passes_l1_snapshot_interval_to_native_strategies(
     assert captured_kwargs["l1_book_snapshot_interval_ms"] == 250
 
 
-def test_build_trading_node_injects_runtime_progress_callback(monkeypatch, tmp_path) -> None:
+def test_build_live_node_injects_runtime_progress_callback(monkeypatch, tmp_path) -> None:
     from polysignal_lab.observability.runtime_health import read_runtime_heartbeat
 
     captured: dict[str, object] = {}
@@ -549,8 +594,12 @@ def test_build_trading_node_injects_runtime_progress_callback(monkeypatch, tmp_p
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
         lambda: (FakeStrategy, FakeRotationActor),
     )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor),
+    )
 
-    runtime = build_trading_node(settings=settings, condition_ids=("condition-btc-5m",))
+    runtime = build_live_node(settings=settings, condition_ids=("condition-btc-5m",))
 
     progress = captured["progress_callback"]
     assert callable(progress)
@@ -570,7 +619,7 @@ def test_runtime_progress_callback_suppresses_heartbeat_write_failures(monkeypat
 
     monkeypatch.setattr(probes_mod, "write_runtime_heartbeat", fail_write)
 
-    from polysignal_lab.nautilus_runtime.node import _runtime_progress_callback
+    from polysignal_lab.nautilus_runtime.node_probes import _runtime_progress_callback
     _runtime_progress_callback(settings)("evaluation_heartbeat")
 
 def test_build_control_adapts_policy() -> None:
@@ -660,7 +709,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     cache_reader = object()
     monkeypatch.setattr(
         node_mod,
-        "build_trading_node",
+        "build_live_node",
         lambda settings=None, *, condition_ids=(), markets=(), market_universe=None, store=None, health=None, observability=None: captured.update(
             condition_ids=tuple(condition_ids),
             markets=tuple(markets),
@@ -937,20 +986,15 @@ async def test_run_nautilus_housekeeping_once_skips_legacy_settlement_with_cache
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polysignal_lab.nautilus_runtime.signal_sidecar import _run_nautilus_housekeeping_once
-    import polysignal_lab.app.scheduler_runtime as runtime_mod
+    import polysignal_lab.app.scheduler_shared as shared_mod
 
     calls: list[str] = []
-
-    async def fail_legacy_settlements(_scheduler: object) -> None:
-        calls.append("settlement")
-        raise AssertionError("Nautilus housekeeping must not settle legacy wallet positions")
 
     async def generate_iteration_report(_scheduler: object, last_report_date: object) -> str:
         calls.append(f"report:{last_report_date}")
         return "2026-07-05"
 
-    monkeypatch.setattr(runtime_mod, "_check_iteration_settlements", fail_legacy_settlements)
-    monkeypatch.setattr(runtime_mod, "_generate_iteration_report", generate_iteration_report)
+    monkeypatch.setattr(shared_mod, "_generate_iteration_report", generate_iteration_report)
 
     scheduler = SimpleNamespace(nautilus_cache_reader=object())
 

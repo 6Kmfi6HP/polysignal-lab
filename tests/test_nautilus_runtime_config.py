@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, pathlib, pathlib.Path, pytest, pydantic, pydantic.ValidationError, polysignal_lab.config, polysignal_lab.config.Settings
+Output: test_runtime_config_defaults_to_nautilus_and_stays_paper_safe, test_nautilus_book_type_defaults_are_paper_only, test_nautilus_rejects_unknown_sandbox_book_type, test_nautilus_runtime_uses_sandbox_book_type_not_matching_engine, test_removed_nautilus_matching_keys_fail_fast, test_yaml_runtime_book_type_values_are_explicit, test_live_polymarket_execution_is_invalid_in_default_runtime, test_production_yaml_declares_nautilus_runtime_section, test_health_config_defaults_are_conservative, test_health_config_accepts_yaml_overrides
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 from pathlib import Path
 

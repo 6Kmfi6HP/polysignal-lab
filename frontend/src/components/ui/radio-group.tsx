@@ -1,3 +1,15 @@
+/**
+ * Input: * as React from 'react', * as RadioGroupPrimitive from '@radix-ui/react-radio-group', { CircleIcon } from 'lucide-react', { cn } from '@/lib/utils', react, @radix-ui/react-radio-group, lucide-react, @/lib/utils
+ * Output: RadioGroup, RadioGroupItem
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import * as React from 'react'
 import * as RadioGroupPrimitive from '@radix-ui/react-radio-group'
 import { CircleIcon } from 'lucide-react'

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, json, dataclasses, dataclasses.dataclass, dataclasses.field, datetime, datetime.UTC, datetime.datetime, typing
+Output: parse_gamma_resolution_payload, choose_decision, SettlementEvidence, ResolutionDecision, WsResolutionCache
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import json

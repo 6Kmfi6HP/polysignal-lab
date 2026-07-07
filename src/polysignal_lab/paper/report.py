@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections, collections.Counter, collections.defaultdict, datetime, datetime.date, typing, typing.Any, typing.Iterable
+Output: normalize_paper_reject_reason, is_rejected_paper_order_payload, PaperReportService
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections import Counter, defaultdict

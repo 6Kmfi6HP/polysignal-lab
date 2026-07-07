@@ -1,3 +1,15 @@
+/**
+ * Input: { type Mock, describe, expect, it, vi } from 'vitest', { act, renderHook } from '@testing-library/react', { type NavigateFn, useTableUrlState } from '@/hooks/use-table-url-state', vitest, @testing-library/react, @/hooks/use-table-url-state
+ * Output: lastNavigateOpts, applyLastSearchFn
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { type Mock, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { type NavigateFn, useTableUrlState } from '@/hooks/use-table-url-state'

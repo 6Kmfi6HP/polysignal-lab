@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, types, types.SimpleNamespace, types.TracebackType, unittest.mock, unittest.mock.AsyncMock, pytest, pydantic, pydantic.JsonValue
+Output: test_cancelled_gamma_refresh_reaches_registry_and_storage, test_scheduler_settles_cancelled_market_as_void_refund, FakeGammaResponse, FakeGammaClient
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from types import SimpleNamespace, TracebackType

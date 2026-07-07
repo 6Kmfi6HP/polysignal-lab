@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, httpx, pytest, polysignal_lab.data.gamma_resolution_client, polysignal_lab.data.gamma_resolution_client.GammaResolutionClient, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market, polysignal_lab.domain.market.Market
+Output: test_gamma_client_fetches_exact_market_by_id, test_gamma_client_falls_back_to_condition_query_on_404, test_gamma_client_error_evidence_on_http_failure
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import httpx

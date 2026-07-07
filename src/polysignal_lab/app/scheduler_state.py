@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, sqlite3, typing, typing.TYPE_CHECKING, polysignal_lab.app, polysignal_lab.app.scheduler_health
+Output: persist_state
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import sqlite3

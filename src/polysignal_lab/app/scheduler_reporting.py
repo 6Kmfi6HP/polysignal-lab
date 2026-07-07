@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, sqlite3, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.date, datetime.datetime, datetime.time
+Output: check_settlements, generate_daily_report, DailyReportInputs
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import sqlite3

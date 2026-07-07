@@ -1,3 +1,15 @@
+/**
+ * Input: { useEffect, useState } from 'react', { cn } from '@/lib/utils', { Separator } from '@/components/ui/separator', { SidebarTrigger } from '@/components/ui/sidebar', react, @/lib/utils, @/components/ui/separator, @/components/ui/sidebar
+ * Output: Header
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { Separator } from '@/components/ui/separator'

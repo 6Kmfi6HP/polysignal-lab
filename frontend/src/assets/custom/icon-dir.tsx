@@ -1,3 +1,15 @@
+/**
+ * Input: { type SVGProps } from 'react', { cn } from '@/lib/utils', { type Direction } from '@/context/direction-provider', react, @/lib/utils, @/context/direction-provider
+ * Output: IconDir
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { type SVGProps } from 'react'
 import { cn } from '@/lib/utils'
 import { type Direction } from '@/context/direction-provider'

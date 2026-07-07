@@ -1,9 +1,15 @@
-"""Stateless publishers for PolySignal custom data on the Nautilus bus.
-
-Nautilus is never imported at module load time. The ``DataType`` wrapper is
-constructed lazily inside each publish method; when Nautilus is not installed,
-the data class itself is passed as ``data_type`` so tests stay Nautilus-free.
 """
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, importlib, importlib.import_module, typing, typing.Callable, typing.Protocol
+Output: market_metadata, timestamp_ns, _Publisher, CustomDataPublisher
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 
@@ -94,7 +100,7 @@ class CustomDataPublisher:
         self.publisher.publish_data(_data_type(PolySignalMarketUniverseData), data)
 
 
-def _market_metadata(market: Market) -> PolySignalMarketMetaData:
+def market_metadata(market: Market) -> PolySignalMarketMetaData:
     now = datetime.now(UTC)
     return PolySignalMarketMetaData(
         market_id=market.market_id,
@@ -102,16 +108,16 @@ def _market_metadata(market: Market) -> PolySignalMarketMetaData:
         condition_id=market.condition_id,
         asset=market.asset,
         timeframe=market.timeframe,
-        start_ts_ns=_timestamp_ns(market.start_ts),
-        end_ts_ns=_timestamp_ns(market.end_ts),
+        start_ts_ns=timestamp_ns(market.start_ts),
+        end_ts_ns=timestamp_ns(market.end_ts),
         up_token_id=market.token_for(Side.UP).token_id,
         down_token_id=market.token_for(Side.DOWN).token_id,
-        ts_event=_timestamp_ns(now),
-        ts_init=_timestamp_ns(now),
+        ts_event=timestamp_ns(now),
+        ts_init=timestamp_ns(now),
     )
 
 
-def _timestamp_ns(value: datetime | None) -> int:
+def timestamp_ns(value: datetime | None) -> int:
     if value is None:
         return 0
     current = value if value.tzinfo is not None else value.replace(tzinfo=UTC)

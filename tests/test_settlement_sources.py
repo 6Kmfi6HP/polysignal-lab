@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market, polysignal_lab.domain.market.Market
+Output: test_chain_evidence_wins_and_records_conflicting_gamma, test_gamma_ws_conflict_without_chain_stays_unknown, test_chain_unresolved_allows_gamma_fallback, test_gamma_outcome_prices_parse_real_resolved_shape, test_ws_cache_matches_condition_slug_and_winning_asset, test_ws_cache_prunes_old_events
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta

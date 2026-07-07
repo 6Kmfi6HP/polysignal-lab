@@ -1,0 +1,1 @@
+/home/debian/project-multilevel-index/.claude-plugin/commands/init-index.md

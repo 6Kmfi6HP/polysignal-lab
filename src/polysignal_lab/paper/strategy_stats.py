@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections, collections.defaultdict, collections.abc, collections.abc.Iterable, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.PaperTradeResult
+Output: build_strategy_leaderboard_rows
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections import defaultdict

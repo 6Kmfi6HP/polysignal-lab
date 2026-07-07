@@ -1,11 +1,15 @@
-"""Alpha equivalence harness — test infrastructure only.
-
-Compares the *semantic* output of a legacy ``BaseStrategy.evaluate(MarketSnapshot)``
-against an extracted alpha core's ``evaluate(MarketView)``. Host-generated fields
-(``signal_id``, ``snapshot_id``/``view_id``, ``created_at``, ``dedupe_key`` and
-its default prefix, ``source_signal_ids``, ``schema_version``, ``action``,
-``freshness_policy``) are excluded: only :data:`SEMANTIC_FIELDS` are compared.
 """
+Input: __future__, __future__.annotations, json, typing, typing.Any, typing.Protocol, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
+Output: normalize_candidate, normalize_decision, assert_legacy_core_equivalent, _LegacyStrategy, _AlphaCore
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

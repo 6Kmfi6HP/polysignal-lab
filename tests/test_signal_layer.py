@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.timedelta, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.domain.enums, polysignal_lab.domain.enums.MarketStatus, polysignal_lab.signal_layer.consensus, polysignal_lab.signal_layer.consensus.ConsensusEngine
+Output: test_signal_gate_accepts_good_signal, test_signal_gate_rejects_inactive_market, test_signal_gate_rejects_low_confidence, test_deduper_flags_duplicate, test_consensus_engine_merges_two_strategies
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import timedelta

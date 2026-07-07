@@ -1,3 +1,15 @@
+/**
+ * Input: { beforeEach, describe, expect, it, vi } from 'vitest', { act, fireEvent, render, type RenderResult } from '@testing-library/react', userEvent from '@testing-library/user-event', { SearchProvider } from '@/context/search-provider', vitest, @testing-library/react, @testing-library/user-event, @/context/search-provider
+ * Output: renderWithSearchProvider, openCommandPalette
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, type RenderResult } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'

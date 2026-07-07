@@ -1,3 +1,15 @@
+/**
+ * Input: { Button } from '@/components/ui/button', @/components/ui/button
+ * Output: MaintenanceError
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { Button } from '@/components/ui/button'
 
 export function MaintenanceError() {

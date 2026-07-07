@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, re, dataclasses, dataclasses.dataclass, typing, typing.Final, anyio, httpx, pydantic
+Output: invalid_telegram_credential_fields, PublishResult, TelegramPublisher
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import re

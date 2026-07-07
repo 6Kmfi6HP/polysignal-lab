@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.alpha.low_side_dual_reversion_core, polysignal_lab.alpha.low_side_dual_reversion_core.LowSideDualReversionAlphaCore, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.decision_to_signal, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaFillEvent, polysignal_lab.domain.enums
+Output: LowSideDualReversionStrategy
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.alpha.low_side_dual_reversion_core import LowSideDualReversionAlphaCore

@@ -1,4 +1,15 @@
-"""CLI orchestrator helpers extracted from node.py."""
+"""
+Input: __future__, __future__.annotations, asyncio, logging, collections.abc, collections.abc.Callable, typing, typing.cast, polysignal_lab.config, polysignal_lab.config.Settings
+Output: run_nautilus_cli_async
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio

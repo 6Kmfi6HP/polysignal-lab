@@ -1,9 +1,15 @@
-"""Nautilus custom data classes for the PolySignal sidecar bus.
-
-These payload classes stay import-safe when Nautilus is unavailable, but become
-real Nautilus ``Data`` subclasses when it is installed so actors can publish
-them through ``publish_data`` and ``CustomData``.
 """
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, importlib, importlib.import_module, types, types.MappingProxyType, typing
+Output: register_polysignal_data_types, _PolySignalDataBase, PolySignalSpotData, PolySignalPriceToBeatData, PolySignalMarketMetaData, PolySignalMarketUniverseData
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

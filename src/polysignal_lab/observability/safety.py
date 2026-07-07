@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, argparse, pathlib, pathlib.Path, typing, typing.Final
+Output: blocked_symbols, scan, skip_path, main
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import argparse

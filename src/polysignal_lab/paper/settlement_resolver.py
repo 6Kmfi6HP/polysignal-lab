@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, asyncio, datetime, datetime.UTC, datetime.datetime, logging, typing, typing.Protocol, polysignal_lab.domain.market
+Output: ChainResolutionSource, GammaResolutionSource, SettlementResolver
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio

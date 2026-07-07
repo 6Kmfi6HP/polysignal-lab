@@ -1,14 +1,15 @@
-"""Alpha core tests for the callback-heavy ``vwap_momentum`` strategy.
-
-Verifies, at the CORE level:
-  * the per-market entry guard is consumed only by ``on_order_accepted``;
-  * ``on_order_rejected`` reverts the pending trade samples staged during the
-    rejected candidate's evaluate;
-  * ``on_order_filled`` (taker fill) returns a hedge ``AlphaDecision`` built
-    from the staged pending hedge, while a GTD fill via ``on_order_expired``
-    clears the pending hedge and produces no reverse hedge;
-plus semantic equivalence to the legacy adapter and state round-trip.
 """
+Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot, polysignal_lab.alpha.state, polysignal_lab.alpha.state.restore_utc_datetime, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
+Output: test_vwap_core_matches_legacy_candidate, test_vwap_entry_guard_not_consumed_until_acceptance, test_vwap_core_accepts_trade_view_events, test_vwap_core_skips_entry_when_favorite_ask_missing, test_vwap_on_order_rejected_reverts_pending_samples, test_vwap_on_order_rejected_reverts_trade_view_samples, test_vwap_on_order_filled_taker_creates_hedge_decision, test_vwap_on_order_expired_gtd_clears_pending_hedge, test_vwap_evaluate_prunes_old_trade_history_and_dedupe_state, test_vwap_core_state_roundtrip
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

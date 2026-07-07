@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, logging, unittest.mock, unittest.mock.AsyncMock, unittest.mock.Mock, pytest
+Output: test_resolver_collects_chain_gamma_and_ws, test_resolver_turns_source_exception_into_retryable_decision
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

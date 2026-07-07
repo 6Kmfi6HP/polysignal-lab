@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, json, os, subprocess, sys, pathlib, pathlib.Path, types, types.ModuleType
+Output: test_cli_help_lists_supported_runtime_modes_without_removed_alias, test_dashboard_compatibility_alias_resolves_to_dashboard, test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given, test_main_uses_nautilus_when_legacy_config_is_default_without_mode, test_main_import_does_not_load_legacy_scheduler_stack, test_explicit_legacy_scheduler_requires_hidden_opt_in, test_main_scheduler_mode_without_once_aliases_to_nautilus, test_main_scheduler_mode_with_once_runs_readonly_smoke, test_once_readonly_smoke_writes_bounded_evidence, _FakeSettings
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import json

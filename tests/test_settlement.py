@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.date, factories, factories.MarketFactoryConfig, factories.sample_market, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._paper_trade_result_from_projection, polysignal_lab.domain.enums
+Output: test_paper_settlement_engine_module_is_removed, test_projection_settlement_builds_result_from_nautilus_position_row, test_unknown_projection_does_not_inflate_win_rate
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import date

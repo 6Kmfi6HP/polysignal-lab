@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, pathlib, pathlib.Path, polysignal_lab.observability.safety, polysignal_lab.observability.safety.scan
+Output: test_default_nautilus_source_avoids_live_execution_symbols, test_project_source_avoids_local_paper_execution_wheels, test_safety_scan_enforces_project_wide_local_paper_isolation, test_local_paper_execution_modules_are_deleted
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -32,7 +44,7 @@ def test_default_nautilus_source_avoids_live_execution_symbols() -> None:
             )
 
     assert findings == []
-    from polysignal_lab.nautilus_runtime.trading_node import PAPER_EXEC_CLIENT_ID
+    from polysignal_lab.nautilus_runtime.live_node import PAPER_EXEC_CLIENT_ID
 
     assert PAPER_EXEC_CLIENT_ID != "POLYMARKET"
 

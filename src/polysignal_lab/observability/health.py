@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, dataclasses.field, typing, typing.Literal, typing.TypeAlias, pydantic, pydantic.JsonValue
+Output: ComponentHealth, HealthSnapshot, HealthRegistry
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

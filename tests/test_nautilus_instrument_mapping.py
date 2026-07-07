@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, sys, types, types.SimpleNamespace, pytest, polysignal_lab.nautilus_runtime.instrument_mapping, polysignal_lab.nautilus_runtime.instrument_mapping.polymarket_instrument_id
+Output: test_polymarket_instrument_id_uses_nautilus_adapter_helper, test_polymarket_instrument_id_rejects_empty_parts, test_polymarket_instrument_id_requires_nautilus_adapter
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import sys

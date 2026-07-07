@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.(, polysignal_lab.domain.freshness, polysignal_lab.domain.freshness.FreshnessPolicy, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.domain.snapshot, polysignal_lab.domain.snapshot.MarketSnapshot
+Output: PTBDiffStrategy
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.alpha.ptb_diff_core import (

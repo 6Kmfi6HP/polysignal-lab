@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.datetime, collections.abc, collections.abc.Sequence, typing, typing.TYPE_CHECKING, typing.Protocol, typing_extensions
+Output: BookDataProvider, MarketViewAssembler
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import datetime

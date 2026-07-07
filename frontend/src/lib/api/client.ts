@@ -1,3 +1,15 @@
+/**
+ * Input: type {, ./types
+ * Output: ApiError, getHealth, getOverview, getSignals, getRejectedSignals, getPaperOrders, getPositions, getTrades, getLeaderboard, getStrategyStatus
+ * Pos: Library - Shared code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import type {
   HealthResponse,
   LeaderboardResponse,

@@ -1,3 +1,15 @@
+/**
+ * Input: { createContext, useContext, useState } from 'react', { getCookie, setCookie } from '@/lib/cookies', react, @/lib/cookies
+ * Output: LayoutProvider, useLayout
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { createContext, useContext, useState } from 'react'
 import { getCookie, setCookie } from '@/lib/cookies'
 

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.OrderIntentSpec, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side
+Output: test_taker_fak_maps_to_ioc_limit_at_best_ask_and_checks_depth, test_order_spec_tags_include_signal_display_metadata, test_taker_fok_maps_to_fok_without_depth_precheck, test_fok_order_mapping_does_not_pre_reject_missing_depth, test_passive_gtd_maps_expiry_seconds_to_gtd_tags, test_contracts_metric_overrides_fixed_stake_quantity_for_hedge, test_approved_signal_candidate_preserves_gtd_expiry_and_pair_metadata, test_late_consensus_maps_to_current_favorite_ask_not_price_ceiling, test_missing_order_intent_uses_paper_safe_taker_at_max_entry_price
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import replace

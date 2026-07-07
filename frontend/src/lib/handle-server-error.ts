@@ -1,3 +1,15 @@
+/**
+ * Input: { AxiosError } from 'axios', { toast } from 'sonner', axios, sonner
+ * Output: handleServerError
+ * Pos: Library - Shared code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { AxiosError } from 'axios'
 import { toast } from 'sonner'
 

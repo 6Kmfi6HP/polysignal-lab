@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, polysignal_lab.alpha.types, polysignal_lab.alpha.types.SideBookView, polysignal_lab.alpha.types.TradeView, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side
+Output: test_assembler_builds_coherent_market_view, test_assembler_returns_none_when_down_leg_missing, test_assembler_builds_view_when_optional_custom_data_missing, test_strategy_custom_data_state_applies_snapshots_for_assembler, FakeBookProvider
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

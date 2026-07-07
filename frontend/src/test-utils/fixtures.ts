@@ -1,3 +1,15 @@
+/**
+ * Input: type {, @/lib/api/types
+ * Output: makeSignal, makeRejectedSignal, makePaperOrder, makePaperPosition, makePaperTradeResult, makeDailyReport, makeOverviewResponse, makeHealthResponse, makeStrategyStatusRow, makeLeaderboardResponse
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import type {
   DailyReport,
   HealthResponse,

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, sys, collections.abc, collections.abc.Callable, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, datetime.timedelta
+Output: test_native_strategy_on_save_load_delegates_to_core_via_encode_decode, test_native_strategy_on_save_persists_only_core_state, test_native_strategy_on_load_restores_core_without_runtime_order_truth, test_runtime_strategy_fok_depth_counts_asks_through_max_entry, test_native_strategy_records_rejection_when_order_mapping_fails, test_native_strategy_blocks_duplicate_in_flight_signal_submission, test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data, test_static_native_strategy_subscribes_custom_data_on_msgbus, test_native_strategy_generates_signal_from_on_data_callback, test_native_strategy_constructor_requires_injected_projections
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import sys
@@ -303,8 +315,8 @@ from polysignal_lab.nautilus_runtime.decision_policy import (  # noqa: E402
     ApprovedDecision,
     DecisionPolicyActor,
 )
-from polysignal_lab.nautilus_runtime.strategies.base import (  # noqa: E402
-    CompatPolySignalNautilusStrategy as RuntimeStrategy,
+from polysignal_lab.nautilus_runtime.native_strategy import (  # noqa: E402
+    PolySignalNativeStrategy,
 )
 
 
@@ -392,20 +404,48 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
             _ = side
             return Book()
 
-    strategy = RuntimeStrategy(
+    class FakeOrderFactory:
+        def limit(self, **kwargs):
+            return kwargs
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.order_factory = FakeOrderFactory()
+            self.submitted = []
+
+        def submit_order(self, order):
+            self.submitted.append(order)
+
+    from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
+
+    class SpecCapturingStrategy(FakeNativeStrategy):
+        def _submit_approved(self, approved, *, view):
+            book = view.book_for(approved.signal.side)
+            spec = order_spec_from_decision(
+                approved,
+                fixed_stake_usdc=self.fixed_stake_usdc,
+                best_ask=book.best_ask,
+            )
+            self.submitted_specs.append(spec)
+            return super()._submit_approved(approved, view=view)
+
+    strategy = SpecCapturingStrategy(
         core=FakeCore([decision]),
         assembler=_assembler(View()),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         policy=RuntimeFakePolicy(),
         fixed_stake_usdc=10.0,
+        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        **_native_projections(),
     )
 
-    specs = strategy.evaluate_condition("condition-btc-5m")
+    strategy.evaluate_condition("condition-btc-5m")
 
-    assert len(specs) == 1
-    assert specs[0].intent == OrderIntent.TAKER_FOK
-    assert specs[0].quantity == 20.0
+    assert len(strategy.submitted_specs) == 1
+    assert strategy.submitted_specs[0].intent == OrderIntent.TAKER_FOK
+    assert strategy.submitted_specs[0].quantity == 20.0
     assert len(strategy.rejected_decisions) == 0
 
 
@@ -3246,57 +3286,6 @@ def test_native_strategy_attributes_inactive_registered_down_order_and_fill_from
     assert getattr(fill, "condition_id") == "condition-btc-exited-5m"
     assert getattr(fill, "token_id") == "down-exited-token"
     assert getattr(fill, "side") is Side.DOWN
-
-
-def test_native_strategy_on_order_denied_records_event_and_forgets_metrics() -> None:
-    from types import SimpleNamespace
-
-    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-
-    class RecordingObservability:
-        def __init__(self) -> None:
-            self.orders: list[object] = []
-
-        def record_nautilus_order_event(self, event: object) -> None:
-            self.orders.append(event)
-
-    class FakeNativeStrategy(PolySignalNativeStrategy):
-        def __init__(self, **kwargs: Any) -> None:
-            super().__init__(**kwargs)
-            self.order_factory = object()
-
-    observability = RecordingObservability()
-    strategy = FakeNativeStrategy(
-        core=FakeCore([]),
-        assembler=_assembler(None),
-        condition_ids=("condition-btc-5m",),
-        strategy_name="ptb_diff",
-        observability=observability,
-        **_native_projections(),
-    )
-    strategy._approved_signal_metrics["client-denied-1"] = {
-        "signal_id": "sig-denied-1",
-        "condition_id": "condition-btc-5m",
-    }
-
-    strategy.on_order_denied(
-        SimpleNamespace(
-            order_id="order-denied-1",
-            client_order_id="client-denied-1",
-            instrument_id="up-token.POLYMARKET",
-            status="DENIED",
-            reason="RISK_DENIED",
-            tags=["strategy=ptb_diff", "condition_id=condition-btc-5m"],
-            ts_event=datetime.now(UTC),
-        )
-    )
-
-    assert len(observability.orders) == 1
-    order = cast(_ObservedOrder, observability.orders[0])
-    assert order.client_order_id == "client-denied-1"
-    assert getattr(order, "status") == "DENIED"
-    assert order.metrics["signal_id"] == "sig-denied-1"
-    assert "client-denied-1" not in strategy._approved_signal_metrics
 
 
 def test_order_submitted_observability_failure_does_not_block_core_event() -> None:

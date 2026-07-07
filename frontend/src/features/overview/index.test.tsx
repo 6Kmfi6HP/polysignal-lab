@@ -1,3 +1,15 @@
+/**
+ * Input: { makeHealthResponse, makeOverviewResponse } from '@/test-utils/fixtures', { renderWithQueryClient } from '@/test-utils/render-with-query-client', { afterEach, describe, expect, it, vi } from 'vitest', * as client from '@/lib/api/client', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', { SidebarProvider } from '@/components/ui/sidebar', { OverviewPage } from './index', @/test-utils/fixtures, @/test-utils/render-with-query-client
+ * Output: renderOverviewPage
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { makeHealthResponse, makeOverviewResponse } from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
 import { afterEach, describe, expect, it, vi } from 'vitest'

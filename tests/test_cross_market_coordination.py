@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, types, types.SimpleNamespace, dataclasses, dataclasses.dataclass, factories
+Output: test_cross_market_context_contains_all_relation_legs, test_cross_market_strategy_receives_snapshot_batch_once, test_cross_market_partial_relation_skips_group_evaluation, test_cross_market_bot_uses_all_leg_prices_for_group_cost, test_cross_market_stale_snapshot_group_skips_evaluation, test_cross_market_unrelated_stale_market_does_not_skip_fresh_relation, _GroupStrategy
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, inspect, inspect.Parameter
+Output: project_order_event, project_fill_event, project_position, project_account, project_portfolio_snapshot
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping

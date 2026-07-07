@@ -1,3 +1,13 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Sequence, nautilus_trader.common.actor, nautilus_trader.common.actor.Actor, nautilus_trader.config, nautilus_trader.config.ActorConfig, nautilus_trader.config.StrategyConfig
+Output: NautilusPolySignalNativeStrategy, NautilusMarketRotationActor, LiveDecisionPolicyActor
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -30,6 +40,19 @@ from polysignal_lab.nautilus_runtime.native_strategy import (
 
 
 class NautilusPolySignalNativeStrategy(PolySignalNativeStrategy, Strategy):
+    """Nautilus-registerable strategy combining PolySignal domain logic with Strategy.
+
+    Dual inheritance is used (not composition) because PolySignalNativeStrategy
+    accesses Nautilus services (clock, cache, subscribe/ unsubscribe methods,
+    order_factory, submit_order) through getattr(self, ...) dynamic dispatch
+    and casts self to OrderSubmittingStrategy (see _submit_approved).
+    Composition would require threading a Nautilus reference through hundreds
+    of lines of domain code and adding forwarding methods for every protocol.
+    The MRO traversal in _subscribe_custom_data (strategy/helpers.py:382)
+    also explicitly depends on PolySignalNativeStrategy appearing before
+    Strategy in the inheritance chain.
+    """
+
     def __init__(
         self,
         *,
@@ -69,6 +92,15 @@ class NautilusPolySignalNativeStrategy(PolySignalNativeStrategy, Strategy):
 
 
 class NautilusMarketRotationActor(MarketRotationActor, Actor):
+    """Nautilus-registerable actor combining market rotation logic with Actor.
+
+    Dual inheritance is used (not composition) because MarketRotationActor
+    calls super(MarketRotationActor, self).publish_data(...) to reach the
+    Nautilus Actor base class (market_rotation.py:95) and accesses self.clock
+    via getattr for timer management.  These are intrinsic coupling patterns
+    that composition cannot resolve without rewriting the domain class.
+    """
+
     def __init__(
         self,
         *,
@@ -90,17 +122,31 @@ class NautilusMarketRotationActor(MarketRotationActor, Actor):
             health=health,
         )
 
-class NautilusDecisionPolicyActor(PolySignalDecisionPolicyActor, Actor):
+
+class LiveDecisionPolicyActor(PolySignalDecisionPolicyActor, Actor):
+    """Nautilus-registerable policy actor combining decision policy with Actor.
+
+    Dual inheritance is used (not composition) for consistency with the
+    other wrapper classes in this module and because PolySignalDecisionPolicyActor
+    (NautilusDecisionPolicyActor in decision_policy_actor.py) provides on_save/
+    on_load lifecycle hooks that call self.save_state()/self.load_state() from
+    the DecisionPolicyActor base.  Composition would add an indirection layer
+    for these two methods with no benefit -- the domain class has no Nautilus
+    coupling and dual inheritance is the simplest path to Nautilus registration.
+    """
+
     def __init__(self, **kwargs: object) -> None:
         Actor.__init__(self, config=ActorConfig())
         PolySignalDecisionPolicyActor.__init__(self, **kwargs)
 
 
-
-
+# LiveDecisionPolicyActor is the Nautilus-registerable variant (inherits Actor).
+# Expose under the expected name for discovery via runtime_classes.
+NautilusDecisionPolicyActor = LiveDecisionPolicyActor
 
 
 __all__ = (
+    "LiveDecisionPolicyActor",
     "NautilusDecisionPolicyActor",
     "NautilusMarketRotationActor",
     "NautilusPolySignalNativeStrategy",

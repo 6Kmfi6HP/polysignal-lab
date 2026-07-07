@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, re, typing, typing.Final, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.app.readonly_smoke_types
+Output: make_public_client, check_gamma_events, check_clob_book, check_clob_404, check_binance_spot, public_get, raw_public_get, response_json, surface, gamma_events
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import re

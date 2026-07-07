@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, concurrent.futures, concurrent.futures.ThreadPoolExecutor, json, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, pathlib
+Output: test_liveness_passes_for_fresh_heartbeat, test_liveness_fails_for_stale_heartbeat, test_liveness_fails_for_fatal_heartbeat, test_liveness_fails_for_missing_heartbeat, test_liveness_allows_missing_heartbeat_during_startup_grace, test_liveness_fails_for_missing_heartbeat_after_startup_grace, test_liveness_allows_stale_heartbeat_during_startup_grace, test_liveness_fails_for_corrupt_heartbeat, test_liveness_fails_for_malformed_heartbeat_timestamp, test_liveness_fails_for_wrong_heartbeat_field_types
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor

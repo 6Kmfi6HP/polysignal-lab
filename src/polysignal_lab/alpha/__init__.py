@@ -1,3 +1,15 @@
+"""
+Input: polysignal_lab.alpha.binary_momentum_core, polysignal_lab.alpha.binary_momentum_core.BinaryMomentumAlphaCore, polysignal_lab.alpha.cross_market_core, polysignal_lab.alpha.cross_market_core.CrossMarketAlphaCore, polysignal_lab.alpha.dump_hedge_core, polysignal_lab.alpha.dump_hedge_core.DumpHedgeAlphaCore, polysignal_lab.alpha.fibonacci_core, polysignal_lab.alpha.fibonacci_core.FibonacciAlphaCore, polysignal_lab.alpha.fibonacci_core.FibonacciCalculator, polysignal_lab.alpha.fibonacci_core.ZigZagDetector
+Output: None
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from polysignal_lab.alpha.binary_momentum_core import BinaryMomentumAlphaCore
 from polysignal_lab.alpha.cross_market_core import CrossMarketAlphaCore
 from polysignal_lab.alpha.dump_hedge_core import DumpHedgeAlphaCore

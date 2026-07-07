@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.timedelta, polysignal_lab.config, polysignal_lab.config.BinanceDataConfig, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.config.SignalConfig, polysignal_lab.domain.enums, polysignal_lab.domain.enums.MarketStatus
+Output: test_signal_gate_records_prd_reason_details, test_signal_deduper_prevents_duplicate_channel_publish, test_signal_rate_limiter_rejects_after_channel_limit, test_signal_candidate_carries_freshness_policy, test_gate_rejects_strategy_policy_stale_orderbook_with_details, test_gate_uses_strictest_threshold_when_global_is_lower, test_gate_uses_global_threshold_when_strategy_has_no_policy, test_gate_distinguishes_missing_orderbook_from_stale_orderbook, test_gate_distinguishes_missing_spot_from_stale_spot, test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import timedelta

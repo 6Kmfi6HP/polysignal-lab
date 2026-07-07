@@ -1,3 +1,15 @@
+/**
+ * Input: {, { type NavGroup } from '../types', ../types, lucide-react
+ * Output: sidebarData
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import {
   Activity,
   Gauge,

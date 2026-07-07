@@ -1,4 +1,15 @@
-"""Runtime health probes extracted from node.py."""
+"""
+Input: __future__, __future__.annotations, logging, pathlib, pathlib.Path, typing, typing.Callable, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.observability.runtime_health
+Output: None
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import logging

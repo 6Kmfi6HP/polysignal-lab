@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, hashlib, json, math, re, secrets, datetime, datetime.UTC, datetime.datetime
+Output: utc_now, utc_iso, parse_dt, stable_hash, new_id, safe_float, as_decimal, to_jsonable, compact_json, mask_secret
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import hashlib

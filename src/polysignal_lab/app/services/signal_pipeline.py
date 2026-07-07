@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Iterable, typing, typing.Any, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate
+Output: SignalPipeline
+Pos: Service Layer - Business logic
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import logging

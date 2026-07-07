@@ -1,4 +1,17 @@
+"""
+Input: __future__, __future__.annotations, asyncio, sqlite3, typing, typing.TYPE_CHECKING, httpx, polysignal_lab.app, polysignal_lab.app.scheduler_health, polysignal_lab.domain.market
+Output: token_ids_for_markets, refresh_markets_once, fetch_resolved_markets, stop_market_ws_subscription, sync_market_ws_subscription, start_websockets, _HealthMarketPersistence
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
+import asyncio
 import sqlite3
 
 
@@ -6,13 +19,11 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from polysignal_lab.app import scheduler_health, scheduler_runtime
+from polysignal_lab.app import scheduler_health
 from polysignal_lab.domain.market import Market
 
 if TYPE_CHECKING:
     from polysignal_lab.app.scheduler import PolySignalScheduler
-
-
 class _HealthMarketPersistence:
     def __init__(self, scheduler: PolySignalScheduler) -> None:
         self._scheduler = scheduler
@@ -134,7 +145,7 @@ async def sync_market_ws_subscription(
 
 async def start_websockets(
     scheduler: PolySignalScheduler,
-) -> list[scheduler_runtime.Task]:
+) -> list[asyncio.Task]:
     scheduler._streams_started = True
     token_ids = scheduler._latest_market_token_ids
     if not scheduler._market_refresh_completed:

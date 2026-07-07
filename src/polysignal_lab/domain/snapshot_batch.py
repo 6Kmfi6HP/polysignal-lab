@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, polysignal_lab.domain.snapshot, polysignal_lab.domain.snapshot.MarketSnapshot
+Output: SnapshotBatch, CrossMarketEvaluationContext
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

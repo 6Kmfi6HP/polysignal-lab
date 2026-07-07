@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, importlib, tomllib, pathlib, pathlib.Path
+Output: test_default_package_import_does_not_require_nautilus, test_nautilus_is_optional_polymarket_extra_not_default_dependency, test_nautilus_node_does_not_import_scheduler_compat_shadow_wallet
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import importlib

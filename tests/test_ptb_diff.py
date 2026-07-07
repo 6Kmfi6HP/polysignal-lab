@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.timedelta, typing, typing.Final, typing.assert_never, pydantic
+Output: test_ptb_diff_emits_buy_up_and_down_from_trigger_rows, test_ptb_diff_strict_anchor_mode_rejects_verified_metadata, test_ptb_diff_rejects_above_max_token_price, test_ptb_diff_rejects_below_probability_edge, test_ptb_diff_rejects_below_diff_threshold_and_wrong_direction, test_ptb_diff_rejects_outside_time_window, test_ptb_diff_rejects_malformed_or_unsupported_inputs, test_ptb_diff_emits_stale_raw_data_candidate_for_signal_gate, test_ptb_diff_schema_rejects_old_probability_band_keys, PtbScenario
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

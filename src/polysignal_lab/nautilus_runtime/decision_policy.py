@@ -1,9 +1,15 @@
-"""Decision policy actor for Nautilus alpha decisions.
-
-The actor stays Nautilus-free: it converts ``AlphaDecision`` objects into the
-existing signal-layer types and runs the same gate/consensus policy used by the
-current runtime.
 """
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, dataclasses, dataclasses.dataclass, typing, typing.cast, polysignal_lab.alpha.types
+Output: ApprovedDecision, RejectedDecision, _MarketAdapter, _BookAdapter, _SpotAdapter, _GateSnapshotAdapter, DecisionPolicyActor
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 
@@ -109,6 +115,44 @@ class _GateSnapshotAdapter:
 
 
 class DecisionPolicyActor:
+    """Decision gate, arbitration, and consensus for signal evaluation.
+
+    Owns the active SignalGate/SignalArbiter/ConsensusEngine instances that drive
+    evaluate() and decide().
+
+    Duplication note
+    ----------------
+    PolySignalScheduler (``app/scheduler.py``) creates its *own* parallel set of
+    gate/consensus/arbiter instances at construction time. These are a legacy from
+    the pre-Nautilus era when the scheduler ran its own SignalPipeline evaluation.
+    In the current Nautilus runtime those scheduler-owned instances serve only:
+
+    * ``scheduler.gate`` — read by ``scheduler_state.persist_state()`` for dedupe
+      snapshot persistence.
+    * ``scheduler.consensus`` — stored in ``SignalPipeline`` (unused; legacy
+      evaluation is disabled).
+    * ``scheduler.arbiter`` — set in ``_initialize_nautilus_scheduler_components``
+      (vestigial; never read during Nautilus operation).
+
+    The two sets coexist solely because retiring the scheduler is a larger
+    refactoring. **They are NOT meant to diverge.**
+
+    To keep them in sync the Nautilus bootstrap calls
+    ``_seed_policy_control_from_scheduler`` (``scheduler_bridge.py``) which overwrites
+    this policy's instances with the scheduler's own references *after* construction.
+    This ensures:
+
+    * ``evaluate()`` mutates the same gate/consensus that ``scheduler_state``
+      snapshots — dedupe persistence is live.
+    * Callers that construct ``DecisionPolicyActor`` outside the Nautilus flow
+      (tests, standalone usage) continue to work with their own independent
+      instances.
+
+    When the scheduler is fully retired, remove the duplication by deleting the
+    parallel instances from ``PolySignalScheduler.__init__`` and keeping only the
+    single set owned by ``DecisionPolicyActor``.
+    """
+
     def __init__(
         self,
         *,
@@ -120,6 +164,10 @@ class DecisionPolicyActor:
         strategy_freshness_policies: Mapping[str, FreshnessPolicy] | None = None,
     ) -> None:
         signal_config = SignalConfig()
+        # NOTE: These instances are overridden by _seed_policy_control_from_scheduler
+        # (scheduler_bridge.py) during the Nautilus bootstrap — see the class
+        # docstring for the full rationale. The "or" branch exists only for callers
+        # that construct DecisionPolicyActor outside that flow (tests, standalone).
         self.gate: SignalGate = gate or SignalGate(signal_config, PolymarketDataConfig(), BinanceDataConfig())
         self.arbiter: SignalArbiter = arbiter or SignalArbiter()
         self.consensus: ConsensusEngine = consensus or ConsensusEngine(

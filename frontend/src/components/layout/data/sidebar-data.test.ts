@@ -1,3 +1,15 @@
+/**
+ * Input: { describe, expect, it } from 'vitest', { sidebarData } from './sidebar-data', vitest, ./sidebar-data
+ * Output: None
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { describe, expect, it } from 'vitest'
 import { sidebarData } from './sidebar-data'
 

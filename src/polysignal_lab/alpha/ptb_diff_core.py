@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, typing, typing.TYPE_CHECKING, typing.assert_never, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.FreshnessView, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.SideBookView
+Output: compute_tp_sl_thresholds, market_view_from_snapshot, decision_to_signal, TpSlThresholds, PTBDiffAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, assert_never

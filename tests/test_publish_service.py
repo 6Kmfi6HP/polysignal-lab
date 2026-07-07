@@ -1,3 +1,15 @@
+"""
+Input: polysignal_lab.app.services.publish_service, polysignal_lab.app.services.publish_service.PublishService
+Output: test_publish_service_health_starts_ok, test_publish_signal_persists_publish_audit, test_publish_nautilus_paper_fill_persists_publish_audit, _Publish, _Formatter, _Publisher, _Persistence, _Signal
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from polysignal_lab.app.services.publish_service import PublishService
 

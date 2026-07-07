@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.data.price_to_beat_provider, polysignal_lab.data.price_to_beat_provider.PriceToBeatProvider, polysignal_lab.data.state, polysignal_lab.data.state.OrderBookRegistry, polysignal_lab.data.state.SpotRegistry, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market
+Output: MarketSnapshotBuilder
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider

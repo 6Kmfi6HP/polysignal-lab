@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Sequence, polysignal_lab.alpha.cross_market_core, polysignal_lab.alpha.cross_market_core.CrossMarketAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums
+Output: CrossMarketNautilusStrategy
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence

@@ -1,3 +1,15 @@
+/**
+ * Input: { clearCookies } from '@/test-utils/cookies', { beforeEach, describe, expect, it, vi } from 'vitest', { render, type RenderResult, within } from '@testing-library/react', userEvent from '@testing-library/user-event', { getCookie, setCookie } from '@/lib/cookies', { DirectionProvider } from '@/context/direction-provider', { LayoutProvider } from '@/context/layout-provider', { ThemeProvider } from '@/context/theme-provider', { SidebarProvider } from '@/components/ui/sidebar', { ConfigDrawer } from './config-drawer'
+ * Output: renderConfigDrawer, openDrawer
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { clearCookies } from '@/test-utils/cookies'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, type RenderResult, within } from '@testing-library/react'

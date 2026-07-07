@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, enum, enum.EnumMeta, enum.StrEnum
+Output: Side, Action, MarketStatus, OrderStatus, OrderIntent, PositionStatus, _TradeResultStatusMeta, TradeResultStatus, ExitMode
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from enum import EnumMeta, StrEnum

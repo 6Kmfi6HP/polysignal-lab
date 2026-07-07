@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, argparse, json, os, shlex, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path
+Output: parse_args, build_config, build_evidence, run, main, TelegramQaEvidence, TelegramQaOptions
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import argparse

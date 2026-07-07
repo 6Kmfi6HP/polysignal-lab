@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections, collections.defaultdict, collections.deque, datetime, datetime.datetime, datetime.timezone, statistics, statistics.mean
+Output: RollingPriceStats, DumpHedgeAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections import defaultdict, deque
@@ -233,6 +245,31 @@ class DumpHedgeAlphaCore:
             order_intent=order_intent,
             hedge_leg=hedge_leg,
         )
+
+    def save_state(self) -> dict[str, object]:
+        from polysignal_lab.alpha.state import json_safe_state
+
+        return json_safe_state({
+            "_positions": self._positions,
+            "_entered_markets": self._entered_markets,
+            "_dump_detected": self._dump_detected,
+        })
+
+    def load_state(self, state: dict[str, object]) -> None:
+        from polysignal_lab.alpha.state import restore_utc_datetime
+        from polysignal_lab.domain.enums import Side
+
+        positions_raw = state.get("_positions", {}) or {}
+        self._positions = {}
+        for mid, pos in positions_raw.items():
+            self._positions[str(mid)] = {
+                "side": Side(pos["side"]),
+                "entry_price": float(pos["entry_price"]),
+                "filled_at": restore_utc_datetime(pos["filled_at"]),
+                "hedged": bool(pos["hedged"]),
+            }
+        self._entered_markets = set(state.get("_entered_markets", []) or [])
+        self._dump_detected = set(state.get("_dump_detected", []) or [])
 
     def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
         from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot

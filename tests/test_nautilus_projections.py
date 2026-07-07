@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.nautilus_runtime.projections, polysignal_lab.nautilus_runtime.projections.(
+Output: test_project_order_event_uses_nautilus_event_fields, test_project_fill_event_uses_nautilus_fill_fields, test_project_fill_event_accepts_nautilus_price_quantity_objects, test_project_position_uses_nautilus_position_fields, test_project_portfolio_snapshot_sums_currency_equity_mapping, _FloatLike, _MoneyLike
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from types import SimpleNamespace

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, asyncio, collections.abc, collections.abc.Mapping, typing, typing.Any
+Output: PublishService
+Pos: Service Layer - Business logic
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio

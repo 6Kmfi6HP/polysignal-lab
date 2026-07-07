@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, json, pathlib, pathlib.Path, pytest, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.app.scheduler
+Output: test_reseed_marks_requested_tokens_missing_from_successful_response_stale, test_websocket_subscribe_calls_reseed_hook, test_polymarket_price_change_before_snapshot_is_dropped_and_counted, test_polymarket_price_changes_event_updates_registry, test_polymarket_price_change_hot_path_avoids_deep_model_copy, test_polymarket_book_best_bid_ask_last_trade_and_lifecycle_events_are_public_contract_safe, test_binance_bookticker_updates_spot_registry, test_malformed_public_market_events_are_ignored_without_crash, test_polymarket_public_payload_text_is_not_executed, test_market_resolved_message_updates_resolution_cache
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import json

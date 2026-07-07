@@ -1,3 +1,15 @@
+/**
+ * Input: { cn } from '@/lib/utils', {, { Button } from '@/components/ui/button', @/lib/utils, @/components/ui/button, @/components/ui/alert-dialog
+ * Output: ConfirmDialog
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { cn } from '@/lib/utils'
 import {
   AlertDialog,

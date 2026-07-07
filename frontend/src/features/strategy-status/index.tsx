@@ -1,3 +1,15 @@
+/**
+ * Input: { useStrategyStatusQuery } from '@/lib/api/hooks', { Badge } from '@/components/ui/badge', { Skeleton } from '@/components/ui/skeleton', {, { Header } from '@/components/layout/header', { Main } from '@/components/layout/main', { Search } from '@/components/search', { ThemeSwitch } from '@/components/theme-switch', @/lib/api/hooks, @/components/ui/badge
+ * Output: StrategyStatusPage
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { useStrategyStatusQuery } from '@/lib/api/hooks'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'

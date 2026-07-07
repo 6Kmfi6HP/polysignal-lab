@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, json, datetime, datetime.UTC, datetime.datetime, pathlib, pathlib.Path, httpx, polysignal_lab.app.readonly_smoke_public
+Output: collect_readonly_smoke, write_evidence
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import json

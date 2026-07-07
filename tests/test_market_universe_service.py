@@ -1,3 +1,15 @@
+"""
+Input: pytest, sqlite3, polysignal_lab.app.services.market_universe_service, polysignal_lab.app.services.market_universe_service.MarketUniverseService, polysignal_lab.domain.enums, polysignal_lab.domain.enums.MarketStatus, polysignal_lab.data.state, polysignal_lab.data.state.MarketRegistry, factories, factories.MarketFactoryConfig
+Output: test_market_universe_refresh_keeps_registry_empty_when_no_markets, test_market_universe_refresh_appends_market_log_only_on_change, test_market_universe_refresh_keeps_tokens_when_persistence_fails, test_market_universe_refresh_passes_rotation_window_options, test_market_universe_refresh_does_not_apply_rotation_window_options_in_legacy_mode, test_market_universe_resolved_refresh_keeps_registry_when_persistence_fails, test_market_universe_resolved_refresh_continues_after_sqlite_failure, test_fetch_resolved_uses_exact_market_lookup_for_open_ids, _Discovery, _Persistence
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 import pytest
 import sqlite3
 

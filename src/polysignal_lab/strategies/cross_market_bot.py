@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.alpha.cross_market_core, polysignal_lab.alpha.cross_market_core.CrossMarketAlphaCore, polysignal_lab.alpha.cross_market_core.MarketRelation, polysignal_lab.alpha.cross_market_core.RelationType, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.decision_to_signal, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot, polysignal_lab.alpha.types
+Output: CrossMarketBotStrategy
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.alpha.cross_market_core import CrossMarketAlphaCore, MarketRelation, RelationType

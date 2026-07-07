@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.signal_layer.arbiter
+Output: candidate_factory, test_arbiter_suppresses_same_market_opposite_side_conflicts, test_arbiter_stable_sorts_by_priority_and_indexes
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections.abc import Callable

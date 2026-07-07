@@ -1,9 +1,15 @@
-"""Pure alpha core for the 99c settlement sniper strategy.
-
-Decision logic moved verbatim from ``strategies/ninety_nine_cent_sniper.py``.
-The ``_sniped_markets`` guard is keyed by ``(market_id, side.value)`` and is
-ONLY advanced by ``on_order_accepted``.
 """
+Input: __future__, __future__.annotations, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.OrderIntentSpec, polysignal_lab.alpha.types.SideBookView, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent
+Output: NinetyNineCentSniperAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

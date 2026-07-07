@@ -1,26 +1,15 @@
-"""Pure alpha core for the callback-heavy ``vwap_momentum`` strategy.
-
-``TradeHistory`` and the evaluate/follow-up logic are moved verbatim from
-``strategies/vwap_momentum.py``. The strategy's mutable callback state lives
-on this core:
-
-* ``trades``                  — ``TradeHistory`` (VWAP/deviation/momentum input).
-* ``_can_enter``              — per-market one-shot entry guard; ``evaluate``
-  READS it (line ~420 of the legacy) but does NOT consume it. Only
-  ``on_order_accepted`` consumes it.
-* ``_last_trade_signatures`` / ``_seen_trade_signatures`` — trade-sample dedup.
-* ``_pending_signal_samples`` — trades pushed during a candidate's evaluate,
-  keyed by ``order_id`` (the adapter binds the candidate's ``signal_id`` via
-  ``bind_signal`` right after ``decision_to_signal``). ``on_order_rejected``
-  reverts them; ``on_order_accepted`` drops the binding (samples remain).
-* ``_pending_hedges``         — staged by ``on_notify_fill``; consumed by
-  ``on_order_filled`` (taker fill → hedge decision) or ``on_order_expired``
-  (GTD fill → clear, no reverse hedge). ``evaluate`` also reads it to emit the
-  pending hedge candidate directly from the current view.
-
-``follow_up_signals`` is replaced by ``on_order_filled`` → ``list[AlphaDecision]``;
-the adapter keeps ``follow_up_signals`` only as a scheduler-facing shim.
 """
+Input: __future__, __future__.annotations, collections, collections.defaultdict, typing, typing.TYPE_CHECKING, typing.Any, typing.Mapping, polysignal_lab.alpha.state, polysignal_lab.alpha.state.json_safe_state
+Output: TradeHistory, VWAPMomentumAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

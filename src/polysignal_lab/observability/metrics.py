@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections, collections.Counter, dataclasses, dataclasses.dataclass, dataclasses.field, threading, threading.Lock
+Output: MetricsRegistry
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections import Counter

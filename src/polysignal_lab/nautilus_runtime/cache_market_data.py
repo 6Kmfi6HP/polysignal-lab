@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Sequence, datetime, datetime.UTC, datetime.datetime, typing, typing.Callable
+Output: NautilusCacheMarketDataProvider
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence

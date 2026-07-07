@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, pytest, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent
+Output: test_market_view_exposes_side_books_and_asks, test_market_view_is_immutable, test_alpha_decision_carries_order_intent_spec, test_market_group_view_carries_relation_members, test_alpha_order_and_fill_events_are_immutable, test_nautilus_order_spec_carries_quantity_and_tags
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

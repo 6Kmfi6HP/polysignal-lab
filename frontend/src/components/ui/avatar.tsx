@@ -1,3 +1,15 @@
+/**
+ * Input: * as React from 'react', * as AvatarPrimitive from '@radix-ui/react-avatar', { cn } from '@/lib/utils', react, @radix-ui/react-avatar, @/lib/utils
+ * Output: Avatar, AvatarImage, AvatarFallback
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import * as React from 'react'
 import * as AvatarPrimitive from '@radix-ui/react-avatar'
 import { cn } from '@/lib/utils'

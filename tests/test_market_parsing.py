@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, pydantic, pydantic.JsonValue, polysignal_lab.data.market_snapshot, polysignal_lab.data.market_snapshot.MarketSnapshotBuilder, polysignal_lab.data.price_to_beat_provider
+Output: test_gamma_resolved_payload_sets_resolved_outcome, test_gamma_crypto_payload_prefers_event_window_over_listing_start_date, test_gamma_down_resolution_can_be_parsed_from_winning_token_id, test_gamma_void_resolution_is_cancelled_without_winning_side, test_gamma_malformed_official_resolution_stays_unknown, test_normalized_snapshot_carries_ptb_resolution_and_token_metadata, test_gamma_uma_resolved_outcome_prices_sets_resolved_outcome, test_gamma_half_half_outcome_prices_resolved_without_side_winner
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

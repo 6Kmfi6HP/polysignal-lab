@@ -1,3 +1,15 @@
+"""
+Input: polysignal_lab.app.services.spot_feed_service, polysignal_lab.app.services.spot_feed_service.SpotFeedService
+Output: test_spot_feed_stop_delegates_to_adapter, _Feed
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from polysignal_lab.app.services.spot_feed_service import SpotFeedService
 
 

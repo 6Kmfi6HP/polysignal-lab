@@ -1,3 +1,15 @@
+/**
+ * Input: globals from 'globals', js from '@eslint/js', pluginQuery from '@tanstack/eslint-plugin-query', reactHooks from 'eslint-plugin-react-hooks', reactRefresh from 'eslint-plugin-react-refresh', { defineConfig } from 'eslint/config', tseslint from 'typescript-eslint', globals, @eslint/js, @tanstack/eslint-plugin-query
+ * Output: None
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import globals from 'globals'
 import js from '@eslint/js'
 import pluginQuery from '@tanstack/eslint-plugin-query'

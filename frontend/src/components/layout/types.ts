@@ -1,3 +1,15 @@
+/**
+ * Input: { type LinkProps } from '@tanstack/react-router', @tanstack/react-router
+ * Output: None
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { type LinkProps } from '@tanstack/react-router'
 
 

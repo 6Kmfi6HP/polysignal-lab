@@ -219,3 +219,17 @@ These are the patterns I see most often. If you catch yourself doing any of thes
 6. **The Style Drift.** You write code in your "preferred" style instead of matching the project. Functional patterns in an OOP codebase. Classes in a functional codebase. TypeScript patterns in a JavaScript project. Match the codebase, not your preferences.
 
 7. **The Runaway Refactor.** You start fixing one thing. It touches another thing. That touches another thing. Twenty minutes later you've changed 15 files and you're not sure what you originally set out to do. If a fix is cascading, stop. Tell the user what's happening. Get buy-in before continuing.
+
+## Agent skills
+
+### Issue 追踪器
+
+Issues 托管在 GitHub Issues。外部 PR 不作为 triage 来源。详见 `docs/agents/issue-tracker.md`。
+
+### Triage 标签
+
+五个标准标签全部使用默认名称（`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`）。详见 `docs/agents/triage-labels.md`。
+
+### 领域文档
+
+单一上下文布局——一个 `CONTEXT.md` 放在仓库根目录（尚未创建）。详见 `docs/agents/domain.md`。

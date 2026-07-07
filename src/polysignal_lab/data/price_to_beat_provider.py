@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, re, dataclasses, dataclasses.dataclass, typing, typing.Any, typing.Protocol, httpx, polysignal_lab.domain.market
+Output: _CryptoPriceResponse, _CryptoPriceClient, PriceToBeatResult, PriceToBeatProvider
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import re

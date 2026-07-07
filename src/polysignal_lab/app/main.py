@@ -1,4 +1,15 @@
-"""PolySignal Lab main entry point."""
+"""
+Input: __future__, __future__.annotations, argparse, signal, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, enum, enum.StrEnum
+Output: build_parser, parse_cli, run_scheduler_cli, run_dashboard_cli, run_readonly_smoke, main, RuntimeMode, CliOptions
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import argparse

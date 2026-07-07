@@ -1,10 +1,15 @@
-"""OneCentBuyStrategy — 1c Buy 极端低价被动限价捕捉策略 (adapter).
-
-Decision logic now lives in :class:`OneCentBuyAlphaCore`. Legacy class name,
-config and ``name`` are preserved for equivalence. The submitted-level guard is
-advanced on order acceptance (``notify_signal_accepted``), not during
-candidate generation.
 """
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, dataclasses.field, polysignal_lab.alpha.one_cent_buy_core, polysignal_lab.alpha.one_cent_buy_core.OneCentBuyAlphaCore, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.decision_to_signal, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot
+Output: OneCentBuyConfig, OneCentBuyStrategy
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

@@ -1,9 +1,15 @@
-"""Runtime state surface — strategy ``on_save``/``on_load`` codec.
-
-Re-exports the existing versioned-JSON state codec from
-``nautilus_bridge.state`` so the runtime package exposes a stable state entry
-point without duplicating logic.
 """
+Input: __future__, __future__.annotations, polysignal_lab.nautilus_bridge.state, polysignal_lab.nautilus_bridge.state.(
+Output: None
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

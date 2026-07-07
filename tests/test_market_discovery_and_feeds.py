@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.config, polysignal_lab.config.MarketConfig, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.config.BinanceDataConfig, polysignal_lab.data.binance_spot_ws, polysignal_lab.data.binance_spot_ws.BinanceSpotFeed, polysignal_lab.data.polymarket_clob_ws, polysignal_lab.data.polymarket_clob_ws.PolymarketMarketWebSocket
+Output: test_market_discovery_flattens_and_parses_crypto_updown, test_binance_feed_url_and_parse_message, test_polymarket_ws_book_message_updates_registry
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.config import MarketConfig, PolymarketDataConfig, BinanceDataConfig

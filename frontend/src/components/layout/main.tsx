@@ -1,3 +1,15 @@
+/**
+ * Input: { cn } from '@/lib/utils', @/lib/utils
+ * Output: Main
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { cn } from '@/lib/utils'
 
 type MainProps = React.HTMLAttributes<HTMLElement> & {

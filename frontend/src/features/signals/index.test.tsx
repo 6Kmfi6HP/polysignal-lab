@@ -1,3 +1,15 @@
+/**
+ * Input: { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', * as client from '@/lib/api/client', { makeRejectedSignal, makeSignal } from '@/test-utils/fixtures', { renderWithQueryClient } from '@/test-utils/render-with-query-client', { SidebarProvider } from '@/components/ui/sidebar', { within } from '@testing-library/react', userEvent from '@testing-library/user-event', { afterEach, describe, expect, it, vi } from 'vitest', { SignalsPage } from './index'
+ * Output: renderSignalsPage
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { SearchProvider } from '@/context/search-provider'
 import { ThemeProvider } from '@/context/theme-provider'
 import * as client from '@/lib/api/client'

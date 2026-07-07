@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, polysignal_lab.data.price_to_beat_provider, polysignal_lab.data.price_to_beat_provider.PriceToBeatProvider, polysignal_lab.domain.anchor_price, polysignal_lab.domain.anchor_price.AnchorPrice, polysignal_lab.domain.enums
+Output: test_ptb_provider_prefers_verified_anchor_over_metadata, test_crypto_price_api_is_opt_in_to_avoid_cloudflare_startup_403, test_enabled_crypto_price_api_uses_market_asset_and_timeframe_variant, test_crypto_price_api_falls_back_to_close_price, FailingAsyncClient, RecordingResponse, RecordingAsyncClient, CloseOnlyResponse, CloseOnlyAsyncClient, _AnchorStore
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

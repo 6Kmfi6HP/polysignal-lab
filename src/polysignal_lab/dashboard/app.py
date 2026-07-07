@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, typing, typing.TypeAlias, fastapi, fastapi.FastAPI, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.sqlite_store.SQLiteStore
+Output: create_dashboard_app
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from typing import TypeAlias

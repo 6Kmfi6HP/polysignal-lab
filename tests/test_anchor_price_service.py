@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, polysignal_lab.data.anchor_price_service, polysignal_lab.data.anchor_price_service.AnchorPriceService, polysignal_lab.data.anchor_price_service.window_for_market, polysignal_lab.data.state, polysignal_lab.data.state.SpotPrice
+Output: test_window_for_market_prefers_event_window, test_window_for_market_derives_from_slug_when_event_start_missing, test_capture_for_market_persists_verified_spot_anchor, test_capture_for_market_keeps_verified_anchor_when_later_sample_is_stale, test_anchor_service_health_reports_latest_lag_and_source, _Store
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

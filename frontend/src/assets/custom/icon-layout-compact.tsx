@@ -1,3 +1,15 @@
+/**
+ * Input: { type SVGProps } from 'react', react
+ * Output: IconLayoutCompact
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { type SVGProps } from 'react'
 
 export function IconLayoutCompact(props: SVGProps<SVGSVGElement>) {

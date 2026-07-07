@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, html, typing, typing.Literal, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.DailyReport, polysignal_lab.domain.paper_result.PaperTradeResult
+Output: MessageFormatter
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import html

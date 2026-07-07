@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, statistics, statistics.mean, typing, typing.Any, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.AlphaFillEvent, polysignal_lab.alpha.types.AlphaOrderEvent
+Output: MidPriceSizingAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from statistics import mean
@@ -214,6 +226,23 @@ class MidPriceSizingAlphaCore:
             order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK),
         )
         return [decision]
+
+    def save_state(self) -> dict[str, object]:
+        from polysignal_lab.alpha.state import json_safe_state
+
+        return json_safe_state({
+            "_layer_count": self._layer_count,
+            "_entry_prices": self._entry_prices,
+        })
+
+    def load_state(self, state: dict[str, object]) -> None:
+        self._layer_count = {
+            str(k): int(v) for k, v in (state.get("_layer_count", {}) or {}).items()
+        }
+        self._entry_prices = {
+            str(k): [float(p) for p in v]
+            for k, v in (state.get("_entry_prices", {}) or {}).items()
+        }
 
     def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
         from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot

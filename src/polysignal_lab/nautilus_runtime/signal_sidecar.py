@@ -1,4 +1,15 @@
-"""Signal/publish/telegram sidecar helpers extracted from node.py."""
+"""
+Input: __future__, __future__.annotations, asyncio, logging, threading, collections.abc, collections.abc.Awaitable, collections.abc.Callable, contextlib, contextlib.suppress
+Output: _PublishResultLike, _PublishServiceLike, _InteractiveBotLike
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio
@@ -236,7 +247,7 @@ async def _run_nautilus_housekeeping_once(
     scheduler: PolySignalScheduler,
     last_report_date: date | None,
 ) -> date | None:
-    from polysignal_lab.app.scheduler_runtime import _generate_iteration_report  # pyright: ignore[reportPrivateUsage] - runtime reuses scheduler's existing report generator.
+    from polysignal_lab.app.scheduler_shared import _generate_iteration_report  # pyright: ignore[reportPrivateUsage] - runtime reuses scheduler's existing report generator.
 
     return await _generate_iteration_report(scheduler, last_report_date)
 

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, typing, typing.assert_never, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode, polysignal_lab.domain.enums.Side
+Output: test_strategy_leaderboard_win_rate_counts_voids_as_closed, test_strategy_leaderboard_excludes_unknown_results, test_strategy_leaderboard_sorts_by_total_pnl_desc
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, json, sys, datetime, datetime.UTC, datetime.datetime, pathlib, pathlib.Path, unittest.mock
+Output: test_audit_finds_open_position_on_resolved_market, test_backfill_closes_position_and_inserts_result, test_backfill_idempotent_skips_existing_result, test_force_correct_replaces_existing_result_once, test_backfill_preserves_stored_position_stake, test_backfill_cancelled_refunds_stake_as_void, test_backfill_unknown_leaves_position_open, test_wallet_reconcile_fixes_cash_after_backfill, test_apply_requires_backup, test_cancelled_market_refunds_stake
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,15 @@
+/**
+ * Input: * as React from 'react', { cn } from '@/lib/utils', react, @/lib/utils
+ * Output: Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell, TableCaption
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 

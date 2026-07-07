@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, typing, typing.assert_never, polysignal_lab.config, polysignal_lab.config.StrategyConfig, polysignal_lab.strategies.base, polysignal_lab.strategies.base.BaseStrategy, polysignal_lab.strategies.binary_momentum, polysignal_lab.strategies.binary_momentum.BinaryMomentumStrategy
+Output: build_strategies, build_strategy
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from typing import assert_never

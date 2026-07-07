@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, importlib, importlib.import_module, typing, typing.Callable, typing.cast
+Output: polymarket_instrument_id
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from importlib import import_module

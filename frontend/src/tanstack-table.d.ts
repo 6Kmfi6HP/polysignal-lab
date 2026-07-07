@@ -1,3 +1,15 @@
+/**
+ * Input: '@tanstack/react-table'
+ * Output: None
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import '@tanstack/react-table'
 
 declare module '@tanstack/react-table' {

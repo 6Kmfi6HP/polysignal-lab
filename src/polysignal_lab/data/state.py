@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, dataclasses.field, datetime, datetime.datetime, datetime.timezone, threading, threading.Lock
+Output: parse_source_timestamp, MarketRegistry, OrderBookRegistry, SpotRegistry
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

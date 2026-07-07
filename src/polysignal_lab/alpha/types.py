@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, typing, typing.Any, typing.Mapping, typing.Protocol
+Output: SideBookView, SpotView, TradeView, FreshnessView, MarketView, OrderIntentSpec, AlphaDecision, AlphaCore, MarketGroupView, AlphaOrderEvent
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

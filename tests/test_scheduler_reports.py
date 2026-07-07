@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, sqlite3, datetime, datetime.UTC, datetime.date, datetime.datetime, pathlib, pathlib.Path, types
+Output: test_projection_settlement_publish_timeout_keeps_durable_closed_result, test_daily_report_uses_next_local_midnight_for_dst_day, test_daily_report_includes_fractional_timestamp_in_first_second, test_iteration_report_uses_configured_report_date_when_local_date_differs, test_daily_report_uses_prior_day_resting_fill_intent, test_daily_report_uses_nautilus_cache_reader_projection_rows, test_daily_report_uses_nautilus_cache_reader_when_wallet_missing, test_daily_report_counts_cancelled_paper_rejects, test_daily_report_counts_prior_day_resting_terminal_rejects_today, test_daily_report_publish_record_written
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import sqlite3
@@ -7,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from polysignal_lab.app import scheduler_reporting, scheduler_runtime
+from polysignal_lab.app import scheduler_reporting, scheduler_shared
 from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.domain.enums import (
     ExitMode,
@@ -193,12 +205,12 @@ async def test_iteration_report_uses_configured_report_date_when_local_date_diff
                 return cls(2026, 6, 23, 6, 30, tzinfo=UTC)
             return cls(2026, 6, 22, 23, 30, tzinfo=tz)
 
-    monkeypatch.setattr(scheduler_runtime, "date", FixedProcessDate)
+    monkeypatch.setattr(scheduler_shared, "date", FixedProcessDate)
     monkeypatch.setattr(scheduler_reporting, "datetime", FixedReportDateTime)
 
-    monkeypatch.setattr(scheduler_runtime, "datetime", FixedReportDateTime)
+    monkeypatch.setattr(scheduler_shared, "datetime", FixedReportDateTime)
     # When: the run-loop gate has already recorded the process-local date.
-    report_date = await scheduler_runtime._generate_iteration_report(
+    report_date = await scheduler_shared._generate_iteration_report(
         scheduler, last_report_date=date(2026, 6, 23)
     )
 

@@ -1,10 +1,15 @@
-"""FibonacciStrategyBot — 斐波那契回撤策略 (adapter).
-
-Decision logic, ZigZag detector and Fibonacci calculator now live in
-:class:`FibonacciAlphaCore` (``polysignal_lab.alpha.fibonacci_core``). This
-module keeps the legacy class name, inline config and ``name`` unchanged for
-equivalence, and re-exports the helpers for existing importers.
 """
+Input: __future__, __future__.annotations, pydantic, pydantic.BaseModel, pydantic.Field, polysignal_lab.alpha.fibonacci_core, polysignal_lab.alpha.fibonacci_core.(, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.decision_to_signal, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot
+Output: FibonacciBotConfig, FibonacciStrategyBot
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

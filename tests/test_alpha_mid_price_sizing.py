@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.alpha.mid_price_sizing_core, polysignal_lab.alpha.mid_price_sizing_core.MidPriceSizingAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaFillEvent, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.strategies.mid_price_sizing
+Output: test_mid_price_sizing_core_matches_legacy_candidate, test_layer_count_changes_only_on_order_filled
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.alpha.mid_price_sizing_core import MidPriceSizingAlphaCore

@@ -1,15 +1,34 @@
+"""
+Input: __future__, __future__.annotations, importlib, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.Protocol, typing.cast, polysignal_lab.config
+Output: assert_no_live_polymarket_execution, build_paper_live_node, build_cache_config, build_data_engine_config, build_exec_engine_config, build_polymarket_data_client_config, build_sandbox_exec_client_config, _Builder
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Protocol, cast
 
 from polysignal_lab.config import Settings, load_settings
-from polysignal_lab.nautilus_runtime.trading_node import (
-    PAPER_EXEC_CLIENT_ID,
-    POLYMARKET_CLIENT_ID,
-    assert_no_live_polymarket_execution,
-)
+
+PAPER_EXEC_CLIENT_ID = "POLYSIGNAL_PM_PAPER"
+POLYMARKET_CLIENT_ID = "POLYMARKET"
+
+
+def assert_no_live_polymarket_execution(config: object) -> None:
+    exec_clients = getattr(config, "exec_clients", None)
+    if exec_clients is None and isinstance(config, Mapping):
+        exec_clients = config.get("exec_clients", {})
+    if isinstance(exec_clients, Mapping) and POLYMARKET_CLIENT_ID in exec_clients:
+        raise RuntimeError("default paper runtime refuses live Polymarket execution")
+
 
 LiveNode: object | None = None
 TraderId: Callable[[str], object] | None = None

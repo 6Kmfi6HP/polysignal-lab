@@ -1,10 +1,15 @@
-"""Pure alpha core for the binary MACD/RSI/VWAP momentum strategy.
-
-Decision logic moved verbatim from ``strategies/binary_momentum.py``. The
-``_entered_markets`` guard is keyed by ``market_id`` and is ONLY advanced by
-``on_order_accepted``: candidate creation does not consume it, so repeated
-``evaluate`` calls keep emitting until an order is accepted for that market.
 """
+Input: __future__, __future__.annotations, collections, collections.defaultdict, collections.deque, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.OrderIntentSpec
+Output: _RollingPriceStats, BinaryMomentumAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

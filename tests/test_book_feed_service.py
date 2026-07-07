@@ -1,3 +1,15 @@
+"""
+Input: polysignal_lab.app.services.book_feed_service, polysignal_lab.app.services.book_feed_service.BookFeedService
+Output: test_book_feed_reseed_marks_missing_books_stale, _MarketData, _Books
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from polysignal_lab.app.services.book_feed_service import BookFeedService
 
 

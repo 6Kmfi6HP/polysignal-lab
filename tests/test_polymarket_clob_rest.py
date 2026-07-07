@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, inspect, pytest, polysignal_lab.config, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.data.polymarket_clob_rest, polysignal_lab.data.polymarket_clob_rest.PolymarketCLOBRestClient, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.OrderBook
+Output: test_clob_rest_constructor_does_not_expose_sdk_client, test_clob_rest_instance_does_not_expose_sdk_client, test_get_books_uses_batch_path, test_get_books_falls_back_to_single_book_requests_when_batch_fails
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 import inspect
 

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, ast, pathlib, pathlib.Path
+Output: test_runtime_functions_stay_reviewable
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import ast
@@ -6,8 +18,10 @@ from pathlib import Path
 
 LIMITS = {
     "src/polysignal_lab/nautilus_runtime/node.py": {
-        "build_trading_node": 55,
         "run_nautilus_cli": 70,
+    },
+    "src/polysignal_lab/nautilus_runtime/node_builder.py": {
+        "build_live_node": 55,
     },
     "src/polysignal_lab/nautilus_runtime/node_cli.py": {
         "run_nautilus_cli_async": 70,

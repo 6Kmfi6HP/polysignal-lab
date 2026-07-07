@@ -1,3 +1,15 @@
+"""
+Input: pytest, polysignal_lab.app.services.signal_pipeline, polysignal_lab.app.services.signal_pipeline.SignalPipeline
+Output: test_signal_pipeline_evaluate_snapshot_is_removed, _Strategy, _Gate, _Consensus
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 import pytest
 
 from polysignal_lab.app.services.signal_pipeline import SignalPipeline

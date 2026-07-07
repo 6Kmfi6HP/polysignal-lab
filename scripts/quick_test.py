@@ -1,4 +1,15 @@
-"""快速测试：连接 Polymarket Gamma API 获取实时数据"""
+"""
+Input: asyncio, httpx, json
+Output: test_gamma_api, main
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 import asyncio
 import httpx
 import json

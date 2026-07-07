@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.alpha.one_cent_buy_core, polysignal_lab.alpha.one_cent_buy_core.OneCentBuyAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.strategies.config, polysignal_lab.strategies.config.OneCentBuyConfig
+Output: test_one_cent_buy_core_matches_legacy_candidate, test_one_cent_buy_level_marks_only_after_order_acceptance
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.alpha.one_cent_buy_core import OneCentBuyAlphaCore

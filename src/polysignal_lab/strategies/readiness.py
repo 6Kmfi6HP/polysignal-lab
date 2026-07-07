@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, typing, typing.Literal, polysignal_lab.domain.snapshot, polysignal_lab.domain.snapshot.MarketSnapshot
+Output: check_strategy_market, StrategyReadiness, StrategyMarketStatus
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

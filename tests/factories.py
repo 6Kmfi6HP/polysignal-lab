@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.timedelta, typing, typing.Final, polysignal_lab.domain.enums, polysignal_lab.domain.enums.(
+Output: sample_market, sample_book, sample_spot, sample_snapshot, sample_storage_lifecycle, MarketFactoryConfig, BookFactoryConfig, SpotFactoryConfig, StorageLifecycle
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

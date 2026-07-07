@@ -1,14 +1,26 @@
+"""
+Input: __future__, __future__.annotations, asyncio, logging, dataclasses, dataclasses.dataclass, dataclasses.field, pathlib, pathlib.Path, polysignal_lab.app
+Output: run_scheduler, ServiceContext, SchedulerServiceContext, build_nautilus_service_context, TelegramStartupConfigError, PolySignalScheduler
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from polysignal_lab.app import (
     scheduler_market_data,
     scheduler_processing,
-    scheduler_runtime,
     scheduler_state,
 )
 from polysignal_lab.app.services.book_feed_service import BookFeedService
@@ -75,125 +87,122 @@ class TelegramStartupConfigError(RuntimeError):
         return f"Telegram live publishing is enabled but missing: {fields}"
 
 
+@dataclass
+class SchedulerServiceContext:
+    """Lightweight context holding only the services consumed by the Nautilus runtime path.
+
+    PolySignalScheduler composes this context + legacy-only services.
+    Build via ``build_nautilus_service_context()``.
+    """
+
+    settings: Settings
+    market_universe: MarketUniverseService
+    health: HealthRegistry
+    persistence: PersistenceService
+    publisher: TelegramPublisher
+    publish_service: PublishService
+    sqlite: SQLiteStore
+    signal_pipeline: SignalPipeline
+
+
+def build_nautilus_service_context(
+    settings: Settings,
+    base_dir: str | Path = ".",
+    market_data_client: PublicMarketDataClient | None = None,
+) -> SchedulerServiceContext:
+    """Build only the services needed by the Nautilus runtime path (~8 services).
+
+    Avoids constructing ~22 legacy-only objects (WebSocket connections,
+    settlement resolvers, anchor prices, snapshot builders, supervisors, etc.)
+    that ``PolySignalScheduler.__init__`` creates.
+    """
+    ctx = ServiceContext(settings=settings)
+    _market_data: PublicMarketDataClient = (
+        market_data_client
+        if market_data_client is not None
+        else PolymarketCLOBRestClient(settings.data.polymarket)
+    )
+    _gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
+    _consensus = ConsensusEngine(
+        settings.signal.consensus_window_sec,
+        settings.signal.consensus_enabled,
+    )
+    _formatter = MessageFormatter(settings.telegram.max_message_chars)
+    publisher = TelegramPublisher(settings.telegram)
+    health = HealthRegistry()
+    discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
+    base = Path(base_dir)
+    logs = JSONLStore(base / settings.storage.jsonl_dir)
+    state = StateStore(base / settings.storage.state_dir)
+    sqlite = SQLiteStore(base / settings.storage.sqlite_path)
+    persistence = PersistenceService(logs, sqlite, state)
+    market_universe = MarketUniverseService(
+        discovery,
+        ctx.markets,
+        persistence,
+        settings=settings,
+        logger=logging.getLogger("polysignal_lab.scheduler"),
+    )
+    signal_pipeline = SignalPipeline(
+        [],
+        _gate,
+        _consensus,
+        persistence,
+        logger=logging.getLogger("polysignal_lab.scheduler"),
+    )
+    publish_service = PublishService(
+        _formatter,
+        publisher,
+        persistence,
+        timeout_sec=settings.telegram.publish_timeout_sec,
+    )
+    return SchedulerServiceContext(
+        settings=settings,
+        market_universe=market_universe,
+        health=health,
+        persistence=persistence,
+        publisher=publisher,
+        publish_service=publish_service,
+        sqlite=sqlite,
+        signal_pipeline=signal_pipeline,
+    )
+
+
 class PolySignalScheduler:
     def __init__(
         self,
         settings: Settings,
         base_dir: str | Path = ".",
         market_data_client: PublicMarketDataClient | None = None,
+        *,
+        _context: SchedulerServiceContext | None = None,
     ):
-        self.settings = settings
-        self.ctx = ServiceContext(settings=settings)
-        self.discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
-        self.market_data: PublicMarketDataClient = (
-            market_data_client
-            if market_data_client is not None
-            else PolymarketCLOBRestClient(settings.data.polymarket)
+        warnings.warn(
+            "PolySignalScheduler is legacy; use SchedulerServiceContext for Nautilus runtime",
+            DeprecationWarning,
+            stacklevel=2,
         )
-        self.gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
-        self.consensus = ConsensusEngine(
-            settings.signal.consensus_window_sec, settings.signal.consensus_enabled
-        )
-        self.formatter = MessageFormatter(settings.telegram.max_message_chars)
-        self.publisher = TelegramPublisher(settings.telegram)
+        if _context is not None:
+            self._init_from_context(_context, settings)
+            return
+        self._init_full(settings, base_dir, market_data_client)
+
+    def _init_from_context(
+        self, ctx: SchedulerServiceContext, settings: Settings
+    ) -> None:
+        """Lightweight init — only services the Nautilus runtime path needs."""
+        self.settings = ctx.settings
+        self.ctx = ServiceContext(settings=ctx.settings)
+        self.health = ctx.health
+        self.persistence = ctx.persistence
+        self.publisher = ctx.publisher
+        self.market_universe = ctx.market_universe
+        self.sqlite = ctx.sqlite
+        self.signal_pipeline = ctx.signal_pipeline
+        self.publish_service = ctx.publish_service
         self.logger = logging.getLogger("polysignal_lab.scheduler")
-        self.health = HealthRegistry()
         self._trading_components_initialized = False
         self._follow_up_signals: list[SignalCandidate] = []
-
-        self.ws_resolution_cache = WsResolutionCache()
-
-        self.poly_ws = PolymarketMarketWebSocket(settings.data.polymarket, self.ctx.books, resolution_cache=self.ws_resolution_cache)
-        self.poly_ws.reseed_hook = self._reseed_ws_books
-        self.binance_ws = BinanceSpotFeed(settings.data.binance, self.ctx.spots)
-        self.rtds_ws = PolymarketRtdsPriceFeed(self.ctx.spots, settings.data.polymarket)
-        self.book_feed = BookFeedService(
-            settings.data.polymarket,
-            self.rest,
-            self.ctx.books,
-            websocket=self.poly_ws,
-            logger=self.logger,
-        )
-        primary_spot_feed = self.rtds_ws if settings.data.polymarket.use_rtds_ws else self.binance_ws
-        self.spot_feed = SpotFeedService(
-            primary_spot_feed,
-            enabled=settings.data.polymarket.use_rtds_ws or settings.data.binance.enabled,
-            logger=self.logger,
-        )
-
-        base = Path(base_dir)
-        self.logs = JSONLStore(base / settings.storage.jsonl_dir)
-        self.state = StateStore(base / settings.storage.state_dir)
-        self.sqlite = SQLiteStore(base / settings.storage.sqlite_path)
-        self.anchor_prices = AnchorPriceService(self.ctx.spots, self.sqlite)
-        self.ptb = PriceToBeatProvider(
-            anchor_store=self.sqlite,
-            use_crypto_price_api=settings.data.polymarket.use_crypto_price_api,
-        )
-        self.snapshot_builder = MarketSnapshotBuilder(self.ctx.books, self.ctx.spots, self.ptb)
-        self.persistence = PersistenceService(self.logs, self.sqlite, self.state)
-        self.market_universe = MarketUniverseService(
-            self.discovery,
-            self.ctx.markets,
-            self.persistence,
-            settings=settings,
-            logger=self.logger,
-        )
-        settlement_config = settings.data.polymarket.settlement
-        chain_source = None
-        if settlement_config.chain_enabled and settlement_config.polygon_rpc_url:
-            chain_source = CtfResolutionClient(
-                settlement_config.polygon_rpc_url,
-                timeout_sec=settlement_config.chain_timeout_sec,
-                contract="0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
-            )
-        gamma_source = GammaResolutionClient(settings.data.polymarket.gamma_base_url) if settlement_config.gamma_enabled else None
-        self.settlement_resolver = SettlementResolver(
-            chain_source,
-            gamma_source,
-            self.ws_resolution_cache if settlement_config.ws_enabled else None,
-            logger=self.logger,
-        )
-        self.snapshot_service = SnapshotService(self.snapshot_builder)
-        self.signal_pipeline = SignalPipeline(
-            [],
-            self.gate,
-            self.consensus,
-            self.persistence,
-            logger=self.logger,
-        )
-        self.publish_service = PublishService(
-            self.formatter,
-            self.publisher,
-            self.persistence,
-            timeout_sec=settings.telegram.publish_timeout_sec,
-        )
-        core_services = [
-            self.persistence,
-            self.market_universe,
-            self.book_feed,
-            self.spot_feed,
-            self.snapshot_service,
-            self.signal_pipeline,
-            self.publish_service,
-        ]
-        self.telegram_bot = None
-        if settings.telegram.interactive_enabled:
-            self.telegram_bot = TelegramBotService(
-                config=settings.telegram,
-                persistence=self.persistence,
-                signal_pipeline=self.signal_pipeline,
-                books=self.ctx.books,
-                markets=self.ctx.markets,
-                formatter=self.formatter,
-                scheduler=self,
-                logger=self.logger,
-            )
-            core_services.append(self.telegram_bot)
-        self.health_service = HealthService(core_services)
-        self.services = [*core_services, self.health_service]
-        self.supervisor = ServiceSupervisor(self.services)
-
         self._ws_tasks: list[asyncio.Task] = []
         self._market_ws_task: asyncio.Task | None = None
         self._binance_ws_task: asyncio.Task | None = None
@@ -202,6 +211,19 @@ class PolySignalScheduler:
         self._market_refresh_completed = False
         self._streams_started = False
         self._running = False
+        self.telegram_bot = None
+        self.nautilus_cache_reader = None
+        self.paper_execution_metadata = None
+        self.strategy_schedule = None
+        self.strategies = None
+        self.arbiter = None
+
+    def _init_full(
+        self,
+        settings: Settings,
+        base_dir: str | Path = ".",
+        market_data_client: PublicMarketDataClient | None = None,
+    ) -> None:
 
     @property
     def rest(self) -> PublicMarketDataClient:
@@ -286,20 +308,20 @@ class PolySignalScheduler:
         return await scheduler_market_data.start_websockets(self)
 
     async def stop(self) -> None:
-        await scheduler_runtime.stop(self)
+        raise RuntimeError("Legacy scheduler stop disabled in Nautilus mode")
 
     def _persist_state(self) -> None:
         scheduler_state.persist_state(self)
 
     async def process_signal(
         self, signal: SignalCandidate
-    ) -> scheduler_processing.ProcessSignalResult:
-        return await scheduler_processing.process_signal(self, signal)
+    ):
+        raise RuntimeError("Legacy scheduler process_signal disabled in Nautilus mode")
 
     async def process_accepted_signals(
         self, signals: list[SignalCandidate]
-    ) -> scheduler_processing.AcceptedSignalSummary:
-        return await scheduler_processing.process_accepted_signals(self, signals)
+    ):
+        raise RuntimeError("Legacy scheduler process_accepted_signals disabled in Nautilus mode")
 
     async def check_settlements(self) -> list[PaperTradeResult]:
         from polysignal_lab.app.scheduler_reporting import check_settlements
@@ -312,7 +334,7 @@ class PolySignalScheduler:
         return await generate_daily_report(self)
 
     async def run(self) -> None:
-        await scheduler_runtime.run(self)
+        raise RuntimeError("Legacy scheduler runtime disabled in Nautilus mode")
 
 
 async def run_scheduler(

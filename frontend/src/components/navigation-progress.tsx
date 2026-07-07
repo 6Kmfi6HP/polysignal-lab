@@ -1,3 +1,15 @@
+/**
+ * Input: { useEffect, useRef } from 'react', { useRouterState } from '@tanstack/react-router', LoadingBar, { type LoadingBarRef } from 'react-top-loading-bar', react, @tanstack/react-router, react-top-loading-bar
+ * Output: NavigationProgress
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { useEffect, useRef } from 'react'
 import { useRouterState } from '@tanstack/react-router'
 import LoadingBar, { type LoadingBarRef } from 'react-top-loading-bar'

@@ -1,14 +1,15 @@
-"""LateConsensusStrategy — Meridian Late Entry V3 (adapter).
-
-Decision logic and callback state now live in
-:class:`polysignal_lab.alpha.late_consensus_core.LateConsensusAlphaCore`.
-Legacy class name, config, ``name``, freshness policy and readiness are
-preserved. The ``entry_sequence`` counter advances ONLY via
-``notify_signal_accepted`` → ``core.on_order_accepted``; candidate creation
-reads it (for ``metrics["entry_sequence"]``) but does not increment it. The
-dedupe suffix ``:{sequence}`` is a candidate concern applied here, after
-``decision_to_signal``, from the decision's ``metrics["entry_sequence"]``.
 """
+Input: __future__, __future__.annotations, polysignal_lab.alpha.late_consensus_core, polysignal_lab.alpha.late_consensus_core.LateConsensusAlphaCore, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.decision_to_signal, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.domain.freshness
+Output: LateConsensusStrategy
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

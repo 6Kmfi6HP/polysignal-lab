@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.timedelta, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.OrderBook, polysignal_lab.utils, polysignal_lab.utils.utc_now, factories, factories.BookFactoryConfig
+Output: test_orderbook_best_bid_ask_spread_depth, test_orderbook_from_polymarket_payload, test_staleness_detection, test_snapshot_builder_derived_metrics
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import timedelta

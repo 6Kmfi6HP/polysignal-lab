@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, json, datetime, datetime.datetime, sqlite3, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path
+Output: DuplicateRecordError, SQLiteStore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import json

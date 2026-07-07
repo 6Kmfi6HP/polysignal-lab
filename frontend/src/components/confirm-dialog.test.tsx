@@ -1,3 +1,15 @@
+/**
+ * Input: type { SubmitEvent } from 'react', { describe, expect, it, vi } from 'vitest', { render } from '@testing-library/react', userEvent from '@testing-library/user-event', { ConfirmDialog } from './confirm-dialog', react, vitest, @testing-library/react, @testing-library/user-event, ./confirm-dialog
+ * Output: None
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import type { SubmitEvent } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { render } from '@testing-library/react'

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, time, collections, collections.defaultdict, collections.deque, dataclasses, dataclasses.dataclass, dataclasses.field, threading
+Output: ChannelRateLimiter
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import time

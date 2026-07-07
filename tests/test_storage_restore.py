@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.date, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode, polysignal_lab.domain.enums.PositionStatus, polysignal_lab.domain.enums.Side, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.paper_position
+Output: test_sqlite_store_restores_wallet_reports_and_leaderboard, test_strategy_leaderboard_win_rate_counts_voids_as_closed, test_sqlite_store_uses_wal_and_busy_timeout
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import date

@@ -1,4 +1,15 @@
-"""OS signal handlers extracted from node.py."""
+"""
+Input: __future__, __future__.annotations, asyncio, signal, collections.abc, collections.abc.Callable, collections.abc.Sequence, contextlib, contextlib.suppress, typing
+Output: None
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio

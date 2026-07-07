@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.OrderStatus, polysignal_lab.domain.enums.Side, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.strategies.base, polysignal_lab.strategies.base.BaseStrategy
+Output: test_base_strategy_notify_defaults_are_noops, test_order_intent_values, test_order_status_new_values, test_signal_candidate_has_order_intent_fields, test_signal_candidate_with_order_intent, test_paper_order_has_order_intent_field, test_paper_order_with_order_intent, test_passive_gtd_skips_max_entry_check, test_taker_still_fails_ask_above_max_entry, test_gtd_expiry_rejects_missing
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side

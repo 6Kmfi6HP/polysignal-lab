@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.alpha.binary_momentum_core, polysignal_lab.alpha.binary_momentum_core.BinaryMomentumAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.strategies.config, polysignal_lab.strategies.config.BinaryMomentumConfig
+Output: test_binary_momentum_core_matches_legacy_candidate, test_binary_momentum_entered_only_after_order_acceptance
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.alpha.binary_momentum_core import BinaryMomentumAlphaCore

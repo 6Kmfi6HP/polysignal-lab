@@ -1,3 +1,15 @@
+/**
+ * Input: React from 'react', { useNavigate } from '@tanstack/react-router', { ArrowRight, ChevronRight, Laptop, Moon, Sun } from 'lucide-react', { useSearch } from '@/context/search-provider', { useTheme } from '@/context/theme-provider', {, { sidebarData } from './layout/data/sidebar-data', { ScrollArea } from './ui/scroll-area', react, @tanstack/react-router
+ * Output: CommandMenu
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import React from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { ArrowRight, ChevronRight, Laptop, Moon, Sun } from 'lucide-react'

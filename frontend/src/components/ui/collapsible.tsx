@@ -1,3 +1,15 @@
+/**
+ * Input: * as CollapsiblePrimitive from '@radix-ui/react-collapsible', @radix-ui/react-collapsible
+ * Output: Collapsible, CollapsibleTrigger, CollapsibleContent
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import * as CollapsiblePrimitive from '@radix-ui/react-collapsible'
 
 function Collapsible({

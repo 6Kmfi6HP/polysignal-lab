@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.timedelta, types, types.SimpleNamespace, typing, typing.Final
+Output: test_late_consensus_emits_multi_asset_signal_with_metrics, test_late_consensus_rejects_exceeded_ask_sum, test_late_consensus_rejects_low_confidence, test_late_consensus_stale_spot_ok_and_rejects_side_change, test_late_consensus_rejects_repeated_flip_inside_guard, test_late_consensus_rejects_unsupported_asset_and_accepts_zero_spot_move, test_late_consensus_signal_carries_configured_freshness_policy, test_late_consensus_stale_spot_is_rejected_by_signal_gate, test_late_consensus_stale_orderbook_is_rejected_by_signal_gate, test_late_consensus_gate_rejection_does_not_consume_entry_state
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

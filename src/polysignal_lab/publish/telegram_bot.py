@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, html, logging, collections.abc, collections.abc.Callable, datetime, datetime.UTC, datetime.datetime, datetime.time
+Output: StrategyControl, TelegramBotService
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import html

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, importlib, sys, dataclasses, dataclasses.replace, pathlib, pathlib.Path, types, types.ModuleType
+Output: test_decision_policy_preserves_gate_first_failure_reasons, test_manual_disable_uses_pipeline_reason_without_touching_gate, test_dependency_disable_uses_pipeline_reason_without_touching_gate, test_approved_decision_preserves_order_intent_fields, test_approved_decision_includes_consensus_signal_when_engine_merges, test_decision_policy_module_imports_without_nautilus_dependency, test_decision_policy_actor_exposes_domain_state_not_nautilus_lifecycle, test_nautilus_decision_policy_actor_constructs_without_nautilus_installed, test_nautilus_decision_policy_actor_on_save_on_load_delegate_to_policy_state, test_runtime_classes_expose_registerable_nautilus_policy_actor
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import importlib

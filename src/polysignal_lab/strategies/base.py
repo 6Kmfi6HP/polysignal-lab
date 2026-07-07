@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, abc, abc.ABC, abc.abstractmethod, collections, collections.defaultdict, collections.deque, statistics, statistics.mean
+Output: BaseStrategy, RollingPriceStats
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

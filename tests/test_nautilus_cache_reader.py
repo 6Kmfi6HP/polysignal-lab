@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, types, types.SimpleNamespace, typing, typing.cast, polysignal_lab.nautilus_runtime.cache_reader, polysignal_lab.nautilus_runtime.cache_reader.NautilusCacheReader
+Output: test_cache_reader_reads_orders_from_cache, test_cache_reader_reads_fills_from_cache, test_cache_reader_reads_positions_from_cache, test_cache_reader_reads_account_from_cache, test_cache_reader_snapshots_portfolio_from_cache, test_cache_reader_snapshots_portfolio_from_cache_fallback, test_cache_reader_snapshots_portfolio_attribute, test_cache_reader_empty_cache_returns_lists, test_cache_reader_respects_separate_portfolio_arg, test_cache_reader_projects_account_and_portfolio_snapshots
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 from types import SimpleNamespace
 from typing import cast

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.FreshnessView, polysignal_lab.alpha.types.MarketView
+Output: test_evaluate_condition_does_not_run_custom_exit_scan, test_native_strategy_has_no_custom_exit_evaluation_api
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

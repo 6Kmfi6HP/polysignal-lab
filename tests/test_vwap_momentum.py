@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.timedelta, types, types.SimpleNamespace, polysignal_lab.config, polysignal_lab.config.BinanceDataConfig
+Output: test_vwap_momentum_emits_buy_up_and_down, test_vwap_momentum_rejects_low_momentum, test_vwap_momentum_rejects_short_history, test_vwap_momentum_rejects_outside_price_range, test_vwap_momentum_gate_rejection_does_not_consume_entry_guard, test_vwap_momentum_rejected_stale_sample_does_not_pollute_next_signal, test_vwap_momentum_accepted_sample_remains_in_history, test_scheduler_notifies_strategy_when_gate_rejects_vwap_signal, test_vwap_momentum_entry_guard_is_consumed_only_after_acceptance, test_vwap_momentum_rejects_too_early
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

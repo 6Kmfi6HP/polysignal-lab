@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, sqlite3, time, dataclasses, dataclasses.dataclass, dataclasses.replace, enum, enum.Enum, queue
+Output: persistence_class_for_table, PersistenceClass, PersistenceWriter, Publisher, AcceptedSignalNotifier, TelemetryEvent, EventStore, Notifier, NautilusEventStoreAdapter, NautilusNotifierAdapter
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import sqlite3

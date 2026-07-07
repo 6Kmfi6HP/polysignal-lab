@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path
+Output: test_fake_market_data_client_matches_protocol, test_binance_feed_url_and_parse_message, test_polymarket_ws_book_message_updates_registry, test_last_trade_does_not_refresh_orderbook_depth_freshness, test_books_for_market_hides_stale_marked_book_but_get_keeps_raw, test_market_snapshot_builder_hides_stale_marked_book_from_signal_inputs, test_market_snapshot_builder_handles_missing_side_for_trade_metrics, test_failed_websocket_reseed_marks_subscribed_books_stale, test_scheduler_refresh_captures_anchor_for_snapshot_ptb_flow, test_scheduler_refresh_ignores_anchor_sqlite_failure
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

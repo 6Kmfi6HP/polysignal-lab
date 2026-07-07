@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.timedelta, polysignal_lab.config, polysignal_lab.config.(, polysignal_lab.data.price_to_beat_provider, polysignal_lab.data.price_to_beat_provider.PriceToBeatProvider, polysignal_lab.data.polymarket_clob_ws, polysignal_lab.data.polymarket_clob_ws.PolymarketMarketWebSocket
+Output: test_vwap_momentum_prefers_reference_last_trade_price_over_best_ask, test_runtime_ptb_config_matches_reference_c1_rule, test_ptb_crypto_price_variant_matches_reference_for_5m, test_clob_last_trade_size_reaches_vwap_weighted_history, test_vwap_fill_schedules_opposite_token_gtd_hedge, test_vwap_filled_gtd_hedge_does_not_schedule_reverse_hedge, test_late_repeat_after_entry_frequency_uses_new_dedupe_key, test_ptb_diff_requires_chainlink_rtds_spot_source, test_ptb_diff_persists_chainlink_and_ptb_source_metrics, test_rtds_chainlink_message_updates_spot_registry
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import timedelta

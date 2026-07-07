@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, typing, typing.Any, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.AlphaFillEvent
+Output: PreOrderMarketAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -175,6 +187,33 @@ class PreOrderMarketAlphaCore:
             order_intent=order_intent,
             hedge_leg=hedge_leg,
         )
+
+    def save_state(self) -> dict[str, object]:
+        from polysignal_lab.alpha.state import json_safe_state
+
+        return json_safe_state({
+            "_pre_ordered": self._pre_ordered,
+            "_entered_markets": self._entered_markets,
+            "_positions": self._positions,
+            "_reconciled": self._reconciled,
+        })
+
+    def load_state(self, state: dict[str, object]) -> None:
+        from polysignal_lab.alpha.state import restore_utc_datetime
+        from polysignal_lab.domain.enums import Side
+
+        positions_raw = state.get("_positions", {}) or {}
+        self._positions = {}
+        for mid, pos in positions_raw.items():
+            self._positions[str(mid)] = {
+                "side": Side(pos["side"]),
+                "entry_price": float(pos["entry_price"]),
+                "filled_at": restore_utc_datetime(pos["filled_at"]),
+                "hedged": bool(pos["hedged"]),
+            }
+        self._pre_ordered = set(state.get("_pre_ordered", []) or [])
+        self._entered_markets = set(state.get("_entered_markets", []) or [])
+        self._reconciled = set(state.get("_reconciled", []) or [])
 
     def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
         from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot

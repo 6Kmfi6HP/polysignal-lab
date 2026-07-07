@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, time, dataclasses, dataclasses.dataclass, dataclasses.field, threading, threading.Lock, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate
+Output: SignalDeduper
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import time

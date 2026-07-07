@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, pytest, types, types.SimpleNamespace, factories, factories.BookFactoryConfig, factories.MarketFactoryConfig, factories.sample_book, factories.sample_market
+Output: test_nautilus_owned_scheduler_cannot_run_legacy_evaluate_once, test_unsupported_strategy_is_skipped_before_evaluate, test_late_consensus_missing_market_end_ts_persists_missing_data, _UnsupportedStrategy, _Markets, _SnapshotBuilder, _Logger, _Logs, _SQLite
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 

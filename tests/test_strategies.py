@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.timedelta, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.data.market_snapshot, polysignal_lab.data.market_snapshot.MarketSnapshotBuilder, polysignal_lab.data.price_to_beat_provider, polysignal_lab.data.price_to_beat_provider.PriceToBeatProvider
+Output: test_ptb_diff_generates_buy_up, test_ptb_diff_requires_verified_ptb, test_late_consensus_generates_favorite_side, test_late_consensus_flip_guard_blocks_recent_flip, test_vwap_momentum_generates_after_window, test_one_cent_buy_emits_passive_gtd_intent, test_ninety_nine_cent_sniper_emits_fok_intent_and_reason_code, test_binary_momentum_emits_fak_intent, test_fibonacci_bot_emits_passive_gtd_intent, test_dump_hedge_emits_leg_and_hedge_intents
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import timedelta

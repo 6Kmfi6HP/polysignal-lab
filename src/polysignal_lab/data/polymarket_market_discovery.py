@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, json, re, datetime, datetime.timedelta, typing, typing.Final, httpx, pydantic
+Output: MarketDiscovery
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import json
@@ -68,6 +80,31 @@ class MarketDiscovery:
             stale_grace_sec=stale_grace_sec,
         )
 
+    def _parse_response(self, response: httpx.Response) -> JsonValue:
+        response.raise_for_status()
+        return JSON_VALUE_ADAPTER.validate_python(response.json())
+
+    def _request(
+        self,
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+        is_async: bool = False,
+        sync_client: httpx.Client | None = None,
+    ):
+        """Execute a GET request.
+
+        When *is_async* is ``True`` the caller must ``await`` the returned
+        coroutine.  When ``False`` the result is returned directly.
+        """
+        if is_async:
+            async def _do():
+                response = await self.client.get(url, params=params)
+                return self._parse_response(response)
+            return _do()
+        response = sync_client.get(url, params=params)
+        return self._parse_response(response)
+
     def _markets_from_payloads(
         self,
         payloads: list[JsonObject],
@@ -135,9 +172,13 @@ class MarketDiscovery:
             "limit": str(GAMMA_PAGE_LIMIT),
             "offset": str(offset),
         }
-        response = client.get(f"{self.config.gamma_base_url}/events", params=params)
-        response.raise_for_status()
-        return _gamma_events_from_json(JSON_VALUE_ADAPTER.validate_python(response.json()))
+        payload = self._request(
+            f"{self.config.gamma_base_url}/events",
+            params=params,
+            is_async=False,
+            sync_client=client,
+        )
+        return _gamma_events_from_json(payload)
 
     async def _fetch_gamma_events_page(self, offset: int) -> list[JsonObject]:
         params = {
@@ -148,9 +189,12 @@ class MarketDiscovery:
             "limit": str(GAMMA_PAGE_LIMIT),
             "offset": str(offset),
         }
-        response = await self.client.get(f"{self.config.gamma_base_url}/events", params=params)
-        response.raise_for_status()
-        return _gamma_events_from_json(JSON_VALUE_ADAPTER.validate_python(response.json()))
+        payload = await self._request(
+            f"{self.config.gamma_base_url}/events",
+            params=params,
+            is_async=True,
+        )
+        return _gamma_events_from_json(payload)
 
     async def _fetch_current_slot_payloads(
         self,
@@ -230,21 +274,19 @@ class MarketDiscovery:
 
     async def _fetch_gamma_market_by_slug(self, slug: str) -> JsonObject | None:
         try:
-            response = await self.client.get(
+            payload = await self._request(
                 f"{self.config.gamma_base_url}/markets",
                 params={"slug": slug},
+                is_async=True,
             )
-            response.raise_for_status()
-            payloads = _gamma_events_from_json(JSON_VALUE_ADAPTER.validate_python(response.json()))
         except (httpx.HTTPError, TypeError, ValueError):
             return None
+        payloads = _gamma_events_from_json(payload)
         return payloads[0] if payloads else None
 
     async def _fetch_gamma_slug_payload(self, url: str) -> JsonObject | None:
         try:
-            response = await self.client.get(url)
-            response.raise_for_status()
-            payload = JSON_VALUE_ADAPTER.validate_python(response.json())
+            payload = await self._request(url, is_async=True)
         except (httpx.HTTPError, TypeError, ValueError):
             return None
         return payload if isinstance(payload, dict) else None
@@ -254,21 +296,20 @@ class MarketDiscovery:
 
     def _fetch_gamma_market_by_slug_sync(self, client: httpx.Client, slug: str) -> JsonObject | None:
         try:
-            response = client.get(
+            payload = self._request(
                 f"{self.config.gamma_base_url}/markets",
                 params={"slug": slug},
+                is_async=False,
+                sync_client=client,
             )
-            response.raise_for_status()
-            payloads = _gamma_events_from_json(JSON_VALUE_ADAPTER.validate_python(response.json()))
         except (httpx.HTTPError, TypeError, ValueError):
             return None
+        payloads = _gamma_events_from_json(payload)
         return payloads[0] if payloads else None
 
     def _fetch_gamma_slug_payload_sync(self, client: httpx.Client, url: str) -> JsonObject | None:
         try:
-            response = client.get(url)
-            response.raise_for_status()
-            payload = JSON_VALUE_ADAPTER.validate_python(response.json())
+            payload = self._request(url, is_async=False, sync_client=client)
         except (httpx.HTTPError, TypeError, ValueError):
             return None
         return payload if isinstance(payload, dict) else None

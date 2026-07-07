@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, json, pathlib, pathlib.Path, httpx, pytest, pydantic, pydantic.JsonValue, polysignal_lab.app
+Output: test_fake_public_api_outage_degrades_without_unhandled_exception, test_health_snapshot_syncs_before_client_cleanup, test_failure_count_counts_only_down_health_snapshot
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, heapq, heapq.heappop, heapq.heappush, graphlib, graphlib.CycleError, graphlib.TopologicalSorter
+Output: order_strategy_schedule, validate_strategy_dag, build_strategy_schedule, StrategyScheduleEntry
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

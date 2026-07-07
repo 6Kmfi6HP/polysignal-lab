@@ -1,15 +1,15 @@
-"""VWAPMomentumStrategy — PolyBullLabs VWAP/Deviation/Momentum (adapter).
-
-Decision logic, ``TradeHistory`` and callback state now live in
-:class:`polysignal_lab.alpha.vwap_momentum_core.VWAPMomentumAlphaCore`.
-Legacy class name, config, ``name``, freshness policy and readiness are
-preserved. The per-market entry guard (``_can_enter``) is consumed ONLY via
-``notify_signal_accepted`` → ``core.on_order_accepted``; candidate creation
-reads it but does not consume it. ``follow_up_signals`` is retained as a
-scheduler-facing shim that translates ``order``/``fill`` into the core's
-``on_order_filled`` (taker fill → hedge decision) / ``on_order_expired``
-(GTD fill → clear pending hedge) events.
 """
+Input: __future__, __future__.annotations, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.decision_to_signal, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaFillEvent, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.alpha.vwap_momentum_core, polysignal_lab.alpha.vwap_momentum_core.TradeHistory
+Output: VWAPMomentumStrategy
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

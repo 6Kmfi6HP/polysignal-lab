@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, sys, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime
+Output: test_order_plan_resolves_taker_price_from_best_ask, test_order_plan_rejects_taker_without_best_ask, test_submit_approved_decision_submits_limit_order_through_strategy, test_submit_approved_decision_uses_instrument_value_converters, test_submit_approved_decision_quantizes_price_before_instrument_converter, test_submit_approved_decision_preserves_price_precision_when_price_type_available, test_submit_approved_decision_maps_passive_gtd_expiry, test_submit_approved_decision_passive_gtd_allows_no_immediate_visible_depth, test_submit_approved_decision_does_not_require_available_shares, test_static_native_strategy_initializes_nautilus_base
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import sys

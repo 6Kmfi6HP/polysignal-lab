@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, logging, polysignal_lab.utils, polysignal_lab.utils.redact_text
+Output: configure_logging, RedactingFormatter
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.alpha.low_side_dual_reversion_core, polysignal_lab.alpha.low_side_dual_reversion_core.LowSideDualReversionAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaFillEvent, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.strategies.low_side_dual_reversion, polysignal_lab.strategies.low_side_dual_reversion.LowSideDualReversionConfig
+Output: test_low_side_dual_core_matches_legacy_candidate, test_hedge_decisions_use_actual_fill_position_state, test_hedge_uses_depth_weighted_ask_and_rejects_shallow_depth
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.alpha.low_side_dual_reversion_core import LowSideDualReversionAlphaCore

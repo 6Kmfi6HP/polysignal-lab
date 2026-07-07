@@ -1,9 +1,15 @@
-"""BinaryMomentumStrategy — MACD/RSI/VWAP 二元动量策略 (adapter).
-
-Decision logic now lives in :class:`BinaryMomentumAlphaCore`. Legacy class
-name, config and ``name`` are preserved. The entered-market guard is advanced
-on order acceptance, not during candidate generation.
 """
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, polysignal_lab.alpha.binary_momentum_core, polysignal_lab.alpha.binary_momentum_core.BinaryMomentumAlphaCore, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.decision_to_signal, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot, polysignal_lab.alpha.types
+Output: BinaryMomentumConfig, BinaryMomentumStrategy
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

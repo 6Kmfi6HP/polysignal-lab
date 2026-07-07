@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, pathlib, pathlib.Path, polysignal_lab.observability.safety, polysignal_lab.observability.safety.scan
+Output: find_forbidden_sdk_imports, test_polymarket_sdk_imports_are_adapter_only, test_polymarket_sdk_import_allowlist_accepts_absolute_adapter_path, test_forbidden_sdk_import_fixture_is_detected, test_safety_scan_reports_deliberate_forbidden_fixture_directory, test_safety_scan_reports_deliberate_forbidden_fixture_file, test_safety_scan_repo_root_exempts_only_deliberate_fixture_path, test_safety_scan_skips_agent_worktrees_but_not_source, test_safety_scan_checks_hidden_claude_dirs_outside_agent_worktrees, test_safety_scan_blocks_create_task_in_nautilus_actor_fallback_paths
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 from pathlib import Path
 

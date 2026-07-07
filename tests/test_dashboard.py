@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timezone, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.dashboard.app
+Output: test_dashboard_readonly_endpoints_return_stored_data, test_dashboard_positions_returns_latest_metadata_first, test_dashboard_health_returns_component_snapshot_from_system_events, test_dashboard_exposes_paper_execution_quality, test_leaderboard_uses_sqlite_report_data, test_leaderboard_recomputes_calibration_status_after_aggregation, test_dashboard_exposes_bounded_strategy_status_rows, test_dashboard_rejects_write_methods
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import date, datetime, timezone

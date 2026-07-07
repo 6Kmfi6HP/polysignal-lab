@@ -1,3 +1,15 @@
+/**
+ * Input: { useMemo } from 'react', {, { Header } from '@/components/layout/header', { Main } from '@/components/layout/main', { Search } from '@/components/search', { ThemeSwitch } from '@/components/theme-switch', { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card', { Skeleton } from '@/components/ui/skeleton', { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs', type { PaperOrder, PaperPosition, PaperTradeResult } from '@/lib/api/types'
+ * Output: PaperTradingPage, CumulativePnlChart, buildCumulativePnlPoints, TradesTable, PositionsTable, OrdersTable
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { useMemo } from 'react'
 import {
   CartesianGrid,

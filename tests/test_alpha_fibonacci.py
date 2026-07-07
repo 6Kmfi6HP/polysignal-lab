@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.alpha.fibonacci_core, polysignal_lab.alpha.fibonacci_core.FibonacciAlphaCore, polysignal_lab.alpha.fibonacci_core.ZigZagDetector, polysignal_lab.strategies.config, polysignal_lab.strategies.config.FibonacciBotConfig, polysignal_lab.strategies.fibonacci_bot, polysignal_lab.strategies.fibonacci_bot.FibonacciStrategyBot, alpha_equivalence
+Output: test_fibonacci_core_matches_legacy_candidate, test_fibonacci_core_state_roundtrip
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.alpha.fibonacci_core import FibonacciAlphaCore, ZigZagDetector

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, polysignal_lab.alpha.cross_market_core, polysignal_lab.alpha.cross_market_core.CrossMarketAlphaCore, polysignal_lab.alpha.cross_market_core.MarketRelation, polysignal_lab.alpha.cross_market_core.RelationType, polysignal_lab.alpha.ptb_diff_core
+Output: test_cross_market_group_core_matches_legacy_group_candidates, test_cross_market_group_walks_ask_depth_before_emitting, test_cross_market_leg_failure_marks_basket_failed
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

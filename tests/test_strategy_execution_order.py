@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, asyncio, time, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.signal_layer.arbiter
+Output: test_strategy_execution_defaults_preserve_yaml_order, test_strategy_dependency_cycle_is_rejected, test_snapshot_building_uses_bounded_concurrency, test_stateless_strategies_run_in_parallel_ready_set, test_arbitration_suppressed_candidates_notify_rejection_without_gate_commit, test_dependencies_order_evaluation_and_commit_before_dependents, test_stateless_dependencies_complete_before_dependent_evaluation, test_per_market_strategy_cannot_depend_on_cross_market_strategy, test_dependencies_complete_for_all_markets_before_dependent_level, _RecordingStrategy
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, sqlite3, typing, typing.TYPE_CHECKING, pydantic, pydantic.JsonValue, polysignal_lab.observability.health, polysignal_lab.observability.health.HealthSnapshot, polysignal_lab.utils
+Output: note_storage_success, note_storage_failure, note_publish_result, sync_runtime_health, persist_health_snapshot
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import sqlite3

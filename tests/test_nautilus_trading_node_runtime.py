@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, asyncio, types, types.SimpleNamespace, pytest, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.nautilus_runtime, polysignal_lab.nautilus_runtime.live_node
+Output: test_trading_node_exposes_expected_client_ids, test_live_polymarket_execution_is_rejected, test_build_paper_live_node_uses_polymarket_data_and_sandbox_exec, test_build_polymarket_data_client_config_enables_dynamic_instrument_loading, test_build_paper_live_node_bounds_cache_tick_capacity, test_build_sandbox_exec_client_config_uses_paper_venue_and_routes_to_polymarket, test_run_nautilus_cli_async_starts_and_stops_observability_writer, FakeConfig, FakePolymarketLiveDataClientFactory, FakeSandboxLiveExecClientFactory
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio
@@ -13,7 +25,7 @@ from polysignal_lab.nautilus_runtime.live_node import (
     build_sandbox_exec_client_config,
 )
 from polysignal_lab.nautilus_runtime.node import run_nautilus_cli_async
-from polysignal_lab.nautilus_runtime.trading_node import (
+from polysignal_lab.nautilus_runtime.live_node import (
     PAPER_EXEC_CLIENT_ID,
     POLYMARKET_CLIENT_ID,
     assert_no_live_polymarket_execution,

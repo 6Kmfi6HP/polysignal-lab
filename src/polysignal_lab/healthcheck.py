@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, argparse, collections.abc, collections.abc.Sequence, datetime, datetime.datetime, json, pathlib, pathlib.Path
+Output: build_parser, main
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import argparse

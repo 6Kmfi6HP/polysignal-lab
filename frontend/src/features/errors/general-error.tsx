@@ -1,3 +1,15 @@
+/**
+ * Input: { useNavigate, useRouter } from '@tanstack/react-router', { cn } from '@/lib/utils', { Button } from '@/components/ui/button', @tanstack/react-router, @/lib/utils, @/components/ui/button
+ * Output: GeneralError
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { useNavigate, useRouter } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'

@@ -1,3 +1,15 @@
+/**
+ * Input: { Link } from '@tanstack/react-router', { Menu } from 'lucide-react', { cn } from '@/lib/utils', { Button } from '@/components/ui/button', {, @tanstack/react-router, lucide-react, @/lib/utils, @/components/ui/button, @/components/ui/dropdown-menu
+ * Output: TopNav
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { Link } from '@tanstack/react-router'
 import { Menu } from 'lucide-react'
 import { cn } from '@/lib/utils'

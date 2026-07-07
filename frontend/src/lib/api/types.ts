@@ -1,3 +1,15 @@
+/**
+ * Input: None
+ * Output: None
+ * Pos: Library - Shared code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 export type Side = 'UP' | 'DOWN'
 export type OrderStatus =
   | 'PENDING'

@@ -1,3 +1,15 @@
+"""
+Input: polysignal_lab.app.scheduler, polysignal_lab.app.scheduler.PolySignalScheduler, pytest, polysignal_lab.app.services.runtime_service, polysignal_lab.app.services.runtime_service.ServiceSupervisor
+Output: test_scheduler_exposes_services_and_supervisor, test_scheduler_stops_started_services_when_startup_fails, test_scheduler_does_not_register_telegram_bot_by_default, test_scheduler_registers_telegram_bot_in_init_when_interactive_enabled, _StartedService
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from polysignal_lab.app.scheduler import PolySignalScheduler
 import pytest
 

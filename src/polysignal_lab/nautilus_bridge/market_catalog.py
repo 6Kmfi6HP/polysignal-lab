@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, typing
+Output: polymarket_instrument_id, InstrumentTokenMeta, MarketPairMeta, MarketCatalog
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections.abc import Callable

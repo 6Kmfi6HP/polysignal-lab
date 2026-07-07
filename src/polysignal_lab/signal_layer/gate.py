@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Callable, dataclasses, dataclasses.dataclass, dataclasses.field, polysignal_lab.config, polysignal_lab.config.BinanceDataConfig
+Output: GateDecision, GateRejection, SignalGate
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import logging

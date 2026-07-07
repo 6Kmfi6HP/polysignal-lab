@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections, collections.deque, datetime, datetime.UTC, datetime.datetime, polysignal_lab.alpha.state, polysignal_lab.alpha.state.json_safe_state, polysignal_lab.alpha.state.restore_utc_datetime
+Output: test_json_safe_state_encodes_domain_values_deterministically, test_restore_utc_datetime_requires_iso_string, test_json_safe_state_normalizes_aware_non_utc_datetime_to_utc
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections import deque

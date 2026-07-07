@@ -1,0 +1,119 @@
+## 📁 tests/
+
+**Architecture**:
+- Application code
+
+**Files**:
+- `test_websocket_contracts.py` - Exports test_reseed_marks_requested_tokens_missing_from_successful_response_stale and 10 more
+- `test_vwap_momentum.py` - Exports test_vwap_momentum_emits_buy_up_and_down and 12 more
+- `test_telegram_validation.py` - Exports test_scheduler_uses_configured_telegram_publish_timeout and 8 more
+- `test_telegram_bot_service.py` - Exports test_telegram_bot_registers_ptb_handlers and 30 more
+- `test_telegram_bot_config.py` - Exports test_telegram_interactive_config_defaults_fail_closed and 2 more
+- `test_strategy_stats.py` - Exports test_strategy_leaderboard_win_rate_counts_voids_as_closed and 2 more
+- `test_strategy_readiness.py` - Exports test_readiness_rejects_unsupported_asset_before_evaluate and 7 more
+- `test_strategy_execution_order.py` - Exports test_strategy_execution_defaults_preserve_yaml_order and 10 more
+- `test_strategies.py` - Exports test_ptb_diff_generates_buy_up and 13 more
+- `test_storage_restore.py` - Exports test_sqlite_store_restores_wallet_reports_and_leaderboard and 2 more
+- `test_storage_reporting_publish.py` - Exports test_formatter_signal_message_within_limit and 13 more
+- `test_spot_feed_service.py` - Exports test_spot_feed_stop_delegates_to_adapter and 1 more
+- `test_signal_pipeline_manual_disable.py` - Test Layer - Unit/Integration tests
+- `test_signal_pipeline_equivalence.py` - Exports test_stage_split_preserves_serial_accepted_signals and 11 more
+- `test_signal_pipeline.py` - Exports test_signal_pipeline_evaluate_snapshot_is_removed and 3 more
+- `test_signal_layer.py` - Exports test_signal_gate_accepts_good_signal and 4 more
+- `test_signal_gate.py` - Exports test_signal_gate_records_prd_reason_details and 11 more
+- `test_signal_arbiter.py` - Exports candidate_factory and 2 more
+- `test_settlement_sources.py` - Exports test_chain_evidence_wins_and_records_conflicting_gamma and 5 more
+- `test_settlement_resolver.py` - Exports test_resolver_collects_chain_gamma_and_ws and 1 more
+- `test_settlement_config.py` - Exports test_default_settlement_config and 1 more
+- `test_settlement.py` - Exports test_paper_settlement_engine_module_is_removed and 2 more
+- `test_scheduler_strategy_readiness.py` - Exports test_nautilus_owned_scheduler_cannot_run_legacy_evaluate_once and 8 more
+- `test_scheduler_settlement_resolution.py` - Exports test_resolved_numeric_half_payout_closes_as_void_with_provenance and 4 more
+- `test_scheduler_services.py` - Exports test_supervisor_starts_and_stops_services_in_reverse_order and 1 more
+- `test_scheduler_reports.py` - Exports test_projection_settlement_publish_timeout_keeps_durable_closed_result and 10 more
+- `test_scheduler_paper.py` - Test Layer - Unit/Integration tests
+- `test_scheduler_lifecycle.py` - Exports test_scheduler_exposes_services_and_supervisor and 4 more
+- `test_scheduler_failure_isolation.py` - Exports test_publish_timeout_does_not_hang_signal_processing and 4 more
+- `test_scheduler_cancelled_markets.py` - Exports test_cancelled_gamma_refresh_reaches_registry_and_storage and 3 more
+- `test_scheduler.py` - Exports test_scheduler_accepts_public_market_data_protocol and 14 more
+- `test_safety.py` - Exports find_forbidden_sdk_imports and 10 more
+- `test_reporting.py` - Exports test_daily_report_includes_strategy_win_rate_and_pnl and 5 more
+- `test_repair_settlement_results.py` - Exports test_audit_finds_open_position_on_resolved_market and 9 more
+- `test_reference_strategy_parity.py` - Exports test_vwap_momentum_prefers_reference_last_trade_price_over_best_ask and 11 more
+- `test_publish_service.py` - Exports test_publish_service_health_starts_ok and 7 more
+- `test_ptb_diff.py` - Exports test_ptb_diff_emits_buy_up_and_down_from_trigger_rows and 9 more
+- `test_price_to_beat_provider.py` - Exports test_ptb_provider_prefers_verified_anchor_over_metadata and 9 more
+- `test_polymarket_clob_rest.py` - Exports test_clob_rest_constructor_does_not_expose_sdk_client and 3 more
+- `test_persistence_service.py` - Exports test_persistence_service_wraps_counts_and_close
+- `test_paper_calibration.py` - Exports test_calibration_buckets_use_signal_confidence_from_paper_flow
+- `test_orderbook_snapshot.py` - Exports test_orderbook_best_bid_ask_spread_depth and 3 more
+- `test_order_intent.py` - Exports test_base_strategy_notify_defaults_are_noops and 15 more
+- `test_nautilus_trading_node_runtime.py` - Exports test_trading_node_exposes_expected_client_ids and 12 more
+- `test_nautilus_strategy_wrappers.py` - Exports test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data and 23 more
+- `test_nautilus_strategy_base.py` - Exports test_native_strategy_on_save_load_delegates_to_core_via_encode_decode and 72 more
+- `test_nautilus_state.py` - Exports test_state_key_uses_polysignal_strategy_version_format and 4 more
+- `test_nautilus_sidecar_actor.py` - Exports test_custom_data_publisher_publishes_spot_without_local_store and 6 more
+- `test_nautilus_safety_boundary.py` - Exports test_default_nautilus_source_avoids_live_execution_symbols and 3 more
+- `test_nautilus_runtime_config.py` - Exports test_runtime_config_defaults_to_nautilus_and_stays_paper_safe and 11 more
+- `test_nautilus_reporting_cache_source.py` - Exports test_report_equity_inputs_prefers_nautilus_cache_reader_over_shadow_wallet and 6 more
+- `test_nautilus_projections.py` - Exports test_project_order_event_uses_nautilus_event_fields and 6 more
+- `test_nautilus_platform_boundary.py` - Exports test_default_import_does_not_require_nautilus and 20 more
+- `test_nautilus_order_mapping.py` - Exports test_taker_fak_maps_to_ioc_limit_at_best_ask_and_checks_depth and 8 more
+- `test_nautilus_observability.py` - Exports test_startup_message_includes_sandbox_book_type and 40 more
+- `test_nautilus_node.py` - Exports test_live_engine_config_builders_import_configs_from_config_module and 48 more
+- `test_nautilus_native_order.py` - Exports test_order_plan_resolves_taker_price_from_best_ask and 13 more
+- `test_nautilus_native_exit.py` - Exports test_evaluate_condition_does_not_run_custom_exit_scan and 1 more
+- `test_nautilus_market_view_assembler.py` - Exports test_assembler_builds_coherent_market_view and 4 more
+- `test_nautilus_market_rotation.py` - Exports test_market_universe_data_round_trips and 23 more
+- `test_nautilus_market_catalog.py` - Exports test_market_catalog_registers_binary_yes_no_pair and 4 more
+- `test_nautilus_instrument_mapping.py` - Exports test_polymarket_instrument_id_uses_nautilus_adapter_helper and 2 more
+- `test_nautilus_full_paper_runtime_smoke.py` - Exports test_full_paper_runtime_builds_node_without_live_execution and 3 more
+- `test_nautilus_exit_policy.py` - Exports test_custom_nautilus_exit_policy_module_is_removed and 1 more
+- `test_nautilus_execution.py` - Exports test_project_source_contains_no_local_paper_symbols
+- `test_nautilus_dependency_boundary.py` - Exports test_default_package_import_does_not_require_nautilus and 2 more
+- `test_nautilus_default_runtime_integration.py` - Exports test_default_runtime_sandbox_client_id_stays_distinct_from_polymarket_venue
+- `test_nautilus_decision_policy.py` - Exports test_decision_policy_preserves_gate_first_failure_reasons and 15 more
+- `test_nautilus_custom_data.py` - Exports test_custom_spot_data_round_trips_dict and 3 more
+- `test_nautilus_cross_market.py` - Exports test_group_assembler_rejects_excessive_skew and 9 more
+- `test_nautilus_cache_reader.py` - Exports test_cache_reader_reads_orders_from_cache and 9 more
+- `test_nautilus_cache_market_data.py` - Exports test_cache_market_data_provider_reads_book_without_local_cache and 7 more
+- `test_market_universe_service.py` - Exports test_market_universe_refresh_keeps_registry_empty_when_no_markets and 15 more
+- `test_market_parsing.py` - Exports test_gamma_resolved_payload_sets_resolved_outcome and 7 more
+- `test_market_discovery_and_feeds.py` - Exports test_market_discovery_flattens_and_parses_crypto_updown and 2 more
+- `test_market_data.py` - Exports test_fake_market_data_client_matches_protocol and 28 more
+- `test_late_consensus.py` - Exports test_late_consensus_emits_multi_asset_signal_with_metrics and 13 more
+- `test_integration_smoke.py` - Exports test_fake_public_api_outage_degrades_without_unhandled_exception and 2 more
+- `test_healthcheck.py` - Exports test_liveness_passes_for_fresh_heartbeat and 20 more
+- `test_health_metrics.py` - Exports test_health_registry_aggregates_component_status_and_transitions and 13 more
+- `test_gamma_resolution_client.py` - Exports test_gamma_client_fetches_exact_market_by_id and 2 more
+- `test_function_size_boundaries.py` - Exports test_runtime_functions_stay_reviewable
+- `test_dashboard.py` - Exports test_dashboard_readonly_endpoints_return_stored_data and 7 more
+- `test_ctf_resolution_client.py` - Exports test_denominator_zero_returns_unresolved_without_numerators and 3 more
+- `test_cross_market_coordination.py` - Exports test_cross_market_context_contains_all_relation_legs and 6 more
+- `test_config_security.py` - Exports test_settings_load_without_secret_key_material and 2 more
+- `test_config.py` - Exports test_load_settings_records_explicit_strategy_names and 13 more
+- `test_commit_message_policy.py` - Exports test_accepts_project_conventional_commit_with_scope and 4 more
+- `test_cli_runtime_modes.py` - Exports test_cli_help_lists_supported_runtime_modes_without_removed_alias and 9 more
+- `test_book_feed_service.py` - Exports test_book_feed_reseed_marks_missing_books_stale and 2 more
+- `test_anchor_price_service.py` - Exports test_window_for_market_prefers_event_window and 5 more
+- `test_alpha_vwap_momentum.py` - Exports test_vwap_core_matches_legacy_candidate and 9 more
+- `test_alpha_types.py` - Exports test_market_view_exposes_side_books_and_asks and 5 more
+- `test_alpha_state.py` - Exports test_json_safe_state_encodes_domain_values_deterministically and 2 more
+- `test_alpha_skew_mean_reversion.py` - Exports test_skew_mean_reversion_core_matches_legacy_candidate
+- `test_alpha_ptb_diff.py` - Exports test_ptb_alpha_core_matches_legacy_strategy_for_equivalent_up_input and 5 more
+- `test_alpha_pre_order_market.py` - Exports test_pre_order_core_matches_legacy_candidate and 4 more
+- `test_alpha_one_cent_buy.py` - Exports test_one_cent_buy_core_matches_legacy_candidate and 1 more
+- `test_alpha_ninety_nine_cent_sniper.py` - Exports test_ninety_nine_cent_sniper_core_matches_legacy_candidate and 1 more
+- `test_alpha_mid_price_sizing.py` - Exports test_mid_price_sizing_core_matches_legacy_candidate and 1 more
+- `test_alpha_low_side_dual_reversion.py` - Exports test_low_side_dual_core_matches_legacy_candidate and 2 more
+- `test_alpha_late_consensus.py` - Exports test_late_consensus_core_matches_legacy_candidate and 4 more
+- `test_alpha_fibonacci.py` - Exports test_fibonacci_core_matches_legacy_candidate and 1 more
+- `test_alpha_equivalence_harness.py` - Exports test_normalizers_compare_semantic_fields_only and 2 more
+- `test_alpha_dump_hedge.py` - Exports test_dump_hedge_core_matches_legacy_candidate and 3 more
+- `test_alpha_cross_market.py` - Exports test_cross_market_group_core_matches_legacy_group_candidates and 2 more
+- `test_alpha_binary_momentum.py` - Exports test_binary_momentum_core_matches_legacy_candidate and 1 more
+- `nautilus_optional.py` - Exports require_nautilus
+- `factories.py` - Exports sample_market and 8 more
+- `conftest.py` - Exports settings and 4 more
+- `alpha_equivalence.py` - Exports normalize_candidate and 4 more
+
+🔄 **Self-reference**: When files in this folder change, update this index and PROJECT_INDEX.md

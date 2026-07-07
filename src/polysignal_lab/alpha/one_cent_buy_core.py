@@ -1,11 +1,15 @@
-"""Pure alpha core for the one-cent buy passive-limit strategy.
-
-Decision logic moved verbatim from ``strategies/one_cent_buy.py``. The
-``_submitted_levels`` guard is keyed by ``(market_id, price)`` and is ONLY
-advanced by ``on_order_accepted``: candidate creation does not consume it, so
-repeated ``evaluate`` calls keep emitting until an order is accepted for that
-level.
 """
+Input: __future__, __future__.annotations, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.OrderIntentSpec, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side
+Output: OneCentBuyAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

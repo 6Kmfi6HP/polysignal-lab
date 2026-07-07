@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, asyncio, sys, collections.abc, collections.abc.Coroutine, datetime, datetime.UTC, datetime.datetime, datetime.timedelta
+Output: test_market_universe_data_round_trips, test_market_universe_data_is_immutable, test_market_metadata_is_immutable, test_market_rotation_actor_initial_publish_and_diff_executes_intercepted_ptb_coroutines, test_market_rotation_actor_refresh_publishes_changed_ptb_for_still_active_market, test_market_rotation_actor_refresh_skips_unchanged_ptb_for_still_active_market, test_market_rotation_actor_refresh_continues_after_single_market_ptb_failure, test_market_rotation_actor_refresh_checks_still_active_ptb_sequentially, test_market_rotation_actor_keeps_last_good_state_on_publish_failure, test_market_rotation_actor_refresh_timer_marks_down_refresh_failures
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import asyncio
@@ -656,7 +668,7 @@ def test_market_rotation_actor_refresh_timer_marks_down_refresh_failures() -> No
         health=health,
     )
 
-    actor._on_refresh_timer()
+    asyncio.run(actor._refresh_async())
 
     assert actor._refresh_in_flight is False
     assert health.down == [
@@ -900,7 +912,7 @@ def test_market_rotation_actor_refresh_timer_runs_sync_after_removing_async_offl
     monkeypatch.setattr(actor, "_apply_refreshed_markets", apply)
     monkeypatch.setattr(actor, "_publish_price_to_beat_batch_sync", publish)
 
-    actor._on_refresh_timer()
+    asyncio.run(actor._refresh_async())
 
     assert calls == ["apply", "ptb"]
     assert actor._refresh_in_flight is False
@@ -973,7 +985,7 @@ def test_market_universe_service_refresh_once_sync_uses_sync_discovery_and_close
     assert service.refresh_completed is True
 
 
-def test_market_rotation_actor_refresh_timer_without_running_loop_publishes_ptb_sync(
+def test_market_rotation_actor_refresh_async_publishes_ptb(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     published: list[object] = []
@@ -1001,7 +1013,7 @@ def test_market_rotation_actor_refresh_timer_without_running_loop_publishes_ptb_
 
     monkeypatch.setattr(actor.ptb_provider, "get_sync", fake_ptb)
 
-    actor._on_refresh_timer()
+    asyncio.run(actor._refresh_async())
 
     assert any(isinstance(item, PolySignalMarketUniverseData) for item in published)
     assert any(isinstance(item, PolySignalMarketMetaData) for item in published)

@@ -1,3 +1,15 @@
+/**
+ * Input: { createContext, useEffect, useState } from 'react', { fonts } from '@/config/fonts', { getCookie, setCookie, removeCookie } from '@/lib/cookies', react, @/config/fonts, @/lib/cookies
+ * Output: FontProvider
+ * Pos: Application code
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { createContext, useEffect, useState } from 'react'
 import { fonts } from '@/config/fonts'
 import { getCookie, setCookie, removeCookie } from '@/lib/cookies'

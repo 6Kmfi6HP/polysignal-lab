@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, posixpath, re, pathlib, pathlib.Path, pathlib.PurePosixPath, urllib.request, urllib.request.urlopen
+Output: fetch_text, title_from_markdown, normalize_posix, docs_url_from_repo_path, rewrite_relative_links, build_document, write_index, main
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import posixpath

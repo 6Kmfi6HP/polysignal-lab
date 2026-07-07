@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, types, types.SimpleNamespace, unittest.mock, unittest.mock.AsyncMock, unittest.mock.Mock, pytest, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting.check_settlements
+Output: test_resolved_numeric_half_payout_closes_as_void_with_provenance, test_unknown_settlement_skips_open_projection, test_cancelled_decision_uses_refund_path, test_check_settlements_is_idempotent_per_position, test_chain_conflict_settlement_logs_system_event
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from types import SimpleNamespace

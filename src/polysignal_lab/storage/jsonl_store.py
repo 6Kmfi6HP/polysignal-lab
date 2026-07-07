@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, json, pathlib, pathlib.Path, threading, threading.Lock, typing, typing.Any, polysignal_lab.utils
+Output: JSONLStore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import json

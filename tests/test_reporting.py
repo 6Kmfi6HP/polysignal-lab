@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.date, typing, typing.assert_never, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode
+Output: test_daily_report_includes_strategy_win_rate_and_pnl, test_daily_report_includes_strategy_asset_timeframe_calibration, test_daily_report_aggregates_paper_execution_quality, test_daily_report_normalizes_legacy_raw_paper_reject_reason, test_daily_report_counts_cancelled_rejects_with_reasons, ResultSpec
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

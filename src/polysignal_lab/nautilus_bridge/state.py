@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, json, collections.abc, collections.abc.Mapping, collections.abc.Sequence, typing, typing.TypeAlias, typing.cast
+Output: state_key, encode_state, decode_state, StateSchemaError
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import json

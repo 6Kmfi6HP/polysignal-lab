@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market, polysignal_lab.domain.market.OutcomeToken, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_bridge.market_catalog.MarketCatalog, polysignal_lab.nautilus_bridge.market_catalog.MarketPairMeta
+Output: test_market_catalog_registers_binary_yes_no_pair, test_market_catalog_token_meta_returns_registered_side_metadata, test_market_catalog_rejects_non_binary_market, test_market_catalog_derives_instrument_id_from_condition_and_token, test_market_catalog_uses_injected_instrument_id_resolver
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import pytest

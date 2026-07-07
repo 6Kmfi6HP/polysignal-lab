@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, pytest, polysignal_lab.nautilus_runtime.market_data, polysignal_lab.nautilus_runtime.market_data.(
+Output: test_custom_spot_data_round_trips_dict, test_custom_price_to_beat_data_round_trips_dict, test_custom_market_meta_data_round_trips_dict, test_register_polysignal_data_types_is_idempotent
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import pytest

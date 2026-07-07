@@ -1,3 +1,15 @@
+"""
+Input: polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.config.load_settings
+Output: test_default_settlement_config, test_settlement_env_override
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from polysignal_lab.config import Settings, load_settings
 
 

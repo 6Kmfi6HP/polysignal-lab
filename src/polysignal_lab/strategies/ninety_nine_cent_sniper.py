@@ -1,9 +1,15 @@
-"""NinetyNineCentSniperStrategy — 99c Sniper 临近结算高概率狙击策略 (adapter).
-
-Decision logic now lives in :class:`NinetyNineCentSniperAlphaCore`. Legacy
-class name, config and ``name`` are preserved. The sniped-side guard is
-advanced on order acceptance, not during candidate generation.
 """
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, polysignal_lab.alpha.ninety_nine_cent_sniper_core, polysignal_lab.alpha.ninety_nine_cent_sniper_core.NinetyNineCentSniperAlphaCore, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.decision_to_signal, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot, polysignal_lab.alpha.types
+Output: NinetyNineCentSniperConfig, NinetyNineCentSniperStrategy
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

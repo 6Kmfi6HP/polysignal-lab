@@ -1,9 +1,15 @@
-"""Pure alpha core for the skew mean-reversion strategy.
-
-Extracted verbatim from ``strategies/skew_mean_reversion.py``: the decision
-logic in ``evaluate`` is moved, not rewritten. No scheduler, Nautilus, Telegram,
-SQLite, wallet, or snapshot machinery.
 """
+Input: __future__, __future__.annotations, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side
+Output: SkewMeanReversionAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.alpha.ninety_nine_cent_sniper_core, polysignal_lab.alpha.ninety_nine_cent_sniper_core.NinetyNineCentSniperAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.strategies.config, polysignal_lab.strategies.config.NinetyNineCentSniperConfig, polysignal_lab.strategies.ninety_nine_cent_sniper, polysignal_lab.strategies.ninety_nine_cent_sniper.NinetyNineCentSniperStrategy
+Output: test_ninety_nine_cent_sniper_core_matches_legacy_candidate, test_ninety_nine_cent_sniper_side_marks_only_after_order_acceptance
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.alpha.ninety_nine_cent_sniper_core import NinetyNineCentSniperAlphaCore

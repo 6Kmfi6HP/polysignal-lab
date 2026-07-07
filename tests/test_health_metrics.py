@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.observability.health, polysignal_lab.observability.health.HealthRegistry, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.sqlite_store.SQLiteStore
+Output: test_health_registry_aggregates_component_status_and_transitions, test_health_registry_set_accepts_uppercase_status_and_error_details, test_health_registry_metric_helpers_preserve_status, test_sqlite_restores_latest_system_event_payload, test_scheduler_records_market_data_health, test_scheduler_records_gate_rejections_and_persists_health_snapshot, test_refresh_markets_marks_jsonl_failure_without_sqlite_down, test_persist_state_marks_state_failure, test_clob_ws_idle_after_empty_market_refresh_is_ok, test_binance_ws_requires_every_configured_spot
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.observability.health import HealthRegistry

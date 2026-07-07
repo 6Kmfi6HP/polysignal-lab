@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, pydantic, pydantic.JsonValue, polysignal_lab.app, polysignal_lab.app.scheduler_health, polysignal_lab.app.readonly_smoke_public, polysignal_lab.app.readonly_smoke_public.book_from_payload, polysignal_lab.app.readonly_smoke_public.spot_from_payload, polysignal_lab.app.readonly_smoke_types
+Output: check_scheduler_snapshot, check_health_snapshot, check_dashboard_reads, check_safety_scan, failure_count, close_scheduler_clients, StaticPriceToBeatProvider
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from pydantic import JsonValue

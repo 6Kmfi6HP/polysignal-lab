@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, pydantic, pydantic.BaseModel
+Output: Trade
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from pydantic import BaseModel

@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, datetime, datetime.datetime, polysignal_lab.alpha.types, polysignal_lab.alpha.types.MarketGroupView, polysignal_lab.alpha.types.MarketView
+Output: MarketGroupViewAssembler
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections.abc import Mapping

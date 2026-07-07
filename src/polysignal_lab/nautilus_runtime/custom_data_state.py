@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, typing, typing.Protocol, polysignal_lab.alpha.types
+Output: PriceToBeatView, CustomDataApplyResult, CustomDataSnapshotProvider, StrategyCustomDataState
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass

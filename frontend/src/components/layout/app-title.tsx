@@ -1,3 +1,15 @@
+/**
+ * Input: { Link } from '@tanstack/react-router', { Menu, X } from 'lucide-react', { cn } from '@/lib/utils', {, { Button } from '../ui/button', @tanstack/react-router, lucide-react, @/lib/utils, ../ui/button, @/components/ui/sidebar
+ * Output: AppTitle, ToggleSidebar
+ * Pos: UI Layer - UI components
+ *
+ * 🔄 Self-reference: When this file changes, update this header
+ */
+
+
+
+
+
 import { Link } from '@tanstack/react-router'
 import { Menu, X } from 'lucide-react'
 import { cn } from '@/lib/utils'

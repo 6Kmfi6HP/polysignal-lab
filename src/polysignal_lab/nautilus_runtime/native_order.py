@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Sequence, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, decimal
+Output: submit_approved_decision, NautilusOrderFactory, OrderSubmittingStrategy
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence

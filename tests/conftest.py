@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, pytest, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.data.price_to_beat_provider, polysignal_lab.data.price_to_beat_provider.PriceToBeatProvider, polysignal_lab.data.state, polysignal_lab.data.state.OrderBookRegistry, polysignal_lab.data.state.SpotRegistry
+Output: settings, market, books, spots, snapshot
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 import pytest

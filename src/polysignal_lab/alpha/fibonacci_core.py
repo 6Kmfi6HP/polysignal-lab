@@ -1,11 +1,15 @@
-"""Pure alpha core for the Fibonacci retracement strategy.
-
-``ZigZagDetector`` and ``FibonacciCalculator`` are moved here from
-``strategies/fibonacci_bot.py`` (the legacy module re-exports them so existing
-callers keep working). Decision logic is moved, not rewritten. The core is a
-``StatefulAlphaCore``: ``save_state``/``load_state`` round-trip candle history,
-ZigZag detector fields and momentum stats via ``json_safe_state`` (no pickle).
 """
+Input: __future__, __future__.annotations, collections, collections.defaultdict, collections.deque, typing, typing.Any, typing.Mapping, polysignal_lab.alpha.state, polysignal_lab.alpha.state.json_safe_state
+Output: _RollingPriceStats, ZigZagDetector, FibonacciCalculator, FibonacciAlphaCore
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 
 from __future__ import annotations
 

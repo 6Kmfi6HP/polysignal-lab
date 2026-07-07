@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, typing, typing.Protocol, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.OrderBook
+Output: PublicMarketDataClient
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from typing import Protocol

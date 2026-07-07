@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, alpha_equivalence, alpha_equivalence.normalize_candidate, alpha_equivalence.normalize_decision, factories, factories.sample_snapshot, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot, polysignal_lab.alpha.types
+Output: test_normalizers_compare_semantic_fields_only, test_sample_snapshot_assembles_valid_market_view, test_sample_snapshot_spot_price_override_assembles_market_view
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 # NOTE: bare imports (not `from tests.X import`) because the installed

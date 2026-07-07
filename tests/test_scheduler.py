@@ -1,3 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, pathlib, pathlib.Path, pytest, polysignal_lab.app, polysignal_lab.app.scheduler, polysignal_lab.app.scheduler.PolySignalScheduler
+Output: test_scheduler_accepts_public_market_data_protocol, test_refresh_markets_before_starting_streams, test_live_telegram_settings_validate_before_market_discovery, test_initial_discovery_failure_prevents_stream_startup, test_live_telegram_validation_runs_before_strategy_and_paper_initialization, test_market_ws_subscribes_after_token_discovery, test_empty_market_refresh_does_not_subscribe_market_ws, test_market_ws_resubscribes_when_token_set_changes, test_scheduler_shared_is_importable, test_scheduler_reporting_has_store_paper_result
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
+
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -298,12 +310,13 @@ async def test_market_ws_resubscribes_when_token_set_changes(tmp_path: Path) -> 
 # ── Dead code removal verification ──
 
 
-def test_scheduler_runtime_no_tick_resting_orders() -> None:
-    """_tick_resting_orders was a no-op function and has been removed."""
-    import polysignal_lab.app.scheduler_runtime as sr
-    assert not hasattr(sr, "_tick_resting_orders"), (
-        "_tick_resting_orders no-op should have been removed"
-    )
+def test_scheduler_shared_is_importable() -> None:
+    """scheduler_runtime.py stub has been removed; scheduler_shared still works."""
+    from polysignal_lab.app.scheduler_shared import _configured_report_date, _generate_iteration_report
+    from polysignal_lab.app.scheduler_reporting import _store_paper_result
+    assert _configured_report_date is not None
+    assert _generate_iteration_report is not None
+    assert _store_paper_result is not None
 
 
 def test_scheduler_reporting_has_store_paper_result() -> None:
