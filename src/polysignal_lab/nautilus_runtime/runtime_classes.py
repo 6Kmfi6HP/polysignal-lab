@@ -1,13 +1,12 @@
 """
-Input: __future__, __future__.annotations
-Output: NautilusPolySignalNativeStrategy, NautilusMarketRotationActor, LiveDecisionPolicyActor
-Pos: Application code — backward-compat aliases
-
-MarketRotationActor now inherits Actor directly; PolySignalNativeStrategy now
-inherits Strategy directly. This file retains aliases for existing consumers.
+Input: __future__, __future__.annotations, nautilus_trader.common.actor, nautilus_trader.common.actor.Actor, nautilus_trader.config, nautilus_trader.config.ActorConfig, polysignal_lab.nautilus_runtime.decision_policy_actor, polysignal_lab.nautilus_runtime.decision_policy_actor.(, polysignal_lab.nautilus_runtime.market_rotation, polysignal_lab.nautilus_runtime.market_rotation.(
+Output: LiveDecisionPolicyActor
+Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

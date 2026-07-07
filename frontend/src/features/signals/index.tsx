@@ -10,6 +10,8 @@
 
 
 
+
+
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { Search } from '@/components/search'

@@ -10,6 +10,8 @@
 
 
 
+
+
 import { SearchProvider } from '@/context/search-provider'
 import { ThemeProvider } from '@/context/theme-provider'
 import * as client from '@/lib/api/client'

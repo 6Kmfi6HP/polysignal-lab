@@ -10,6 +10,8 @@
 
 
 
+
+
 import { type SVGProps } from 'react'
 
 export function IconThemeLight(props: SVGProps<SVGSVGElement>) {

@@ -8,6 +8,8 @@ Pos: Application code
 
 
 
+
+
 from __future__ import annotations
 
 from collections import deque
@@ -50,6 +52,7 @@ from polysignal_lab.nautilus_runtime.native_order import (
     OrderSubmittingStrategy,
     submit_approved_decision,
 )
+from polysignal_lab.nautilus_runtime.strategy.subscriptions import MarketSubscriptionState
 from polysignal_lab.nautilus_runtime.strategy.helpers import (
     DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
     DEFAULT_NATIVE_DATA_NAMES,
@@ -84,115 +87,6 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _value,
     classify_project_owned_data,
 )
-from polysignal_lab.nautilus_runtime.strategy.subscriptions import MarketSubscriptionState
-
-
-class _SubscriptionManager:
-    """Encapsulates subscription management for PolySignalNativeStrategy.
-
-    Owns the MarketSubscriptionState and handles subscribe/unsubscribe
-    dispatch for market data (quote_ticks, trade_ticks, order_book_deltas)
-    and custom data type subscription via MRO-based delegation.
-    """
-
-    def __init__(
-        self,
-        strategy: object,
-        registry: MarketCatalog,
-        data_names: tuple[str, ...],
-        book_type: str,
-        startup_condition_ids: tuple[str, ...],
-    ) -> None:
-        self._strategy: object = strategy
-        self._registry: MarketCatalog = registry
-        self._data_names: tuple[str, ...] = data_names
-        self._book_type: str = book_type
-        self._condition_ids: tuple[str, ...] = startup_condition_ids
-        self._state: MarketSubscriptionState = MarketSubscriptionState()
-
-    @property
-    def state(self) -> MarketSubscriptionState:
-        return self._state
-
-    def subscribe_market_conditions(
-        self,
-        condition_ids: Sequence[str],
-        active_condition_ids: set[str],
-    ) -> None:
-        """Subscribe all instruments for the given conditions."""
-        if self._registry is None:
-            return
-        for condition_id in condition_ids:
-            if condition_id not in active_condition_ids:
-                continue
-            if condition_id in self._state.wire_condition_ids:
-                self._state.pending_metadata_condition_ids.discard(condition_id)
-                self._state.pending_subscribe_condition_ids.discard(condition_id)
-                self._state.retained_wire_condition_ids.discard(condition_id)
-                continue
-            instrument_ids = _instrument_ids(self._registry, (condition_id,))
-            if not instrument_ids:
-                self._state.pending_metadata_condition_ids.add(condition_id)
-                self._state.pending_subscribe_condition_ids.discard(condition_id)
-                continue
-            self._state.pending_metadata_condition_ids.discard(condition_id)
-            for instrument_id in instrument_ids:
-                instrument_text = _identifier_text(instrument_id)
-                if instrument_text is not None:
-                    self._subscribe_market_instrument(instrument_text)
-            self._state.pending_subscribe_condition_ids.discard(condition_id)
-            self._state.retained_wire_condition_ids.discard(condition_id)
-            self._state.wire_condition_ids.add(condition_id)
-
-    def _subscribe_market_instrument(self, instrument_id: str) -> None:
-        """Subscribe to market data for a specific instrument."""
-        for data_name in self._data_names:
-            method = getattr(self._strategy, f"subscribe_{data_name}", None)
-            if callable(method):
-                _ = method(instrument_id)
-        if self._book_type == "L1_MBP":
-            request_l1 = getattr(self._strategy, "request_order_book_snapshot", None)
-            if callable(request_l1):
-                _ = request_l1(instrument_id)
-
-    def unsubscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
-        """Unsubscribe all instruments for the given conditions."""
-        if self._registry is None:
-            return
-        for condition_id in condition_ids:
-            instrument_ids = _instrument_ids(self._registry, (condition_id,))
-            for instrument_id in instrument_ids:
-                instrument_text = _identifier_text(instrument_id)
-                if instrument_text is not None:
-                    self._unsubscribe_market_instrument(instrument_text)
-            self._state.wire_condition_ids.discard(condition_id)
-            self._state.retained_wire_condition_ids.discard(condition_id)
-            self._state.pending_subscribe_condition_ids.discard(condition_id)
-            self._state.pending_metadata_condition_ids.discard(condition_id)
-
-    def _unsubscribe_market_instrument(self, instrument_id: str) -> None:
-        """Unsubscribe from market data for a specific instrument."""
-        for data_name in self._data_names:
-            method = getattr(self._strategy, f"unsubscribe_{data_name}", None)
-            if callable(method):
-                _ = method(instrument_id)
-
-    def subscribe_data(self, data_type: object) -> None:
-        """Delegate to parent Strategy.subscribe_data() via MRO.
-
-        Replaces the previous getattr-based dispatch (subscribe_{data_type})
-        with a direct call to the Nautilus base class subscribe_data method,
-        found by walking the strategy's MRO past PolySignalNativeStrategy.
-        """
-        mro = type(self._strategy).mro()
-        try:
-            base_index = mro.index(PolySignalNativeStrategy) + 1
-        except ValueError:
-            return
-        base_subscribe = getattr(mro[base_index], "subscribe_data", None)
-        if callable(base_subscribe):
-            base_subscribe(self._strategy, data_type)
-
 
 class PolySignalNativeStrategy(Strategy):
     """Nautilus callback-shaped strategy wrapper around a PolySignal alpha core."""
@@ -240,13 +134,6 @@ class PolySignalNativeStrategy(Strategy):
         self.observability: _Observability | None = observability
         self.cache_reader: object | None = None
         self.progress_callback: Callable[[str], None] | None = progress_callback
-        self._subscription_manager: _SubscriptionManager = _SubscriptionManager(
-            strategy=self,
-            registry=registry,
-            data_names=self.data_names,
-            book_type=self.book_type,
-            startup_condition_ids=self.condition_ids,
-        )
         self._initialize_runtime_state(registry, unsubscribe_exited=unsubscribe_exited)
 
     def _initialize_runtime_state(

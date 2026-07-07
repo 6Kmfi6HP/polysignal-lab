@@ -1,10 +1,12 @@
 """
 Input: __future__, __future__.annotations, asyncio, importlib, logging, sys, collections.abc, collections.abc.Callable, collections.abc.Sequence, dataclasses
-Output: build_live_node, build_nautilus_runtime, _TraderLike, _Disposable, _NautilusNodeLike, _NativeStrategyLike, _EmptyBookDataProvider, _StaticMarketUniverse, NautilusRuntimeBundle
+Output: build_nautilus_runtime_context, build_live_node, build_nautilus_runtime, _TraderLike, _Disposable, _NautilusNodeLike, _NativeStrategyLike, _EmptyBookDataProvider, _StaticMarketUniverse, NautilusRuntimeContext
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -38,9 +40,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.observability import ObservabilityActor
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
-from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.formatter import MessageFormatter
-from polysignal_lab.signal_layer.gate import SignalGate
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
@@ -112,8 +112,6 @@ class NautilusRuntimeContext:
     publish_service: PublishService
     sqlite: SQLiteStore
     signal_pipeline: SignalPipeline
-    gate: SignalGate
-    consensus: ConsensusEngine
     discovery: MarketDiscovery
     logger: logging.Logger
 
@@ -148,11 +146,6 @@ def build_nautilus_runtime_context(
         spots: SpotRegistry = field(default_factory=SpotRegistry)
 
     ctx = ServiceContext(settings=settings)
-    gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
-    consensus = ConsensusEngine(
-        settings.signal.consensus_window_sec,
-        settings.signal.consensus_enabled,
-    )
     formatter = MessageFormatter(settings.telegram.max_message_chars)
     publisher = TelegramPublisher(settings.telegram)
     health = HealthRegistry()
@@ -171,8 +164,8 @@ def build_nautilus_runtime_context(
     )
     signal_pipeline = SignalPipeline(
         [],
-        gate,
-        consensus,
+        None,
+        None,
         persistence,
         logger=logging.getLogger('polysignal_lab.scheduler'),
     )
@@ -191,8 +184,6 @@ def build_nautilus_runtime_context(
         publish_service=publish_service,
         sqlite=sqlite,
         signal_pipeline=signal_pipeline,
-        gate=gate,
-        consensus=consensus,
         discovery=discovery,
         logger=logging.getLogger('polysignal_lab.scheduler'),
     )

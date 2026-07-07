@@ -1,26 +1,22 @@
 """
-Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Sequence, typing, typing.Any, typing.cast
-Output: _disabled_strategy_names_from_services, _seed_policy_control_from_services, _initialize_services_schedule
+Input: __future__, __future__.annotations, logging, typing, typing.Any, typing.cast, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.signal_layer.arbiter, polysignal_lab.signal_layer.arbiter.SignalArbiter
+Output: None
 Pos: Application code
-
-Bridge between the PolySignalServiceBundle and Nautilus-native runtime.
-Renamed from "scheduler bridge" — the scheduler no longer exists.
 
 🔄 Self-reference: When this file changes, update this header
 """
 
 
 
+
+
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
 from typing import Any, cast
 
 from polysignal_lab.config import Settings
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
-from polysignal_lab.strategies.execution import StrategyScheduleEntry
 
 logger = logging.getLogger(__name__)
 
@@ -43,33 +39,6 @@ def _disabled_strategy_names_from_services(
         for name in (str(raw_name) for raw_name in cast(list[object], disabled_raw))
         if name in known_strategy_names
     )
-
-
-def _seed_policy_control_from_services(
-    policy: DecisionPolicyActor,
-    services: object,
-) -> None:
-    """Transfer configuration state and signal-layer instances from services to policy.
-
-    Shares signal-layer instances (SignalGate/ConsensusEngine/SignalArbiter)
-    between the service bundle and the policy so that:
-    * ``policy.evaluate()`` mutates the same gate (deduper) and consensus
-      that state persistence snapshots — no stale dedupe state.
-    * The arbiter set during initialization becomes the policy's active arbiter.
-    """
-    policy.gate = getattr(services, "gate", None) or policy.gate
-    policy.arbiter = getattr(services, "arbiter", None) or policy.arbiter
-    policy.consensus = getattr(services, "consensus", None) or policy.consensus
-
-    schedule = cast(Sequence[StrategyScheduleEntry], getattr(services, "strategy_schedule", None))
-    if schedule is None:
-        return
-    policy.strategy_dependencies = {
-        entry.name: tuple(entry.depends_on) for entry in schedule
-    }
-    known_strategy_names = {entry.name for entry in schedule}
-    for name in _disabled_strategy_names_from_services(services, known_strategy_names):
-        policy.set_strategy_enabled(name, False)
 
 
 def _initialize_services_schedule(services: object) -> None:

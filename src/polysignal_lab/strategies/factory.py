@@ -1,13 +1,12 @@
 """
-Input: __future__, __future__.annotations
+Input: __future__, __future__.annotations, polysignal_lab.config, polysignal_lab.config.StrategyConfig
 Output: build_strategies, build_strategy
-Pos: Application code — RETIRED
-
-Legacy strategy factory that instantiated BaseStrategy subclasses.
-All strategies now use AlphaCore via Nautilus-native routing.
+Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

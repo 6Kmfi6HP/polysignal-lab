@@ -220,6 +220,43 @@ These are the patterns I see most often. If you catch yourself doing any of thes
 
 7. **The Runaway Refactor.** You start fixing one thing. It touches another thing. That touches another thing. Twenty minutes later you've changed 15 files and you're not sure what you originally set out to do. If a fix is cascading, stop. Tell the user what's happening. Get buy-in before continuing.
 
+## 仓库布局
+
+```
+polysignal-lab/
+├── .claude/          # Claude Code 配置 (settings, hooks, skills, workflows)
+│   ├── CLAUDE.md     # CodeGraph + Fast Context 指令
+│   ├── settings.json # 权限, worktree配置, hooks
+│   ├── skills/       # 按需加载的领域技能
+│   └── hooks/        # 自动化钩子
+├── src/polysignal_lab/  # Python 后端 (FastAPI, NautilusTrader集成)
+│   ├── app/          # 应用入口 + API 路由
+│   ├── domain/       # 领域模型与业务逻辑
+│   ├── signal_layer/ # 信号生成层
+│   ├── strategies/   # 交易策略
+│   ├── nautilus_runtime/ # NautilusTrader 运行时
+│   ├── nautilus_bridge/  # 桥接适配层
+│   ├── alpha/        # Alpha 研究模块
+│   ├── data/         # 数据处理
+│   ├── storage/      # 存储层
+│   ├── paper/        # 纸面交易
+│   ├── observability/# 可观测性 (Telegram QA, safety scan)
+│   ├── publish/      # 发布模块
+│   └── dashboard/    # 后端仪表盘支持
+├── frontend/         # React + Vite 前端 (Polysignal Dashboard)
+├── tests/            # Python 测试
+├── docs/             # 文档 + Nautilus 参考
+├── config/           # 配置文件
+├── scripts/          # 工具脚本
+├── data/             # 运行时数据
+├── logs/             # 日志输出
+└── workflows/        # 工作流定义
+```
+
+- Python 命令在仓库根目录运行；前端命令在 `frontend/` 目录运行。
+- `docs/nautilus_reference/` 包含 NautilusTrader 开发者指南。
+- `data/`、`logs/`、`state/` 是运行时目录，通常不提交。
+
 ## Agent skills
 
 ### Issue 追踪器

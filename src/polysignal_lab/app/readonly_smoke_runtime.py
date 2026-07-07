@@ -1,14 +1,12 @@
 """
-Input: none
-Output: none
-Pos: Application code — RETIRED with PolySignalScheduler
-
-This smoke-test runtime was coupled to the legacy PolySignalScheduler.
-The Nautilus runtime provides equivalent health probes via
-``polysignal_lab.nautilus_runtime.node_probes``.
+Input: None
+Output: None
+Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 def __getattr__(name: str) -> object:
     raise RuntimeError(

@@ -10,8 +10,6 @@
 - `price_to_beat_provider.py` - Exports _CryptoPriceResponse and 3 more
 - `polymarket_rtds_ws.py` - Exports PolymarketRtdsPriceFeed
 - `polymarket_market_discovery.py` - Exports MarketDiscovery
-- `polymarket_clob_ws.py` - Exports PolymarketMarketWebSocket
-- `polymarket_clob_rest.py` - Exports _CLOBSDKClient and 1 more
 - `market_snapshot.py` - Exports MarketSnapshotBuilder
 - `gamma_resolution_client.py` - Exports GammaResolutionClient
 - `ctf_resolution_client.py` - Exports CtfResolutionClient

@@ -4,7 +4,6 @@
 - Application code
 
 **Files**:
-- `test_websocket_contracts.py` - Exports test_reseed_marks_requested_tokens_missing_from_successful_response_stale and 10 more
 - `test_vwap_momentum.py` - Exports test_vwap_momentum_emits_buy_up_and_down and 12 more
 - `test_telegram_validation.py` - Exports test_scheduler_uses_configured_telegram_publish_timeout and 8 more
 - `test_telegram_bot_service.py` - Exports test_telegram_bot_registers_ptb_handlers and 30 more
@@ -29,15 +28,12 @@
 - `test_scheduler_strategy_readiness.py` - Exports test_nautilus_owned_scheduler_cannot_run_legacy_evaluate_once and 8 more
 - `test_scheduler_settlement_resolution.py` - Exports test_resolved_numeric_half_payout_closes_as_void_with_provenance and 4 more
 - `test_scheduler_services.py` - Exports test_supervisor_starts_and_stops_services_in_reverse_order and 1 more
-- `test_scheduler_reports.py` - Exports test_projection_settlement_publish_timeout_keeps_durable_closed_result and 10 more
 - `test_scheduler_paper.py` - Test Layer - Unit/Integration tests
 - `test_scheduler_lifecycle.py` - Exports test_scheduler_exposes_services_and_supervisor and 4 more
 - `test_scheduler_failure_isolation.py` - Exports test_publish_timeout_does_not_hang_signal_processing and 4 more
 - `test_scheduler_cancelled_markets.py` - Exports test_cancelled_gamma_refresh_reaches_registry_and_storage and 3 more
-- `test_scheduler.py` - Exports test_scheduler_accepts_public_market_data_protocol and 14 more
 - `test_safety.py` - Exports find_forbidden_sdk_imports and 10 more
 - `test_reporting.py` - Exports test_daily_report_includes_strategy_win_rate_and_pnl and 5 more
-- `test_repair_settlement_results.py` - Exports test_audit_finds_open_position_on_resolved_market and 9 more
 - `test_reference_strategy_parity.py` - Exports test_vwap_momentum_prefers_reference_last_trade_price_over_best_ask and 11 more
 - `test_publish_service.py` - Exports test_publish_service_health_starts_ok and 7 more
 - `test_ptb_diff.py` - Exports test_ptb_diff_emits_buy_up_and_down_from_trigger_rows and 9 more

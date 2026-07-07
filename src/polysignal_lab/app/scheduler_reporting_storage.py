@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, sqlite3, typing, typing.TYPE_CHECKING, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.DailyReport, polysignal_lab.domain.paper_result.PaperTradeResult
+Input: __future__, __future__.annotations, sqlite3, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.DailyReport, polysignal_lab.domain.paper_result.PaperTradeResult
 Output: delete_paper_result_rows, delete_daily_report_rows
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

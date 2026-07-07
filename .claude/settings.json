@@ -13,6 +13,24 @@
       "Bash(ruff check *)",
       "Bash(mypy *)",
       "mcp__fast-context__fast_context_search"
+    ],
+    "deny": [
+      "Read(./.venv/**)",
+      "Read(./refs/**)"
+    ]
+  },
+  "worktree": {
+    "sparsePaths": [
+      ".claude",
+      "src",
+      "tests",
+      "docs",
+      "config",
+      "scripts",
+      "data"
+    ],
+    "symlinkDirectories": [
+      ".venv"
     ]
   },
   "hooks": {

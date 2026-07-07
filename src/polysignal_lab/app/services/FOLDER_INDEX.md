@@ -10,7 +10,7 @@
 - `runtime_service.py` - Exports RuntimeService and 1 more
 - `publish_service.py` - Exports PublishService
 - `persistence_service.py` - Exports PersistenceService
-- `market_universe_service.py` - Exports MarketUniverseService
+- `market_universe_service.py` - Exports token_ids_for_markets and 1 more
 - `health_service.py` - Exports HealthService
 - `book_feed_service.py` - Exports BookFeedService
 - `__init__.py` - Service Layer - Business logic

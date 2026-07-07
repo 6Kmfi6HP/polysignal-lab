@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, asyncio, atexit, inspect, logging, signal
+Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, asyncio, inspect, logging, signal, contextlib
 Output: run_nautilus_cli, main
 Pos: Application code
 
@@ -10,21 +10,18 @@ Pos: Application code
 
 
 
+
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
 import asyncio
-import atexit
 import inspect
 import logging
 import signal
-import traceback
 from contextlib import suppress
-import sys
 from collections.abc import Callable, Sequence
-from pathlib import Path
-from types import TracebackType
 from typing import Any, cast
 
 from polysignal_lab.config import Settings, load_settings
@@ -33,6 +30,10 @@ from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.node_crash import (
+    _dump_thread_stacks,
+    _install_crash_logger,
+)
 from polysignal_lab.nautilus_runtime.node_probes import (
     _runtime_heartbeat_path,
     _runtime_startup_marker_path,
@@ -99,10 +100,6 @@ from polysignal_lab.nautilus_runtime.strategy_builder import (
     _native_core_for,
     _instrument_id_resolver,
     build_control,
-)
-from polysignal_lab.nautilus_runtime.scheduler_bridge import (
-    _initialize_services_schedule,
-    _seed_policy_control_from_services,
 )
 
 UTC = timezone.utc
@@ -187,7 +184,6 @@ async def _prepare_nautilus_runtime_context(
     settings: Settings,
 ) -> tuple[NautilusRuntimeContext, tuple[Market, ...], ObservabilityActor]:
     context = build_nautilus_runtime_context(settings)
-    _initialize_services_schedule(context)
     context._nautilus_runtime_owned_by_live_node = True
     discovered_markets = tuple(await context.market_universe.refresh_once())
     observability = ObservabilityActor(
@@ -246,7 +242,6 @@ def _build_nautilus_runtime_bundle(
     context.nautilus_cache_reader = components.get("cache_reader")
     context.paper_execution_metadata = paper_execution_metadata
     policy = cast(DecisionPolicyActor, components["policy"])
-    _seed_policy_control_from_services(policy, context)
     bot = context.telegram_bot
     if bot is not None:
         bot.strategy_control = build_control(policy)
@@ -271,53 +266,6 @@ def _install_sync_os_signal_handlers(
         _ = signal.signal(sig, lambda _signum, _frame: request_stop())
     return lambda: _restore_os_signal_handlers(previous_handlers)
 
-
-def _dump_thread_stacks(log_path: str) -> None:
-    """Write all thread stack traces to a file that survives container restart."""
-    try:
-        _crash_dir = Path(log_path).parent
-        _crash_dir.mkdir(parents=True, exist_ok=True)
-        frames = sys._current_frames()  # pyright: ignore[reportPrivateUsage]
-        lines: list[str] = [
-            f"=== crash dump {datetime.now(UTC).isoformat()} ===",
-            f"threads={len(frames)}",
-        ]
-        for tid, stack in frames.items():
-            lines.append(f"\n--- thread {tid} ---")
-            stack_summary = cast(Sequence[traceback.FrameSummary], traceback.extract_stack(stack))
-            for frame in stack_summary:
-                lines.append(f"  {frame.filename}:{frame.lineno} {frame.name}")
-                if frame.line:
-                    lines.append(f"    {frame.line.strip()}")
-        with open(log_path, "a", encoding="utf-8") as fh:
-            _ = fh.write("\n".join(lines) + "\n")
-    except Exception:
-        pass
-
-
-def _install_crash_logger(log_dir: str) -> None:
-    crash_path = f"{log_dir.rstrip('/')}/crash.log"
-
-    def crash_excepthook(typ: type[BaseException], val: BaseException, tb: TracebackType | None) -> None:
-        _dump_thread_stacks(crash_path)
-        try:
-            with open(crash_path, "a", encoding="utf-8") as fh:
-                traceback.print_exception(typ, val, tb, file=fh)
-        except Exception:
-            pass
-        sys.__excepthook__(typ, val, tb)
-
-    sys.excepthook = crash_excepthook
-
-    def _atexit_dump() -> None:
-        _dump_thread_stacks(crash_path)
-        try:
-            with open(crash_path, "a", encoding="utf-8") as fh:
-                _ = fh.write(f"=== atexit {datetime.now(UTC).isoformat()} ===\n")
-        except Exception:
-            pass
-
-    _ = atexit.register(_atexit_dump)
 
 
 def _strategy_names_from_bundle(bundle: NautilusRuntimeBundle) -> list[str]:

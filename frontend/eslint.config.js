@@ -10,6 +10,8 @@
 
 
 
+
+
 import globals from 'globals'
 import js from '@eslint/js'
 import pluginQuery from '@tanstack/eslint-plugin-query'

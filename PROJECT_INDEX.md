@@ -35,14 +35,14 @@ Auto-generated project index maintained by the Fractal Multi-level Index System.
   ├── archive/ (2 files)
   ├── polysignal_lab/ (4 files)
     ├── alpha/ (16 files)
-    ├── app/ (14 files)
+    ├── app/ (11 files)
       ├── services/ (10 files)
     ├── dashboard/ (2 files)
-    ├── data/ (15 files)
+    ├── data/ (13 files)
     ├── domain/ (14 files)
     ├── nautilus_bridge/ (4 files)
       ├── strategies/ (1 files)
-    ├── nautilus_runtime/ (28 files)
+    ├── nautilus_runtime/ (29 files)
       ├── strategies/ (3 files)
       ├── strategy/ (3 files)
     ├── observability/ (6 files)
@@ -50,8 +50,8 @@ Auto-generated project index maintained by the Fractal Multi-level Index System.
     ├── publish/ (4 files)
     ├── signal_layer/ (7 files)
     ├── storage/ (5 files)
-    ├── strategies/ (19 files)
-├── tests/ (111 files)
+    ├── strategies/ (20 files)
+├── tests/ (107 files)
   ├── fixtures/ (1 files)
 ```
 
@@ -102,11 +102,11 @@ graph TD
   config_drawer[config-drawer]
   config_drawer_test[config-drawer.test]
   command_menu[command-menu]
-  503[503]
-  500[500]
-  404[404]
-  403[403]
-  401[401]
+  system_health[system-health]
+  strategy_status[strategy-status]
+  signals[signals]
+  route[route]
+  paper_trading[paper-trading]
   vite_config --> path_from__path_
   vite_config --> __defineConfig___from__vite_
   vite_config --> plugin_react_
@@ -217,27 +217,27 @@ graph TD
   command_menu --> React_from__react_
   command_menu --> react_router_
   command_menu --> __ArrowRight__ChevronRight__Laptop__Moon__Sun___from__lucide_react_
-  503 --> react_router_
-  503 --> maintenance_error_
-  503 --> react_router
-  500 --> react_router_
-  500 --> general_error_
-  500 --> react_router
-  404 --> react_router_
-  404 --> not_found_error_
-  404 --> react_router
-  403 --> react_router_
-  403 --> forbidden_
-  403 --> react_router
-  401 --> react_router_
-  401 --> unauthorized_error_
-  401 --> react_router
+  system_health --> react_router_
+  system_health --> system_health_
+  system_health --> react_router
+  strategy_status --> react_router_
+  strategy_status --> strategy_status_
+  strategy_status --> react_router
+  signals --> react_router_
+  signals --> signals_
+  signals --> react_router
+  route --> react_router_
+  route --> authenticated_layout_
+  route --> react_router
+  paper_trading --> react_router_
+  paper_trading --> paper_trading_
+  paper_trading --> react_router
 ```
 
 ## 📊 Statistics
 
 - Total folders: 46
-- Total files: 395
+- Total files: 388
 
 ---
 

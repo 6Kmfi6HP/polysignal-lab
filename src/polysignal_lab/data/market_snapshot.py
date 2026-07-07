@@ -10,6 +10,8 @@ Pos: Application code
 
 
 
+
+
 from __future__ import annotations
 
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
