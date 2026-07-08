@@ -145,6 +145,10 @@ class _GateSnapshotAdapter:
 
 class DecisionPolicyActor:
     """Decision gate, arbitration, and consensus for signal evaluation.
+
+    Runs before Nautilus order submission; Nautilus RiskEngine still owns
+    account, exposure, and execution-side risk checks.
+
     Owns the active SignalGate/SignalArbiter/ConsensusEngine instances.
     These are the single source of truth — no parallel instances exist elsewhere.
     """

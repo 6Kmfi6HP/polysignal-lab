@@ -20,7 +20,6 @@ class MarketSubscriptionState:
     """Track wire subscriptions separately from active-condition membership."""
 
     wire_condition_ids: set[str] = field(default_factory=set)
-    wire_instrument_ids: set[str] = field(default_factory=set)
     pending_metadata_condition_ids: set[str] = field(default_factory=set)
     pending_subscribe_condition_ids: set[str] = field(default_factory=set)
     retained_wire_condition_ids: set[str] = field(default_factory=set)

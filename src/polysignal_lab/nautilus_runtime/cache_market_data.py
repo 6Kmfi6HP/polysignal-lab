@@ -1,13 +1,10 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Sequence, datetime, datetime.UTC, datetime.datetime, typing, typing.Callable
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Sequence, datetime, datetime.UTC, datetime.datetime, typing, typing.Callable, typing.cast
 Output: NautilusCacheMarketDataProvider
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
-
-
-
 
 
 
@@ -20,6 +17,7 @@ from typing import Callable, cast
 
 from polysignal_lab.alpha.types import SideBookView, TradeView
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.strategy.helpers import _maybe_float
 
 
 class NautilusCacheMarketDataProvider:
@@ -41,7 +39,9 @@ class NautilusCacheMarketDataProvider:
         best_bid = bids[0][0] if bids else None
         best_ask = asks[0][0] if asks else None
         spread = round(best_ask - best_bid, 10) if best_bid is not None and best_ask is not None else None
-        received_at = _datetime_or_none(getattr(book, "received_at", None))
+        received_at = _datetime_or_none(
+            getattr(book, "received_at", getattr(book, "ts_last", None))
+        )
         return SideBookView(
             token_id=token_id,
             best_bid=best_bid,
@@ -64,7 +64,10 @@ class NautilusCacheMarketDataProvider:
         getter = getattr(self._cache, "trade_ticks", None)
         if not callable(getter):
             return ()
-        rows = cast(Callable[[object], object], getter)(instrument_id)
+        try:
+            rows = cast(Callable[[object], object], getter)(instrument_id)
+        except LookupError:
+            return ()
         if not isinstance(rows, Iterable) or isinstance(rows, (str, bytes)):
             return ()
         return tuple(
@@ -81,7 +84,10 @@ class NautilusCacheMarketDataProvider:
         getter = getattr(self._cache, "order_book", None)
         if not callable(getter):
             return None
-        return cast(Callable[[object], object | None], getter)(instrument_id)
+        try:
+            return cast(Callable[[object], object | None], getter)(instrument_id)
+        except LookupError:
+            return None
 
 
 def _levels(raw: object) -> tuple[tuple[float, float], ...]:
@@ -99,17 +105,6 @@ def _levels(raw: object) -> tuple[tuple[float, float], ...]:
     return tuple(values)
 
 
-def _maybe_float(value: object) -> float | None:
-    if value is None:
-        return None
-    if callable(value):
-        value = value()
-    try:
-        return float(value if isinstance(value, (int, float, str, bytes, bytearray)) else str(value))
-    except (TypeError, ValueError):
-        return None
-
-
 def _float_attr(source: object, name: str) -> float:
     value = _maybe_float(getattr(source, name, None))
     return 0.0 if value is None else value
@@ -118,8 +113,9 @@ def _float_attr(source: object, name: str) -> float:
 def _datetime_or_none(value: object) -> datetime | None:
     if isinstance(value, datetime):
         return value
-    if isinstance(value, (int, float)) and value > 0:
-        return datetime.fromtimestamp(value / 1_000_000_000, UTC)
+    timestamp = _maybe_float(value)
+    if timestamp is not None and timestamp > 0:
+        return datetime.fromtimestamp(timestamp / 1_000_000_000, UTC)
     return None
 
 

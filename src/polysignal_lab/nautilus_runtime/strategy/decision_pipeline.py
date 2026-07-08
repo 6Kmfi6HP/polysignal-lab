@@ -85,15 +85,49 @@ class NativeDecisionSink(Protocol):
     def note_progress(self, event: str) -> None: ...
 
 
+def _record_rejection(
+    rejected: RejectedDecision,
+    decision: AlphaDecision,
+    *,
+    state: DecisionPipelineState,
+    sink: NativeDecisionSink,
+) -> None:
+    state.rejected_decisions.append(rejected)
+    sink.record_decision(decision, accepted=False)
+    sink.record_rejected(rejected)
+
+
 @dataclass(slots=True)
 class NativeDecisionSinkImpl:
-    submit_order: Callable[[ApprovedDecision, MarketView], object]
-    remember_metrics: Callable[[object, ApprovedDecision], None]
-    record_signal: Callable[[SignalCandidate], None]
-    notify_accepted: Callable[[SignalCandidate], None]
-    record_decision: Callable[[AlphaDecision, bool], None]
-    record_rejected: Callable[[RejectedDecision], None]
-    note_progress: Callable[[str], None] | None = None
+    submit_order_fn: Callable[[ApprovedDecision, MarketView], object]
+    remember_metrics_fn: Callable[[object, ApprovedDecision], None]
+    record_signal_fn: Callable[[SignalCandidate], None]
+    notify_accepted_fn: Callable[[SignalCandidate], None]
+    record_decision_fn: Callable[[AlphaDecision, bool], None]
+    record_rejected_fn: Callable[[RejectedDecision], None]
+    note_progress_fn: Callable[[str], None] | None = None
+
+    def submit_order(self, approved: ApprovedDecision, *, view: MarketView) -> object:
+        return self.submit_order_fn(approved, view)
+
+    def remember_metrics(self, order: object, approved: ApprovedDecision) -> None:
+        self.remember_metrics_fn(order, approved)
+
+    def record_signal(self, signal: SignalCandidate) -> None:
+        self.record_signal_fn(signal)
+
+    def notify_accepted(self, signal: SignalCandidate) -> None:
+        self.notify_accepted_fn(signal)
+
+    def record_decision(self, decision: AlphaDecision, *, accepted: bool) -> None:
+        self.record_decision_fn(decision, accepted)
+
+    def record_rejected(self, rejected: RejectedDecision) -> None:
+        self.record_rejected_fn(rejected)
+
+    def note_progress(self, event: str) -> None:
+        if self.note_progress_fn is not None:
+            self.note_progress_fn(event)
 
 
 class DecisionPipeline:
@@ -156,9 +190,7 @@ class DecisionPipeline:
         state: DecisionPipelineState,
         sink: NativeDecisionSink,
     ) -> None:
-        state.rejected_decisions.append(rejected)
-        sink.record_decision(decision, accepted=False)
-        sink.record_rejected(rejected)
+        _record_rejection(rejected, decision, state=state, sink=sink)
 
     @staticmethod
     def _on_order_mapping_failed(
@@ -168,9 +200,7 @@ class DecisionPipeline:
         state: DecisionPipelineState,
         sink: NativeDecisionSink,
     ) -> None:
-        state.rejected_decisions.append(rejected)
-        sink.record_decision(decision, accepted=False)
-        sink.record_rejected(rejected)
+        _record_rejection(rejected, decision, state=state, sink=sink)
 
     @staticmethod
     def _on_approved(
@@ -195,9 +225,7 @@ class DecisionPipeline:
         state: DecisionPipelineState,
         sink: NativeDecisionSink,
     ) -> None:
-        state.rejected_decisions.append(rejected)
-        sink.record_decision(decision, accepted=False)
-        sink.record_rejected(rejected)
+        _record_rejection(rejected, decision, state=state, sink=sink)
 
     def try_map_approved_spec(
         self,

@@ -52,24 +52,23 @@ def route_strategy_data(
     data: object,
     *,
     classify: Callable[[object], DataBoundaryClassification],
-) -> list[NautilusOrderSpec]:
+) -> None:
     if classify(data) is DataBoundaryClassification.DROPPED_FRAME:
         strategy._note_runtime_progress("dropped_frame")
-        return []
+        return
     if handle_custom_data(
         strategy,
         data,
         subscription_manager=strategy._subscription_manager,
     ):
-        return []
+        return
     if isinstance(data, PolySignalMarketMetaData):
         if handle_market_metadata(strategy, data):
-            return []
+            return
     if isinstance(data, PolySignalMarketUniverseData):
         if handle_market_universe(strategy, data):
-            return []
+            return
     handle_generic_data(strategy, data)
-    return []
 
 
 def handle_custom_data(
@@ -132,4 +131,3 @@ def handle_generic_data(strategy: _CustomDataStrategy, data: object) -> None:
         return
     for candidate in strategy._active_condition_ids:
         strategy.evaluate_condition(candidate)
-

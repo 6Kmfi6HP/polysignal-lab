@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Iterable, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.UTC, datetime.datetime
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.UTC, datetime.datetime, polysignal_lab.nautilus_runtime.projections
 Output: classify_project_owned_data, DataBoundaryClassification, _Assembler, _Observability
 Pos: Application code
 
@@ -12,12 +12,19 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from importlib import import_module
-from types import SimpleNamespace
 from typing import Protocol, cast
+
+try:
+    from nautilus_trader.model.data import DataType as _NautilusDataType
+    from nautilus_trader.model.enums import book_type_from_str as _book_type_from_str
+    from nautilus_trader.model.identifiers import InstrumentId as _InstrumentId
+except ModuleNotFoundError:
+    _NautilusDataType = None
+    _book_type_from_str = None
+    _InstrumentId = None
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
@@ -29,7 +36,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalPriceToBeatData,
     PolySignalSpotData,
 )
-from polysignal_lab.nautilus_runtime.projections import _tags
+from polysignal_lab.nautilus_runtime.projections import _tags  # noqa: F401
 
 DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
 MISSING_PROJECTIONS_ERROR = "PolySignalNativeStrategy requires injected registry and assembler projections"
@@ -70,10 +77,13 @@ def _book_has_quote_depth(book: object) -> bool:
 
 
 def _market_view_ready(view: object) -> bool:
+    book_for = getattr(view, "book_for", None)
+    if not callable(book_for):
+        return False
     try:
-        up_book = view.book_for(Side.UP)
-        down_book = view.book_for(Side.DOWN)
-    except (AttributeError, ValueError):
+        up_book = book_for(Side.UP)
+        down_book = book_for(Side.DOWN)
+    except ValueError:
         return False
     return _book_has_quote_depth(up_book) and _book_has_quote_depth(down_book)
 
@@ -98,39 +108,21 @@ def _identity_instrument_id(token_id: str) -> str:
     return token_id
 
 
-def _nautilus_instrument_id(value: str) -> object:
-    try:
-        identifiers = import_module("nautilus_trader.model.identifiers")
-    except ModuleNotFoundError:
-        return value
-    instrument_id_cls = cast(object | None, getattr(identifiers, "InstrumentId", None))
-    from_str = cast(object | None, getattr(instrument_id_cls, "from_str", None))
-    if callable(from_str):
-        return cast(Callable[[str], object], from_str)(value)
+def _nautilus_instrument_id(value: object) -> object:
+    if _InstrumentId is not None and isinstance(value, str):
+        return _InstrumentId.from_str(value)
     return value
 
 
 def _nautilus_book_type(value: str) -> object:
-    try:
-        enums = import_module("nautilus_trader.model.enums")
-    except ModuleNotFoundError:
-        return value
-    converter = getattr(enums, "book_type_from_str", None)
-    if callable(converter):
-        return cast(Callable[[str], object], converter)(value)
+    if _book_type_from_str is not None:
+        return _book_type_from_str(value)
     return value
 
 
 def _nautilus_data_type(value: object) -> object:
-    if not isinstance(value, type):
-        return value
-    try:
-        module = import_module("nautilus_trader.model.data")
-    except ModuleNotFoundError:
-        return value
-    data_type_cls = getattr(module, "DataType", None)
-    if callable(data_type_cls):
-        return cast(Callable[[type[object]], object], data_type_cls)(value)
+    if _NautilusDataType is not None and isinstance(value, type):
+        return _NautilusDataType(value)
     return value
 
 
@@ -200,44 +192,6 @@ def _event_side(
             if meta is not None:
                 return meta.side
     return Side.UP
-
-
-def _projection_order_event(
-    event: object, metrics: Mapping[str, object]
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        client_order_id=_value(event, "client_order_id"),
-        instrument_id=_value(event, "instrument_id"),
-        order_side=_value(event, "order_side"),
-        order_type=_value(event, "order_type"),
-        time_in_force=_value(event, "time_in_force"),
-        quantity=_value(event, "quantity"),
-        price=_value(event, "price"),
-        status=_value(event, "status"),
-        tags=_value(event, "tags", ()),
-        metrics=dict(metrics),
-        ts_event=_value(event, "ts_event", _value(event, "timestamp")),
-    )
-
-
-def _projection_fill_event(
-    event: object, metrics: Mapping[str, object]
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        client_order_id=_value(event, "client_order_id"),
-        instrument_id=_value(event, "instrument_id"),
-        trade_id=_value(event, "trade_id", _value(event, "fill_id")),
-        last_qty=_value(
-            event, "last_qty", _value(event, "shares", _value(event, "quantity"))
-        ),
-        last_px=_value(
-            event, "last_px", _value(event, "fill_price", _value(event, "price"))
-        ),
-        liquidity_side=_value(event, "liquidity_side"),
-        tags=_value(event, "tags", ()),
-        metrics=dict(metrics),
-        ts_event=_value(event, "ts_event", _value(event, "timestamp")),
-    )
 
 
 def _instrument_ids(
@@ -359,55 +313,16 @@ def _subscribe_custom_data(
     *,
     allow_fallback: bool = True,
 ) -> None:
-    # Lazy import to avoid circular dependency: helpers ← native_strategy
-    from polysignal_lab.nautilus_runtime.native_strategy import (  # noqa: PLC0415
-        PolySignalNativeStrategy,
-    )
-
-    mro = type(strategy).mro()
-    try:
-        base_index = mro.index(PolySignalNativeStrategy) + 1
-    except ValueError:
-        base_index = -1
     resolved_data_type = _nautilus_data_type(data_type)
-    if _subscribe_custom_data_on_bus(strategy, resolved_data_type):
-        return
-    base_subscribe = (
-        getattr(mro[base_index], "subscribe_data", None)
-        if 0 <= base_index < len(mro)
-        else None
-    )
-    if callable(base_subscribe):
-        _ = base_subscribe(strategy, resolved_data_type)
-        return
     if not allow_fallback:
         return
     fallback = getattr(strategy, "subscribe_data", None)
     if callable(fallback):
-        _ = fallback(resolved_data_type)
-
-
-def _subscribe_custom_data_on_bus(strategy: object, data_type: object) -> bool:
-    msgbus = getattr(strategy, "msgbus", None)
-    if msgbus is None:
-        msgbus = getattr(strategy, "_msgbus", None)
-    handler = getattr(strategy, "handle_data", None)
-    subscribe = getattr(msgbus, "subscribe", None)
-    topic_cache = getattr(strategy, "_topic_cache", None)
-    topic_getter = getattr(topic_cache, "get_custom_data_topic", None)
-
-    if not callable(topic_getter):
         try:
-            topic_module = import_module("nautilus_trader.common.data_topics")
-        except ModuleNotFoundError:
-            return False
-        topic_cache_cls = getattr(topic_module, "TopicCache", None)
-        topic_cache = topic_cache_cls() if callable(topic_cache_cls) else None
-        topic_getter = getattr(topic_cache, "get_custom_data_topic", None)
-    if not callable(subscribe) or not callable(topic_getter) or not callable(handler):
-        return False
-    _ = subscribe(topic=topic_getter(data_type, None), handler=handler)
-    return True
+            _ = fallback(resolved_data_type)
+        except ValueError as e:
+            if "not been registered" not in str(e):
+                raise
 
 
 def _json_state_payload(value: object) -> Mapping[str, JsonValue]:

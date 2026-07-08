@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, sys, collections.abc, collections.abc.Callable, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, datetime.timedelta
-Output: test_native_strategy_on_save_load_delegates_to_core_via_encode_decode, test_native_strategy_on_save_persists_only_core_state, test_native_strategy_on_load_restores_core_without_runtime_order_truth, test_runtime_strategy_fok_depth_counts_asks_through_max_entry, test_native_strategy_records_rejection_when_order_mapping_fails, test_native_strategy_blocks_duplicate_in_flight_signal_submission, test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data, test_static_native_strategy_subscribes_custom_data_on_msgbus, test_native_strategy_generates_signal_from_on_data_callback, test_native_strategy_constructor_requires_injected_projections
+Output: test_native_strategy_on_save_load_delegates_to_core_via_encode_decode, test_native_strategy_on_save_persists_only_core_state, test_native_strategy_on_load_restores_core_without_runtime_order_truth, test_runtime_strategy_fok_depth_counts_asks_through_max_entry, test_native_strategy_records_rejection_when_order_mapping_fails, test_native_strategy_blocks_duplicate_in_flight_signal_submission, test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data, test_static_native_strategy_does_not_bypass_custom_data_lifecycle, test_native_strategy_generates_signal_from_on_data_callback, test_native_strategy_constructor_requires_injected_projections
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -69,6 +69,11 @@ class FakeCore:
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         _ = view
         return self.decisions
+
+
+class _NoopClock:
+    def set_timer(self, name: object, interval: object, *, callback: object) -> None:
+        _ = name, interval, callback
 
 
 class StatefulFakeCore(FakeCore):
@@ -259,11 +264,11 @@ def test_native_strategy_on_save_persists_only_core_state() -> None:
 
     core = StatefulFakeCore([])
     strategy = _minimal_native_strategy(core=core, strategy_name="vwap_momentum")
-    strategy._approved_signal_metrics["client-1"] = {
+    strategy._metrics_tracker._approved_signal_metrics["client-1"] = {
         "dedupe_key": "dedupe-1",
         "level_price": 0.82,
     }
-    strategy._submitted_signal_keys.add("dedupe-1")
+    strategy._pipeline_state.submitted_signal_keys.add("dedupe-1")
     strategy.submitted_orders.append(SimpleNamespace(client_order_id="client-1"))
     strategy.rejected_decisions.append(
         RejectedDecision(reason_code="TEST", detail={}, candidate=None)
@@ -285,8 +290,8 @@ def test_native_strategy_on_load_restores_core_without_runtime_order_truth() -> 
 
     core = StatefulFakeCore([])
     strategy = _minimal_native_strategy(core=core, strategy_name="ptb_diff")
-    strategy._approved_signal_metrics["client-1"] = {"dedupe_key": "dedupe-1"}
-    strategy._submitted_signal_keys.add("dedupe-1")
+    strategy._metrics_tracker._approved_signal_metrics["client-1"] = {"dedupe_key": "dedupe-1"}
+    strategy._pipeline_state.submitted_signal_keys.add("dedupe-1")
     strategy.submitted_orders.append(SimpleNamespace(client_order_id="client-1"))
     strategy.rejected_decisions.append(
         RejectedDecision(reason_code="TEST", detail={}, candidate=None)
@@ -296,16 +301,16 @@ def test_native_strategy_on_load_restores_core_without_runtime_order_truth() -> 
 
     restored_core = StatefulFakeCore([])
     restored = _minimal_native_strategy(core=restored_core, strategy_name="ptb_diff")
-    restored._approved_signal_metrics["preexisting"] = {"dedupe_key": "keep-me"}
+    restored._metrics_tracker._approved_signal_metrics["preexisting"] = {"dedupe_key": "keep-me"}
     restored.on_load(state)
 
     assert restored_core.loaded_payload == {
         "alpha_marker": 42,
         "trades": {"condition-btc-5m": []},
     }
-    assert restored._approved_signal_metrics == {"preexisting": {"dedupe_key": "keep-me"}}
+    assert restored._metrics_tracker._approved_signal_metrics == {"preexisting": {"dedupe_key": "keep-me"}}
     assert len(restored.submitted_orders) == 0
-    assert restored._submitted_signal_keys == set()
+    assert restored._pipeline_state.submitted_signal_keys == set()
     assert len(restored.rejected_decisions) == 0
 
 
@@ -406,20 +411,15 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
             _ = side
             return Book()
 
-    class FakeOrderFactory:
-        def limit(self, **kwargs):
-            return kwargs
+    from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 
     class FakeNativeStrategy(PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
-            self.order_factory = FakeOrderFactory()
             self.submitted = []
 
         def submit_order(self, order):
             self.submitted.append(order)
-
-    from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 
     class SpecCapturingStrategy(FakeNativeStrategy):
         def _submit_approved(self, approved, *, view):
@@ -430,7 +430,7 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
                 best_ask=book.best_ask,
             )
             self.submitted_specs.append(spec)
-            return super()._submit_approved(approved, view=view)
+            return SimpleNamespace(client_order_id="captured")
 
     strategy = SpecCapturingStrategy(
         core=FakeCore([decision]),
@@ -463,14 +463,9 @@ def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
             _ = side
             return Book()
 
-    class FakeOrderFactory:
-        def limit(self, **kwargs):
-            return kwargs
-
     class FakeNativeStrategy(PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
-            self.order_factory = FakeOrderFactory()
             self.submitted = []
 
         def submit_order(self, order):
@@ -579,8 +574,14 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
         def __init__(self, *, config: object) -> None:
             self.config = config
             self.custom_subscriptions = []
+            self.clock = _NoopClock()
 
         def subscribe_order_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = instrument_id, args, kwargs
+
+        def subscribe_quote_ticks(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
@@ -625,11 +626,10 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
     assert cast(list[object], getattr(strategy, "custom_subscriptions")) != []
 
 
-def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) -> None:
+def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatch) -> None:
     from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
-        MarketCatalog,
     )
     from polysignal_lab.nautilus_runtime.custom_data_types import (
         PolySignalMarketMetaData,
@@ -647,21 +647,19 @@ def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) ->
         ) -> None:
             self.calls.append((topic, handler))
 
-    class FakeTopicCache:
-        def get_custom_data_topic(
-            self, data_type: object, instrument_id: object
-        ) -> object:
-            _ = instrument_id
-            return data_type
-
     class FakeBase:
         def __init__(self, *, config: object) -> None:
             self.config = config
             self.custom_subscriptions = []
             self._msgbus = FakeMsgBus()
-            self._topic_cache = FakeTopicCache()
+            self.clock = _NoopClock()
 
         def subscribe_order_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = instrument_id, args, kwargs
+
+        def subscribe_quote_ticks(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
@@ -675,9 +673,6 @@ def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) ->
             self, data_type: object, *args: object, **kwargs: object
         ) -> None:
             self.custom_subscriptions.append(data_type)
-
-        def handle_data(self, data: object) -> None:
-            _ = cast(_DataHandler, cast(object, self)).on_data(data)
 
     strategy_type = _load_static_native_strategy(monkeypatch, FakeBase, "cfg")
 
@@ -696,7 +691,6 @@ def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) ->
         )
     )
 
-    sidecar = StrategyCustomDataState()
     strategy = strategy_type(
         core=FakeCore([]),
         assembler=_assembler(None),
@@ -707,18 +701,16 @@ def test_static_native_strategy_subscribes_custom_data_on_msgbus(monkeypatch) ->
 
     strategy.on_start()
 
-    assert cast(list[object], getattr(strategy, "custom_subscriptions")) == []
-    msgbus_calls = cast(FakeMsgBus, getattr(strategy, "_msgbus")).calls
-    assert len(msgbus_calls) == 4
-    assert {getattr(topic, "type", topic) for topic, _handler in msgbus_calls} == {
+    assert cast(FakeMsgBus, getattr(strategy, "_msgbus")).calls == []
+    custom_subscriptions = cast(list[object], getattr(strategy, "custom_subscriptions"))
+    assert {getattr(data_type, "type", data_type) for data_type in custom_subscriptions} == {
         PolySignalSpotData,
         PolySignalPriceToBeatData,
         PolySignalMarketMetaData,
         PolySignalMarketUniverseData,
     }
 
-    _topic, handler = msgbus_calls[0]
-    handler(
+    strategy.on_data(
         PolySignalSpotData(
             asset="BTC",
             symbol="BTCUSD",
@@ -741,9 +733,12 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     class FakeNativeStrategy(PolySignalNativeStrategy):
+        @property
+        def order_factory(self) -> FakeOrderFactoryForNative:
+            return FakeOrderFactoryForNative()
+
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(**kwargs)
-            self.order_factory = FakeOrderFactoryForNative()
             self.submitted = []
             self.subscriptions = []
 
@@ -843,6 +838,9 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
         def subscribe_data(self, data_type):
             self.custom_subscriptions.append(getattr(data_type, "type", data_type))
 
+        def _start_evaluation_heartbeat(self) -> None:
+            return None
+
     strategy = FakeNativeStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
@@ -880,11 +878,15 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
             self.canceled.append(name)
 
     class FakeNativeStrategy(PolySignalNativeStrategy):
+        @property
+        def clock(self) -> FakeClock:
+            return self.fake_clock
+
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.custom_subscriptions: list[object] = []
             self.evaluated: list[str] = []
-            self.clock = FakeClock()
+            self.fake_clock = FakeClock()
 
         def subscribe_data(self, data_type):
             self.custom_subscriptions.append(data_type)
@@ -1240,6 +1242,156 @@ def test_native_strategy_routes_decisions_through_policy_actor_decide() -> None:
 
     assert decided == [(decision, view)]
     assert submitted == [(approved_decision, view)]
+
+
+def test_cache_market_data_provider_uses_nautilus_order_book_methods_and_ts_last() -> None:
+    from polysignal_lab.nautilus_runtime.cache_market_data import (
+        NautilusCacheMarketDataProvider,
+    )
+
+    class Level:
+        def __init__(self, price: float, size: float) -> None:
+            self.price = price
+            self.size = size
+
+    class NautilusLikeOrderBook:
+        ts_last = 1_800_000_000_000_000_000
+
+        def bids(self) -> list[Level]:
+            return [Level(0.49, 10.0)]
+
+        def asks(self) -> list[Level]:
+            return [Level(0.51, 20.0), Level(0.52, 10.0)]
+
+    class Cache:
+        def order_book(self, instrument_id: object) -> NautilusLikeOrderBook:
+            assert instrument_id == "up-token.POLYMARKET"
+            return NautilusLikeOrderBook()
+
+        def trade_ticks(self, instrument_id: object) -> list[object]:
+            _ = instrument_id
+            return []
+
+    from polysignal_lab.nautilus_bridge.market_catalog import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+    )
+
+    registry = _test_market_catalog()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-5m",
+            market_slug="btc-updown-5m",
+            condition_id="condition-btc-5m",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
+        )
+    )
+    provider = NautilusCacheMarketDataProvider(cast(Any, Cache()), catalog=registry)
+
+    book = provider.book_for_token("up-token")
+
+    assert book is not None
+    assert book.best_bid == 0.49
+    assert book.best_ask == 0.51
+    assert book.ask_levels == ((0.51, 20.0), (0.52, 10.0))
+    assert book.received_at == datetime.fromtimestamp(1_800_000_000, UTC)
+    assert book.freshness_ms is not None
+
+
+def test_cache_market_data_provider_treats_missing_trade_ticks_as_empty() -> None:
+    from polysignal_lab.nautilus_runtime.cache_market_data import (
+        NautilusCacheMarketDataProvider,
+    )
+
+    class Cache:
+        def order_book(self, instrument_id: object) -> object | None:
+            _ = instrument_id
+            return None
+
+        def trade_ticks(self, instrument_id: object) -> object:
+            _ = instrument_id
+            raise LookupError("no cached trades")
+
+    from polysignal_lab.nautilus_bridge.market_catalog import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+    )
+
+    registry = _test_market_catalog()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-5m",
+            market_slug="btc-updown-5m",
+            condition_id="condition-btc-5m",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
+        )
+    )
+    provider = NautilusCacheMarketDataProvider(cast(Any, Cache()), catalog=registry)
+
+    assert provider.trades_for_token("up-token") == ()
+
+
+def test_cache_market_data_provider_treats_absent_trade_ticks_api_as_empty() -> None:
+    from polysignal_lab.nautilus_runtime.cache_market_data import (
+        NautilusCacheMarketDataProvider,
+    )
+
+    class Cache:
+        def order_book(self, instrument_id: object) -> object | None:
+            _ = instrument_id
+            return None
+
+    from polysignal_lab.nautilus_bridge.market_catalog import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+    )
+
+    registry = _test_market_catalog()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-5m",
+            market_slug="btc-updown-5m",
+            condition_id="condition-btc-5m",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
+        )
+    )
+    provider = NautilusCacheMarketDataProvider(cast(Any, Cache()), catalog=registry)
+
+    assert provider.trades_for_token("up-token") == ()
+
+
+def test_native_strategy_resolved_instrument_allows_cache_without_instrument_api() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class Cache:
+        pass
+
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        **_native_projections(),
+    )
+    strategy.cache = Cache()
+
+    assert strategy._resolved_instrument("up-token") == "up-token.POLYMARKET"
 
 
 def test_native_strategy_does_not_submit_when_approved_decision_view_lacks_book() -> None:
@@ -1766,7 +1918,6 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
 
     strategy.on_start()
     strategy._subscription_state.wire_condition_ids.clear()
-    strategy._subscription_state.wire_instrument_ids.clear()
 
     strategy.on_data(
         PolySignalMarketUniverseData(
@@ -3819,6 +3970,3 @@ def test_native_strategy_does_not_define_custom_market_data_subscription_group()
     assert "class _MarketDataSubscriptionGroup" not in source
     assert "_polysignal_market_data_subscription_group" not in source
     assert "_market_data_subscription_group" not in source
-
-
-
