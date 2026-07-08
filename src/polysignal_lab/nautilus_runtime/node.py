@@ -52,7 +52,7 @@ from polysignal_lab.nautilus_runtime.node_cli import (
 from polysignal_lab.nautilus_runtime.observability import (
     NautilusEventStoreAdapter,
     NautilusNotifierAdapter,
-    ObservabilityActor,
+    ObservabilityService,
 )
 from polysignal_lab.nautilus_runtime.node_builder import (
     LiveNode,
@@ -162,11 +162,11 @@ def _build_market_rotation_actor(
 
 async def _prepare_nautilus_runtime_context(
     settings: Settings,
-) -> tuple[NautilusRuntimeContext, tuple[Market, ...], ObservabilityActor]:
+) -> tuple[NautilusRuntimeContext, tuple[Market, ...], ObservabilityService]:
     context = build_nautilus_runtime_context(settings)
     context._nautilus_runtime_owned_by_live_node = True
     discovered_markets = tuple(await context.market_universe.refresh_once())
-    observability = ObservabilityActor(
+    observability = ObservabilityService(
         health=context.health,
         store=NautilusEventStoreAdapter(context.persistence),
         notifier=NautilusNotifierAdapter(context.publisher),
@@ -183,7 +183,7 @@ def _build_nautilus_runtime_bundle(
     settings: Settings,
     context: NautilusRuntimeContext,
     discovered_markets: tuple[Market, ...],
-    observability: ObservabilityActor,
+    observability: ObservabilityService,
 ) -> NautilusRuntimeBundle:
     condition_ids = tuple(market.condition_id for market in discovered_markets if market.condition_id)
     components = build_live_node(

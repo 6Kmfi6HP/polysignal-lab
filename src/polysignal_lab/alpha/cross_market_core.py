@@ -22,6 +22,7 @@ from polysignal_lab.alpha.helpers import (
     OrderDecisionSpec,
     build_order_decision,
     depth_weighted_ask,
+    evaluate_from_snapshot_for_test,
 )
 from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, MarketGroupView, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
@@ -238,10 +239,7 @@ class CrossMarketAlphaCore:
         )
 
     def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
-
-        view = market_view_from_snapshot(snapshot)
-        return [] if view is None else self.evaluate(view)
+        return evaluate_from_snapshot_for_test(self, snapshot)
 
     def save_state(self) -> dict[str, object]:
         from polysignal_lab.alpha.state import json_safe_state

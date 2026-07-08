@@ -25,6 +25,7 @@ from polysignal_lab.alpha.helpers import (
     build_order_decision,
     build_hedge_order_decision,
     enabled_for_view,
+    evaluate_from_snapshot_for_test,
     restore_position_state,
     restore_string_set,
 )
@@ -203,7 +204,4 @@ class PreOrderMarketAlphaCore:
         self._reconciled = restore_string_set(state.get("_reconciled", []) or [])
 
     def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
-
-        view = market_view_from_snapshot(snapshot)
-        return [] if view is None else self.evaluate(view)
+        return evaluate_from_snapshot_for_test(self, snapshot)

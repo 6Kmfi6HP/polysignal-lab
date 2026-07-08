@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING
 
+from polysignal_lab.alpha.helpers import evaluate_from_snapshot_for_test
 from polysignal_lab.alpha.stats import _RollingPriceStats
 from polysignal_lab.alpha.types import AlphaDecision, AlphaOrderEvent, MarketView, OrderIntentSpec, SideBookView
 from polysignal_lab.domain.enums import OrderIntent, Side
@@ -249,9 +250,5 @@ class BinaryMomentumAlphaCore:
             order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FAK),
         )
 
-    def evaluate_view_from_snapshot_for_test(
-        self, snapshot: "MarketSnapshot"
-    ) -> list[AlphaDecision]:
-        from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
-        view = market_view_from_snapshot(snapshot)
-        return self.evaluate(view) if view is not None else []
+    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
+        return evaluate_from_snapshot_for_test(self, snapshot)

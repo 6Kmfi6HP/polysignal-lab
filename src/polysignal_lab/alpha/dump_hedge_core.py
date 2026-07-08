@@ -26,6 +26,7 @@ from polysignal_lab.alpha.helpers import (
     build_order_decision,
     build_hedge_order_decision,
     enabled_for_view,
+    evaluate_from_snapshot_for_test,
     position_hedge_context,
     record_two_leg_fill,
     restore_position_state,
@@ -254,7 +255,4 @@ class DumpHedgeAlphaCore:
         self._dump_detected = restore_string_set(state.get("_dump_detected", []) or [])
 
     def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
-
-        view = market_view_from_snapshot(snapshot)
-        return [] if view is None else self.evaluate(view)
+        return evaluate_from_snapshot_for_test(self, snapshot)

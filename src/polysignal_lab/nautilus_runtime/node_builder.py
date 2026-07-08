@@ -29,7 +29,7 @@ from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketP
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
-from polysignal_lab.nautilus_runtime.observability import ObservabilityActor
+from polysignal_lab.nautilus_runtime.observability import ObservabilityService
 from polysignal_lab.nautilus_runtime.runtime_context_factory import (
     NautilusRuntimeContext,
     build_nautilus_runtime_context,
@@ -98,7 +98,7 @@ class NautilusRuntimeBundle:
     components: dict[str, object]
     bridge_registry: MarketCatalog
     node: _NautilusNodeLike
-    observability: ObservabilityActor
+    observability: ObservabilityService
     websocket_tasks: list[asyncio.Task[object]]
 
 
@@ -298,7 +298,7 @@ def build_live_node(
     market_universe: object | None = None,
     store: AnchorPriceStore | None = None,
     health: object | None = None,
-    observability: ObservabilityActor | None = None,
+    observability: ObservabilityService | None = None,
 ) -> dict[str, object]:
     """Build a LiveNode-based paper runtime wiring."""
     from polysignal_lab.nautilus_runtime.node import (

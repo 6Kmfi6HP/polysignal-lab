@@ -19,7 +19,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-from polysignal_lab.alpha.helpers import enabled_for_view
+from polysignal_lab.alpha.helpers import enabled_for_view, evaluate_from_snapshot_for_test
 from polysignal_lab.alpha.state import json_safe_state
 from polysignal_lab.alpha.types import (
     AlphaDecision,
@@ -612,13 +612,8 @@ class VWAPMomentumAlphaCore:
     # Test helper + state round-trip
     # ------------------------------------------------------------------
 
-    def evaluate_view_from_snapshot_for_test(
-        self, snapshot: "MarketSnapshot"
-    ) -> list[AlphaDecision]:
-        from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
-
-        view = market_view_from_snapshot(snapshot)
-        return self.evaluate(view) if view is not None else []
+    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
+        return evaluate_from_snapshot_for_test(self, snapshot)
 
 
     def _prune_trade_state(self, key: str, window_sec: float, now: float) -> None:

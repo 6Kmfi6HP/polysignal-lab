@@ -29,7 +29,7 @@ from polysignal_lab.nautilus_runtime.node_builder import (
 from polysignal_lab.nautilus_runtime.node_probes import _runtime_progress_callback
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
-    ObservabilityActor,
+    ObservabilityService,
 )
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
@@ -191,7 +191,7 @@ def _build_native_strategies(
     policy: DecisionPolicyActor,
     condition_ids: Sequence[str],
     registry: MarketCatalog,
-    observability: ObservabilityActor | None,
+    observability: ObservabilityService | None,
 ) -> list[_NativeStrategyLike]:
     strategy_cls, _actor_cls, _policy_cls = _runtime_class_triple()
     strategy_type = cast(Callable[..., _NativeStrategyLike], strategy_cls)
@@ -246,7 +246,7 @@ def _create_native_strategy(
     strategy_book_type: str,
     instrument_id_resolver: Callable[[str], object],
     registry: MarketCatalog,
-    observability: ObservabilityActor | None,
+    observability: ObservabilityService | None,
 ) -> _NativeStrategyLike:
     return strategy_type(
         core=core,

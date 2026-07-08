@@ -38,7 +38,7 @@ __all__ = [
     "DecisionPolicyControl",
     "NautilusEventStoreAdapter",
     "NautilusNotifierAdapter",
-    "ObservabilityActor",
+    "ObservabilityService",
     "PersistenceClass",
     "StrategyControl",
     "persistence_class_for_table",
@@ -51,7 +51,7 @@ __all__ = [
 REPEAT_SUPPRESS_TTL_SEC = 60.0
 
 
-class ObservabilityActor:
+class ObservabilityService:
     """Receives typed events and writes them to SQLite + JSONL + health registry.
 
     Reuses existing PersistenceService patterns without Nautilus runtime dependency.

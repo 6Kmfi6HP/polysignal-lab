@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Mapping
 
+from polysignal_lab.alpha.helpers import evaluate_from_snapshot_for_test
 from polysignal_lab.alpha.state import json_safe_state, restore_utc_datetime
 from polysignal_lab.alpha.types import AlphaDecision, AlphaOrderEvent, MarketView
 from polysignal_lab.domain.enums import Side
@@ -271,13 +272,8 @@ class LateConsensusAlphaCore:
     # Test helper + state round-trip
     # ------------------------------------------------------------------
 
-    def evaluate_view_from_snapshot_for_test(
-        self, snapshot: "MarketSnapshot"
-    ) -> list[AlphaDecision]:
-        from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
-
-        view = market_view_from_snapshot(snapshot)
-        return self.evaluate(view) if view is not None else []
+    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
+        return evaluate_from_snapshot_for_test(self, snapshot)
 
     def save_state(self) -> Mapping[str, object]:
         return json_safe_state(

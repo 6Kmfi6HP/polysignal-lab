@@ -15,6 +15,7 @@ Pos: Application code
 
 from __future__ import annotations
 
+from polysignal_lab.alpha.helpers import evaluate_from_snapshot_for_test
 from polysignal_lab.alpha.types import AlphaDecision, AlphaOrderEvent, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 
@@ -121,9 +122,5 @@ class OneCentBuyAlphaCore:
 
         return decisions
 
-    def evaluate_view_from_snapshot_for_test(
-        self, snapshot: MarketSnapshot
-    ) -> list[AlphaDecision]:
-        from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
-        view = market_view_from_snapshot(snapshot)
-        return self.evaluate(view) if view is not None else []
+    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
+        return evaluate_from_snapshot_for_test(self, snapshot)
