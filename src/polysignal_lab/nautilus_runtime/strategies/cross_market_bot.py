@@ -11,7 +11,6 @@ Pos: Application code
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import cast
 
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
@@ -25,7 +24,7 @@ from polysignal_lab.alpha.types import (
 )
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
-from polysignal_lab.nautilus_bridge.state import decode_state, encode_state
+from polysignal_lab.nautilus_bridge.state import save_strategy_state, load_strategy_state
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     DecisionPolicyActor,
@@ -68,19 +67,10 @@ class CrossMarketNautilusStrategy(Strategy):
         self.rejected_decisions: list[RejectedDecision] = []
 
     def on_save(self) -> dict[str, bytes]:
-        payload = (
-            self.core.save_state()
-            if hasattr(self.core, "save_state")
-            else {}
-        )
-        return encode_state(self.strategy_name, payload)
+        return save_strategy_state(self.strategy_name, self.core)
 
     def on_load(self, state: Mapping[str, bytes]) -> None:
-        loader = getattr(self.core, "load_state", None)
-        if not callable(loader):
-            return
-        payload = cast(Mapping[str, object], decode_state(self.strategy_name, state))
-        _ = loader(payload)
+        load_strategy_state(self.strategy_name, self.core, state)
 
     def evaluate_group(self, group: MarketGroupView) -> list[NautilusOrderSpec]:
         """Evaluate a pre-assembled MarketGroupView and submit approved orders."""

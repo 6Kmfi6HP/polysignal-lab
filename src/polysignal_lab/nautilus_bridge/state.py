@@ -56,3 +56,20 @@ def decode_state(strategy_name: str, state: Mapping[str, bytes], version: int = 
     if not isinstance(payload, dict):
         raise StateSchemaError(f"Invalid state payload for {strategy_name}")
     return cast(JsonObject, payload)
+
+
+def save_strategy_state(strategy_name: str, core: object) -> dict[str, bytes]:
+    payload = (
+        core.save_state()
+        if hasattr(core, "save_state")
+        else {}
+    )
+    return encode_state(strategy_name, payload)
+
+
+def load_strategy_state(strategy_name: str, core: object, state: Mapping[str, bytes]) -> None:
+    loader = getattr(core, "load_state", None)
+    if not callable(loader):
+        return
+    payload = cast(Mapping[str, object], decode_state(strategy_name, state))
+    loader(payload)

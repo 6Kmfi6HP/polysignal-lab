@@ -34,7 +34,7 @@ from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_bridge.market_catalog import (
     MarketCatalog,
 )
-from polysignal_lab.nautilus_bridge.state import decode_state, encode_state
+from polysignal_lab.nautilus_bridge.state import save_strategy_state, load_strategy_state
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     DecisionPolicyActor,
@@ -78,7 +78,6 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _identifier_text,
     _identity_instrument_id,
     _instrument_ids,
-    _json_state_payload,
     _market_view_ready,
     _nautilus_book_type,
     _nautilus_instrument_id,
@@ -268,20 +267,10 @@ class PolySignalNativeStrategy(Strategy):
         _ = self.clock.cancel_timer(EVALUATION_HEARTBEAT_TIMER_NAME)
 
     def on_save(self) -> dict[str, bytes]:
-        import warnings
-
-        if not hasattr(self.core, "save_state"):
-            warnings.warn(f"{type(self.core).__name__} has no save_state — state will not persist across restarts")
-        saver = getattr(self.core, "save_state", None)
-        raw_payload = saver() if callable(saver) else {}
-        return encode_state(self.strategy_name, _json_state_payload(raw_payload))
+        return save_strategy_state(self.strategy_name, self.core)
 
     def on_load(self, state: Mapping[str, bytes]) -> None:
-        loader = getattr(self.core, "load_state", None)
-        if not callable(loader):
-            return
-        payload = cast(Mapping[str, object], decode_state(self.strategy_name, state))
-        _ = loader(payload)
+        load_strategy_state(self.strategy_name, self.core, state)
 
 
     def _on_evaluation_heartbeat(self, _event: object) -> None:

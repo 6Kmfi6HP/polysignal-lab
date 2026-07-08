@@ -28,9 +28,7 @@ from polysignal_lab.app._settlement_check import (
     _projection_float,
     _projection_side,
     _publish_paper_result_best_effort,
-    _store_paper_result,
     _store_projection_result,
-    check_settlements,
 )
 from polysignal_lab.app.scheduler_reporting_storage import (
     delete_daily_report_rows,
