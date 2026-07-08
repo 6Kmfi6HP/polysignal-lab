@@ -27,10 +27,9 @@ from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 class NautilusDecisionPolicyActor(DecisionPolicyActor, Actor):
     """Nautilus lifecycle seam for the pure decision policy engine.
 
-    Inherits Actor directly so the class is Nautilus-registerable without a
-    runtime_classes wrapper.  The on_save/on_load lifecycle hooks call
-    DecisionPolicyActor.save_state() / load_state() and encode/decode through
-    the Nautilus state bridge.
+    Inherits Actor directly so the class is Nautilus-registerable. The
+    on_save/on_load lifecycle hooks call DecisionPolicyActor.save_state() /
+    load_state() and encode/decode through the Nautilus state bridge.
     """
 
     state_name = "decision_policy"

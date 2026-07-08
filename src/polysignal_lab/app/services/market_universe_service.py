@@ -191,7 +191,7 @@ class MarketUniverseService:
         self,
         discover: Callable[..., object],
     ) -> dict[str, int]:
-        if self.settings is None or self.settings.runtime.engine != "nautilus":
+        if self.settings is None:
             return {}
         try:
             parameters = inspect.signature(discover).parameters

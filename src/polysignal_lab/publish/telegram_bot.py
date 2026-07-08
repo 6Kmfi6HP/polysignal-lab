@@ -18,7 +18,7 @@ import html
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, time, timedelta, timezone
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -34,20 +34,14 @@ from telegram.ext import (
 )
 
 from polysignal_lab.app.services.persistence_service import PersistenceService
-from polysignal_lab.app.services.signal_pipeline import SignalPipeline
 from polysignal_lab.config import TelegramConfig
 from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
+from polysignal_lab.nautilus_runtime.observability import StrategyControl
 from polysignal_lab.paper.strategy_stats import build_strategy_leaderboard_rows
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.utils import new_id, utc_iso
-
-
-class StrategyControl(Protocol):
-    def set_strategy_enabled(self, name: str, enabled: bool) -> None: ...
-    def is_strategy_enabled(self, name: str) -> bool: ...
-    def status_payload(self) -> dict[str, object]: ...
 
 
 class TelegramBotService:
@@ -58,19 +52,19 @@ class TelegramBotService:
         *,
         config: TelegramConfig,
         persistence: PersistenceService,
-        signal_pipeline: SignalPipeline,
+        strategy_control: StrategyControl,
+        strategy_names: list[str],
         books: OrderBookRegistry,
         markets: MarketRegistry,
         formatter: MessageFormatter,
         scheduler: Any | None = None,
         application: Application | None = None,
         logger: logging.Logger | None = None,
-        strategy_control: StrategyControl | None = None,
     ) -> None:
         self.config = config
         self.persistence = persistence
-        self.signal_pipeline = signal_pipeline
         self.strategy_control = strategy_control
+        self.strategy_names = list(strategy_names)
         self.books = books
         self.markets = markets
         self.formatter = formatter
@@ -131,10 +125,6 @@ class TelegramBotService:
             self._error = "no allowed chat ids"
             self.logger.warning("Telegram interactive bot disabled: no allowed chat ids")
             return
-        if self.scheduler is not None and hasattr(self.scheduler, "strategy_schedule"):
-            self.signal_pipeline.set_strategy_dependencies(
-                {entry.name: tuple(entry.depends_on) for entry in self.scheduler.strategy_schedule}
-            )
         self.application = self.application or (
             ApplicationBuilder()
             .token(self.config.resolved_bot_token)
@@ -470,36 +460,24 @@ class TelegramBotService:
         return self.formatter.strategy_leaderboard_message(rows, scope=scope)
 
     def _strategy_names(self) -> list[str]:
-        return [
-            str(getattr(strategy, "name", ""))
-            for strategy in self.signal_pipeline.strategies
-            if getattr(strategy, "name", "")
-        ]
+        return [name for name in self.strategy_names if name]
 
     def _toggle_callback_for(self, name: str) -> str | None:
         data = f"tg:{name}"
         return data if len(data.encode("utf-8")) <= 64 else None
 
     def _is_strategy_enabled(self, name: str) -> bool:
-        control = self.strategy_control
-        if control is not None:
-            return control.is_strategy_enabled(name)
-        return self.signal_pipeline.is_strategy_enabled(name)
+        return self.strategy_control.is_strategy_enabled(name)
 
     def _set_strategy_enabled(self, name: str, enabled: bool) -> None:
-        self.signal_pipeline.set_strategy_enabled(name, enabled)
-        control = self.strategy_control
-        if control is not None:
-            control.set_strategy_enabled(name, enabled)
+        self.strategy_control.set_strategy_enabled(name, enabled)
 
     def _disabled_strategy_names(self) -> list[str]:
-        control = self.strategy_control
-        if control is not None:
-            payload = control.status_payload()
-            disabled = payload.get("disabled_strategies", ())
-            if isinstance(disabled, list):
-                return sorted(str(name) for name in disabled)
-        return sorted(self.signal_pipeline.disabled_strategies)
+        payload = self.strategy_control.status_payload()
+        disabled = payload.get("disabled_strategies", ())
+        if isinstance(disabled, list):
+            return sorted(str(name) for name in disabled)
+        return []
 
 
     def _format_strategies(self) -> str:
@@ -510,7 +488,7 @@ class TelegramBotService:
             suffix = ""
             if self._toggle_callback_for(name) is None:
                 suffix = " (cannot be toggled from Telegram)"
-            reason = self.signal_pipeline.skip_reason_for(name)
+            reason = self.strategy_control.skip_reason_for(name)
             if reason and reason.startswith("dependency_disabled:"):
                 suffix = f" ({reason})"
             lines.append(f"{prefix} {self._safe(name)}{suffix}")
@@ -644,7 +622,7 @@ class TelegramBotService:
         health = self.persistence.restore_latest_system_event("health_snapshot") or {}
         status = str(health.get("status") or "unknown")
         emoji = "🟢" if status == "ok" else "🟡" if status == "degraded" else "🔴"
-        strategies = [getattr(strategy, "name", "?") for strategy in self.signal_pipeline.strategies]
+        strategies = list(self.strategy_names)
         enabled_count = sum(1 for name in strategies if self._is_strategy_enabled(name))
         total_count = len(strategies)
         equity = float(wallet.get("equity", 0.0) or 0.0)

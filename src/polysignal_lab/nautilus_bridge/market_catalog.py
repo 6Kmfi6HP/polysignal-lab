@@ -23,12 +23,7 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
 
 
-def polymarket_instrument_id(condition_id: str, token_id: str) -> str:
-    from polysignal_lab.nautilus_runtime.instrument_mapping import (
-        polymarket_instrument_id as resolve_polymarket_instrument_id,
-    )
-
-    return resolve_polymarket_instrument_id(condition_id, token_id)
+from polysignal_lab.nautilus_bridge.instrument_mapping import polymarket_instrument_id
 
 
 @dataclass(frozen=True, slots=True)

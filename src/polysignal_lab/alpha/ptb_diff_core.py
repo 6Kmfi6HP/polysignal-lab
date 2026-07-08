@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, typing, typing.TYPE_CHECKING, typing.assert_never, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.FreshnessView, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.SideBookView
-Output: compute_tp_sl_thresholds, market_view_from_snapshot, decision_to_signal, TpSlThresholds, PTBDiffAlphaCore
+Output: compute_tp_sl_thresholds, market_view_from_snapshot, decision_to_signal, TpSlThresholds, _EvalContext, PTBDiffAlphaCore
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,6 +14,7 @@ Pos: Application code
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, assert_never
 
 from polysignal_lab.alpha.types import AlphaDecision, FreshnessView, MarketView, SideBookView, SpotView
@@ -21,11 +22,26 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
 if TYPE_CHECKING:
     from polysignal_lab.domain.snapshot import MarketSnapshot
-from polysignal_lab.strategies.config import PTBDiffConfig
+from polysignal_lab.domain.strategy_config import PTBDiffConfig, PTBExitConfig, PTBTriggerConfig
 
 
 class TpSlThresholds(dict[str, float | None]):
     pass
+
+
+@dataclass(frozen=True)
+class _EvalContext:
+    """Shared evaluation context extracted from a MarketView.
+
+    Fields are pre-validated and ready for per-trigger evaluation.
+    """
+
+    view: MarketView
+    seconds: int
+    diff: float
+    spot_source: str
+    exit_cfg: PTBExitConfig
+    max_spread: float
 
 
 def compute_tp_sl_thresholds(entry_prob: float, stop_loss_pct: float, tp_rr: float, tp_cap: float) -> TpSlThresholds:
@@ -64,73 +80,130 @@ class PTBDiffAlphaCore:
         self.config = config
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
-        if not self.config.enabled:
+        ctx = self._prepare_context(view)
+        if ctx is None:
             return []
-        if view.asset not in [a.upper() for a in self.config.assets]:
-            return []
-        if view.timeframe not in self.config.timeframes:
-            return []
+
+        for trigger in self.config.triggers:
+            decision = self._evaluate_trigger(ctx, trigger)
+            if decision is not None:
+                return [decision]
+        return []
+
+    def _prepare_context(self, view: MarketView) -> _EvalContext | None:
+        """Validate inputs and extract shared evaluation context."""
+        cfg = self.config
+        if not cfg.enabled:
+            return None
+        if view.asset not in [a.upper() for a in cfg.assets]:
+            return None
+        if view.timeframe not in cfg.timeframes:
+            return None
         if view.spot is None or view.price_to_beat is None:
-            return []
-        if self.config.require_verified_ptb_source and view.metrics.get("price_to_beat_verified") is not True:
-            return []
-        if self.config.require_anchor_price_source and not view.metrics.get("price_to_beat_from_anchor_service"):
-            return []
+            return None
+        if cfg.require_verified_ptb_source and view.metrics.get("price_to_beat_verified") is not True:
+            return None
+        if cfg.require_anchor_price_source and not view.metrics.get("price_to_beat_from_anchor_service"):
+            return None
         spot_source = str(view.metrics.get("spot_source") or view.spot.source)
-        if self.config.require_chainlink_spot_source and spot_source not in self.config.chainlink_spot_sources:
-            return []
+        if cfg.require_chainlink_spot_source and spot_source not in cfg.chainlink_spot_sources:
+            return None
 
         seconds = view.seconds_to_close
         if seconds is None or seconds <= 0:
-            return []
+            return None
 
-        diff = view.spot.price - view.price_to_beat
-        exit_cfg = self.config.exit_config
+        return _EvalContext(
+            view=view,
+            seconds=seconds,
+            diff=view.spot.price - view.price_to_beat,
+            spot_source=spot_source,
+            exit_cfg=cfg.exit_config,
+            max_spread=cfg.max_spread,
+        )
 
-        for trigger in self.config.triggers:
-            wanted_side = trigger.side
-            if not self._diff_supports_side(diff, wanted_side):
-                continue
-            if not (trigger.min_seconds_to_close <= seconds <= trigger.max_seconds_to_close):
-                continue
-            if abs(diff) < trigger.min_diff_usd:
-                continue
+    def _evaluate_trigger(self, ctx: _EvalContext, trigger: PTBTriggerConfig) -> AlphaDecision | None:
+        """Evaluate a single trigger and return a decision if all conditions are met."""
+        view = ctx.view
+        wanted_side = trigger.side
+        if not self._diff_supports_side(ctx.diff, wanted_side):
+            return None
+        if not (trigger.min_seconds_to_close <= ctx.seconds <= trigger.max_seconds_to_close):
+            return None
+        if abs(ctx.diff) < trigger.min_diff_usd:
+            return None
 
-            entry_price = view.ask_for(wanted_side)
-            if entry_price is None or entry_price <= 0.0:
-                continue
-            if entry_price > trigger.max_token_price:
-                continue
+        entry_price = view.ask_for(wanted_side)
+        if entry_price is None or entry_price <= 0.0:
+            return None
+        if entry_price > trigger.max_token_price:
+            return None
 
-            if trigger.min_token_price > 0.0:
-                if not (trigger.min_token_price <= entry_price <= trigger.max_token_price):
-                    continue
-                directional_probability = entry_price
-                probability_edge = max(0.0, entry_price - trigger.min_token_price)
-            else:
-                directional_probability = self._directional_probability(diff, wanted_side)
-                probability_edge = max(0.0, directional_probability - entry_price)
-                if probability_edge < trigger.min_probability_edge:
-                    continue
+        prob_result = self._resolve_probability(ctx.diff, wanted_side, entry_price, trigger)
+        if prob_result is None:
+            return None
+        directional_probability, probability_edge, prob_ok_code = prob_result
 
-            side_book = view.book_for(wanted_side)
-            if side_book.best_bid is None or side_book.best_ask is None:
-                continue
-            if side_book.spread is None or side_book.spread > self.config.max_spread:
-                continue
+        side_book = view.book_for(wanted_side)
+        if side_book.best_bid is None or side_book.best_ask is None:
+            return None
+        if side_book.spread is None or side_book.spread > ctx.max_spread:
+            return None
 
-            max_lag_ms = exit_cfg.market_data_max_lag_sec * 1000
-            orderbook_freshness_ms = side_book.freshness_ms
-            spot_freshness_ms = view.spot.freshness_ms
-            tp_sl = compute_tp_sl_thresholds(
-                entry_prob=entry_price,
-                stop_loss_pct=exit_cfg.stop_loss_prob_pct,
-                tp_rr=exit_cfg.take_profit_rr,
-                tp_cap=exit_cfg.take_profit_cap,
-            )
-            confidence = min(0.98, 0.55 + min(0.25, abs(diff) / 500) + min(0.18, probability_edge))
-            prob_ok_code = "PTB_PROB_RANGE_OK" if trigger.min_token_price > 0.0 else "PTB_PROBABILITY_EDGE_OK"
-            reason_codes = (
+        return self._build_decision(ctx, trigger, wanted_side, entry_price,
+                                    directional_probability, probability_edge, prob_ok_code, side_book)
+
+    @staticmethod
+    def _resolve_probability(diff: float, side: Side, entry_price: float,
+                             trigger: PTBTriggerConfig) -> tuple[float, float, str] | None:
+        """Calculate directional probability and edge for a trigger."""
+        if trigger.min_token_price > 0.0:
+            if not (trigger.min_token_price <= entry_price <= trigger.max_token_price):
+                return None
+            probability_edge = max(0.0, entry_price - trigger.min_token_price)
+            return entry_price, probability_edge, "PTB_PROB_RANGE_OK"
+        else:
+            directional_probability = PTBDiffAlphaCore._directional_probability(diff, side)
+            probability_edge = max(0.0, directional_probability - entry_price)
+            if probability_edge < trigger.min_probability_edge:
+                return None
+            return directional_probability, probability_edge, "PTB_PROBABILITY_EDGE_OK"
+
+    def _build_decision(
+        self,
+        ctx: _EvalContext,
+        trigger: PTBDiffTrigger,
+        wanted_side: Side,
+        entry_price: float,
+        directional_probability: float,
+        probability_edge: float,
+        prob_ok_code: str,
+        side_book: SideBookView,
+    ) -> AlphaDecision:
+        """Construct the final AlphaDecision from evaluation results."""
+        view = ctx.view
+        tp_sl = compute_tp_sl_thresholds(
+            entry_prob=entry_price,
+            stop_loss_pct=ctx.exit_cfg.stop_loss_prob_pct,
+            tp_rr=ctx.exit_cfg.take_profit_rr,
+            tp_cap=ctx.exit_cfg.take_profit_cap,
+        )
+        confidence = min(0.98, 0.55 + min(0.25, abs(ctx.diff) / 500) + min(0.18, probability_edge))
+        return AlphaDecision(
+            strategy=self.name,
+            asset=view.asset,
+            timeframe=view.timeframe,
+            market_id=view.market_id,
+            market_slug=view.market_slug,
+            condition_id=view.condition_id,
+            token_id=side_book.token_id,
+            side=wanted_side,
+            confidence=confidence,
+            entry_reference_price=entry_price,
+            max_entry_price=trigger.max_token_price,
+            seconds_to_close=ctx.seconds,
+            data_freshness_ms=view.freshness.max_ms,
+            reason_codes=(
                 self._spot_reason(wanted_side),
                 "PTB_DIFF_THRESHOLD_OK",
                 "PTB_TOKEN_PRICE_OK",
@@ -138,59 +211,41 @@ class PTBDiffAlphaCore:
                 "PTB_TIME_WINDOW_OK",
                 "PTB_SPREAD_OK",
                 trigger.name,
-            )
-            return [
-                AlphaDecision(
-                    strategy=self.name,
-                    asset=view.asset,
-                    timeframe=view.timeframe,
-                    market_id=view.market_id,
-                    market_slug=view.market_slug,
-                    condition_id=view.condition_id,
-                    token_id=side_book.token_id,
-                    side=wanted_side,
-                    confidence=confidence,
-                    entry_reference_price=entry_price,
-                    max_entry_price=trigger.max_token_price,
-                    seconds_to_close=seconds,
-                    data_freshness_ms=view.freshness.max_ms,
-                    reason_codes=reason_codes,
-                    metrics={
-                        "spot_price": view.spot.price,
-                        "spot_source": spot_source,
-                        "price_to_beat": view.price_to_beat,
-                        "price_to_beat_source": view.metrics.get("price_to_beat_source"),
-                        "price_to_beat_verified": view.metrics.get("price_to_beat_verified"),
-                        "diff_usd": diff,
-                        "abs_diff_usd": abs(diff),
-                        "trigger": trigger.name,
-                        "trigger_side": trigger.side.value,
-                        "entry_prob": entry_price,
-                        "token_ask": entry_price,
-                        "directional_probability": directional_probability,
-                        "max_token_price": trigger.max_token_price,
-                        "min_token_price": trigger.min_token_price,
-                        "probability_edge": probability_edge,
-                        "min_probability_edge": trigger.min_probability_edge,
-                        "min_diff_usd": trigger.min_diff_usd,
-                        "seconds_to_close": seconds,
-                        "min_seconds_to_close": trigger.min_seconds_to_close,
-                        "max_seconds_to_close": trigger.max_seconds_to_close,
-                        "tp_sl_stop_prob": tp_sl["stop_prob"],
-                        "tp_sl_tp_prob": tp_sl["tp_trigger_prob"],
-                        "tp_sl_risk_abs": tp_sl["risk_abs"],
-                        "tp_sl_stop_loss_pct": exit_cfg.stop_loss_prob_pct,
-                        "tp_sl_take_profit_rr": exit_cfg.take_profit_rr,
-                        "tp_sl_take_profit_cap": exit_cfg.take_profit_cap,
-                        "spread": side_book.spread,
-                        "max_spread": self.config.max_spread,
-                        "orderbook_freshness_ms": orderbook_freshness_ms,
-                        "max_lag_ms": max_lag_ms,
-                        "spot_freshness_ms": spot_freshness_ms,
-                    },
-                )
-            ]
-        return []
+            ),
+            metrics={
+                "spot_price": view.spot.price,
+                "spot_source": ctx.spot_source,
+                "price_to_beat": view.price_to_beat,
+                "price_to_beat_source": view.metrics.get("price_to_beat_source"),
+                "price_to_beat_verified": view.metrics.get("price_to_beat_verified"),
+                "diff_usd": ctx.diff,
+                "abs_diff_usd": abs(ctx.diff),
+                "trigger": trigger.name,
+                "trigger_side": trigger.side.value,
+                "entry_prob": entry_price,
+                "token_ask": entry_price,
+                "directional_probability": directional_probability,
+                "max_token_price": trigger.max_token_price,
+                "min_token_price": trigger.min_token_price,
+                "probability_edge": probability_edge,
+                "min_probability_edge": trigger.min_probability_edge,
+                "min_diff_usd": trigger.min_diff_usd,
+                "seconds_to_close": ctx.seconds,
+                "min_seconds_to_close": trigger.min_seconds_to_close,
+                "max_seconds_to_close": trigger.max_seconds_to_close,
+                "tp_sl_stop_prob": tp_sl["stop_prob"],
+                "tp_sl_tp_prob": tp_sl["tp_trigger_prob"],
+                "tp_sl_risk_abs": tp_sl["risk_abs"],
+                "tp_sl_stop_loss_pct": ctx.exit_cfg.stop_loss_prob_pct,
+                "tp_sl_take_profit_rr": ctx.exit_cfg.take_profit_rr,
+                "tp_sl_take_profit_cap": ctx.exit_cfg.take_profit_cap,
+                "spread": side_book.spread,
+                "max_spread": ctx.max_spread,
+                "orderbook_freshness_ms": side_book.freshness_ms,
+                "max_lag_ms": ctx.exit_cfg.market_data_max_lag_sec * 1000,
+                "spot_freshness_ms": view.spot.freshness_ms,
+            },
+        )
 
     @staticmethod
     def _diff_supports_side(diff_usd: float, side: Side) -> bool:

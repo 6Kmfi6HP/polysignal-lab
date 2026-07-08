@@ -29,7 +29,7 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.spot import SpotPrice
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
-from polysignal_lab.nautilus_runtime.market_data import (
+from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
     register_polysignal_data_types,
 )
@@ -96,6 +96,7 @@ class MarketRotationActor(Actor):
         self._active_by_condition: dict[str, Market] = _markets_by_condition(startup_markets)
         self._epoch: int = 0
         self._last_published_ptb: dict[str, _PriceToBeatSignature] = {}
+        self._refresh_in_flight: bool = False
 
     def publish_data(self, data_type: object, data: object) -> None:
         # Calls Actor.publish_data via MRO — Actor is now a direct base class.
@@ -236,24 +237,33 @@ class MarketRotationActor(Actor):
             _ = self._last_published_ptb.pop(condition_id, None)
 
     def _on_refresh_timer(self, _event: object = None) -> None:
-        """Nautilus Timer callback — runs on the event loop thread.
-
-        Schedules the refresh work as a fire-and-forget coroutine. Since Nautilus
-        Timer callbacks are serialized on the event loop, no manual concurrency
-        guard is needed.
-        """
-        _ = asyncio.create_task(self._refresh_async())
-
-    async def _refresh_async(self) -> None:
+        """Nautilus Timer callback — refresh runs synchronously on the actor thread."""
+        if self._refresh_in_flight:
+            return
+        self._refresh_in_flight = True
         try:
-            refreshed_markets = tuple(
-                await asyncio.to_thread(self.market_universe.refresh_once_sync)
-            )
+            self._run_refresh_sync()
+        finally:
+            self._refresh_in_flight = False
+
+    def _run_refresh_sync(self) -> None:
+        try:
+            refreshed_markets = tuple(self.market_universe.refresh_once_sync())
             _ = self._apply_refreshed_markets(refreshed_markets)
             self._publish_price_to_beat_batch_sync(self.active_markets())
         except Exception as exc:
             logger.exception("market_rotation phase=refresh failed epoch=%s", self._epoch)
             self._mark_down(exc, phase="refresh")
+
+    async def _refresh_async(self) -> None:
+        """Async entry point retained for tests and direct callers."""
+        if self._refresh_in_flight:
+            return
+        self._refresh_in_flight = True
+        try:
+            self._run_refresh_sync()
+        finally:
+            self._refresh_in_flight = False
 
     def _on_spot(self, spot: SpotPrice) -> None:
         self.publisher.publish_spot(

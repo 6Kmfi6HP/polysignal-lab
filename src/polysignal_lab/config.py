@@ -30,7 +30,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from polysignal_lab.strategies.config import (  # noqa: F401
+from polysignal_lab.domain.strategy_config import (  # noqa: F401
     LateConsensusConfig,
     PTBDiffConfig,
     StrategyConfig,
@@ -212,14 +212,6 @@ class SignalConfig(BaseModel):
 
     max_snapshot_concurrency: int = 4
 
-class FillModelConfig(BaseModel):
-    type: str = "best_ask_taker"
-    slippage_bps: float = 25.0
-    require_depth_check: bool = True
-    min_fill_ratio: float = 1.0
-    reject_if_partial: bool = True
-    max_fill_delay_ms: int = 1000
-
 
 class ExitModelConfig(BaseModel):
     mode: str = "hold_to_resolution_with_optional_tp_sl"
@@ -238,7 +230,6 @@ class PaperTradingConfig(BaseModel):
     max_open_positions: int = 10
     max_market_exposure_usdc: float = 30.0
     max_strategy_exposure_usdc: float = 100.0
-    fill_model: FillModelConfig = Field(default_factory=FillModelConfig)
     exit_model: ExitModelConfig = Field(default_factory=ExitModelConfig)
 
 
@@ -330,7 +321,6 @@ class NautilusRuntimeConfig(BaseModel):
 
 
 class RuntimeConfig(BaseModel):
-    engine: Literal["legacy", "nautilus"] = "nautilus"
     nautilus: NautilusRuntimeConfig = Field(default_factory=NautilusRuntimeConfig)
 
 

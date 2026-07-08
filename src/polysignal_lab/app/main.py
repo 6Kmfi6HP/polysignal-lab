@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, argparse, signal, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, enum, enum.StrEnum
-Output: build_parser, parse_cli, run_scheduler_cli, run_dashboard_cli, run_readonly_smoke, main, RuntimeMode, CliOptions
+Output: build_parser, parse_cli, run_dashboard_cli, run_readonly_smoke, main, RuntimeMode, CliOptions
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -32,10 +32,12 @@ from polysignal_lab.storage.sqlite_store import SQLiteStore
 
 
 class RuntimeMode(StrEnum):
-    SCHEDULER = "scheduler"
     DASHBOARD = "dashboard"
     SMOKE = "smoke"
     NAUTILUS = "nautilus"
+
+
+SCHEDULER_MODE_ALIAS = "scheduler"
 
 
 MODE_VALUES: Final = tuple(mode.value for mode in RuntimeMode)
@@ -48,7 +50,6 @@ class CliOptions:
     use_config_default_runtime: bool
     once: bool
     real_readonly_smoke: bool
-    allow_legacy_scheduler: bool
     evidence: Path | None
 
 
@@ -59,13 +60,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "command",
-        choices=MODE_VALUES,
+        choices=(*MODE_VALUES, SCHEDULER_MODE_ALIAS),
         nargs="?",
         help="Optional runtime mode command.",
     )
     parser.add_argument(
         "--mode",
-        choices=MODE_VALUES,
+        choices=(*MODE_VALUES, SCHEDULER_MODE_ALIAS),
         help="Runtime mode to execute.",
     )
     parser.add_argument("--config", default="config/signal_bot.yaml")
@@ -83,11 +84,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--real-readonly-smoke",
         action="store_true",
         help="Run bounded public read-only market, scheduler, dashboard, and safety checks.",
-    )
-    parser.add_argument(
-        "--allow-legacy-scheduler",
-        action="store_true",
-        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--evidence",
@@ -108,19 +104,19 @@ def parse_cli(argv: Sequence[str] | None = None) -> CliOptions:
             parser.error("--dashboard cannot be combined with command or --mode")
         mode = RuntimeMode.DASHBOARD
     else:
-        selected = mode_arg or command or RuntimeMode.SCHEDULER.value
+        selected = mode_arg or command or RuntimeMode.NAUTILUS.value
+        if selected == SCHEDULER_MODE_ALIAS:
+            selected = (
+                RuntimeMode.SMOKE.value
+                if args.once or args.real_readonly_smoke
+                else RuntimeMode.NAUTILUS.value
+            )
         mode = RuntimeMode(selected)
 
     if mode is RuntimeMode.DASHBOARD and (args.once or args.real_readonly_smoke):
         parser.error("dashboard mode cannot be combined with --once or smoke flags")
     if args.real_readonly_smoke and not args.once and mode is not RuntimeMode.SMOKE:
         parser.error("--real-readonly-smoke requires --once outside smoke mode")
-    if args.allow_legacy_scheduler and not (mode_arg or command):
-        parser.error("--allow-legacy-scheduler requires an explicit scheduler selector")
-    if args.allow_legacy_scheduler and mode is not RuntimeMode.SCHEDULER:
-        parser.error("--allow-legacy-scheduler requires scheduler mode")
-    if args.allow_legacy_scheduler and (args.once or args.real_readonly_smoke):
-        parser.error("--allow-legacy-scheduler cannot be combined with bounded smoke")
 
     return CliOptions(
         config=Path(args.config),
@@ -128,7 +124,6 @@ def parse_cli(argv: Sequence[str] | None = None) -> CliOptions:
         use_config_default_runtime=not runtime_selected and not args.once and not args.real_readonly_smoke,
         once=bool(args.once or mode is RuntimeMode.SMOKE),
         real_readonly_smoke=bool(args.real_readonly_smoke or mode is RuntimeMode.SMOKE),
-        allow_legacy_scheduler=bool(args.allow_legacy_scheduler),
         evidence=Path(args.evidence) if args.evidence else None,
     )
 
@@ -136,13 +131,6 @@ def parse_cli(argv: Sequence[str] | None = None) -> CliOptions:
 def _sigterm_handler(_signum: int, _frame: object) -> None:
     """Convert Docker SIGTERM into KeyboardInterrupt so anyio/finally runs."""
     raise KeyboardInterrupt()
-
-
-def run_scheduler_cli(settings: Settings) -> None:
-    raise RuntimeError(
-        "Legacy PolySignalScheduler has been retired. "
-        "Use the Nautilus runtime: `polysignal-nautilus`"
-    )
 
 
 def run_dashboard_cli(settings: Settings) -> None:
@@ -174,11 +162,10 @@ def run_readonly_smoke(settings: Settings, options: CliOptions) -> None:
     print(f"Bounded read-only smoke {status}")
 
 def _resolve_runtime_mode(settings: Settings, options: CliOptions) -> RuntimeMode:
+    _ = settings
+    if options.once or options.real_readonly_smoke:
+        return RuntimeMode.SMOKE
     if options.use_config_default_runtime:
-        return RuntimeMode.NAUTILUS
-    if options.mode is RuntimeMode.SCHEDULER and not options.allow_legacy_scheduler:
-        if options.once or options.real_readonly_smoke:
-            return RuntimeMode.SCHEDULER
         return RuntimeMode.NAUTILUS
     return options.mode
 
@@ -190,12 +177,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode = _resolve_runtime_mode(settings, options)
 
     match mode:
-        case RuntimeMode.SCHEDULER:
-            if options.once or options.real_readonly_smoke:
-                run_readonly_smoke(settings, options)
-                return 0
-            run_scheduler_cli(settings)
-            return 0
         case RuntimeMode.DASHBOARD:
             run_dashboard_cli(settings)
             return 0

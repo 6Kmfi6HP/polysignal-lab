@@ -57,23 +57,14 @@ class PersistenceService:
     def insert_strategy_status(self, status: Any) -> None:
         self.sqlite.insert_strategy_status(status)
 
-    def insert_paper_order(self, order: Any) -> None:
-        self.sqlite.insert_paper_order(order)
-
     def upsert_paper_order(self, order: Any) -> None:
         self.sqlite.upsert_paper_order(order)
-
-    def insert_paper_fill(self, fill: Any) -> None:
-        self.sqlite.insert_paper_fill(fill)
 
     def upsert_paper_position(self, position: Any) -> None:
         self.sqlite.upsert_paper_position(position)
 
     def insert_paper_trade_result(self, result: Any) -> None:
         self.sqlite.insert_paper_trade_result(result)
-
-    def insert_wallet_snapshot(self, snapshot: Any) -> None:
-        self.sqlite.insert_wallet_snapshot(snapshot)
 
     def insert_daily_report(self, report: Any) -> None:
         self.sqlite.insert_daily_report(report)

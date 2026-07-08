@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from polysignal_lab.alpha.types import SpotView
-from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatData, PolySignalSpotData
+from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
 
 
 @dataclass(frozen=True, slots=True)

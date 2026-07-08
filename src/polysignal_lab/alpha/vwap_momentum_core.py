@@ -16,6 +16,7 @@ Pos: Application code
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
 from polysignal_lab.alpha.state import json_safe_state
@@ -143,6 +144,15 @@ class TradeHistory:
         self._trades.pop(key, None)
 
 
+@dataclass(frozen=True)
+class _EvalContext:
+    """Pre-validated evaluation context for VWAP evaluate()."""
+
+    seconds_to_close: int
+    elapsed_sec: float | None
+    cfg: Any  # VWAPMomentumConfig — kept as Any to avoid import coupling
+
+
 class VWAPMomentumAlphaCore:
     """PolyBullLabs VWAP / Deviation / Momentum signal strategy (pure core)."""
 
@@ -261,22 +271,58 @@ class VWAPMomentumAlphaCore:
         return f"{market_id}:{side.value}"
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
-        cfg = self.config
-        if not cfg.enabled:
-            return []
-        if view.asset.upper() not in [a.upper() for a in cfg.assets]:
-            return []
-        if view.timeframe not in cfg.timeframes:
-            return []
-
-        # Pending hedge short-circuit: emit the hedge candidate from the view.
+        # Hedge short-circuit: emit the hedge candidate from the view.
         hedge = self._pending_hedge_decision(view)
         if hedge:
             return hedge
 
+        # Phase 1: Validate entry conditions + calculate time context.
+        ctx = self._validate_and_prepare(view)
+        if ctx is None:
+            return []
+
+        # Phase 2: Ingest trade data from this snapshot into history.
+        now_ts = view.created_at.timestamp()
+        pushed_samples = self._ingest_trades(view, now_ts)
+
+        up_key = self._market_key(view.market_id, Side.UP)
+        down_key = self._market_key(view.market_id, Side.DOWN)
+
+        up_price = self.trades.latest_price(up_key)
+        down_price = self.trades.latest_price(down_key)
+        if up_price is None or down_price is None:
+            return []
+
+        fav_side = Side.UP if up_price >= down_price else Side.DOWN
+        fav_price = up_price if fav_side == Side.UP else down_price
+        fav_key = self._market_key(view.market_id, fav_side)
+
+        # Phase 3: Check all entry conditions.
+        decision = self._check_entry(view, ctx, fav_side, fav_price, fav_key)
+        if decision is None:
+            return []
+
+        # Stash the just-pushed samples so the adapter can bind them to the
+        # candidate's signal_id (for on_order_rejected revert).
+        self._pending_signal_samples_hold[view.market_id] = pushed_samples
+        return [decision]
+
+    def _validate_and_prepare(self, view: MarketView) -> _EvalContext | None:
+        """Validate inputs and calculate time context.
+
+        Returns None if any validation fails.
+        """
+        cfg = self.config
+        if not cfg.enabled:
+            return None
+        if view.asset.upper() not in [a.upper() for a in cfg.assets]:
+            return None
+        if view.timeframe not in cfg.timeframes:
+            return None
+
         seconds_to_close = view.seconds_to_close
         if seconds_to_close is None:
-            return []
+            return None
 
         # elapsed_sec = duration_sec - time_left = now - start_ts
         dt_duration: float | None = None
@@ -292,8 +338,21 @@ class VWAPMomentumAlphaCore:
         if dt_duration is not None and dt_duration > 0:
             elapsed_sec = dt_duration - seconds_to_close
 
-        # Feed prices from this snapshot.
-        now_ts = view.created_at.timestamp()
+        return _EvalContext(
+            seconds_to_close=seconds_to_close,
+            elapsed_sec=elapsed_sec,
+            cfg=cfg,
+        )
+
+    def _ingest_trades(
+        self, view: MarketView, now_ts: float
+    ) -> list[tuple[str, float, float, float]]:
+        """Feed all trade data from the snapshot into the trade history.
+
+        Returns the list of (key, price, size, timestamp) samples that were
+        newly pushed (for use in on_order_rejected revert logic).
+        """
+        cfg = self.config
         pushed_samples: list[tuple[str, float, float, float]] = []
         for side in [Side.UP, Side.DOWN]:
             book = view.book_for(side)
@@ -340,82 +399,80 @@ class VWAPMomentumAlphaCore:
         history_window_sec = max(cfg.vwap_window_sec, cfg.momentum_window_sec + 1.5)
         for key in (self._market_key(view.market_id, Side.UP), self._market_key(view.market_id, Side.DOWN)):
             self._prune_trade_state(key, history_window_sec, now_ts)
+        return pushed_samples
 
-
-        up_key = self._market_key(view.market_id, Side.UP)
-        down_key = self._market_key(view.market_id, Side.DOWN)
-
-        up_price = self.trades.latest_price(up_key)
-        down_price = self.trades.latest_price(down_key)
-        if up_price is None or down_price is None:
-            return []
-
-        fav_side = Side.UP if up_price >= down_price else Side.DOWN
-        fav_price = up_price if fav_side == Side.UP else down_price
-        fav_key = self._market_key(view.market_id, fav_side)
+    def _check_entry(
+        self,
+        view: MarketView,
+        ctx: _EvalContext,
+        fav_side: Side,
+        fav_price: float,
+        fav_key: str,
+    ) -> AlphaDecision | None:
+        """Check all entry conditions and return a decision if all are met."""
+        cfg = ctx.cfg
 
         # Condition 1: Price in range
         if not (cfg.min_price <= fav_price <= cfg.max_price):
-            return []
+            return None
 
         # Condition 2: Enough time elapsed
-        if elapsed_sec is not None and elapsed_sec < cfg.min_elapsed_sec:
-            return []
+        if ctx.elapsed_sec is not None and ctx.elapsed_sec < cfg.min_elapsed_sec:
+            return None
 
         # Condition 3: Not too close to end
-        if seconds_to_close <= cfg.no_entry_before_end_sec:
-            return []
+        if ctx.seconds_to_close <= cfg.no_entry_before_end_sec:
+            return None
 
         # VWAP & Deviation (fractional)
+        now_ts = view.created_at.timestamp()
         vwap = self.trades.vwap(fav_key, cfg.vwap_window_sec, now_ts)
         if vwap is None or vwap <= 0:
-            return []
+            return None
 
         deviation_pct = (fav_price - vwap) / vwap
 
         # Condition 4: Deviation in range
         if not (cfg.min_deviation_pct < deviation_pct < cfg.max_deviation_pct):
-            return []
+            return None
 
         # Momentum (fractional) — time-band approach
         momentum = self.trades.momentum(fav_key, cfg.momentum_window_sec, now_ts)
         if momentum is None:
-            return []
+            return None
 
         # Condition 5: Positive momentum above noise threshold
         if momentum <= cfg.min_momentum:
-            return []
+            return None
 
         # One-shot entry guard (per-market) — READ ONLY here.
         if not self._can_enter[view.market_id]:
-            return []
+            return None
 
         entry_reference_price = view.ask_for(fav_side)
         if entry_reference_price is None:
-            return []
+            return None
 
         confidence = self._compute_confidence(deviation_pct, momentum)
+        return self._build_decision(view, ctx, fav_side, fav_price, vwap, deviation_pct,
+                                    momentum, confidence, entry_reference_price)
 
+    @staticmethod
+    def _build_decision(
+        view: MarketView,
+        ctx: _EvalContext,
+        fav_side: Side,
+        fav_price: float,
+        vwap: float,
+        deviation_pct: float,
+        momentum: float,
+        confidence: float,
+        entry_reference_price: float,
+    ) -> AlphaDecision:
+        """Construct the final AlphaDecision from evaluated conditions."""
         opposite_book = view.book_for(fav_side.opposite)
-        metrics: dict[str, Any] = {
-            "vwap": vwap,
-            "deviation_pct": deviation_pct,
-            "deviation_percent": deviation_pct * 100.0,
-            "momentum_pct": momentum,
-            "momentum": momentum,
-            "favorite_side": fav_side.value,
-            "fav_price": fav_price,
-            "elapsed_sec": elapsed_sec,
-            "seconds_to_close": seconds_to_close,
-            "up_last_price": up_price,
-            "down_last_price": down_price,
-            "opposite_token_id": opposite_book.token_id,
-            "condition_id": view.condition_id,
-            "created_at_for_test": view.created_at,
-        }
-
-        decision = AlphaDecision(
-            strategy=self.name,
+        return AlphaDecision(
+            strategy="vwap_momentum",
             asset=view.asset,
             timeframe=view.timeframe,
             market_id=view.market_id,
@@ -425,8 +482,8 @@ class VWAPMomentumAlphaCore:
             side=fav_side,
             confidence=confidence,
             entry_reference_price=entry_reference_price,
-            max_entry_price=min(cfg.max_price, fav_price + 0.05),
-            seconds_to_close=seconds_to_close,
+            max_entry_price=min(ctx.cfg.max_price, fav_price + 0.05),
+            seconds_to_close=ctx.seconds_to_close,
             data_freshness_ms=view.freshness.max_ms,
             reason_codes=(
                 "VWAP_DEVIATION_OK",
@@ -434,13 +491,21 @@ class VWAPMomentumAlphaCore:
                 "FAVORITE_SELECTED",
                 "ENTRY_WINDOW_OK",
             ),
-            metrics=metrics,
+            metrics={
+                "vwap": vwap,
+                "deviation_pct": deviation_pct,
+                "deviation_percent": deviation_pct * 100.0,
+                "momentum_pct": momentum,
+                "momentum": momentum,
+                "favorite_side": fav_side.value,
+                "fav_price": fav_price,
+                "elapsed_sec": ctx.elapsed_sec,
+                "seconds_to_close": ctx.seconds_to_close,
+                "opposite_token_id": opposite_book.token_id,
+                "condition_id": view.condition_id,
+                "created_at_for_test": view.created_at,
+            },
         )
-
-        # Stash the just-pushed samples so the adapter can bind them to the
-        # candidate's signal_id (for on_order_rejected revert).
-        self._pending_signal_samples_hold[view.market_id] = pushed_samples
-        return [decision]
 
     def _pending_hedge_decision(self, view: MarketView) -> list[AlphaDecision]:
         pending = self._pending_hedges.get(view.market_id)

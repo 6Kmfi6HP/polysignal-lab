@@ -34,7 +34,10 @@ from polysignal_lab.nautilus_runtime.observability import (
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
-from polysignal_lab.strategies.execution import StrategyScheduleEntry, order_strategy_schedule
+from polysignal_lab.nautilus_runtime.strategy_schedule import (
+    StrategyScheduleEntry,
+    order_strategy_schedule,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +161,7 @@ def _build_policy(
     policy_factory = cast(Callable[..., DecisionPolicyActor], policy_type)
     schedule = _build_nautilus_config_strategy_schedule(settings)
     # NOTE: These instances are fallbacks. In the Nautilus bootstrap flow,
-    # _seed_policy_control_from_scheduler (scheduler_bridge.py:43) overwrites
+    # Disabled strategies are restored from persistence in node lifecycle.
     # them with the scheduler's own gate/consensus/arbiter instances so that
     # dedupe/consensus state is unified across evaluation and persistence.
     # Callers outside that flow (tests) use these directly.

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, dataclasses, dataclasses.dataclass, typing, typing.cast, polysignal_lab.alpha.types
-Output: ApprovedDecision, RejectedDecision, _MarketAdapter, _BookAdapter, _SpotAdapter, _GateSnapshotAdapter, DecisionPolicyActor
+Output: ApprovedDecision, RejectedDecision, candidate_from_decision, _MarketAdapter, _BookAdapter, _SpotAdapter, _GateSnapshotAdapter, DecisionPolicyActor
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -45,6 +45,31 @@ def _string_tuple_mapping(raw: object) -> dict[str, tuple[str, ...]]:
 _UNKNOWN_LAG_MS = 10**12
 
 
+def candidate_from_decision(decision: AlphaDecision, view: MarketView) -> SignalCandidate:
+    return SignalCandidate.build(
+        strategy=decision.strategy,
+        asset=decision.asset,
+        timeframe=decision.timeframe,
+        market_id=decision.market_id,
+        market_slug=decision.market_slug,
+        condition_id=decision.condition_id,
+        token_id=decision.token_id,
+        side=decision.side,
+        confidence=decision.confidence,
+        entry_reference_price=decision.entry_reference_price,
+        max_entry_price=decision.max_entry_price,
+        seconds_to_close=decision.seconds_to_close,
+        data_freshness_ms=decision.data_freshness_ms,
+        reason_codes=list(decision.reason_codes),
+        metrics=dict(decision.metrics),
+        snapshot_id=view.view_id,
+        order_intent=decision.order_intent.intent if decision.order_intent else None,
+        expiry_seconds=decision.order_intent.expiry_seconds if decision.order_intent else None,
+        pair_id=decision.order_intent.pair_id if decision.order_intent else None,
+        hedge_leg=decision.hedge_leg,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ApprovedDecision:
     signal: SignalCandidate
@@ -85,6 +110,8 @@ class _SpotAdapter:
 
 @dataclass(frozen=True, slots=True)
 class _GateSnapshotAdapter:
+    """Minimal MarketSnapshot-shaped view over MarketView for SignalGate.evaluate."""
+
     view: MarketView
 
     @property
@@ -233,26 +260,8 @@ class DecisionPolicyActor:
     def _candidate_from_decision(
         self, decision: AlphaDecision, view: MarketView
     ) -> SignalCandidate:
-        return SignalCandidate.build(
-            strategy=decision.strategy,
-            asset=decision.asset,
-            timeframe=decision.timeframe,
-            market_id=decision.market_id,
-            market_slug=decision.market_slug,
-            condition_id=decision.condition_id,
-            token_id=decision.token_id,
-            side=decision.side,
-            confidence=decision.confidence,
-            entry_reference_price=decision.entry_reference_price,
-            max_entry_price=decision.max_entry_price,
-            seconds_to_close=decision.seconds_to_close,
-            data_freshness_ms=decision.data_freshness_ms,
-            reason_codes=list(decision.reason_codes),
-            metrics=dict(decision.metrics),
-            freshness_policy=self.strategy_freshness_policies.get(decision.strategy),
-            snapshot_id=view.view_id,
-            order_intent=decision.order_intent.intent if decision.order_intent else None,
-            expiry_seconds=decision.order_intent.expiry_seconds if decision.order_intent else None,
-            pair_id=decision.order_intent.pair_id if decision.order_intent else None,
-            hedge_leg=decision.hedge_leg,
-        )
+        candidate = candidate_from_decision(decision, view)
+        policy = self.strategy_freshness_policies.get(decision.strategy)
+        if policy is None:
+            return candidate
+        return candidate.model_copy(update={"freshness_policy": policy})

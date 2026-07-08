@@ -125,11 +125,28 @@ class OrderBookRegistry:
 
             return True
 
+    def _check_sequence_validity(
+        self, state: BookEpochState, book: OrderBook
+    ) -> bool:
+        """Validate the sequence of a book update.
+
+        Returns False (and marks state stale) if the update is chronologically
+        before the last known state. Returns True if the update should proceed.
+        """
+        new_ts = parse_source_timestamp(book.source_timestamp)
+        if new_ts and state.last_source_timestamp and new_ts < state.last_source_timestamp:
+            state.has_snapshot = False
+            state.stale_reason = "BOOK_SEQUENCE_INVALID"
+            self.metrics.inc("book_sequence_invalid")
+            return False
+        state.last_source_timestamp = new_ts or state.last_source_timestamp
+        state.last_received_at = book.received_at
+        return True
+
     def update_from_snapshot(self, book: OrderBook) -> None:
         token_id = book.token_id
         with self._lock:
             state = self.states.get(token_id)
-            new_ts = parse_source_timestamp(book.source_timestamp)
             if state is None:
                 state = BookEpochState(
                     token_id=token_id,
@@ -137,22 +154,16 @@ class OrderBookRegistry:
                     has_snapshot=True,
                     stale_reason=None,
                     last_hash=getattr(book, "hash", None),
-                    last_source_timestamp=new_ts,
+                    last_source_timestamp=parse_source_timestamp(book.source_timestamp),
                     last_received_at=book.received_at,
                 )
                 self.states[token_id] = state
-            else:
-                if new_ts and state.last_source_timestamp and new_ts < state.last_source_timestamp:
-                    state.has_snapshot = False
-                    state.stale_reason = "BOOK_SEQUENCE_INVALID"
-                    self.metrics.inc("book_sequence_invalid")
-                    return
-
+            elif self._check_sequence_validity(state, book):
                 state.has_snapshot = True
                 state.stale_reason = None
                 state.last_hash = getattr(book, "hash", None)
-                state.last_source_timestamp = new_ts or state.last_source_timestamp
-                state.last_received_at = book.received_at
+            else:
+                return
 
             self.books[token_id] = book
 
@@ -164,15 +175,9 @@ class OrderBookRegistry:
                 self.metrics.inc("delta_without_snapshot")
                 return
 
-            new_ts = parse_source_timestamp(book.source_timestamp)
-            if new_ts and state.last_source_timestamp and new_ts < state.last_source_timestamp:
-                state.has_snapshot = False
-                state.stale_reason = "BOOK_SEQUENCE_INVALID"
-                self.metrics.inc("book_sequence_invalid")
+            if not self._check_sequence_validity(state, book):
                 return
 
-            state.last_source_timestamp = new_ts or state.last_source_timestamp
-            state.last_received_at = book.received_at
             self.books[token_id] = book
 
     def update_telemetry(self, token_id: str, best_bid: float | None, best_ask: float | None) -> None:

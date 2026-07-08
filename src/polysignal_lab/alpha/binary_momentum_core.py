@@ -133,17 +133,7 @@ class BinaryMomentumAlphaCore:
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         cfg = self.config
-        # 1. collect spot price
-        if view.spot is not None and view.spot.price > 0:
-            self._spot_prices.append(view.spot.price)
-        # 2. collect token mids for VWAP
-        for book_side in (Side.UP, Side.DOWN):
-            book = view.book_for(book_side)
-            if book.best_bid is not None and book.best_ask is not None:
-                mid = (book.best_bid + book.best_ask) / 2.0
-                if mid > 0:
-                    key = f"{view.market_id}:{book_side.value}"
-                    self._vwap_stats.push(key, mid, 1.0)
+        self._collect_data(view)
 
         spot_prices = list(self._spot_prices)
         if len(spot_prices) < cfg.macd_slow:
@@ -165,94 +155,124 @@ class BinaryMomentumAlphaCore:
         decisions: list[AlphaDecision] = []
 
         for direction_side in (Side.UP, Side.DOWN):
-            if direction_side == Side.UP:
-                if not (
-                    histogram > 0
-                    and macd_line > signal
-                    and cfg.rsi_up_min <= rsi_val <= cfg.rsi_upper
-                ):
-                    continue
-            else:
-                if not (
-                    histogram < 0
-                    and macd_line < signal
-                    and cfg.rsi_lower <= rsi_val <= cfg.rsi_down_max
-                ):
-                    continue
-
-            book = view.book_for(direction_side)
-            mid = self._book_mid(book)
-            if mid is None:
-                continue
-            if mid > cfg.max_token_price:
-                continue
-
-            vwap_key = f"{market_id}:{direction_side.value}"
-            vwap_stats = self._vwap_stats.stats(vwap_key)
-            current_vwap = vwap_stats.get("vwap")
-            if current_vwap is None or current_vwap <= 0:
-                continue
-
-            if direction_side == Side.UP:
-                if mid <= current_vwap * (1.0 + cfg.vwap_deviation):
-                    continue
-            else:
-                if mid >= current_vwap * (1.0 - cfg.vwap_deviation):
-                    continue
-
-            if already_in:
-                continue
-
-            rsi_mid = abs(rsi_val - 50.0) / 50.0
-            macd_strength = (
-                abs(histogram) / (abs(macd_line) + 1e-10)
-                if abs(macd_line) > 1e-10
-                else 0.5
+            decision = self._evaluate_direction(
+                view, direction_side, macd_line, signal, histogram,
+                rsi_val, already_in,
             )
-            macd_strength = min(1.0, macd_strength)
-            confidence = 0.50 + 0.20 * rsi_mid + 0.10 * macd_strength
-            confidence = max(0.50, min(0.95, confidence))
-
-            decisions.append(
-                AlphaDecision(
-                    strategy=self.name,
-                    asset=view.asset,
-                    timeframe=view.timeframe,
-                    market_id=market_id,
-                    market_slug=view.market_slug,
-                    condition_id=view.condition_id,
-                    token_id=book.token_id,
-                    side=direction_side,
-                    confidence=confidence,
-                    entry_reference_price=book.best_ask if book.best_ask is not None else (mid * 1.05),
-                    max_entry_price=book.best_ask if book.best_ask is not None else (mid * 1.05),
-                    seconds_to_close=view.seconds_to_close,
-                    data_freshness_ms=view.freshness.max_ms,
-                    reason_codes=(
-                        "BINARY_MOMENTUM",
-                        f"MACD_{'BULL' if direction_side == Side.UP else 'BEAR'}",
-                        f"RSI_{int(rsi_val)}",
-                        "VWAP_CONFIRMED",
-                    ),
-                    metrics={
-                        "macd_line": macd_line,
-                        "macd_signal": signal,
-                        "macd_histogram": histogram,
-                        "rsi": rsi_val,
-                        "vwap": current_vwap,
-                        "token_mid": mid,
-                        "direction": direction_side.value,
-                        "spot_price": view.spot.price if view.spot else None,
-                        "stop_loss_pct": cfg.stop_loss_pct,
-                        "take_profit_pct": cfg.take_profit_pct,
-                        "max_notional": cfg.max_notional,
-                        "created_at_for_test": view.created_at,
-                    },
-                    order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FAK),
-                )
-            )
+            if decision is not None:
+                decisions.append(decision)
 
         return decisions
+
+    def _collect_data(self, view: MarketView) -> None:
+        """Extract spot prices and token mids from the view."""
+        if view.spot is not None and view.spot.price > 0:
+            self._spot_prices.append(view.spot.price)
+        for book_side in (Side.UP, Side.DOWN):
+            book = view.book_for(book_side)
+            if book.best_bid is not None and book.best_ask is not None:
+                mid = (book.best_bid + book.best_ask) / 2.0
+                if mid > 0:
+                    key = f"{view.market_id}:{book_side.value}"
+                    self._vwap_stats.push(key, mid, 1.0)
+
+    def _evaluate_direction(
+        self,
+        view: MarketView,
+        direction_side: Side,
+        macd_line: float,
+        signal: float,
+        histogram: float,
+        rsi_val: float,
+        already_in: bool,
+    ) -> AlphaDecision | None:
+        """Check conditions for a single direction and return a decision if met."""
+        cfg = self.config
+        market_id = view.market_id
+
+        # Direction-specific MACD/RSI check
+        if direction_side == Side.UP:
+            if not (
+                histogram > 0
+                and macd_line > signal
+                and cfg.rsi_up_min <= rsi_val <= cfg.rsi_upper
+            ):
+                return None
+        else:
+            if not (
+                histogram < 0
+                and macd_line < signal
+                and cfg.rsi_lower <= rsi_val <= cfg.rsi_down_max
+            ):
+                return None
+
+        book = view.book_for(direction_side)
+        mid = self._book_mid(book)
+        if mid is None or mid > cfg.max_token_price:
+            return None
+
+        vwap_key = f"{market_id}:{direction_side.value}"
+        vwap_stats = self._vwap_stats.stats(vwap_key)
+        current_vwap = vwap_stats.get("vwap")
+        if current_vwap is None or current_vwap <= 0:
+            return None
+
+        if direction_side == Side.UP:
+            if mid <= current_vwap * (1.0 + cfg.vwap_deviation):
+                return None
+        else:
+            if mid >= current_vwap * (1.0 - cfg.vwap_deviation):
+                return None
+
+        if already_in:
+            return None
+
+        rsi_mid = abs(rsi_val - 50.0) / 50.0
+        macd_strength = (
+            abs(histogram) / (abs(macd_line) + 1e-10)
+            if abs(macd_line) > 1e-10
+            else 0.5
+        )
+        macd_strength = min(1.0, macd_strength)
+        confidence = 0.50 + 0.20 * rsi_mid + 0.10 * macd_strength
+        confidence = max(0.50, min(0.95, confidence))
+
+        return AlphaDecision(
+            strategy=self.name,
+            asset=view.asset,
+            timeframe=view.timeframe,
+            market_id=market_id,
+            market_slug=view.market_slug,
+            condition_id=view.condition_id,
+            token_id=book.token_id,
+            side=direction_side,
+            confidence=confidence,
+            entry_reference_price=book.best_ask if book.best_ask is not None else (mid * 1.05),
+            max_entry_price=book.best_ask if book.best_ask is not None else (mid * 1.05),
+            seconds_to_close=view.seconds_to_close,
+            data_freshness_ms=view.freshness.max_ms,
+            reason_codes=(
+                "BINARY_MOMENTUM",
+                f"MACD_{'BULL' if direction_side == Side.UP else 'BEAR'}",
+                f"RSI_{int(rsi_val)}",
+                "VWAP_CONFIRMED",
+            ),
+            metrics={
+                "macd_line": macd_line,
+                "macd_signal": signal,
+                "macd_histogram": histogram,
+                "rsi": rsi_val,
+                "vwap": current_vwap,
+                "token_mid": mid,
+                "direction": direction_side.value,
+                "spot_price": view.spot.price if view.spot else None,
+                "stop_loss_pct": cfg.stop_loss_pct,
+                "take_profit_pct": cfg.take_profit_pct,
+                "max_notional": cfg.max_notional,
+                "created_at_for_test": view.created_at,
+            },
+            order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FAK),
+        )
 
     def evaluate_view_from_snapshot_for_test(
         self, snapshot: MarketSnapshot

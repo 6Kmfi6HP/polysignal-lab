@@ -36,9 +36,12 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from polysignal_lab.app.scheduler import PolySignalScheduler
 from polysignal_lab.app.scheduler_reporting import _store_paper_result
 from polysignal_lab.config import load_settings
+from polysignal_lab.nautilus_runtime.runtime_context_factory import (
+    NautilusRuntimeContext,
+    build_nautilus_runtime_context,
+)
 from polysignal_lab.domain.enums import ExitMode, PositionStatus, TradeResultStatus
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.paper_position import PaperPosition
@@ -118,21 +121,21 @@ def _position_in_range(position: PaperPosition, since: date | None, until: date 
 
 
 def _existing_results_for_position(
-    scheduler: PolySignalScheduler, paper_position_id: str
+    scheduler: NautilusRuntimeContext, paper_position_id: str
 ) -> list[dict[str, Any]]:
     rows = scheduler.persistence.query_json("paper_trade_results", limit=100_000)
     return [row for row in rows if row.get("paper_position_id") == paper_position_id]
 
 
 def _existing_result_for_position(
-    scheduler: PolySignalScheduler, paper_position_id: str
+    scheduler: NautilusRuntimeContext, paper_position_id: str
 ) -> dict[str, Any] | None:
     rows = _existing_results_for_position(scheduler, paper_position_id)
     return rows[0] if rows else None
 
 
-def _load_market(scheduler: PolySignalScheduler, market_id: str) -> Market | None:
-    cached = scheduler.ctx.markets.get(market_id)
+def _load_market(scheduler: NautilusRuntimeContext, market_id: str) -> Market | None:
+    cached = scheduler.markets.get(market_id)
     if cached is not None:
         return cached
     rows = scheduler.persistence.query_json(
@@ -144,7 +147,7 @@ def _load_market(scheduler: PolySignalScheduler, market_id: str) -> Market | Non
     if not rows:
         return None
     market = Market.model_validate(rows[0])
-    scheduler.ctx.markets.upsert_many([market])
+    scheduler.markets.upsert_many([market])
     return market
 
 
@@ -208,10 +211,15 @@ def _settle_for_repair(
     return result
 
 
-def _replay_wallet(scheduler: PolySignalScheduler) -> tuple[float, float, int]:
+def _replay_wallet(scheduler: NautilusRuntimeContext) -> tuple[float, float, int]:
     starting = float(scheduler.settings.paper_trading.starting_balance_usdc)
     cash = starting
-    fills = scheduler.persistence.query_json("paper_fills", limit=100_000)
+    fills = scheduler.persistence.query_json(
+        "system_events",
+        where="WHERE event_type=?",
+        params=("nautilus_fill",),
+        limit=100_000,
+    )
     for fill in fills:
         cash -= float(fill.get("stake_usdc") or 0.0)
     results = scheduler.persistence.query_json("paper_trade_results", limit=100_000)
@@ -224,7 +232,7 @@ def _replay_wallet(scheduler: PolySignalScheduler) -> tuple[float, float, int]:
     return round(cash, 10), round(realized_pnl, 10), open_count
 
 
-def _wallet_drift(scheduler: PolySignalScheduler) -> dict[str, float]:
+def _wallet_drift(scheduler: NautilusRuntimeContext) -> dict[str, float]:
     replay_cash, replay_pnl, _ = _replay_wallet(scheduler)
     latest = scheduler.persistence.restore_latest_wallet_snapshot() or {}
     stored_cash = float(latest.get("cash_balance", replay_cash))
@@ -245,7 +253,7 @@ def _is_c5_candidate(existing: dict[str, Any]) -> bool:
 
 
 async def _resolve_position(
-    scheduler: PolySignalScheduler,
+    scheduler: NautilusRuntimeContext,
     position: PaperPosition,
     market: Market,
 ) -> ResolutionDecision:
@@ -269,7 +277,7 @@ def _planned_result_label(decision: ResolutionDecision, position: PaperPosition)
     return TradeResultStatus.UNKNOWN.value
 
 
-async def audit(scheduler: PolySignalScheduler, config: RepairConfig) -> AuditReport:
+async def audit(scheduler: NautilusRuntimeContext, config: RepairConfig) -> AuditReport:
     report = AuditReport(run_id=new_run_id())
     c1: list[dict[str, Any]] = []
     c2: list[dict[str, Any]] = []
@@ -345,13 +353,13 @@ async def audit(scheduler: PolySignalScheduler, config: RepairConfig) -> AuditRe
     return report
 
 
-def _backup_sqlite(scheduler: PolySignalScheduler, backup_path: Path) -> None:
+def _backup_sqlite(scheduler: NautilusRuntimeContext, backup_path: Path) -> None:
     backup_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(scheduler.sqlite.path, backup_path)
 
 
 def _append_repair_audit(
-    scheduler: PolySignalScheduler,
+    scheduler: NautilusRuntimeContext,
     *,
     run_id: str,
     backup_path: Path | None,
@@ -374,7 +382,7 @@ def _append_repair_audit(
         LOGGER.warning("Failed to append settlement repair audit to JSONL")
 
 
-async def backfill(scheduler: PolySignalScheduler, config: RepairConfig) -> dict[str, Any]:
+async def backfill(scheduler: NautilusRuntimeContext, config: RepairConfig) -> dict[str, Any]:
     run_id = new_run_id()
     if not config.dry_run:
         if config.backup_path is None:
@@ -486,7 +494,7 @@ async def backfill(scheduler: PolySignalScheduler, config: RepairConfig) -> dict
     }
 
 
-def reconcile_wallet(scheduler: PolySignalScheduler, config: RepairConfig) -> dict[str, Any]:
+def reconcile_wallet(scheduler: NautilusRuntimeContext, config: RepairConfig) -> dict[str, Any]:
     drift = _wallet_drift(scheduler)
     needs_fix = (
         abs(drift["cash_delta"]) > WALLET_EPSILON
@@ -514,11 +522,11 @@ def reconcile_wallet(scheduler: PolySignalScheduler, config: RepairConfig) -> di
         open_position_count=open_count,
         created_at=utc_now(),
     )
-    scheduler.persistence.insert_wallet_snapshot(snapshot)
+    scheduler.persistence.sqlite.insert_wallet_snapshot(snapshot)
     return {"applied": True, "drift": drift}
 
 
-async def regenerate_reports(scheduler: PolySignalScheduler, config: RepairConfig, dates: list[str]) -> dict[str, Any]:
+async def regenerate_reports(scheduler: NautilusRuntimeContext, config: RepairConfig, dates: list[str]) -> dict[str, Any]:
     if not dates:
         return {"regenerated": []}
     today = datetime.now(ZoneInfo(scheduler.settings.app.timezone)).date().isoformat()
@@ -553,10 +561,9 @@ async def regenerate_reports(scheduler: PolySignalScheduler, config: RepairConfi
     return {"regenerated": regenerated}
 
 
-async def build_scheduler(config: RepairConfig) -> PolySignalScheduler:
+async def build_runtime(config: RepairConfig) -> NautilusRuntimeContext:
     settings = load_settings(config.config_path)
-    scheduler = PolySignalScheduler(settings, base_dir=config.data_dir)
-    return scheduler
+    return build_nautilus_runtime_context(settings, base_dir=config.data_dir)
 
 
 def validate_config(config: RepairConfig) -> int | None:
@@ -574,30 +581,30 @@ async def run_repair_async(config: RepairConfig) -> int:
     if error_code is not None:
         return error_code
 
-    scheduler = await build_scheduler(config)
+    runtime = await build_runtime(config)
     exit_code = 0
     report_dates: list[str] = []
 
     if config.mode in {"audit", "all"}:
-        audit_report = await audit(scheduler, config)
+        audit_report = await audit(runtime, config)
         print(json.dumps(audit_report.to_dict(), indent=2, default=str))
 
     if config.mode in {"backfill", "all"}:
-        backfill_report = await backfill(scheduler, config)
+        backfill_report = await backfill(runtime, config)
         print(json.dumps(backfill_report, indent=2, default=str))
         report_dates = backfill_report.get("affected_report_dates", [])
         if backfill_report.get("failures", 0) > 0:
             exit_code = 1
 
     if config.mode in {"wallet", "all"}:
-        wallet_report = reconcile_wallet(scheduler, config)
+        wallet_report = reconcile_wallet(runtime, config)
         print(json.dumps(wallet_report, indent=2, default=str))
 
     if config.mode in {"reports", "all"}:
-        reports_report = await regenerate_reports(scheduler, config, report_dates)
+        reports_report = await regenerate_reports(runtime, config, report_dates)
         print(json.dumps(reports_report, indent=2, default=str))
 
-    scheduler.persistence.close()
+    runtime.persistence.close()
     return exit_code
 
 

@@ -9,7 +9,7 @@
 - `scheduler_reporting.py` - Exports generate_daily_report and 1 more
 - `scheduler_health.py` - Exports note_storage_success and 4 more
 - `readonly_smoke_types.py` - Exports ReadonlySmokeRequest and 9 more
-- `readonly_smoke_runtime.py` - Application code
+- `readonly_smoke.py` - Exports collect_readonly_smoke and write_evidence
 - `readonly_smoke_public.py` - Exports make_public_client and 18 more
 - `readonly_smoke.py` - Exports collect_readonly_smoke and 1 more
 - `main.py` - Exports build_parser and 7 more

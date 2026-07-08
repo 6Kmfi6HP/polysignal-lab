@@ -21,7 +21,7 @@ from typing import Callable, Protocol, cast
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
-from polysignal_lab.nautilus_runtime.market_data import (
+from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,

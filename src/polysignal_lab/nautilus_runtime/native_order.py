@@ -17,7 +17,9 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from importlib import import_module
+from nautilus_trader.model.enums import OrderSide, TimeInForce
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.objects import Price, Quantity
 from typing import Protocol, TypeVar, cast
 
 from polysignal_lab.domain.enums import OrderIntent, Side
@@ -90,78 +92,51 @@ def submit_approved_decision(
 
 def _order_side(side: Side, *, reduce_only: bool) -> object:
     if reduce_only:
-        return _enum_member("OrderSide", "SELL", "SELL")
+        return OrderSide.SELL
     if side in {Side.UP, Side.DOWN}:
-        return _enum_member("OrderSide", "BUY", "BUY")
+        return OrderSide.BUY
     raise ValueError(f"unsupported side for Nautilus order: {side}")
 
 
 def _time_in_force(intent: OrderIntent) -> object:
     if intent == OrderIntent.PASSIVE_GTD:
-        return _enum_member("TimeInForce", "GTD", "GTD")
+        return TimeInForce.GTD
     if intent == OrderIntent.TAKER_FOK:
-        return _enum_member("TimeInForce", "FOK", "FOK")
-    return _enum_member("TimeInForce", "IOC", "IOC")
+        return TimeInForce.FOK
+    return TimeInForce.IOC
 
 
 def _instrument_id(instrument: object) -> object:
     value = cast(object, getattr(instrument, "id", instrument))
     if isinstance(value, str):
-        instrument_id_cls = _optional_nautilus_attr("nautilus_trader.model.identifiers", "InstrumentId")
-        from_str = cast(object, getattr(instrument_id_cls, "from_str", None)) if instrument_id_cls is not None else None
-        if callable(from_str):
-            return cast(Callable[[str], object], from_str)(value)
+        return InstrumentId.from_str(value)
     return value
 
 
 def _price_value(instrument: object, value: float) -> object:
     precision = _precision(instrument, "price_precision")
     price_text = _decimal_str(value, precision)
-    price_cls = _optional_nautilus_attr("nautilus_trader.model.objects", "Price")
-    from_str = cast(object, getattr(price_cls, "from_str", None)) if price_cls is not None else None
-    if callable(from_str) and precision is not None:
-        return cast(Callable[[str], object], from_str)(price_text)
-    normalized = float(price_text) if precision is not None else value
+    if precision is not None:
+        return Price.from_str(price_text)
     maker = cast(object, getattr(instrument, "make_price", None))
     if callable(maker):
-        return cast(Callable[[float], object], maker)(normalized)
-    if callable(from_str):
-        return cast(Callable[[str], object], from_str)(price_text)
-    return normalized
+        return cast(Callable[[float], object], maker)(value)
+    return Price.from_str(price_text)
 
 
 def _quantity_value(instrument: object, value: float) -> object:
-    quantity_cls = _optional_nautilus_attr("nautilus_trader.model.objects", "Quantity")
-    from_str = cast(object, getattr(quantity_cls, "from_str", None)) if quantity_cls is not None else None
     precision = _precision(instrument, "size_precision")
-    if callable(from_str) and precision is not None:
-        return cast(Callable[[str], object], from_str)(_decimal_str(value, precision))
+    if precision is not None:
+        return Quantity.from_str(_decimal_str(value, precision))
     maker = cast(object, getattr(instrument, "make_qty", None))
     if callable(maker):
         return cast(Callable[[float], object], maker)(value)
-    if callable(from_str):
-        return cast(Callable[[str], object], from_str)(_decimal_str(value, precision))
-    return value
+    return Quantity.from_str(_decimal_str(value, precision))
 
 
 def _precision(instrument: object, attr: str) -> int | None:
     value = cast(object, getattr(instrument, attr, None))
     return value if isinstance(value, int) else None
-
-
-def _enum_member(class_name: str, member: str, fallback: str) -> object:
-    enum_cls = _optional_nautilus_attr("nautilus_trader.model.enums", class_name)
-    if enum_cls is None:
-        return fallback
-    return cast(object, getattr(enum_cls, member, fallback))
-
-
-def _optional_nautilus_attr(module_name: str, attr_name: str) -> object | None:
-    try:
-        module = import_module(module_name)
-    except ModuleNotFoundError:
-        return None
-    return cast(object, getattr(module, attr_name))
 
 
 def _decimal_str(value: float, precision: int | None = None) -> str:
