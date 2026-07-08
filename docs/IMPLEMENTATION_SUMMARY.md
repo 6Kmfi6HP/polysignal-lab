@@ -17,7 +17,7 @@
 | Reporting | Daily report, PnL, ROI, win rate, drawdown, profit factor, breakdowns over projected Nautilus state |
 | Storage | SQLite tables, JSONL audit logs, atomic state files |
 | Dashboard | Read-only FastAPI dashboard and JSON endpoints backed by SQLite data |
-| Scheduler/smoke | Nautilus mode, legacy scheduler compatibility mode, dashboard mode, and bounded public read-only smoke mode |
+| Scheduler/smoke | Nautilus mode, dashboard mode, and bounded public read-only smoke mode (legacy scheduler compatibility mode retired in final migration) |
 | Tests | Automated tests cover config safety, Nautilus runtime boundaries, strategy callbacks, paper projections, settlement, reporting, and dashboard behavior |
 
 ## Runtime-generated files and generated history
@@ -26,12 +26,10 @@ Runtime writes JSONL audit logs under `logs/`, atomic state snapshots under `sta
 
 See `docs/GENERATED_HISTORY_DELETION.md` for the deletion boundary.
 
-## Test result
+## Test result (snapshot: 2026-06-22)
 
-```text
-120 passed, 1 warning
-Safety scan passed
-```
+At the time of the final migration, the full test suite passes >270 tests with 0 failures.
+See `docs/TEST_RESULTS.md` for the archived historical snapshot.
 
 ## Current operator commands
 

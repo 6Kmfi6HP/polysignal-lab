@@ -1,6 +1,10 @@
-# Test Results
+# Test Results (Archived Snapshot)
 
-Date: 2026-06-22
+**Date:** 2026-06-22
+**Status:** Historical snapshot from the original implementation phase.
+
+> ⚠️ This file is retained for historical reference. Current test counts will differ.
+> See the project's CI output or run `uv run pytest -q` for current results.
 
 ## pytest
 

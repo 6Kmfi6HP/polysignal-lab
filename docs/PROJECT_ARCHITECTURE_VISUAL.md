@@ -13,8 +13,7 @@ PolySignal Lab 是一个 **只读 Polymarket 短周期信号 + Nautilus 纸面�
 flowchart TB
   CLI["CLI 入口<br/>polysignal-lab"] --> Main["app/main.py"]
 
-  Main --> Nautilus["Nautilus Runtime<br/>默认"]
-  Main --> Scheduler["Legacy Scheduler 模式<br/>兼容/测试"]
+  Main --> Nautilus["Nautilus Runtime"]
   Main --> Dashboard["Dashboard 模式"]
   Main --> Smoke["Smoke 检查模式"]
 
@@ -81,7 +80,7 @@ flowchart LR
   Root --> Docs["docs/<br/>交付/PRD 文档"]
   Root --> Scripts["scripts/<br/>安全扫描等"]
 
-  Src --> App["app/<br/>入口 + legacy scheduler facade"]
+  Src --> App["app/<br/>入口 + scheduler"]
   Src --> NautilusRuntime["nautilus_runtime/<br/>LiveNode / strategy / order / projections"]
   Src --> NautilusBridge["nautilus_bridge/<br/>MarketCatalog / view assembly / state codec"]
   Src --> Alpha["alpha/<br/>策略核心逻辑"]
@@ -217,4 +216,4 @@ flowchart TD
 
 1. 复查 `extra_fills/extra_positions` 是否漏存。
 2. 隔离 `refs/`，避免旧 bot 代码污染代码索引和安全扫描。
-3. 将 scheduler 持续失败状态显式写入 `system_events` 或 health surface。
+3. 将 scheduler 持续失败状态显式写入 `system_events` 或 health surface。（注：Legacy Scheduler 模式已在最终迁移中移除）

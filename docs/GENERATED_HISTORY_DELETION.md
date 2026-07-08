@@ -1,9 +1,5 @@
 # Generated History Deletion Manifest
 
-Todo: active PRD-old removal plan, item 2.
-
-Tier used: LIGHT. This manifest documents deletion boundaries only and does not delete runtime artifacts.
-
 ## Approved Generated Paths For Later Deletion
 
 The following paths are approved generated history/runtime outputs. A later cleanup task may delete them if present, after confirming no scoped evidence file is being removed:
@@ -54,12 +50,6 @@ These project paths are source/control/evidence surfaces and are not generated h
 - `uv.lock`
 - `Dockerfile`
 - `docker-compose.yml`
-
-## PRD-Old Alignment Notes
-
-- `docs/PRD-old.md:154-170` requires live startup discovery and streaming before normalized snapshots and strategy execution; generated historical state must not stand in for live startup behavior.
-- `docs/PRD-old.md:996-1047` requires Telegram publication and safety controls, including no wallet secrets, no authenticated trading client, no execution methods, and Telegram token redaction.
-- The work plan explicitly requires generated historical artifacts to be deleted during execution while preserving `.env` untouched and unread.
 
 ## Operator Checklist For Later Cleanup
 

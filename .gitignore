@@ -31,3 +31,4 @@ refs/*
 .omo/lsp.json
 data/*
 backups/
+.pyscn/

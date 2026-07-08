@@ -78,13 +78,6 @@ paper_trading:
   max_open_positions: 10
   max_market_exposure_usdc: 30.0
   max_strategy_exposure_usdc: 100.0
-  fill_model:
-    type: best_ask_taker
-    slippage_bps: 25
-    require_depth_check: true
-    min_fill_ratio: 1.0
-    reject_if_partial: true
-    max_fill_delay_ms: 1000
   exit_model:
     mode: hold_to_resolution_with_optional_tp_sl
     take_profit_enabled: true
@@ -203,7 +196,6 @@ strategies:
     enabled: true
 
 runtime:
-  engine: nautilus
   nautilus:
     trader_id: PolySignal-Nautilus-001
     python: "3.12"

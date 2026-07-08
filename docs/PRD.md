@@ -702,16 +702,58 @@ polysignal-lab/
   config/
     signal_bot.yaml
 
-  src/
+  src/polysignal_lab/
     app/
       main.py
-      scheduler.py
+      _settlement_check.py
+      scheduler_health.py
+      scheduler_reporting.py
+      scheduler_reporting_storage.py
+      scheduler_shared.py
+      readonly_smoke.py
+      readonly_smoke_public.py
+      readonly_smoke_runtime.py
+      readonly_smoke_types.py
+      services/
+        market_universe_service.py
+        persistence_service.py
+        publish_service.py
+
+    alpha/
+      vwap_momentum_core.py
+      late_consensus_core.py
+      ptb_diff_core.py
+      binary_momentum_core.py
+      cross_market_core.py
+      dump_hedge_core.py
+      fibonacci_core.py
+      low_side_dual_reversion_core.py
+      mid_price_sizing_core.py
+      ninety_nine_cent_sniper_core.py
+      one_cent_buy_core.py
+      pre_order_market_core.py
+      skew_mean_reversion_core.py
+      types.py
+      state.py
+
+    config.py
+    healthcheck.py
 
     data/
       polymarket_market_discovery.py
-      polymarket_clob_ws.py
+      polymarket_rtds_ws.py
       binance_spot_ws.py
       market_snapshot.py
+      market_discovery_helpers.py
+      anchor_price_service.py
+      book_reconciliation.py
+      ctf_resolution_client.py
+      gamma_resolution_client.py
+      price_to_beat_provider.py
+      public_market_data_client.py
+      rate_limiter.py
+      spot_tick.py
+      state.py
 
     domain/
       market.py
@@ -720,61 +762,132 @@ polysignal-lab/
       paper_order.py
       paper_position.py
       paper_result.py
+      anchor_price.py
+      enums.py
+      freshness.py
+      snapshot.py
+      snapshot_batch.py
+      spot.py
+      strategy_config.py
+      strategy_readiness.py
+      trade.py
 
-    strategies/
-      base.py
-      vwap_momentum.py
-      late_consensus.py
-      ptb_diff.py
-
-    signal/
-      gate.py
-      deduper.py
-      consensus.py
-      formatter.py
+    nautilus_bridge/
+      market_catalog.py
+      market_view_assembler.py
+      instrument_mapping.py
+      state.py
 
     nautilus_runtime/
       node.py
-      trading_node.py
+      live_node.py
       native_strategy.py
       native_order.py
       cache_reader.py
-    paper/
-      settlement.py
-      report.py
-
-    publish/
-      telegram_publisher.py
-
-    storage/
-      jsonl_store.py
-      state_store.py
-      sqlite_store.py
+      cache_market_data.py
+      decision_policy.py
+      decision_policy_actor.py
+      observability.py
+      node_builder.py
+      node_cache_projection.py
+      node_cli.py
+      node_crash.py
+      node_lifecycle.py
+      node_probes.py
+      node_shared.py
+      node_sidecar.py
+      node_signals.py
+      node_trader_registration.py
+      market_data.py
+      market_rotation.py
+      strategy_builder.py
+      strategy_schedule.py
+      custom_data_state.py
+      custom_data_types.py
+      group_views.py
+      observability_persistence.py
+      order_mapping.py
+      order_plan.py
+      projection_recorder.py
+      projections.py
+      runtime_context_factory.py
+      sidecar_data.py
+      signal_sidecar.py
+      telemetry_writer.py
+      strategy/
+        custom_data_handlers.py
+        data_boundary.py
+        decision_pipeline.py
+        event_handlers.py
+        event_projection.py
+        helpers.py
+        subscriptions.py
+      strategies/
+        cross_market_bot.py
 
     observability/
       logger.py
       health.py
       metrics.py
+      runtime_health.py
+      safety.py
 
-  logs/
-  state/
+    paper/
+      settlement_resolver.py
+      settlement_sources.py
+      report.py
+      strategy_stats.py
+
+    publish/
+      telegram_publisher.py
+      telegram_bot.py
+      telegram_qa.py
+
+    signal_layer/
+      gate.py
+      deduper.py
+      consensus.py
+      arbiter.py
+      formatter.py
+      rate_limit.py
+
+    storage/
+      jsonl_store.py
+      sqlite_store.py
+      sqlite_schema.py
+      state_store.py
+
+    dashboard/
+      app.py
+
+    utils.py
+
   tests/
+  logs/  (generated)
+  state/  (generated)
+  data/  (generated)
 ```
 
 ### 16.2 主要模块职责
 
 | 模块 | 职责 |
 |------|------|
-| MarketDiscovery | 发现当前 Polymarket crypto Up/Down 市场 |
-| NautilusLiveNode | 拥有 strategy lifecycle、market data dispatch、order lifecycle |
-| NautilusStrategyWrapper | 在 Nautilus callbacks 中运行 alpha core |
-| AlphaCore | 产生 engine-agnostic AlphaDecision |
-| DecisionPolicyActor | stale、spread、price、confidence、时间窗口、dedupe、consensus 检查 |
-| NautilusSandboxExecution | 处理 paper orders、fills、positions、account state |
+| app/main.py | CLI 入口, runtime mode 分派 |
+| AlphaCore (alpha/) | 产生 engine-agnostic AlphaDecision |
+| NautilusLiveNode | 拥有 strategy lifecycle, market data dispatch, order lifecycle |
+| PolySignalNativeStrategy | 在 Nautilus callbacks 中运行 alpha core, 处理 order/fill/position events |
+| DecisionPolicyActor | gate / dedupe / consensus / arbiter 检查 |
+| NautilusDecisionPolicyActor | DecisionPolicyActor 的 Nautilus Actor 生命周期封装 |
+| NautilusSandboxExecution | 处理 paper orders, fills, positions, account state |
 | NautilusCacheReader | 只读投影 Nautilus orders/fills/positions/account/portfolio |
-| TelegramPublisher | 发送信号、结果、日报 |
+| NautilusProjectionRecorder | 将 Nautilus events 持久化到 SQLite system_events |
+| MarketCatalog (nautilus_bridge/) | 业务 key 查找, condition/token 映射 |
+| MarketViewAssembler | 从 cache 投影 + custom data 组装只读 market view |
+| TelegramPublisher | 发送信号, 结果, 日报 |
+| SignalGate (signal_layer/) | 市场活跃, 时间窗口, 新鲜度, spread, 去重, 频控 |
 | PaperSettlement | 市场结束后判断 projected position win/loss |
-| PaperReport | 统计胜率、PnL、日报 |
+| Dashboard API | FastAPI 只读 JSON API + HTML 首页 |
+| Storage | SQLite + JSONL + state |
 
 ## 17. 配置设计
 
@@ -1014,9 +1127,11 @@ roi = pnl / stake_usdc
 | SIM-009 | 余额不足不成交 | account cash 不足时 rejected |
 | SIM-010 | 结果写入日志 | paper_results.jsonl 有完整记录 |
 
-## 24. 实施阶段
+## 24. 实施阶段（已完成）
 
-### Phase 1：项目骨架与安全边界
+> 以下所有阶段均已完成并交付。详细的当前架构见 `docs/PROJECT_ARCHITECTURE_VISUAL.md`。
+
+### Phase 1：项目骨架与安全边界 ✅
 
 交付：
 - 项目名 PolySignal Lab。
@@ -1025,7 +1140,7 @@ roi = pnl / stake_usdc
 - JSONL storage。
 - Telegram test message。
 
-### Phase 2：市场数据层
+### Phase 2：市场数据层 ✅
 
 交付：
 - Polymarket market discovery。
@@ -1033,16 +1148,16 @@ roi = pnl / stake_usdc
 - Binance spot feed。
 - Normalized market snapshot。
 
-### Phase 3：策略信号层
+### Phase 3：策略信号层 ✅
 
 交付：
-- VWAP Momentum adapter。
-- PTB Diff adapter。
-- Late Consensus adapter。
+- VWAP Momentum core。
+- PTB Diff core。
+- Late Consensus core。
 - Signal gate。
 - Dedupe。
 
-### Phase 4：Telegram 信号层
+### Phase 4：Telegram 信号层 ✅
 
 交付：
 - Signal formatter。
@@ -1050,7 +1165,7 @@ roi = pnl / stake_usdc
 - Signal publish log。
 - Rate limit。
 
-### Phase 5：Nautilus Paper Runtime
+### Phase 5：Nautilus Paper Runtime ✅
 
 交付：
 - Nautilus LiveNode runtime。
@@ -1060,7 +1175,7 @@ roi = pnl / stake_usdc
 - Hold-to-resolution settlement。
 - Paper result log。
 
-### Phase 6：统计与日报
+### Phase 6：统计与日报 ✅
 
 交付：
 - win/loss report。
@@ -1069,7 +1184,9 @@ roi = pnl / stake_usdc
 - timeframe breakdown。
 - Telegram daily paper report。
 
-## 25. 第一版最小范围
+## 25. 第一版范围（已完成）
+
+以下项在初始实施中交付；当前系统已包含更多功能（见 Section 26）。
 
 **第一版必须包含：**
 - ✅ 项目名：PolySignal Lab。
@@ -1086,26 +1203,39 @@ roi = pnl / stake_usdc
 - ✅ Win/Loss/PnL 日志。
 - ✅ Telegram paper result。
 
-**第一版可以暂缓：**
-- ⏳ ETH / SOL / XRP。
-- ⏳ Late Consensus。
-- ⏳ Consensus signal。
-- ⏳ SQLite。
-- ⏳ Web dashboard。
-- ⏳ TP/SL paper exit。
-- ⏳ 历史 replay。
-- ⏳ 付费频道。
+**第一版暂缓（后已交付）：**
+- ✅ ETH / SOL / XRP — 已增加多资产支持。
+- ✅ Late Consensus — 已实现。
+- ✅ Consensus signal — 已实现。
+- ✅ SQLite — 已实现 canonical storage。
+- ✅ Web dashboard — 已实现。
+- ✅ Daily report — 已实现。
+- ⏳ TP/SL paper exit — 配置可选（默认 hold_to_resolution）。
+- ⏳ 历史 replay — 不在当前范围。
+- ⏳ 付费频道 — 不适用。
 
-## 26. 第二版范围
+## 26. 第二版范围（大部分已完成）
 
-- Late Consensus。
-- 多资产 BTC / ETH / SOL / XRP。
-- Consensus signal。
-- SQLite。
-- Daily report。
-- Paper TP/SL。
-- Dashboard。
-- Strategy leaderboard。
+> 第二版项已在迁移至 Nautilus Runtime 和最终合规修复过程中交付。
+
+- ✅ Late Consensus — 已交付。
+- ✅ 多资产 BTC / ETH / SOL / XRP — 已交付。
+- ✅ Consensus signal — 已交付。
+- ✅ SQLite — 已交付。
+- ✅ Daily report — 已交付。
+- ⏳ Paper TP/SL — 配置框架就绪, 默认 hold_to_resolution。
+- ✅ Dashboard — 已交付。
+- ✅ Strategy leaderboard — 已交付。
+
+### 当前额外交付项（超出原始第二版范围）
+
+- 13+ AlphaCore 策略实现（超过原始 3 个）。
+- Nautilus L1/L2 market data 订阅。
+- Polymarket resolution 预言机集成（CTF + Gamma）。
+- Nautilus 可观测性 Actor（system_events、telemetry）。
+- 调度器健康检查和自动化报告。
+- 生产级容器化（Docker Compose 多阶段构建）。
+- 安全扫描和合规性 CI/CD。
 
 ## 27. 成功指标
 

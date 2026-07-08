@@ -1,4 +1,9 @@
+> **ARCHIVED** — This migration plan has been executed. The legacy scheduler path, dual wrappers, and compatibility mode have been removed. See `docs/compliance_review_report.md` for the final compliance review and `docs/PROJECT_ARCHITECTURE_VISUAL.md` for the current architecture.
+>
+> **Note:** This document is retained for historical reference only. Do not use as an active implementation plan.
+
 ---
+
 title: "Final Migration: PolySignal Lab → Full NautilusTrader Native"
 status: draft
 created: 2026-07-07
