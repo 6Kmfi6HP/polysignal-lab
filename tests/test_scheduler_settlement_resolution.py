@@ -11,7 +11,6 @@ Pos: Test Layer - Unit/Integration tests
 
 
 
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -67,10 +66,9 @@ def _scheduler(market: Market, decision: ResolutionDecision) -> Mock:
     scheduler = Mock()
     scheduler.settlement_resolver = AsyncMock()
     scheduler.settlement_resolver.resolve_market.return_value = decision
-    scheduler.ctx.markets.get.return_value = market
-    scheduler.nautilus_cache_reader = SimpleNamespace(
-        read_positions=lambda: [_projection()],
-    )
+    scheduler.markets = SimpleNamespace(get=Mock(return_value=market), upsert_many=Mock())
+    scheduler.nautilus_cache = object()
+    scheduler.nautilus_portfolio = None
     scheduler.persistence.insert_paper_trade_result.return_value = None
     scheduler.persistence.append_log.return_value = None
     scheduler.persistence.insert_system_event.return_value = None
@@ -79,8 +77,20 @@ def _scheduler(market: Market, decision: ResolutionDecision) -> Mock:
     return scheduler
 
 
+def _patch_positions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Override _nautilus_positions to return the default projected position dict."""
+    import polysignal_lab.app._settlement_check as settlement_mod
+
+    monkeypatch.setattr(
+        settlement_mod,
+        "_nautilus_positions",
+        lambda s: [_projection()],
+    )
+
+
 @pytest.mark.anyio
-async def test_resolved_numeric_half_payout_closes_as_void_with_provenance() -> None:
+async def test_resolved_numeric_half_payout_closes_as_void_with_provenance(monkeypatch) -> None:
+    _patch_positions(monkeypatch)
     scheduler = _scheduler(
         _market(),
         ResolutionDecision(
@@ -105,7 +115,8 @@ async def test_resolved_numeric_half_payout_closes_as_void_with_provenance() -> 
 
 
 @pytest.mark.anyio
-async def test_unknown_settlement_skips_open_projection() -> None:
+async def test_unknown_settlement_skips_open_projection(monkeypatch) -> None:
+    _patch_positions(monkeypatch)
     decision = ResolutionDecision(
         "market-1",
         "0x" + "1" * 64,
@@ -125,7 +136,8 @@ async def test_unknown_settlement_skips_open_projection() -> None:
 
 
 @pytest.mark.anyio
-async def test_cancelled_decision_uses_refund_path() -> None:
+async def test_cancelled_decision_uses_refund_path(monkeypatch) -> None:
+    _patch_positions(monkeypatch)
     scheduler = _scheduler(
         _market(MarketStatus.CLOSED),
         ResolutionDecision(
@@ -148,7 +160,8 @@ async def test_cancelled_decision_uses_refund_path() -> None:
 
 
 @pytest.mark.anyio
-async def test_check_settlements_is_idempotent_per_position() -> None:
+async def test_check_settlements_is_idempotent_per_position(monkeypatch) -> None:
+    _patch_positions(monkeypatch)
     stored: list[dict[str, object]] = []
 
     def query_json(table: str, **kwargs: object) -> list[dict[str, object]]:
@@ -185,7 +198,8 @@ async def test_check_settlements_is_idempotent_per_position() -> None:
 
 
 @pytest.mark.anyio
-async def test_chain_conflict_settlement_logs_system_event() -> None:
+async def test_chain_conflict_settlement_logs_system_event(monkeypatch) -> None:
+    _patch_positions(monkeypatch)
     scheduler = _scheduler(
         _market(),
         ResolutionDecision(

@@ -21,29 +21,19 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Protocol, cast, runtime_checkable
 
-import logging
-from pathlib import Path
-
 from polysignal_lab.alpha.types import AlphaCore, TradeView
-from polysignal_lab.app.services.persistence_service import PersistenceService
-from polysignal_lab.app.services.market_universe_service import MarketUniverseService
-from polysignal_lab.app.services.publish_service import PublishService
-from polysignal_lab.app.services.signal_pipeline import SignalPipeline
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
-from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.observability import ObservabilityActor
-from polysignal_lab.observability.health import HealthRegistry
-from polysignal_lab.publish.telegram_publisher import TelegramPublisher
-from polysignal_lab.signal_layer.formatter import MessageFormatter
-from polysignal_lab.storage.jsonl_store import JSONLStore
-from polysignal_lab.storage.sqlite_store import SQLiteStore
-from polysignal_lab.storage.state_store import StateStore
+from polysignal_lab.nautilus_runtime.runtime_context_factory import (
+    NautilusRuntimeContext,
+    build_nautilus_runtime_context,
+)
 
 
 class _TraderLike(Protocol):
@@ -98,95 +88,6 @@ class _StaticMarketUniverse:
 
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(slots=True)
-class NautilusRuntimeContext:
-    """Services needed by the Nautilus runtime path — replaces PolySignalScheduler."""
-
-    settings: Settings
-    market_universe: MarketUniverseService
-    health: HealthRegistry
-    persistence: PersistenceService
-    publisher: TelegramPublisher
-    publish_service: PublishService
-    sqlite: SQLiteStore
-    signal_pipeline: SignalPipeline
-    discovery: MarketDiscovery
-    logger: logging.Logger
-
-    # Runtime state bag (mutable)
-    nautilus_cache_reader: object | None = None
-    telegram_bot: object | None = None
-    paper_execution_metadata: object | None = None
-    strategy_schedule: object | None = None
-    strategies: object | None = None
-    arbiter: object | None = None
-    _running: bool = False
-    _nautilus_runtime_owned_by_live_node: bool = False
-
-
-def build_nautilus_runtime_context(
-    settings: Settings,
-    base_dir: str | Path = '.',
-) -> NautilusRuntimeContext:
-    """Build the services needed by the Nautilus runtime path.
-
-    Replaces ``build_nautilus_service_context`` + ``PolySignalScheduler``
-    from the legacy scheduler module.
-    """
-    from dataclasses import dataclass, field
-    from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry, SpotRegistry
-
-    @dataclass
-    class ServiceContext:
-        settings: Settings | None = None
-        markets: MarketRegistry = field(default_factory=MarketRegistry)
-        books: OrderBookRegistry = field(default_factory=OrderBookRegistry)
-        spots: SpotRegistry = field(default_factory=SpotRegistry)
-
-    ctx = ServiceContext(settings=settings)
-    formatter = MessageFormatter(settings.telegram.max_message_chars)
-    publisher = TelegramPublisher(settings.telegram)
-    health = HealthRegistry()
-    discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
-    base = Path(base_dir)
-    logs = JSONLStore(base / settings.storage.jsonl_dir)
-    state = StateStore(base / settings.storage.state_dir)
-    sqlite = SQLiteStore(base / settings.storage.sqlite_path)
-    persistence = PersistenceService(logs, sqlite, state)
-    market_universe = MarketUniverseService(
-        discovery,
-        ctx.markets,
-        persistence,
-        settings=settings,
-        logger=logging.getLogger('polysignal_lab.scheduler'),
-    )
-    signal_pipeline = SignalPipeline(
-        [],
-        None,
-        None,
-        persistence,
-        logger=logging.getLogger('polysignal_lab.scheduler'),
-    )
-    publish_service = PublishService(
-        formatter,
-        publisher,
-        persistence,
-        timeout_sec=settings.telegram.publish_timeout_sec,
-    )
-    return NautilusRuntimeContext(
-        settings=settings,
-        market_universe=market_universe,
-        health=health,
-        persistence=persistence,
-        publisher=publisher,
-        publish_service=publish_service,
-        sqlite=sqlite,
-        signal_pipeline=signal_pipeline,
-        discovery=discovery,
-        logger=logging.getLogger('polysignal_lab.scheduler'),
-    )
 
 
 @dataclass(slots=True)
@@ -248,16 +149,14 @@ def _ensure_nautilus_imports() -> None:
 
 
 def _load_runtime_classes() -> tuple[type[object], ...]:
-    from polysignal_lab.nautilus_runtime.runtime_classes import (
-        LiveDecisionPolicyActor,
-        NautilusMarketRotationActor,
-        NautilusPolySignalNativeStrategy,
-    )
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
+    from polysignal_lab.nautilus_runtime.decision_policy_actor import NautilusDecisionPolicyActor
 
     return (
-        NautilusPolySignalNativeStrategy,
-        NautilusMarketRotationActor,
-        LiveDecisionPolicyActor,
+        PolySignalNativeStrategy,
+        MarketRotationActor,
+        NautilusDecisionPolicyActor,
     )
 
 
@@ -314,7 +213,7 @@ def _register_markets(
 
 
 def _instrument_load_ids(markets: Sequence[Market]) -> frozenset[str]:
-    from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
+    from polysignal_lab.nautilus_bridge.instrument_mapping import polymarket_instrument_id
 
     load_ids: set[str] = set()
     for market in markets:
@@ -374,7 +273,8 @@ def _runtime_components(
     assembler: MarketViewAssembler,
     policy: DecisionPolicyActor,
     strategies: Sequence[_NativeStrategyLike],
-    cache_reader: object,
+    cache: object,
+    portfolio: object,
 ) -> dict[str, object]:
     return {
         "node": node,
@@ -385,7 +285,8 @@ def _runtime_components(
         "policy": policy,
         "strategies": list(strategies),
         "strategy_names": [strategy.strategy_name for strategy in strategies],
-        "cache_reader": cache_reader,
+        "cache": cache,
+        "portfolio": portfolio,
     }
 
 
@@ -427,7 +328,7 @@ def build_live_node(
         observability,
     )
     _register_runtime_trader_components(node, market_rotation_actor, policy, strategies)
-    cache_reader = _attach_cache_projections(node, registry, assembler, strategies)
+    nautilus_cache, nautilus_portfolio = _attach_cache_projections(node, registry, assembler, strategies)
     return _runtime_components(
         node=node,
         config=config,
@@ -436,7 +337,8 @@ def build_live_node(
         assembler=assembler,
         policy=policy,
         strategies=strategies,
-        cache_reader=cache_reader,
+        cache=nautilus_cache,
+        portfolio=nautilus_portfolio,
     )
 
 

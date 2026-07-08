@@ -27,7 +27,7 @@ from polysignal_lab.config import Settings
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatResult
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.market import Market, OutcomeToken
-from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
+from polysignal_lab.nautilus_bridge.instrument_mapping import polymarket_instrument_id
 from polysignal_lab.nautilus_runtime.live_node import PAPER_EXEC_CLIENT_ID, POLYMARKET_CLIENT_ID
 
 
@@ -183,8 +183,6 @@ def _patch_live_node_builder_fakes(monkeypatch: pytest.MonkeyPatch) -> SimpleNam
 
 
 def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pytest.MonkeyPatch) -> None:
-    from polysignal_lab.nautilus_runtime.cache_reader import NautilusCacheReader
-
     _install_fake_polymarket_id_helper(monkeypatch)
     fakes = _patch_live_node_builder_fakes(monkeypatch)
 
@@ -219,12 +217,10 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pyte
     assert getattr(exec_config, "venue") == POLYMARKET_CLIENT_ID
     assert "paper_client" not in runtime
     assert "matching_client" not in runtime
-    cache_reader = runtime["cache_reader"]
-    assert isinstance(cache_reader, NautilusCacheReader)
-    assert cache_reader.read_orders() == []
-    assert cache_reader.read_fills() == []
-    assert cache_reader.read_positions() == []
-    assert cache_reader.snapshot_portfolio() is not None
+    assert "cache" in runtime
+    assert "portfolio" in runtime
+    assert runtime["cache"] is not None
+    assert runtime["portfolio"] is not None
 
 
 def test_build_live_node_uses_cache_backed_market_data_provider(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -251,7 +247,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
-    from polysignal_lab.nautilus_runtime.market_data import (
+    from polysignal_lab.nautilus_runtime.custom_data_types import (
         PolySignalMarketMetaData,
         PolySignalPriceToBeatData,
         PolySignalSpotData,
@@ -473,7 +469,7 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
     )
     from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
-    from polysignal_lab.nautilus_runtime.market_data import (
+    from polysignal_lab.nautilus_runtime.custom_data_types import (
         PolySignalMarketMetaData,
         PolySignalMarketUniverseData,
         PolySignalPriceToBeatData,

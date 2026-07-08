@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from polysignal_lab.app import scheduler_health
 from polysignal_lab.app._settlement_check import (
     _existing_result_for_position,
-    _nautilus_cache_reader,
+    _nautilus_positions,
     _paper_trade_result_from_projection,
     _projection_float,
     _projection_side,
@@ -112,9 +112,12 @@ def _fill_payloads_with_order_intents(
 
     placeholders = ",".join("?" for _ in missing_order_ids)
     fill_orders = scheduler.persistence.query_json(
-        "paper_orders",
-        where=f"WHERE paper_order_id IN ({placeholders})",
-        params=missing_order_ids,
+        "system_events",
+        where=(
+            f"WHERE event_type=? AND json_extract(payload_json, '$.paper_order_id') "
+            f"IN ({placeholders})"
+        ),
+        params=("nautilus_order", *missing_order_ids),
         limit=len(missing_order_ids),
     )
     orders_by_id = {
@@ -137,18 +140,51 @@ def _fill_payloads_with_order_intents(
     return enriched
 
 
+def _nautilus_system_event_rows(
+    scheduler: object,
+    event_type: str,
+    *,
+    day_start: datetime,
+    day_end: datetime,
+) -> list[dict[str, object]]:
+    rows = scheduler.persistence.query_json(
+        "system_events",
+        where="WHERE event_type=? AND created_at >= ? AND created_at < ?",
+        params=(event_type, _utc_text_bound(day_start), _utc_text_bound(day_end)),
+        limit=10000,
+    )
+    return [row for row in rows if isinstance(row, dict)]
+
+
 def _nautilus_projection_rows(
     scheduler: object,
     name: str,
 ) -> list[dict[str, object]]:
-    reader = getattr(scheduler, "nautilus_cache_reader", None)
-    method = getattr(reader, name, None)
+    from polysignal_lab.nautilus_runtime.projections import (
+        project_fill_event,
+        project_order_event,
+        project_position,
+    )
+
+    PROJECTORS: dict[str, tuple[str, object]] = {
+        "read_orders": ("orders", project_order_event),
+        "read_fills": ("fills", project_fill_event),
+        "read_positions": ("positions", project_position),
+    }
+    cache_attr, projector = PROJECTORS.get(name, (None, None))
+    if cache_attr is None:
+        return []
+
+    nautilus_cache = getattr(scheduler, "nautilus_cache", None)
+    if nautilus_cache is None:
+        return []
+    method = getattr(nautilus_cache, cache_attr, None)
     if not callable(method):
         return []
     rows = method()
-    if not isinstance(rows, list):
+    if not isinstance(rows, (list, tuple)):
         return []
-    return [row for row in rows if isinstance(row, dict)]
+    return [projector(row) for row in rows if row is not None]
 
 
 def _nautilus_projection_rows_for_day(
@@ -172,35 +208,45 @@ def _nautilus_projection_rows_for_day(
 
 def _report_equity_inputs(scheduler: object) -> tuple[float, float, int]:
     starting_equity = float(scheduler.settings.paper_trading.starting_balance_usdc)
-    cache_reader = _nautilus_cache_reader(scheduler)
-    if cache_reader is None:
+    nautilus_cache = getattr(scheduler, "nautilus_cache", None)
+    if nautilus_cache is None:
         return starting_equity, starting_equity, 0
     return _report_equity_inputs_from_nautilus_cache(
-        cache_reader,
+        nautilus_cache,
+        nautilus_portfolio=getattr(scheduler, "nautilus_portfolio", None),
         starting_equity=starting_equity,
     )
 
 
 def _report_equity_inputs_from_nautilus_cache(
-    cache_reader: object,
+    nautilus_cache: object,
     *,
+    nautilus_portfolio: object | None = None,
     starting_equity: float,
 ) -> tuple[float, float, int]:
+    from polysignal_lab.nautilus_runtime.projections import (
+        project_account,
+        project_portfolio_snapshot,
+        project_position,
+    )
+
     ending_equity = starting_equity
     open_positions = 0
 
-    read_account_projection = getattr(cache_reader, "read_account_projection", None)
-    snapshot_portfolio_projection = getattr(cache_reader, "snapshot_portfolio_projection", None)
-    read_positions = getattr(cache_reader, "read_positions", None)
+    # Account
+    account = None
+    account_method = getattr(nautilus_cache, "account", None)
+    if callable(account_method):
+        account = account_method()
+    account_projection = project_account(account) if account is not None else None
 
+    # Portfolio snapshot
+    portfolio = nautilus_portfolio or getattr(nautilus_cache, "portfolio", None)
+    if callable(portfolio):
+        portfolio = portfolio()
     portfolio_projection = (
-        snapshot_portfolio_projection()
-        if callable(snapshot_portfolio_projection)
-        else None
-    )
-    account_projection = (
-        read_account_projection()
-        if callable(read_account_projection)
+        project_portfolio_snapshot(portfolio, account=account)
+        if portfolio is not None
         else None
     )
     portfolio_equity = _projection_float(
@@ -220,13 +266,18 @@ def _report_equity_inputs_from_nautilus_cache(
                 if total is not None:
                     ending_equity = total
                     break
-    positions = read_positions() if callable(read_positions) else []
-    if isinstance(positions, list):
+
+    # Positions
+    positions_method = getattr(nautilus_cache, "positions", None)
+    positions = positions_method() if callable(positions_method) else []
+    if isinstance(positions, (list, tuple)):
+        projected = [project_position(p) for p in positions if p is not None]
         open_positions = sum(
             1
-            for position in positions
-            if isinstance(position, dict) and not bool(position.get("is_closed"))
+            for p in projected
+            if isinstance(p, dict) and not bool(p.get("is_closed"))
         )
+
     return starting_equity, ending_equity, open_positions
 
 
@@ -253,11 +304,11 @@ def _collect_daily_report_inputs(
             params=day_params,
         )
     ]
-    today_fills_raw = scheduler.persistence.query_json(
-        "paper_fills",
-        where=day_created_where,
-        params=day_params,
-        limit=10000,
+    today_fills_raw = _nautilus_system_event_rows(
+        scheduler,
+        "nautilus_fill",
+        day_start=day_start,
+        day_end=day_end,
     )
     if not today_fills_raw:
         today_fills_raw = _nautilus_projection_rows_for_day(
@@ -266,13 +317,13 @@ def _collect_daily_report_inputs(
             day_start=day_start,
             day_end=day_end,
         )
-    today_orders_raw = scheduler.persistence.query_json(
-        "paper_orders",
-        where=day_created_where,
-        params=day_params,
-        limit=10000,
+    today_orders_raw = _nautilus_system_event_rows(
+        scheduler,
+        "nautilus_order",
+        day_start=day_start,
+        day_end=day_end,
     )
-    using_nautilus_order_rows = False
+    using_nautilus_order_rows = bool(today_orders_raw)
     if not today_orders_raw:
         today_orders_raw = _nautilus_projection_rows_for_day(
             scheduler,
@@ -281,20 +332,22 @@ def _collect_daily_report_inputs(
             day_end=day_end,
         )
         using_nautilus_order_rows = bool(today_orders_raw)
-    today_order_ids = {
-        str(order.get("paper_order_id") or "")
-        for order in today_orders_raw
-        if order.get("paper_order_id")
-    }
     today_terminal_orders_raw: list[dict[str, object]] = []
-    if not using_nautilus_order_rows:
-        terminal_order_candidates = scheduler.persistence.query_json(
-            "paper_orders",
-            where="WHERE status IN (?, ?)",
-            params=("REJECTED", "CANCELLED"),
-            limit=10000,
+    if using_nautilus_order_rows:
+        today_order_ids = {
+            str(order.get("paper_order_id") or "")
+            for order in today_orders_raw
+            if order.get("paper_order_id")
+        }
+        terminal_candidates = _nautilus_system_event_rows(
+            scheduler,
+            "nautilus_order",
+            day_start=day_start,
+            day_end=day_end,
         )
-        for order in terminal_order_candidates:
+        for order in terminal_candidates:
+            if str(order.get("status") or "").upper() not in {"REJECTED", "CANCELLED"}:
+                continue
             order_id = str(order.get("paper_order_id") or "")
             if order_id in today_order_ids:
                 continue
@@ -340,23 +393,12 @@ async def _build_daily_report_from_inputs(
         if order.get("status") == "FILLED"
         and _paper_order_metrics(order).get("orderbook_fresh") is False
     )
-    fill_cfg = scheduler.settings.paper_trading.fill_model
     paper_execution_assumptions = {
         "max_book_staleness_ms": scheduler.settings.data.polymarket.max_book_staleness_ms,
-        "min_fill_ratio": fill_cfg.min_fill_ratio,
-        "reject_if_partial": fill_cfg.reject_if_partial,
-        "require_depth_check": fill_cfg.require_depth_check,
-        "slippage_bps": fill_cfg.slippage_bps,
     }
     execution_metadata = getattr(scheduler, "paper_execution_metadata", None)
     if isinstance(execution_metadata, dict):
-        paper_execution_assumptions.update(
-            {
-                key: execution_metadata[key]
-                for key in ("paper_engine", "accuracy_mode")
-                if execution_metadata.get(key)
-            }
-        )
+        paper_execution_assumptions.update(execution_metadata)
 
     starting_equity, ending_equity, open_positions = _report_equity_inputs(scheduler)
     try:

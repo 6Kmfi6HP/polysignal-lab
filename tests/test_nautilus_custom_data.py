@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, pytest, polysignal_lab.nautilus_runtime.market_data, polysignal_lab.nautilus_runtime.market_data.(
+Input: __future__, __future__.annotations, pytest, polysignal_lab.nautilus_runtime.custom_data_types, polysignal_lab.nautilus_runtime.custom_data_types.(
 Output: test_custom_spot_data_round_trips_dict, test_custom_price_to_beat_data_round_trips_dict, test_custom_market_meta_data_round_trips_dict, test_register_polysignal_data_types_is_idempotent
 Pos: Test Layer - Unit/Integration tests
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from polysignal_lab.nautilus_runtime.market_data import (
+from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
@@ -69,7 +69,7 @@ def test_register_polysignal_data_types_is_idempotent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _ = pytest.importorskip("nautilus_trader.serialization.base")
-    from polysignal_lab.nautilus_runtime import market_data as market_data_mod
+    from polysignal_lab.nautilus_runtime import custom_data_types as custom_data_mod
 
     seen: set[type[object]] = set()
     calls: list[type[object]] = []
@@ -84,14 +84,14 @@ def test_register_polysignal_data_types_is_idempotent(
         seen.add(cls)
         calls.append(cls)
 
-    monkeypatch.setattr(market_data_mod, "_POLYSIGNAL_DATA_TYPES_REGISTERED", False)
+    monkeypatch.setattr(custom_data_mod, "_POLYSIGNAL_DATA_TYPES_REGISTERED", False)
     monkeypatch.setattr(
         "nautilus_trader.serialization.base.register_serializable_type",
         fake_register_serializable_type,
     )
 
-    market_data_mod.register_polysignal_data_types()
-    market_data_mod.register_polysignal_data_types()
+    custom_data_mod.register_polysignal_data_types()
+    custom_data_mod.register_polysignal_data_types()
 
     assert calls == [
         PolySignalSpotData,

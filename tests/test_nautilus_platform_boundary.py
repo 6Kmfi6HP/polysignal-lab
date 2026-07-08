@@ -41,10 +41,6 @@ def test_nautilus_node_and_strategies_do_not_import_legacy_execution() -> None:
 
     try:
         _ = importlib.import_module("polysignal_lab.nautilus_runtime.node")
-        assert "polysignal_lab.nautilus_runtime.strategies.base" not in sys.modules
-        assert "polysignal_lab.nautilus_runtime.execution_types" not in sys.modules
-        _ = importlib.import_module("polysignal_lab.nautilus_runtime.strategies.base")
-
         assert "polysignal_lab.nautilus_runtime.execution" not in sys.modules
     finally:
         for name in tuple(sys.modules):
@@ -147,7 +143,6 @@ def test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources() -> N
         Path("src/polysignal_lab/nautilus_runtime/node.py"),
         Path("src/polysignal_lab/nautilus_runtime/native_order.py"),
         Path("src/polysignal_lab/nautilus_runtime/native_strategy.py"),
-        Path("src/polysignal_lab/nautilus_runtime/cache_reader.py"),
         Path("src/polysignal_lab/nautilus_runtime/projections.py"),
         Path("src/polysignal_lab/nautilus_runtime/observability.py"),
     )
@@ -162,7 +157,6 @@ def test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime
     forbidden = (
         "polysignal_lab.nautilus_runtime.matching",
         "polysignal_lab.nautilus_runtime.orchestrator",
-        "polysignal_lab.nautilus_runtime.strategies.base",
         "polysignal_lab.nautilus_runtime.execution_types",
         "PaperWallet",
         "PaperExecutionResult",
@@ -216,7 +210,6 @@ def test_nautilus_runtime_source_has_no_platform_truth_source_terms() -> None:
         "BacktestExecClient(",
     )
     allowed_files = {
-        Path("src/polysignal_lab/nautilus_runtime/cache_reader.py"),
         Path("src/polysignal_lab/nautilus_runtime/projections.py"),
     }
     findings: list[str] = []

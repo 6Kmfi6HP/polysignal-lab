@@ -1,29 +1,23 @@
 """
 Input: __future__, __future__.annotations, types, types.SimpleNamespace, types.TracebackType, unittest.mock, unittest.mock.AsyncMock, pytest, pydantic, pydantic.JsonValue
-Output: test_cancelled_gamma_refresh_reaches_registry_and_storage, test_scheduler_settles_cancelled_market_as_void_refund, FakeGammaResponse, FakeGammaClient
+Output: test_cancelled_gamma_refresh_reaches_registry_and_storage, test_runtime_settles_cancelled_market_as_void_refund, FakeGammaResponse, FakeGammaClient
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
 
-
-
-
-
-
-
 from __future__ import annotations
 
 from types import SimpleNamespace, TracebackType
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pydantic import JsonValue
 
-from polysignal_lab.app import scheduler_market_data, scheduler_reporting
-from polysignal_lab.app.scheduler import PolySignalScheduler
+from polysignal_lab.app.scheduler_reporting import check_settlements
 from polysignal_lab.config import Settings
 from polysignal_lab.domain.enums import MarketStatus, Side, TradeResultStatus
+from polysignal_lab.nautilus_runtime.runtime_context_factory import build_nautilus_runtime_context
 from polysignal_lab.paper.settlement_sources import ResolutionDecision
 from factories import MarketFactoryConfig, sample_market
 
@@ -68,16 +62,14 @@ class FakeGammaClient:
         return FakeGammaResponse([payload])
 
 
-def _scheduler(tmp_path) -> PolySignalScheduler:
+def _runtime(tmp_path):
     settings = Settings()
     settings.telegram.enabled = False
     settings.telegram.send_paper_results = False
     settings.telegram.send_daily_report = False
     settings.data.binance.enabled = False
     settings.data.polymarket.use_market_ws = False
-    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
-    scheduler._initialize_trading_components()
-    return scheduler
+    return build_nautilus_runtime_context(settings, base_dir=tmp_path)
 
 
 def _projection(market_id: str, token_id: str) -> dict[str, object]:
@@ -97,24 +89,39 @@ def _projection(market_id: str, token_id: str) -> dict[str, object]:
     }
 
 
+def _settlement_scheduler(market, decision: ResolutionDecision) -> Mock:
+    scheduler = Mock()
+    scheduler.settlement_resolver = AsyncMock()
+    scheduler.settlement_resolver.resolve_market.return_value = decision
+    scheduler.markets = SimpleNamespace(get=Mock(return_value=market), upsert_many=Mock())
+    scheduler.nautilus_cache = object()
+    scheduler.nautilus_portfolio = None
+    scheduler.persistence = Mock()
+    scheduler.persistence.insert_paper_trade_result.return_value = None
+    scheduler.persistence.append_log.return_value = None
+    scheduler.persistence.insert_system_event.return_value = None
+    scheduler.persistence.query_json.return_value = []
+    scheduler.settings = SimpleNamespace(telegram=SimpleNamespace(send_paper_results=False))
+    scheduler.sqlite = scheduler.persistence
+    scheduler.logger = Mock()
+    return scheduler
+
+
 async def test_cancelled_gamma_refresh_reaches_registry_and_storage(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Given: an open paper position whose closed Gamma payload is cancelled.
-    scheduler = _scheduler(tmp_path)
-    scheduler.nautilus_cache_reader = SimpleNamespace(
-        read_positions=lambda: [
-            _projection("gamma-cancelled-1", "token-up"),
-        ]
+    runtime = _runtime(tmp_path)
+    runtime.nautilus_cache = object()
+    runtime.nautilus_portfolio = None
+    monkeypatch.setattr(
+        "polysignal_lab.app.services.market_universe_service.httpx.AsyncClient",
+        FakeGammaClient,
     )
-    monkeypatch.setattr(scheduler_market_data.httpx, "AsyncClient", FakeGammaClient)
 
-    # When: the scheduler refreshes closed markets from Gamma.
-    await scheduler_market_data.fetch_resolved_markets(scheduler)
+    await runtime.market_universe.fetch_resolved(open_market_ids={"gamma-cancelled-1"})
 
-    # Then: the cancelled market reaches both runtime registry and SQLite storage.
-    market = scheduler.ctx.markets.get("gamma-cancelled-1")
-    rows = scheduler.sqlite.query_json(
+    market = runtime.market_universe.markets.get("gamma-cancelled-1")
+    rows = runtime.sqlite.query_json(
         "markets", where="WHERE market_id = ?", params=("gamma-cancelled-1",)
     )
     assert market is not None
@@ -123,35 +130,47 @@ async def test_cancelled_gamma_refresh_reaches_registry_and_storage(
     assert [row["status"] for row in rows] == ["CANCELLED"]
 
 
-async def test_scheduler_settles_cancelled_market_as_void_refund(tmp_path) -> None:
-    # Given: an open Nautilus position projection on a market marked CANCELLED.
-    scheduler = _scheduler(tmp_path)
+async def test_runtime_settles_cancelled_market_as_void_refund(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import polysignal_lab.app._settlement_check as settlement_mod
+
+    runtime = _runtime(tmp_path)
     cancelled_market = sample_market(
         MarketFactoryConfig(asset="BTC", timeframe="5m", seconds_to_close=-1)
     ).model_copy(update={"status": MarketStatus.CANCELLED, "resolved_outcome": None})
-    scheduler.ctx.markets.upsert_many([cancelled_market])
-    scheduler.nautilus_cache_reader = SimpleNamespace(
-        read_positions=lambda: [
-            _projection(cancelled_market.market_id, cancelled_market.token_for(Side.UP).token_id),
-        ]
+    scheduler = _settlement_scheduler(
+        cancelled_market,
+        ResolutionDecision(
+            cancelled_market.market_id,
+            cancelled_market.condition_id,
+            "cancelled",
+            "gamma",
+            {},
+            False,
+            (),
+            {"settlement_source": "gamma"},
+        ),
     )
-    scheduler.settlement_resolver = AsyncMock()
-    scheduler.settlement_resolver.resolve_market.return_value = ResolutionDecision(
-        cancelled_market.market_id,
-        cancelled_market.condition_id,
-        "cancelled",
-        "gamma",
-        {},
-        False,
-        (),
-        {"settlement_source": "gamma"},
+    scheduler.persistence = runtime.persistence
+    scheduler.sqlite = runtime.sqlite
+    scheduler.markets = runtime.markets
+    runtime.markets.upsert_many([cancelled_market])
+
+    monkeypatch.setattr(
+        settlement_mod,
+        "_nautilus_positions",
+        lambda s: [
+            _projection(
+                cancelled_market.market_id,
+                cancelled_market.token_for(Side.UP).token_id,
+            )
+        ],
     )
 
-    # When: scheduler settlement runs from Nautilus projections.
-    results = await scheduler_reporting.check_settlements(scheduler)
+    results = await check_settlements(scheduler)
 
-    # Then: VOID semantics close the position and refund the stake through storage.
-    result_rows = scheduler.sqlite.query_json("paper_trade_results")
+    result_rows = runtime.sqlite.query_json("paper_trade_results")
     assert [result.result for result in results] == [TradeResultStatus.VOID]
     assert results[0].settlement_value == 10.0
     assert [row["result"] for row in result_rows] == ["VOID"]

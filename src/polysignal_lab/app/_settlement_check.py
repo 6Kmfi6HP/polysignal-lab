@@ -22,8 +22,20 @@ from polysignal_lab.domain.paper_result import PaperTradeResult
 from polysignal_lab.utils import new_id, parse_dt, redact_text, utc_iso, utc_now
 
 
-def _nautilus_cache_reader(scheduler: object) -> object | None:
-    return getattr(scheduler, "nautilus_cache_reader", None)
+def _nautilus_positions(scheduler: object) -> list[dict[str, object]]:
+    """Get projected position dicts from the Nautilus cache."""
+    from polysignal_lab.nautilus_runtime.projections import project_position
+
+    nautilus_cache = getattr(scheduler, "nautilus_cache", None)
+    if nautilus_cache is None:
+        return []
+    positions_method = getattr(nautilus_cache, "positions", None)
+    if not callable(positions_method):
+        return []
+    raw = positions_method()
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [project_position(p) for p in raw if p is not None]
 
 
 def _projection_float(source: dict[str, object] | None, key: str) -> float | None:
@@ -38,88 +50,116 @@ def _projection_float(source: dict[str, object] | None, key: str) -> float | Non
         return None
 
 
+def _load_market(scheduler: object, market_id: str) -> Market | None:
+    markets = getattr(scheduler, "markets", None)
+    if markets is not None:
+        cached = markets.get(market_id)
+        if cached is not None:
+            return cached
+    rows = scheduler.persistence.query_json(
+        "markets",
+        where="WHERE market_id = ?",
+        params=(market_id,),
+    )
+    if not rows:
+        return None
+    try:
+        market = Market.model_validate(rows[0])
+    except (TypeError, ValueError):
+        return None
+    if markets is not None and hasattr(markets, "upsert_many"):
+        markets.upsert_many([market])
+    return market
+
+
 async def check_settlements(scheduler: object) -> list[PaperTradeResult]:
-    cache_reader = _nautilus_cache_reader(scheduler)
-    if cache_reader is None:
-        return []
-    read_positions = getattr(cache_reader, "read_positions", None)
-    if not callable(read_positions):
-        return []
-    raw_positions = read_positions()
-    if not isinstance(raw_positions, list):
+    raw_positions = _nautilus_positions(scheduler)
+    if not raw_positions:
         return []
 
     settled: list[PaperTradeResult] = []
     for projection in raw_positions:
-        if not isinstance(projection, dict):
-            continue
-        if bool(projection.get("is_closed")):
-            continue
-        market_id = str(projection.get("market_id") or "")
-        token_id = str(projection.get("token_id") or projection.get("instrument_id") or "")
-        if not market_id or not token_id:
-            continue
-        market = scheduler.ctx.markets.get(market_id)
-        if market is None:
-            rows = scheduler.persistence.query_json(
-                "markets",
-                where="WHERE market_id = ?",
-                params=(market_id,),
-            )
-            if not rows:
-                continue
-            try:
-                market = Market.model_validate(rows[0])
-            except (TypeError, ValueError):
-                continue
-        settlement_resolver = getattr(scheduler, "settlement_resolver", None)
-        if settlement_resolver is None:
-            continue
-        decision = await settlement_resolver.resolve_market(market)
-        outcome_value: float | None
-        if decision.status == "resolved":
-            outcome_value = decision.outcome_value_for(token_id)
-        elif decision.status == "cancelled":
-            outcome_value = _projection_float(projection, "avg_entry_price")
-        else:
-            continue
-        if outcome_value is None:
-            continue
-        paper_position_id = str(
-            projection.get("paper_position_id") or projection.get("position_id") or ""
-        )
-        if not paper_position_id:
-            continue
-        if _existing_result_for_position(scheduler, paper_position_id):
-            continue
-        result = _paper_trade_result_from_projection(
-            projection,
-            market=market,
-            outcome_value=outcome_value,
-            details=decision.details,
-        )
-        await _store_projection_result(scheduler, result)
-        if decision.conflict:
-            event = {
-                "event_id": new_id("evt", "settlement_conflict", result.paper_trade_id),
-                "event_type": "settlement_conflict",
-                "severity": "WARNING",
-                "created_at": utc_iso(),
-                "market_id": decision.market_id,
-                "condition_id": decision.condition_id,
-                "paper_trade_id": result.paper_trade_id,
-                "conflict_sources": list(decision.conflict_sources),
-            }
-            try:
-                scheduler.persistence.insert_system_event(event)
-                scheduler.persistence.append_log("system_events", event)
-            except (OSError, sqlite3.Error, TypeError, ValueError):
-                scheduler.logger.warning(
-                    "Failed to audit settlement conflict for %s",
-                    decision.market_id,
-                )
-        settled.append(result)
+        result = await _try_settle_projection(scheduler, projection)
+        if result is not None:
+            settled.append(result)
     return settled
+
+
+async def _try_settle_projection(
+    scheduler: object, projection: dict[str, object]
+) -> PaperTradeResult | None:
+    """Try to settle a single position projection.
+
+    Returns the settlement result, or None if the projection should
+    not be settled (e.g., already closed, no market found, unready).
+    """
+    if not isinstance(projection, dict):
+        return None
+    if bool(projection.get("is_closed")):
+        return None
+    market_id = str(projection.get("market_id") or "")
+    token_id = str(projection.get("token_id") or projection.get("instrument_id") or "")
+    if not market_id or not token_id:
+        return None
+    market = _load_market(scheduler, market_id)
+    if market is None:
+        return None
+    settlement_resolver = getattr(scheduler, "settlement_resolver", None)
+    if settlement_resolver is None:
+        return None
+    decision = await settlement_resolver.resolve_market(market)
+    outcome_value: float | None
+    if decision.status == "resolved":
+        outcome_value = decision.outcome_value_for(token_id)
+    elif decision.status == "cancelled":
+        outcome_value = _projection_float(projection, "avg_entry_price")
+    else:
+        return None
+    if outcome_value is None:
+        return None
+    paper_position_id = str(
+        projection.get("paper_position_id") or projection.get("position_id") or ""
+    )
+    if not paper_position_id:
+        return None
+    if _existing_result_for_position(scheduler, paper_position_id):
+        return None
+    result = _paper_trade_result_from_projection(
+        projection,
+        market=market,
+        outcome_value=outcome_value,
+        details=decision.details,
+    )
+    await _store_projection_result(scheduler, result)
+    if decision.conflict:
+        await _log_settlement_conflict(scheduler, decision, result)
+    return result
+
+
+async def _log_settlement_conflict(
+    scheduler: object,
+    decision: object,
+    result: PaperTradeResult,
+) -> None:
+    """Log a settlement conflict event."""
+    event = {
+        "event_id": new_id("evt", "settlement_conflict", result.paper_trade_id),
+        "event_type": "settlement_conflict",
+        "severity": "WARNING",
+        "created_at": utc_iso(),
+        "market_id": decision.market_id,
+        "condition_id": decision.condition_id,
+        "paper_trade_id": result.paper_trade_id,
+        "conflict_sources": list(decision.conflict_sources),
+    }
+    try:
+        scheduler.persistence.insert_system_event(event)
+        scheduler.persistence.append_log("system_events", event)
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        scheduler.logger.warning(
+            "Failed to audit settlement conflict for %s",
+            decision.market_id,
+        )
 
 
 def _existing_result_for_position(

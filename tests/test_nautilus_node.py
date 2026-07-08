@@ -485,46 +485,6 @@ def test_build_live_node_skips_disabled_native_strategies(
     assert getattr(runtime["node"], "trader").strategies == []
 
 
-def test_initialize_services_schedule_avoids_legacy_strategy_build(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from polysignal_lab.nautilus_runtime import node as node_mod
-
-    def fail_build_strategy_schedule(_settings):
-        raise AssertionError("Nautilus startup must not instantiate legacy strategies")
-
-    monkeypatch.setattr(node_mod, "build_strategy_schedule", fail_build_strategy_schedule, raising=False)
-
-    class Pipeline:
-        def __init__(self) -> None:
-            self.strategies = None
-            self.dependencies = None
-            self.disabled: list[str] = []
-
-        def set_strategy_dependencies(self, dependencies):
-            self.dependencies = dependencies
-
-        def set_strategy_enabled(self, name, enabled):
-            if not enabled:
-                self.disabled.append(name)
-
-    settings = Settings()
-    settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
-    scheduler = SimpleNamespace(
-        _trading_components_initialized=False,
-        settings=settings,
-        strategies=None,
-        signal_pipeline=Pipeline(),
-        persistence=SimpleNamespace(read_state=lambda *_args, **_kwargs: ["vwap_momentum"]),
-    )
-
-    node_mod._initialize_services_schedule(scheduler)
-
-    assert scheduler.strategy_schedule[0].name == "vwap_momentum"
-    assert scheduler.strategy_schedule[0].strategy is None
-    assert scheduler.strategies == scheduler.signal_pipeline.strategies
-    assert scheduler.signal_pipeline.disabled == ["vwap_momentum"]
-
 
 def test_build_live_node_passes_l1_snapshot_interval_to_native_strategies(
     monkeypatch: pytest.MonkeyPatch,
@@ -709,7 +669,8 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
             self.consensus = None
             self.arbiter = None
             self.telegram_bot = None
-            self.nautilus_cache_reader = None
+            self.nautilus_cache = None
+            self.nautilus_portfolio = None
             self.paper_execution_metadata = None
             self._running = False
             self._nautilus_runtime_owned_by_live_node = True
@@ -723,7 +684,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     monkeypatch.setattr(node_mod, "NautilusEventStoreAdapter", lambda persistence: persistence)
     monkeypatch.setattr(node_mod, "NautilusNotifierAdapter", lambda publisher: publisher)
     monkeypatch.setattr(node_mod, "ObservabilityActor", lambda **kwargs: SimpleNamespace(**kwargs))
-    cache_reader = object()
+    cache_holder = object()
     monkeypatch.setattr(
         node_mod,
         "build_live_node",
@@ -737,7 +698,8 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
         )
         or {
             "assembler": SimpleNamespace(books=None),
-            "cache_reader": cache_reader,
+            "cache": cache_holder,
+            "portfolio": cache_holder,
             "registry": object(),
             "sidecar": object(),
             "node": SimpleNamespace(),
@@ -757,7 +719,8 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert callable(getattr(captured["observability"], "accepted_signal_notifier", None))
 
     assert bundle.context is not None
-    assert getattr(bundle.context, "nautilus_cache_reader") is cache_reader
+    assert getattr(bundle.context, "nautilus_cache") is cache_holder
+    assert getattr(bundle.context, "nautilus_portfolio") is cache_holder
     assert getattr(bundle.context, "paper_execution_metadata") == {
         "sandbox_book_type": "L2_MBP",
     }
@@ -947,7 +910,8 @@ def test_prepare_nautilus_runtime_context_rebinds_market_discovery_client_for_la
             self.consensus = None
             self.arbiter = None
             self.telegram_bot = None
-            self.nautilus_cache_reader = None
+            self.nautilus_cache = None
+            self.nautilus_portfolio = None
             self.paper_execution_metadata = None
             self._running = False
             self._nautilus_runtime_owned_by_live_node = True
@@ -1010,7 +974,6 @@ async def test_prepare_nautilus_runtime_context_does_not_wire_shadow_wallet_mirr
         ),
         sqlite=SimpleNamespace(),
         publish_service=SimpleNamespace(formatter=object(), persistence=object(), timeout_sec=10.0),
-        signal_pipeline=SimpleNamespace(set_strategy_dependencies=lambda deps: None, strategies=[], disabled=[]),
         logger=logging.getLogger("test"),
         settings=settings,
     )
@@ -1024,7 +987,7 @@ async def test_prepare_nautilus_runtime_context_does_not_wire_shadow_wallet_mirr
     assert getattr(ctx, "_nautilus_runtime_owned_by_live_node") is True
 
 
-async def test_run_nautilus_housekeeping_once_skips_legacy_settlement_with_cache_reader(
+async def test_run_nautilus_housekeeping_once_skips_legacy_settlement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polysignal_lab.nautilus_runtime.signal_sidecar import _run_nautilus_housekeeping_once
@@ -1038,7 +1001,7 @@ async def test_run_nautilus_housekeeping_once_skips_legacy_settlement_with_cache
 
     monkeypatch.setattr(shared_mod, "_generate_iteration_report", generate_iteration_report)
 
-    scheduler = SimpleNamespace(nautilus_cache_reader=object())
+    scheduler = SimpleNamespace(nautilus_cache=object())
 
     result = await _run_nautilus_housekeeping_once(scheduler, "2026-07-04")
 

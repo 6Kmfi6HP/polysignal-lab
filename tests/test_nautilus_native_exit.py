@@ -81,11 +81,6 @@ def _native_strategy() -> PolySignalNativeStrategy:
 
 def test_evaluate_condition_does_not_run_custom_exit_scan() -> None:
     strategy = _native_strategy()
-    strategy.cache_reader = SimpleNamespace(
-        read_positions=lambda: (_ for _ in ()).throw(
-            AssertionError("custom exit engine must not scan Nautilus positions")
-        )
-    )
 
     strategy.evaluate_condition("condition-1")
 
