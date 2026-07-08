@@ -45,6 +45,25 @@ class GateRejection:
     details: GateDetails = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class _FreshnessCheckSpec:
+    source: str
+    missing_reason: str
+    stale_reason: str
+
+
+_BOOK_FRESHNESS = _FreshnessCheckSpec(
+    source="orderbook",
+    missing_reason="MISSING_ORDERBOOK",
+    stale_reason="STALE_ORDERBOOK",
+)
+_SPOT_FRESHNESS = _FreshnessCheckSpec(
+    source="spot_price",
+    missing_reason="MISSING_SPOT_PRICE",
+    stale_reason="STALE_SPOT_PRICE",
+)
+
+
 class SignalGate:
     def __init__(
         self,
@@ -127,9 +146,9 @@ class SignalGate:
     def _policy_threshold(
         self,
         policy: FreshnessPolicy | None,
-        policy_value: int | None,
+        policy_value: int | float | None,
         global_value: int,
-    ) -> tuple[int, str]:
+    ) -> tuple[int | float, str]:
         if policy is None or policy_value is None:
             return global_value, "global"
         return min(global_value, policy_value), "strategy_and_global"
@@ -139,7 +158,7 @@ class SignalGate:
         *,
         source: str,
         lag_ms: int | None,
-        threshold_ms: int,
+        threshold_ms: int | float,
         policy_source: str,
     ) -> GateDetails:
         return {
@@ -158,7 +177,7 @@ class SignalGate:
         missing_reason: str,
         stale_reason: str,
         data_source: Any | None,
-        policy_staleness_ms: int | None,
+        policy_staleness_ms: int | float | None,
         config_threshold: int,
     ) -> GateRejection | None:
         threshold_ms, policy_source = self._policy_threshold(
@@ -200,25 +219,44 @@ class SignalGate:
         return None
 
     def _book_freshness(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
-        return self._check_freshness(
-            candidate, snapshot,
-            source="orderbook",
-            missing_reason="MISSING_ORDERBOOK",
-            stale_reason="STALE_ORDERBOOK",
+        return self._check_configured_freshness(
+            candidate,
+            snapshot,
+            _BOOK_FRESHNESS,
             data_source=snapshot.book_for(candidate.side),
             policy_staleness_ms=candidate.freshness_policy.max_orderbook_staleness_ms if candidate.freshness_policy else None,  # noqa: E501
             config_threshold=self.poly_config.max_book_staleness_ms,
         )
 
     def _spot_freshness(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
-        return self._check_freshness(
-            candidate, snapshot,
-            source="spot_price",
-            missing_reason="MISSING_SPOT_PRICE",
-            stale_reason="STALE_SPOT_PRICE",
+        return self._check_configured_freshness(
+            candidate,
+            snapshot,
+            _SPOT_FRESHNESS,
             data_source=snapshot.spot,
             policy_staleness_ms=candidate.freshness_policy.max_spot_staleness_ms if candidate.freshness_policy else None,  # noqa: E501
             config_threshold=self.binance_config.max_price_staleness_ms,
+        )
+
+    def _check_configured_freshness(
+        self,
+        candidate: SignalCandidate,
+        snapshot: MarketSnapshot,
+        spec: _FreshnessCheckSpec,
+        *,
+        data_source: Any,
+        policy_staleness_ms: int | None,
+        config_threshold: int,
+    ) -> GateRejection | None:
+        return self._check_freshness(
+            candidate,
+            snapshot,
+            source=spec.source,
+            missing_reason=spec.missing_reason,
+            stale_reason=spec.stale_reason,
+            data_source=data_source,
+            policy_staleness_ms=policy_staleness_ms,
+            config_threshold=config_threshold,
         )
 
     def _spread(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:

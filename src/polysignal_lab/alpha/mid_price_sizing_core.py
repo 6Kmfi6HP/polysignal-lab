@@ -99,34 +99,30 @@ class MidPriceSizingAlphaCore:
 
         if current_layers > 0 and current_avg is not None:
             if bid <= self.config.stop_price:
-                return self._make_signal(
+                return self._close_signal(
                     view,
                     side,
                     ask,
-                    confidence=0.30,
+                    bid,
+                    current_layers,
+                    current_avg,
+                    "CLOSE_STOP_LOSS",
+                    "stop_price",
+                    self.config.stop_price,
                     reason_codes=("STOP_LOSS", f"BID_{bid:.4f}"),
-                    metrics={
-                        "action": "CLOSE_STOP_LOSS",
-                        "current_layers": current_layers,
-                        "avg_cost": current_avg,
-                        "bid": bid,
-                        "stop_price": self.config.stop_price,
-                    },
                 )
             if bid >= self.config.take_profit_price:
-                return self._make_signal(
+                return self._close_signal(
                     view,
                     side,
                     ask,
-                    confidence=0.30,
+                    bid,
+                    current_layers,
+                    current_avg,
+                    "CLOSE_TAKE_PROFIT",
+                    "take_profit_price",
+                    self.config.take_profit_price,
                     reason_codes=("TAKE_PROFIT", f"BID_{bid:.4f}"),
-                    metrics={
-                        "action": "CLOSE_TAKE_PROFIT",
-                        "current_layers": current_layers,
-                        "avg_cost": current_avg,
-                        "bid": bid,
-                        "take_profit_price": self.config.take_profit_price,
-                    },
                 )
 
         if current_layers >= self.config.max_layers:
@@ -136,6 +132,35 @@ class MidPriceSizingAlphaCore:
         if current_avg is not None:
             return self._evaluate_addition(view, side, ask, current_layers, current_avg)
         return []
+
+    def _close_signal(
+        self,
+        view: MarketView,
+        side: Side,
+        ask: float,
+        bid: float,
+        current_layers: int,
+        current_avg: float,
+        action: str,
+        threshold_key: str,
+        threshold_value: float,
+        *,
+        reason_codes: tuple[str, ...],
+    ) -> list[AlphaDecision]:
+        return self._make_signal(
+            view,
+            side,
+            ask,
+            confidence=0.30,
+            reason_codes=reason_codes,
+            metrics={
+                "action": action,
+                "current_layers": current_layers,
+                "avg_cost": current_avg,
+                "bid": bid,
+                threshold_key: threshold_value,
+            },
+        )
 
     def _evaluate_entry(self, view: MarketView, side: Side, ask: float) -> list[AlphaDecision]:
         if ask > self.config.entry_center + self.config.entry_band:
@@ -158,51 +183,98 @@ class MidPriceSizingAlphaCore:
 
     def _evaluate_addition(self, view: MarketView, side: Side, ask: float, current_layers: int, avg_cost: float) -> list[AlphaDecision]:
         mode = str(getattr(self.config.mode, "value", self.config.mode)).upper()
+        setup = self._addition_setup(mode, side, ask, avg_cost)
+        if setup is None:
+            return []
+        action, move_key, move_value, step_key, step_value, multiplier, confidence = setup
+        return self._make_signal(
+            view,
+            side,
+            ask,
+            confidence=confidence,
+            reason_codes=(action, f"LAYER_{current_layers + 1}_OF_{self.config.max_layers}"),
+            metrics={
+                "action": action,
+                move_key: round(move_value, 4),
+                step_key: step_value,
+                "avg_cost": avg_cost,
+                "current_layers": current_layers,
+                "layer": current_layers + 1,
+                "multiplier": multiplier,
+            },
+        )
+
+    def _addition_setup(
+        self, mode: str, side: Side, ask: float, avg_cost: float
+    ) -> tuple[str, str, float, str, float, float, float] | None:
         if mode == "MARTINGALE":
-            adverse_move = (avg_cost - ask) if side == Side.UP and ask < avg_cost else 0.0
-            if side == Side.DOWN and ask > avg_cost:
-                adverse_move = ask - avg_cost
-            if adverse_move >= self.config.adverse_step:
-                conf = min(0.75, 0.55 + (adverse_move / (self.config.adverse_step * 3)) * 0.20)
-                return self._make_signal(
-                    view,
-                    side,
-                    ask,
-                    confidence=conf,
-                    reason_codes=("MARTINGALE_ADD", f"LAYER_{current_layers + 1}_OF_{self.config.max_layers}"),
-                    metrics={
-                        "action": "MARTINGALE_ADD",
-                        "adverse_move": round(adverse_move, 4),
-                        "adverse_step": self.config.adverse_step,
-                        "avg_cost": avg_cost,
-                        "current_layers": current_layers,
-                        "layer": current_layers + 1,
-                        "multiplier": self.config.martingale_multiplier,
-                    },
-                )
-        elif mode == "ANTI_MARTINGALE":
-            favorable_move = (ask - avg_cost) if side == Side.UP and ask > avg_cost else 0.0
-            if side == Side.DOWN and ask < avg_cost:
-                favorable_move = avg_cost - ask
-            if favorable_move >= self.config.favorable_step:
-                conf = min(0.80, 0.60 + (favorable_move / (self.config.favorable_step * 3)) * 0.20)
-                return self._make_signal(
-                    view,
-                    side,
-                    ask,
-                    confidence=conf,
-                    reason_codes=("ANTI_MARTINGALE_ADD", f"LAYER_{current_layers + 1}_OF_{self.config.max_layers}"),
-                    metrics={
-                        "action": "ANTI_MARTINGALE_ADD",
-                        "favorable_move": round(favorable_move, 4),
-                        "favorable_step": self.config.favorable_step,
-                        "avg_cost": avg_cost,
-                        "current_layers": current_layers,
-                        "layer": current_layers + 1,
-                        "multiplier": self.config.anti_martingale_multiplier,
-                    },
-                )
-        return []
+            move = self._adverse_move(side, ask, avg_cost)
+            return self._addition_tuple(
+                move,
+                "MARTINGALE_ADD",
+                "adverse_move",
+                "adverse_step",
+                self.config.adverse_step,
+                self.config.martingale_multiplier,
+                0.55,
+                0.75,
+            )
+        if mode == "ANTI_MARTINGALE":
+            move = self._favorable_move(side, ask, avg_cost)
+            return self._addition_tuple(
+                move,
+                "ANTI_MARTINGALE_ADD",
+                "favorable_move",
+                "favorable_step",
+                self.config.favorable_step,
+                self.config.anti_martingale_multiplier,
+                0.60,
+                0.80,
+            )
+        return None
+
+    @staticmethod
+    def _addition_tuple(
+        move: float,
+        action: str,
+        move_key: str,
+        step_key: str,
+        step_value: float,
+        multiplier: float,
+        confidence_base: float,
+        confidence_cap: float,
+    ) -> tuple[str, str, float, str, float, float, float] | None:
+        if move < step_value:
+            return None
+        confidence = min(
+            confidence_cap,
+            confidence_base + (move / (step_value * 3)) * 0.20,
+        )
+        return (
+            action,
+            move_key,
+            move,
+            step_key,
+            step_value,
+            multiplier,
+            confidence,
+        )
+
+    @staticmethod
+    def _adverse_move(side: Side, ask: float, avg_cost: float) -> float:
+        if side == Side.UP and ask < avg_cost:
+            return avg_cost - ask
+        if side == Side.DOWN and ask > avg_cost:
+            return ask - avg_cost
+        return 0.0
+
+    @staticmethod
+    def _favorable_move(side: Side, ask: float, avg_cost: float) -> float:
+        if side == Side.UP and ask > avg_cost:
+            return ask - avg_cost
+        if side == Side.DOWN and ask < avg_cost:
+            return avg_cost - ask
+        return 0.0
 
     def _make_signal(self, view: MarketView, side: Side, max_entry_price: float, *, confidence: float, reason_codes: tuple[str, ...], metrics: dict[str, Any]) -> list[AlphaDecision]:
         book = view.book_for(side)
@@ -238,12 +310,18 @@ class MidPriceSizingAlphaCore:
         })
 
     def load_state(self, state: dict[str, object]) -> None:
+        layer_raw = state.get("_layer_count", {}) or {}
+        if not isinstance(layer_raw, dict):
+            layer_raw = {}
         self._layer_count = {
-            str(k): int(v) for k, v in (state.get("_layer_count", {}) or {}).items()
+            str(k): int(v) for k, v in layer_raw.items()
         }
+        prices_raw = state.get("_entry_prices", {}) or {}
+        if not isinstance(prices_raw, dict):
+            prices_raw = {}
         self._entry_prices = {
             str(k): [float(p) for p in v]
-            for k, v in (state.get("_entry_prices", {}) or {}).items()
+            for k, v in prices_raw.items()
         }
 
     def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:

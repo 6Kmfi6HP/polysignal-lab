@@ -47,84 +47,86 @@ class NinetyNineCentSniperAlphaCore:
         return self._book_mid(view.book_for(side))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
-        cfg = self.config
         seconds_to_close = view.seconds_to_close
-        if seconds_to_close is None:
+        if seconds_to_close is None or not self._in_time_window(seconds_to_close):
             return []
 
-        if not (
+        decisions: list[AlphaDecision] = []
+        for side in (Side.UP, Side.DOWN):
+            decision = self._evaluate_side(view, side, seconds_to_close)
+            if decision is not None:
+                decisions.append(decision)
+
+        return decisions
+
+    def _in_time_window(self, seconds_to_close: int) -> bool:
+        cfg = self.config
+        return (
             cfg.min_seconds_before_close
             <= seconds_to_close
             <= cfg.max_seconds_before_close
-        ):
-            return []
+        )
 
-        market_id = view.market_id
-        decisions: list[AlphaDecision] = []
+    def _evaluate_side(
+        self, view: MarketView, side: Side, seconds_to_close: int
+    ) -> AlphaDecision | None:
+        cfg = self.config
+        if (view.market_id, side.value) in self._sniped_markets:
+            return None
+        book = view.book_for(side)
+        best_ask = book.best_ask
+        if best_ask is None or best_ask > cfg.max_entry_price:
+            return None
+        prob = self._external_probability(view, side)
+        if prob is None or prob < cfg.min_external_probability:
+            return None
+        if book.best_bid is not None and book.best_bid <= cfg.stop_price:
+            return None
+        opposite_ask = self._opposite_ask_if_settled(view, side)
+        if cfg.require_effectively_settled and opposite_ask is None:
+            return None
+        return AlphaDecision(
+            strategy=self.name,
+            asset=view.asset,
+            timeframe=view.timeframe,
+            market_id=view.market_id,
+            market_slug=view.market_slug,
+            condition_id=view.condition_id,
+            token_id=book.token_id,
+            side=side,
+            confidence=0.96,
+            entry_reference_price=best_ask,
+            max_entry_price=min(cfg.max_entry_price, best_ask * 1.01),
+            seconds_to_close=seconds_to_close,
+            data_freshness_ms=view.freshness.max_ms,
+            reason_codes=(
+                "NINETY_NINE_SNIPE",
+                "EFFECTIVELY_SETTLED",
+                "HIGH_PROBABILITY",
+                "FOK_EXECUTION",
+            ),
+            metrics={
+                "best_ask": best_ask,
+                "best_bid": book.best_bid,
+                "midpoint": self._book_mid(book),
+                "external_probability": prob,
+                "seconds_to_close": seconds_to_close,
+                "max_notional": cfg.max_notional_per_trade,
+                "stop_price": cfg.stop_price,
+                "require_effectively_settled": cfg.require_effectively_settled,
+                "opposite_ask": opposite_ask,
+                "created_at_for_test": view.created_at,
+            },
+            order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK),
+        )
 
-        for side in (Side.UP, Side.DOWN):
-            side_key = (market_id, side.value)
-            if side_key in self._sniped_markets:
-                continue
-
-            book = view.book_for(side)
-            if book.best_ask is None:
-                continue
-
-            if book.best_ask > cfg.max_entry_price:
-                continue
-
-            prob = self._external_probability(view, side)
-            if prob is None or prob < cfg.min_external_probability:
-                continue
-
-            if book.best_bid is not None and book.best_bid <= cfg.stop_price:
-                continue
-
-            if cfg.require_effectively_settled:
-                opposite_side = side.opposite
-                opp_book = view.book_for(opposite_side)
-                if opp_book.best_ask is None or opp_book.best_ask > 0.05:
-                    continue
-
-            decisions.append(
-                AlphaDecision(
-                    strategy=self.name,
-                    asset=view.asset,
-                    timeframe=view.timeframe,
-                    market_id=market_id,
-                    market_slug=view.market_slug,
-                    condition_id=view.condition_id,
-                    token_id=book.token_id,
-                    side=side,
-                    confidence=0.96,
-                    entry_reference_price=book.best_ask,
-                    max_entry_price=min(cfg.max_entry_price, book.best_ask * 1.01),
-                    seconds_to_close=seconds_to_close,
-                    data_freshness_ms=view.freshness.max_ms,
-                    reason_codes=(
-                        "NINETY_NINE_SNIPE",
-                        "EFFECTIVELY_SETTLED",
-                        "HIGH_PROBABILITY",
-                        "FOK_EXECUTION",
-                    ),
-                    metrics={
-                        "best_ask": book.best_ask,
-                        "best_bid": book.best_bid,
-                        "midpoint": self._book_mid(book),
-                        "external_probability": prob,
-                        "seconds_to_close": seconds_to_close,
-                        "max_notional": cfg.max_notional_per_trade,
-                        "stop_price": cfg.stop_price,
-                        "require_effectively_settled": cfg.require_effectively_settled,
-                        "opposite_ask": opp_book.best_ask if cfg.require_effectively_settled else None,
-                        "created_at_for_test": view.created_at,
-                    },
-                    order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK),
-                )
-            )
-
-        return decisions
+    def _opposite_ask_if_settled(self, view: MarketView, side: Side) -> float | None:
+        if not self.config.require_effectively_settled:
+            return None
+        opposite_ask = view.book_for(side.opposite).best_ask
+        if opposite_ask is None or opposite_ask > 0.05:
+            return None
+        return opposite_ask
 
     def evaluate_view_from_snapshot_for_test(
         self, snapshot: MarketSnapshot

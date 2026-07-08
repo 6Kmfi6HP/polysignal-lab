@@ -19,20 +19,6 @@
       "Read(./refs/**)"
     ]
   },
-  "worktree": {
-    "sparsePaths": [
-      ".claude",
-      "src",
-      "tests",
-      "docs",
-      "config",
-      "scripts",
-      "data"
-    ],
-    "symlinkDirectories": [
-      ".venv"
-    ]
-  },
   "hooks": {
     "PostToolUse": [
       {
@@ -67,5 +53,22 @@
         ]
       }
     ]
+  },
+  "worktree": {
+    "symlinkDirectories": [
+      ".venv"
+    ],
+    "sparsePaths": [
+      ".claude",
+      "src",
+      "tests",
+      "docs",
+      "config",
+      "scripts",
+      "data"
+    ]
+  },
+  "enabledPlugins": {
+    "codex@openai-codex": true
   }
 }

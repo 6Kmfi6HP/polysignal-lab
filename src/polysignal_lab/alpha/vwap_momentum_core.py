@@ -17,8 +17,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
+from polysignal_lab.alpha.helpers import enabled_for_view
 from polysignal_lab.alpha.state import json_safe_state
 from polysignal_lab.alpha.types import (
     AlphaDecision,
@@ -26,6 +27,7 @@ from polysignal_lab.alpha.types import (
     AlphaOrderEvent,
     MarketView,
     OrderIntentSpec,
+    SideBookView,
     TradeView,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
@@ -153,6 +155,21 @@ class _EvalContext:
     cfg: Any  # VWAPMomentumConfig — kept as Any to avoid import coupling
 
 
+@dataclass(frozen=True)
+class _HedgeDecisionContext:
+    asset: str
+    timeframe: str
+    market_id: str
+    market_slug: str
+    condition_id: str
+    token_id: str
+    side: Side
+    confidence: float
+    seconds_to_close: int | None
+    data_freshness_ms: int | None
+    contracts: float
+
+
 class VWAPMomentumAlphaCore:
     """PolyBullLabs VWAP / Deviation / Momentum signal strategy (pure core)."""
 
@@ -166,7 +183,7 @@ class VWAPMomentumAlphaCore:
         # Transient holding area: evaluate stashes the just-pushed samples per
         # market here; the adapter binds them to the candidate's signal_id.
         self._pending_signal_samples_hold: dict[str, list[tuple[str, float, float, float]]] = {}
-        self._last_trade_signatures: dict[str, tuple[float | None, float | None, str | None, float]] = {}
+        self._last_trade_signatures: dict[str, tuple[float, float, str | None, float | None]] = {}
         self._seen_trade_signatures: dict[str, set[tuple[float, float, float]]] = defaultdict(set)
         self._pending_hedges: dict[str, tuple[Side, float]] = {}
 
@@ -221,34 +238,22 @@ class VWAPMomentumAlphaCore:
             return []
         seconds_to_close = m.get("seconds_to_close")
         return [
-            AlphaDecision(
-                strategy=self.name,
-                asset=str(m.get("asset", "")),
-                timeframe=str(m.get("timeframe", "")),
-                market_id=event.market_id,
-                market_slug=str(m.get("market_slug", "")),
-                condition_id=condition_id,
-                token_id=opposite_token_id,
-                side=hedge_side,
-                confidence=float(m.get("signal_confidence", 0.70)),
-                entry_reference_price=self.config.hedge_price,
-                max_entry_price=self.config.hedge_price,
-                seconds_to_close=int(seconds_to_close)
-                if isinstance(seconds_to_close, (int, float))
-                else None,
-                data_freshness_ms=None,
-                reason_codes=("VWAP_GTD_HEDGE",),
-                metrics={
-                    "contracts": contracts,
-                    "hedge_price": self.config.hedge_price,
-                    "hedge_source": "vwap_entry_fill",
-                },
-                order_intent=OrderIntentSpec(
-                    intent=OrderIntent.PASSIVE_GTD,
-                    expiry_seconds=self.config.hedge_expiry_seconds,
-                    pair_id=f"{event.market_id}:vwap",
-                ),
-                hedge_leg=True,
+            self._build_hedge_decision(
+                _HedgeDecisionContext(
+                    asset=str(m.get("asset", "")),
+                    timeframe=str(m.get("timeframe", "")),
+                    market_id=event.market_id,
+                    market_slug=str(m.get("market_slug", "")),
+                    condition_id=condition_id,
+                    token_id=opposite_token_id,
+                    side=hedge_side,
+                    confidence=float(m.get("signal_confidence", 0.70)),
+                    seconds_to_close=int(seconds_to_close)
+                    if isinstance(seconds_to_close, (int, float))
+                    else None,
+                    data_freshness_ms=None,
+                    contracts=contracts,
+                )
             )
         ]
 
@@ -313,11 +318,7 @@ class VWAPMomentumAlphaCore:
         Returns None if any validation fails.
         """
         cfg = self.config
-        if not cfg.enabled:
-            return None
-        if view.asset.upper() not in [a.upper() for a in cfg.assets]:
-            return None
-        if view.timeframe not in cfg.timeframes:
+        if not enabled_for_view(cfg, view):
             return None
 
         seconds_to_close = view.seconds_to_close
@@ -347,59 +348,91 @@ class VWAPMomentumAlphaCore:
     def _ingest_trades(
         self, view: MarketView, now_ts: float
     ) -> list[tuple[str, float, float, float]]:
-        """Feed all trade data from the snapshot into the trade history.
-
-        Returns the list of (key, price, size, timestamp) samples that were
-        newly pushed (for use in on_order_rejected revert logic).
-        """
-        cfg = self.config
         pushed_samples: list[tuple[str, float, float, float]] = []
-        for side in [Side.UP, Side.DOWN]:
+        for side in (Side.UP, Side.DOWN):
             book = view.book_for(side)
             key = self._market_key(view.market_id, side)
-            trade_events = view.up_trades if side == Side.UP else view.down_trades
+            trade_events = self._trade_events_for(view, side)
             if trade_events:
-                for raw_trade in trade_events:
-                    if isinstance(raw_trade, Trade):
-                        price = raw_trade.price
-                        size = raw_trade.size
-                        timestamp = raw_trade.timestamp
-                    elif isinstance(raw_trade, TradeView):
-                        price = raw_trade.price
-                        size = raw_trade.size
-                        timestamp = raw_trade.ts.timestamp() if raw_trade.ts else now_ts
-                    elif isinstance(raw_trade, dict):
-                        trade = Trade.model_validate(raw_trade)
-                        price = trade.price
-                        size = trade.size
-                        timestamp = trade.timestamp
-                    else:
-                        continue
-                    signature = (price, size, timestamp)
-                    if signature in self._seen_trade_signatures[key]:
-                        continue
-                    self._seen_trade_signatures[key].add(signature)
-                    self.trades.push(key, price, size, timestamp)
-                    pushed_samples.append((key, price, size, timestamp))
+                pushed_samples.extend(self._ingest_trade_events(key, trade_events, now_ts))
                 continue
-            price = book.last_trade_price if book.last_trade_price is not None else book.best_ask
-            if price is not None and price > 0:
-                size = book.last_trade_size if book.last_trade_size and book.last_trade_size > 0 else 1.0
-                signature = (
-                    price,
-                    size,
-                    book.last_trade_timestamp,
-                    book.received_at.timestamp() if book.received_at else None,
-                )
-                if self._last_trade_signatures.get(key) == signature:
-                    continue
-                self._last_trade_signatures[key] = signature
-                self.trades.push(key, price, size, now_ts)
-                pushed_samples.append((key, price, size, now_ts))
+            sample = self._ingest_book_trade(key, book, now_ts)
+            if sample is not None:
+                pushed_samples.append(sample)
+
+        cfg = self.config
         history_window_sec = max(cfg.vwap_window_sec, cfg.momentum_window_sec + 1.5)
         for key in (self._market_key(view.market_id, Side.UP), self._market_key(view.market_id, Side.DOWN)):
             self._prune_trade_state(key, history_window_sec, now_ts)
         return pushed_samples
+
+    @staticmethod
+    def _trade_events_for(view: MarketView, side: Side) -> Sequence[TradeView]:
+        return view.up_trades if side == Side.UP else view.down_trades
+
+    def _ingest_trade_events(
+        self,
+        key: str,
+        trade_events: Sequence[Any],
+        now_ts: float,
+    ) -> list[tuple[str, float, float, float]]:
+        pushed_samples: list[tuple[str, float, float, float]] = []
+        for raw_trade in trade_events:
+            sample = self._trade_sample(raw_trade, now_ts)
+            if sample is None:
+                continue
+            price, size, timestamp = sample
+            if not self._push_unique_trade(key, price, size, timestamp):
+                continue
+            pushed_samples.append((key, price, size, timestamp))
+        return pushed_samples
+
+    @staticmethod
+    def _trade_sample(raw_trade: Any, now_ts: float) -> tuple[float, float, float] | None:
+        if isinstance(raw_trade, Trade):
+            return raw_trade.price, raw_trade.size, raw_trade.timestamp
+        if isinstance(raw_trade, TradeView):
+            return (
+                raw_trade.price,
+                raw_trade.size,
+                raw_trade.ts.timestamp() if raw_trade.ts else now_ts,
+            )
+        if isinstance(raw_trade, dict):
+            trade = Trade.model_validate(raw_trade)
+            return trade.price, trade.size, trade.timestamp
+        return None
+
+    def _push_unique_trade(
+        self, key: str, price: float, size: float, timestamp: float
+    ) -> bool:
+        signature = (price, size, timestamp)
+        if signature in self._seen_trade_signatures[key]:
+            return False
+        self._seen_trade_signatures[key].add(signature)
+        self.trades.push(key, price, size, timestamp)
+        return True
+
+    def _ingest_book_trade(
+        self,
+        key: str,
+        book: SideBookView,
+        now_ts: float,
+    ) -> tuple[str, float, float, float] | None:
+        price = book.last_trade_price if book.last_trade_price is not None else book.best_ask
+        if price is None or price <= 0:
+            return None
+        size = book.last_trade_size if book.last_trade_size and book.last_trade_size > 0 else 1.0
+        signature = (
+            price,
+            size,
+            book.last_trade_timestamp,
+            book.received_at.timestamp() if book.received_at else None,
+        )
+        if self._last_trade_signatures.get(key) == signature:
+            return None
+        self._last_trade_signatures[key] = signature
+        self.trades.push(key, price, size, now_ts)
+        return key, price, size, now_ts
 
     def _check_entry(
         self,
@@ -517,34 +550,51 @@ class VWAPMomentumAlphaCore:
             return []
         book = view.book_for(hedge_side)
         return [
-            AlphaDecision(
-                strategy=self.name,
-                asset=view.asset,
-                timeframe=view.timeframe,
-                market_id=view.market_id,
-                market_slug=view.market_slug,
-                condition_id=view.condition_id,
-                token_id=book.token_id,
-                side=hedge_side,
-                confidence=0.70,
-                entry_reference_price=self.config.hedge_price,
-                max_entry_price=self.config.hedge_price,
-                seconds_to_close=view.seconds_to_close,
-                data_freshness_ms=view.freshness.max_ms,
-                reason_codes=("VWAP_GTD_HEDGE",),
-                metrics={
-                    "contracts": contracts,
-                    "hedge_price": self.config.hedge_price,
-                    "hedge_source": "vwap_entry_fill",
-                },
-                order_intent=OrderIntentSpec(
-                    intent=OrderIntent.PASSIVE_GTD,
-                    expiry_seconds=self.config.hedge_expiry_seconds,
-                    pair_id=f"{view.market_id}:vwap",
-                ),
-                hedge_leg=True,
+            self._build_hedge_decision(
+                _HedgeDecisionContext(
+                    asset=view.asset,
+                    timeframe=view.timeframe,
+                    market_id=view.market_id,
+                    market_slug=view.market_slug,
+                    condition_id=view.condition_id,
+                    token_id=book.token_id,
+                    side=hedge_side,
+                    confidence=0.70,
+                    seconds_to_close=view.seconds_to_close,
+                    data_freshness_ms=view.freshness.max_ms,
+                    contracts=contracts,
+                )
             )
         ]
+
+    def _build_hedge_decision(self, ctx: _HedgeDecisionContext) -> AlphaDecision:
+        return AlphaDecision(
+            strategy=self.name,
+            asset=ctx.asset,
+            timeframe=ctx.timeframe,
+            market_id=ctx.market_id,
+            market_slug=ctx.market_slug,
+            condition_id=ctx.condition_id,
+            token_id=ctx.token_id,
+            side=ctx.side,
+            confidence=ctx.confidence,
+            entry_reference_price=self.config.hedge_price,
+            max_entry_price=self.config.hedge_price,
+            seconds_to_close=ctx.seconds_to_close,
+            data_freshness_ms=ctx.data_freshness_ms,
+            reason_codes=("VWAP_GTD_HEDGE",),
+            metrics={
+                "contracts": ctx.contracts,
+                "hedge_price": self.config.hedge_price,
+                "hedge_source": "vwap_entry_fill",
+            },
+            order_intent=OrderIntentSpec(
+                intent=OrderIntent.PASSIVE_GTD,
+                expiry_seconds=self.config.hedge_expiry_seconds,
+                pair_id=f"{ctx.market_id}:vwap",
+            ),
+            hedge_leg=True,
+        )
 
     @staticmethod
     def _compute_confidence(deviation_pct: float, momentum: float) -> float:
@@ -603,6 +653,8 @@ class VWAPMomentumAlphaCore:
 
     def load_state(self, payload: Mapping[str, object]) -> None:
         trades_raw = payload.get("trades", {}) or {}
+        if not isinstance(trades_raw, Mapping):
+            trades_raw = {}
         new_trades = TradeHistory()
         for k, lst in trades_raw.items():
             for t in lst:
@@ -612,20 +664,28 @@ class VWAPMomentumAlphaCore:
         self.trades = new_trades
 
         can_enter_raw = payload.get("can_enter", {}) or {}
+        if not isinstance(can_enter_raw, Mapping):
+            can_enter_raw = {}
         self._can_enter = defaultdict(
             lambda: True, {str(k): bool(v) for k, v in can_enter_raw.items()}
         )
 
         sigs_raw = payload.get("last_trade_signatures", {}) or {}
+        if not isinstance(sigs_raw, Mapping):
+            sigs_raw = {}
         self._last_trade_signatures = {str(k): tuple(v) for k, v in sigs_raw.items()}
 
         seen_raw = payload.get("seen_trade_signatures", {}) or {}
+        if not isinstance(seen_raw, Mapping):
+            seen_raw = {}
         self._seen_trade_signatures = defaultdict(
             set,
             {str(k): {tuple(sig) for sig in v} for k, v in seen_raw.items()},
         )
 
         hedges_raw = payload.get("pending_hedges", {}) or {}
+        if not isinstance(hedges_raw, Mapping):
+            hedges_raw = {}
         self._pending_hedges = {
             str(k): (Side(v[0]), float(v[1])) for k, v in hedges_raw.items()
         }

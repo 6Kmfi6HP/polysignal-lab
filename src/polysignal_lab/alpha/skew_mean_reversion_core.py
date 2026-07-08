@@ -15,6 +15,7 @@ Pos: Application code
 
 from __future__ import annotations
 
+from polysignal_lab.alpha.helpers import enabled_for_view
 from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.domain.enums import Side
 
@@ -29,11 +30,7 @@ class SkewMeanReversionAlphaCore:
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         cfg = self.config
-        if not getattr(cfg, "enabled", True):
-            return []
-        if view.asset not in [a.upper() for a in cfg.assets]:
-            return []
-        if view.timeframe not in cfg.timeframes:
+        if not enabled_for_view(cfg, view):
             return []
         if view.up.best_ask is None or view.down.best_ask is None:
             return []
@@ -101,7 +98,7 @@ class SkewMeanReversionAlphaCore:
                 token_id=book.token_id,
                 side=side,
                 confidence=confidence,
-                entry_reference_price=book.best_ask,
+                entry_reference_price=cheap_price,
                 max_entry_price=cfg.max_entry_price,
                 seconds_to_close=view.seconds_to_close,
                 data_freshness_ms=view.freshness.max_ms,

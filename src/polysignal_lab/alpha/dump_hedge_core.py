@@ -14,36 +14,29 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
 from datetime import datetime, timezone
-from statistics import mean, pstdev
 from typing import Any
 
+from polysignal_lab.alpha.helpers import (
+    HedgeDecisionContext,
+    HedgeDecisionSpec,
+    SIDES,
+    OrderDecisionSpec,
+    active_unhedged_position,
+    build_order_decision,
+    build_hedge_order_decision,
+    enabled_for_view,
+    position_hedge_context,
+    record_two_leg_fill,
+    restore_position_state,
+    restore_string_set,
+)
+from polysignal_lab.alpha.stats import RollingPriceStats
 from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 _FEE_RATE = 0.01
 _SLIPPAGE_BUFFER = 0.01
-
-
-class RollingPriceStats:
-    def __init__(self, window_size: int = 16) -> None:
-        self.values: dict[str, deque[tuple[float, float]]] = defaultdict(lambda: deque(maxlen=window_size))
-
-    def push(self, key: str, price: float, size: float = 1.0) -> None:
-        self.values[key].append((price, max(size, 1e-9)))
-
-    def stats(self, key: str) -> dict[str, float | None]:
-        vals = list(self.values[key])
-        if not vals:
-            return {"vwap": None, "momentum": None, "z_score": None, "count": 0}
-        total_size = sum(size for _, size in vals)
-        prices = [price for price, _ in vals]
-        vwap = sum(price * size for price, size in vals) / total_size if total_size else mean(prices)
-        momentum = vals[-1][0] - vals[0][0] if len(vals) > 1 else 0.0
-        stdev = pstdev(prices) if len(prices) > 1 else 0.0
-        z_score = (prices[-1] - mean(prices)) / stdev if stdev > 0 else 0.0
-        return {"vwap": vwap, "momentum": momentum, "z_score": z_score, "count": len(vals)}
 
 
 class DumpHedgeAlphaCore:
@@ -68,22 +61,14 @@ class DumpHedgeAlphaCore:
     # -- guard helpers -------------------------------------------------------
 
     def _validate_inputs(self, view: MarketView) -> bool:
-        if not self.config.enabled:
-            return False
-        if view.asset not in [asset.upper() for asset in self.config.assets]:
-            return False
-        if view.timeframe not in self.config.timeframes:
-            return False
-        return True
+        return enabled_for_view(self.config, view)
 
     def _active_position(self, view: MarketView) -> dict[str, Any] | None:
-        position = self._positions.get(view.market_id)
-        if position and not position.get("hedged", False):
-            return position
-        return None
+        position = active_unhedged_position(self._positions, view.market_id)
+        return dict(position) if position is not None else None
 
     def _update_price_stats(self, view: MarketView) -> None:
-        for side in (Side.UP, Side.DOWN):
+        for side in SIDES:
             book = view.book_for(side)
             if book.best_ask is not None:
                 self._price_stats.push(book.token_id, book.best_ask, size=1.0)
@@ -93,7 +78,7 @@ class DumpHedgeAlphaCore:
 
     def _evaluate_sides(self, view: MarketView) -> list[AlphaDecision]:
         decisions: list[AlphaDecision] = []
-        for side in (Side.UP, Side.DOWN):
+        for side in SIDES:
             book = view.book_for(side)
             stats = self._price_stats.stats(book.token_id)
             if stats["count"] < 2:
@@ -148,16 +133,12 @@ class DumpHedgeAlphaCore:
 
     def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
         self._dump_detected.add(event.market_id)
-        if event.market_id in self._positions:
-            self._positions[event.market_id]["hedged"] = True
-            self._entered_markets.add(event.market_id)
-            return []
-        self._positions[event.market_id] = {
-            "side": event.side,
-            "entry_price": event.fill_price,
-            "filled_at": event.ts_event,
-            "hedged": False,
-        }
+        record_two_leg_fill(
+            self._positions,
+            self._entered_markets,
+            event,
+            enter_on_first_fill=False,
+        )
         return []
 
     def on_leg_failure(self, pair_id: str, market_id: str, side: Side) -> None:
@@ -178,53 +159,55 @@ class DumpHedgeAlphaCore:
         return self._evaluate_sides(view)
 
     def _try_hedge_or_stop(self, view: MarketView, position: dict[str, Any]) -> list[AlphaDecision]:
-        now = self._utc_now()
-        filled_side: Side = position["side"]
-        hedge_side = filled_side.opposite
-        filled_price = float(position["entry_price"])
-        elapsed = (now - position["filled_at"]).total_seconds()
-        hedge_ask = view.ask_for(hedge_side)
+        hedge = position_hedge_context(position, self._utc_now())
+        hedge_ask = view.ask_for(hedge.hedge_side)
         decisions: list[AlphaDecision] = []
 
         if hedge_ask is not None:
-            cost = self._pair_effective_cost(filled_price, hedge_ask)
+            cost = self._pair_effective_cost(hedge.filled_price, hedge_ask)
             if cost <= self.config.pair_cost_cap:
-                decision = self._decision(
-                    view,
-                    hedge_side,
-                    confidence=0.70,
-                    max_entry_price=hedge_ask,
-                    reason_codes=("DUMP_HEDGE", f"HEDGE_{hedge_side.value}"),
-                    metrics={
-                        "pair_cost": round(cost, 4),
-                        "pair_cost_cap": self.config.pair_cost_cap,
-                        "filled_leg_price": filled_price,
-                        "hedge_ask": hedge_ask,
-                        "elapsed_seconds": round(elapsed, 2),
-                    },
-                    order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK, pair_id=f"{view.market_id}:dump"),
-                    hedge_leg=True,
+                decision = build_hedge_order_decision(
+                    HedgeDecisionContext(
+                        self.name,
+                        view,
+                        hedge.hedge_side,
+                        hedge.filled_price,
+                        hedge.elapsed_seconds,
+                    ),
+                    HedgeDecisionSpec(
+                        confidence=0.70,
+                        hedge_price=hedge_ask,
+                        pair_cost=cost,
+                        cap_metric="pair_cost_cap",
+                        cap_value=self.config.pair_cost_cap,
+                        reason_codes=("DUMP_HEDGE", f"HEDGE_{hedge.hedge_side.value}"),
+                        order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK, pair_id=f"{view.market_id}:dump"),
+                        hedge_price_metric="hedge_ask",
+                    ),
                 )
                 if decision:
                     decisions.append(decision)
 
-        if elapsed >= self.config.stop_loss_max_wait_seconds and hedge_ask is not None:
-            cost = self._pair_effective_cost(filled_price, hedge_ask)
+        if hedge.elapsed_seconds >= self.config.stop_loss_max_wait_seconds and hedge_ask is not None:
+            cost = self._pair_effective_cost(hedge.filled_price, hedge_ask)
             if cost <= self.config.stop_loss_pair_cap:
-                decision = self._decision(
-                    view,
-                    hedge_side,
-                    confidence=0.50,
-                    max_entry_price=hedge_ask,
-                    reason_codes=("DUMP_HEDGE_STOP_LOSS", f"WAITED_{elapsed:.0f}s"),
-                    metrics={
-                        "pair_cost": round(cost, 4),
-                        "stop_loss_cap": self.config.stop_loss_pair_cap,
-                        "filled_leg_price": filled_price,
-                        "elapsed_seconds": round(elapsed, 2),
-                    },
-                    order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK, pair_id=f"{view.market_id}:dump"),
-                    hedge_leg=True,
+                decision = build_hedge_order_decision(
+                    HedgeDecisionContext(
+                        self.name,
+                        view,
+                        hedge.hedge_side,
+                        hedge.filled_price,
+                        hedge.elapsed_seconds,
+                    ),
+                    HedgeDecisionSpec(
+                        confidence=0.50,
+                        hedge_price=hedge_ask,
+                        pair_cost=cost,
+                        cap_metric="stop_loss_cap",
+                        cap_value=self.config.stop_loss_pair_cap,
+                        reason_codes=("DUMP_HEDGE_STOP_LOSS", f"WAITED_{hedge.elapsed_seconds:.0f}s"),
+                        order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK, pair_id=f"{view.market_id}:dump"),
+                    ),
                 )
                 if decision:
                     decisions.append(decision)
@@ -242,27 +225,18 @@ class DumpHedgeAlphaCore:
         order_intent: OrderIntentSpec,
         hedge_leg: bool = False,
     ) -> AlphaDecision | None:
-        book = view.book_for(side)
-        if book.best_ask is None:
-            return None
-        return AlphaDecision(
-            strategy=self.name,
-            asset=view.asset,
-            timeframe=view.timeframe,
-            market_id=view.market_id,
-            market_slug=view.market_slug,
-            condition_id=view.condition_id,
-            token_id=book.token_id,
-            side=side,
-            confidence=confidence,
-            entry_reference_price=book.best_ask,
-            max_entry_price=max_entry_price,
-            seconds_to_close=view.seconds_to_close,
-            data_freshness_ms=view.freshness.max_ms,
-            reason_codes=reason_codes,
-            metrics=metrics,
-            order_intent=order_intent,
-            hedge_leg=hedge_leg,
+        return build_order_decision(
+            self.name,
+            view,
+            side,
+            OrderDecisionSpec(
+                confidence=confidence,
+                max_entry_price=max_entry_price,
+                reason_codes=reason_codes,
+                metrics=metrics,
+                order_intent=order_intent,
+                hedge_leg=hedge_leg,
+            ),
         )
 
     def save_state(self) -> dict[str, object]:
@@ -275,20 +249,9 @@ class DumpHedgeAlphaCore:
         })
 
     def load_state(self, state: dict[str, object]) -> None:
-        from polysignal_lab.alpha.state import restore_utc_datetime
-        from polysignal_lab.domain.enums import Side
-
-        positions_raw = state.get("_positions", {}) or {}
-        self._positions = {}
-        for mid, pos in positions_raw.items():
-            self._positions[str(mid)] = {
-                "side": Side(pos["side"]),
-                "entry_price": float(pos["entry_price"]),
-                "filled_at": restore_utc_datetime(pos["filled_at"]),
-                "hedged": bool(pos["hedged"]),
-            }
-        self._entered_markets = set(state.get("_entered_markets", []) or [])
-        self._dump_detected = set(state.get("_dump_detected", []) or [])
+        self._positions = restore_position_state(state.get("_positions", {}) or {})
+        self._entered_markets = restore_string_set(state.get("_entered_markets", []) or [])
+        self._dump_detected = restore_string_set(state.get("_dump_detected", []) or [])
 
     def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
         from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot

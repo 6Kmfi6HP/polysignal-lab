@@ -15,40 +15,15 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
+from collections import deque
+from typing import TYPE_CHECKING
 
+from polysignal_lab.alpha.stats import _RollingPriceStats
 from polysignal_lab.alpha.types import AlphaDecision, AlphaOrderEvent, MarketView, OrderIntentSpec, SideBookView
 from polysignal_lab.domain.enums import OrderIntent, Side
 
-
-class _RollingPriceStats:
-    """Pure copy of strategies.base.RollingPriceStats (kept pure: no import
-    of the strategy layer, which pulls snapshot machinery)."""
-
-    def __init__(self, window_size: int = 16) -> None:
-        self.values: dict[str, deque[tuple[float, float]]] = defaultdict(
-            lambda: deque(maxlen=window_size)
-        )
-
-    def push(self, key: str, price: float, size: float = 1.0) -> None:
-        self.values[key].append((price, max(size, 1e-9)))
-
-    def stats(self, key: str) -> dict[str, float | None]:
-        vals = list(self.values[key])
-        if not vals:
-            return {"vwap": None, "momentum": None, "z_score": None, "count": 0}
-        total_size = sum(size for _, size in vals)
-        vwap = (
-            sum(price * size for price, size in vals) / total_size
-            if total_size
-            else sum(p for p, _ in vals) / len(vals)
-        )
-        momentum = vals[-1][0] - vals[0][0] if len(vals) > 1 else 0.0
-        prices = [p for p, _ in vals]
-        stdev_val = (sum((p - (sum(prices) / len(prices))) ** 2 for p in prices) / len(prices)) ** 0.5
-        mean_price = sum(prices) / len(prices)
-        z = (prices[-1] - mean_price) / stdev_val if stdev_val > 0 else 0.0
-        return {"vwap": vwap, "momentum": momentum, "z_score": z, "count": len(vals)}
+if TYPE_CHECKING:
+    from polysignal_lab.domain.snapshot import MarketSnapshot
 
 
 class BinaryMomentumAlphaCore:
@@ -143,7 +118,7 @@ class BinaryMomentumAlphaCore:
         macd_line = macd.get("macd_line")
         signal = macd.get("signal")
         histogram = macd.get("histogram")
-        if any(v is None for v in (macd_line, signal, histogram)):
+        if macd_line is None or signal is None or histogram is None:
             return []
 
         rsi_val = self._rsi(spot_prices)
@@ -275,7 +250,7 @@ class BinaryMomentumAlphaCore:
         )
 
     def evaluate_view_from_snapshot_for_test(
-        self, snapshot: MarketSnapshot
+        self, snapshot: "MarketSnapshot"
     ) -> list[AlphaDecision]:
         from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
         view = market_view_from_snapshot(snapshot)

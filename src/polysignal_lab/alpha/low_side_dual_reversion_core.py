@@ -17,7 +17,20 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, MarketView, OrderIntentSpec, SideBookView
+from polysignal_lab.alpha.helpers import (
+    HedgeDecisionContext,
+    HedgeDecisionSpec,
+    SIDES,
+    OrderDecisionSpec,
+    active_unhedged_position,
+    build_order_decision,
+    build_hedge_order_decision,
+    depth_weighted_ask,
+    enabled_for_view,
+    position_hedge_context,
+    record_two_leg_fill,
+)
+from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 
@@ -32,37 +45,17 @@ class LowSideDualReversionAlphaCore:
     def _pair_effective_cost(self, leg1_price: float, leg2_price: float) -> float:
         return leg1_price + leg2_price + 2.0 * self.config.fee_rate + self.config.slippage_buffer
 
-    def _depth_weighted_ask(self, book: SideBookView, shares: int) -> float | None:
-        if shares <= 0 or not book.ask_levels:
-            return None
-        remaining = float(shares)
-        total_cost = 0.0
-        for price, size in sorted(book.ask_levels, key=lambda level: level[0]):
-            take = min(remaining, size)
-            total_cost += take * price
-            remaining -= take
-            if remaining <= 0:
-                break
-        if remaining > 0:
-            return None
-        return total_cost / shares
-
     @staticmethod
     def _utc_now() -> datetime:
         return datetime.now(timezone.utc)
 
     def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
-        if event.market_id in self._positions:
-            self._positions[event.market_id]["hedged"] = True
-            self._entered_markets.add(event.market_id)
-            return []
-        self._positions[event.market_id] = {
-            "side": event.side,
-            "entry_price": event.fill_price,
-            "filled_at": event.ts_event,
-            "hedged": False,
-        }
-        self._entered_markets.add(event.market_id)
+        record_two_leg_fill(
+            self._positions,
+            self._entered_markets,
+            event,
+            enter_on_first_fill=True,
+        )
         return []
 
     def on_order_submitted(self, event: AlphaOrderEvent) -> None: pass
@@ -74,19 +67,11 @@ class LowSideDualReversionAlphaCore:
     # -- guard helpers -------------------------------------------------------
 
     def _validate_inputs(self, view: MarketView) -> bool:
-        if not self.config.enabled:
-            return False
-        if view.asset not in [asset.upper() for asset in self.config.assets]:
-            return False
-        if view.timeframe not in self.config.timeframes:
-            return False
-        return True
+        return enabled_for_view(self.config, view)
 
     def _active_position(self, view: MarketView) -> dict[str, Any] | None:
-        position = self._positions.get(view.market_id)
-        if position and not position.get("hedged", False):
-            return position
-        return None
+        position = active_unhedged_position(self._positions, view.market_id)
+        return dict(position) if position is not None else None
 
     def _should_skip(self, view: MarketView) -> bool:
         if view.seconds_to_close is None:
@@ -118,9 +103,12 @@ class LowSideDualReversionAlphaCore:
     # -- decision helpers ----------------------------------------------------
 
     def _build_decisions(self, view: MarketView, best_price: float) -> list[AlphaDecision]:
+        seconds_to_close = view.seconds_to_close
+        if seconds_to_close is None:
+            return []
         best_cost = self._pair_effective_cost(best_price, best_price)
         decisions: list[AlphaDecision] = []
-        for side in (Side.UP, Side.DOWN):
+        for side in SIDES:
             decision = self._decision(
                 view,
                 side,
@@ -135,7 +123,7 @@ class LowSideDualReversionAlphaCore:
                 },
                 order_intent=OrderIntentSpec(
                     OrderIntent.PASSIVE_GTD,
-                    expiry_seconds=min(view.seconds_to_close - 60, 300),
+                    expiry_seconds=min(seconds_to_close - 60, 300),
                     pair_id=f"{view.market_id}:dual",
                 ),
             )
@@ -157,82 +145,76 @@ class LowSideDualReversionAlphaCore:
         return [] if best_price is None else self._build_decisions(view, best_price)
 
     def _try_hedge(self, view: MarketView, position: dict[str, Any]) -> list[AlphaDecision]:
-        filled_side: Side = position["side"]
-        hedge_side = filled_side.opposite
-        filled_price = float(position["entry_price"])
-        elapsed = (self._utc_now() - position["filled_at"]).total_seconds()
+        hedge = position_hedge_context(position, self._utc_now())
         decisions: list[AlphaDecision] = []
 
-        hedge_book = view.book_for(hedge_side)
-        depth_ask = self._depth_weighted_ask(hedge_book, self.config.shares_per_level)
+        hedge_book = view.book_for(hedge.hedge_side)
+        depth_ask = depth_weighted_ask(hedge_book, self.config.shares_per_level)
         if depth_ask is not None:
-            cost = self._pair_effective_cost(filled_price, depth_ask)
+            cost = self._pair_effective_cost(hedge.filled_price, depth_ask)
             if cost <= self.config.pair_cost_cap:
-                decision = self._decision(
-                    view,
-                    hedge_side,
-                    confidence=0.70,
-                    max_entry_price=depth_ask,
-                    reason_codes=("DUAL_REVERSION_HEDGE", f"HEDGE_{hedge_side.value}"),
-                    metrics={
-                        "pair_cost": round(cost, 4),
-                        "pair_cost_cap": self.config.pair_cost_cap,
-                        "filled_leg_price": filled_price,
-                        "hedge_weighted_ask": depth_ask,
-                        "elapsed_seconds": round(elapsed, 2),
-                    },
-                    order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dual"),
-                    hedge_leg=True,
+                decision = build_hedge_order_decision(
+                    HedgeDecisionContext(
+                        self.name,
+                        view,
+                        hedge.hedge_side,
+                        hedge.filled_price,
+                        hedge.elapsed_seconds,
+                    ),
+                    HedgeDecisionSpec(
+                        confidence=0.70,
+                        hedge_price=depth_ask,
+                        pair_cost=cost,
+                        cap_metric="pair_cost_cap",
+                        cap_value=self.config.pair_cost_cap,
+                        reason_codes=("DUAL_REVERSION_HEDGE", f"HEDGE_{hedge.hedge_side.value}"),
+                        order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dual"),
+                        hedge_price_metric="hedge_weighted_ask",
+                    ),
                 )
                 if decision:
                     decisions.append(decision)
 
-        if elapsed >= self.config.max_unhedged_seconds:
-            stop_ask = view.ask_for(hedge_side)
+        if hedge.elapsed_seconds >= self.config.max_unhedged_seconds:
+            stop_ask = view.ask_for(hedge.hedge_side)
             if stop_ask is not None:
-                cost = self._pair_effective_cost(filled_price, stop_ask)
+                cost = self._pair_effective_cost(hedge.filled_price, stop_ask)
                 if cost <= self.config.stop_loss_hedge_cap:
-                    decision = self._decision(
-                        view,
-                        hedge_side,
-                        confidence=0.50,
-                        max_entry_price=stop_ask,
-                        reason_codes=("DUAL_REVERSION_STOP_LOSS", f"UNHEDGED_{elapsed:.0f}s"),
-                        metrics={
-                            "pair_cost": round(cost, 4),
-                            "stop_loss_cap": self.config.stop_loss_hedge_cap,
-                            "filled_leg_price": filled_price,
-                            "elapsed_seconds": round(elapsed, 2),
-                        },
-                        order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dual"),
-                        hedge_leg=True,
+                    decision = build_hedge_order_decision(
+                        HedgeDecisionContext(
+                            self.name,
+                            view,
+                            hedge.hedge_side,
+                            hedge.filled_price,
+                            hedge.elapsed_seconds,
+                        ),
+                        HedgeDecisionSpec(
+                            confidence=0.50,
+                            hedge_price=stop_ask,
+                            pair_cost=cost,
+                            cap_metric="stop_loss_cap",
+                            cap_value=self.config.stop_loss_hedge_cap,
+                            reason_codes=("DUAL_REVERSION_STOP_LOSS", f"UNHEDGED_{hedge.elapsed_seconds:.0f}s"),
+                            order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dual"),
+                        ),
                     )
                     if decision:
                         decisions.append(decision)
         return decisions
 
     def _decision(self, view: MarketView, side: Side, *, confidence: float, max_entry_price: float, reason_codes: tuple[str, ...], metrics: dict[str, Any], order_intent: OrderIntentSpec, hedge_leg: bool = False) -> AlphaDecision | None:
-        book = view.book_for(side)
-        if book.best_ask is None:
-            return None
-        return AlphaDecision(
-            strategy=self.name,
-            asset=view.asset,
-            timeframe=view.timeframe,
-            market_id=view.market_id,
-            market_slug=view.market_slug,
-            condition_id=view.condition_id,
-            token_id=book.token_id,
-            side=side,
-            confidence=confidence,
-            entry_reference_price=book.best_ask,
-            max_entry_price=max_entry_price,
-            seconds_to_close=view.seconds_to_close,
-            data_freshness_ms=view.freshness.max_ms,
-            reason_codes=reason_codes,
-            metrics=metrics,
-            order_intent=order_intent,
-            hedge_leg=hedge_leg,
+        return build_order_decision(
+            self.name,
+            view,
+            side,
+            OrderDecisionSpec(
+                confidence=confidence,
+                max_entry_price=max_entry_price,
+                reason_codes=reason_codes,
+                metrics=metrics,
+                order_intent=order_intent,
+                hedge_leg=hedge_leg,
+            ),
         )
 
     def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:

@@ -18,7 +18,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, MarketGroupView, MarketView, OrderIntentSpec, SideBookView
+from polysignal_lab.alpha.helpers import (
+    OrderDecisionSpec,
+    build_order_decision,
+    depth_weighted_ask,
+)
+from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, MarketGroupView, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 
@@ -75,21 +80,6 @@ class CrossMarketAlphaCore:
     def _pair_effective_cost(self, *leg_prices: float) -> float:
         return sum(leg_prices) + len(leg_prices) * self.config.fee_rate
 
-    def _executable_buy_price(self, book: SideBookView, shares: int) -> float | None:
-        if shares <= 0 or not book.ask_levels:
-            return None
-        remaining = float(shares)
-        total_cost = 0.0
-        for price, size in sorted(book.ask_levels, key=lambda level: level[0]):
-            take = min(remaining, size)
-            total_cost += take * price
-            remaining -= take
-            if remaining <= 0:
-                break
-        if remaining > 0:
-            return None
-        return total_cost / shares
-
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         if not self.config.enabled:
             return []
@@ -125,7 +115,7 @@ class CrossMarketAlphaCore:
 
         leg_exec_prices: list[float] = []
         for leg_index, view in enumerate(views):
-            exec_price = self._executable_buy_price(view.book_for(rel.sides[leg_index]), self.config.min_depth_shares)
+            exec_price = depth_weighted_ask(view.book_for(rel.sides[leg_index]), self.config.min_depth_shares)
             if exec_price is None:
                 return []
             leg_exec_prices.append(exec_price)
@@ -143,26 +133,26 @@ class CrossMarketAlphaCore:
         n_legs = len(views)
         leg_price_map = {condition_id: round(price, 4) for condition_id, price in zip(rel.condition_ids, leg_exec_prices, strict=True)}
         for leg_index, view in enumerate(views):
-            decisions.append(
-                self._decision(
-                    view,
-                    rel.sides[leg_index],
-                    confidence=confidence,
-                    max_entry_price=leg_exec_prices[leg_index],
-                    reason_codes=(relation_code, f"COST_{cost:.4f}", f"LEG_{leg_index}_OF_{n_legs}"),
-                    metrics={
-                        "relation_id": rel.relation_id,
-                        "relation_type": rel.rel_type.value,
-                        "leg_index": leg_index,
-                        "n_legs": n_legs,
-                        "estimated_pair_cost": round(cost, 4),
-                        "min_edge": self.config.min_edge,
-                        "leg_exec_price": leg_exec_prices[leg_index],
-                        "leg_exec_prices": leg_price_map,
-                    },
-                    pair_id=rel.relation_id,
-                )
+            decision = self._decision(
+                view,
+                rel.sides[leg_index],
+                confidence=confidence,
+                max_entry_price=leg_exec_prices[leg_index],
+                reason_codes=(relation_code, f"COST_{cost:.4f}", f"LEG_{leg_index}_OF_{n_legs}"),
+                metrics={
+                    "relation_id": rel.relation_id,
+                    "relation_type": rel.rel_type.value,
+                    "leg_index": leg_index,
+                    "n_legs": n_legs,
+                    "estimated_pair_cost": round(cost, 4),
+                    "min_edge": self.config.min_edge,
+                    "leg_exec_price": leg_exec_prices[leg_index],
+                    "leg_exec_prices": leg_price_map,
+                },
+                pair_id=rel.relation_id,
             )
+            if decision is not None:
+                decisions.append(decision)
         return decisions
 
     def _evaluate_relation(self, view: MarketView, rel: MarketRelation, triggered_condition_id: str) -> list[AlphaDecision]:
@@ -174,7 +164,7 @@ class CrossMarketAlphaCore:
         target_book = view.book_for(target_side)
         if target_book.best_ask is None:
             return []
-        exec_price = self._executable_buy_price(target_book, self.config.min_depth_shares)
+        exec_price = depth_weighted_ask(target_book, self.config.min_depth_shares)
         if exec_price is None:
             return []
 
@@ -221,37 +211,30 @@ class CrossMarketAlphaCore:
         confidence = min(0.90, 0.60 + (1.0 - metrics.get("estimated_pair_cost", 1.0)) * 2.0)
         basket = self._active_baskets.setdefault(rel.relation_id, {"fills": {}, "markets": set(), "failed": False})
         basket["markets"].add(view.market_id)
-        return [
-            self._decision(
-                view,
-                target_side,
-                confidence=confidence,
-                max_entry_price=exec_price,
-                reason_codes=reason_codes,
-                metrics=metrics,
-                pair_id=rel.relation_id,
-            )
-        ]
-
-    def _decision(self, view: MarketView, side: Side, *, confidence: float, max_entry_price: float, reason_codes: tuple[str, ...], metrics: dict[str, Any], pair_id: str) -> AlphaDecision:
-        book = view.book_for(side)
-        return AlphaDecision(
-            strategy=self.name,
-            asset=view.asset,
-            timeframe=view.timeframe,
-            market_id=view.market_id,
-            market_slug=view.market_slug,
-            condition_id=view.condition_id,
-            token_id=book.token_id,
-            side=side,
+        decision = self._decision(
+            view,
+            target_side,
             confidence=confidence,
-            entry_reference_price=book.best_ask or max_entry_price,
-            max_entry_price=max_entry_price,
-            seconds_to_close=view.seconds_to_close,
-            data_freshness_ms=view.freshness.max_ms,
+            max_entry_price=exec_price,
             reason_codes=reason_codes,
             metrics=metrics,
-            order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK, pair_id=pair_id),
+            pair_id=rel.relation_id,
+        )
+        return [] if decision is None else [decision]
+
+    def _decision(self, view: MarketView, side: Side, *, confidence: float, max_entry_price: float, reason_codes: tuple[str, ...], metrics: dict[str, Any], pair_id: str) -> AlphaDecision | None:
+        return build_order_decision(
+            self.name,
+            view,
+            side,
+            OrderDecisionSpec(
+                confidence=confidence,
+                max_entry_price=max_entry_price,
+                reason_codes=reason_codes,
+                metrics=metrics,
+                order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK, pair_id=pair_id),
+                fallback_to_max_entry=True,
+            ),
         )
 
     def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:

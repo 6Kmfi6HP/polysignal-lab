@@ -15,41 +15,29 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
-from typing import Any, Mapping
+from collections import deque
+from typing import Any, Mapping, Sequence, TypedDict
 
+from polysignal_lab.alpha.helpers import (
+    OrderDecisionSpec,
+    build_order_decision,
+    enabled_for_view,
+)
 from polysignal_lab.alpha.state import json_safe_state
+from polysignal_lab.alpha.stats import _RollingPriceStats
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 
-class _RollingPriceStats:
-    """Pure copy of strategies.base.RollingPriceStats."""
+class _FibState(TypedDict):
+    spot_price: float
+    symbol: str
 
-    def __init__(self, window_size: int = 16) -> None:
-        self.values: dict[str, deque[tuple[float, float]]] = defaultdict(
-            lambda: deque(maxlen=window_size)
-        )
 
-    def push(self, key: str, price: float, size: float = 1.0) -> None:
-        self.values[key].append((price, max(size, 1e-9)))
-
-    def stats(self, key: str) -> dict[str, float | None]:
-        vals = list(self.values[key])
-        if not vals:
-            return {"vwap": None, "momentum": None, "z_score": None, "count": 0}
-        total_size = sum(size for _, size in vals)
-        vwap = (
-            sum(price * size for price, size in vals) / total_size
-            if total_size
-            else sum(p for p, _ in vals) / len(vals)
-        )
-        momentum = vals[-1][0] - vals[0][0] if len(vals) > 1 else 0.0
-        prices = [p for p, _ in vals]
-        mean_price = sum(prices) / len(prices)
-        stdev_val = (sum((p - mean_price) ** 2 for p in prices) / len(prices)) ** 0.5
-        z = (prices[-1] - mean_price) / stdev_val if stdev_val > 0 else 0.0
-        return {"vwap": vwap, "momentum": momentum, "z_score": z, "count": len(vals)}
+class _FibSetup(TypedDict):
+    swing_high: float
+    swing_low: float
+    fib_levels: dict[float, float]
 
 
 class ZigZagDetector:
@@ -79,9 +67,13 @@ class ZigZagDetector:
             new_direction = "down"
         else:
             return
+        extreme_price = self._extreme_price
+        if extreme_price is None:
+            self._extreme_price = price
+            return
         if new_direction == self._current_trend:
-            if (new_direction == "up" and price > self._extreme_price) or (
-                new_direction == "down" and price < self._extreme_price
+            if (new_direction == "up" and price > extreme_price) or (
+                new_direction == "down" and price < extreme_price
             ):
                 self._extreme_price = price
         else:
@@ -186,16 +178,9 @@ class FibonacciAlphaCore:
     # -- guard helpers -------------------------------------------------------
 
     def _validate_inputs(self, view: MarketView) -> bool:
-        cfg = self.config
-        if not getattr(cfg, "enabled", True):
-            return False
-        if view.asset not in [a.upper() for a in cfg.assets]:
-            return False
-        if view.timeframe not in cfg.timeframes:
-            return False
-        return True
+        return enabled_for_view(self.config, view)
 
-    def _update_state(self, view: MarketView) -> dict | None:
+    def _update_state(self, view: MarketView) -> _FibState | None:
         if view.spot is None or view.spot.price <= 0:
             return None
         spot_price = view.spot.price
@@ -205,7 +190,7 @@ class FibonacciAlphaCore:
         self._momentum.push(symbol, spot_price)
         return {"spot_price": spot_price, "symbol": symbol}
 
-    def _compute_fib_setup(self, symbol: str, spot_price: float) -> dict | None:
+    def _compute_fib_setup(self, symbol: str, spot_price: float) -> _FibSetup | None:
         zigzag = self._ensure_zigzag(symbol)
         zigzag.push(spot_price)
         zigzag._finalize_last_extreme()
@@ -223,7 +208,7 @@ class FibonacciAlphaCore:
     # -- decision helpers ----------------------------------------------------
 
     def _build_fib_decisions(
-        self, view: MarketView, state: dict, setup: dict
+        self, view: MarketView, state: _FibState, setup: _FibSetup
     ) -> list[AlphaDecision]:
         spot_price = state["spot_price"]
         symbol = state["symbol"]
@@ -269,21 +254,13 @@ class FibonacciAlphaCore:
                 "created_at_for_test": view.created_at,
             }
 
-            decisions.append(
-                AlphaDecision(
-                    strategy=self.name,
-                    asset=view.asset,
-                    timeframe=view.timeframe,
-                    market_id=view.market_id,
-                    market_slug=view.market_slug,
-                    condition_id=view.condition_id,
-                    token_id=book.token_id,
-                    side=side,
+            decision = build_order_decision(
+                self.name,
+                view,
+                side,
+                OrderDecisionSpec(
                     confidence=confidence,
-                    entry_reference_price=token_ask,
                     max_entry_price=min(token_ask + cfg.offset_from_fib, cfg.max_token_price),
-                    seconds_to_close=view.seconds_to_close,
-                    data_freshness_ms=view.freshness.max_ms,
                     reason_codes=(
                         "FIBONACCI_ZONE",
                         f"RATIO_{ratio:.3f}",
@@ -294,8 +271,10 @@ class FibonacciAlphaCore:
                     order_intent=OrderIntentSpec(
                         intent=OrderIntent.PASSIVE_GTD, expiry_seconds=300
                     ),
-                )
+                ),
             )
+            if decision is not None:
+                decisions.append(decision)
 
         return decisions
 
@@ -335,26 +314,55 @@ class FibonacciAlphaCore:
 
     def load_state(self, payload: Mapping[str, object]) -> None:
         candles_raw = payload.get("candles", {}) or {}
+        if not isinstance(candles_raw, Mapping):
+            candles_raw = {}
         self._candles = {
-            str(k): deque(v, maxlen=100) for k, v in candles_raw.items()
+            str(k): deque(
+                (float(str(item)) for item in v),
+                maxlen=100,
+            )
+            for k, v in candles_raw.items()
+            if isinstance(v, Sequence) and not isinstance(v, str)
         }
 
         zigzag_raw = payload.get("zigzag", {}) or {}
+        if not isinstance(zigzag_raw, Mapping):
+            zigzag_raw = {}
         self._zigzag = {}
         for k, d in zigzag_raw.items():
-            det = ZigZagDetector(threshold_pct=float(d["threshold_pct"]))
-            det._prices.extend(d["prices"])
-            det._swing_highs.extend(d["swing_highs"])
-            det._swing_lows.extend(d["swing_lows"])
-            det._current_trend = d["current_trend"]
-            det._extreme_price = d["extreme_price"]
+            if not isinstance(d, Mapping):
+                continue
+            det = ZigZagDetector(threshold_pct=float(str(d["threshold_pct"])))
+            prices = d.get("prices", ())
+            swing_highs = d.get("swing_highs", ())
+            swing_lows = d.get("swing_lows", ())
+            if isinstance(prices, Sequence) and not isinstance(prices, str):
+                det._prices.extend(float(str(item)) for item in prices)
+            if isinstance(swing_highs, Sequence) and not isinstance(swing_highs, str):
+                det._swing_highs.extend(float(str(item)) for item in swing_highs)
+            if isinstance(swing_lows, Sequence) and not isinstance(swing_lows, str):
+                det._swing_lows.extend(float(str(item)) for item in swing_lows)
+            current_trend = d.get("current_trend")
+            det._current_trend = current_trend if isinstance(current_trend, str) else None
+            extreme_price = d.get("extreme_price")
+            det._extreme_price = (
+                float(str(extreme_price)) if extreme_price is not None else None
+            )
             self._zigzag[str(k)] = det
 
         momentum_raw = payload.get("momentum", {}) or {}
+        if not isinstance(momentum_raw, Mapping):
+            momentum_raw = {}
         new_momentum = _RollingPriceStats(window_size=self.config.momentum_window)
         for k, entries in momentum_raw.items():
+            if not isinstance(entries, Sequence):
+                continue
             new_momentum.values[str(k)] = deque(
-                (tuple(entry) for entry in entries),
+                (
+                    (float(str(entry[0])), float(str(entry[1])))
+                    for entry in entries
+                    if isinstance(entry, Sequence) and len(entry) == 2
+                ),
                 maxlen=self.config.momentum_window,
             )
         self._momentum = new_momentum

@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, assert_never
 
+from polysignal_lab.alpha.helpers import enabled_for_view, entry_ask_at_or_below
 from polysignal_lab.alpha.types import AlphaDecision, FreshnessView, MarketView, SideBookView, SpotView
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
@@ -93,11 +94,7 @@ class PTBDiffAlphaCore:
     def _prepare_context(self, view: MarketView) -> _EvalContext | None:
         """Validate inputs and extract shared evaluation context."""
         cfg = self.config
-        if not cfg.enabled:
-            return None
-        if view.asset not in [a.upper() for a in cfg.assets]:
-            return None
-        if view.timeframe not in cfg.timeframes:
+        if not enabled_for_view(cfg, view):
             return None
         if view.spot is None or view.price_to_beat is None:
             return None
@@ -133,10 +130,8 @@ class PTBDiffAlphaCore:
         if abs(ctx.diff) < trigger.min_diff_usd:
             return None
 
-        entry_price = view.ask_for(wanted_side)
-        if entry_price is None or entry_price <= 0.0:
-            return None
-        if entry_price > trigger.max_token_price:
+        entry_price = entry_ask_at_or_below(view, wanted_side, trigger.max_token_price)
+        if entry_price is None:
             return None
 
         prob_result = self._resolve_probability(ctx.diff, wanted_side, entry_price, trigger)
@@ -172,7 +167,7 @@ class PTBDiffAlphaCore:
     def _build_decision(
         self,
         ctx: _EvalContext,
-        trigger: PTBDiffTrigger,
+        trigger: PTBTriggerConfig,
         wanted_side: Side,
         entry_price: float,
         directional_probability: float,
@@ -182,6 +177,9 @@ class PTBDiffAlphaCore:
     ) -> AlphaDecision:
         """Construct the final AlphaDecision from evaluation results."""
         view = ctx.view
+        spot = view.spot
+        if spot is None:
+            raise AssertionError("PTB decision requires spot context")
         tp_sl = compute_tp_sl_thresholds(
             entry_prob=entry_price,
             stop_loss_pct=ctx.exit_cfg.stop_loss_prob_pct,
@@ -213,7 +211,7 @@ class PTBDiffAlphaCore:
                 trigger.name,
             ),
             metrics={
-                "spot_price": view.spot.price,
+                "spot_price": spot.price,
                 "spot_source": ctx.spot_source,
                 "price_to_beat": view.price_to_beat,
                 "price_to_beat_source": view.metrics.get("price_to_beat_source"),
@@ -243,7 +241,7 @@ class PTBDiffAlphaCore:
                 "max_spread": ctx.max_spread,
                 "orderbook_freshness_ms": side_book.freshness_ms,
                 "max_lag_ms": ctx.exit_cfg.market_data_max_lag_sec * 1000,
-                "spot_freshness_ms": view.spot.freshness_ms,
+                "spot_freshness_ms": spot.freshness_ms,
             },
         )
 

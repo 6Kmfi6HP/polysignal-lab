@@ -17,6 +17,17 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from polysignal_lab.alpha.helpers import (
+    HedgeDecisionContext,
+    HedgeDecisionSpec,
+    SIDES,
+    OrderDecisionSpec,
+    build_order_decision,
+    build_hedge_order_decision,
+    enabled_for_view,
+    restore_position_state,
+    restore_string_set,
+)
 from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 
@@ -86,11 +97,7 @@ class PreOrderMarketAlphaCore:
         return []
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
-        if not self.config.enabled:
-            return []
-        if view.asset not in [asset.upper() for asset in self.config.assets]:
-            return []
-        if view.timeframe not in self.config.timeframes:
+        if not enabled_for_view(self.config, view):
             return []
 
         position = self._positions.get(view.market_id)
@@ -108,7 +115,7 @@ class PreOrderMarketAlphaCore:
         decisions: list[AlphaDecision] = []
         now = self._utc_now()
         for price, shares in self.config.ladder:
-            for side in (Side.UP, Side.DOWN):
+            for side in SIDES:
                 ask = view.ask_for(side)
                 if ask is not None and price >= ask:
                     continue
@@ -149,45 +156,34 @@ class PreOrderMarketAlphaCore:
             self._reconciled.add(view.market_id)
             return []
         self._reconciled.add(view.market_id)
-        decision = self._decision(
-            view,
-            hedge_side,
-            confidence=0.55,
-            max_entry_price=hedge_ask,
-            reason_codes=("PRE_ORDER_RECONCILE", f"HEDGE_{hedge_side.value}"),
-            metrics={
-                "pair_cost": round(cost, 4),
-                "reconcile_max_pair_cost": self.config.reconcile_max_pair_cost,
-                "filled_leg_price": filled_price,
-                "hedge_ask": hedge_ask,
-            },
-            order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:pre"),
-            hedge_leg=True,
+        decision = build_hedge_order_decision(
+            HedgeDecisionContext(self.name, view, hedge_side, filled_price, 0.0),
+            HedgeDecisionSpec(
+                confidence=0.55,
+                hedge_price=hedge_ask,
+                pair_cost=cost,
+                cap_metric="reconcile_max_pair_cost",
+                cap_value=self.config.reconcile_max_pair_cost,
+                reason_codes=("PRE_ORDER_RECONCILE", f"HEDGE_{hedge_side.value}"),
+                order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:pre"),
+                hedge_price_metric="hedge_ask",
+            ),
         )
         return [decision] if decision else []
 
     def _decision(self, view: MarketView, side: Side, *, confidence: float, max_entry_price: float, reason_codes: tuple[str, ...], metrics: dict[str, Any], order_intent: OrderIntentSpec, hedge_leg: bool = False) -> AlphaDecision | None:
-        book = view.book_for(side)
-        if book.best_ask is None:
-            return None
-        return AlphaDecision(
-            strategy=self.name,
-            asset=view.asset,
-            timeframe=view.timeframe,
-            market_id=view.market_id,
-            market_slug=view.market_slug,
-            condition_id=view.condition_id,
-            token_id=book.token_id,
-            side=side,
-            confidence=confidence,
-            entry_reference_price=book.best_ask,
-            max_entry_price=max_entry_price,
-            seconds_to_close=view.seconds_to_close,
-            data_freshness_ms=view.freshness.max_ms,
-            reason_codes=reason_codes,
-            metrics=metrics,
-            order_intent=order_intent,
-            hedge_leg=hedge_leg,
+        return build_order_decision(
+            self.name,
+            view,
+            side,
+            OrderDecisionSpec(
+                confidence=confidence,
+                max_entry_price=max_entry_price,
+                reason_codes=reason_codes,
+                metrics=metrics,
+                order_intent=order_intent,
+                hedge_leg=hedge_leg,
+            ),
         )
 
     def save_state(self) -> dict[str, object]:
@@ -201,21 +197,10 @@ class PreOrderMarketAlphaCore:
         })
 
     def load_state(self, state: dict[str, object]) -> None:
-        from polysignal_lab.alpha.state import restore_utc_datetime
-        from polysignal_lab.domain.enums import Side
-
-        positions_raw = state.get("_positions", {}) or {}
-        self._positions = {}
-        for mid, pos in positions_raw.items():
-            self._positions[str(mid)] = {
-                "side": Side(pos["side"]),
-                "entry_price": float(pos["entry_price"]),
-                "filled_at": restore_utc_datetime(pos["filled_at"]),
-                "hedged": bool(pos["hedged"]),
-            }
-        self._pre_ordered = set(state.get("_pre_ordered", []) or [])
-        self._entered_markets = set(state.get("_entered_markets", []) or [])
-        self._reconciled = set(state.get("_reconciled", []) or [])
+        self._positions = restore_position_state(state.get("_positions", {}) or {})
+        self._pre_ordered = restore_string_set(state.get("_pre_ordered", []) or [])
+        self._entered_markets = restore_string_set(state.get("_entered_markets", []) or [])
+        self._reconciled = restore_string_set(state.get("_reconciled", []) or [])
 
     def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
         from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
