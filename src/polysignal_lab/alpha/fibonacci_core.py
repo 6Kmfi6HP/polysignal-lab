@@ -183,44 +183,54 @@ class FibonacciAlphaCore:
             return Side.UP
         return Side.DOWN
 
-    def evaluate(self, view: MarketView) -> list[AlphaDecision]:
+    # -- guard helpers -------------------------------------------------------
+
+    def _validate_inputs(self, view: MarketView) -> bool:
         cfg = self.config
         if not getattr(cfg, "enabled", True):
-            return []
+            return False
         if view.asset not in [a.upper() for a in cfg.assets]:
-            return []
+            return False
         if view.timeframe not in cfg.timeframes:
-            return []
-        if view.spot is None or view.spot.price <= 0:
-            return []
+            return False
+        return True
 
+    def _update_state(self, view: MarketView) -> dict | None:
+        if view.spot is None or view.spot.price <= 0:
+            return None
         spot_price = view.spot.price
         symbol = view.spot.symbol
-
         candles = self._ensure_candles(symbol)
         candles.append(spot_price)
         self._momentum.push(symbol, spot_price)
+        return {"spot_price": spot_price, "symbol": symbol}
 
-        if not self._check_momentum(symbol, spot_price):
-            return []
-
+    def _compute_fib_setup(self, symbol: str, spot_price: float) -> dict | None:
         zigzag = self._ensure_zigzag(symbol)
         zigzag.push(spot_price)
         zigzag._finalize_last_extreme()
         if not zigzag.has_swing():
-            return []
-
+            return None
         swing_high = zigzag.current_swing_high()
         swing_low = zigzag.current_swing_low()
-        if swing_high is None or swing_low is None:
-            return []
-        if swing_high <= swing_low:
-            return []
-
+        if swing_high is None or swing_low is None or swing_high <= swing_low:
+            return None
         fib_levels = self._fib_calc.retracement_levels(swing_high, swing_low)
         if not fib_levels:
-            return []
+            return None
+        return {"swing_high": swing_high, "swing_low": swing_low, "fib_levels": fib_levels}
 
+    # -- decision helpers ----------------------------------------------------
+
+    def _build_fib_decisions(
+        self, view: MarketView, state: dict, setup: dict
+    ) -> list[AlphaDecision]:
+        spot_price = state["spot_price"]
+        symbol = state["symbol"]
+        swing_high = setup["swing_high"]
+        swing_low = setup["swing_low"]
+        fib_levels = setup["fib_levels"]
+        cfg = self.config
         decisions: list[AlphaDecision] = []
         for idx, (ratio, fib_price) in enumerate(fib_levels.items()):
             if not FibonacciCalculator.is_in_zone(
@@ -288,6 +298,19 @@ class FibonacciAlphaCore:
             )
 
         return decisions
+
+    # -- entry point ---------------------------------------------------------
+
+    def evaluate(self, view: MarketView) -> list[AlphaDecision]:
+        if not self._validate_inputs(view):
+            return []
+        state = self._update_state(view)
+        if state is None or not self._check_momentum(state["symbol"], state["spot_price"]):
+            return []
+        setup = self._compute_fib_setup(state["symbol"], state["spot_price"])
+        if setup is None:
+            return []
+        return self._build_fib_decisions(view, state, setup)
 
     # --- StatefulAlphaCore -------------------------------------------------
 

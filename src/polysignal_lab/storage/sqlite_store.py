@@ -74,6 +74,32 @@ class SQLiteStore:
     def _json(self, obj: Any) -> str:
         return json.dumps(to_jsonable(obj), ensure_ascii=False, sort_keys=True)
 
+    def _build_query(
+        self,
+        table: str,
+        columns: str = "payload_json",
+        where: str = "",
+        params: Iterable[Any] = (),
+        order_by: str = "",
+        limit: int | None = None,
+    ) -> tuple[str, list[Any]]:
+        """Build a SELECT SQL string + parameter list from structured components.
+
+        Returns (sql, param_list) safe for self._conn.execute(sql, param_list).
+        """
+        if table not in ALLOWED_TABLES:
+            raise ValueError(f"Unknown table: {table}")
+        parts: list[str] = [f"SELECT {columns} FROM {table}"]
+        param_list: list[Any] = list(params)
+        if where:
+            parts.append(where)
+        if order_by:
+            parts.append(f"ORDER BY {order_by}")
+        if limit is not None:
+            parts.append("LIMIT ?")
+            param_list.append(limit)
+        return " ".join(parts), param_list
+
     def upsert_market(self, market: Any) -> None:
         payload = to_jsonable(market)
         with self._lock, self._conn:
@@ -136,13 +162,14 @@ class SQLiteStore:
     def get_verified_anchor_price(
         self, asset: str, timeframe: str, market_slug: str
     ) -> AnchorPrice | None:
+        sql, params = self._build_query(
+            "anchor_prices",
+            where="WHERE asset=? AND timeframe=? AND market_slug=? AND verified=1",
+            params=(asset.upper(), timeframe, market_slug),
+            limit=1,
+        )
         with self._lock:
-            row = self._conn.execute(
-                """SELECT payload_json FROM anchor_prices
-                WHERE asset=? AND timeframe=? AND market_slug=? AND verified=1
-                LIMIT 1""",
-                (asset.upper(), timeframe, market_slug),
-            ).fetchone()
+            row = self._conn.execute(sql, params).fetchone()
         if row is None:
             return None
         payload = json.loads(row["payload_json"])
@@ -312,24 +339,21 @@ class SQLiteStore:
             )
 
     def restore_latest_system_event(self, event_type: str) -> dict[str, Any] | None:
+        sql, params = self._build_query(
+            "system_events",
+            where="WHERE event_type = ?",
+            params=(event_type,),
+            order_by="created_at DESC, rowid DESC",
+            limit=1,
+        )
         with self._lock:
-            row = self._conn.execute(
-                """
-                SELECT payload_json FROM system_events
-                WHERE event_type = ?
-                ORDER BY created_at DESC, rowid DESC
-                LIMIT 1
-                """,
-                (event_type,),
-            ).fetchone()
+            row = self._conn.execute(sql, params).fetchone()
         return json.loads(row["payload_json"]) if row else None
 
     def query_json(self, table: str, limit: int = 100, where: str = "", params: Iterable[Any] = ()) -> list[dict[str, Any]]:
-        if table not in ALLOWED_TABLES:
-            raise ValueError("Unknown table")
-        sql = f"SELECT payload_json FROM {table} {where} LIMIT ?"
+        sql, params = self._build_query(table, where=where, params=params, limit=limit)
         with self._lock:
-            rows = self._conn.execute(sql, (*params, limit)).fetchall()
+            rows = self._conn.execute(sql, params).fetchall()
         return [json.loads(row["payload_json"]) for row in rows]
 
     def counts(self) -> dict[str, int]:
@@ -337,10 +361,13 @@ class SQLiteStore:
             return {t: int(self._conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"]) for t in COUNT_TABLES}
 
     def restore_latest_wallet_snapshot(self) -> dict[str, Any] | None:
+        sql, params = self._build_query(
+            "paper_wallet_snapshots",
+            order_by="created_at DESC, id DESC",
+            limit=1,
+        )
         with self._lock:
-            row = self._conn.execute(
-                "SELECT payload_json FROM paper_wallet_snapshots ORDER BY created_at DESC, id DESC LIMIT 1"
-            ).fetchone()
+            row = self._conn.execute(sql, params).fetchone()
         return json.loads(row["payload_json"]) if row else None
 
     def restore_open_positions(self) -> list[dict[str, Any]]:
@@ -390,10 +417,10 @@ class SQLiteStore:
         columns: tuple[str, ...],
         values: tuple[Any, ...],
     ) -> None:
-        existing = self._conn.execute(
-            f"SELECT payload_json FROM {table} WHERE {key} = ?",
-            (record_id,),
-        ).fetchone()
+        sql, params = self._build_query(
+            table, where=f"WHERE {key} = ?", params=(record_id,)
+        )
+        existing = self._conn.execute(sql, params).fetchone()
         payload = values[-1]
         if existing:
             if json.loads(existing["payload_json"]) == json.loads(payload):

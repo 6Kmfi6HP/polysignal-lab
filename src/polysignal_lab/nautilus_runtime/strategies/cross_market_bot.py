@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Sequence, polysignal_lab.alpha.cross_market_core, polysignal_lab.alpha.cross_market_core.CrossMarketAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Mapping, collections.abc.Sequence, typing, typing.cast, nautilus_trader.config, nautilus_trader.config.StrategyConfig, nautilus_trader.trading.strategy, nautilus_trader.trading.strategy.Strategy, polysignal_lab.alpha.cross_market_core, polysignal_lab.alpha.cross_market_core.CrossMarketAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.nautilus_bridge.state, polysignal_lab.nautilus_bridge.state.decode_state, polysignal_lab.nautilus_bridge.state.encode_state
 Output: CrossMarketNautilusStrategy
 Pos: Application code
 
@@ -8,13 +8,13 @@ Pos: Application code
 
 
 
-
-
-
-
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import cast
+
+from nautilus_trader.config import StrategyConfig
+from nautilus_trader.trading.strategy import Strategy
 
 from polysignal_lab.alpha.cross_market_core import CrossMarketAlphaCore
 from polysignal_lab.alpha.types import (
@@ -25,6 +25,7 @@ from polysignal_lab.alpha.types import (
 )
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+from polysignal_lab.nautilus_bridge.state import decode_state, encode_state
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     DecisionPolicyActor,
@@ -33,7 +34,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 
 
-class CrossMarketNautilusStrategy:
+class CrossMarketNautilusStrategy(Strategy):
     """Nautilus wrapper for cross-market alpha strategies.
 
     Unlike single-market wrappers that evaluate one condition_id at a time,
@@ -52,7 +53,10 @@ class CrossMarketNautilusStrategy:
         policy: DecisionPolicyActor | None = None,
         submitter: Callable[[NautilusOrderSpec], object] | None = None,
         fixed_stake_usdc: float = 10.0,
+        config: StrategyConfig | None = None,
     ) -> None:
+        Strategy.__init__(self, config=config or StrategyConfig())
+
         self.core: CrossMarketAlphaCore = core
         self.assembler: MarketViewAssembler | None = assembler
         self.condition_ids: tuple[str, ...] = tuple(condition_ids)
@@ -62,6 +66,21 @@ class CrossMarketNautilusStrategy:
         self.fixed_stake_usdc: float = fixed_stake_usdc
         self.submitted_specs: list[NautilusOrderSpec] = []
         self.rejected_decisions: list[RejectedDecision] = []
+
+    def on_save(self) -> dict[str, bytes]:
+        payload = (
+            self.core.save_state()
+            if hasattr(self.core, "save_state")
+            else {}
+        )
+        return encode_state(self.strategy_name, payload)
+
+    def on_load(self, state: Mapping[str, bytes]) -> None:
+        loader = getattr(self.core, "load_state", None)
+        if not callable(loader):
+            return
+        payload = cast(Mapping[str, object], decode_state(self.strategy_name, state))
+        _ = loader(payload)
 
     def evaluate_group(self, group: MarketGroupView) -> list[NautilusOrderSpec]:
         """Evaluate a pre-assembled MarketGroupView and submit approved orders."""

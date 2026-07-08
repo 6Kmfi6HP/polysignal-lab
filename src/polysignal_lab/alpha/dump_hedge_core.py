@@ -65,6 +65,66 @@ class DumpHedgeAlphaCore:
     def _utc_now() -> datetime:
         return datetime.now(timezone.utc)
 
+    # -- guard helpers -------------------------------------------------------
+
+    def _validate_inputs(self, view: MarketView) -> bool:
+        if not self.config.enabled:
+            return False
+        if view.asset not in [asset.upper() for asset in self.config.assets]:
+            return False
+        if view.timeframe not in self.config.timeframes:
+            return False
+        return True
+
+    def _active_position(self, view: MarketView) -> dict[str, Any] | None:
+        position = self._positions.get(view.market_id)
+        if position and not position.get("hedged", False):
+            return position
+        return None
+
+    def _update_price_stats(self, view: MarketView) -> None:
+        for side in (Side.UP, Side.DOWN):
+            book = view.book_for(side)
+            if book.best_ask is not None:
+                self._price_stats.push(book.token_id, book.best_ask, size=1.0)
+                self._last_price[book.token_id] = book.best_ask
+
+    # -- decision helpers ----------------------------------------------------
+
+    def _evaluate_sides(self, view: MarketView) -> list[AlphaDecision]:
+        decisions: list[AlphaDecision] = []
+        for side in (Side.UP, Side.DOWN):
+            book = view.book_for(side)
+            stats = self._price_stats.stats(book.token_id)
+            if stats["count"] < 2:
+                continue
+            vwap = stats["vwap"]
+            current_ask = book.best_ask
+            if vwap is None or current_ask is None or vwap == 0:
+                continue
+            drop_ratio = (vwap - current_ask) / vwap
+            if drop_ratio >= self.config.move_threshold:
+                decision = self._decision(
+                    view,
+                    side,
+                    confidence=0.75,
+                    max_entry_price=current_ask,
+                    reason_codes=("DUMP_DETECTED", f"DROP_{drop_ratio:.1%}", f"SIDE_{side.value}"),
+                    metrics={
+                        "vwap": round(vwap, 4),
+                        "current_ask": round(current_ask, 4),
+                        "drop_ratio": round(drop_ratio, 4),
+                        "move_threshold": self.config.move_threshold,
+                        "shares": self.config.leg_shares,
+                    },
+                    order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dump"),
+                )
+                if decision:
+                    decisions.append(decision)
+        return decisions
+
+    # -- guard helpers (cont.) -----------------------------------------------
+
     def _is_in_detection_window(self, view: MarketView) -> bool:
         if view.start_ts is None:
             return False
@@ -105,60 +165,17 @@ class DumpHedgeAlphaCore:
         self._dump_detected.discard(market_id)
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
-        if not self.config.enabled:
+        if not self._validate_inputs(view):
             return []
-        if view.asset not in [asset.upper() for asset in self.config.assets]:
-            return []
-        if view.timeframe not in self.config.timeframes:
-            return []
-
-        position = self._positions.get(view.market_id)
-        if position and not position.get("hedged", False):
-            return self._try_hedge_or_stop(view, position)
+        pos = self._active_position(view)
+        if pos is not None:
+            return self._try_hedge_or_stop(view, pos)
         if view.market_id in self._entered_markets:
             return []
-
-        for side in (Side.UP, Side.DOWN):
-            book = view.book_for(side)
-            if book.best_ask is not None:
-                self._price_stats.push(book.token_id, book.best_ask, size=1.0)
-                self._last_price[book.token_id] = book.best_ask
-
-        if not self._is_in_detection_window(view):
+        self._update_price_stats(view)
+        if not self._is_in_detection_window(view) or view.market_id in self._dump_detected:
             return []
-        if view.market_id in self._dump_detected:
-            return []
-
-        decisions: list[AlphaDecision] = []
-        for side in (Side.UP, Side.DOWN):
-            book = view.book_for(side)
-            stats = self._price_stats.stats(book.token_id)
-            if stats["count"] < 2:
-                continue
-            vwap = stats["vwap"]
-            current_ask = book.best_ask
-            if vwap is None or current_ask is None or vwap == 0:
-                continue
-            drop_ratio = (vwap - current_ask) / vwap
-            if drop_ratio >= self.config.move_threshold:
-                decision = self._decision(
-                    view,
-                    side,
-                    confidence=0.75,
-                    max_entry_price=current_ask,
-                    reason_codes=("DUMP_DETECTED", f"DROP_{drop_ratio:.1%}", f"SIDE_{side.value}"),
-                    metrics={
-                        "vwap": round(vwap, 4),
-                        "current_ask": round(current_ask, 4),
-                        "drop_ratio": round(drop_ratio, 4),
-                        "move_threshold": self.config.move_threshold,
-                        "shares": self.config.leg_shares,
-                    },
-                    order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dump"),
-                )
-                if decision:
-                    decisions.append(decision)
-        return decisions
+        return self._evaluate_sides(view)
 
     def _try_hedge_or_stop(self, view: MarketView, position: dict[str, Any]) -> list[AlphaDecision]:
         now = self._utc_now()
