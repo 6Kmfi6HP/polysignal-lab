@@ -158,27 +158,6 @@ async def test_market_universe_refresh_passes_rotation_window_options(settings) 
         "stale_grace_sec": 7,
     }
 
-async def test_market_universe_refresh_does_not_apply_rotation_window_options_in_legacy_mode(
-    settings,
-) -> None:
-    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
-    discovery = _DiscoverOnly(market)
-    settings.runtime.engine = "legacy"
-    settings.runtime.nautilus.market_rotation.include_next_periods = 2
-    settings.runtime.nautilus.market_rotation.stale_grace_sec = 7
-    service = MarketUniverseService(
-        discovery,
-        MarketRegistry(),
-        _Persistence(),
-        settings=settings,
-    )
-
-    await service.refresh_once()
-
-    assert discovery.kwargs == {
-        "include_next_periods": 0,
-        "stale_grace_sec": 0,
-    }
 
 async def test_market_universe_resolved_refresh_keeps_registry_when_persistence_fails(settings) -> None:
     market = sample_market(

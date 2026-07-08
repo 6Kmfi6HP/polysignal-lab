@@ -31,7 +31,7 @@ from polysignal_lab.data.state import MarketRegistry
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import JsonObject, Market, OutcomeToken
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
-from polysignal_lab.nautilus_runtime.market_data import (
+from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
@@ -972,7 +972,6 @@ def test_market_universe_service_refresh_once_sync_uses_sync_discovery_and_close
         client=cast(Any, _FakeAsyncClient([])),
     )
     settings = Settings()
-    settings.runtime.engine = "nautilus"
     service = MarketUniverseService(
         discovery,
         MarketRegistry(),

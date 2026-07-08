@@ -24,7 +24,6 @@ from polysignal_lab.config import Settings
 def test_runtime_config_defaults_to_nautilus_and_stays_paper_safe() -> None:
     settings = Settings()
 
-    assert settings.runtime.engine == "nautilus"
     assert settings.runtime.nautilus.allow_live_polymarket_execution is False
     assert settings.runtime.nautilus.execution_mode == "paper_sandbox"
 
@@ -98,7 +97,6 @@ def test_live_polymarket_execution_is_invalid_in_default_runtime() -> None:
         _ = Settings.model_validate(
             {
                 "runtime": {
-                    "engine": "nautilus",
                     "nautilus": {"allow_live_polymarket_execution": True},
                 }
             }

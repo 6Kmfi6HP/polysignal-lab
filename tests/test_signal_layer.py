@@ -21,13 +21,14 @@ from polysignal_lab.domain.enums import MarketStatus
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.deduper import SignalDeduper
 from polysignal_lab.signal_layer.gate import SignalGate
-from polysignal_lab.strategies.late_consensus import LateConsensusStrategy
-from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
+from signal_helpers import ptb_signal_from_snapshot, ptb_signals_from_snapshot
+from polysignal_lab.alpha.late_consensus_core import LateConsensusAlphaCore
+from polysignal_lab.alpha.ptb_diff_core import decision_to_signal, market_view_from_snapshot
 from polysignal_lab.utils import utc_now
 
 
 async def _ptb_signal(snapshot, settings):
-    return PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0]
+    return ptb_signal_from_snapshot(snapshot, settings)
 
 
 async def test_signal_gate_accepts_good_signal(snapshot, settings):
@@ -62,8 +63,10 @@ async def test_deduper_flags_duplicate(snapshot, settings):
 
 
 async def test_consensus_engine_merges_two_strategies(snapshot, settings):
-    ptb = PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0]
-    late = LateConsensusStrategy(settings.strategies.late_consensus).evaluate(snapshot)[0]
+    ptb = ptb_signals_from_snapshot(snapshot, settings)[0]
+    view = market_view_from_snapshot(snapshot)
+    late_decisions = LateConsensusAlphaCore(settings.strategies.late_consensus).evaluate(view)
+    late = decision_to_signal(late_decisions[0], view.view_id, None)
     engine = ConsensusEngine(window_sec=45, enabled=True)
     assert engine.add(ptb) is None
     consensus = engine.add(late)

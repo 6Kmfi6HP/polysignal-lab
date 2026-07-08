@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path
-Output: test_fake_market_data_client_matches_protocol, test_binance_feed_url_and_parse_message, test_polymarket_ws_book_message_updates_registry, test_last_trade_does_not_refresh_orderbook_depth_freshness, test_books_for_market_hides_stale_marked_book_but_get_keeps_raw, test_market_snapshot_builder_hides_stale_marked_book_from_signal_inputs, test_market_snapshot_builder_handles_missing_side_for_trade_metrics, test_failed_websocket_reseed_marks_subscribed_books_stale, test_scheduler_refresh_captures_anchor_for_snapshot_ptb_flow, test_scheduler_refresh_ignores_anchor_sqlite_failure
+Output: test_fake_market_data_client_matches_protocol, test_binance_feed_url_and_parse_message, test_polymarket_ws_book_message_updates_registry, test_last_trade_does_not_refresh_orderbook_depth_freshness, test_books_for_market_hides_stale_marked_book_but_get_keeps_raw, test_market_snapshot_builder_hides_stale_marked_book_from_signal_inputs, test_market_snapshot_builder_handles_missing_side_for_trade_metrics, test_websocket_event_types_reconciliation
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -17,7 +17,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import sqlite3
 
 from pydantic import JsonValue, TypeAdapter
 from typing import assert_type
@@ -243,143 +242,6 @@ async def test_market_snapshot_builder_handles_missing_side_for_trade_metrics(
     assert snapshot.metrics["up_trades"] == []
     assert snapshot.metrics["down_trades"] == []
 
-async def test_failed_websocket_reseed_marks_subscribed_books_stale(
-    tmp_path: Path, settings
-) -> None:
-    from polysignal_lab.app.scheduler import PolySignalScheduler
-    from polysignal_lab.domain.orderbook import OrderBook
-
-    class FailingRestClient:
-        async def get_books(self, token_ids: list[str]) -> list[OrderBook]:
-            raise RuntimeError("reseed failed")
-
-    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
-    scheduler.market_data = FailingRestClient()
-    scheduler.ctx.books.update_from_snapshot(OrderBook(token_id="token-up"))
-    scheduler.ctx.books.update_from_snapshot(OrderBook(token_id="token-down"))
-
-    await scheduler._reseed_ws_books(["token-up", "token-down"])
-
-    for token_id in ("token-up", "token-down"):
-        state = scheduler.ctx.books.get_state(token_id)
-        assert state is not None
-        assert state.has_snapshot is False
-        assert state.stale_reason == "RECONNECT_RESEED_FAILED"
-
-
-
-async def test_scheduler_refresh_captures_anchor_for_snapshot_ptb_flow(
-    tmp_path: Path, settings
-) -> None:
-    from polysignal_lab.app.scheduler import PolySignalScheduler
-    from polysignal_lab.domain.enums import MarketStatus
-    from polysignal_lab.domain.market import Market, OutcomeToken
-    from polysignal_lab.domain.spot import SpotPrice
-
-    start = datetime(2026, 6, 23, 12, 0, tzinfo=timezone.utc)
-    market = Market(
-        market_id="anchor-market",
-        market_slug="btc-updown-5m-1782216000",
-        condition_id="anchor-condition",
-        question="BTC Up or Down",
-        asset="BTC",
-        timeframe="5m",
-        start_ts=start,
-        end_ts=start + timedelta(minutes=5),
-        status=MarketStatus.ACTIVE,
-        price_to_beat=65000.0,
-        outcome_tokens=[
-            OutcomeToken(
-                token_id="anchor-up",
-                side=Side.UP,
-                outcome_name="Up",
-                market_id="anchor-market",
-            ),
-            OutcomeToken(
-                token_id="anchor-down",
-                side=Side.DOWN,
-                outcome_name="Down",
-                market_id="anchor-market",
-            ),
-        ],
-    )
-
-    class FakeDiscovery:
-        async def discover(self) -> list[Market]:
-            return [market]
-
-    class FakeRestClient:
-        async def get_books(self, token_ids: list[str]) -> list[OrderBook]:
-            return [
-                sample_book(token_ids[0], BookFactoryConfig(ask=0.55, bid=0.54)),
-                sample_book(token_ids[1], BookFactoryConfig(ask=0.47, bid=0.46)),
-            ]
-
-    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
-    scheduler.discovery = FakeDiscovery()
-    scheduler.rest = FakeRestClient()
-    scheduler.ctx.spots.update(
-        SpotPrice(
-            asset="BTC",
-            symbol="BTCUSDT",
-            price=64250.25,
-            source="binance",
-            event_time=start,
-            received_at=start,
-        )
-    )
-
-    await scheduler.refresh_markets_once()
-    snapshot = await scheduler.snapshot_builder.build(market)
-
-    assert snapshot.price_to_beat == 64250.25
-    assert snapshot.metrics["price_to_beat_source"] == "anchor_service:binance"
-    assert snapshot.metrics["price_to_beat_from_anchor_service"] is True
-    assert snapshot.metrics["anchor_price_lag_ms"] == 0
-
-async def test_scheduler_refresh_ignores_anchor_sqlite_failure(
-    tmp_path: Path, settings
-) -> None:
-    from polysignal_lab.app.scheduler import PolySignalScheduler
-    from polysignal_lab.domain.market import Market, MarketStatus, OutcomeToken
-
-    market = Market(
-        market_id="anchor-failure-market",
-        condition_id="anchor-failure-condition",
-        question="BTC Up or Down",
-        market_slug="btc-updown-5m-1782216000",
-        asset="BTC",
-        timeframe="5m",
-        status=MarketStatus.ACTIVE,
-        outcome_tokens=[
-            OutcomeToken(
-                token_id="failure-up",
-                side=Side.UP,
-                outcome_name="Up",
-                market_id="anchor-failure-market",
-            )
-        ],
-    )
-
-    class FakeDiscovery:
-        async def discover(self) -> list[Market]:
-            return [market]
-
-    class FakeRestClient:
-        async def get_books(self, token_ids: list[str]) -> list[OrderBook]:
-            return [sample_book(token_ids[0], BookFactoryConfig(ask=0.55, bid=0.54))]
-
-    scheduler = PolySignalScheduler(settings, base_dir=tmp_path, market_data_client=FakeRestClient())
-    scheduler.discovery = FakeDiscovery()
-
-    def raise_sqlite(_: Market) -> None:
-        raise sqlite3.OperationalError("anchor db unavailable")
-
-    scheduler.anchor_prices.capture_for_market = raise_sqlite
-
-    await scheduler.refresh_markets_once()
-
-    assert scheduler._latest_market_token_ids == ("failure-up",)
 
 def test_websocket_event_types_reconciliation() -> None:
     from polysignal_lab.domain.orderbook import OrderBook

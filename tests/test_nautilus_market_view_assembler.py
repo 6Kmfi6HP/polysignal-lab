@@ -21,7 +21,7 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
-from polysignal_lab.nautilus_runtime.market_data import PolySignalPriceToBeatData, PolySignalSpotData
+from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
 from factories import MarketFactoryConfig, sample_market
 
 

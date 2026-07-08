@@ -25,12 +25,12 @@ from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
 from polysignal_lab.domain.spot import SpotPrice
 from polysignal_lab.signal_layer.gate import SignalGate
-from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
+from signal_helpers import ptb_signal_from_snapshot, ptb_signals_from_snapshot
 from polysignal_lab.utils import utc_now
 
 
 async def _ptb_signal(snapshot, settings):
-    return PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0]
+    return ptb_signal_from_snapshot(snapshot, settings)
 
 
 async def test_signal_gate_records_prd_reason_details(snapshot, settings) -> None:
@@ -300,8 +300,7 @@ def test_gate_distinguishes_missing_spot_from_stale_spot() -> None:
 async def test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason(
     snapshot, settings
 ) -> None:
-    strategy = PTBDiffStrategy(settings.strategies.ptb_diff)
-    signals = strategy.evaluate(snapshot)
+    signals = ptb_signals_from_snapshot(snapshot, settings)
 
     assert signals
     metrics = signals[0].metrics
@@ -322,9 +321,7 @@ async def test_ptb_diff_stale_spot_candidate_is_rejected_by_gate(snapshot, setti
             ),
         }
     )
-    strategy = PTBDiffStrategy(settings.strategies.ptb_diff)
-    signals = strategy.evaluate(stale_snapshot)
-
+    signals = ptb_signals_from_snapshot(stale_snapshot, settings)
     assert signals
 
     gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
@@ -356,9 +353,7 @@ async def test_ptb_diff_stale_orderbook_candidate_has_no_fresh_reason(
             ),
         }
     )
-    strategy = PTBDiffStrategy(settings.strategies.ptb_diff)
-    signals = strategy.evaluate(stale_snapshot)
-
+    signals = ptb_signals_from_snapshot(stale_snapshot, settings)
     assert signals
     assert "PTB_ORDERBOOK_FRESH" not in signals[0].reason_codes
 

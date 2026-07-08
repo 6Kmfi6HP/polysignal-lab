@@ -20,9 +20,8 @@ from datetime import UTC, datetime
 from polysignal_lab.alpha.late_consensus_core import LateConsensusAlphaCore
 from polysignal_lab.alpha.types import AlphaOrderEvent
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.strategies.config import LateConsensusConfig
-from polysignal_lab.strategies.late_consensus import LateConsensusStrategy
-from alpha_equivalence import assert_legacy_core_equivalent
+from polysignal_lab.domain.strategy_config import LateConsensusConfig
+from alpha_helpers import evaluate_core_from_snapshot
 from factories import sample_snapshot
 
 
@@ -54,19 +53,6 @@ def _accept_event(decision, *, ts_event=None) -> AlphaOrderEvent:
 
 
 # ---------------------------------------------------------------------------
-# Equivalence
-# ---------------------------------------------------------------------------
-
-
-def test_late_consensus_core_matches_legacy_candidate() -> None:
-    config = _config()
-    snapshot = _snapshot()
-    strategy = LateConsensusStrategy(config)
-    core = LateConsensusAlphaCore(config)
-    assert_legacy_core_equivalent(strategy, core, snapshot)
-
-
-# ---------------------------------------------------------------------------
 # Mutation timing: sequence advances only on acceptance
 # ---------------------------------------------------------------------------
 
@@ -75,12 +61,12 @@ def test_late_consensus_sequence_not_incremented_until_acceptance() -> None:
     core = LateConsensusAlphaCore(_config())
     snapshot = _snapshot()
 
-    first = core.evaluate_view_from_snapshot_for_test(snapshot)
+    first = evaluate_core_from_snapshot(core, snapshot)
     assert len(first) == 1
     assert first[0].metrics["entry_sequence"] == 0
 
     # Repeated candidate generation must NOT consume the sequence counter.
-    second = core.evaluate_view_from_snapshot_for_test(snapshot)
+    second = evaluate_core_from_snapshot(core, snapshot)
     assert len(second) == 1
     assert second[0].metrics["entry_sequence"] == 0
     assert core._accepted_counts == {}
@@ -88,7 +74,7 @@ def test_late_consensus_sequence_not_incremented_until_acceptance() -> None:
     # Acceptance is the ONLY thing that advances the sequence.
     core.on_order_accepted(_accept_event(first[0]))
 
-    third = core.evaluate_view_from_snapshot_for_test(snapshot)
+    third = evaluate_core_from_snapshot(core, snapshot)
     assert len(third) == 1
     assert third[0].metrics["entry_sequence"] == 1
     assert core._accepted_counts == {snapshot.market.market_id: 1}
@@ -100,39 +86,18 @@ def test_late_consensus_flip_guard_advances_only_on_acceptance() -> None:
     up_snapshot = _snapshot()
     down_snapshot = sample_snapshot(up_ask=0.18, down_ask=0.82, seconds_to_close=120)
 
-    up = core.evaluate_view_from_snapshot_for_test(up_snapshot)
+    up = evaluate_core_from_snapshot(core, up_snapshot)
     assert len(up) == 1 and up[0].side == Side.UP
 
     # A rejected/unaaccepted UP candidate must NOT poison the flip guard.
-    down_before_accept = core.evaluate_view_from_snapshot_for_test(down_snapshot)
+    down_before_accept = evaluate_core_from_snapshot(core, down_snapshot)
     assert len(down_before_accept) == 1
     assert down_before_accept[0].side == Side.DOWN
 
     # Only once UP is accepted does the flip guard block a rapid DOWN flip.
     core.on_order_accepted(_accept_event(up[0]))
-    down_after_accept = core.evaluate_view_from_snapshot_for_test(down_snapshot)
+    down_after_accept = evaluate_core_from_snapshot(core, down_snapshot)
     assert down_after_accept == []
-
-
-# ---------------------------------------------------------------------------
-# Adapter dedupe-suffix contract
-# ---------------------------------------------------------------------------
-
-
-def test_late_consensus_adapter_applies_dedupe_suffix_from_sequence() -> None:
-    strategy = LateConsensusStrategy(_config())
-    snapshot = _snapshot()
-
-    first = strategy.evaluate(snapshot)[0]
-    assert first.metrics["entry_sequence"] == 0
-    assert first.dedupe_key.endswith(":0")
-
-    strategy.notify_signal_accepted(first)
-
-    second = strategy.evaluate(snapshot)[0]
-    assert second.metrics["entry_sequence"] == 1
-    assert second.dedupe_key.endswith(":1")
-    assert second.dedupe_key != first.dedupe_key
 
 
 # ---------------------------------------------------------------------------

@@ -1,16 +1,10 @@
 """
 Input: __future__, __future__.annotations, datetime, datetime.timedelta, polysignal_lab.alpha.pre_order_market_core, polysignal_lab.alpha.pre_order_market_core.PreOrderMarketAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaFillEvent, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.domain.enums
-Output: test_pre_order_core_matches_legacy_candidate, test_pre_order_candidates_repeat_until_order_submitted, test_pre_order_cancel_or_expire_rolls_back_pre_order_guard, test_pre_order_adapter_cancel_or_expire_rolls_back_pre_order_guard, test_pre_order_reconcile_uses_fill_event_state
+Output: test_pre_order_candidates_repeat_until_order_submitted, test_pre_order_cancel_or_expire_rolls_back_pre_order_guard, test_pre_order_reconcile_uses_fill_event_state
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
-
-
-
-
-
-
 
 from __future__ import annotations
 
@@ -19,9 +13,9 @@ from datetime import timedelta
 from polysignal_lab.alpha.pre_order_market_core import PreOrderMarketAlphaCore
 from polysignal_lab.alpha.types import AlphaFillEvent, AlphaOrderEvent
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.strategies.pre_order_market import PreOrderMarketConfig, PreOrderMarketStrategy
+from polysignal_lab.domain.strategy_config import PreOrderMarketConfig
 from polysignal_lab.utils import utc_now
-from alpha_equivalence import assert_legacy_core_equivalent
+from alpha_helpers import evaluate_core_from_snapshot
 from factories import sample_snapshot
 
 
@@ -51,19 +45,13 @@ def _order(decision, *, order_id: str = "order-1") -> AlphaOrderEvent:
     )
 
 
-def test_pre_order_core_matches_legacy_candidate() -> None:
-    config = PreOrderMarketConfig()
-    snapshot = _preopen_snapshot()
-    assert_legacy_core_equivalent(PreOrderMarketStrategy(config), PreOrderMarketAlphaCore(config), snapshot)
-
-
 def test_pre_order_candidates_repeat_until_order_submitted() -> None:
     config = PreOrderMarketConfig()
     core = PreOrderMarketAlphaCore(config)
     snapshot = _preopen_snapshot()
 
-    first = core.evaluate_view_from_snapshot_for_test(snapshot)
-    second = core.evaluate_view_from_snapshot_for_test(snapshot)
+    first = evaluate_core_from_snapshot(core, snapshot)
+    second = evaluate_core_from_snapshot(core, snapshot)
 
     assert len(first) == 4
     assert len(second) == 4
@@ -72,39 +60,23 @@ def test_pre_order_candidates_repeat_until_order_submitted() -> None:
     core.on_order_submitted(_order(first[0]))
 
     assert snapshot.market.market_id in core._pre_ordered
-    assert core.evaluate_view_from_snapshot_for_test(snapshot) == []
+    assert evaluate_core_from_snapshot(core, snapshot) == []
 
 
 def test_pre_order_cancel_or_expire_rolls_back_pre_order_guard() -> None:
     config = PreOrderMarketConfig()
     core = PreOrderMarketAlphaCore(config)
     snapshot = _preopen_snapshot()
-    decisions = core.evaluate_view_from_snapshot_for_test(snapshot)
+    decisions = evaluate_core_from_snapshot(core, snapshot)
     assert decisions
 
     core.on_order_submitted(_order(decisions[0]))
     core.on_order_canceled(_order(decisions[0]))
-    assert len(core.evaluate_view_from_snapshot_for_test(snapshot)) == 4
+    assert len(evaluate_core_from_snapshot(core, snapshot)) == 4
 
     core.on_order_submitted(_order(decisions[0]))
     core.on_order_expired(_order(decisions[0]))
-    assert len(core.evaluate_view_from_snapshot_for_test(snapshot)) == 4
-
-
-def test_pre_order_adapter_cancel_or_expire_rolls_back_pre_order_guard() -> None:
-    config = PreOrderMarketConfig()
-    strategy = PreOrderMarketStrategy(config)
-    snapshot = _preopen_snapshot()
-    signals = strategy.evaluate(snapshot)
-    assert signals
-
-    strategy.notify_signal_accepted(signals[0])
-    strategy.notify_cancel(snapshot.market.market_id, signals[0].side, "PAPER_REJECTED")
-    assert len(strategy.evaluate(snapshot)) == 4
-
-    strategy.notify_signal_accepted(signals[0])
-    strategy.notify_cancel(snapshot.market.market_id, signals[0].side, "GTD_EXPIRED")
-    assert len(strategy.evaluate(snapshot)) == 4
+    assert len(evaluate_core_from_snapshot(core, snapshot)) == 4
 
 
 def test_pre_order_reconcile_uses_fill_event_state() -> None:
@@ -132,7 +104,7 @@ def test_pre_order_reconcile_uses_fill_event_state() -> None:
         )
     )
 
-    decisions = core.evaluate_view_from_snapshot_for_test(snapshot)
+    decisions = evaluate_core_from_snapshot(core, snapshot)
     assert decisions
     assert decisions[0].side == Side.DOWN
     assert decisions[0].hedge_leg is True

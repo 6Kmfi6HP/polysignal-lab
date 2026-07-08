@@ -1,60 +1,23 @@
 """
-Input: __future__, __future__.annotations, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.OrderStatus, polysignal_lab.domain.enums.Side, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.strategies.base, polysignal_lab.strategies.base.BaseStrategy
-Output: test_base_strategy_notify_defaults_are_noops, test_order_intent_values, test_order_status_new_values, test_signal_candidate_has_order_intent_fields, test_signal_candidate_with_order_intent, test_paper_order_has_order_intent_field, test_paper_order_with_order_intent, test_passive_gtd_skips_max_entry_check, test_taker_still_fails_ask_above_max_entry, test_gtd_expiry_rejects_missing
+Input: __future__, __future__.annotations, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.OrderStatus, polysignal_lab.domain.enums.Side, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.signal_layer.gate, polysignal_lab.signal_layer.gate.SignalGate
+Output: test_order_intent_values, test_order_status_new_values, test_signal_candidate_has_order_intent_fields, test_signal_candidate_with_order_intent, test_paper_order_has_order_intent_field, test_paper_order_with_order_intent, test_passive_gtd_skips_max_entry_check, test_taker_still_fails_ask_above_max_entry, test_gtd_expiry_rejects_missing
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
 
-
-
-
-
-
-
 from __future__ import annotations
 
-from polysignal_lab.domain.enums import OrderIntent, OrderStatus, Side
+from datetime import timedelta
+
+from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
+from polysignal_lab.domain.enums import MarketStatus, OrderIntent, OrderStatus, Side
+from polysignal_lab.domain.orderbook import BookLevel, OrderBook
 from polysignal_lab.domain.signal import SignalCandidate
-
-from polysignal_lab.strategies.base import BaseStrategy
-
-
-class CountingStrategy(BaseStrategy):
-    name = "counting"
-
-    def __init__(self):
-        self.fills = 0
-        self.cancels = 0
-        self.leg_failures = 0
-
-    def evaluate(self, snapshot):
-        return []
-
-    def notify_fill(self, market_id, side, fill_price, shares):
-        super().notify_fill(market_id, side, fill_price, shares)
-        self.fills += 1
-
-    def notify_cancel(self, market_id, side, reason):
-        super().notify_cancel(market_id, side, reason)
-        self.cancels += 1
-
-    def notify_leg_failure(self, pair_id, market_id, side):
-        super().notify_leg_failure(pair_id, market_id, side)
-        self.leg_failures += 1
-
-
-def test_base_strategy_notify_defaults_are_noops():
-    strategy = CountingStrategy()
-
-    strategy.notify_fill("m", Side.UP, 0.5, 10.0)
-    assert strategy.fills == 1
-
-    strategy.notify_cancel("m", Side.UP, "EXPIRED")
-    assert strategy.cancels == 1
-
-    strategy.notify_leg_failure("pair-1", "m", Side.UP)
-    assert strategy.leg_failures == 1
+from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
+from polysignal_lab.domain.spot import SpotPrice
+from polysignal_lab.signal_layer.gate import SignalGate
+from polysignal_lab.utils import utc_now
 
 
 def test_order_intent_values():
@@ -156,19 +119,13 @@ def test_paper_order_with_order_intent():
         order_intent="passive_gtd",
     )
     assert po.order_intent == "passive_gtd"
-from polysignal_lab.signal_layer.gate import SignalGate
-from polysignal_lab.config import SignalConfig, PolymarketDataConfig, BinanceDataConfig
-from polysignal_lab.domain.snapshot import MarketSnapshot, FreshnessState
-from polysignal_lab.domain.orderbook import BookLevel, OrderBook
-from polysignal_lab.domain.enums import MarketStatus, Action
-from datetime import timedelta
-from polysignal_lab.utils import utc_now
-from polysignal_lab.domain.spot import SpotPrice
+
 
 def _make_gate() -> SignalGate:
     return SignalGate(
         SignalConfig(), PolymarketDataConfig(), BinanceDataConfig()
     )
+
 
 def _make_passive_signal() -> SignalCandidate:
     return SignalCandidate.build(
@@ -181,6 +138,7 @@ def _make_passive_signal() -> SignalCandidate:
         order_intent=OrderIntent.PASSIVE_GTD, expiry_seconds=200,
     )
 
+
 def _make_fresh_book() -> OrderBook:
     return OrderBook(
         token_id="t-up", bids=[BookLevel(price=0.30, size=100)],
@@ -188,8 +146,10 @@ def _make_fresh_book() -> OrderBook:
         last_trade_price=0.42, received_at=utc_now(),
     )
 
+
 def _make_active_snapshot(book: OrderBook) -> MarketSnapshot:
     from polysignal_lab.domain.market import Market, OutcomeToken
+
     now = utc_now()
     market = Market(
         market_id="mkt-1", market_slug="s", condition_id="c",
@@ -209,6 +169,7 @@ def _make_active_snapshot(book: OrderBook) -> MarketSnapshot:
         freshness=FreshnessState(up_book_ms=10, down_book_ms=None, spot_ms=10, max_ms=10),
     )
 
+
 def test_passive_gtd_skips_max_entry_check():
     gate = _make_gate()
     sig = _make_passive_signal()
@@ -216,6 +177,7 @@ def test_passive_gtd_skips_max_entry_check():
     # ask=0.55 > max_entry=0.35, but PASSIVE_GTD should pass
     reason = gate._max_entry(sig, snap)
     assert reason is None
+
 
 def test_taker_still_fails_ask_above_max_entry():
     gate = _make_gate()
@@ -233,6 +195,7 @@ def test_taker_still_fails_ask_above_max_entry():
     assert reason is not None
     assert reason.reason_code == "ASK_ABOVE_MAX_ENTRY"
 
+
 def test_gtd_expiry_rejects_missing():
     gate = _make_gate()
     sig = SignalCandidate.build(
@@ -245,11 +208,11 @@ def test_gtd_expiry_rejects_missing():
         order_intent=OrderIntent.PASSIVE_GTD,
         # expiry_seconds NOT set
     )
-    gate = _make_gate()
     snap = _make_active_snapshot(_make_fresh_book())
     reason = gate._gtd_expiry(sig, snap)
     assert reason is not None
     assert reason.reason_code == "MISSING_GTD_EXPIRY"
+
 
 def test_gtd_expiry_rejects_too_long():
     gate = _make_gate()
@@ -267,12 +230,14 @@ def test_gtd_expiry_rejects_too_long():
     assert reason is not None
     assert reason.reason_code == "GTD_EXPIRY_EXCEEDS_24H"
 
+
 def test_gtd_expiry_accepts_valid():
     gate = _make_gate()
     sig = _make_passive_signal()
     snap = _make_active_snapshot(_make_fresh_book())
     reason = gate._gtd_expiry(sig, snap)
     assert reason is None
+
 
 def test_passive_gtd_skips_spread_check():
     gate = _make_gate()
@@ -281,12 +246,14 @@ def test_passive_gtd_skips_spread_check():
     reason = gate._spread(sig, snap)
     assert reason is None
 
+
 def test_passive_gtd_skips_time_window():
     gate = _make_gate()
     sig = _make_passive_signal()
     snap = _make_active_snapshot(_make_fresh_book())
     reason = gate._time_window(sig, snap)
     assert reason is None
+
 
 def test_passive_gtd_full_evaluate_accepted():
     gate = _make_gate()
@@ -295,20 +262,3 @@ def test_passive_gtd_full_evaluate_accepted():
     decision = gate.evaluate(sig, snap)
     assert decision.accepted is True
     assert decision.signal is not None
-
-
-def test_base_strategy_notify_defaults_are_noops():
-    from polysignal_lab.strategies.base import BaseStrategy
-    from polysignal_lab.domain.enums import Side
-
-    class CountingStrategy(BaseStrategy):
-        name = "counting"
-        def evaluate(self, snapshot):
-            return []
-
-    s = CountingStrategy()
-    s.notify_fill("mkt", Side.UP, 0.5, 10.0)
-    s.notify_cancel("mkt", Side.UP, "EXPIRED")
-    s.notify_leg_failure("pair-1", "mkt", Side.UP)
-    # If these don't raise, the no-op defaults work
-    assert True

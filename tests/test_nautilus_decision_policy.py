@@ -210,7 +210,7 @@ def test_nautilus_decision_policy_actor_on_save_on_load_delegate_to_policy_state
 
 
 def test_runtime_classes_expose_registerable_nautilus_policy_actor(monkeypatch) -> None:
-    runtime_module_name = "polysignal_lab.nautilus_runtime.runtime_classes"
+    runtime_module_name = "polysignal_lab.nautilus_runtime.decision_policy_actor"
     missing = object()
     previous_runtime_module = sys.modules.get(runtime_module_name, missing)
     _ = sys.modules.pop(runtime_module_name, None)

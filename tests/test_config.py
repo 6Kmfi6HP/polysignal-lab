@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.domain.enums import TradeResultStatus
-from polysignal_lab.strategies.factory import build_strategies
+from polysignal_lab.nautilus_runtime.strategy_builder import _build_nautilus_config_strategy_schedule
 
 
 def test_load_settings_records_explicit_strategy_names(tmp_path: Path) -> None:
@@ -71,22 +71,18 @@ def test_default_rtds_assets_cover_default_market_assets() -> None:
     assert set(settings.markets.assets).issubset(settings.data.polymarket.rtds_assets)
 
 
-def test_strategy_factory_builds_default_configured_strategies() -> None:
-    from polysignal_lab.strategies.factory import build_strategy
+def _enabled_strategy_names(settings: Settings) -> list[str]:
+    return [entry.name for entry in _build_nautilus_config_strategy_schedule(settings)]
 
+
+def test_strategy_schedule_builds_default_configured_strategies() -> None:
     settings = load_settings("config/signal_bot.yaml")
 
-    strategy_names = [strategy.name for strategy in build_strategies(settings.strategies)]
-    single_strategy_names = [
-        build_strategy(strategy_config).name for strategy_config in settings.strategies
-    ]
-
-    assert strategy_names == [
+    assert _enabled_strategy_names(settings) == [
         "vwap_momentum",
         "late_consensus",
         "ptb_diff",
     ]
-    assert single_strategy_names == strategy_names
 
 
 def test_explicit_restored_strategy_can_be_built(tmp_path: Path) -> None:
@@ -103,7 +99,7 @@ strategies:
 
     settings = load_settings(config_path)
 
-    assert [strategy.name for strategy in build_strategies(settings.strategies)] == [
+    assert _enabled_strategy_names(settings) == [
         "fibonacci_bot"
     ]
 
@@ -124,7 +120,7 @@ strategies:
 
     settings = load_settings(config_path)
 
-    assert [strategy.name for strategy in build_strategies(settings.strategies)] == [
+    assert _enabled_strategy_names(settings) == [
         "late_consensus"
     ]
 
@@ -172,12 +168,10 @@ strategies:
     )
 
     settings = load_settings(config_path)
-    strategies = build_strategies(settings.strategies)
 
-    assert [strategy.name for strategy in strategies] == ["late_consensus"]
-    assert strategies[0].freshness_policy is not None
-    assert strategies[0].freshness_policy.max_orderbook_staleness_ms == 1_500
-    assert strategies[0].freshness_policy.max_spot_staleness_ms == 1_500
+    assert _enabled_strategy_names(settings) == ["late_consensus"]
+    assert settings.strategies.late_consensus.max_orderbook_staleness_ms == 1_500
+    assert settings.strategies.late_consensus.max_spot_staleness_ms == 1_500
 
 
 def test_ptb_diff_policy_uses_exit_lag_default_when_yaml_omits_fields(tmp_path: Path) -> None:
@@ -192,12 +186,9 @@ strategies:
     )
 
     settings = load_settings(config_path)
-    strategies = build_strategies(settings.strategies)
 
-    assert [strategy.name for strategy in strategies] == ["ptb_diff"]
-    assert strategies[0].freshness_policy is not None
-    assert strategies[0].freshness_policy.max_orderbook_staleness_ms == 1_000
-    assert strategies[0].freshness_policy.max_spot_staleness_ms == 1_000
+    assert _enabled_strategy_names(settings) == ["ptb_diff"]
+    assert settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec == 1.0
 
 
 def test_ptb_diff_anchor_required_mode_loads_from_yaml(tmp_path: Path) -> None:
@@ -225,14 +216,14 @@ def test_prd_result_states_exclude_partial_settlement() -> None:
 
 def test_production_config_uses_reviewed_strategy_subset() -> None:
     settings = Settings.from_yaml("config/signal_bot.yaml")
-    names = [strategy.name for strategy in build_strategies(settings.strategies)]
+    names = _enabled_strategy_names(settings)
 
     assert names == ["vwap_momentum", "late_consensus", "ptb_diff"]
 
 
 def test_lab_config_preserves_experimental_strategy_breadth() -> None:
     settings = Settings.from_yaml("config/signal_bot.lab.yaml")
-    names = {strategy.name for strategy in build_strategies(settings.strategies)}
+    names = set(_enabled_strategy_names(settings))
 
     assert names == {
         "vwap_momentum",

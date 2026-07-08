@@ -318,7 +318,7 @@ def _load_static_native_strategy(
     strategy_base: type[object],
     strategy_config: object,
 ) -> type[object]:
-    runtime_module_name = "polysignal_lab.nautilus_runtime.runtime_classes"
+    runtime_module_name = "polysignal_lab.nautilus_runtime.native_strategy"
     missing = object()
     previous_runtime_module = sys.modules.get(runtime_module_name, missing)
     _ = sys.modules.pop(runtime_module_name, None)

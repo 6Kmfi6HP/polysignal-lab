@@ -22,9 +22,8 @@ from polysignal_lab.alpha.state import restore_utc_datetime
 from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, TradeView
 from polysignal_lab.alpha.vwap_momentum_core import TradeHistory, VWAPMomentumAlphaCore
 from polysignal_lab.domain.enums import OrderIntent, Side
-from polysignal_lab.strategies.config import VWAPMomentumConfig
-from polysignal_lab.strategies.vwap_momentum import VWAPMomentumStrategy
-from alpha_equivalence import assert_legacy_core_equivalent
+from polysignal_lab.domain.strategy_config import VWAPMomentumConfig
+from alpha_helpers import evaluate_core_from_snapshot
 from factories import sample_snapshot
 
 
@@ -72,25 +71,6 @@ def _accept_event(decision, *, order_id: str = "order-1") -> AlphaOrderEvent:
 
 
 # ---------------------------------------------------------------------------
-# Equivalence
-# ---------------------------------------------------------------------------
-
-
-def test_vwap_core_matches_legacy_candidate() -> None:
-    config = _fast_config()
-    snapshot = _snapshot()
-    market_id = snapshot.market.market_id
-    now_ts = snapshot.created_at.timestamp()
-
-    strategy = VWAPMomentumStrategy(config)
-    core = VWAPMomentumAlphaCore(config)
-    _seed_band(strategy.core, market_id, now_ts)
-    _seed_band(core, market_id, now_ts)
-
-    assert_legacy_core_equivalent(strategy, core, snapshot)
-
-
-# ---------------------------------------------------------------------------
 # Entry guard: consumed only on acceptance
 # ---------------------------------------------------------------------------
 
@@ -102,11 +82,11 @@ def test_vwap_entry_guard_not_consumed_until_acceptance() -> None:
     market_id = snapshot.market.market_id
     _seed_band(core, market_id, snapshot.created_at.timestamp())
 
-    first = core.evaluate_view_from_snapshot_for_test(snapshot)
+    first = evaluate_core_from_snapshot(core, snapshot)
     assert len(first) == 1
 
     # Repeated candidate generation must NOT consume the entry guard.
-    second = core.evaluate_view_from_snapshot_for_test(snapshot)
+    second = evaluate_core_from_snapshot(core, snapshot)
     assert len(second) == 1
     assert core._can_enter[market_id] is True
 
@@ -114,7 +94,7 @@ def test_vwap_entry_guard_not_consumed_until_acceptance() -> None:
     core.on_order_accepted(_accept_event(first[0]))
 
     assert core._can_enter[market_id] is False
-    assert core.evaluate_view_from_snapshot_for_test(snapshot) == []
+    assert evaluate_core_from_snapshot(core, snapshot) == []
 
 
 
@@ -134,7 +114,7 @@ def test_vwap_core_accepts_trade_view_events() -> None:
     now_ts = snapshot.created_at.timestamp()
     _seed_band(core, snapshot.market.market_id, now_ts)
 
-    decisions = core.evaluate_view_from_snapshot_for_test(snapshot)
+    decisions = evaluate_core_from_snapshot(core, snapshot)
 
     assert len(decisions) == 1
     assert decisions[0].side == Side.UP
@@ -165,7 +145,7 @@ def test_vwap_on_order_rejected_reverts_pending_samples() -> None:
     now_ts = snapshot.created_at.timestamp()
     _seed_band(core, market_id, now_ts)
 
-    decision = core.evaluate_view_from_snapshot_for_test(snapshot)[0]
+    decision = evaluate_core_from_snapshot(core, snapshot)[0]
     # The evaluate pushed a current UP sample (mid ≈ 0.585) staged as pending.
     core.bind_signal(market_id, "sig-rejected")
 
@@ -208,7 +188,7 @@ def test_vwap_on_order_rejected_reverts_trade_view_samples() -> None:
     )
     _seed_band(core, market_id, snapshot.created_at.timestamp())
 
-    decision = core.evaluate_view_from_snapshot_for_test(snapshot)[0]
+    decision = evaluate_core_from_snapshot(core, snapshot)[0]
     core.bind_signal(market_id, "sig-tradeview-rejected")
 
     up_key = f"{market_id}:{Side.UP.value}"
@@ -324,7 +304,7 @@ def test_vwap_evaluate_prunes_old_trade_history_and_dedupe_state() -> None:
     core._seen_trade_signatures[down_key].add((0.39, 1.0, now_ts - 500.0))
     _seed_band(core, market_id, now_ts)
 
-    decisions = core.evaluate_view_from_snapshot_for_test(snapshot)
+    decisions = evaluate_core_from_snapshot(core, snapshot)
 
     assert len(decisions) == 1
     assert min(trade.timestamp for trade in core.trades._trades[up_key]) >= now_ts - 6.5

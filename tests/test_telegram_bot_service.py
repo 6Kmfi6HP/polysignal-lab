@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, types, types.SimpleNamespace, pytest, telegram.ext, telegram.ext.CallbackQueryHandler, telegram.ext.CommandHandler, polysignal_lab.app.services.signal_pipeline, polysignal_lab.app.services.signal_pipeline.SignalPipeline
+Input: __future__, __future__.annotations, types, types.SimpleNamespace, pytest, telegram.ext, telegram.ext.CallbackQueryHandler, telegram.ext.CommandHandler, polysignal_lab.publish.telegram_bot, polysignal_lab.publish.telegram_bot.TelegramBotService
 Output: test_telegram_bot_registers_ptb_handlers, test_telegram_bot_start_uses_embedded_ptb_lifecycle, test_telegram_bot_start_polling_uses_drop_pending_updates, test_telegram_bot_stop_uses_ptb_shutdown_order, test_telegram_bot_rejects_group_chat, test_telegram_bot_rejects_private_chat_not_in_allowlist, test_telegram_bot_uses_ptb_inline_keyboard_markup, test_telegram_bot_callback_always_answers, test_telegram_bot_callback_answers_before_rendering, test_telegram_bot_status_replies_before_rendering
 Pos: Test Layer - Unit/Integration tests
 
@@ -19,7 +19,6 @@ from types import SimpleNamespace
 import pytest
 from telegram.ext import CallbackQueryHandler, CommandHandler
 
-from polysignal_lab.app.services.signal_pipeline import SignalPipeline
 from polysignal_lab.config import TelegramConfig
 from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry
 from polysignal_lab.publish.telegram_bot import TelegramBotService
@@ -113,6 +112,8 @@ def _service(
     enabled: bool = True,
     dry_run: bool = False,
     application: _FakeApplication | None = None,
+    strategy_control: _FakeStrategyControl | None = None,
+    strategy_names: list[str] | None = None,
 ) -> TelegramBotService:
     config = TelegramConfig(
         interactive_enabled=enabled,
@@ -120,10 +121,12 @@ def _service(
         interactive_allowed_chat_ids=allowed,
         retry_attempts=1,
     )
+    control = strategy_control or _FakeStrategyControl()
     return TelegramBotService(
         config=config,
         persistence=_FakePersistence(),
-        signal_pipeline=SignalPipeline([], object(), object(), None),
+        strategy_control=control,
+        strategy_names=strategy_names or [],
         books=OrderBookRegistry(),
         markets=MarketRegistry(),
         formatter=MessageFormatter(),
@@ -367,6 +370,11 @@ class _FakeStrategyControl:
     def status_payload(self) -> dict[str, object]:
         return {"disabled_strategies": sorted(self.disabled)}
 
+    def skip_reason_for(self, name: str) -> str | None:
+        if name in self.disabled:
+            return "manual_disabled"
+        return None
+
 
 class _FormattingPersistence(_FakePersistence):
     def __init__(self) -> None:
@@ -429,11 +437,17 @@ class _FormattingPersistence(_FakePersistence):
         raise AssertionError(table)
 
 
-def _formatting_service(persistence: _FormattingPersistence) -> TelegramBotService:
+def _formatting_service(
+    persistence: _FormattingPersistence,
+    *,
+    strategy_control: _FakeStrategyControl | None = None,
+    strategy_names: list[str] | None = None,
+) -> TelegramBotService:
     return TelegramBotService(
         config=TelegramConfig(interactive_enabled=True, interactive_allowed_chat_ids=(123,)),
         persistence=persistence,
-        signal_pipeline=SignalPipeline([], object(), object(), persistence),
+        strategy_control=strategy_control or _FakeStrategyControl(),
+        strategy_names=strategy_names or [],
         books=OrderBookRegistry(),
         markets=MarketRegistry(),
         formatter=MessageFormatter(),
@@ -587,12 +601,10 @@ def test_telegram_bot_status_includes_health_wallet_counts_and_disabled_strategi
         "created_at": "2026-06-24T12:00:00Z",
         "components": [],
     }
-    service = _formatting_service(persistence)
+    service = _formatting_service(persistence, strategy_names=["a", "b"], strategy_control=_FakeStrategyControl(["b"]))
     persistence.positions = [{}, {}, {}]
     service.markets.markets["m1"] = object()
     service.markets.markets["m2"] = object()
-    service.signal_pipeline.strategies = [SimpleNamespace(name="a"), SimpleNamespace(name="b")]
-    service.signal_pipeline.set_strategy_enabled("b", False)
 
     text = service._format_status()
 
@@ -605,12 +617,10 @@ def test_telegram_bot_status_includes_health_wallet_counts_and_disabled_strategi
 
 def test_telegram_bot_strategies_menu_uses_short_callback_data() -> None:
     persistence = _FormattingPersistence()
-    service = _formatting_service(persistence)
-    service.signal_pipeline.strategies = [
-        SimpleNamespace(name="vwap_momentum"),
-        SimpleNamespace(name="late_consensus"),
-        SimpleNamespace(name="x" * 70),
-    ]
+    service = _formatting_service(
+        persistence,
+        strategy_names=["vwap_momentum", "late_consensus", "x" * 70],
+    )
 
     text = service._format_strategies()
     keyboard = service._strategies_keyboard()
@@ -627,13 +637,12 @@ def test_telegram_bot_strategies_menu_uses_short_callback_data() -> None:
 
 def test_telegram_bot_strategy_toggle_persists_state_and_event() -> None:
     persistence = _FormattingPersistence()
-    service = _formatting_service(persistence)
-    service.signal_pipeline.strategies = [SimpleNamespace(name="vwap_momentum")]
+    service = _formatting_service(persistence, strategy_names=["vwap_momentum"])
 
     text, keyboard = service._toggle_strategy("tg:vwap_momentum")
 
     assert "⏸ vwap_momentum" in text
-    assert "vwap_momentum" in service.signal_pipeline.disabled_strategies
+    assert "vwap_momentum" in service.strategy_control.status_payload()["disabled_strategies"]
     assert persistence.state["telegram_disabled_strategies"] == ["vwap_momentum"]
     event = persistence.state["last_event"]
     assert event["event_type"] == "strategy_toggle"
@@ -642,18 +651,19 @@ def test_telegram_bot_strategy_toggle_persists_state_and_event() -> None:
     assert isinstance(keyboard, InlineKeyboardMarkup)
 
 
-def test_telegram_bot_strategy_control_updates_policy_and_pipeline() -> None:
+def test_telegram_bot_strategy_control_updates_policy() -> None:
     persistence = _FormattingPersistence()
-    service = _formatting_service(persistence)
     control = _FakeStrategyControl(["vwap_momentum"])
-    service.strategy_control = control
-    service.signal_pipeline.strategies = [SimpleNamespace(name="vwap_momentum")]
+    service = _formatting_service(
+        persistence,
+        strategy_names=["vwap_momentum"],
+        strategy_control=control,
+    )
 
     text, keyboard = service._toggle_strategy("tg:vwap_momentum")
 
     assert "✅ vwap_momentum" in text
     assert control.is_strategy_enabled("vwap_momentum") is True
-    assert service.signal_pipeline.is_strategy_enabled("vwap_momentum") is True
     assert persistence.state["telegram_disabled_strategies"] == []
     assert persistence.state["last_event"]["enabled"] is True
     assert isinstance(keyboard, InlineKeyboardMarkup)
@@ -661,8 +671,7 @@ def test_telegram_bot_strategy_control_updates_policy_and_pipeline() -> None:
 
 def test_telegram_bot_strategy_toggle_rejects_unknown_strategy() -> None:
     persistence = _FormattingPersistence()
-    service = _formatting_service(persistence)
-    service.signal_pipeline.strategies = [SimpleNamespace(name="vwap_momentum")]
+    service = _formatting_service(persistence, strategy_names=["vwap_momentum"])
 
     with pytest.raises(ValueError, match="Unknown strategy"):
         service._toggle_strategy("tg:not_real")

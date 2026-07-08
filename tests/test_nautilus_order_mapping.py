@@ -21,8 +21,9 @@ from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
-from polysignal_lab.strategies.config import LateConsensusConfig
-from polysignal_lab.strategies.late_consensus import LateConsensusStrategy
+from polysignal_lab.domain.strategy_config import LateConsensusConfig
+from polysignal_lab.alpha.late_consensus_core import LateConsensusAlphaCore
+from polysignal_lab.alpha.ptb_diff_core import decision_to_signal, market_view_from_snapshot
 from factories import sample_snapshot
 
 
@@ -194,9 +195,13 @@ def test_approved_signal_candidate_preserves_gtd_expiry_and_pair_metadata() -> N
 
 
 def test_late_consensus_maps_to_current_favorite_ask_not_price_ceiling() -> None:
-    signal = LateConsensusStrategy(
+    snapshot = sample_snapshot(up_ask=0.82, down_ask=0.18, seconds_to_close=100)
+    view = market_view_from_snapshot(snapshot)
+    assert view is not None
+    decisions = LateConsensusAlphaCore(
         LateConsensusConfig(entry_frequency_sec=0)
-    ).evaluate(sample_snapshot(up_ask=0.82, down_ask=0.18, seconds_to_close=100))[0]
+    ).evaluate(view)
+    signal = decision_to_signal(decisions[0], view.view_id, None)
 
     spec = order_spec_from_decision(
         ApprovedDecision(signal=signal),

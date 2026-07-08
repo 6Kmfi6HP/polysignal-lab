@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, polysignal_lab.alpha.binary_momentum_core, polysignal_lab.alpha.binary_momentum_core.BinaryMomentumAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.strategies.config, polysignal_lab.strategies.config.BinaryMomentumConfig
+Input: __future__, __future__.annotations, polysignal_lab.alpha.binary_momentum_core, polysignal_lab.alpha.binary_momentum_core.BinaryMomentumAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.BinaryMomentumConfig
 Output: test_binary_momentum_core_matches_legacy_candidate, test_binary_momentum_entered_only_after_order_acceptance
 Pos: Test Layer - Unit/Integration tests
 
@@ -17,9 +17,8 @@ from __future__ import annotations
 from polysignal_lab.alpha.binary_momentum_core import BinaryMomentumAlphaCore
 from polysignal_lab.alpha.types import AlphaOrderEvent
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.strategies.config import BinaryMomentumConfig
-from polysignal_lab.strategies.binary_momentum import BinaryMomentumStrategy
-from alpha_equivalence import assert_legacy_core_equivalent
+from polysignal_lab.domain.strategy_config import BinaryMomentumConfig
+from alpha_helpers import evaluate_core_from_snapshot
 from factories import sample_snapshot
 
 
@@ -46,29 +45,14 @@ def _seed(core: BinaryMomentumAlphaCore, market_id: str) -> None:
     core._vwap_stats.push(f"{market_id}:{Side.UP.value}", 0.40)
 
 
-def test_binary_momentum_core_matches_legacy_candidate() -> None:
-    config = _momentum_config()
-    snapshot = _momentum_snapshot()
-    market_id = snapshot.market.market_id
-
-    strategy = BinaryMomentumStrategy(config)
-    core = BinaryMomentumAlphaCore(config)
-    # Pre-seed identical MACD/RSI history on both sides so the single firing
-    # evaluate (run by the harness) actually produces a candidate.
-    _seed(strategy.core, market_id)
-    _seed(core, market_id)
-
-    assert_legacy_core_equivalent(strategy, core, snapshot)
-
-
 def test_binary_momentum_entered_only_after_order_acceptance() -> None:
     config = _momentum_config()
     snapshot = _momentum_snapshot()
     core = BinaryMomentumAlphaCore(config)
     _seed(core, snapshot.market.market_id)
 
-    first = core.evaluate_view_from_snapshot_for_test(snapshot)
-    second = core.evaluate_view_from_snapshot_for_test(snapshot)
+    first = evaluate_core_from_snapshot(core, snapshot)
+    second = evaluate_core_from_snapshot(core, snapshot)
 
     assert first
     assert second  # guard NOT consumed by candidate creation
@@ -88,4 +72,4 @@ def test_binary_momentum_entered_only_after_order_acceptance() -> None:
         )
     )
 
-    assert core.evaluate_view_from_snapshot_for_test(snapshot) == []
+    assert evaluate_core_from_snapshot(core, snapshot) == []

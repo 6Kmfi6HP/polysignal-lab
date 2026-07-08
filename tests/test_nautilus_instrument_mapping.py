@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from polysignal_lab.nautilus_runtime.instrument_mapping import polymarket_instrument_id
+from polysignal_lab.nautilus_bridge.instrument_mapping import polymarket_instrument_id
 
 
 def test_polymarket_instrument_id_uses_nautilus_adapter_helper(monkeypatch) -> None:

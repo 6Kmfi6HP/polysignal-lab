@@ -17,12 +17,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from polysignal_lab.alpha.cross_market_core import CrossMarketAlphaCore, MarketRelation, RelationType
-from polysignal_lab.alpha.ptb_diff_core import decision_to_signal, market_view_from_snapshot
+from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
 from polysignal_lab.alpha.types import MarketGroupView
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.domain.snapshot_batch import CrossMarketEvaluationContext, SnapshotBatch
-from polysignal_lab.strategies.cross_market_bot import CrossMarketBotConfig, CrossMarketBotStrategy
-from alpha_equivalence import normalize_candidate, normalize_decision
+from polysignal_lab.domain.snapshot_batch import SnapshotBatch
+from polysignal_lab.domain.strategy_config import CrossMarketBotConfig
+from alpha_equivalence import normalize_decision
 from factories import BookFactoryConfig, sample_book, sample_snapshot
 from polysignal_lab.domain.orderbook import BookLevel
 
@@ -78,18 +78,11 @@ def _context(relation_id: str, *snapshots) -> CrossMarketEvaluationContext:
     )
 
 
-def test_cross_market_group_core_matches_legacy_group_candidates() -> None:
+def test_cross_market_group_core_emits_expected_candidates() -> None:
     btc = _snapshot("BTC", 0.20)
     eth = _snapshot("ETH", 0.21)
     relation_id = "btc-eth-exhaustive"
     config = CrossMarketBotConfig(assets=["BTC", "ETH"], fee_rate=0.0, min_edge=0.01)
-    strategy = CrossMarketBotStrategy(config)
-    strategy.register_relation(
-        relation_id,
-        RelationType.EXHAUSTIVE_MUTUALLY_EXCLUSIVE,
-        [btc.market.condition_id, eth.market.condition_id],
-        [Side.UP, Side.UP],
-    )
     core = CrossMarketAlphaCore(config)
     core.register_relation(
         relation_id,
@@ -98,12 +91,10 @@ def test_cross_market_group_core_matches_legacy_group_candidates() -> None:
         [Side.UP, Side.UP],
     )
 
-    legacy = strategy.evaluate_group(_context(relation_id, btc, eth))
     decisions = core.evaluate_group(_group_view(relation_id, btc, eth))
-    signals = [decision_to_signal(decision, None, strategy.freshness_policy) for decision in decisions]
 
-    assert [normalize_candidate(signal) for signal in legacy] == [normalize_candidate(signal) for signal in signals]
-    assert [normalize_candidate(signal) for signal in legacy] == [normalize_decision(decision) for decision in decisions]
+    assert len(decisions) == 2
+    assert all(normalize_decision(decision)["pair_id"] == relation_id for decision in decisions)
 
 
 def test_cross_market_group_walks_ask_depth_before_emitting() -> None:

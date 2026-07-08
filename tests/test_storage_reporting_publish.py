@@ -23,6 +23,7 @@ from polysignal_lab.dashboard.app import create_dashboard_app
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
+from polysignal_lab.domain.strategy_readiness import StrategyMarketStatus
 from polysignal_lab.paper.report import PaperReportService
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 from polysignal_lab.signal_layer.formatter import MessageFormatter
@@ -30,14 +31,13 @@ from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import DuplicateRecordError, SQLiteStore
 from polysignal_lab.storage.sqlite_schema import SchemaValidationError
 from polysignal_lab.storage.state_store import StateStore
-from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
-from polysignal_lab.strategies.readiness import StrategyMarketStatus
+from signal_helpers import ptb_signal_from_snapshot
 from factories import sample_storage_lifecycle
 
 
 async def test_formatter_signal_message_within_limit(snapshot, settings):
     # Given: a PRD signal candidate.
-    sig = PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0]
+    sig = ptb_signal_from_snapshot(snapshot, settings)
 
     # When: the Telegram signal message is formatted.
     message = MessageFormatter(max_chars=4096).signal_message(sig, 10.0)
@@ -153,7 +153,7 @@ def test_jsonl_and_state_restore_required_streams(tmp_path):
 
 async def test_sqlite_store_and_dashboard(tmp_path, snapshot, settings):
     store = SQLiteStore(tmp_path / "db.sqlite3")
-    sig = PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0]
+    sig = ptb_signal_from_snapshot(snapshot, settings)
     store.insert_signal(sig)
     assert store.counts()["signals"] == 1
     app = create_dashboard_app(store)
@@ -261,7 +261,7 @@ def test_sqlite_store_persists_strategy_status_rows(tmp_path) -> None:
 def test_duplicate_ids_are_idempotent_or_reported(tmp_path, snapshot, settings):
     # Given: a SQLite store with one full PRD audit lifecycle persisted.
     store = SQLiteStore(tmp_path / "db.sqlite3")
-    sig = PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0]
+    sig = ptb_signal_from_snapshot(snapshot, settings)
     lifecycle = sample_storage_lifecycle(sig)
 
     # When: the same payloads are inserted twice and one conflicting duplicate is inserted.
@@ -419,7 +419,7 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
 
 async def test_formatter_truncates_long_signal_message(snapshot, settings) -> None:
     # Given: a signal whose reasons would exceed a short Telegram message limit.
-    sig = PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0].model_copy(
+    sig = ptb_signal_from_snapshot(snapshot, settings).model_copy(
         update={"reason_codes": [f"reason-{index}" for index in range(30)]}
     )
 

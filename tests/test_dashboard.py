@@ -26,14 +26,14 @@ from polysignal_lab.domain.paper_order import PaperOrder
 from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport
 from polysignal_lab.storage.sqlite_store import SQLiteStore
-from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
-from polysignal_lab.strategies.readiness import StrategyMarketStatus
+from polysignal_lab.domain.strategy_readiness import StrategyMarketStatus
+from signal_helpers import ptb_signal_from_snapshot
 from factories import sample_storage_lifecycle
 
 
 def _client_with_store(tmp_path, snapshot, settings) -> tuple[TestClient, SQLiteStore]:
     store = SQLiteStore(tmp_path / "dashboard.sqlite3")
-    signal = PTBDiffStrategy(settings.strategies.ptb_diff).evaluate(snapshot)[0]
+    signal = ptb_signal_from_snapshot(snapshot, settings)
     lifecycle = sample_storage_lifecycle(signal)
     rejected = lifecycle.rejected.model_copy(
         update={

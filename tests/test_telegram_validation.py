@@ -1,16 +1,10 @@
 """
-Input: __future__, __future__.annotations, json, httpx, pytest, polysignal_lab.app.scheduler, polysignal_lab.app.scheduler.PolySignalScheduler, polysignal_lab.app.scheduler.TelegramStartupConfigError, polysignal_lab.config, polysignal_lab.config.Settings
-Output: test_scheduler_uses_configured_telegram_publish_timeout, test_telegram_qa_default_message_is_compact, test_missing_telegram_credentials_fail_startup_when_publish_enabled, test_malformed_telegram_credentials_fail_startup_when_publish_enabled, test_mocked_telegram_send_returns_sent_and_redacts_token, test_failed_telegram_response_redacts_token, test_invalid_publisher_credentials_fail_without_http_request, test_telegram_qa_records_actual_dry_run_invocation, test_telegram_qa_records_actual_live_failure_invocation
+Input: __future__, __future__.annotations, json, httpx, pytest, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.nautilus_runtime.runtime_context_factory, polysignal_lab.nautilus_runtime.runtime_context_factory.build_nautilus_runtime_context
+Output: test_runtime_uses_configured_telegram_publish_timeout, test_telegram_qa_default_message_is_compact, test_missing_telegram_credentials_fail_live_publish, test_malformed_telegram_credentials_fail_live_publish, test_mocked_telegram_send_returns_sent_and_redacts_token, test_failed_telegram_response_redacts_token, test_invalid_publisher_credentials_fail_without_http_request, test_telegram_qa_records_actual_dry_run_invocation, test_telegram_qa_records_actual_live_failure_invocation
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
-
-
-
-
-
-
 
 from __future__ import annotations
 
@@ -19,8 +13,8 @@ import json
 import httpx
 import pytest
 
-from polysignal_lab.app.scheduler import PolySignalScheduler, TelegramStartupConfigError
 from polysignal_lab.config import Settings, TelegramConfig
+from polysignal_lab.nautilus_runtime.runtime_context_factory import build_nautilus_runtime_context
 from polysignal_lab.publish.telegram_qa import DEFAULT_MESSAGE, parse_args, run
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 
@@ -41,11 +35,11 @@ def _live_telegram_config() -> TelegramConfig:
     )
 
 
-def test_scheduler_uses_configured_telegram_publish_timeout(tmp_path) -> None:
+def test_runtime_uses_configured_telegram_publish_timeout(tmp_path) -> None:
     settings = Settings(telegram=TelegramConfig(publish_timeout_sec=20.0))
-    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    runtime = build_nautilus_runtime_context(settings, base_dir=tmp_path)
 
-    assert scheduler.publish_service.timeout_sec == 20.0
+    assert runtime.publish_service.timeout_sec == 20.0
 
 
 def test_telegram_qa_default_message_is_compact() -> None:
@@ -60,43 +54,37 @@ def test_telegram_qa_default_message_is_compact() -> None:
         assert removed not in DEFAULT_MESSAGE
 
 
-def test_missing_telegram_credentials_fail_startup_when_publish_enabled(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+async def test_missing_telegram_credentials_fail_live_publish(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given: live Telegram signal publishing is enabled without exported env vars.
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHANNEL_ID", raising=False)
-    settings = Settings(telegram=_live_telegram_config())
-    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    publisher = TelegramPublisher(_live_telegram_config())
 
-    # When / Then: startup validation fails before a live publisher can run.
-    with pytest.raises(TelegramStartupConfigError) as error:
-        scheduler._validate_telegram_startup()
-    assert "TELEGRAM_BOT_TOKEN" in str(error.value)
-    assert "TELEGRAM_CHANNEL_ID" in str(error.value)
+    result = await publisher.send("Paper-only QA signal.", "signal", "sig1")
+
+    assert result.status == "FAILED"
+    assert result.error == "TELEGRAM_NOT_CONFIGURED"
 
 
-def test_malformed_telegram_credentials_fail_startup_when_publish_enabled(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+async def test_malformed_telegram_credentials_fail_live_publish(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given: live Telegram publishing has malformed exported credentials.
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "not-a-token")
     monkeypatch.setenv("TELEGRAM_CHANNEL_ID", "bad channel")
-    settings = Settings(telegram=_live_telegram_config())
-    scheduler = PolySignalScheduler(settings, base_dir=tmp_path)
+    publisher = TelegramPublisher(_live_telegram_config())
 
-    # When / Then: validation rejects field names without leaking values.
-    with pytest.raises(TelegramStartupConfigError) as error:
-        scheduler._validate_telegram_startup()
-    message = str(error.value)
-    assert "TELEGRAM_BOT_TOKEN" in message
-    assert "TELEGRAM_CHANNEL_ID" in message
+    result = await publisher.send("Paper-only QA signal.", "signal", "sig1")
+
+    message = str(result.error)
+    assert result.status == "FAILED"
+    assert "bot_token" in message
+    assert "channel_id" in message
     assert "not-a-token" not in message
     assert "bad channel" not in message
 
 
 async def test_mocked_telegram_send_returns_sent_and_redacts_token() -> None:
-    # Given: a live publisher with a mocked Telegram sendMessage endpoint.
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -111,10 +99,8 @@ async def test_mocked_telegram_send_returns_sent_and_redacts_token() -> None:
         client=client,
     )
 
-    # When: a signal message is sent through the real publisher surface.
     result = await publisher.send("Paper-only QA signal. No profit guarantee.", "signal", "sig1")
 
-    # Then: the send result is successful and the result payload has no full token.
     payload = result.as_dict()
     assert result.status == "SENT"
     assert result.telegram_message_id == "321"
@@ -124,7 +110,6 @@ async def test_mocked_telegram_send_returns_sent_and_redacts_token() -> None:
 
 
 async def test_failed_telegram_response_redacts_token() -> None:
-    # Given: Telegram returns an HTTP failure that includes the token-bearing URL.
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda request: httpx.Response(401, request=request, json={"ok": False})
@@ -137,10 +122,8 @@ async def test_failed_telegram_response_redacts_token() -> None:
         client=client,
     )
 
-    # When: the publisher records the failed send.
     result = await publisher.send("Paper-only QA signal.", "signal", "sig1")
 
-    # Then: the error is useful but does not contain the full token.
     assert result.status == "FAILED"
     assert result.error is not None
     assert VALID_TOKEN not in result.error
@@ -148,7 +131,6 @@ async def test_failed_telegram_response_redacts_token() -> None:
 
 
 async def test_invalid_publisher_credentials_fail_without_http_request() -> None:
-    # Given: malformed explicit credentials are passed to a live publisher.
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -163,10 +145,8 @@ async def test_invalid_publisher_credentials_fail_without_http_request() -> None
         client=client,
     )
 
-    # When: a send is attempted.
     result = await publisher.send("Paper-only QA signal.", "signal", "sig1")
 
-    # Then: malformed credentials fail locally and no token-bearing URL is requested.
     assert result.status == "FAILED"
     assert result.error == "TELEGRAM_INVALID_CREDENTIALS: bot_token, channel_id"
     assert requests == []
@@ -175,16 +155,13 @@ async def test_invalid_publisher_credentials_fail_without_http_request() -> None
 async def test_telegram_qa_records_actual_dry_run_invocation(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Given: dry-run QA writes to a caller-selected evidence path.
     evidence_path = tmp_path / "actual-dry-run-evidence.json"
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", VALID_TOKEN)
     monkeypatch.setenv("TELEGRAM_CHANNEL_ID", VALID_CHANNEL)
     options = parse_args(["--evidence", str(evidence_path)])
 
-    # When: the QA command runs.
     exit_code = await run(options)
 
-    # Then: the artifact records the actual mode and evidence target.
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     assert exit_code == 0
     assert evidence["status"] == "DRY_RUN"
@@ -200,16 +177,13 @@ async def test_telegram_qa_records_actual_dry_run_invocation(
 async def test_telegram_qa_records_actual_live_failure_invocation(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Given: live QA is requested without exported Telegram credentials.
     evidence_path = tmp_path / "actual-live-failure-evidence.json"
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHANNEL_ID", raising=False)
     options = parse_args(["--live", "--evidence", str(evidence_path)])
 
-    # When: the QA command runs.
     exit_code = await run(options)
 
-    # Then: the failure artifact still records the actual live invocation.
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     assert exit_code == 2
     assert evidence["status"] == "FAILED"

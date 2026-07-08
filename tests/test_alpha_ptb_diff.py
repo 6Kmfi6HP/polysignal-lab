@@ -1,16 +1,10 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.timedelta, typing, typing.Final, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.PTBDiffAlphaCore
-Output: test_ptb_alpha_core_matches_legacy_strategy_for_equivalent_up_input, test_ptb_alpha_core_matches_legacy_strategy_for_equivalent_down_input, test_ptb_alpha_core_rejects_missing_verified_anchor_source, test_ptb_alpha_core_rejects_missing_market_data, test_legacy_ptb_strategy_rejects_snapshot_without_outcome_tokens, CoreScenario
+Output: test_ptb_alpha_core_matches_equivalent_up_input, test_ptb_alpha_core_matches_equivalent_down_input, test_ptb_alpha_core_rejects_missing_verified_anchor_source, test_ptb_alpha_core_rejects_missing_market_data, test_ptb_snapshot_without_outcome_tokens_produces_no_view
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
-
-
-
-
-
-
 
 from __future__ import annotations
 
@@ -21,8 +15,7 @@ from typing import Final
 from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore, market_view_from_snapshot
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
-from polysignal_lab.strategies.config import PTBDiffConfig, PTBTriggerConfig
-from polysignal_lab.strategies.ptb_diff import PTBDiffStrategy
+from polysignal_lab.domain.strategy_config import PTBDiffConfig, PTBTriggerConfig
 from polysignal_lab.utils import utc_now
 from factories import BookFactoryConfig, MarketFactoryConfig, SpotFactoryConfig, sample_book, sample_market, sample_spot
 
@@ -104,34 +97,26 @@ def _snapshot(scenario: CoreScenario) -> MarketSnapshot:
     )
 
 
-def test_ptb_alpha_core_matches_legacy_strategy_for_equivalent_up_input() -> None:
+def test_ptb_alpha_core_matches_equivalent_up_input() -> None:
     config = _config()
     snapshot = _snapshot(CoreScenario(side=Side.UP, diff_usd=120.0, side_ask=0.82))
+    decision = PTBDiffAlphaCore(config).evaluate(market_view_from_snapshot(snapshot))[0]
 
-    legacy_signal = PTBDiffStrategy(config).evaluate(snapshot)[0]
-    core_decision = PTBDiffAlphaCore(config).evaluate(market_view_from_snapshot(snapshot))[0]
-
-    assert core_decision.side == legacy_signal.side
-    assert core_decision.confidence == legacy_signal.confidence
-    assert core_decision.max_entry_price == legacy_signal.max_entry_price
-    assert core_decision.reason_codes == tuple(legacy_signal.reason_codes)
-    assert dict(core_decision.metrics) == legacy_signal.metrics
-    assert core_decision.order_intent is None
-    assert legacy_signal.order_intent is None
-    assert core_decision.hedge_leg == legacy_signal.hedge_leg
+    assert decision.side == Side.UP
+    assert decision.confidence > 0
+    assert decision.max_entry_price == 0.92
+    assert decision.order_intent is None
+    assert decision.hedge_leg is False
 
 
-def test_ptb_alpha_core_matches_legacy_strategy_for_equivalent_down_input() -> None:
+def test_ptb_alpha_core_matches_equivalent_down_input() -> None:
     config = _config()
     snapshot = _snapshot(CoreScenario(side=Side.DOWN, diff_usd=140.0, side_ask=0.83))
+    decision = PTBDiffAlphaCore(config).evaluate(market_view_from_snapshot(snapshot))[0]
 
-    legacy_signal = PTBDiffStrategy(config).evaluate(snapshot)[0]
-    core_decision = PTBDiffAlphaCore(config).evaluate(market_view_from_snapshot(snapshot))[0]
-
-    assert core_decision.side == legacy_signal.side
-    assert core_decision.reason_codes == tuple(legacy_signal.reason_codes)
-    assert core_decision.metrics["diff_usd"] == legacy_signal.metrics["diff_usd"]
-    assert core_decision.metrics["trigger"] == "test_down"
+    assert decision.side == Side.DOWN
+    assert decision.metrics["abs_diff_usd"] > 0
+    assert decision.metrics["trigger"] == "test_down"
 
 
 def test_ptb_alpha_core_rejects_missing_verified_anchor_source() -> None:
@@ -148,8 +133,7 @@ def test_ptb_alpha_core_rejects_missing_market_data() -> None:
     assert PTBDiffAlphaCore(config).evaluate(market_view_from_snapshot(snapshot)) == []
 
 
-def test_legacy_ptb_strategy_rejects_snapshot_without_outcome_tokens() -> None:
-    config = _config()
+def test_ptb_snapshot_without_outcome_tokens_produces_no_view() -> None:
     snapshot = _snapshot(CoreScenario())
     malformed_market = snapshot.market.model_copy(update={"outcome_tokens": []})
     malformed_snapshot = snapshot.model_copy(
@@ -157,4 +141,3 @@ def test_legacy_ptb_strategy_rejects_snapshot_without_outcome_tokens() -> None:
     )
 
     assert market_view_from_snapshot(malformed_snapshot) is None
-    assert PTBDiffStrategy(config).evaluate(malformed_snapshot) == []

@@ -28,8 +28,8 @@ from polysignal_lab.app.readonly_smoke_types import ReadonlySmokeEvidence, Reado
 
 
 class _FakeSettings:
-    def __init__(self, engine: str) -> None:
-        self.runtime = SimpleNamespace(engine=engine)
+    def __init__(self) -> None:
+        self.runtime = SimpleNamespace(nautilus=SimpleNamespace())
 
     def validate_runtime_environment(self) -> None:
         return None
@@ -50,7 +50,7 @@ def test_cli_help_lists_supported_runtime_modes_without_removed_alias() -> None:
     result = subprocess.run(command, capture_output=True, check=True, text=True, env=_worktree_env())
 
     # Then: help lists stable supported modes and excludes removed aliases.
-    assert "--mode {scheduler,dashboard,smoke,nautilus}" in result.stdout
+    assert "--mode {dashboard,smoke,nautilus,scheduler}" in result.stdout
     assert "--once" in result.stdout
     assert "--real-readonly-smoke" in result.stdout
     assert "--allow-legacy-scheduler" not in result.stdout
@@ -74,16 +74,15 @@ def test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given(
 ) -> None:
     # Given: no explicit runtime selector and the loaded settings default to Nautilus.
     calls: list[str] = []
-    fake_settings = _FakeSettings("nautilus")
+    fake_settings = _FakeSettings()
     fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
     setattr(
         fake_module,
         "run_nautilus_cli",
-        lambda settings: calls.append(f"nautilus:{settings.runtime.engine}"),
+        lambda settings: calls.append("nautilus"),
     )
 
     monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
-    monkeypatch.setattr(app_main, "run_scheduler_cli", lambda settings: calls.append("scheduler"))
     monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
 
     # When: the main entry runs without command or --mode.
@@ -91,28 +90,27 @@ def test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given(
 
     # Then: it follows the configured Nautilus default instead of the legacy scheduler default.
     assert exit_code == 0
-    assert calls == ["nautilus:nautilus"]
+    assert calls == ["nautilus"]
 
-def test_main_uses_nautilus_when_legacy_config_is_default_without_mode(
+def test_main_uses_nautilus_when_no_mode_is_given(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
-    fake_settings = _FakeSettings("legacy")
+    fake_settings = _FakeSettings()
     fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
     setattr(
         fake_module,
         "run_nautilus_cli",
-        lambda settings: calls.append(f"nautilus:{settings.runtime.engine}"),
+        lambda settings: calls.append("nautilus"),
     )
 
     monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
-    monkeypatch.setattr(app_main, "run_scheduler_cli", lambda settings: calls.append("scheduler"))
     monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
 
     exit_code = app_main.main([])
 
     assert exit_code == 0
-    assert calls == ["nautilus:legacy"]
+    assert calls == ["nautilus"]
 
 
 def test_main_import_does_not_load_legacy_scheduler_stack() -> None:
@@ -131,32 +129,16 @@ def test_main_import_does_not_load_legacy_scheduler_stack() -> None:
     assert result.stdout.strip() == "False"
 
 
-def test_explicit_legacy_scheduler_requires_hidden_opt_in(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[str] = []
-    fake_settings = _FakeSettings("nautilus")
-
-    monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
-    monkeypatch.setattr(app_main, "run_scheduler_cli", lambda settings: calls.append("scheduler"))
-
-    exit_code = app_main.main(["--mode", "scheduler", "--allow-legacy-scheduler"])
-
-    assert exit_code == 0
-    assert calls == ["scheduler"]
-
-
 def test_main_scheduler_mode_without_once_aliases_to_nautilus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given: the caller requests scheduler mode without --once.
     calls: list[str] = []
-    fake_settings = _FakeSettings("nautilus")
+    fake_settings = _FakeSettings()
     fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
     setattr(fake_module, "run_nautilus_cli", lambda settings: calls.append("nautilus"))
 
     monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
-    monkeypatch.setattr(app_main, "run_scheduler_cli", lambda settings: calls.append("scheduler"))
     monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
 
     # When: scheduler mode is provided without --once.
@@ -172,7 +154,7 @@ def test_main_scheduler_mode_with_once_runs_readonly_smoke(
 ) -> None:
     # Given: scheduler mode is requested with bounded --once smoke.
     calls: list[str] = []
-    fake_settings = _FakeSettings("nautilus")
+    fake_settings = _FakeSettings()
     fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
     setattr(fake_module, "run_nautilus_cli", lambda settings: calls.append("nautilus"))
 
@@ -180,7 +162,6 @@ def test_main_scheduler_mode_with_once_runs_readonly_smoke(
         calls.append("readonly_smoke")
 
     monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
-    monkeypatch.setattr(app_main, "run_scheduler_cli", lambda settings: calls.append("scheduler"))
     monkeypatch.setattr(app_main, "run_readonly_smoke", fake_readonly_smoke)
     monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
 
