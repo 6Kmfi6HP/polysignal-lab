@@ -29,6 +29,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalPriceToBeatData,
     PolySignalSpotData,
 )
+from polysignal_lab.nautilus_runtime.projections import _tags
 
 DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
 MISSING_PROJECTIONS_ERROR = "PolySignalNativeStrategy requires injected registry and assembler projections"
@@ -152,23 +153,6 @@ def _value(obj: object, name: str, default: object = None) -> object:
         return cast(Mapping[object, object], obj).get(name, default)
     return getattr(obj, name, default)
 
-
-def _tags(raw: object) -> dict[str, str]:
-    if isinstance(raw, Mapping):
-        return {
-            str(key): str(value)
-            for key, value in cast(Mapping[object, object], raw).items()
-        }
-    if not isinstance(raw, Iterable) or isinstance(raw, (str, bytes)):
-        return {}
-    parsed: dict[str, str] = {}
-    for item in raw:
-        text = str(item)
-        if "=" not in text:
-            continue
-        key, value = text.split("=", 1)
-        parsed[key] = value
-    return parsed
 
 
 def _optional_str(value: object) -> str | None:

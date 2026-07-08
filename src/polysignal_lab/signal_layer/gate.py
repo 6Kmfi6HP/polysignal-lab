@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from typing import Any
 from dataclasses import dataclass, field
 
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
@@ -148,6 +149,46 @@ class SignalGate:
             "policy_source": policy_source,
         }
 
+    def _check_freshness(
+        self,
+        candidate: SignalCandidate,
+        snapshot: MarketSnapshot,
+        *,
+        source: str,
+        missing_reason: str,
+        stale_reason: str,
+        data_source: Any | None,
+        policy_staleness_ms: int | None,
+        config_threshold: int,
+    ) -> GateRejection | None:
+        threshold_ms, policy_source = self._policy_threshold(
+            candidate.freshness_policy,
+            policy_staleness_ms,
+            config_threshold,
+        )
+        if data_source is None:
+            return GateRejection(
+                missing_reason,
+                self._freshness_details(
+                    source=source,
+                    lag_ms=None,
+                    threshold_ms=threshold_ms,
+                    policy_source=policy_source,
+                ),
+            )
+        lag_ms = data_source.freshness_ms(snapshot.created_at)
+        if lag_ms > threshold_ms:
+            return GateRejection(
+                stale_reason,
+                self._freshness_details(
+                    source=source,
+                    lag_ms=lag_ms,
+                    threshold_ms=threshold_ms,
+                    policy_source=policy_source,
+                ),
+            )
+        return None
+
     def _market_active(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
         return None if snapshot.market.is_active else GateRejection("MARKET_NOT_ACTIVE")
 
@@ -159,63 +200,26 @@ class SignalGate:
         return None
 
     def _book_freshness(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
-        threshold_ms, policy_source = self._policy_threshold(
-            candidate.freshness_policy,
-            candidate.freshness_policy.max_orderbook_staleness_ms if candidate.freshness_policy else None,
-            self.poly_config.max_book_staleness_ms,
+        return self._check_freshness(
+            candidate, snapshot,
+            source="orderbook",
+            missing_reason="MISSING_ORDERBOOK",
+            stale_reason="STALE_ORDERBOOK",
+            data_source=snapshot.book_for(candidate.side),
+            policy_staleness_ms=candidate.freshness_policy.max_orderbook_staleness_ms if candidate.freshness_policy else None,  # noqa: E501
+            config_threshold=self.poly_config.max_book_staleness_ms,
         )
-        book = snapshot.book_for(candidate.side)
-        if book is None:
-            return GateRejection(
-                "MISSING_ORDERBOOK",
-                self._freshness_details(
-                    source="orderbook",
-                    lag_ms=None,
-                    threshold_ms=threshold_ms,
-                    policy_source=policy_source,
-                ),
-            )
-        lag_ms = book.freshness_ms(snapshot.created_at)
-        if lag_ms > threshold_ms:
-            return GateRejection(
-                "STALE_ORDERBOOK",
-                self._freshness_details(
-                    source="orderbook",
-                    lag_ms=lag_ms,
-                    threshold_ms=threshold_ms,
-                    policy_source=policy_source,
-                ),
-            )
-        return None
 
     def _spot_freshness(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
-        threshold_ms, policy_source = self._policy_threshold(
-            candidate.freshness_policy,
-            candidate.freshness_policy.max_spot_staleness_ms if candidate.freshness_policy else None,
-            self.binance_config.max_price_staleness_ms,
+        return self._check_freshness(
+            candidate, snapshot,
+            source="spot_price",
+            missing_reason="MISSING_SPOT_PRICE",
+            stale_reason="STALE_SPOT_PRICE",
+            data_source=snapshot.spot,
+            policy_staleness_ms=candidate.freshness_policy.max_spot_staleness_ms if candidate.freshness_policy else None,  # noqa: E501
+            config_threshold=self.binance_config.max_price_staleness_ms,
         )
-        if snapshot.spot is None:
-            return GateRejection(
-                "MISSING_SPOT_PRICE",
-                self._freshness_details(
-                    source="spot_price",
-                    lag_ms=None,
-                    threshold_ms=threshold_ms,
-                    policy_source=policy_source,
-                ),
-            )
-        lag_ms = snapshot.spot.freshness_ms(snapshot.created_at)
-        if lag_ms > threshold_ms:
-            return GateRejection(
-                "STALE_SPOT_PRICE",
-                self._freshness_details(
-                    source="spot_price",
-                    lag_ms=lag_ms,
-                    threshold_ms=threshold_ms,
-                    policy_source=policy_source,
-                ),
-            )
-        return None
 
     def _spread(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
         if candidate.order_intent == OrderIntent.PASSIVE_GTD:

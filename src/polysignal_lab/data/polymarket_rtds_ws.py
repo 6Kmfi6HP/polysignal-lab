@@ -119,15 +119,25 @@ class PolymarketRtdsPriceFeed:
             self.on_spot(spot)
 
 
-def _symbol(payload: dict[str, Any]) -> str | None:
-    symbol = payload.get("symbol")
-    if isinstance(symbol, str):
-        return symbol.lower()
+def _data_item(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract the last item from payload's ``data`` list, if present."""
     data = payload.get("data")
     if isinstance(data, list) and data:
         item = data[-1]
-        if isinstance(item, dict) and isinstance(item.get("symbol"), str):
-            return str(item["symbol"]).lower()
+        if isinstance(item, dict):
+            return item
+    return None
+
+
+def _symbol(payload: dict[str, Any]) -> str | None:
+    raw = payload.get("symbol")
+    if isinstance(raw, str):
+        return raw.lower()
+    item = _data_item(payload)
+    if item is not None:
+        raw = item.get("symbol")
+        if isinstance(raw, str):
+            return raw.lower()
     return None
 
 
@@ -135,20 +145,17 @@ def _price(payload: dict[str, Any]) -> float | None:
     value = safe_float(payload.get("value"))
     if value is not None:
         return value
-    data = payload.get("data")
-    if isinstance(data, list) and data:
-        item = data[-1]
-        if isinstance(item, dict):
-            return safe_float(item.get("value") or item.get("price"))
+    item = _data_item(payload)
+    if item is not None:
+        return safe_float(item.get("value") or item.get("price"))
     return None
 
 
 def _event_time(payload: dict[str, Any]) -> datetime | None:
     raw = payload.get("timestamp") or payload.get("ts")
-    data = payload.get("data")
-    if raw is None and isinstance(data, list) and data:
-        item = data[-1]
-        if isinstance(item, dict):
+    if raw is None:
+        item = _data_item(payload)
+        if item is not None:
             raw = item.get("timestamp") or item.get("ts")
     if raw is None:
         return None
