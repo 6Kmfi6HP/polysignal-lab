@@ -1,0 +1,33 @@
+Surface: pyscn quality scan
+Invocation: uv tool run pyscn analyze
+Started: 2026-07-09T01:52:48+02:00
+Error: requires at least 1 arg(s), only received 0
+Usage:
+  pyscn analyze [files...] [flags]
+
+Flags:
+      --clone-threshold float   Minimum similarity for clone detection (0.0-1.0) (default 0.65)
+  -c, --config string           Configuration file path
+      --csv                     Generate CSV report file
+  -h, --help                    help for analyze
+      --html                    Generate HTML report file
+      --json                    Generate JSON report file
+      --min-cbo int             Minimum CBO to report
+      --min-complexity int      Minimum complexity to report (default 5)
+      --min-severity string     Minimum dead code severity (critical, warning, info) (default "warning")
+      --no-open                 Don't auto-open HTML in browser
+      --select strings          Only run specified analyses (complexity,deadcode,clones,cbo,lcom,deps,communities)
+      --skip-cbo                Skip class coupling (CBO) analysis
+      --skip-clones             Skip clone detection
+      --skip-communities        Skip module community detection
+      --skip-complexity         Skip complexity analysis
+      --skip-deadcode           Skip dead code detection
+      --skip-deps               Skip module dependencies and architecture analysis
+      --skip-lcom               Skip class cohesion (LCOM4) analysis
+      --yaml                    Generate YAML report file
+
+Global Flags:
+  -v, --verbose   Enable verbose output
+
+Exit: 1
+Finished: 2026-07-09T01:52:48+02:00

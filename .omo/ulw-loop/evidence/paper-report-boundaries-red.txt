@@ -1,0 +1,80 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+______________ test_daily_report_ignores_boolean_execution_depth _______________
+
+    def test_daily_report_ignores_boolean_execution_depth() -> None:
+        report = PaperReportService().build_daily_report(
+            report_date=date(2026, 6, 22),
+            starting_equity=1000.0,
+            ending_equity=1000.0,
+            total_signals=2,
+            paper_orders=2,
+            paper_fills=0,
+            rejected_paper_orders=0,
+            open_positions=0,
+            results=[],
+            paper_order_payloads=[
+                {
+                    "paper_order_id": "bool-depth",
+                    "status": "FILLED",
+                    "metrics": {"paper_available_depth_usdc": True},
+                },
+                {
+                    "paper_order_id": "numeric-depth",
+                    "status": "FILLED",
+                    "metrics": {"paper_available_depth_usdc": 7.0},
+                },
+            ],
+        )
+    
+>       assert report.average_executable_depth_usdc == 7.0
+E       AssertionError: assert 4.0 == 7.0
+E        +  where 4.0 = DailyReport(schema_version=1, report_id='dr_20260709103121563726_28b3537a', report_date=datetime.date(2026, 6, 22), st..., calibration_breakdown={}, created_at=datetime.datetime(2026, 7, 9, 10, 31, 21, 563812, tzinfo=datetime.timezone.utc)).average_executable_depth_usdc
+
+tests/test_paper_report_boundaries.py:33: AssertionError
+______________ test_daily_report_handles_non_string_reject_reason ______________
+
+    def test_daily_report_handles_non_string_reject_reason() -> None:
+>       report = PaperReportService().build_daily_report(
+            report_date=date(2026, 6, 22),
+            starting_equity=1000.0,
+            ending_equity=1000.0,
+            total_signals=1,
+            paper_orders=1,
+            paper_fills=0,
+            rejected_paper_orders=1,
+            open_positions=0,
+            results=[],
+            paper_order_payloads=[
+                {
+                    "paper_order_id": "bad-reason",
+                    "status": "REJECTED",
+                    "metrics": {
+                        "paper_normalized_reason": True,
+                        "paper_original_reason": True,
+                    },
+                },
+            ],
+        )
+
+tests/test_paper_report_boundaries.py:37: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/polysignal_lab/paper/report.py:75: in build_daily_report
+    execution_aggregates = self._paper_execution_aggregates(
+src/polysignal_lab/paper/report.py:169: in _paper_execution_aggregates
+    normalized = normalize_paper_reject_reason(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+reason = True
+
+    def normalize_paper_reject_reason(reason: PaperRejectReason) -> str:
+        if reason is None or reason == "":
+            return PAPER_FILL_REJECTED
+>       if reason.startswith("PAPER_"):
+           ^^^^^^^^^^^^^^^^^
+E       AttributeError: 'bool' object has no attribute 'startswith'
+
+src/polysignal_lab/paper/report_rejections.py:45: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_paper_report_boundaries.py::test_daily_report_ignores_boolean_execution_depth
+FAILED tests/test_paper_report_boundaries.py::test_daily_report_handles_non_string_reject_reason

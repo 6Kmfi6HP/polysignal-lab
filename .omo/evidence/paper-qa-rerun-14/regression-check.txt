@@ -1,0 +1,45 @@
+surface: CLI evidence audit
+exact invocation: cat focused/full/restore pytest evidence files and assert passing summaries
+
+===== .omo/ulw-loop/evidence/paper-post-split-focused-pytest.txt =====
+.........                                                                [100%]
+
+===== .omo/ulw-loop/evidence/paper-storage-restore-pytest.txt =====
+................                                                         [100%]
+
+===== .omo/ulw-loop/evidence/paper-post-r10-focused-rerun.txt =====
+.........................................................                [100%]
+=============================== warnings summary ===============================
+tests/test_scheduler_cancelled_markets.py::test_cancelled_gamma_refresh_reaches_registry_and_storage
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+tests/test_scheduler_cancelled_markets.py::test_cancelled_gamma_refresh_reaches_registry_and_storage
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+===== .omo/ulw-loop/evidence/paper-post-r10-full-pytest-rerun.txt =====
+........................................................................ [ 10%]
+........................................................................ [ 20%]
+........................................................................ [ 31%]
+........................................................................ [ 41%]
+........................................................................ [ 51%]
+........................................................................ [ 62%]
+........................................................................ [ 72%]
+........................................................................ [ 83%]
+........................................................................ [ 93%]
+.............................................                            [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+observable: PASS iff evidence includes `[100%]` completion/pass markers and no structural pytest failure sections.

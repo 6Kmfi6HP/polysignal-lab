@@ -6,12 +6,6 @@ Pos: Test Layer - Unit/Integration tests
 🔄 Self-reference: When this file changes, update this header
 """
 
-
-
-
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,16 +15,13 @@ from typing import Final
 from polysignal_lab.domain.enums import (
     ExitMode,
     MarketStatus,
-    OrderStatus,
     PositionStatus,
     Side,
     TradeResultStatus,
 )
 from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.domain.orderbook import BookLevel, OrderBook
-from polysignal_lab.domain.paper_order import PaperFill, PaperOrder
-from polysignal_lab.domain.paper_position import PaperPosition
-from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult, PaperWalletSnapshot
+from polysignal_lab.domain.paper_result import DailyReport, PaperWalletSnapshot
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
 from polysignal_lab.domain.spot import SpotPrice
@@ -61,10 +52,10 @@ class SpotFactoryConfig:
 @dataclass(frozen=True, slots=True)
 class StorageLifecycle:
     rejected: RejectedSignal
-    order: PaperOrder
-    fill: PaperFill
-    position: PaperPosition
-    result: PaperTradeResult
+    order: dict[str, object]
+    fill: dict[str, object]
+    position: dict[str, object]
+    result: dict[str, object]
     wallet: PaperWalletSnapshot
     report: DailyReport
     publish: dict[str, str | None]
@@ -180,72 +171,80 @@ def sample_snapshot(
 def sample_storage_lifecycle(signal: SignalCandidate) -> StorageLifecycle:
     now = utc_now()
     rejected = RejectedSignal(candidate=signal, gate_name="gate", reason_code="wide_spread")
-    order = PaperOrder(
-        paper_order_id="po-1",
-        signal_id=signal.signal_id,
-        asset=signal.asset,
-        timeframe=signal.timeframe,
-        strategy=signal.strategy,
-        market_id=signal.market_id,
-        market_slug=signal.market_slug,
-        token_id=signal.token_id,
-        side=signal.side,
-        limit_price=0.83,
-        reference_price=0.82,
-        stake_usdc=10.0,
-        status=OrderStatus.FILLED,
-    )
-    fill = PaperFill(
-        paper_fill_id="pf-1",
-        paper_order_id=order.paper_order_id,
-        signal_id=signal.signal_id,
-        token_id=signal.token_id,
-        side=signal.side,
-        raw_best_ask=0.82,
-        slippage_bps=10.0,
-        fill_price=0.821,
-        stake_usdc=10.0,
-        shares=12.18,
-        depth_checked=True,
-    )
-    position = PaperPosition(
-        paper_position_id="pp-1",
-        signal_id=signal.signal_id,
-        paper_order_id=order.paper_order_id,
-        paper_fill_id=fill.paper_fill_id,
-        strategy=signal.strategy,
-        asset=signal.asset,
-        timeframe=signal.timeframe,
-        market_id=signal.market_id,
-        market_slug=signal.market_slug,
-        token_id=signal.token_id,
-        side=signal.side,
-        entry_price=fill.fill_price,
-        shares=fill.shares,
-        stake_usdc=fill.stake_usdc,
-        status=PositionStatus.OPEN,
-    )
-    result = PaperTradeResult(
-        paper_trade_id="pt-1",
-        signal_id=signal.signal_id,
-        paper_position_id=position.paper_position_id,
-        strategy=signal.strategy,
-        asset=signal.asset,
-        timeframe=signal.timeframe,
-        market_id=signal.market_id,
-        market_slug=signal.market_slug,
-        side=signal.side,
-        entry_price=fill.fill_price,
-        shares=fill.shares,
-        stake_usdc=fill.stake_usdc,
-        exit_mode=ExitMode.TAKE_PROFIT,
-        outcome_value=1.0,
-        settlement_value=12.8,
-        pnl_usdc=2.8,
-        roi=0.28,
-        result=TradeResultStatus.WIN,
-        opened_at=now,
-    )
+    order = {
+        "paper_order_id": "po-1",
+        "signal_id": signal.signal_id,
+        "created_at": now.isoformat(),
+        "asset": signal.asset,
+        "timeframe": signal.timeframe,
+        "strategy": signal.strategy,
+        "market_id": signal.market_id,
+        "market_slug": signal.market_slug,
+        "token_id": signal.token_id,
+        "side": signal.side.value,
+        "order_type": "SIMULATED_MARKETABLE_LIMIT",
+        "order_intent": None,
+        "limit_price": 0.83,
+        "reference_price": 0.82,
+        "stake_usdc": 10.0,
+        "status": "FILLED",
+    }
+    fill = {
+        "paper_fill_id": "pf-1",
+        "paper_order_id": order["paper_order_id"],
+        "signal_id": signal.signal_id,
+        "created_at": now.isoformat(),
+        "token_id": signal.token_id,
+        "side": signal.side.value,
+        "raw_best_ask": 0.82,
+        "slippage_bps": 10.0,
+        "fill_price": 0.821,
+        "stake_usdc": 10.0,
+        "shares": 12.18,
+        "depth_checked": True,
+    }
+    position = {
+        "paper_position_id": "pp-1",
+        "position_id": "pp-1",
+        "signal_id": signal.signal_id,
+        "paper_order_id": order["paper_order_id"],
+        "paper_fill_id": fill["paper_fill_id"],
+        "strategy": signal.strategy,
+        "asset": signal.asset,
+        "timeframe": signal.timeframe,
+        "market_id": signal.market_id,
+        "market_slug": signal.market_slug,
+        "token_id": signal.token_id,
+        "side": signal.side.value,
+        "entry_price": fill["fill_price"],
+        "shares": fill["shares"],
+        "stake_usdc": fill["stake_usdc"],
+        "opened_at": now.isoformat(),
+        "status": PositionStatus.OPEN.value,
+        "is_closed": False,
+    }
+    result = {
+        "paper_trade_id": "pt-1",
+        "signal_id": signal.signal_id,
+        "paper_position_id": str(position["paper_position_id"]),
+        "strategy": signal.strategy,
+        "asset": signal.asset,
+        "timeframe": signal.timeframe,
+        "market_id": signal.market_id,
+        "market_slug": signal.market_slug,
+        "side": signal.side.value,
+        "entry_price": float(fill["fill_price"]),
+        "shares": float(fill["shares"]),
+        "stake_usdc": float(fill["stake_usdc"]),
+        "exit_mode": ExitMode.TAKE_PROFIT.value,
+        "outcome_value": 1.0,
+        "settlement_value": 12.8,
+        "pnl_usdc": 2.8,
+        "roi": 0.28,
+        "result": TradeResultStatus.WIN.value,
+        "opened_at": now.isoformat(),
+        "closed_at": now.isoformat(),
+    }
     wallet = PaperWalletSnapshot(
         starting_balance=1000.0,
         cash_balance=990.0,
@@ -300,3 +299,33 @@ def sample_storage_lifecycle(signal: SignalCandidate) -> StorageLifecycle:
         publish=publish,
         event=event,
     )
+
+
+def sample_paper_trade_result(**overrides: object) -> dict[str, object]:
+    now = utc_now()
+    base: dict[str, object] = {
+        "schema_version": 1,
+        "paper_trade_id": "pt-test",
+        "signal_id": "sig-test",
+        "paper_position_id": "pos-test",
+        "strategy": "ptb_diff",
+        "asset": "BTC",
+        "timeframe": "5m",
+        "market_id": "market-test",
+        "market_slug": "btc-updown-5m-test",
+        "side": Side.UP.value,
+        "entry_price": 0.50,
+        "shares": 20.0,
+        "stake_usdc": 10.0,
+        "exit_mode": ExitMode.RESOLUTION.value,
+        "outcome_value": 1.0,
+        "settlement_value": 20.0,
+        "pnl_usdc": 10.0,
+        "roi": 1.0,
+        "result": TradeResultStatus.WIN.value,
+        "opened_at": now.isoformat(),
+        "closed_at": now.isoformat(),
+        "details": {},
+    }
+    base.update(overrides)
+    return base

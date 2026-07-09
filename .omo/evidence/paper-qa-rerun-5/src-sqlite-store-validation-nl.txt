@@ -1,0 +1,166 @@
+     1	# noqa: SIZE_OK  — legacy SQLite gateway; current change only adds fail-closed parsing
+     2	"""
+     3	Input: __future__, __future__.annotations, json, datetime, datetime.datetime, sqlite3, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, math
+     4	Output: DuplicateRecordError, SQLiteStore
+     5	Pos: Application code
+     6	
+     7	🔄 Self-reference: When this file changes, update this header
+     8	"""
+     9	
+    10	
+    11	
+    12	
+    13	
+    14	
+    15	
+    16	from __future__ import annotations
+    17	
+    18	import json
+    19	from datetime import datetime
+    20	import math
+    21	import sqlite3
+    22	from dataclasses import dataclass
+    23	from collections.abc import Mapping
+    24	from pathlib import Path
+    25	from threading import Lock
+    26	from typing import Any, Iterable
+    27	
+    28	from polysignal_lab.domain.anchor_price import AnchorPrice
+    29	from polysignal_lab.domain.enums import PositionStatus, Side
+    30	from polysignal_lab.domain.paper_result import (
+    31	    InvalidPaperTradeResultRow,
+    32	    parse_paper_trade_result_row,
+    33	)
+    34	from polysignal_lab.storage.sqlite_schema import (
+    35	    ALLOWED_TABLES,
+    36	    COUNT_TABLES,
+    37	    INDEX_DDL_STATEMENTS,
+    38	    TABLE_DDL_STATEMENTS,
+    39	    validate_sqlite_schema,
+    40	)
+    41	from polysignal_lab.utils import stable_hash, to_jsonable, utc_iso
+    42	
+    43	
+    44	@dataclass(frozen=True, slots=True)
+    45	class DuplicateRecordError(RuntimeError):
+    46	    table: str
+    47	    key: str
+    48	    record_id: str
+    49	
+    50	    def __str__(self) -> str:
+    51	        return f"duplicate {self.table}.{self.key}={self.record_id} has a different payload"
+    52	
+    53	
+    54	@dataclass(frozen=True, slots=True)
+    55	class UnknownSQLiteTableError(RuntimeError):
+    56	    table: str
+    57	
+    58	    def __str__(self) -> str:
+    59	        return f"Unknown table: {self.table}"
+    60	
+    61	
+    62	def _valid_position_event(row: Mapping[str, Any]) -> bool:
+    63	    position_id = str(row.get("paper_position_id") or row.get("position_id") or "")
+    64	    if not position_id:
+    65	        return False
+    66	    status = str(row.get("status") or "").upper()
+    67	    if status not in {"", PositionStatus.OPEN.value, PositionStatus.CLOSED.value}:
+    68	        return False
+    69	    if status == "" and not isinstance(row.get("is_closed"), bool):
+    70	        return False
+    71	    is_open = status == PositionStatus.OPEN.value or (
+    72	        status == "" and row.get("is_closed") is False
+    73	    )
+    74	    side = str(row.get("side") or "").upper()
+    75	    if is_open and side not in {Side.UP.value, Side.DOWN.value}:
+    76	        return False
+    77	    if is_open and (
+    78	        _row_finite_float(row, "shares", "quantity", "signed_qty") is None
+    79	        or _row_finite_float(row, "entry_price", "avg_entry_price") is None
+    80	        or _row_finite_float(row, "stake_usdc") is None
+    81	        or _row_timestamp(row, "opened_at", "ts", "created_at") is None
+    82	    ):
+    83	        return False
+    84	    for key in ("shares", "quantity", "signed_qty", "entry_price", "avg_entry_price", "stake_usdc"):
+    85	        value = row.get(key)
+    86	        if value in (None, ""):
+    87	            continue
+    88	        parsed = _row_finite_float(row, key)
+    89	        if parsed is None or parsed < 0.0:
+    90	            return False
+    91	    return True
+    92	
+    93	
+    94	def _row_finite_float(row: Mapping[str, Any], *keys: str) -> float | None:
+    95	    for key in keys:
+    96	        value = row.get(key)
+    97	        if value in (None, ""):
+    98	            continue
+    99	        if not isinstance(value, (int, float, str)):
+   100	            return None
+   101	        try:
+   102	            parsed = float(value)
+   103	        except ValueError:
+   104	            return None
+   105	        return parsed if math.isfinite(parsed) else None
+   106	    return None
+   107	
+   108	
+   109	def _row_timestamp(row: Mapping[str, Any], *keys: str) -> datetime | None:
+   110	    for key in keys:
+   111	        value = row.get(key)
+   112	        if value in (None, ""):
+   113	            continue
+   114	        if isinstance(value, datetime):
+   115	            return value
+   116	        if isinstance(value, str):
+   117	            try:
+   118	                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+   119	            except ValueError:
+   120	                return None
+   400	    def restore_latest_wallet_snapshot(self) -> dict[str, Any] | None:
+   401	        sql, params = self._build_query(
+   402	            "paper_wallet_snapshots",
+   403	            order_by="created_at DESC, id DESC",
+   404	            limit=1,
+   405	        )
+   406	        with self._lock:
+   407	            row = self._conn.execute(sql, params).fetchone()
+   408	        return json.loads(row["payload_json"]) if row else None
+   409	
+   410	    def _latest_position_events(self) -> dict[str, dict[str, Any]]:
+   411	        rows = self.query_json(
+   412	            "system_events",
+   413	            where="WHERE event_type=? ORDER BY created_at ASC, rowid ASC",
+   414	            params=("nautilus_position",),
+   415	            limit=100_000,
+   416	        )
+   417	        latest: dict[str, dict[str, Any]] = {}
+   418	        for row in rows:
+   419	            position_id = str(row.get("paper_position_id") or row.get("position_id") or "")
+   420	            if position_id:
+   421	                latest[position_id] = row
+   422	        return {position_id: row for position_id, row in latest.items() if _valid_position_event(row)}
+   423	
+   424	    def restore_open_positions(self) -> list[dict[str, Any]]:
+   425	        open_status = PositionStatus.OPEN.value
+   426	        return [
+   427	            row
+   428	            for row in self._latest_position_events().values()
+   429	            if str(row.get("status", "")).upper() == open_status
+   430	            or (row.get("status") in (None, "") and row.get("is_closed") is False)
+   431	        ]
+   432	
+   433	    def restore_closed_positions(self) -> list[dict[str, Any]]:
+   434	        closed_status = PositionStatus.CLOSED.value
+   435	        return [
+   436	            row
+   437	            for row in self._latest_position_events().values()
+   438	            if str(row.get("status", "")).upper() == closed_status
+   439	            or row.get("is_closed") is True
+   440	        ]
+   441	
+   442	    def restore_daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
+   443	        return self.query_json(
+   444	            "daily_reports",
+   445	            where="ORDER BY report_date DESC, created_at DESC",

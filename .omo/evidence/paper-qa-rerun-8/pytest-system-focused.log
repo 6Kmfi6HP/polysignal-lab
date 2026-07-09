@@ -1,0 +1,9 @@
+surface=S2 system python pytest same selection
+exact invocation: python -m pytest tests/test_paper_calibration.py tests/test_scheduler_cancelled_markets.py tests/test_nautilus_projections.py tests/test_scheduler_settlement_resolution.py tests/test_settlement.py tests/test_storage_restore.py
+python: /usr/bin/python
+Python 3.11.2
+
+................................................                         [100%]
+48 passed in 0.70s
+
+exit_status=0

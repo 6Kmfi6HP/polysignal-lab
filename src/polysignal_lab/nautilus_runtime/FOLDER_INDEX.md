@@ -23,7 +23,6 @@
 - `native_order.py` - Exports submit_approved_decision and 2 more
 - `market_rotation.py` - Exports _MarketUniverse and 2 more
 - `live_node.py` - Exports assert_no_live_polymarket_execution and 7 more
-- `instrument_mapping.py` - Exports polymarket_instrument_id
 - `group_views.py` - Exports MarketGroupViewAssembler
 - `decision_policy_actor.py` - Exports NautilusDecisionPolicyActor
 - `decision_policy.py` - Exports ApprovedDecision and 6 more

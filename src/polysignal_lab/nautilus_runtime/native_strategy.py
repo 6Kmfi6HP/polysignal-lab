@@ -8,14 +8,11 @@ Pos: Application code
 
 
 
-
-
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-import sqlite3
 from typing import cast
 
 from nautilus_trader.config import StrategyConfig
@@ -27,9 +24,7 @@ from polysignal_lab.alpha.types import (
     AlphaFillEvent,
     AlphaOrderEvent,
     MarketView,
-    NautilusOrderSpec,
 )
-from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_bridge.market_catalog import (
     MarketCatalog,
@@ -58,12 +53,40 @@ from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
 )
 from polysignal_lab.nautilus_runtime.strategy.event_projection import (
     ApprovedSignalMetricsTracker,
-    project_fill_event,
-    project_nautilus_fill_event,
-    project_nautilus_order_event,
-    project_order_event,
 )
-from polysignal_lab.nautilus_runtime.strategy.subscriptions import MarketSubscriptionState
+from polysignal_lab.nautilus_runtime.strategy.observability_hooks import (
+    notify_accepted_signal as _notify_accepted_signal_hook,
+    record_decision as _record_decision_hook,
+    record_nautilus_fill as _record_nautilus_fill_hook,
+    record_nautilus_order as _record_nautilus_order_hook,
+    record_nautilus_position as _record_nautilus_position_hook,
+    record_observability as _record_observability_hook,
+    record_rejected as _record_rejected_hook,
+    record_signal as _record_signal_hook,
+)
+from polysignal_lab.nautilus_runtime.strategy.order_events import (
+    call_core as _call_core_hook,
+    forget_approved_metrics as _forget_approved_metrics_hook,
+    handle_order_filled as _handle_order_filled,
+    handle_order_lifecycle_event as _handle_order_lifecycle_event,
+    handle_position_event as _handle_position_event,
+    project_strategy_fill_event as _project_strategy_fill_event,
+    project_strategy_order_event as _project_strategy_order_event,
+    should_notify_fill as _should_notify_fill_hook,
+)
+from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    InstrumentSubscriptionManager,
+    MarketSubscriptionState,
+    call_subscription as _call_subscription_fn,
+    clear_condition_subscription_state as _clear_condition_subscription_state_fn,
+    condition_instruments as _condition_instruments_fn,
+    refresh_asset_conditions as _refresh_asset_conditions_fn,
+    retry_market_instrument_requests as _retry_market_instrument_requests_fn,
+    subscribe_market_conditions as _subscribe_market_conditions_fn,
+    subscribe_market_instrument as _subscribe_market_instrument_fn,
+    unsubscribe_market_conditions as _unsubscribe_market_conditions_fn,
+    unsubscribe_market_instrument as _unsubscribe_market_instrument_fn,
+)
 from polysignal_lab.nautilus_runtime.strategy.helpers import (
     DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
     DEFAULT_NATIVE_DATA_NAMES,
@@ -77,24 +100,11 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _condition_id_from_catalog_instrument,
     _identifier_text,
     _identity_instrument_id,
-    _instrument_ids,
     _market_view_ready,
-    _nautilus_book_type,
     _nautilus_instrument_id,
     _subscribe_custom_data,
     classify_project_owned_data,
 )
-
-
-class _InstrumentSubscriptionManager:
-    def __init__(self, strategy: "PolySignalNativeStrategy") -> None:
-        self._strategy = strategy
-
-    def retry_instrument_requests(self, condition_ids: tuple[str, ...]) -> None:
-        self._strategy._retry_market_instrument_requests(
-            condition_ids,
-            retry_after=timedelta(seconds=10),
-        )
 
 
 class PolySignalNativeStrategy(Strategy):
@@ -193,7 +203,7 @@ class PolySignalNativeStrategy(Strategy):
             record_rejected_fn=self._record_rejected,
             note_progress_fn=self._note_runtime_progress,
         )
-        self._subscription_manager = _InstrumentSubscriptionManager(self)
+        self._subscription_manager = InstrumentSubscriptionManager(self)
         self.rejected_decisions = self._pipeline_state.rejected_decisions
         self.submitted_orders = self._pipeline_state.submitted_orders
 
@@ -349,79 +359,37 @@ class PolySignalNativeStrategy(Strategy):
         self.evaluate_condition(condition_id)
 
     def on_order_submitted(self, event: object) -> None:
-        self._note_runtime_progress("order_event")
-        alpha_event = self._order_event(event)
-        self._record_nautilus_order(event, alpha_event.metrics)
-        self._call_core("on_order_submitted", alpha_event)
+        _handle_order_lifecycle_event(self, "on_order_submitted", event)
 
     def on_order_accepted(self, event: object) -> None:
-        self._note_runtime_progress("order_event")
-        alpha_event = self._order_event(event)
-        self._record_nautilus_order(event, alpha_event.metrics)
-        self._call_core("on_order_accepted", alpha_event)
+        _handle_order_lifecycle_event(self, "on_order_accepted", event)
 
     def on_order_rejected(self, event: object) -> None:
-        self._note_runtime_progress("order_event")
-        alpha_event = self._order_event(event)
-        self._record_nautilus_order(event, alpha_event.metrics)
-        self._call_core("on_order_rejected", alpha_event)
-        self._forget_approved_metrics(
-            event,
-            cast(AlphaOrderEvent, cast(object, alpha_event)),
+        _handle_order_lifecycle_event(
+            self, "on_order_rejected", event, forget_metrics=True
         )
 
     def on_order_canceled(self, event: object) -> None:
-        self._note_runtime_progress("order_event")
-        alpha_event = self._order_event(event)
-        self._record_nautilus_order(event, alpha_event.metrics)
-        self._call_core("on_order_canceled", alpha_event)
-        self._forget_approved_metrics(
-            event,
-            cast(AlphaOrderEvent, cast(object, alpha_event)),
+        _handle_order_lifecycle_event(
+            self, "on_order_canceled", event, forget_metrics=True
         )
 
     def on_order_expired(self, event: object) -> None:
-        self._note_runtime_progress("order_event")
-        alpha_event = self._order_event(event)
-        self._record_nautilus_order(event, alpha_event.metrics)
-        self._call_core("on_order_expired", alpha_event)
-        self._forget_approved_metrics(
-            event,
-            cast(AlphaOrderEvent, cast(object, alpha_event)),
+        _handle_order_lifecycle_event(
+            self, "on_order_expired", event, forget_metrics=True
         )
 
     def on_order_filled(self, event: object) -> None:
-        self._note_runtime_progress("order_event")
-        alpha_event = self._fill_event(event)
-        should_notify = self._should_notify_fill(alpha_event)
-        if should_notify:
-            notify = getattr(self.core, "on_notify_fill", None)
-            if callable(notify):
-                _ = notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
-        self._record_nautilus_fill(event, alpha_event.metrics)
-        self._forget_approved_metrics(
-            event,
-            cast(AlphaOrderEvent, cast(object, alpha_event)),
-        )
-        handler = getattr(self.core, "on_order_filled", None)
-        decisions = handler(alpha_event) if callable(handler) else ()
-        if isinstance(decisions, Iterable) and not isinstance(decisions, (str, bytes)):
-            for decision in cast(Iterable[AlphaDecision], decisions):
-                if decision.condition_id not in self._active_condition_ids:
-                    continue
-                view = self._require_assembler().build(decision.condition_id)
-                if view is None:
-                    continue
-                self._handle_decision(decision, cast(MarketView, view))
+        _handle_order_filled(self, event)
 
     def on_position_opened(self, position: object) -> None:
-        self._record_nautilus_position(position)
+        _handle_position_event(self, position)
 
     def on_position_changed(self, position: object) -> None:
-        self._record_nautilus_position(position)
+        _handle_position_event(self, position)
 
     def on_position_closed(self, position: object) -> None:
-        self._record_nautilus_position(position)
+        _handle_position_event(self, position)
 
     def evaluate_condition(self, condition_id: str) -> None:
         if condition_id not in self._active_condition_ids:
@@ -489,111 +457,50 @@ class PolySignalNativeStrategy(Strategy):
         return None
 
     def _call_core(self, method_name: str, event: AlphaOrderEvent) -> None:
-        handler = getattr(self.core, method_name, None)
-        if callable(handler):
-            _ = handler(event)
+        _call_core_hook(self, method_name, event)
 
     def _record_signal(self, signal: SignalCandidate) -> None:
-        recorder = (
-            None
-            if self.observability is None
-            else getattr(self.observability, "record_signal", None)
-        )
-        if callable(recorder):
-            _ = recorder(signal)
+        _record_signal_hook(self, signal)
 
     def _notify_accepted_signal(self, signal: SignalCandidate) -> None:
-        notifier = (
-            None
-            if self.observability is None
-            else getattr(self.observability, "notify_accepted_signal", None)
-        )
-        if callable(notifier):
-            _ = notifier(signal, self.fixed_stake_usdc)
-
+        _notify_accepted_signal_hook(self, signal)
 
     def _record_decision(self, decision: AlphaDecision, *, accepted: bool) -> None:
-        if self.observability is None:
-            return
-        try:
-            self.observability.record_decision(decision, accepted)
-        except (OSError, sqlite3.Error):
-            self._note_runtime_progress("telemetry_side_effect_failed")
+        _record_decision_hook(self, decision, accepted=accepted)
 
     def _record_rejected(self, rejected: object) -> None:
-        if self.observability is None:
-            return
-        self.observability.record_rejected_decision(rejected)
+        _record_rejected_hook(self, rejected)
 
     def _record_nautilus_order(
         self, event: object, metrics: Mapping[str, object]
     ) -> None:
-        self._record_observability(
-            lambda obs: obs.record_nautilus_order_event(
-                project_nautilus_order_event(event, metrics)
-            )
-        )
+        _record_nautilus_order_hook(self, event, metrics)
 
     def _record_observability(self, action: Callable[[_Observability], None]) -> None:
-        observability = self.observability
-        if observability is None:
-            return
-        try:
-            action(observability)
-        except (OSError, sqlite3.Error):
-            self._note_runtime_progress("telemetry_side_effect_failed")
+        _record_observability_hook(self, action)
 
     def _record_nautilus_fill(
         self, event: object, metrics: Mapping[str, object]
     ) -> None:
-        self._record_observability(
-            lambda obs: obs.record_nautilus_fill_event(
-                project_nautilus_fill_event(event, metrics)
-            )
-        )
+        _record_nautilus_fill_hook(self, event, metrics)
 
     def _record_nautilus_position(self, position: object) -> None:
-        self._record_observability(
-            lambda obs: obs.record_nautilus_position(position)
-        )
+        _record_nautilus_position_hook(self, position)
 
     def _order_event(self, event: object) -> AlphaOrderEvent:
-        return project_order_event(
-            event,
-            registry=self.registry,
-            strategy_name=self.strategy_name,
-            metrics_lookup=self._metrics_tracker.metrics_for_event,
-        )
+        return _project_strategy_order_event(self, event)
 
     def _fill_event(self, event: object) -> AlphaFillEvent:
-        return project_fill_event(
-            event,
-            registry=self.registry,
-            strategy_name=self.strategy_name,
-            metrics_lookup=self._metrics_tracker.metrics_for_event,
-        )
+        return _project_strategy_fill_event(self, event)
 
     def _should_notify_fill(self, event: AlphaFillEvent) -> bool:
-        if self.strategy_name != "vwap_momentum":
-            return True
-        intent = event.metrics.get("order_intent")
-        if isinstance(intent, OrderIntent):
-            intent = intent.value
-        return not (
-            bool(event.metrics.get("hedge_leg"))
-            or intent == OrderIntent.PASSIVE_GTD.value
-        )
+        return _should_notify_fill_hook(self, event)
 
     def _forget_approved_metrics(self, event: object, order: AlphaOrderEvent) -> None:
-        self._metrics_tracker.forget(event, order)
+        _forget_approved_metrics_hook(self, event, order)
 
     def _refresh_asset_conditions(self) -> None:
-        tracked_condition_ids = tuple(
-            dict.fromkeys((*self._startup_condition_ids, *self._active_condition_ids))
-        )
-        self._asset_condition_ids = _asset_conditions(
-            self.registry, tracked_condition_ids
-        )
+        _refresh_asset_conditions_fn(self)
 
     def _retry_market_instrument_requests(
         self,
@@ -601,107 +508,27 @@ class PolySignalNativeStrategy(Strategy):
         *,
         retry_after: timedelta | None = None,
     ) -> None:
-        _ = retry_after
-        if self.registry is None:
-            return
-        for instrument_id in _instrument_ids(self.registry, condition_ids):
-            _ = self.request_instrument(instrument_id)
+        _retry_market_instrument_requests_fn(
+            self, condition_ids, retry_after=retry_after
+        )
 
     def _subscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
-        if self.registry is None:
-            return
-        for condition_id in condition_ids:
-            if condition_id not in self._active_condition_ids:
-                continue
-            if condition_id in self._subscription_state.wire_condition_ids:
-                self._subscription_state.pending_metadata_condition_ids.discard(
-                    condition_id
-                )
-                self._subscription_state.pending_subscribe_condition_ids.discard(
-                    condition_id
-                )
-                self._subscription_state.retained_wire_condition_ids.discard(
-                    condition_id
-                )
-                continue
-            instrument_ids = _instrument_ids(self.registry, (condition_id,))
-            if not instrument_ids:
-                self._subscription_state.pending_metadata_condition_ids.add(
-                    condition_id
-                )
-                self._subscription_state.pending_subscribe_condition_ids.discard(
-                    condition_id
-                )
-                continue
-            self._subscription_state.pending_metadata_condition_ids.discard(
-                condition_id
-            )
-            subscribed = True
-            for instrument_id in self._condition_instruments(condition_id):
-                if not self._subscribe_market_instrument(instrument_id):
-                    subscribed = False
-            if subscribed:
-                self._subscription_state.pending_subscribe_condition_ids.discard(
-                    condition_id
-                )
-                self._subscription_state.retained_wire_condition_ids.discard(
-                    condition_id
-                )
-                self._subscription_state.wire_condition_ids.add(condition_id)
-            else:
-                self._subscription_state.pending_subscribe_condition_ids.add(
-                    condition_id
-                )
+        _subscribe_market_conditions_fn(self, condition_ids)
 
     def _subscribe_market_instrument(self, instrument_id: object) -> bool:
-        instrument_id = _nautilus_instrument_id(instrument_id)
-        book_type = _nautilus_book_type(self.book_type)
-        subscribed = self._call_subscription(self.subscribe_quote_ticks, instrument_id)
-        if not self._call_subscription(self.subscribe_trade_ticks, instrument_id):
-            subscribed = False
-        if not self._call_subscription(
-            self.subscribe_order_book_deltas,
-            instrument_id,
-            book_type=book_type,
-        ):
-            subscribed = False
-        if self.book_type == "L1_MBP" and not self._call_subscription(
-            self.request_order_book_snapshot, instrument_id
-        ):
-            subscribed = False
-        return subscribed
+        return _subscribe_market_instrument_fn(self, instrument_id)
 
     def _unsubscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
-        if self.registry is None:
-            return
-        for condition_id in condition_ids:
-            for instrument_id in self._condition_instruments(condition_id):
-                _ = self._unsubscribe_market_instrument(instrument_id)
-            self._clear_condition_subscription_state(condition_id)
+        _unsubscribe_market_conditions_fn(self, condition_ids)
 
     def _condition_instruments(self, condition_id: str) -> tuple[object, ...]:
-        if self.registry is None:
-            return ()
-        return _instrument_ids(self.registry, (condition_id,))
+        return _condition_instruments_fn(self, condition_id)
 
     def _clear_condition_subscription_state(self, condition_id: str) -> None:
-        self._subscription_state.wire_condition_ids.discard(condition_id)
-        self._subscription_state.retained_wire_condition_ids.discard(condition_id)
-        self._subscription_state.pending_subscribe_condition_ids.discard(condition_id)
-        self._subscription_state.pending_metadata_condition_ids.discard(condition_id)
+        _clear_condition_subscription_state_fn(self, condition_id)
 
     def _unsubscribe_market_instrument(self, instrument_id: object) -> bool:
-        instrument_id = _nautilus_instrument_id(instrument_id)
-        unsubscribed = self._call_subscription(
-            self.unsubscribe_quote_ticks, instrument_id
-        )
-        if not self._call_subscription(self.unsubscribe_trade_ticks, instrument_id):
-            unsubscribed = False
-        if not self._call_subscription(
-            self.unsubscribe_order_book_deltas, instrument_id
-        ):
-            unsubscribed = False
-        return unsubscribed
+        return _unsubscribe_market_instrument_fn(self, instrument_id)
 
     def _call_subscription(
         self,
@@ -709,16 +536,7 @@ class PolySignalNativeStrategy(Strategy):
         *args: object,
         **kwargs: object,
     ) -> bool:
-        try:
-            _ = callback(*args, **kwargs)
-        except ValueError as e:
-            message = str(e)
-            if "not been registered" not in message:
-                raise
-            if message == "The actor has not been registered":
-                return True
-            return False
-        return True
+        return _call_subscription_fn(self, callback, *args, **kwargs)
 
     def subscribe_data(self, data_type: object) -> None:
         super().subscribe_data(data_type)

@@ -1,0 +1,9 @@
+SURFACE: direct Python storage/domain probes
+INVOCATION: python - <<'PY' [inline probe for settlement_missing_stake, malformed system_events/latest_health/daily_reports, idempotent existing malformed typed error]
+settlement_missing_stake=None
+system_events_query=[]
+latest_health=None
+daily_reports=[]
+idempotent_existing_malformed=typed:MalformedSQLitePayloadError
+DIRECT_PROBES=PASS
+EXIT_CODE=0

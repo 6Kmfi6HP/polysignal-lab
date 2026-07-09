@@ -1,0 +1,68 @@
+tests/test_function_size_boundaries.py:26:        "build_live_node": 55,
+src/polysignal_lab/nautilus_runtime/node_builder.py:3:Output: build_nautilus_runtime_context, build_live_node, build_nautilus_runtime, _TraderLike, _Disposable, _NautilusNodeLike, _NativeStrategyLike, _EmptyBookDataProvider, _StaticMarketUniverse, NautilusRuntimeContext
+src/polysignal_lab/nautilus_runtime/node_builder.py:113:    module_live_node = getattr(mod, "LiveNode", None) if mod is not None else None
+src/polysignal_lab/nautilus_runtime/node_builder.py:118:            PolymarketInstrumentProviderConfig = cast(Callable[..., object], getattr(mod, "PolymarketInstrumentProviderConfig", PolymarketInstrumentProviderConfig))
+src/polysignal_lab/nautilus_runtime/node_builder.py:119:            NautilusActor = cast(type[object] | None, getattr(mod, "NautilusActor", NautilusActor))
+src/polysignal_lab/nautilus_runtime/node_builder.py:120:            NautilusActorConfig = cast(Callable[[], object] | None, getattr(mod, "NautilusActorConfig", NautilusActorConfig))
+src/polysignal_lab/nautilus_runtime/node_builder.py:121:            NautilusStrategy = cast(type[object] | None, getattr(mod, "NautilusStrategy", NautilusStrategy))
+src/polysignal_lab/nautilus_runtime/node_builder.py:122:            NautilusStrategyConfig = cast(Callable[[], object] | None, getattr(mod, "NautilusStrategyConfig", NautilusStrategyConfig))
+src/polysignal_lab/nautilus_runtime/node_builder.py:138:        getattr(provider_mod, "PolymarketInstrumentProviderConfig"),
+src/polysignal_lab/nautilus_runtime/node_builder.py:140:    NautilusActor = cast(type[object], getattr(actor_mod, "Actor"))
+src/polysignal_lab/nautilus_runtime/node_builder.py:141:    NautilusActorConfig = cast(Callable[[], object], getattr(config_mod, "ActorConfig"))
+src/polysignal_lab/nautilus_runtime/node_builder.py:142:    NautilusStrategy = cast(type[object], getattr(strategy_mod, "Strategy"))
+src/polysignal_lab/nautilus_runtime/node_builder.py:143:    NautilusStrategyConfig = cast(Callable[[], object], getattr(config_mod, "StrategyConfig"))
+src/polysignal_lab/nautilus_runtime/node_builder.py:216:def build_live_node(
+tests/test_nautilus_node.py:3:Output: test_live_engine_config_builders_import_configs_from_config_module, test_build_live_node_uses_livenode_builder, test_build_live_node_uses_configured_non_default_trader_id, test_build_live_node_returns_nautilus_runtime_components, test_build_live_node_injects_shared_projections_and_no_manual_sync_components, test_build_live_node_gives_each_strategy_own_custom_data_state, test_build_live_node_uses_static_runtime_classes, test_build_live_node_registers_market_rotation_actor, test_build_live_node_registers_policy_actor_when_runtime_class_exists, test_build_live_node_uses_sandbox_execution_not_matching_client
+tests/test_nautilus_node.py:30:    build_live_node,
+tests/test_nautilus_node.py:221:def test_build_live_node_uses_livenode_builder(monkeypatch) -> None:
+tests/test_nautilus_node.py:224:    runtime = build_live_node(condition_ids=("condition-btc-5m",))
+tests/test_nautilus_node.py:236:def test_build_live_node_uses_configured_non_default_trader_id(monkeypatch) -> None:
+tests/test_nautilus_node.py:241:    runtime = build_live_node(settings=settings, condition_ids=("condition-btc-5m",))
+tests/test_nautilus_node.py:247:def test_build_live_node_returns_nautilus_runtime_components(monkeypatch) -> None:
+tests/test_nautilus_node.py:250:    runtime = build_live_node(condition_ids=("condition-btc-5m",))
+tests/test_nautilus_node.py:260:def test_build_live_node_injects_shared_projections_and_no_manual_sync_components(monkeypatch) -> None:
+tests/test_nautilus_node.py:263:    runtime = build_live_node(condition_ids=("condition-btc-5m",))
+tests/test_nautilus_node.py:277:    assert getattr(first_strategy, "registry") is runtime["registry"]
+tests/test_nautilus_node.py:278:    assert getattr(first_strategy, "assembler").catalog is runtime["registry"]
+tests/test_nautilus_node.py:281:def test_build_live_node_gives_each_strategy_own_custom_data_state(monkeypatch) -> None:
+tests/test_nautilus_node.py:286:    runtime = build_live_node(condition_ids=("condition-btc-5m",))
+tests/test_nautilus_node.py:292:        custom_data = getattr(strategy, "custom_data", None)
+tests/test_nautilus_node.py:293:        strategy_assembler = getattr(strategy, "assembler")
+tests/test_nautilus_node.py:297:        assert getattr(strategy_assembler, "custom_data") is custom_data
+tests/test_nautilus_node.py:299:def test_build_live_node_uses_static_runtime_classes(monkeypatch) -> None:
+tests/test_nautilus_node.py:322:    runtime = build_live_node(condition_ids=("condition-btc-5m",))
+tests/test_nautilus_node.py:330:def test_build_live_node_registers_market_rotation_actor(monkeypatch) -> None:
+tests/test_nautilus_node.py:353:    runtime = build_live_node(
+tests/test_nautilus_node.py:367:def test_build_live_node_registers_policy_actor_when_runtime_class_exists(monkeypatch) -> None:
+tests/test_nautilus_node.py:398:    runtime = build_live_node(condition_ids=("condition-btc-5m",))
+tests/test_nautilus_node.py:407:def test_build_live_node_uses_sandbox_execution_not_matching_client(monkeypatch) -> None:
+tests/test_nautilus_node.py:410:    runtime = build_live_node()
+tests/test_nautilus_node.py:418:def test_build_live_node_strategies_is_list(monkeypatch) -> None:
+tests/test_nautilus_node.py:422:    runtime = build_live_node()
+tests/test_nautilus_node.py:426:def test_build_live_node_forwards_unsubscribe_exited_to_native_strategy(
+tests/test_nautilus_node.py:458:    runtime = build_live_node(
+tests/test_nautilus_node.py:467:    assert getattr(runtime["node"], "trader").strategies == strategies
+tests/test_nautilus_node.py:472:def test_build_live_node_skips_disabled_native_strategies(
+tests/test_nautilus_node.py:502:    runtime = build_live_node(
+tests/test_nautilus_node.py:508:    assert getattr(runtime["node"], "trader").strategies == []
+tests/test_nautilus_node.py:512:def test_build_live_node_passes_l1_snapshot_interval_to_native_strategies(
+tests/test_nautilus_node.py:545:    runtime = build_live_node(
+tests/test_nautilus_node.py:554:    assert getattr(runtime["node"], "trader").strategies == strategies
+tests/test_nautilus_node.py:559:def test_build_live_node_injects_runtime_progress_callback(monkeypatch, tmp_path) -> None:
+tests/test_nautilus_node.py:588:    runtime = build_live_node(settings=settings, condition_ids=("condition-btc-5m",))
+tests/test_nautilus_node.py:702:        "build_live_node",
+tests/test_nautilus_node.py:731:    assert callable(getattr(captured["observability"], "accepted_signal_notifier", None))
+tests/test_nautilus_node.py:734:    assert getattr(bundle.context, "nautilus_cache") is cache_holder
+tests/test_nautilus_node.py:735:    assert getattr(bundle.context, "nautilus_portfolio") is cache_holder
+tests/test_nautilus_node.py:736:    assert getattr(bundle.context, "paper_execution_metadata") == {
+tests/test_nautilus_node.py:988:    assert getattr(ctx, "_nautilus_runtime_owned_by_live_node") is True
+tests/test_nautilus_node.py:1388:        if getattr(fn, "__name__", "") != "run":
+src/polysignal_lab/app/scheduler_reporting.py:176:    nautilus_cache = getattr(scheduler, "nautilus_cache", None)
+src/polysignal_lab/app/scheduler_reporting.py:179:    method = getattr(nautilus_cache, cache_attr, None)
+src/polysignal_lab/app/scheduler_reporting.py:209:    nautilus_cache = getattr(scheduler, "nautilus_cache", None)
+src/polysignal_lab/app/scheduler_reporting.py:212:    return _report_equity_inputs_from_nautilus_cache(
+src/polysignal_lab/app/scheduler_reporting.py:214:        nautilus_portfolio=getattr(scheduler, "nautilus_portfolio", None),
+src/polysignal_lab/app/scheduler_reporting.py:219:def _report_equity_inputs_from_nautilus_cache(
+src/polysignal_lab/app/scheduler_reporting.py:231:    account = nautilus_cache.account()
+src/polysignal_lab/app/scheduler_reporting.py:250:    positions = nautilus_cache.positions()
+src/polysignal_lab/app/scheduler_reporting.py:392:    execution_metadata = getattr(scheduler, "paper_execution_metadata", None)

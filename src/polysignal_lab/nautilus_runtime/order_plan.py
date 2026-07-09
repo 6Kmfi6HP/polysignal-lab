@@ -20,6 +20,7 @@ from typing import SupportsFloat, cast
 from polysignal_lab.alpha.types import AlphaDecision, NautilusOrderSpec, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
 
 
 def build_order_spec(
@@ -147,15 +148,13 @@ def add_time_in_force_tags(
     intent: OrderIntent,
     expiry_seconds: int | None,
 ) -> None:
+    tags["time_in_force"] = PolymarketEnumParser.to_nautilus_time_in_force(intent).name
     if intent == OrderIntent.PASSIVE_GTD:
-        tags["time_in_force"] = "GTD"
         if expiry_seconds is not None:
             tags["expire_seconds"] = str(expiry_seconds)
         return
     if intent == OrderIntent.TAKER_FOK:
-        tags["time_in_force"] = "FOK"
         return
-    tags["time_in_force"] = "IOC"
     tags["fill_policy"] = "FAK" if intent == OrderIntent.TAKER_FAK else "IOC"
     if explicit_order_intent(source) is None:
         tags["paper_safe_default"] = "true"

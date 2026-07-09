@@ -14,10 +14,13 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 from telegram.ext import CallbackQueryHandler, CommandHandler
+
+from factories import sample_paper_trade_result
 
 from polysignal_lab.config import TelegramConfig
 from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry
@@ -350,7 +353,6 @@ from datetime import date, datetime, timezone
 
 from polysignal_lab.domain.enums import PositionStatus, Side
 from polysignal_lab.domain.orderbook import BookLevel, OrderBook
-from polysignal_lab.domain.paper_position import PaperPosition
 from polysignal_lab.domain.paper_result import DailyReport
 
 
@@ -456,24 +458,25 @@ def _formatting_service(
 
 def test_telegram_bot_positions_marks_live_book_when_available() -> None:
     persistence = _FormattingPersistence()
-    position = PaperPosition(
-        signal_id="sig_1",
-        paper_order_id="po_1",
-        paper_fill_id="pf_1",
-        strategy="vwap_momentum",
-        asset="BTC",
-        timeframe="15m",
-        market_id="m_1",
-        market_slug="btc-15m",
-        token_id="token-up",
-        side=Side.UP,
-        entry_price=0.64,
-        shares=500.0,
-        stake_usdc=320.0,
-        opened_at=datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc),
-        status=PositionStatus.OPEN,
-    )
-    persistence.positions = [position.model_dump(mode="json")]
+    position = {
+        "paper_position_id": "pp-1",
+        "signal_id": "sig_1",
+        "paper_order_id": "po_1",
+        "paper_fill_id": "pf_1",
+        "strategy": "vwap_momentum",
+        "asset": "BTC",
+        "timeframe": "15m",
+        "market_id": "m_1",
+        "market_slug": "btc-15m",
+        "token_id": "token-up",
+        "side": Side.UP.value,
+        "entry_price": 0.64,
+        "shares": 500.0,
+        "stake_usdc": 320.0,
+        "opened_at": datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc).isoformat(),
+        "status": PositionStatus.OPEN.value,
+    }
+    persistence.positions = [position]
     service = _formatting_service(persistence)
     service.books.update(
         OrderBook(
@@ -496,29 +499,87 @@ def test_telegram_bot_positions_marks_live_book_when_available() -> None:
 
 def test_telegram_bot_positions_shows_mark_na_without_live_book() -> None:
     persistence = _FormattingPersistence()
-    position = PaperPosition(
-        signal_id="sig_1",
-        paper_order_id="po_1",
-        paper_fill_id="pf_1",
-        strategy="vwap_momentum",
-        asset="BTC",
-        timeframe="15m",
-        market_id="m_1",
-        market_slug="btc-15m",
-        token_id="missing-token",
-        side=Side.UP,
-        entry_price=0.64,
-        shares=500.0,
-        stake_usdc=320.0,
-        status=PositionStatus.OPEN,
-    )
-    persistence.positions = [position.model_dump(mode="json")]
+    position = {
+        "paper_position_id": "pp-2",
+        "signal_id": "sig_1",
+        "paper_order_id": "po_1",
+        "paper_fill_id": "pf_1",
+        "strategy": "vwap_momentum",
+        "asset": "BTC",
+        "timeframe": "15m",
+        "market_id": "m_1",
+        "market_slug": "btc-15m",
+        "token_id": "missing-token",
+        "side": Side.UP.value,
+        "entry_price": 0.64,
+        "shares": 500.0,
+        "stake_usdc": 320.0,
+        "status": PositionStatus.OPEN.value,
+    }
+    persistence.positions = [position]
     service = _formatting_service(persistence)
 
     text = service._format_positions()
 
     assert "Mark      n/a (live book unavailable)" in text
     assert "PnL       n/a" in text
+
+
+def test_telegram_bot_positions_accepts_projected_nautilus_rows() -> None:
+    persistence = _FormattingPersistence()
+    persistence.positions = [
+        {
+            "position_id": "P-001",
+            "market_id": "m_1",
+            "market_slug": "btc-15m",
+            "asset": "BTC",
+            "timeframe": "15m",
+            "token_id": "token-up",
+            "side": "UP",
+            "avg_entry_price": 0.64,
+            "quantity": 500.0,
+            "opened_at": "2026-06-24T12:00:00Z",
+        }
+    ]
+    service = _formatting_service(persistence)
+    service.books.update(
+        OrderBook(
+            token_id="token-up",
+            bids=[BookLevel(price=0.71, size=100)],
+            asks=[BookLevel(price=0.72, size=100)],
+        )
+    )
+
+    text = service._format_positions()
+
+    assert "📈 BTC 15m · UP" in text
+    assert "Entry     0.6400" in text
+    assert "Shares    500.0000" in text
+    assert "PnL       +35.00 USDC (+10.94%)" in text
+    assert "ID        P-001" in text
+
+
+def test_telegram_bot_positions_skips_rows_without_side() -> None:
+    persistence = _FormattingPersistence()
+    persistence.positions = [
+        {
+            "position_id": "P-no-side",
+            "market_id": "m_1",
+            "market_slug": "btc-15m",
+            "asset": "BTC",
+            "timeframe": "15m",
+            "token_id": "token-up",
+            "avg_entry_price": 0.64,
+            "quantity": 500.0,
+            "opened_at": "2026-06-24T12:00:00Z",
+        }
+    ]
+    service = _formatting_service(persistence)
+
+    text = service._format_positions()
+
+    assert text == "暂无 open paper positions。"
+    assert "· UP" not in text
 
 
 def test_telegram_bot_signals_merges_accepted_and_rejected() -> None:
@@ -678,32 +739,23 @@ def test_telegram_bot_strategy_toggle_rejects_unknown_strategy() -> None:
 
 
 def test_telegram_bot_leaderboard_all_time() -> None:
-    from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
-    from polysignal_lab.domain.paper_result import PaperTradeResult
+    from polysignal_lab.domain.enums import TradeResultStatus
 
     persistence = _FormattingPersistence()
-    result = PaperTradeResult(
+    result = sample_paper_trade_result(
         signal_id="sig-1",
         paper_position_id="pos-1",
-        strategy="ptb_diff",
-        asset="BTC",
-        timeframe="5m",
         market_id="m-1",
         market_slug="btc-5m",
-        side=Side.UP,
-        entry_price=0.50,
-        shares=20.0,
-        stake_usdc=10.0,
-        exit_mode=ExitMode.RESOLUTION,
         outcome_value=1.0,
         settlement_value=12.4,
         pnl_usdc=2.4,
         roi=0.24,
-        result=TradeResultStatus.WIN,
-        opened_at=datetime(2026, 6, 21, tzinfo=timezone.utc),
-        closed_at=datetime(2026, 6, 22, tzinfo=timezone.utc),
+        result=TradeResultStatus.WIN.value,
+        opened_at=datetime(2026, 6, 21, tzinfo=timezone.utc).isoformat(),
+        closed_at=datetime(2026, 6, 22, tzinfo=timezone.utc).isoformat(),
     )
-    persistence.trade_results = [result.model_dump(mode="json")]
+    persistence.trade_results = [result]
     service = _formatting_service(persistence)
 
     text = service._format_leaderboard("all")
@@ -714,56 +766,37 @@ def test_telegram_bot_leaderboard_all_time() -> None:
 
 
 def test_telegram_bot_leaderboard_today_filters_by_closed_at(monkeypatch: pytest.MonkeyPatch) -> None:
-    from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
-    from polysignal_lab.domain.paper_result import PaperTradeResult
+    from polysignal_lab.domain.enums import TradeResultStatus
 
     persistence = _FormattingPersistence()
-    today_result = PaperTradeResult(
+    today_result = sample_paper_trade_result(
         signal_id="sig-today",
         paper_position_id="pos-today",
-        strategy="ptb_diff",
-        asset="BTC",
-        timeframe="5m",
         market_id="m-1",
         market_slug="btc-5m",
-        side=Side.UP,
-        entry_price=0.50,
-        shares=20.0,
-        stake_usdc=10.0,
-        exit_mode=ExitMode.RESOLUTION,
         outcome_value=1.0,
         settlement_value=12.4,
         pnl_usdc=2.4,
         roi=0.24,
-        result=TradeResultStatus.WIN,
-        opened_at=datetime(2026, 7, 5, 1, 0, tzinfo=timezone.utc),
-        closed_at=datetime(2026, 7, 5, 2, 0, tzinfo=timezone.utc),
+        result=TradeResultStatus.WIN.value,
+        opened_at=datetime(2026, 7, 5, 1, 0, tzinfo=timezone.utc).isoformat(),
+        closed_at=datetime(2026, 7, 5, 2, 0, tzinfo=timezone.utc).isoformat(),
     )
-    old_result = PaperTradeResult(
+    old_result = sample_paper_trade_result(
         signal_id="sig-old",
         paper_position_id="pos-old",
         strategy="vwap_momentum",
-        asset="BTC",
-        timeframe="5m",
         market_id="m-2",
         market_slug="btc-5m",
-        side=Side.UP,
-        entry_price=0.50,
-        shares=20.0,
-        stake_usdc=10.0,
-        exit_mode=ExitMode.RESOLUTION,
         outcome_value=0.0,
         settlement_value=0.0,
         pnl_usdc=-10.0,
         roi=-1.0,
-        result=TradeResultStatus.LOSS,
-        opened_at=datetime(2026, 7, 4, 1, 0, tzinfo=timezone.utc),
-        closed_at=datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc),
+        result=TradeResultStatus.LOSS.value,
+        opened_at=datetime(2026, 7, 4, 1, 0, tzinfo=timezone.utc).isoformat(),
+        closed_at=datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc).isoformat(),
     )
-    persistence.trade_results = [
-        today_result.model_dump(mode="json"),
-        old_result.model_dump(mode="json"),
-    ]
+    persistence.trade_results = [today_result, old_result]
     service = _formatting_service(persistence)
     service.scheduler = SimpleNamespace(
         settings=SimpleNamespace(app=SimpleNamespace(timezone="Asia/Bangkok"))

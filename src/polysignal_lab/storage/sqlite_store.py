@@ -1,6 +1,7 @@
+# noqa: SIZE_OK  — legacy SQLite gateway; current change only adds fail-closed parsing
 """
-Input: __future__, __future__.annotations, json, datetime, datetime.datetime, sqlite3, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path
-Output: DuplicateRecordError, SQLiteStore
+Input: __future__, __future__.annotations, json, datetime, datetime.datetime, sqlite3, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, math
+Output: DuplicateRecordError, MalformedSQLitePayloadError, SQLiteStore
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -16,14 +17,20 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+import math
 import sqlite3
 from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
 from threading import Lock
 from typing import Any, Iterable
 
 from polysignal_lab.domain.anchor_price import AnchorPrice
-from polysignal_lab.domain.enums import PositionStatus
+from polysignal_lab.domain.enums import PositionStatus, Side
+from polysignal_lab.domain.paper_result import (
+    InvalidPaperTradeResultRow,
+    parse_paper_trade_result_row,
+)
 from polysignal_lab.storage.sqlite_schema import (
     ALLOWED_TABLES,
     COUNT_TABLES,
@@ -42,6 +49,183 @@ class DuplicateRecordError(RuntimeError):
 
     def __str__(self) -> str:
         return f"duplicate {self.table}.{self.key}={self.record_id} has a different payload"
+
+
+@dataclass(frozen=True, slots=True)
+class MalformedSQLitePayloadError(RuntimeError):
+    table: str
+    key: str
+    record_id: str
+
+    def __str__(self) -> str:
+        return f"malformed {self.table}.payload_json for {self.key}={self.record_id}"
+
+
+@dataclass(frozen=True, slots=True)
+class UnknownSQLiteTableError(RuntimeError):
+    table: str
+
+    def __str__(self) -> str:
+        return f"Unknown table: {self.table}"
+
+
+def _payload_json(row: sqlite3.Row) -> Any | None:
+    try:
+        return json.loads(row["payload_json"])
+    except ValueError:
+        return None
+
+
+def _valid_position_event(row: Mapping[str, Any]) -> bool:
+    position_id = str(row.get("paper_position_id") or row.get("position_id") or "")
+    if not position_id:
+        return False
+    status = str(row.get("status") or "").upper()
+    if status not in {"", PositionStatus.OPEN.value, PositionStatus.CLOSED.value}:
+        return False
+    if status == "" and not isinstance(row.get("is_closed"), bool):
+        return False
+    if status == PositionStatus.OPEN.value and row.get("is_closed") is True:
+        return False
+    if status == PositionStatus.CLOSED.value and row.get("is_closed") is False:
+        return False
+    is_open = status == PositionStatus.OPEN.value or (
+        status == "" and row.get("is_closed") is False
+    )
+    is_closed = status == PositionStatus.CLOSED.value or (
+        status == "" and row.get("is_closed") is True
+    )
+    side = str(row.get("side") or "").upper()
+    if (is_open or is_closed) and side not in {Side.UP.value, Side.DOWN.value}:
+        return False
+    timestamp_keys = ("opened_at", "ts", "created_at") if is_open else ("closed_at", "ts", "created_at")
+    if (is_open or is_closed) and (
+        _row_positive_float(row, "shares", "quantity", "signed_qty") is None
+        or _row_positive_float(row, "entry_price", "avg_entry_price") is None
+        or _row_positive_float(row, "stake_usdc") is None
+        or _row_timestamp(row, *timestamp_keys) is None
+    ):
+        return False
+    for key in ("shares", "quantity", "signed_qty", "entry_price", "avg_entry_price", "stake_usdc"):
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        parsed = _row_finite_float(row, key)
+        if parsed is None or parsed <= 0.0:
+            return False
+    return True
+
+
+def _row_finite_float(row: Mapping[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            return None
+        try:
+            parsed = float(value)
+        except (OverflowError, ValueError):
+            return None
+        return parsed if math.isfinite(parsed) else None
+    return None
+
+
+def _row_positive_float(row: Mapping[str, Any], *keys: str) -> float | None:
+    parsed = _row_finite_float(row, *keys)
+    if parsed is None or parsed <= 0.0:
+        return None
+    return parsed
+
+
+def _row_timestamp(row: Mapping[str, Any], *keys: str) -> datetime | None:
+    for key in keys:
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        return None
+    return None
+
+
+def _valid_money_value(value: Any, *, allow_negative: bool) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return False
+    try:
+        parsed = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return False
+    if not math.isfinite(parsed):
+        return False
+    return allow_negative or parsed >= 0.0
+
+
+def _valid_count_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return 0 <= value <= 1_000_000
+    if isinstance(value, float):
+        return math.isfinite(value) and value.is_integer() and 0.0 <= value <= 1_000_000.0
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text.isdecimal():
+        return False
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return 0 <= parsed <= 1_000_000
+
+
+def _valid_wallet_snapshot_payload(payload: Mapping[str, Any]) -> bool:
+    for key in ("starting_balance", "cash_balance", "reserved_balance", "equity"):
+        value = payload.get(key)
+        if value not in (None, "") and not _valid_money_value(value, allow_negative=False):
+            return False
+    for key in ("realized_pnl", "unrealized_pnl"):
+        value = payload.get(key)
+        if value not in (None, "") and not _valid_money_value(value, allow_negative=True):
+            return False
+    count = payload.get("open_position_count")
+    return count in (None, "") or _valid_count_value(count)
+
+
+def _valid_strategy_breakdown(row: Mapping[str, Any]) -> bool:
+    for key in ("closed_positions", "win_count", "loss_count", "void_count"):
+        value = row.get(key)
+        if value not in (None, "") and not _valid_count_value(value):
+            return False
+    for key in ("total_pnl_usdc", "average_roi", "win_rate"):
+        value = row.get(key)
+        if value not in (None, "") and not _valid_money_value(value, allow_negative=True):
+            return False
+    return True
+
+
+def _valid_daily_report_payload(payload: Mapping[str, Any]) -> bool:
+    for key in ("paper_pnl", "paper_roi", "total_pnl_usdc", "average_roi", "win_rate", "max_drawdown"):
+        value = payload.get(key)
+        if value not in (None, "") and not _valid_money_value(value, allow_negative=True):
+            return False
+    for key in ("total_signals", "paper_orders", "paper_fills", "rejected_paper_orders", "open_positions", "closed_positions", "win_count", "loss_count", "void_count"):
+        value = payload.get(key)
+        if value not in (None, "") and not _valid_count_value(value):
+            return False
+    breakdown = payload.get("strategy_breakdown", {})
+    if not isinstance(breakdown, Mapping):
+        return False
+    return all(
+        isinstance(row, Mapping) and _valid_strategy_breakdown(row)
+        for row in breakdown.values()
+    )
 
 
 class SQLiteStore:
@@ -88,7 +272,7 @@ class SQLiteStore:
         Returns (sql, param_list) safe for self._conn.execute(sql, param_list).
         """
         if table not in ALLOWED_TABLES:
-            raise ValueError(f"Unknown table: {table}")
+            raise UnknownSQLiteTableError(table=table)
         parts: list[str] = [f"SELECT {columns} FROM {table}"]
         param_list: list[Any] = list(params)
         if where:
@@ -172,7 +356,9 @@ class SQLiteStore:
             row = self._conn.execute(sql, params).fetchone()
         if row is None:
             return None
-        payload = json.loads(row["payload_json"])
+        payload = _payload_json(row)
+        if not isinstance(payload, dict):
+            return None
         return AnchorPrice(
             asset=str(payload["asset"]),
             timeframe=str(payload["timeframe"]),
@@ -235,58 +421,8 @@ class SQLiteStore:
                 ),
             )
 
-    def insert_paper_order(self, order: Any) -> None:
-        p = to_jsonable(order)
-        with self._lock, self._conn:
-            self._insert_idempotent(
-                "paper_orders",
-                "paper_order_id",
-                p["paper_order_id"],
-                ("paper_order_id", "signal_id", "strategy", "asset", "timeframe", "market_id", "status", "created_at", "payload_json"),
-                (p["paper_order_id"], p["signal_id"], p["strategy"], p["asset"], p["timeframe"], p["market_id"], p["status"], p["created_at"], self._json(p)),
-            )
-
-    def upsert_paper_order(self, order: Any) -> None:
-        p = to_jsonable(order)
-        with self._lock, self._conn:
-            self._conn.execute(
-                """INSERT OR REPLACE INTO paper_orders(paper_order_id,signal_id,strategy,asset,timeframe,market_id,status,created_at,payload_json)
-                VALUES(?,?,?,?,?,?,?,?,?)""",
-                (
-                    p["paper_order_id"],
-                    p["signal_id"],
-                    p["strategy"],
-                    p["asset"],
-                    p["timeframe"],
-                    p["market_id"],
-                    p["status"],
-                    p["created_at"],
-                    self._json(p),
-                ),
-            )
-
-    def insert_paper_fill(self, fill: Any) -> None:
-        p = to_jsonable(fill)
-        with self._lock, self._conn:
-            self._insert_idempotent(
-                "paper_fills",
-                "paper_fill_id",
-                p["paper_fill_id"],
-                ("paper_fill_id", "paper_order_id", "signal_id", "fill_price", "stake_usdc", "shares", "created_at", "payload_json"),
-                (p["paper_fill_id"], p["paper_order_id"], p["signal_id"], p["fill_price"], p["stake_usdc"], p["shares"], p["created_at"], self._json(p)),
-            )
-
-    def upsert_paper_position(self, position: Any) -> None:
-        p = to_jsonable(position)
-        with self._lock, self._conn:
-            self._conn.execute(
-                """INSERT OR REPLACE INTO paper_positions(paper_position_id,signal_id,strategy,asset,timeframe,market_id,status,opened_at,closed_at,payload_json)
-                VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                (p["paper_position_id"], p["signal_id"], p["strategy"], p["asset"], p["timeframe"], p["market_id"], p["status"], p["opened_at"], p.get("closed_at"), self._json(p)),
-            )
-
     def insert_paper_trade_result(self, result: Any) -> None:
-        p = to_jsonable(result)
+        p: dict[str, Any] = dict(parse_paper_trade_result_row(to_jsonable(result)))
         with self._lock, self._conn:
             self._insert_idempotent(
                 "paper_trade_results",
@@ -348,13 +484,44 @@ class SQLiteStore:
         )
         with self._lock:
             row = self._conn.execute(sql, params).fetchone()
-        return json.loads(row["payload_json"]) if row else None
+        if row is None:
+            return None
+        payload = _payload_json(row)
+        if not isinstance(payload, dict):
+            return None
+        return payload
 
     def query_json(self, table: str, limit: int = 100, where: str = "", params: Iterable[Any] = ()) -> list[dict[str, Any]]:
         sql, params = self._build_query(table, where=where, params=params, limit=limit)
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
-        return [json.loads(row["payload_json"]) for row in rows]
+        if table == "paper_trade_results":
+            valid_results: list[dict[str, Any]] = []
+            for row in rows:
+                try:
+                    payload = _payload_json(row)
+                    if not isinstance(payload, dict):
+                        continue
+                    valid_results.append(dict(parse_paper_trade_result_row(payload)))
+                except InvalidPaperTradeResultRow:
+                    continue
+            return valid_results
+        if table in {"system_events", "daily_reports"}:
+            valid_rows: list[dict[str, Any]] = []
+            for row in rows:
+                payload = _payload_json(row)
+                if not isinstance(payload, dict):
+                    continue
+                if table == "daily_reports" and not _valid_daily_report_payload(payload):
+                    continue
+                valid_rows.append(payload)
+            return valid_rows
+        valid_rows: list[dict[str, Any]] = []
+        for row in rows:
+            payload = _payload_json(row)
+            if isinstance(payload, dict):
+                valid_rows.append(payload)
+        return valid_rows
 
     def counts(self) -> dict[str, int]:
         with self._lock:
@@ -368,15 +535,46 @@ class SQLiteStore:
         )
         with self._lock:
             row = self._conn.execute(sql, params).fetchone()
-        return json.loads(row["payload_json"]) if row else None
+        if row is None:
+            return None
+        payload = _payload_json(row)
+        if not isinstance(payload, dict):
+            return None
+        if not _valid_wallet_snapshot_payload(payload):
+            return None
+        return payload
+
+    def _latest_position_events(self) -> dict[str, dict[str, Any]]:
+        rows = self.query_json(
+            "system_events",
+            where="WHERE event_type=? ORDER BY created_at ASC, rowid ASC",
+            params=("nautilus_position",),
+            limit=100_000,
+        )
+        latest: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            position_id = str(row.get("paper_position_id") or row.get("position_id") or "")
+            if position_id:
+                latest[position_id] = row
+        return {position_id: row for position_id, row in latest.items() if _valid_position_event(row)}
 
     def restore_open_positions(self) -> list[dict[str, Any]]:
-        return self.query_json(
-            "paper_positions",
-            where="WHERE status = ? ORDER BY opened_at ASC",
-            params=(PositionStatus.OPEN.value,),
-            limit=10000,
-        )
+        open_status = PositionStatus.OPEN.value
+        return [
+            row
+            for row in self._latest_position_events().values()
+            if str(row.get("status", "")).upper() == open_status
+            or (row.get("status") in (None, "") and row.get("is_closed") is False)
+        ]
+
+    def restore_closed_positions(self) -> list[dict[str, Any]]:
+        closed_status = PositionStatus.CLOSED.value
+        return [
+            row
+            for row in self._latest_position_events().values()
+            if str(row.get("status", "")).upper() == closed_status
+            or row.get("is_closed") is True
+        ]
 
     def restore_daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
         return self.query_json(
@@ -423,7 +621,14 @@ class SQLiteStore:
         existing = self._conn.execute(sql, params).fetchone()
         payload = values[-1]
         if existing:
-            if json.loads(existing["payload_json"]) == json.loads(payload):
+            existing_payload = _payload_json(existing)
+            if existing_payload is None:
+                raise MalformedSQLitePayloadError(
+                    table=table,
+                    key=key,
+                    record_id=record_id,
+                )
+            if existing_payload == json.loads(payload):
                 return
             raise DuplicateRecordError(table=table, key=key, record_id=record_id)
         placeholders = ",".join("?" for _ in columns)

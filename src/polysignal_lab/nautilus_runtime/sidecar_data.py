@@ -114,6 +114,9 @@ def market_metadata(market: Market) -> PolySignalMarketMetaData:
         end_ts_ns=timestamp_ns(market.end_ts),
         up_token_id=market.token_for(Side.UP).token_id,
         down_token_id=market.token_for(Side.DOWN).token_id,
+        question=market.question,
+        up_outcome=market.token_for(Side.UP).outcome_name,
+        down_outcome=market.token_for(Side.DOWN).outcome_name,
         ts_event=timestamp_ns(now),
         ts_init=timestamp_ns(now),
     )

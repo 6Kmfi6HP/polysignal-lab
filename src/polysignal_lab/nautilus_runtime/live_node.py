@@ -15,6 +15,7 @@ Pos: Application code
 from __future__ import annotations
 
 import importlib
+import sys
 from collections.abc import Callable, Mapping
 from typing import Protocol, cast
 
@@ -32,6 +33,9 @@ def assert_no_live_polymarket_execution(config: object) -> None:
         raise RuntimeError("default paper runtime refuses live Polymarket execution")
 
 
+# Lazy placeholders. Tests monkeypatch these module globals (and
+# live_node._import_callable) so unit tests never import real Nautilus LiveNode.
+# Do not replace with import-time static nautilus_trader imports.
 LiveNode: object | None = None
 TraderId: Callable[[str], object] | None = None
 Environment: object | None = None
@@ -157,22 +161,58 @@ def build_sandbox_exec_client_config(settings: Settings) -> object:
 
 
 def _ensure_live_imports() -> None:
+    """Lazy-import Nautilus LiveNode symbols into module globals.
+
+    Monkeypatch surface (keep assignable; do not switch to static imports):
+    - LiveNode, TraderId, Environment
+    - PolymarketLiveDataClientFactory, SandboxLiveExecClientFactory
+    - _import_callable (config factories used by build_* helpers)
+
+    Reads LiveNode from ``sys.modules`` so string-path monkeypatches take effect
+    even if this function's ``__globals__`` is a stale module object.
+    """
     global LiveNode, TraderId, Environment, PolymarketLiveDataClientFactory, SandboxLiveExecClientFactory
-    if LiveNode is not None:
+
+    mod = sys.modules.get(__name__)
+    module_live_node = getattr(mod, "LiveNode", None) if mod is not None else None
+    current_live_node = module_live_node if module_live_node is not None else LiveNode
+    if current_live_node is not None:
+        LiveNode = current_live_node
+        if mod is not None:
+            # Only re-sync symbols tests actually monkeypatch.
+            TraderId = cast(
+                Callable[[str], object] | None,
+                getattr(mod, "TraderId", TraderId),
+            )
+            Environment = getattr(mod, "Environment", Environment)
+            PolymarketLiveDataClientFactory = getattr(
+                mod, "PolymarketLiveDataClientFactory", PolymarketLiveDataClientFactory
+            )
+            SandboxLiveExecClientFactory = getattr(
+                mod, "SandboxLiveExecClientFactory", SandboxLiveExecClientFactory
+            )
         return
+
     live_mod = importlib.import_module("nautilus_trader.live")
     common_mod = importlib.import_module("nautilus_trader.common")
     identifiers_mod = importlib.import_module("nautilus_trader.model.identifiers")
     polymarket_mod = importlib.import_module("nautilus_trader.adapters.polymarket")
     sandbox_factory_mod = importlib.import_module("nautilus_trader.adapters.sandbox.factory")
-    LiveNode = getattr(live_mod, "LiveNode")
-    Environment = getattr(common_mod, "Environment")
-    TraderId = cast(Callable[[str], object], getattr(identifiers_mod, "TraderId"))
-    PolymarketLiveDataClientFactory = getattr(polymarket_mod, "PolymarketLiveDataClientFactory")
-    SandboxLiveExecClientFactory = getattr(sandbox_factory_mod, "SandboxLiveExecClientFactory")
+    LiveNode = live_mod.LiveNode
+    Environment = common_mod.Environment
+    TraderId = cast(Callable[[str], object], identifiers_mod.TraderId)
+    PolymarketLiveDataClientFactory = polymarket_mod.PolymarketLiveDataClientFactory
+    SandboxLiveExecClientFactory = sandbox_factory_mod.SandboxLiveExecClientFactory
+    if mod is not None:
+        mod.LiveNode = LiveNode
+        mod.TraderId = TraderId
+        mod.Environment = Environment
+        mod.PolymarketLiveDataClientFactory = PolymarketLiveDataClientFactory
+        mod.SandboxLiveExecClientFactory = SandboxLiveExecClientFactory
 
 
 def _import_callable(module_name: str, attr_name: str) -> Callable[..., object]:
+    """Import a config/factory callable. Tests monkeypatch this seam."""
     module = importlib.import_module(module_name)
     return cast(Callable[..., object], getattr(module, attr_name))
 

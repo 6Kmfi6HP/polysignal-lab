@@ -1,0 +1,176 @@
+     1	"""
+     2	Input: scripts.repair_settlement_results, factories, polysignal_lab.domain.paper_result
+     3	Output: test_settle_for_repair_returns_parseable_trade_result_row
+     4	Pos: Test Layer - Unit tests
+     5	
+     6	🔄 Self-reference: When this file changes, update this header
+     7	"""
+     8	
+     9	from __future__ import annotations
+    10	
+    11	import importlib.util
+    12	from pathlib import Path
+    13	import sys
+    14	
+    15	from factories import sample_market
+    16	
+    17	from polysignal_lab.domain.enums import Side
+    18	from polysignal_lab.domain.paper_result import parse_paper_trade_result_row
+    19	from polysignal_lab.paper.settlement_sources import ResolutionDecision
+    20	
+    21	
+    22	def _repair_module():
+    23	    script_path = Path(__file__).resolve().parents[1] / "scripts" / "repair_settlement_results.py"
+    24	    spec = importlib.util.spec_from_file_location(
+    25	        "repair_settlement_results_for_test",
+    26	        script_path,
+    27	    )
+    28	    assert spec is not None
+    29	    assert spec.loader is not None
+    30	    module = importlib.util.module_from_spec(spec)
+    31	    sys.modules[spec.name] = module
+    32	    spec.loader.exec_module(module)
+    33	    return module
+    34	
+    35	
+    36	def test_settle_for_repair_returns_parseable_trade_result_row() -> None:
+    37	    market = sample_market()
+    38	    token = market.token_for(Side.UP)
+    39	    position = {
+    40	        "paper_position_id": "pos-repair-1",
+    41	        "position_id": "pos-repair-1",
+    42	        "signal_id": "sig-repair-1",
+    43	        "strategy": "ptb_diff",
+    44	        "asset": "BTC",
+    45	        "timeframe": "5m",
+    46	        "market_id": market.market_id,
+    47	        "market_slug": market.market_slug,
+    48	        "token_id": token.token_id,
+    49	        "side": Side.UP.value,
+    50	        "entry_price": 0.4,
+    51	        "shares": 25.0,
+    52	        "stake_usdc": 10.0,
+    53	        "opened_at": "2026-06-22T00:00:00+00:00",
+    54	    }
+    55	    decision = ResolutionDecision(
+    56	        market_id=market.market_id,
+    57	        condition_id=market.condition_id,
+    58	        status="resolved",
+    59	        source="chain",
+    60	        outcome_values_by_token={token.token_id: 1.0},
+    61	        conflict=False,
+    62	        conflict_sources=(),
+    63	        details={},
+    64	    )
+    65	
+    66	    module = _repair_module()
+    67	    result = module._settle_for_repair(position, market, decision)
+    68	
+    69	    assert result is not None
+    70	    parsed = parse_paper_trade_result_row(result)
+    71	    assert parsed.get("paper_trade_id")
+    72	    assert parsed.get("signal_id") == "sig-repair-1"
+    73	
+    74	
+    75	def test_settle_for_repair_rejects_incomplete_position_money_fields() -> None:
+    76	    market = sample_market()
+    77	    token = market.token_for(Side.UP)
+    78	    position = {
+    79	        "paper_position_id": "pos-incomplete",
+    80	        "position_id": "pos-incomplete",
+    81	        "signal_id": "sig-incomplete",
+    82	        "strategy": "ptb_diff",
+    83	        "asset": "BTC",
+    84	        "timeframe": "5m",
+    85	        "market_id": market.market_id,
+    86	        "market_slug": market.market_slug,
+    87	        "token_id": token.token_id,
+    88	        "side": Side.UP.value,
+    89	        "opened_at": "2026-06-22T00:00:00+00:00",
+    90	    }
+    91	    decision = ResolutionDecision(
+    92	        market_id=market.market_id,
+    93	        condition_id=market.condition_id,
+    94	        status="resolved",
+    95	        source="chain",
+    96	        outcome_values_by_token={token.token_id: 1.0},
+    97	        conflict=False,
+    98	        conflict_sources=(),
+    99	        details={},
+   100	    )
+   101	
+   102	    module = _repair_module()
+   103	
+   104	    assert module._settle_for_repair(position, market, decision) is None
+   105	
+   106	
+   107	def test_settle_for_repair_uses_event_timestamp_when_opened_at_missing() -> None:
+   108	    market = sample_market()
+   109	    token = market.token_for(Side.UP)
+   110	    position = {
+   111	        "paper_position_id": "pos-created-at",
+   112	        "position_id": "pos-created-at",
+   113	        "signal_id": "sig-created-at",
+   114	        "strategy": "ptb_diff",
+   115	        "asset": "BTC",
+   116	        "timeframe": "5m",
+   117	        "market_id": market.market_id,
+   118	        "market_slug": market.market_slug,
+   119	        "token_id": token.token_id,
+   120	        "side": Side.UP.value,
+   121	        "entry_price": 0.4,
+   122	        "shares": 25.0,
+   123	        "stake_usdc": 10.0,
+   124	        "created_at": "2026-06-22T00:00:00+00:00",
+   125	    }
+   126	    decision = ResolutionDecision(
+   127	        market_id=market.market_id,
+   128	        condition_id=market.condition_id,
+   129	        status="resolved",
+   130	        source="chain",
+   131	        outcome_values_by_token={token.token_id: 1.0},
+   132	        conflict=False,
+   133	        conflict_sources=(),
+   134	        details={},
+   135	    )
+   136	
+   137	    module = _repair_module()
+   138	    result = module._settle_for_repair(position, market, decision)
+   139	
+   140	    assert result is not None
+   141	    parsed = parse_paper_trade_result_row(result)
+   142	    assert parsed.get("opened_at") == "2026-06-22T00:00:00+00:00"
+   143	
+   144	
+   145	def test_settle_for_repair_rejects_position_without_side() -> None:
+   146	    market = sample_market()
+   147	    token = market.token_for(Side.UP)
+   148	    position = {
+   149	        "paper_position_id": "pos-no-side",
+   150	        "position_id": "pos-no-side",
+   151	        "signal_id": "sig-no-side",
+   152	        "strategy": "ptb_diff",
+   153	        "asset": "BTC",
+   154	        "timeframe": "5m",
+   155	        "market_id": market.market_id,
+   156	        "market_slug": market.market_slug,
+   157	        "token_id": token.token_id,
+   158	        "entry_price": 0.4,
+   159	        "shares": 25.0,
+   160	        "stake_usdc": 10.0,
+   161	        "opened_at": "2026-06-22T00:00:00+00:00",
+   162	    }
+   163	    decision = ResolutionDecision(
+   164	        market_id=market.market_id,
+   165	        condition_id=market.condition_id,
+   166	        status="resolved",
+   167	        source="chain",
+   168	        outcome_values_by_token={token.token_id: 1.0},
+   169	        conflict=False,
+   170	        conflict_sources=(),
+   171	        details={},
+   172	    )
+   173	
+   174	    module = _repair_module()
+   175	
+   176	    assert module._settle_for_repair(position, market, decision) is None

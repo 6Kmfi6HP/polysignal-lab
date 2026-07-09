@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.OrderStatus, polysignal_lab.domain.enums.Side, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.signal_layer.gate, polysignal_lab.signal_layer.gate.SignalGate
-Output: test_order_intent_values, test_order_status_new_values, test_signal_candidate_has_order_intent_fields, test_signal_candidate_with_order_intent, test_paper_order_has_order_intent_field, test_paper_order_with_order_intent, test_passive_gtd_skips_max_entry_check, test_taker_still_fails_ask_above_max_entry, test_gtd_expiry_rejects_missing
+Input: __future__, __future__.annotations, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.signal_layer.gate, polysignal_lab.signal_layer.gate.SignalGate
+Output: test_order_intent_values, test_projection_order_status_strings, test_signal_candidate_has_order_intent_fields, test_signal_candidate_with_order_intent, test_nautilus_order_payload_has_order_intent_field, test_nautilus_order_payload_with_order_intent, test_passive_gtd_skips_max_entry_check, test_taker_still_fails_ask_above_max_entry, test_gtd_expiry_rejects_missing
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
-from polysignal_lab.domain.enums import MarketStatus, OrderIntent, OrderStatus, Side
+from polysignal_lab.domain.enums import MarketStatus, OrderIntent, Side
 from polysignal_lab.domain.orderbook import BookLevel, OrderBook
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
@@ -27,14 +27,10 @@ def test_order_intent_values():
     assert OrderIntent.TAKER_IOC == "taker_ioc"
 
 
-def test_order_status_new_values():
-    assert OrderStatus.RESTING == "RESTING"
-    assert OrderStatus.CANCELLED == "CANCELLED"
-    assert OrderStatus.PARTIAL == "PARTIAL"
-    # existing values still present
-    assert OrderStatus.PENDING == "PENDING"
-    assert OrderStatus.FILLED == "FILLED"
-    assert OrderStatus.REJECTED == "REJECTED"
+def test_projection_order_status_strings():
+    """Nautilus order projections use uppercase status strings."""
+    for status in ("PENDING", "RESTING", "CANCELLED", "PARTIAL", "FILLED", "REJECTED"):
+        assert status == status.upper()
 
 
 def _base_build_kwargs(**overrides):
@@ -82,43 +78,39 @@ def test_signal_candidate_with_order_intent():
     assert sig.hedge_leg is False
 
 
-def test_paper_order_has_order_intent_field():
-    from polysignal_lab.domain.paper_order import PaperOrder
-
-    po = PaperOrder(
-        signal_id="sig-1",
-        asset="BTC",
-        timeframe="5m",
-        strategy="test",
-        market_id="mkt-1",
-        market_slug="btc-updown-5m-1",
-        token_id="token-up",
-        side=Side.UP,
-        limit_price=0.5,
-        reference_price=0.5,
-        stake_usdc=10.0,
-    )
-    assert po.order_intent is None
+def test_nautilus_order_payload_has_order_intent_field():
+    order = {
+        "signal_id": "sig-1",
+        "asset": "BTC",
+        "timeframe": "5m",
+        "strategy": "test",
+        "market_id": "mkt-1",
+        "market_slug": "btc-updown-5m-1",
+        "token_id": "token-up",
+        "side": Side.UP.value,
+        "limit_price": 0.5,
+        "reference_price": 0.5,
+        "stake_usdc": 10.0,
+    }
+    assert order.get("order_intent") is None
 
 
-def test_paper_order_with_order_intent():
-    from polysignal_lab.domain.paper_order import PaperOrder
-
-    po = PaperOrder(
-        signal_id="sig-1",
-        asset="BTC",
-        timeframe="5m",
-        strategy="test",
-        market_id="mkt-1",
-        market_slug="btc-updown-5m-1",
-        token_id="token-up",
-        side=Side.UP,
-        limit_price=0.5,
-        reference_price=0.5,
-        stake_usdc=10.0,
-        order_intent="passive_gtd",
-    )
-    assert po.order_intent == "passive_gtd"
+def test_nautilus_order_payload_with_order_intent():
+    order = {
+        "signal_id": "sig-1",
+        "asset": "BTC",
+        "timeframe": "5m",
+        "strategy": "test",
+        "market_id": "mkt-1",
+        "market_slug": "btc-updown-5m-1",
+        "token_id": "token-up",
+        "side": Side.UP.value,
+        "limit_price": 0.5,
+        "reference_price": 0.5,
+        "stake_usdc": 10.0,
+        "order_intent": "passive_gtd",
+    }
+    assert order["order_intent"] == "passive_gtd"
 
 
 def _make_gate() -> SignalGate:

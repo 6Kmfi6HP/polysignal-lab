@@ -57,14 +57,11 @@ class PersistenceService:
     def insert_strategy_status(self, status: Any) -> None:
         self.sqlite.insert_strategy_status(status)
 
-    def upsert_paper_order(self, order: Any) -> None:
-        self.sqlite.upsert_paper_order(order)
-
-    def upsert_paper_position(self, position: Any) -> None:
-        self.sqlite.upsert_paper_position(position)
-
     def insert_paper_trade_result(self, result: Any) -> None:
         self.sqlite.insert_paper_trade_result(result)
+
+    def insert_wallet_snapshot(self, snapshot: Any) -> None:
+        self.sqlite.insert_wallet_snapshot(snapshot)
 
     def insert_daily_report(self, report: Any) -> None:
         self.sqlite.insert_daily_report(report)
@@ -89,6 +86,9 @@ class PersistenceService:
 
     def restore_open_positions(self) -> list[dict[str, Any]]:
         return self.sqlite.restore_open_positions()
+
+    def restore_closed_positions(self) -> list[dict[str, Any]]:
+        return self.sqlite.restore_closed_positions()
 
     def restore_daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
         return self.sqlite.restore_daily_reports(limit=limit)

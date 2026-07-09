@@ -1,0 +1,22 @@
+surface=protected refs/docs check
+invocation=git status --short -- refs docs/nautilus_reference
+invocation=test ! -e refs && find docs/nautilus_reference -type f -printf '%p %s bytes
+' | sort | head -20
+refs directory absent
+docs/nautilus_reference/developer_guide/README.md 2354 bytes
+docs/nautilus_reference/developer_guide/adapters.md 136460 bytes
+docs/nautilus_reference/developer_guide/benchmarking.md 7353 bytes
+docs/nautilus_reference/developer_guide/coding_standards.md 6998 bytes
+docs/nautilus_reference/developer_guide/design_principles.md 1759 bytes
+docs/nautilus_reference/developer_guide/docs.md 9029 bytes
+docs/nautilus_reference/developer_guide/environment_setup.md 19776 bytes
+docs/nautilus_reference/developer_guide/ffi.md 8199 bytes
+docs/nautilus_reference/developer_guide/index.md 1201 bytes
+docs/nautilus_reference/developer_guide/python.md 6523 bytes
+docs/nautilus_reference/developer_guide/release_security.md 12339 bytes
+docs/nautilus_reference/developer_guide/releases.md 13156 bytes
+docs/nautilus_reference/developer_guide/rust.md 64051 bytes
+docs/nautilus_reference/developer_guide/spec_data_testing.md 39036 bytes
+docs/nautilus_reference/developer_guide/spec_exec_testing.md 95091 bytes
+docs/nautilus_reference/developer_guide/test_datasets.md 15600 bytes
+docs/nautilus_reference/developer_guide/testing.md 22413 bytes

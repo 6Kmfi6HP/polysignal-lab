@@ -1,0 +1,10 @@
+surface=CLI/data
+invocation=git status --short -- refs @refs docs/nautilus_reference; git diff --name-only -- refs @refs docs/nautilus_reference
+
+[git status]
+status_exit_code=0
+
+[git diff --name-only]
+diff_exit_code=0
+
+overall=PASS

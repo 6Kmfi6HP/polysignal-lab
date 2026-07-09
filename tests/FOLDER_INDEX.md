@@ -24,7 +24,7 @@
 - `test_settlement_sources.py` - Exports test_chain_evidence_wins_and_records_conflicting_gamma and 5 more
 - `test_settlement_resolver.py` - Exports test_resolver_collects_chain_gamma_and_ws and 1 more
 - `test_settlement_config.py` - Exports test_default_settlement_config and 1 more
-- `test_settlement.py` - Exports test_paper_settlement_engine_module_is_removed and 2 more
+- `test_settlement.py` - Exports test_projection_settlement_builds_result_from_nautilus_position_row and 5 more
 - `test_scheduler_strategy_readiness.py` - Exports test_nautilus_owned_scheduler_cannot_run_legacy_evaluate_once and 8 more
 - `test_scheduler_settlement_resolution.py` - Exports test_resolved_numeric_half_payout_closes_as_void_with_provenance and 4 more
 - `test_scheduler_services.py` - Exports test_supervisor_starts_and_stops_services_in_reverse_order and 1 more
@@ -61,7 +61,6 @@
 - `test_nautilus_market_view_assembler.py` - Exports test_assembler_builds_coherent_market_view and 4 more
 - `test_nautilus_market_rotation.py` - Exports test_market_universe_data_round_trips and 23 more
 - `test_nautilus_market_catalog.py` - Exports test_market_catalog_registers_binary_yes_no_pair and 4 more
-- `test_nautilus_instrument_mapping.py` - Exports test_polymarket_instrument_id_uses_nautilus_adapter_helper and 2 more
 - `test_nautilus_full_paper_runtime_smoke.py` - Exports test_full_paper_runtime_builds_node_without_live_execution and 3 more
 - `test_nautilus_exit_policy.py` - Exports test_custom_nautilus_exit_policy_module_is_removed and 1 more
 - `test_nautilus_execution.py` - Exports test_project_source_contains_no_local_paper_symbols

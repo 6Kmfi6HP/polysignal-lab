@@ -1,0 +1,17 @@
+tests/test_nautilus_platform_boundary.py:307:        "from polysignal_lab.domain.paper_order import",
+tests/test_nautilus_platform_boundary.py:308:        "from polysignal_lab.domain.paper_position import",
+tests/test_nautilus_enum_parser.py:5:from nautilus_trader.model.enums import OrderStatus as NautilusOrderStatus
+tests/test_nautilus_enum_parser.py:43:        == NautilusOrderStatus.SUBMITTED
+tests/test_nautilus_enum_parser.py:47:        == NautilusOrderStatus.ACCEPTED
+tests/test_nautilus_enum_parser.py:51:        == NautilusOrderStatus.PARTIALLY_FILLED
+tests/test_nautilus_enum_parser.py:55:        == NautilusOrderStatus.CANCELED
+src/polysignal_lab/nautilus_bridge/enum_parser.py:6:from nautilus_trader.model.enums import OrderStatus as NautilusOrderStatus
+src/polysignal_lab/nautilus_bridge/enum_parser.py:36:    def to_nautilus_order_status(status: str) -> NautilusOrderStatus:
+src/polysignal_lab/nautilus_bridge/enum_parser.py:39:                return NautilusOrderStatus.SUBMITTED
+src/polysignal_lab/nautilus_bridge/enum_parser.py:41:                return NautilusOrderStatus.ACCEPTED
+src/polysignal_lab/nautilus_bridge/enum_parser.py:43:                return NautilusOrderStatus.REJECTED
+src/polysignal_lab/nautilus_bridge/enum_parser.py:45:                return NautilusOrderStatus.CANCELED
+src/polysignal_lab/nautilus_bridge/enum_parser.py:47:                return NautilusOrderStatus.FILLED
+src/polysignal_lab/nautilus_bridge/enum_parser.py:49:                return NautilusOrderStatus.PARTIALLY_FILLED
+src/polysignal_lab/nautilus_bridge/enum_parser.py:51:                return NautilusOrderStatus.EXPIRED
+src/polysignal_lab/domain/paper_result.py:21:class PaperTradeResultRow(TypedDict, total=False):

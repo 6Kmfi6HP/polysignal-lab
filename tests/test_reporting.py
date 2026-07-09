@@ -16,10 +16,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import assert_never
+from typing import Any, assert_never
+
+from factories import sample_paper_trade_result
 
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
-from polysignal_lab.domain.paper_result import PaperTradeResult
 from polysignal_lab.paper.report import PaperReportService
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 
@@ -39,14 +40,14 @@ def _outcome_value(status: TradeResultStatus) -> float:
     match status:
         case TradeResultStatus.WIN:
             return 1.0
-        case TradeResultStatus.LOSS | TradeResultStatus.VOID | TradeResultStatus.UNKNOWN:
+        case TradeResultStatus.LOSS | TradeResultStatus.VOID | TradeResultStatus.UNKNOWN | TradeResultStatus.SPLIT:
             return 0.0
         case unreachable:
             assert_never(unreachable)
 
 
-def _result(spec: ResultSpec) -> PaperTradeResult:
-    return PaperTradeResult(
+def _result(spec: ResultSpec) -> dict[str, Any]:
+    return sample_paper_trade_result(
         signal_id=spec.signal_id,
         paper_position_id=f"pos-{spec.signal_id}",
         strategy=spec.strategy,
@@ -54,17 +55,12 @@ def _result(spec: ResultSpec) -> PaperTradeResult:
         timeframe=spec.timeframe,
         market_id=f"market-{spec.signal_id}",
         market_slug=f"market-{spec.signal_id}",
-        side=Side.UP,
-        entry_price=0.50,
-        shares=20.0,
-        stake_usdc=10.0,
-        exit_mode=ExitMode.RESOLUTION,
         outcome_value=_outcome_value(spec.status),
         settlement_value=10.0 + spec.pnl_usdc,
         pnl_usdc=spec.pnl_usdc,
         roi=spec.roi,
-        result=spec.status,
-        opened_at=date(2026, 6, 21),
+        result=spec.status.value,
+        opened_at=date(2026, 6, 21).isoformat(),
     )
 
 
@@ -115,17 +111,46 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
     assert report.asset_breakdown["BTC"]["total_pnl_usdc"] == 6.0
     assert report.timeframe_breakdown["15m"]["loss_count"] == 1
 
-    message = MessageFormatter().daily_report_message(report)
+    message = MessageFormatter().daily_report_message(report.model_dump(mode="json"))
     assert "SPLIT" not in message
     assert message.startswith("<b>📊 Daily Paper Report</b>")
     assert "<b>Strategies</b>" in message
-    assert {state.value for state in TradeResultStatus} == {"WIN", "LOSS", "VOID", "UNKNOWN"}
+    assert {
+        TradeResultStatus.WIN.value,
+        TradeResultStatus.LOSS.value,
+        TradeResultStatus.VOID.value,
+        TradeResultStatus.UNKNOWN.value,
+    } == {"WIN", "LOSS", "VOID", "UNKNOWN"}
+
+
+def test_daily_report_counts_split_as_closed_without_win_loss_void() -> None:
+    result = _result(ResultSpec("split", TradeResultStatus.SPLIT, 2.0, 0.20))
+
+    report = PaperReportService().build_daily_report(
+        report_date=date(2026, 6, 22),
+        starting_equity=1000.0,
+        ending_equity=1002.0,
+        total_signals=1,
+        paper_orders=1,
+        paper_fills=1,
+        rejected_paper_orders=0,
+        open_positions=0,
+        results=[result],
+    )
+
+    assert report.closed_positions == 1
+    assert report.win_count == 0
+    assert report.loss_count == 0
+    assert report.void_count == 0
+    assert report.total_pnl_usdc == 2.0
+    assert report.strategy_breakdown["ptb_diff"]["closed_positions"] == 1
 
 
 def test_daily_report_includes_strategy_asset_timeframe_calibration() -> None:
-    result = _result(
-        ResultSpec("calibrated-win", TradeResultStatus.WIN, 4.0, 0.40)
-    ).model_copy(update={"details": {"confidence": 0.80}})
+    result = {
+        **_result(ResultSpec("calibrated-win", TradeResultStatus.WIN, 4.0, 0.40)),
+        "details": {"confidence": 0.80},
+    }
 
     report = PaperReportService().build_daily_report(
         report_date=date(2026, 6, 22),
@@ -220,64 +245,3 @@ def test_daily_report_aggregates_paper_execution_quality() -> None:
     assert report.average_execution_staleness_ms == 42.0
     assert report.average_executable_depth_usdc == 154.0 / 3
     assert report.paper_execution_assumptions["slippage_bps"] == 25.0
-
-
-
-def test_daily_report_normalizes_legacy_raw_paper_reject_reason() -> None:
-    order_payloads = [
-        {
-            "paper_order_id": "po-legacy-reject",
-            "status": "REJECTED",
-            "reject_reason": "ASK_ABOVE_MAX_ENTRY",
-            "metrics": {},
-        },
-    ]
-
-    report = PaperReportService().build_daily_report(
-        report_date=date(2026, 6, 22),
-        starting_equity=1000.0,
-        ending_equity=1000.0,
-        total_signals=1,
-        paper_orders=1,
-        paper_fills=0,
-        rejected_paper_orders=1,
-        open_positions=0,
-        results=[],
-        paper_order_payloads=order_payloads,
-    )
-
-    assert report.paper_rejects_by_reason == {"PAPER_ENTRY_PRICE_MOVED": 1}
-    assert report.paper_rejects_by_original_reason == {"ASK_ABOVE_MAX_ENTRY": 1}
-
-
-def test_daily_report_counts_cancelled_rejects_with_reasons() -> None:
-    order_payloads = [
-        {
-            "paper_order_id": "po-cancelled-reject",
-            "status": "CANCELLED",
-            "order_intent": "passive_gtd",
-            "reject_reason": "GTD_EXPIRED",
-            "metrics": {
-                "paper_order_intent": "passive_gtd",
-                "paper_orderbook_staleness_ms": 18.0,
-                "paper_available_depth_usdc": 12.0,
-            },
-        },
-    ]
-
-    report = PaperReportService().build_daily_report(
-        report_date=date(2026, 6, 22),
-        starting_equity=1000.0,
-        ending_equity=1000.0,
-        total_signals=1,
-        paper_orders=1,
-        paper_fills=0,
-        rejected_paper_orders=1,
-        open_positions=0,
-        results=[],
-        paper_order_payloads=order_payloads,
-    )
-
-    assert report.paper_attempts_by_intent == {"passive_gtd": 1}
-    assert report.paper_rejects_by_reason == {"PAPER_GTD_EXPIRED": 1}
-    assert report.paper_rejects_by_original_reason == {"GTD_EXPIRED": 1}

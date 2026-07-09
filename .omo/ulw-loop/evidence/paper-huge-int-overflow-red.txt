@@ -1,0 +1,142 @@
+COMMAND: PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_paper_report_boundaries.py tests/test_storage_restore.py -q
+..........F.F......F..........................                           [100%]
+=================================== FAILURES ===================================
+____________ test_report_numeric_helpers_ignore_huge_json_integers _____________
+
+    def test_report_numeric_helpers_ignore_huge_json_integers() -> None:
+        huge = 10**4000
+        row = {
+            "cash_balance": huge,
+            "total_pnl_usdc": huge,
+            "pnl_usdc": huge,
+        }
+    
+>       assert wallet_float(row, "cash_balance") == 0.0
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_paper_report_boundaries.py:197: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+row = {'cash_balance': 100000000000000000...0000000000000000000, 'total_pnl_usdc': 100000000000000000...0000000000000000000, 'pnl_usdc': 100000000000000000...0000000000000000000}
+key = 'cash_balance', default = 0.0
+
+    def wallet_float(row: Mapping[str, Any] | Any, key: str, default: float = 0.0) -> float:
+        value = _row_value(row, key, default)
+        if isinstance(value, bool):
+            return default
+        if isinstance(value, (int, float)):
+>           parsed = float(value)
+                     ^^^^^^^^^^^^
+E           OverflowError: int too large to convert to float
+
+src/polysignal_lab/domain/paper_report.py:84: OverflowError
+__________ test_daily_report_ignores_huge_trade_and_execution_numbers __________
+
+    def test_daily_report_ignores_huge_trade_and_execution_numbers() -> None:
+        huge = 10**4000
+        result = sample_paper_trade_result(
+            paper_trade_id="pt-huge-pnl",
+            result=TradeResultStatus.WIN.value,
+            pnl_usdc=huge,
+            roi=huge,
+            details={"confidence": huge},
+        )
+    
+>       report = PaperReportService().build_daily_report(
+            report_date=date(2026, 6, 22),
+            starting_equity=1000.0,
+            ending_equity=1000.0,
+            total_signals=2,
+            paper_orders=2,
+            paper_fills=1,
+            rejected_paper_orders=0,
+            open_positions=0,
+            results=[result],
+            paper_order_payloads=[
+                {
+                    "paper_order_id": "huge-depth",
+                    "status": "FILLED",
+                    "metrics": {
+                        "paper_available_depth_usdc": huge,
+                        "paper_orderbook_staleness_ms": huge,
+                    },
+                },
+                {
+                    "paper_order_id": "good-depth",
+                    "status": "FILLED",
+                    "metrics": {"paper_available_depth_usdc": 8.0},
+                },
+            ],
+        )
+
+tests/test_paper_report_boundaries.py:243: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/polysignal_lab/paper/report.py:68: in build_daily_report
+    total_pnl = sum(trade_result_float(r, "pnl_usdc") for r in closed)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/polysignal_lab/paper/report.py:68: in <genexpr>
+    total_pnl = sum(trade_result_float(r, "pnl_usdc") for r in closed)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+row = {'schema_version': 1, 'paper_trade_id': 'pt-huge-pnl', 'signal_id': 'sig-test', 'paper_position_id': 'pos-test', ...}
+key = 'pnl_usdc', default = 0.0
+
+    def trade_result_float(row: Mapping[str, Any], key: str, default: float = 0.0) -> float:
+        value = row.get(key)
+        if isinstance(value, bool):
+            return default
+        if isinstance(value, (int, float)):
+>           parsed = float(value)
+                     ^^^^^^^^^^^^
+E           OverflowError: int too large to convert to float
+
+src/polysignal_lab/domain/paper_result.py:112: OverflowError
+___________ test_sqlite_store_rejects_huge_integer_paper_trade_rows ____________
+
+tmp_path = PosixPath('/tmp/pytest-of-debian/pytest-1813/test_sqlite_store_rejects_huge0')
+
+    def test_sqlite_store_rejects_huge_integer_paper_trade_rows(tmp_path: Path) -> None:
+        # Given: huge valid JSON integers which cannot fit paper numeric boundaries.
+        store = SQLiteStore(tmp_path / "restore.sqlite3")
+        invalid = sample_paper_trade_result(paper_trade_id="pt-huge-entry-price")
+        invalid["entry_price"] = 10**4000
+    
+        # When/Then: API inserts fail closed with the typed parser error.
+        with pytest.raises(InvalidPaperTradeResultRow):
+>           store.insert_paper_trade_result(invalid)
+
+tests/test_storage_restore.py:284: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/polysignal_lab/storage/sqlite_store.py:416: in insert_paper_trade_result
+    p: dict[str, Any] = dict(parse_paper_trade_result_row(to_jsonable(result)))
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/polysignal_lab/domain/paper_result.py:166: in parse_paper_trade_result_row
+    payload[key] = _finite_float(payload, key, allow_negative=False, allow_zero=False)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+row = {'schema_version': 1, 'paper_trade_id': 'pt-huge-entry-price', 'signal_id': 'sig-test', 'paper_position_id': 'pos-test', ...}
+key = 'entry_price', allow_negative = False, allow_zero = False
+
+    def _finite_float(
+        row: Mapping[str, Any],
+        key: str,
+        *,
+        allow_negative: bool,
+        allow_zero: bool = True,
+    ) -> float:
+        value = row.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise InvalidPaperTradeResultRow(key, "missing")
+        try:
+>           parsed = float(value)
+                     ^^^^^^^^^^^^
+E           OverflowError: int too large to convert to float
+
+src/polysignal_lab/domain/paper_result.py:201: OverflowError
+=========================== short test summary info ============================
+FAILED tests/test_paper_report_boundaries.py::test_report_numeric_helpers_ignore_huge_json_integers
+FAILED tests/test_paper_report_boundaries.py::test_daily_report_ignores_huge_trade_and_execution_numbers
+FAILED tests/test_storage_restore.py::test_sqlite_store_rejects_huge_integer_paper_trade_rows
+EXIT_CODE: 1

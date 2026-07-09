@@ -1,0 +1,28 @@
+scenario: C6 full pytest rerun after ambiguous existing full-suite artifact
+surface: CLI pytest from repo root
+invocation: PYTHONDONTWRITEBYTECODE=1 uv run pytest -q
+observable: process exit code 0
+started: 2026-07-09T11:31:23+02:00
+........................................................................ [ 10%]
+........................................................................ [ 20%]
+........................................................................ [ 30%]
+........................................................................ [ 41%]
+........................................................................ [ 51%]
+........................................................................ [ 61%]
+........................................................................ [ 72%]
+........................................................................ [ 82%]
+........................................................................ [ 92%]
+..................................................                       [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+finished: 2026-07-09T11:31:36+02:00
+exit_code: 0
+verdict: PASS

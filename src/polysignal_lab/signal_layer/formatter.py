@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, html, typing, typing.Literal, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.DailyReport, polysignal_lab.domain.paper_result.PaperTradeResult
-Output: MessageFormatter
+Input: __future__, __future__.annotations, html, typing, typing.Literal, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.report_date_text, polysignal_lab.domain.paper_result.report_float, polysignal_lab.domain.paper_result.report_nested_mapping, polysignal_lab.domain.paper_result.trade_result_float, polysignal_lab.domain.paper_result.trade_result_status, polysignal_lab.domain.paper_result.trade_result_text
+Output: PaperTradeResultRow helpers, DailyReportRow helpers, MessageFormatter
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -17,8 +17,17 @@ from __future__ import annotations
 import html
 from typing import Literal
 
+from collections.abc import Mapping
+
 from polysignal_lab.domain.enums import TradeResultStatus
-from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
+from polysignal_lab.domain.paper_result import (
+    report_date_text,
+    report_float,
+    report_nested_mapping,
+    trade_result_float,
+    trade_result_status,
+    trade_result_text,
+)
 from polysignal_lab.domain.signal import SignalCandidate
 
 
@@ -44,29 +53,36 @@ Mode: Paper
 ID: <code>{html.escape(signal.signal_id)}</code>"""
         return self._truncate(message)
 
-    def result_message(self, result: PaperTradeResult) -> str:
-        sign = "+" if result.pnl_usdc >= 0 else ""
-        match result.result:
+    def result_message(self, result: Mapping[str, object]) -> str:
+        pnl_usdc = trade_result_float(result, "pnl_usdc")
+        sign = "+" if pnl_usdc >= 0 else ""
+        status = trade_result_status(result)
+        match status:
             case TradeResultStatus.WIN:
                 emoji = "✅"
             case TradeResultStatus.LOSS:
                 emoji = "🔴"
             case _:
                 emoji = "⚪"
-        message = f"""<b>{emoji} {html.escape(result.asset)} {html.escape(result.timeframe)} · {html.escape(result.result.value)}</b>
-<code>{html.escape(result.strategy)}</code>
+        asset = trade_result_text(result, "asset")
+        timeframe = trade_result_text(result, "timeframe")
+        strategy = trade_result_text(result, "strategy")
+        side = trade_result_text(result, "side")
+        signal_id = trade_result_text(result, "signal_id")
+        message = f"""<b>{emoji} {html.escape(asset)} {html.escape(timeframe)} · {html.escape(status.value)}</b>
+<code>{html.escape(strategy)}</code>
 
-Side   {html.escape(result.side.value)}
-Entry  {result.entry_price:.4f}
-Stake  {result.stake_usdc:.2f} USDC
-Shares {result.shares:.4f}
+Side   {html.escape(side)}
+Entry  {trade_result_float(result, "entry_price"):.4f}
+Stake  {trade_result_float(result, "stake_usdc"):.2f} USDC
+Shares {trade_result_float(result, "shares"):.4f}
 
-PnL    {sign}{result.pnl_usdc:.4f} USDC
-ROI    {sign}{result.roi:.2%}
-Settle {result.settlement_value:.4f} USDC
+PnL    {sign}{pnl_usdc:.4f} USDC
+ROI    {sign}{trade_result_float(result, "roi"):.2%}
+Settle {trade_result_float(result, "settlement_value"):.4f} USDC
 
 Mode: Paper
-ID: <code>{html.escape(result.signal_id)}</code>"""
+ID: <code>{html.escape(signal_id)}</code>"""
         return self._truncate(message)
 
     def nautilus_fill_message(self, fill: dict[str, object]) -> str:
@@ -85,42 +101,45 @@ Order  <code>{html.escape(str(fill.get("client_order_id", "")))}</code>
 FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
         return self._truncate(message)
 
-    def daily_report_message(self, report: DailyReport) -> str:
+    def daily_report_message(self, report: Mapping[str, object]) -> str:
         lines = []
-        for strategy, row in report.strategy_breakdown.items():
-            closed = row.get("closed_positions", 0)
+        strategy_breakdown = report_nested_mapping(report, "strategy_breakdown")
+        for strategy, row in strategy_breakdown.items():
+            if not isinstance(row, dict):
+                continue
+            closed = int(row.get("closed_positions", 0))
             trade_word = "trade" if closed == 1 else "trades"
             lines.append(
                 f"• {html.escape(strategy)}: {closed} {trade_word}, "
                 f"{row.get('win_count', 0)}W/{row.get('loss_count', 0)}L, "
-                f"{row.get('total_pnl_usdc', 0.0):+.2f} USDC"
+                f"{float(row.get('total_pnl_usdc', 0.0)):+.2f} USDC"
             )
         strategy_text = "\n".join(lines) if lines else "• No closed trades"
+        rejects_by_reason = report_nested_mapping(report, "paper_rejects_by_reason")
         reject_text = "none"
-        if report.paper_rejects_by_reason:
+        if rejects_by_reason:
             reject_text = ", ".join(
-                f"{reason}:{count}" for reason, count in sorted(report.paper_rejects_by_reason.items())
+                f"{reason}:{count}"
+                for reason, count in sorted(rejects_by_reason.items())
+                if isinstance(count, (int, float))
             )
-        exec_lag = (
-            "n/a"
-            if report.average_execution_staleness_ms is None
-            else f"{report.average_execution_staleness_ms:.0f} ms"
-        )
+        exec_lag_value = _row_optional_float(report, "average_execution_staleness_ms")
+        exec_lag = "n/a" if exec_lag_value is None else f"{exec_lag_value:.0f} ms"
         message = f"""<b>📊 Daily Paper Report</b>
-{report.report_date.isoformat()}
+{report_date_text(report)}
 
-Equity  {report.starting_equity:.2f} → {report.ending_equity:.2f} USDC
-PnL     {report.paper_pnl:+.2f} USDC
-ROI     {report.paper_roi:+.2%}
+Equity  {report_float(report, 'starting_equity'):.2f} → {report_float(report, 'ending_equity'):.2f} USDC
+PnL     {report_float(report, 'paper_pnl'):+.2f} USDC
+ROI     {report_float(report, 'paper_roi'):+.2%}
 
-Signals {report.total_signals}
-Orders  {report.paper_orders}
-Rejects {report.rejected_paper_orders} ({reject_text})
+Signals {int(report_float(report, 'total_signals'))}
+Orders  {int(report_float(report, 'paper_orders'))}
+Rejects {int(report_float(report, 'rejected_paper_orders'))} ({reject_text})
 ExecLag {exec_lag}
-Filled  {report.paper_fills}
-Closed  {report.closed_positions}
-W/L     {report.win_count} / {report.loss_count}
-WR      {report.win_rate:.2%}
+Filled  {int(report_float(report, 'paper_fills'))}
+Closed  {int(report_float(report, 'closed_positions'))}
+W/L     {int(report_float(report, 'win_count'))} / {int(report_float(report, 'loss_count'))}
+WR      {report_float(report, 'win_rate'):.2%}
 
 <b>Strategies</b>
 {strategy_text}"""
@@ -169,3 +188,16 @@ def _float_value(value: object) -> float:
         except ValueError:
             return 0.0
     return 0.0
+
+
+def _row_optional_float(row: Mapping[str, object] | object, key: str) -> float | None:
+    if isinstance(row, Mapping):
+        value = row.get(key)
+    else:
+        value = getattr(row, key, None)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

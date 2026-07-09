@@ -1,0 +1,28 @@
+PASS paper-json-digit-limit-red.txt
+.omo/ulw-loop/evidence/paper-json-digit-limit-red.txt
+PASS paper-json-digit-limit-green.txt
+.omo/ulw-loop/evidence/paper-json-digit-limit-green.txt
+PASS paper-storage-json-boundary-focused.txt
+.omo/ulw-loop/evidence/paper-storage-json-boundary-focused.txt
+PASS paper-huge-int-overflow-red.txt
+.omo/ulw-loop/evidence/paper-huge-int-overflow-red.txt
+PASS paper-huge-int-overflow-green.txt
+.omo/ulw-loop/evidence/paper-huge-int-overflow-green.txt
+PASS paper-final-focused-pytest.txt
+.omo/ulw-loop/evidence/paper-final-focused-pytest.txt
+PASS paper-final-full-pytest.txt
+.omo/ulw-loop/evidence/paper-final-full-pytest.txt
+PASS paper-final-no-excuse.txt
+.omo/ulw-loop/evidence/paper-final-no-excuse.txt
+PASS paper-final-basedpyright.txt
+.omo/ulw-loop/evidence/paper-final-basedpyright.txt
+PASS paper-final-compileall.txt
+.omo/ulw-loop/evidence/paper-final-compileall.txt
+PASS paper-final-diff-check.txt
+.omo/ulw-loop/evidence/paper-final-diff-check.txt
+PASS paper-final-refs-check.txt
+.omo/ulw-loop/evidence/paper-final-refs-check.txt
+PASS paper-final-security-probe.txt
+.omo/ulw-loop/evidence/paper-final-security-probe.txt
+PASS paper-final-artifact-integrity.txt
+.omo/ulw-loop/evidence/paper-final-artifact-integrity.txt

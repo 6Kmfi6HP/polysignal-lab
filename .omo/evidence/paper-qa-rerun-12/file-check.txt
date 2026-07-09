@@ -1,0 +1,10 @@
+PASS non-empty .omo/ulw-loop/evidence/paper-r10-protocol-callable-red.txt bytes=2182 lines=48
+PASS non-empty .omo/ulw-loop/evidence/paper-r10-protocol-callable-green.txt bytes=80 lines=1
+PASS non-empty .omo/ulw-loop/evidence/paper-storage-timestamp-red.txt bytes=2926 lines=60
+PASS non-empty .omo/ulw-loop/evidence/paper-storage-timestamp-green.txt bytes=80 lines=1
+PASS non-empty .omo/ulw-loop/evidence/paper-storage-restore-pytest.txt bytes=80 lines=1
+PASS non-empty .omo/ulw-loop/evidence/paper-post-r10-focused-rerun.txt bytes=1195 lines=11
+PASS non-empty .omo/ulw-loop/evidence/paper-post-r10-full-pytest-rerun.txt bytes=1885 lines=20
+PASS non-empty .omo/ulw-loop/evidence/paper-post-r10-rg-rerun.txt bytes=182 lines=2
+PASS non-empty .omo/ulw-loop/evidence/paper-post-r10-diff-check.txt bytes=62 lines=2
+PASS non-empty .omo/ulw-loop/evidence/paper-post-r10-refs-check.txt bytes=196 lines=5

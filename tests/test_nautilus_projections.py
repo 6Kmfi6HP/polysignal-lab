@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.nautilus_runtime.projections, polysignal_lab.nautilus_runtime.projections.(
-Output: test_project_order_event_uses_nautilus_event_fields, test_project_fill_event_uses_nautilus_fill_fields, test_project_fill_event_accepts_nautilus_price_quantity_objects, test_project_position_uses_nautilus_position_fields, test_project_portfolio_snapshot_sums_currency_equity_mapping, _FloatLike, _MoneyLike
+Output: test_project_order_event_uses_nautilus_event_fields, test_project_fill_event_uses_nautilus_fill_fields, test_project_fill_event_accepts_nautilus_price_quantity_objects, test_project_position_uses_nautilus_position_fields, test_project_position_leaves_missing_money_unknown, test_project_portfolio_snapshot_sums_currency_equity_mapping, _FloatLike, _MoneyLike
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -131,9 +131,24 @@ def test_project_position_uses_nautilus_position_fields() -> None:
     assert row["instrument_id"] == "up-token.POLYMARKET"
     assert row["quantity"] == 20.0
     assert row["avg_entry_price"] == 0.50
+    assert row["stake_usdc"] == 10.0
     assert row["realized_pnl"] == 1.25
     assert row["status"] == "OPEN"
     assert row["is_closed"] is False
+
+
+def test_project_position_leaves_missing_money_unknown() -> None:
+    position = SimpleNamespace(
+        id="P-missing-money",
+        instrument_id="up-token.POLYMARKET",
+        is_closed=False,
+    )
+
+    row = project_position(position)
+
+    assert row["quantity"] is None
+    assert row["avg_entry_price"] is None
+    assert row["stake_usdc"] is None
 
 
 def test_project_portfolio_snapshot_sums_currency_equity_mapping() -> None:

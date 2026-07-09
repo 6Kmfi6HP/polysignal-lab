@@ -1,0 +1,7 @@
+surface=S1 focused pytest selection
+exact invocation: pytest tests/test_paper_calibration.py tests/test_scheduler_cancelled_markets.py tests/test_nautilus_projections.py tests/test_scheduler_settlement_resolution.py tests/test_settlement.py tests/test_storage_restore.py
+
+................................................                         [100%]
+48 passed in 0.68s
+
+exit_status=0

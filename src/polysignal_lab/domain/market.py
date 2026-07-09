@@ -15,6 +15,7 @@ Pos: Application code
 from __future__ import annotations
 
 from datetime import datetime
+from importlib import import_module
 from typing import Final
 
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, computed_field
@@ -115,8 +116,24 @@ class Market(BaseModel):
             if raw_tid is None:
                 continue
             tid = str(raw_tid)
-            side = _side_from_text(name) or (Side.UP if idx == 0 else Side.DOWN)
-            tokens.append(OutcomeToken(token_id=tid, side=side, outcome_name=name or side.value, market_id=market_id))
+            parsed_outcome = _binary_option_outcome_from_gamma(
+                payload,
+                condition_id=condition_id,
+                question=str(question or slug),
+                end_ts=end_ts,
+                token_id=tid,
+                outcome=name,
+            )
+            outcome_name = parsed_outcome or name
+            side = _side_from_text(outcome_name) or (Side.UP if idx == 0 else Side.DOWN)
+            tokens.append(
+                OutcomeToken(
+                    token_id=tid,
+                    side=side,
+                    outcome_name=outcome_name or side.value,
+                    market_id=market_id,
+                )
+            )
         resolved_outcome = _resolved_outcome_from_gamma(payload, tokens)
         status = _status_from_gamma(payload)
         return cls(
@@ -152,6 +169,55 @@ def _first_float(payload: JsonObject, keys: tuple[str, ...]) -> float | None:
         if value is not None:
             return value
     return None
+
+
+def _binary_option_outcome_from_gamma(
+    payload: JsonObject,
+    *,
+    condition_id: str,
+    question: str,
+    end_ts: datetime | None,
+    token_id: str,
+    outcome: str,
+) -> str | None:
+    end_date = _first_text(payload, ("end_date_iso", "endDateIso", "endDate", "end_date"))
+    market_info: dict[str, object] = {
+        "condition_id": condition_id,
+        "question": question,
+        "minimum_tick_size": _first_text(
+            payload,
+            ("minimum_tick_size", "minimumTickSize", "tick_size", "tickSize"),
+        )
+        or "0.01",
+        "end_date_iso": end_date or _iso_z(end_ts),
+        "_gamma_original": payload,
+    }
+    try:
+        parser = _parse_nautilus_polymarket_instrument
+        instrument = parser(market_info, token_id, outcome)
+    except (AttributeError, KeyError, ModuleNotFoundError, TypeError, ValueError):
+        return None
+    parsed_outcome = getattr(instrument, "outcome", None)
+    return str(parsed_outcome) if parsed_outcome is not None else None
+
+
+def _parse_nautilus_polymarket_instrument(
+    market_info: dict[str, object],
+    token_id: str,
+    outcome: str,
+    ts_init: int | None = None,
+) -> object:
+    parser = getattr(
+        import_module("nautilus_trader.adapters.polymarket"),
+        "parse_polymarket_instrument",
+    )
+    return parser(market_info, token_id, outcome, ts_init)
+
+
+def _iso_z(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat().replace("+00:00", "Z")
 
 
 def _json_list(raw: JsonValue | None) -> list[JsonValue]:

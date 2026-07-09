@@ -1,0 +1,85 @@
+surface=S6 QA scope check
+exact invocation: git status --short -- .omo/evidence/paper-qa-rerun-8 .omo/evidence/paper-qa-rerun-8.md; git status --short -- src tests refs docs/nautilus_reference
+
+-- QA evidence paths --
+?? .omo/evidence/paper-qa-rerun-8.md
+?? .omo/evidence/paper-qa-rerun-8/
+
+-- production/test/protected baseline paths --
+ M src/polysignal_lab/app/_settlement_check.py
+ M src/polysignal_lab/app/readonly_smoke_public.py
+ M src/polysignal_lab/app/scheduler_reporting.py
+ M src/polysignal_lab/app/scheduler_reporting_storage.py
+ M src/polysignal_lab/app/services/persistence_service.py
+ M src/polysignal_lab/app/services/publish_service.py
+ M src/polysignal_lab/dashboard/app.py
+ M src/polysignal_lab/data/FOLDER_INDEX.md
+ M src/polysignal_lab/data/polymarket_market_discovery.py
+ M src/polysignal_lab/domain/FOLDER_INDEX.md
+ M src/polysignal_lab/domain/enums.py
+ M src/polysignal_lab/domain/market.py
+ M src/polysignal_lab/domain/orderbook.py
+ D src/polysignal_lab/domain/paper_order.py
+ D src/polysignal_lab/domain/paper_position.py
+ M src/polysignal_lab/domain/paper_result.py
+ M src/polysignal_lab/nautilus_bridge/FOLDER_INDEX.md
+ D src/polysignal_lab/nautilus_bridge/instrument_mapping.py
+ M src/polysignal_lab/nautilus_bridge/market_catalog.py
+ M src/polysignal_lab/nautilus_runtime/FOLDER_INDEX.md
+ M src/polysignal_lab/nautilus_runtime/__init__.py
+ M src/polysignal_lab/nautilus_runtime/custom_data_types.py
+ M src/polysignal_lab/nautilus_runtime/native_order.py
+ M src/polysignal_lab/nautilus_runtime/node.py
+ M src/polysignal_lab/nautilus_runtime/node_builder.py
+ M src/polysignal_lab/nautilus_runtime/node_shared.py
+ M src/polysignal_lab/nautilus_runtime/observability_persistence.py
+ M src/polysignal_lab/nautilus_runtime/order_plan.py
+ M src/polysignal_lab/nautilus_runtime/projections.py
+ M src/polysignal_lab/nautilus_runtime/sidecar_data.py
+ M src/polysignal_lab/paper/report.py
+ M src/polysignal_lab/paper/strategy_stats.py
+ M src/polysignal_lab/publish/telegram_bot.py
+ M src/polysignal_lab/signal_layer/formatter.py
+ M src/polysignal_lab/storage/sqlite_schema.py
+ M src/polysignal_lab/storage/sqlite_store.py
+ M tests/FOLDER_INDEX.md
+ M tests/factories.py
+ M tests/test_dashboard.py
+ M tests/test_market_data.py
+ M tests/test_market_parsing.py
+ M tests/test_nautilus_cache_market_data.py
+ M tests/test_nautilus_custom_data.py
+ M tests/test_nautilus_full_paper_runtime_smoke.py
+ D tests/test_nautilus_instrument_mapping.py
+ M tests/test_nautilus_market_catalog.py
+ M tests/test_nautilus_market_rotation.py
+ M tests/test_nautilus_native_order.py
+ M tests/test_nautilus_node.py
+ M tests/test_nautilus_observability.py
+ M tests/test_nautilus_platform_boundary.py
+ M tests/test_nautilus_projections.py
+ M tests/test_nautilus_reporting_cache_source.py
+ M tests/test_nautilus_sidecar_actor.py
+ M tests/test_nautilus_trading_node_runtime.py
+ M tests/test_order_intent.py
+ M tests/test_orderbook_snapshot.py
+ M tests/test_paper_calibration.py
+ M tests/test_polymarket_clob_rest.py
+ M tests/test_publish_service.py
+ M tests/test_reporting.py
+ M tests/test_scheduler_cancelled_markets.py
+ M tests/test_scheduler_settlement_resolution.py
+ M tests/test_settlement.py
+ M tests/test_storage_reporting_publish.py
+ M tests/test_storage_restore.py
+ M tests/test_strategy_stats.py
+ M tests/test_telegram_bot_service.py
+?? src/polysignal_lab/data/orderbook_payload.py
+?? src/polysignal_lab/data/polymarket_clob_rest.py
+?? src/polysignal_lab/data/polymarket_clob_ws.py
+?? src/polysignal_lab/nautilus_bridge/enum_parser.py
+?? src/polysignal_lab/nautilus_runtime/node_builder_components.py
+?? tests/test_nautilus_enum_parser.py
+?? tests/test_nautilus_instrument_load_ids.py
+?? tests/test_nautilus_static_native_strategy.py
+?? tests/test_repair_settlement_results.py

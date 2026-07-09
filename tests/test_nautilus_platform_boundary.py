@@ -31,10 +31,14 @@ def test_nautilus_node_and_strategies_do_not_import_legacy_execution() -> None:
     root_pkg = importlib.import_module("polysignal_lab")
     missing_runtime_attr = not hasattr(root_pkg, "nautilus_runtime")
     saved_runtime_attr = getattr(root_pkg, "nautilus_runtime", None)
+    preserved_custom_data_types = sys.modules.get(
+        "polysignal_lab.nautilus_runtime.custom_data_types"
+    )
     saved_runtime_modules = {
         name: module
         for name, module in tuple(sys.modules.items())
         if name.startswith("polysignal_lab.nautilus_runtime")
+        and name != "polysignal_lab.nautilus_runtime.custom_data_types"
     }
     for name in saved_runtime_modules:
         _ = sys.modules.pop(name, None)
@@ -47,6 +51,10 @@ def test_nautilus_node_and_strategies_do_not_import_legacy_execution() -> None:
             if name.startswith("polysignal_lab.nautilus_runtime"):
                 _ = sys.modules.pop(name, None)
         sys.modules.update(saved_runtime_modules)
+        if preserved_custom_data_types is not None:
+            sys.modules[
+                "polysignal_lab.nautilus_runtime.custom_data_types"
+            ] = preserved_custom_data_types
         package = sys.modules.get("polysignal_lab.nautilus_runtime")
         if package is not None:
             for child in ("node", "strategies", "execution", "execution_types"):

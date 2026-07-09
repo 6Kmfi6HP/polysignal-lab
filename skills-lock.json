@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "ask-matt": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/ask-matt/SKILL.md",
+      "computedHash": "fdb0ea595c292ca93332d0f1e2c6624053e16ce5057533f5c59f8c166be707c5"
+    },
     "grill-me": {
       "source": "mattpocock/skills",
       "sourceType": "github",

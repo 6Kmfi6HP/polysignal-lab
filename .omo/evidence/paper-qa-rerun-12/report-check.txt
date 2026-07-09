@@ -1,0 +1,6 @@
+PASS report contains Verdict: PASS
+PASS report contains ### surfaceEvidence
+PASS report contains ### adversarialCases
+PASS report contains ### artifactRefs
+PASS report contains A12
+PASS report non-empty bytes=5601

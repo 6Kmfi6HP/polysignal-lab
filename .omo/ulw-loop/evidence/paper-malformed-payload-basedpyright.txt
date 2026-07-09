@@ -1,0 +1,240 @@
+/home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:26:25 - warning: This type is deprecated as of Python 3.9; use "collections.abc.Iterable" instead (reportDeprecated)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:50:9 - warning: Method "__str__" is not marked as override but is overriding a method in class "BaseException" (reportImplicitOverride)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:58:9 - warning: Method "__str__" is not marked as override but is overriding a method in class "BaseException" (reportImplicitOverride)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:62:45 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:94:41 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:109:38 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:127:14 - warning: Type annotation for attribute `path` is required because this class is not decorated with `@final` (reportUnannotatedClassAttribute)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:129:14 - warning: Type annotation for attribute `_lock` is required because this class is not decorated with `@final` (reportUnannotatedClassAttribute)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:130:14 - warning: Type annotation for attribute `_conn` is required because this class is not decorated with `@final` (reportUnannotatedClassAttribute)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:132:9 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:133:9 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:134:9 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:143:17 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:146:17 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:152:21 - warning: Type of parameter "obj" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:152:26 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:160:26 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:163:26 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:171:26 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:181:29 - warning: Type of parameter "market" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:181:37 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:182:9 - warning: Type of "payload" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:184:13 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:187:104 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:187:127 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:206:13 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:250:13 - warning: Type of "row" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:253:9 - warning: Type of "payload" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:253:30 - warning: Argument type is Any
+    Argument corresponds to parameter "s" in function "loads" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:255:23 - warning: Argument type is Any
+    Argument corresponds to parameter "object" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:256:27 - warning: Argument type is Any
+    Argument corresponds to parameter "object" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:257:29 - warning: Argument type is Any
+    Argument corresponds to parameter "object" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:258:53 - warning: Argument type is Any
+    Argument corresponds to parameter "object" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:259:51 - warning: Argument type is Any
+    Argument corresponds to parameter "object" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:260:25 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:260:46 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:261:24 - warning: Argument type is Any
+    Argument corresponds to parameter "object" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:262:27 - warning: Argument type is Any
+    Argument corresponds to parameter "o" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:263:52 - warning: Argument type is Any
+    Argument corresponds to parameter "object" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:264:24 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:264:46 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:267:29 - warning: Type of parameter "signal" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:267:37 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:268:9 - warning: Type of "p" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:273:17 - warning: Argument type is Any
+    Argument corresponds to parameter "record_id" in function "_insert_idempotent" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:278:38 - warning: Type of parameter "rejected" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:278:48 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:279:9 - warning: Type of "p" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:284:17 - warning: Argument type is Any
+    Argument corresponds to parameter "record_id" in function "_insert_idempotent" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:289:38 - warning: Type of parameter "status" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:289:46 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:290:9 - warning: Type of "p" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:293:13 - warning: Argument type is Any
+    Argument corresponds to parameter "parts" in function "stable_hash" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:294:13 - warning: Argument type is Any
+    Argument corresponds to parameter "parts" in function "stable_hash" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:295:13 - warning: Argument type is Any
+    Argument corresponds to parameter "parts" in function "stable_hash" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:296:13 - warning: Argument type is Any
+    Argument corresponds to parameter "parts" in function "stable_hash" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:297:13 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:297:13 - warning: Argument type is Any
+    Argument corresponds to parameter "parts" in function "stable_hash" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:301:13 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:310:21 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:316:41 - warning: Type of parameter "result" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:316:49 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:317:22 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:317:63 - warning: Argument type is Any
+    Argument corresponds to parameter "row" in function "parse_paper_trade_result_row" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:322:17 - warning: Argument type is Any
+    Argument corresponds to parameter "record_id" in function "_insert_idempotent" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:327:38 - warning: Type of parameter "snapshot" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:327:48 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:328:9 - warning: Type of "p" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:330:13 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:336:35 - warning: Type of parameter "report" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:336:43 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:337:9 - warning: Type of "p" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:342:17 - warning: Argument type is Any
+    Argument corresponds to parameter "record_id" in function "_insert_idempotent" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:347:58 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:348:9 - warning: Type of "p" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:353:17 - warning: Argument type is Any
+    Argument corresponds to parameter "record_id" in function "_insert_idempotent" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:355:54 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:355:87 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:358:52 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:359:9 - warning: Type of "p" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:364:17 - warning: Argument type is Any
+    Argument corresponds to parameter "record_id" in function "_insert_idempotent" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:369:73 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:378:13 - warning: Type of "row" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:379:27 - warning: Argument type is Any
+    Argument corresponds to parameter "s" in function "loads" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:381:90 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:381:119 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:386:32 - warning: Argument type is Any
+    Argument corresponds to parameter "s" in function "loads" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:386:57 - warning: Type of "row" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:387:31 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:388:13 - warning: Type of "row" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:390:17 - warning: Type of "payload" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:390:38 - warning: Argument type is Any
+    Argument corresponds to parameter "s" in function "loads" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:391:64 - warning: Argument type is Any
+    Argument corresponds to parameter "row" in function "parse_paper_trade_result_row" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:398:28 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:400:59 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:407:13 - warning: Type of "row" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:408:27 - warning: Argument type is Any
+    Argument corresponds to parameter "s" in function "loads" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:410:62 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:417:37 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:424:56 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:429:20 - warning: Argument type is Any
+    Argument corresponds to parameter "object" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:433:58 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:438:20 - warning: Argument type is Any
+    Argument corresponds to parameter "object" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:442:73 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:449:80 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:454:17 - warning: Type of "strategy" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:454:27 - warning: Type of "row" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:454:34 - warning: Type of "items" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:456:21 - warning: Argument type is Any
+    Argument corresponds to parameter "key" in function "setdefault" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:459:30 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:459:30 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:461:68 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:461:68 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:462:70 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:462:70 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:463:70 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:463:70 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:464:82 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:464:82 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:465:49 - warning: Argument type is Any
+    Argument corresponds to parameter "key" in function "get" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:465:73 - warning: Type of "get" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:465:73 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:471:62 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:479:23 - warning: Type `Any` is not allowed (reportExplicitAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:484:9 - warning: Type of "existing" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:485:9 - warning: Type of "payload" is Any (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:487:27 - warning: Argument type is Any
+    Argument corresponds to parameter "s" in function "loads" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:487:67 - warning: Argument type is Any
+    Argument corresponds to parameter "s" in function "loads" (reportAny)
+  /home/debian/polysignal-lab/src/polysignal_lab/storage/sqlite_store.py:492:9 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+/home/debian/polysignal-lab/tests/test_storage_restore.py
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:31:63 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:31:63 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:33:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:170:56 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:170:56 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:172:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:180:16 - warning: "_lock" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:180:29 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:181:9 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:181:15 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:233:59 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:233:59 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:235:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:246:16 - warning: "_lock" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:246:29 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:247:9 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:247:15 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:270:56 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:270:56 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:272:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:295:64 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:295:64 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:297:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:317:71 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:317:71 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:319:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:333:16 - warning: "_lock" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:333:29 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:334:9 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:334:15 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:351:75 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:351:75 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:353:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:380:65 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:380:65 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:382:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:408:73 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:408:73 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:410:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:443:63 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:443:63 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:445:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:490:49 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:490:49 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:491:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:493:9 - warning: Type of "journal_mode" is Any (reportAny)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:493:30 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:494:9 - warning: Type of "busy_timeout" is Any (reportAny)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:494:30 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:495:9 - warning: Type of "synchronous" is Any (reportAny)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:495:29 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:499:16 - warning: Argument type is Any
+    Argument corresponds to parameter "object" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:501:16 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+0 errors, 182 warnings, 0 notes

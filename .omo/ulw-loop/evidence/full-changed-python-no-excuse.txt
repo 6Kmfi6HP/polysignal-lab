@@ -1,0 +1,420 @@
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:272:13: [silent-except] silent `except: pass` - log, re-raise, or actually handle the error
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:26:36: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:26:62: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:42:41: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:77:40: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:91:43: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:174:16: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:183:27: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:187:24: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:266:44: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:291:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:114:5: [if-elif-on-variant] isinstance/enum if/elif chain — use match/case + assert_never
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:1:1: [oversized-module] 322 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py:328:5: [broad-except] `except Exception` is too broad — catch the specific exception you expect
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/persistence_service.py:39:35: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/publish_service.py:16:1: [no-asyncio] import asyncio - use anyio (opt out: trailing `# noqa: ANYIO_OK`)
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/publish_service.py:99:47: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/publish_service.py:99:69: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/publish_service.py:135:33: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/publish_service.py:143:34: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/publish_service.py:155:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/publish_service.py:155:64: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/publish_service.py:45:35: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/publish_service.py:57:63: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/publish_service.py:68:63: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/app/services/publish_service.py:78:68: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/data/polymarket_market_discovery.py:1:1: [oversized-module] 376 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/src/polysignal_lab/domain/market.py:294:9: [missing-assert-never] match without `case _: assert_never(x)` default
+/home/debian/polysignal-lab/src/polysignal_lab/domain/market.py:88:9: [generic-exception] `raise KeyError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/domain/market.py:205:28: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/domain/market.py:209:6: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/domain/market.py:184:28: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/domain/market.py:1:1: [oversized-module] 289 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_bridge/market_catalog.py:51:13: [generic-exception] `raise ValueError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_bridge/market_catalog.py:158:13: [generic-exception] `raise ValueError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_bridge/market_catalog.py:160:13: [generic-exception] `raise ValueError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_bridge/market_catalog.py:170:13: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_bridge/market_catalog.py:79:34: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/__init__.py:22:31: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:238:13: [silent-except] silent `except: pass` - log, re-raise, or actually handle the error
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:128:20: [pyright-ignore] `# pyright: ignore` - fix the underlying type instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:243:9: [generic-exception] `raise TypeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:249:9: [generic-exception] `raise TypeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:260:9: [generic-exception] `raise TypeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:253:13: [generic-exception] `raise TypeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:264:13: [generic-exception] `raise TypeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:241:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:247:31: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:258:33: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:38:45: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:153:36: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/custom_data_types.py:169:37: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:61:45: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:96:32: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:96:43: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:103:30: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:103:55: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:113:33: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:113:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:123:28: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:37:24: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:38:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:39:19: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:40:16: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/native_order.py:41:24: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node.py:19:1: [no-asyncio] import asyncio - use anyio (opt out: trailing `# noqa: ANYIO_OK`)
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node.py:101:12: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node.py:101:20: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node.py:121:28: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node.py:145:22: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node.py:148:13: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node.py:149:6: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node.py:1:1: [oversized-module] 251 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:15:1: [no-asyncio] import asyncio - use anyio (opt out: trailing `# noqa: ANYIO_OK`)
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:88:2: [mutable-dataclass] class NautilusRuntimeBundle: @dataclass without frozen=True
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:166:5: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:175:9: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:76:11: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:77:51: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:78:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:79:35: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:80:24: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:81:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:146:43: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:158:43: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:158:57: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:158:71: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:172:31: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:189:22: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:221:22: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:223:13: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:225:16: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:47:28: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:48:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:67:30: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:69:13: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:93:27: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_builder.py:97:40: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/node_shared.py:40:5: [broad-except] `except Exception` is too broad — catch the specific exception you expect
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:141:13: [generic-exception] `raise ValueError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:77:43: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:93:56: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:49:37: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:50:48: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:51:49: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:52:52: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:53:48: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:57:92: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:67:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:68:72: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:135:28: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:167:72: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:107:53: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/observability_persistence.py:129:42: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/order_plan.py:83:9: [generic-exception] `raise ValueError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/order_plan.py:86:9: [generic-exception] `raise ValueError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/order_plan.py:103:9: [generic-exception] `raise ValueError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/order_plan.py:184:9: [generic-exception] `raise ValueError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/order_plan.py:91:27: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/order_plan.py:188:40: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:163:17: [silent-except] silent `except: pass` - log, re-raise, or actually handle the error
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:209:17: [silent-except] silent `except: pass` - log, re-raise, or actually handle the error
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:24:32: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:24:53: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:53:31: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:53:52: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:77:32: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:77:53: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:101:30: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:101:51: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:121:16: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:123:14: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:124:16: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:132:34: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:132:51: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:153:22: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:179:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:186:34: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:193:30: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:225:24: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:230:22: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:230:43: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:237:26: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:249:29: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:263:16: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:105:30: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:238:13: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/projections.py:240:15: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/sidecar_data.py:36:34: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/sidecar_data.py:36:46: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/sidecar_data.py:33:39: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/nautilus_runtime/sidecar_data.py:33:53: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/paper/strategy_stats.py:35:9: [if-elif-on-variant] isinstance/enum if/elif chain — use match/case + assert_never
+/home/debian/polysignal-lab/src/polysignal_lab/paper/strategy_stats.py:37:9: [if-elif-on-variant] isinstance/enum if/elif chain — use match/case + assert_never
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:261:9: [missing-assert-never] match without `case _: assert_never(x)` default
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:103:13: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:511:13: [generic-exception] `raise ValueError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:515:13: [generic-exception] `raise ValueError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:139:17: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:279:17: [generic-exception] `raise ValueError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:195:35: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:595:10: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:643:28: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:646:34: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:656:34: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:1:1: [oversized-module] 652 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:98:9: [broad-except] `except Exception` is too broad — catch the specific exception you expect
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:307:9: [broad-except] `except Exception` is too broad — catch the specific exception you expect
+/home/debian/polysignal-lab/src/polysignal_lab/publish/telegram_bot.py:424:9: [broad-except] `except Exception` is too broad — catch the specific exception you expect
+/home/debian/polysignal-lab/src/polysignal_lab/signal_layer/formatter.py:60:9: [missing-assert-never] match without `case _: assert_never(x)` default
+/home/debian/polysignal-lab/src/polysignal_lab/signal_layer/formatter.py:182:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/signal_layer/formatter.py:193:53: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/signal_layer/formatter.py:193:43: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/signal_layer/formatter.py:56:51: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/signal_layer/formatter.py:88:53: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/src/polysignal_lab/signal_layer/formatter.py:104:57: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/factories.py:304:44: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/factories.py:304:65: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/factories.py:55:22: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/factories.py:56:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/factories.py:57:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/factories.py:58:23: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/factories.py:306:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/factories.py:1:1: [oversized-module] 304 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/tests/test_market_data.py:1:1: [oversized-module] 514 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/tests/test_market_parsing.py:69:32: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_market_parsing.py:72:32: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_market_parsing.py:76:10: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_cache_market_data.py:33:2: [missing-slots] class FakeLevel: @dataclass without slots=True
+/home/debian/polysignal-lab/tests/test_nautilus_cache_market_data.py:65:41: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_cache_market_data.py:69:42: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_cache_market_data.py:63:30: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_cache_market_data.py:151:46: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_custom_data.py:86:13: [generic-exception] `raise KeyError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/tests/test_nautilus_custom_data.py:77:20: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_custom_data.py:78:22: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_custom_data.py:81:19: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_custom_data.py:82:19: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_custom_data.py:83:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:17:1: [no-asyncio] import asyncio - use anyio (opt out: trailing `# noqa: ANYIO_OK`)
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:72:24: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:72:42: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:83:30: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:272:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:431:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:431:52: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:505:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:506:30: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:512:52: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:694:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:694:52: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:99:42: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:102:36: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:120:60: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:120:81: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:130:45: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:134:51: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:138:51: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:142:62: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:142:78: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:146:62: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:146:78: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:155:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:155:79: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:94:35: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:95:31: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:124:32: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:125:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:126:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:127:55: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:127:63: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:128:55: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:128:63: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_full_paper_runtime_smoke.py:1:1: [oversized-module] 683 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:708:16: [cast-any] cast(Any, ...) - narrow with isinstance/TypeGuard or use a Protocol/TypedDict
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:787:16: [cast-any] cast(Any, ...) - narrow with isinstance/TypeGuard or use a Protocol/TypedDict
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:983:16: [cast-any] cast(Any, ...) - narrow with isinstance/TypeGuard or use a Protocol/TypedDict
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:17:1: [no-asyncio] import asyncio - use anyio (opt out: trailing `# noqa: ANYIO_OK`)
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:247:49: [type-ignore] `# type: ignore` - fix the underlying type instead
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:270:32: [type-ignore] `# type: ignore` - fix the underlying type instead
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:506:13: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:646:17: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:144:16: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:169:51: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:189:31: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:95:45: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:98:73: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:106:48: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:111:33: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:117:23: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:122:39: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:179:50: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:275:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:351:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:409:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:421:35: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:421:49: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:480:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:603:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:688:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:773:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:847:31: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:1003:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:92:44: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:93:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:640:49: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:640:63: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:859:23: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:860:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:861:24: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:862:23: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:971:39: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:974:41: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py:1:1: [oversized-module] 907 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:28:2: [mutable-dataclass] class FakeOrder: @dataclass without frozen=True
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:39:23: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:39:34: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:31:17: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:32:15: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:33:12: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:34:20: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:36:18: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:50:24: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:51:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:52:19: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:53:16: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:54:24: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_native_order.py:45:36: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:17:1: [no-asyncio] import asyncio - use anyio (opt out: trailing `# noqa: ANYIO_OK`)
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1268:9: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1310:13: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1528:13: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1531:13: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1969:13: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:854:17: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:301:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:430:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:516:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:562:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:641:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:895:24: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:999:53: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:999:79: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1066:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1177:27: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1177:35: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1178:19: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1231:27: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1231:35: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1232:19: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1463:23: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1516:23: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1832:21: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:848:48: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:848:73: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1534:50: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1537:48: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1580:48: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1583:50: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_node.py:1:1: [oversized-module] 1714 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:17:1: [no-asyncio] import asyncio - use anyio (opt out: trailing `# noqa: ANYIO_OK`)
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:453:28: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:48:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:51:72: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:57:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:69:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:80:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:92:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:102:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:708:37: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:711:48: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:714:49: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:717:42: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:720:48: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:733:10: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:768:42: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:773:49: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:705:37: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_observability.py:1:1: [oversized-module] 682 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/tests/test_nautilus_platform_boundary.py:1:1: [oversized-module] 390 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/tests/test_nautilus_sidecar_actor.py:30:39: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_sidecar_actor.py:30:53: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_sidecar_actor.py:160:40: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_sidecar_actor.py:28:30: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:17:1: [no-asyncio] import asyncio - use anyio (opt out: trailing `# noqa: ANYIO_OK`)
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:38:31: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:38:49: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:58:56: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:58:77: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:68:41: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:72:47: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:76:47: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:80:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:80:74: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:84:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:84:74: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:94:54: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:94:75: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:99:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:99:43: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:62:28: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:63:34: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:64:34: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:65:51: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:65:59: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:66:51: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py:66:59: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_polymarket_clob_rest.py:93:13: [generic-exception] `raise RuntimeError("...")` - define a typed error class instead
+/home/debian/polysignal-lab/tests/test_reporting.py:1:1: [oversized-module] 262 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:75:61: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:51:16: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:197:28: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:199:42: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:199:68: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:204:56: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:1:1: [oversized-module] 331 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/tests/test_storage_reporting_publish.py:1:1: [oversized-module] 370 pure LOC (limit: 250) — split by responsibility
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:33:57: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:37:45: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:54:36: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:79:56: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:82:59: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:85:73: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:88:73: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:91:102: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:94:46: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:94:64: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:97:45: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:100:52: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:108:53: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:243:63: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:246:60: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:299:57: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:317:46: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:321:47: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:321:58: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:372:43: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:396:56: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:399:59: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:402:73: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:406:73: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:415:25: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:432:102: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:48:47: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:49:29: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:74:31: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:106:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:237:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:238:36: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:384:40: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:385:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:386:39: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:387:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:388:44: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:389:32: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:390:38: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:419:34: [no-object] `object` as type annotation — use Protocol, TypeVar, or union
+/home/debian/polysignal-lab/tests/test_telegram_bot_service.py:1:1: [oversized-module] 668 pure LOC (limit: 250) — split by responsibility
+
+418 violation(s) in 60 file(s)

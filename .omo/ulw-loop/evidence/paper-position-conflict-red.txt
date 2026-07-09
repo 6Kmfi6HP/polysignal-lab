@@ -1,0 +1,38 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_sqlite_store_excludes_contradictory_position_state ____________
+
+tmp_path = PosixPath('/tmp/pytest-of-debian/pytest-1800/test_sqlite_store_excludes_con0')
+
+    def test_sqlite_store_excludes_contradictory_position_state(tmp_path) -> None:
+        # Given: a position event with valid money fields but contradictory lifecycle state.
+        store = SQLiteStore(tmp_path / "restore.sqlite3")
+        now = utc_now().isoformat()
+        store.insert_system_event(
+            {
+                "event_id": "evt-position-contradictory-state",
+                "event_type": "nautilus_position",
+                "severity": "info",
+                "created_at": now,
+                "paper_position_id": "pos-contradictory-state",
+                "status": PositionStatus.OPEN.value,
+                "is_closed": True,
+                "side": Side.UP.value,
+                "shares": 10.0,
+                "entry_price": 0.5,
+                "stake_usdc": 5.0,
+                "opened_at": now,
+                "closed_at": now,
+            }
+        )
+    
+        # When/Then: restore paths reject the row instead of returning it as both open and closed.
+>       assert store.restore_open_positions() == []
+E       AssertionError: assert [{'closed_at'...-state', ...}] == []
+E         
+E         Left contains one more item: {'closed_at': '2026-07-09T12:06:27.583402+00:00', 'created_at': '2026-07-09T12:06:27.583402+00:00', 'entry_price': 0.5, 'event_id': 'evt-position-contradictory-state', ...}
+E         Use -v to get more diff
+
+tests/test_storage_restore.py:916: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_storage_restore.py::test_sqlite_store_excludes_contradictory_position_state

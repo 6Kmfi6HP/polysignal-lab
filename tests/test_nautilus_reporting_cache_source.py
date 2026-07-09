@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._report_equity_inputs
-Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_ignores_shadow_wallet_without_cache
+Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -142,6 +142,22 @@ def test_report_equity_inputs_requires_nautilus_cache() -> None:
     )
 
     assert _report_equity_inputs(scheduler) == (1_000.0, 1_000.0, 0)
+
+
+def test_report_equity_inputs_requires_reporting_cache_protocol() -> None:
+    invalid_caches = (
+        SimpleNamespace(),
+        SimpleNamespace(account=123, positions=lambda: []),
+        SimpleNamespace(account=lambda: None, positions=[]),
+    )
+
+    for cache in invalid_caches:
+        scheduler = SimpleNamespace(
+            settings=_settings(),
+            nautilus_cache=cache,
+        )
+
+        assert _report_equity_inputs(scheduler) == (1_000.0, 1_000.0, 0)
 
 
 def test_report_equity_inputs_ignores_shadow_wallet_without_cache() -> None:

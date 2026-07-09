@@ -1,0 +1,11 @@
+debug_runtime=python uv pytest/asgi sqlite data surface
+hypothesis_1=restore_open_positions fails open when nautilus_position payload has money fields but lacks opened_at/ts/created_at
+evidence_1=.omo/ulw-loop/evidence/paper-timestamp-storage-pytest.txt: 1 passed after failing-first worker proof; manual QA storage_missing_timestamp=pass
+hypothesis_2=dashboard can still expose incomplete OPEN position rows despite storage guard
+evidence_2=.omo/ulw-loop/evidence/paper-blockers-manual-qa.txt: dashboard_incomplete_positions=pass; focused pytest 49 passed
+hypothesis_3=repair script can fabricate settlement rows from incomplete position money/timestamp/side fields
+evidence_3=.omo/ulw-loop/evidence/paper-blockers-manual-qa.txt: repair_incomplete_position=pass and repair_parse=pass
+root_cause=storage validator required OPEN money fields but not a payload timestamp, so restore paths could return rows repair/dashboard could not safely settle/display
+fix=src/polysignal_lab/storage/sqlite_store.py requires _row_timestamp(opened_at, ts, created_at) for OPEN rows
+qa=manual driver exercised repair parse, incomplete repair, cache guard, split report, malformed persisted rows, dashboard incomplete positions, and storage missing timestamp
+cleanup=debug journal removed; .git/info/exclude debug-journal entry removed; rg debug artifact scan clean

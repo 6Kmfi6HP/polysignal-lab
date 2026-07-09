@@ -1,0 +1,18 @@
+surface: CLI artifact integrity check
+exact invocation: for each required .omo/ulw-loop/evidence artifact, test -s and print byte count
+started: 2026-07-09T14:53:35+02:00
+
+PASS non-empty .omo/ulw-loop/evidence/paper-huge-int-overflow-red.txt bytes=6513
+PASS non-empty .omo/ulw-loop/evidence/paper-huge-int-overflow-green.txt bytes=847
+PASS non-empty .omo/ulw-loop/evidence/paper-final-focused-pytest.txt bytes=93
+PASS non-empty .omo/ulw-loop/evidence/paper-final-full-pytest.txt bytes=1978
+PASS non-empty .omo/ulw-loop/evidence/paper-final-no-excuse.txt bytes=41
+PASS non-empty .omo/ulw-loop/evidence/paper-final-basedpyright.txt bytes=86375
+PASS non-empty .omo/ulw-loop/evidence/paper-final-compileall.txt bytes=18
+PASS non-empty .omo/ulw-loop/evidence/paper-final-diff-check.txt bytes=22
+PASS non-empty .omo/ulw-loop/evidence/paper-final-refs-check.txt bytes=55
+PASS non-empty .omo/ulw-loop/evidence/paper-final-security-probe.txt bytes=479
+PASS non-empty .omo/ulw-loop/evidence/paper-final-artifact-integrity.txt bytes=1102
+
+finished: 2026-07-09T14:53:35+02:00
+exit_status: 0

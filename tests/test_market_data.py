@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path, pydantic, pytest, typing, typing.assert_type, typing_extensions, typing_extensions.override, polysignal_lab.data.orderbook_payload
 Output: test_fake_market_data_client_matches_protocol, test_binance_feed_url_and_parse_message, test_polymarket_ws_book_message_updates_registry, test_last_trade_does_not_refresh_orderbook_depth_freshness, test_books_for_market_hides_stale_marked_book_but_get_keeps_raw, test_market_snapshot_builder_hides_stale_marked_book_from_signal_inputs, test_market_snapshot_builder_handles_missing_side_for_trade_metrics, test_websocket_event_types_reconciliation
 Pos: Test Layer - Unit/Integration tests
 
@@ -19,11 +19,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter
+import pytest
 from typing import assert_type
+from typing_extensions import override
 
 from polysignal_lab.config import BinanceDataConfig, MarketConfig, PolymarketDataConfig
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
 from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
+from polysignal_lab.data.orderbook_payload import JsonObject, parse_order_book_payload
 from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
 from polysignal_lab.data.public_market_data_client import PublicMarketDataClient
 from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
@@ -31,11 +34,14 @@ from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.market import Market
 from factories import BookFactoryConfig, SpotFactoryConfig, sample_book, sample_spot
 from polysignal_lab.domain.orderbook import OrderBook
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "public_market_payloads.json"
-FIXTURE_ADAPTER = TypeAdapter(dict[str, JsonValue])
+FIXTURE_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+COUNTERS_ADAPTER: TypeAdapter[dict[str, int]] = TypeAdapter(dict[str, int])
 
 
 def _fixtures() -> dict[str, JsonValue]:
@@ -62,7 +68,7 @@ class FakeResponse:
 
 class FakeAsyncClient:
     def __init__(self, payloads: list[JsonValue]) -> None:
-        self.payloads = payloads
+        self.payloads: list[JsonValue] = payloads
         self.calls: list[FakeRequest] = []
 
     async def get(
@@ -76,23 +82,34 @@ class FakeAsyncClient:
         return FakeResponse(payload)
 
 
-class _FakePublicMarketData:
+class _FakePublicMarketData(PublicMarketDataClient):
+    @override
     async def get_book(self, token_id: str) -> OrderBook:
         raise NotImplementedError
 
+    @override
     async def get_books(self, token_ids: list[str]) -> list[OrderBook]:
         return []
 
+    @override
     async def get_mid(self, token_id: str) -> float | None:
         return None
 
+    @override
     async def get_spread(self, token_id: str) -> float | None:
         return None
 
 
 def test_fake_market_data_client_matches_protocol() -> None:
-    client: PublicMarketDataClient = _FakePublicMarketData()
-    assert_type(client, PublicMarketDataClient)
+    def public_client() -> PublicMarketDataClient:
+        return _FakePublicMarketData()
+
+    client = public_client()
+    _ = assert_type(client, PublicMarketDataClient)
+
+
+def _metric_counters(registry: OrderBookRegistry) -> dict[str, int]:
+    return COUNTERS_ADAPTER.validate_python(getattr(registry.metrics, "counters"))
 
 def _gamma_market_payload(
     *,
@@ -183,7 +200,7 @@ def test_last_trade_does_not_refresh_orderbook_depth_freshness() -> None:
     assert registry.is_fill_eligible("tok", 10_000, now) is False
 
 
-def test_books_for_market_hides_stale_marked_book_but_get_keeps_raw(market) -> None:
+def test_books_for_market_hides_stale_marked_book_but_get_keeps_raw(market: Market) -> None:
     registry = OrderBookRegistry()
     up_book = sample_book(market.token_for(Side.UP).token_id, BookFactoryConfig(ask=0.82))
     down_book = sample_book(market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=0.18))
@@ -198,7 +215,7 @@ def test_books_for_market_hides_stale_marked_book_but_get_keeps_raw(market) -> N
     assert registry.get(up_book.token_id) == up_book
     assert registry.is_fill_eligible(up_book.token_id, 10_000, up_book.received_at) is False
     assert (
-        registry.metrics.snapshot()["counters"].get(
+        _metric_counters(registry).get(
             "paper_fill_rejected_TICK_SIZE_CHANGE_RESEED_REQUIRED"
         )
         == 1
@@ -206,7 +223,7 @@ def test_books_for_market_hides_stale_marked_book_but_get_keeps_raw(market) -> N
 
 
 async def test_market_snapshot_builder_hides_stale_marked_book_from_signal_inputs(
-    market,
+    market: Market,
 ) -> None:
     books = OrderBookRegistry()
     spots = SpotRegistry()
@@ -229,7 +246,7 @@ async def test_market_snapshot_builder_hides_stale_marked_book_from_signal_input
 
 
 async def test_market_snapshot_builder_handles_missing_side_for_trade_metrics(
-    market,
+    market: Market,
 ) -> None:
     partial_market = market.model_copy(
         update={"outcome_tokens": [market.token_for(Side.UP)]}
@@ -257,23 +274,22 @@ def test_websocket_event_types_reconciliation() -> None:
     assert state is not None
     assert registry.is_fill_eligible("token-up", 10000, utc_now()) is False
     assert state.stale_reason == "TICK_SIZE_CHANGE_RESEED_REQUIRED"
-    assert registry.metrics.snapshot()["counters"].get("ws_event_tick_size_change") == 1
+    assert _metric_counters(registry).get("ws_event_tick_size_change") == 1
 
     ws.handle_message({"event_type": "some_unknown_event_type"})
-    assert registry.metrics.snapshot()["counters"].get("ws_event_unknown_some_unknown_event_type") == 1
+    assert _metric_counters(registry).get("ws_event_unknown") == 1
+    assert _metric_counters(registry).get("ws_event_unknown_some_unknown_event_type") is None
 
 
 def test_order_book_parses_hash_field() -> None:
-    from polysignal_lab.domain.orderbook import OrderBook
-
-    payload = {
+    payload: JsonObject = {
         "market": "market-1",
         "asset_id": "token-up",
         "hash": "test-hash-value",
         "bids": [],
         "asks": [],
     }
-    book = OrderBook.from_polymarket(payload)
+    book = parse_order_book_payload(payload)
     assert book.hash == "test-hash-value"
 
 
@@ -305,7 +321,7 @@ def test_registry_reconciliation_methods() -> None:
     delta_book = OrderBook(token_id="token-1", source_timestamp="1710000000100", received_at=now)
     registry.update_from_delta(delta_book)
     assert registry.get("token-1") is None
-    assert registry.metrics.snapshot()["counters"].get("delta_without_snapshot") == 1
+    assert _metric_counters(registry).get("delta_without_snapshot") == 1
 
     # 2. Snapshot creates eligibility
     snapshot_book = OrderBook(token_id="token-1", source_timestamp="1710000000000", received_at=now)
@@ -321,7 +337,7 @@ def test_registry_reconciliation_methods() -> None:
     regressed_book = OrderBook(token_id="token-1", source_timestamp="1700000000000", received_at=now)
     registry.update_from_delta(regressed_book)
     assert registry.is_fill_eligible("token-1", 10000, now) is False
-    assert registry.metrics.snapshot()["counters"].get("book_sequence_invalid") == 1
+    assert _metric_counters(registry).get("book_sequence_invalid") == 1
 
 
 async def test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids() -> None:
@@ -350,7 +366,7 @@ async def test_gamma_active_market_discovery_paginates_filters_and_extracts_toke
 
 
 async def test_gamma_discovery_skips_future_active_crypto_windows() -> None:
-    payloads = [
+    payloads: JsonValue = [
         {
             "id": "event-future",
             "slug": "btc-updown-5m-4102444800",
@@ -387,7 +403,7 @@ async def test_gamma_discovery_skips_future_active_crypto_windows() -> None:
 
 
 async def test_gamma_discovery_fetches_current_slot_by_slug_when_list_has_only_future_windows(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polysignal_lab.data import polymarket_market_discovery as discovery_module
 
@@ -419,7 +435,7 @@ async def test_gamma_discovery_fetches_current_slot_by_slug_when_list_has_only_f
 
 
 async def test_gamma_discovery_fetches_current_5m_and_15m_crypto_slots(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polysignal_lab.data import polymarket_market_discovery as discovery_module
 
@@ -465,7 +481,9 @@ async def test_gamma_discovery_fetches_current_5m_and_15m_crypto_slots(
     )
 
 
-async def test_gamma_discovery_includes_next_period_market_when_requested(monkeypatch) -> None:
+async def test_gamma_discovery_includes_next_period_market_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from polysignal_lab.data import polymarket_market_discovery as discovery_module
 
     now = datetime(2026, 6, 23, 22, 41, tzinfo=timezone.utc)
@@ -494,7 +512,9 @@ async def test_gamma_discovery_includes_next_period_market_when_requested(monkey
     assert [market.market_id for market in markets] == ["market-current", "market-next"]
 
 
-async def test_gamma_discovery_keeps_recently_ended_slot_with_stale_grace(monkeypatch) -> None:
+async def test_gamma_discovery_keeps_recently_ended_slot_with_stale_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from polysignal_lab.data import polymarket_market_discovery as discovery_module
 
     now = datetime(2026, 6, 23, 22, 45, 3, tzinfo=timezone.utc)
@@ -516,7 +536,9 @@ async def test_gamma_discovery_keeps_recently_ended_slot_with_stale_grace(monkey
 
     assert [market.market_id for market in markets] == ["market-previous"]
 
-async def test_gamma_discovery_maps_current_slot_tokens_by_outcome_label(monkeypatch) -> None:
+async def test_gamma_discovery_maps_current_slot_tokens_by_outcome_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from polysignal_lab.data import polymarket_market_discovery as discovery_module
 
     now = datetime(2026, 6, 23, 22, 41, tzinfo=timezone.utc)
@@ -543,7 +565,9 @@ async def test_gamma_discovery_maps_current_slot_tokens_by_outcome_label(monkeyp
     assert markets[0].token_for(Side.DOWN).token_id == "token-down"
 
 
-async def test_gamma_discovery_dedupes_list_and_current_slug_payload(monkeypatch) -> None:
+async def test_gamma_discovery_dedupes_list_and_current_slug_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from polysignal_lab.data import polymarket_market_discovery as discovery_module
 
     now = datetime(2026, 6, 23, 22, 41, tzinfo=timezone.utc)
@@ -606,7 +630,7 @@ def test_clob_ws_exposes_connection_and_invalid_event_metrics() -> None:
     assert ws.subscribed_token_count == 2
     assert ws.reconnect_count == 1
     assert ws.last_error == "network reset"
-    assert registry.metrics.snapshot()["counters"]["ws_decode_errors"] == 1
+    assert _metric_counters(registry)["ws_decode_errors"] == 1
 
 
 def test_binance_feed_exposes_connection_metrics() -> None:

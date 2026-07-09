@@ -255,7 +255,7 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
         return None
     if _runtime_intercepts_os_signals(bundle.context.settings):
         cleanup_signals = _install_sync_os_signal_handlers(request_stop)
-    runtime_logger = cast(logging.Logger, bundle.context.logger)
+    runtime_logger = cast(logging.Logger, getattr(bundle.context, "logger", logging.getLogger(__name__)))
     strategy_names = _strategy_names_from_bundle(bundle)
     telegram_bot_thread: _InteractiveTelegramBotThread | None = None
     report_loop_thread: _NautilusReportLoopThread | None = None

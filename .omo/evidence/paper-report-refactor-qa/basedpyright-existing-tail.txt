@@ -1,0 +1,40 @@
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:586:71 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:586:71 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:588:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:602:16 - warning: "_lock" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:602:29 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:603:9 - warning: Result of call expression is of type "Cursor" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:603:15 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:620:75 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:620:75 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:622:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:649:65 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:649:65 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:651:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:677:73 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:677:73 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:679:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:712:63 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:712:63 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:714:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:759:49 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:759:49 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:760:25 - warning: Argument type is unknown
+    Argument corresponds to parameter "path" in function "__init__" (reportUnknownArgumentType)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:762:9 - warning: Type of "journal_mode" is Any (reportAny)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:762:30 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:763:9 - warning: Type of "busy_timeout" is Any (reportAny)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:763:30 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:764:9 - warning: Type of "synchronous" is Any (reportAny)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:764:29 - warning: "_conn" is protected and used outside of the class in which it is declared (reportPrivateUsage)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:768:16 - warning: Argument type is Any
+    Argument corresponds to parameter "object" in function "__new__" (reportAny)
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:770:16 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+0 errors, 436 warnings, 0 notes

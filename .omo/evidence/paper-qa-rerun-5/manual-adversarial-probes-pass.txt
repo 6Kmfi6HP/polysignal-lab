@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "<stdin>", line 43, in <module>
+  File "/home/debian/polysignal-lab/src/polysignal_lab/app/_settlement_check.py", line 287, in _paper_trade_result_from_projection
+    opened_at = parse_dt(cast(str | datetime | None, ts_raw))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/debian/polysignal-lab/src/polysignal_lab/utils.py", line 42, in parse_dt
+    return datetime.fromisoformat(text)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: Invalid isoformat string: 'not-a-date'

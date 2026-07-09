@@ -1,0 +1,23 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_confidence_bucket_ignores_non_numeric_confidence _____________
+
+    def test_confidence_bucket_ignores_non_numeric_confidence() -> None:
+>       assert confidence_bucket("bad") == "low"
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_paper_report_boundaries.py:178: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+confidence = 'bad'
+
+    def confidence_bucket(confidence: float | None) -> str:
+        if isinstance(confidence, bool):
+            return "low"
+>       value = float(confidence or 0.0)
+                ^^^^^^^^^^^^^^^^^^^^^^^^
+E       ValueError: could not convert string to float: 'bad'
+
+src/polysignal_lab/paper/report_aggregates.py:88: ValueError
+=========================== short test summary info ============================
+FAILED tests/test_paper_report_boundaries.py::test_confidence_bucket_ignores_non_numeric_confidence

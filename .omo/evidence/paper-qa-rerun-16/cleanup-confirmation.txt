@@ -1,0 +1,12 @@
+QA cleanup confirmation for paper-qa-rerun-16
+Spawned by this QA: server=no browser=no tmux=no container=no port=no
+Teardown required: none
+Evidence directory contents:
+cleanup-confirmation.txt 169 bytes
+focused-regression-pytest.txt 1208 bytes
+full-suite-artifact-inspection.txt 5148 bytes
+git-diff-check.txt 13 bytes
+parser-boundary-pytest.txt 93 bytes
+refs-guard.txt 172 bytes
+
+EXIT_CODE=0

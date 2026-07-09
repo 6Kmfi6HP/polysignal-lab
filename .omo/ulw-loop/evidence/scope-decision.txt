@@ -1,0 +1,15 @@
+Scope inputs:
+- cursor final says only OrderBook removal/migration deferred
+- architecture Phase 4 says `domain/orderbook.py` `OrderBook.from_polymarket()` is the deprecated item; full custom OrderBook removal is long-term/high-test-impact.
+- architecture line 29 says: move raw Polymarket order-book ingestion to the Nautilus boundary, while keeping a simplified custom OrderBook for MarketView assembly for now.
+- architecture lines 497-515 identify Phase 4 long-term target and list success criterion "Custom OrderBook.from_polymarket() is unreferenced dead code (removed)".
+- code already contains `NautilusCacheMarketDataProvider` (`src/polysignal_lab/nautilus_runtime/cache_market_data.py`) reading books/trades from Nautilus cache via `cache.order_book()` / `cache.trade_ticks()`; `_attach_cache_projections()` in `src/polysignal_lab/nautilus_runtime/node.py` wires it into `MarketViewAssembler` at live-node build time.
+
+Decision:
+- Complete the safe slice now: remove the raw public Polymarket payload parser from the domain model; parse at the public data/app boundary with fail-closed validation; keep simplified `OrderBook` for existing MarketView/state assembly.
+- Do not attempt full custom OrderBook/state registry removal in this dirty worktree. That is the documented long-term/high-impact slice and would touch broader custom data state, MarketSnapshotBuilder, strategy tests, and runtime surfaces.
+
+Current proof after edits:
+- `rg -n "from_polymarket" src tests --glob '!@refs/**'` reports only test/doc names, no production call or method definition.
+- `src/polysignal_lab/data/orderbook_payload.py` owns public payload parsing and raises `InvalidOrderBookPayload` for non-object/missing-token payloads.
+- `src/polysignal_lab/data/polymarket_clob_ws.py` collapses unknown WS event metrics to `ws_event_unknown` and ignores invalid book snapshots instead of poisoning registry state.

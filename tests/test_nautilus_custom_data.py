@@ -58,6 +58,9 @@ def test_custom_market_meta_data_round_trips_dict() -> None:
         end_ts_ns=2,
         up_token_id="up",
         down_token_id="down",
+        question="Will BTC close above 100k?",
+        up_outcome="Yes",
+        down_outcome="No",
         ts_event=3,
         ts_init=4,
     )
@@ -84,7 +87,7 @@ def test_register_polysignal_data_types_is_idempotent(
         seen.add(cls)
         calls.append(cls)
 
-    monkeypatch.setattr(custom_data_mod, "_POLYSIGNAL_DATA_TYPES_REGISTERED", False)
+    monkeypatch.setattr(custom_data_mod, "_polysignal_data_types_registered", False)
     monkeypatch.setattr(
         "nautilus_trader.serialization.base.register_serializable_type",
         fake_register_serializable_type,

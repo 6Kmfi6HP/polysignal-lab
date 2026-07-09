@@ -23,6 +23,7 @@ from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
 from polysignal_lab.domain.enums import MarketStatus, Side
 from polysignal_lab.domain.market import Market
+import polysignal_lab.domain.market as market_module
 from factories import BookFactoryConfig, SpotFactoryConfig, sample_book, sample_spot
 
 
@@ -60,6 +61,41 @@ def test_gamma_resolved_payload_sets_resolved_outcome() -> None:
     assert market.resolved_outcome == Side.UP
     assert market.token_for(Side.UP).token_id == "token-up"
     assert market.token_for(Side.DOWN).token_id == "token-down"
+
+
+def test_gamma_payload_uses_nautilus_parser_for_binary_option_tokens(monkeypatch) -> None:
+    payload = _gamma_payload()
+    payload["clobTokenIds"] = '["123", "456"]'
+    seen: list[tuple[dict[str, object], str, str]] = []
+
+    def parse_binary_option(
+        market_info: dict[str, object],
+        token_id: str,
+        outcome: str,
+        ts_init: int | None = None,
+    ) -> object:
+        seen.append((market_info, token_id, outcome))
+        return type("ParsedBinaryOption", (), {"outcome": f"Parsed {outcome}"})()
+
+    monkeypatch.setattr(
+        market_module,
+        "_parse_nautilus_polymarket_instrument",
+        parse_binary_option,
+    )
+
+    market = Market.from_gamma(payload, asset="BTC", timeframe="5m")
+
+    assert [token.outcome_name for token in market.outcome_tokens] == [
+        "Parsed Up",
+        "Parsed Down",
+    ]
+    assert [(token_id, outcome) for _, token_id, outcome in seen] == [
+        ("123", "Up"),
+        ("456", "Down"),
+    ]
+    assert seen[0][0]["condition_id"] == "0xcondition"
+    assert seen[0][0]["end_date_iso"] == "2026-06-22T12:05:00Z"
+    assert seen[0][0]["minimum_tick_size"] == "0.01"
 
 
 def test_gamma_crypto_payload_prefers_event_window_over_listing_start_date() -> None:

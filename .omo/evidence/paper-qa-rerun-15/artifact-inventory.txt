@@ -1,0 +1,16 @@
+surface: CLI/data artifact inventory
+invocation: for f in required evidence files; do test -s "" && wc -c ""; done
+PASS non-empty 435 .omo/ulw-loop/evidence/paper-post-scheduler-split-loc.txt
+PASS non-empty 2205 .omo/ulw-loop/evidence/paper-storage-exit-mode-red.txt
+PASS non-empty 80 .omo/ulw-loop/evidence/paper-storage-exit-mode-green.txt
+PASS non-empty 80 .omo/ulw-loop/evidence/paper-post-scheduler-split-focused-pytest.txt
+PASS non-empty 25488 .omo/ulw-loop/evidence/paper-post-scheduler-split-basedpyright.txt
+PASS non-empty 2182 .omo/ulw-loop/evidence/paper-r10-protocol-callable-red.txt
+PASS non-empty 80 .omo/ulw-loop/evidence/paper-r10-protocol-callable-green.txt
+PASS non-empty 2926 .omo/ulw-loop/evidence/paper-storage-timestamp-red.txt
+PASS non-empty 80 .omo/ulw-loop/evidence/paper-storage-timestamp-green.txt
+PASS non-empty 1195 .omo/ulw-loop/evidence/paper-post-r10-focused-rerun.txt
+PASS non-empty 1885 .omo/ulw-loop/evidence/paper-post-r10-full-pytest-rerun.txt
+PASS non-empty 62 .omo/ulw-loop/evidence/paper-post-r10-diff-check.txt
+PASS non-empty 196 .omo/ulw-loop/evidence/paper-post-r10-refs-check.txt
+VERDICT: PASS

@@ -1,0 +1,7 @@
+focused_pytest=pass
+system_python_focused_pytest=pass
+basedpyright=0 errors
+compileall=pass
+diff_check=pass
+refs_check=pass
+cleanup=no server browser tmux container port spawned; CLI commands exited

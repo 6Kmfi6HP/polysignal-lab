@@ -1,0 +1,5 @@
+settlement_missing_stake=None
+system_events_query=[]
+latest_health=None
+daily_reports=[]
+idempotent_existing_malformed=typed:MalformedSQLitePayloadError

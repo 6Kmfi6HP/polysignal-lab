@@ -1,0 +1,724 @@
+     1	#!/usr/bin/env python3
+     2	# noqa: SIZE_OK  — self-contained offline repair CLI; splitting is outside this security fix
+     3	"""Offline repair for missed paper settlement persistence.
+     4	
+     5	Stop the polysignal-lab / polysignal-nautilus container (or any process holding
+     6	the SQLite database) before running this script. Repairs are offline-only and
+     7	use read-only Gamma / Polygon RPC calls through the production settlement
+     8	resolver.
+     9	
+    10	Example::
+    11	
+    12	    python -m scripts.repair_settlement_results \\
+    13	        --config config/signal_bot.yaml \\
+    14	        --data-dir . \\
+    15	        --mode audit
+    16	
+    17	    python -m scripts.repair_settlement_results \\
+    18	        --config config/signal_bot.yaml \\
+    19	        --data-dir . \\
+    20	        --mode backfill \\
+    21	        --apply \\
+    22	        --backup ./backups/pre-repair.sqlite
+    23	"""
+    24	
+    25	from __future__ import annotations
+    26	
+    27	import argparse
+    28	import json
+    29	import logging
+    30	import sqlite3
+    31	import shutil
+    32	import subprocess
+    33	import sys
+    34	from dataclasses import dataclass, field
+    35	from datetime import date, datetime
+    36	from pathlib import Path
+    37	from typing import TYPE_CHECKING, Any
+    38	from zoneinfo import ZoneInfo
+    39	
+    40	from polysignal_lab.app._settlement_check import _store_paper_result
+    41	from polysignal_lab.config import load_settings
+    42	from polysignal_lab.domain.enums import ExitMode, PositionStatus, Side, TradeResultStatus
+    43	from polysignal_lab.domain.market import Market
+    44	import anyio
+    45	
+    46	from polysignal_lab.domain.paper_result import InvalidPaperTradeResultRow, PaperWalletSnapshot
+    47	from polysignal_lab.paper.settlement_sources import ResolutionDecision
+    48	from polysignal_lab.utils import new_id, utc_iso, utc_now
+    49	
+    50	if TYPE_CHECKING:
+    51	    from polysignal_lab.nautilus_runtime.runtime_context_factory import NautilusRuntimeContext
+    52	
+    53	WALLET_EPSILON = 1e-6
+    54	LOGGER = logging.getLogger("polysignal_lab.repair_settlement")
+    55	
+    56	
+    57	@dataclass(frozen=True, slots=True)
+    58	class RepairConfig:
+    59	    config_path: Path | None
+    60	    data_dir: Path
+    61	    mode: str
+    62	    dry_run: bool
+    63	    backup_path: Path | None
+    64	    since: date | None
+    65	    until: date | None
+    66	    market_id: str | None
+    67	    position_id: str | None
+    68	    publish_telegram: bool
+    69	    force_correct: bool
+    70	
+    71	
+    72	@dataclass(slots=True)  # noqa: MUTABLE_OK  — audit report accumulates class buckets during one run
+    73	class AuditReport:
+    74	    run_id: str
+    75	    classes: dict[str, Any] = field(default_factory=dict)
+    76	    skipped_unknown: list[dict[str, str]] = field(default_factory=list)
+    77	
+    78	    def to_dict(self) -> dict[str, Any]:
+    79	        return {
+    80	            "run_id": self.run_id,
+    81	            "classes": self.classes,
+    82	            "skipped_unknown": self.skipped_unknown,
+    83	        }
+    84	
+    85	
+    86	@dataclass(frozen=True, slots=True)
+    87	class MissingBackupError(RuntimeError):
+    88	    mode: str
+    89	
+    90	    def __str__(self) -> str:
+    91	        return f"--backup is required when applying {self.mode}"
+    92	
+    93	
+    94	def new_run_id() -> str:
+    95	    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    96	    return f"repair-{stamp}-{new_id('run')[-6:]}"
+    97	
+    98	
+    99	def _git_commit_hash() -> str | None:
+   100	    try:
+   101	        proc = subprocess.run(
+   102	            ["git", "rev-parse", "HEAD"],
+   103	            capture_output=True,
+   104	            text=True,
+   105	            check=True,
+   106	            timeout=5,
+   107	        )
+   108	    except (OSError, subprocess.SubprocessError):
+   109	        return None
+   110	    commit = proc.stdout.strip()
+   111	    return commit or None
+   112	
+   113	
+   114	def _parse_date(value: str | None) -> date | None:
+   115	    if not value:
+   116	        return None
+   117	    return date.fromisoformat(value)
+   118	
+   119	
+   120	def _position_id(position: dict[str, Any]) -> str:
+   121	    return str(position.get("paper_position_id") or position.get("position_id") or "")
+   122	
+   123	
+   124	def _position_opened_at(position: dict[str, Any]) -> datetime | None:
+   125	    raw = position.get("opened_at") or position.get("ts") or position.get("created_at")
+   126	    if raw in (None, ""):
+   127	        return None
+   128	    if isinstance(raw, datetime):
+   129	        opened = raw
+   130	    else:
+   131	        try:
+   132	            opened = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+   133	        except ValueError:
+   134	            return None
+   135	    if opened.tzinfo is None:
+   136	        opened = opened.replace(tzinfo=ZoneInfo("UTC"))
+   137	    return opened
+   138	
+   139	
+   140	def _position_side(position: dict[str, Any]) -> Side | None:
+   141	    raw = position.get("side")
+   142	    if raw in (None, ""):
+   143	        return None
+   144	    try:
+   145	        return Side(str(raw).upper())
+   146	    except ValueError:
+   147	        return None
+   148	
+   149	
+   150	def _position_in_range(position: dict[str, Any], since: date | None, until: date | None) -> bool:
+   151	    opened = _position_opened_at(position)
+   152	    if opened is None:
+   153	        return False
+   154	    opened_date = opened.date()
+   155	    if since is not None and opened_date < since:
+   156	        return False
+   157	    if until is not None and opened_date > until:
+   158	        return False
+   159	    return True
+   160	
+   161	
+   162	def _existing_results_for_position(
+   163	    scheduler: NautilusRuntimeContext, paper_position_id: str
+   164	) -> list[dict[str, Any]]:
+   165	    rows = scheduler.persistence.query_json("paper_trade_results", limit=100_000)
+   166	    return [row for row in rows if row.get("paper_position_id") == paper_position_id]
+   167	
+   168	
+   169	def _existing_result_for_position(
+   170	    scheduler: NautilusRuntimeContext, paper_position_id: str
+   171	) -> dict[str, Any] | None:
+   172	    rows = _existing_results_for_position(scheduler, paper_position_id)
+   173	    return rows[0] if rows else None
+   174	
+   175	
+   176	def _load_market(scheduler: NautilusRuntimeContext, market_id: str) -> Market | None:
+   177	    cached = scheduler.markets.get(market_id)
+   178	    if cached is not None:
+   179	        return cached
+   180	    rows = scheduler.persistence.query_json(
+   181	        "markets",
+   182	        where="WHERE market_id = ?",
+   183	        params=(market_id,),
+   184	        limit=1,
+   185	    )
+   186	    if not rows:
+   187	        return None
+   188	    market = Market.model_validate(rows[0])
+   189	    scheduler.markets.upsert_many([market])
+   190	    return market
+   191	
+   192	
+   193	def _settle_for_repair(
+   194	    position: dict[str, Any],
+   195	    market: Market,
+   196	    decision: ResolutionDecision,
+   197	) -> dict[str, Any] | None:
+   198	    entry_price = _repair_float(position, "entry_price")
+   199	    shares = _repair_float(position, "shares")
+   200	    stake_usdc = _repair_float(position, "stake_usdc")
+   201	    if entry_price is None or shares is None or stake_usdc is None:
+   202	        return None
+   203	    opened_at = _position_opened_at(position)
+   204	    side = _position_side(position)
+   205	    if opened_at is None or side is None:
+   206	        return None
+   207	    token_id = str(position.get("token_id") or "")
+   208	    match decision.status:  # noqa: MATCH_OK  — external resolver status string, not a closed variant
+   209	        case "cancelled":
+   210	            outcome_value = entry_price
+   211	            settlement_value = stake_usdc
+   212	            pnl = 0.0
+   213	            roi = 0.0
+   214	            result_status = TradeResultStatus.VOID
+   215	        case "resolved":
+   216	            outcome_value = decision.outcome_value_for(token_id)
+   217	            if outcome_value is None:
+   218	                return None
+   219	            settlement_value = shares * float(outcome_value)
+   220	            pnl = settlement_value - stake_usdc
+   221	            roi = pnl / stake_usdc if stake_usdc else 0.0
+   222	            if outcome_value == 1.0:
+   223	                result_status = TradeResultStatus.WIN
+   224	            elif outcome_value == 0.0:
+   225	                result_status = TradeResultStatus.LOSS
+   226	            elif 0.0 < outcome_value < 1.0:
+   227	                result_status = TradeResultStatus.VOID
+   228	            else:
+   229	                result_status = TradeResultStatus.WIN if pnl > 0 else TradeResultStatus.LOSS
+   230	        case _:
+   231	            return None
+   232	    closed_at = utc_now()
+   233	    position["status"] = PositionStatus.CLOSED.value
+   234	    position["closed_at"] = closed_at.isoformat()
+   235	    position["is_closed"] = True
+   236	    return {
+   237	        "paper_trade_id": new_id("pt", _position_id(position), closed_at.isoformat()),
+   238	        "signal_id": str(position.get("signal_id") or ""),
+   239	        "paper_position_id": _position_id(position),
+   240	        "strategy": str(position.get("strategy") or ""),
+   241	        "asset": str(position.get("asset") or ""),
+   242	        "timeframe": str(position.get("timeframe") or ""),
+   243	        "market_id": market.market_id,
+   244	        "market_slug": market.market_slug,
+   245	        "side": side.value,
+   246	        "entry_price": entry_price,
+   247	        "shares": shares,
+   248	        "stake_usdc": stake_usdc,
+   249	        "exit_mode": ExitMode.RESOLUTION.value,
+   250	        "outcome_value": float(outcome_value),
+   251	        "settlement_value": settlement_value,
+   252	        "pnl_usdc": pnl,
+   253	        "roi": roi,
+   254	        "result": result_status.value,
+   255	        "opened_at": opened_at.isoformat(),
+   256	        "closed_at": closed_at.isoformat(),
+   257	        "details": {
+   258	            "resolved_outcome": market.resolved_outcome.value if market.resolved_outcome else None,
+   259	            "confidence": position.get("signal_confidence"),
+   260	            **decision.details,
+   261	        },
+   262	    }
+   263	
+   264	
+   265	def _repair_float(position: dict[str, Any], key: str) -> float | None:
+   266	    value = position.get(key)
+   267	    if value in (None, ""):
+   268	        return None
+   269	    try:
+   270	        return float(value)
+   271	    except (TypeError, ValueError):
+   272	        return None
+   273	
+   274	
+   275	def _replay_wallet(scheduler: NautilusRuntimeContext) -> tuple[float, float, int]:
+   276	    starting = float(scheduler.settings.paper_trading.starting_balance_usdc)
+   277	    cash = starting
+   278	    fills = scheduler.persistence.query_json(
+   279	        "system_events",
+   280	        where="WHERE event_type=?",
+   281	        params=("nautilus_fill",),
+   282	        limit=100_000,
+   283	    )
+   284	    for fill in fills:
+   285	        cash -= float(fill.get("stake_usdc") or 0.0)
+   286	    results = scheduler.persistence.query_json("paper_trade_results", limit=100_000)
+   287	    realized_pnl = 0.0
+   288	    for row in results:
+   289	        cash += float(row.get("settlement_value") or 0.0)
+   290	        realized_pnl += float(row.get("pnl_usdc") or 0.0)
+   291	    open_positions = scheduler.persistence.restore_open_positions()
+   292	    open_count = len(open_positions)
+   293	    return round(cash, 10), round(realized_pnl, 10), open_count
+   294	
+   295	
+   296	def _wallet_drift(scheduler: NautilusRuntimeContext) -> dict[str, float]:
+   297	    replay_cash, replay_pnl, _ = _replay_wallet(scheduler)
+   298	    latest = scheduler.persistence.restore_latest_wallet_snapshot() or {}
+   299	    stored_cash = float(latest.get("cash_balance", replay_cash))
+   300	    stored_pnl = float(latest.get("realized_pnl", replay_pnl))
+   301	    return {
+   302	        "cash_delta": round(replay_cash - stored_cash, 10),
+   303	        "realized_pnl_delta": round(replay_pnl - stored_pnl, 10),
+   304	        "replay_cash": replay_cash,
+   305	        "replay_pnl": replay_pnl,
+   306	    }
+   307	
+   308	
+   309	def _is_c5_candidate(existing: dict[str, Any]) -> bool:
+   310	    details = existing.get("details") or {}
+   311	    if existing.get("result") == TradeResultStatus.UNKNOWN.value and not details.get("settlement_source"):
+   312	        return True
+   313	    return False
+   314	
+   315	
+   316	async def _resolve_position(
+   317	    scheduler: NautilusRuntimeContext,
+   318	    position: dict[str, Any],
+   319	    market: Market,
+   320	) -> ResolutionDecision:
+   321	    return await scheduler.settlement_resolver.resolve_market(market)
+   322	
+   323	
+   324	def _planned_result_label(decision: ResolutionDecision, position: dict[str, Any]) -> str | None:
+   325	    if decision.status == "cancelled":
+   326	        return TradeResultStatus.VOID.value
+   327	    if decision.status != "resolved":
+   328	        return None
+   329	    outcome_value = decision.outcome_value_for(str(position.get("token_id") or ""))
+   330	    if outcome_value is None:
+   331	        return None
+   332	    if outcome_value == 1.0:
+   333	        return TradeResultStatus.WIN.value
+   334	    if outcome_value == 0.0:
+   335	        return TradeResultStatus.LOSS.value
+   336	    if 0.0 < outcome_value < 1.0:
+   337	        return TradeResultStatus.VOID.value
+   338	    return TradeResultStatus.UNKNOWN.value
+   339	
+   340	
+   341	async def audit(scheduler: NautilusRuntimeContext, config: RepairConfig) -> AuditReport:
+   342	    report = AuditReport(run_id=new_run_id())
+   343	    c1: list[dict[str, Any]] = []
+   344	    c2: list[dict[str, Any]] = []
+   345	    c5: list[dict[str, Any]] = []
+   346	
+   347	    open_rows = scheduler.persistence.restore_open_positions()
+   348	    for row in open_rows:
+   349	        position = dict(row)
+   350	        position_id = _position_id(position)
+   351	        if config.position_id and position_id != config.position_id:
+   352	            continue
+   353	        if config.market_id and position.get("market_id") != config.market_id:
+   354	            continue
+   355	        if not _position_in_range(position, config.since, config.until):
+   356	            continue
+   357	        if _existing_result_for_position(scheduler, position_id):
+   358	            if config.force_correct:
+   359	                existing = _existing_result_for_position(scheduler, position_id)
+   360	                if existing and _is_c5_candidate(existing):
+   361	                    c5.append({"paper_position_id": position_id, "market_id": position.get("market_id")})
+   362	            continue
+   363	        market = _load_market(scheduler, str(position.get("market_id") or ""))
+   364	        if market is None:
+   365	            report.skipped_unknown.append(
+   366	                {
+   367	                    "paper_position_id": position_id,
+   368	                    "reason": "MARKET_NOT_FOUND",
+   369	                }
+   370	            )
+   371	            continue
+   372	        decision = await _resolve_position(scheduler, position, market)
+   373	        if decision.status in {"resolved", "cancelled"}:
+   374	            c1.append(
+   375	                {
+   376	                    "paper_position_id": position_id,
+   377	                    "market_id": position.get("market_id"),
+   378	                    "planned_result": _planned_result_label(decision, position),
+   379	                }
+   380	            )
+   381	        elif decision.status == "unknown":
+   382	            report.skipped_unknown.append(
+   383	                {
+   384	                    "paper_position_id": position_id,
+   385	                    "reason": str(decision.details.get("reason") or "NO_RESOLVED_EVIDENCE"),
+   386	                }
+   387	            )
+   388	
+   389	    closed_rows = scheduler.persistence.restore_closed_positions()
+   390	    for row in closed_rows:
+   391	        position = dict(row)
+   392	        position_id = _position_id(position)
+   393	        if config.position_id and position_id != config.position_id:
+   394	            continue
+   395	        if config.market_id and position.get("market_id") != config.market_id:
+   396	            continue
+   397	        if _existing_result_for_position(scheduler, position_id):
+   398	            existing = _existing_result_for_position(scheduler, position_id)
+   399	            if existing and _is_c5_candidate(existing):
+   400	                c5.append({"paper_position_id": position_id, "market_id": position.get("market_id")})
+   401	            continue
+   402	        c2.append({"paper_position_id": position_id, "market_id": position.get("market_id")})
+   403	
+   404	    drift = _wallet_drift(scheduler)
+   405	    report.classes = {
+   406	        "C1_missed_settlement": c1,
+   407	        "C2_closed_without_result": c2,
+   408	        "C3_wallet_drift": drift,
+   409	        "C5_manual_review": c5,
+   410	    }
+   411	    return report
+   412	
+   413	
+   414	def _backup_sqlite(scheduler: NautilusRuntimeContext, backup_path: Path) -> None:
+   415	    backup_path.parent.mkdir(parents=True, exist_ok=True)
+   416	    shutil.copy2(scheduler.sqlite.path, backup_path)
+   417	
+   418	
+   419	def _append_repair_audit(
+   420	    scheduler: NautilusRuntimeContext,
+   421	    *,
+   422	    run_id: str,
+   423	    backup_path: Path | None,
+   424	    counts: dict[str, int],
+   425	) -> None:
+   426	    event = {
+   427	        "event_id": new_id("evt", "settlement_repair_applied", run_id),
+   428	        "event_type": "settlement_repair_applied",
+   429	        "severity": "INFO",
+   430	        "created_at": utc_iso(),
+   431	        "run_id": run_id,
+   432	        "backup_path": str(backup_path) if backup_path else None,
+   433	        "git_commit": _git_commit_hash(),
+   434	        "counts": counts,
+   435	    }
+   436	    scheduler.persistence.insert_system_event(event)
+   437	    try:
+   438	        scheduler.persistence.append_log("system_events", event)
+   439	    except (OSError, TypeError, ValueError):
+   440	        LOGGER.warning("Failed to append settlement repair audit to JSONL")
+   441	
+   442	
+   443	async def backfill(scheduler: NautilusRuntimeContext, config: RepairConfig) -> dict[str, Any]:
+   444	    run_id = new_run_id()
+   445	    if not config.dry_run:
+   446	        if config.backup_path is None:
+   447	            raise MissingBackupError(mode="backfill")
+   448	        _backup_sqlite(scheduler, config.backup_path)
+   449	
+   450	    applied = 0
+   451	    skipped = 0
+   452	    skipped_unknown: list[dict[str, str]] = []
+   453	    failures = 0
+   454	    affected_dates: set[date] = set()
+   455	
+   456	    prior_send = scheduler.settings.telegram.send_paper_results
+   457	    if config.publish_telegram:
+   458	        scheduler.settings.telegram.send_paper_results = True
+   459	
+   460	    try:
+   461	        open_rows = scheduler.persistence.restore_open_positions()
+   462	        for row in open_rows:
+   463	            position = dict(row)
+   464	            position_id = _position_id(position)
+   465	            if config.position_id and position_id != config.position_id:
+   466	                continue
+   467	            if config.market_id and position.get("market_id") != config.market_id:
+   468	                continue
+   469	            if not _position_in_range(position, config.since, config.until):
+   470	                continue
+   471	            if _existing_result_for_position(scheduler, position_id) and not config.force_correct:
+   472	                skipped += 1
+   473	                continue
+   474	
+   475	            market = _load_market(scheduler, str(position.get("market_id") or ""))
+   476	            if market is None:
+   477	                skipped_unknown.append(
+   478	                    {"paper_position_id": position_id, "reason": "MARKET_NOT_FOUND"}
+   479	                )
+   480	                continue
+   481	
+   482	            decision = await _resolve_position(scheduler, position, market)
+   483	            if decision.status == "unknown":
+   484	                skipped_unknown.append(
+   485	                    {
+   486	                        "paper_position_id": position_id,
+   487	                        "reason": str(decision.details.get("reason") or "NO_RESOLVED_EVIDENCE"),
+   488	                    }
+   489	                )
+   490	                continue
+   491	            if decision.status not in {"resolved", "cancelled"}:
+   492	                continue
+   493	
+   494	            work_position = position if not config.dry_run else dict(position)
+   495	            result = _settle_for_repair(work_position, market, decision)
+   496	            if result is None:
+   497	                skipped_unknown.append(
+   498	                    {"paper_position_id": position_id, "reason": "NO_PAYOUT_FOR_TOKEN"}
+   499	                )
+   500	                continue
+   501	
+   502	            if config.force_correct and not config.dry_run:
+   503	                for stale in _existing_results_for_position(scheduler, position_id):
+   504	                    paper_trade_id = stale.get("paper_trade_id")
+   505	                    if isinstance(paper_trade_id, str):
+   506	                        publish_id = stale.get("publish_id")
+   507	                        scheduler.persistence.delete_paper_result_rows(
+   508	                            paper_trade_id,
+   509	                            publish_id if isinstance(publish_id, str) else None,
+   510	                        )
+   511	
+   512	            if config.dry_run:
+   513	                applied += 1
+   514	                LOGGER.info(
+   515	                    "Dry-run would settle %s -> %s",
+   516	                    position_id,
+   517	                    result["result"],
+   518	                )
+   519	                continue
+   520	
+   521	            try:
+   522	                await _store_paper_result(scheduler, result, work_position)
+   523	            except (InvalidPaperTradeResultRow, KeyError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
+   524	                failures += 1
+   525	                LOGGER.error("Failed to persist repair for %s: %s", position_id, exc)
+   526	                continue
+   527	
+   528	            applied += 1
+   529	            closed_at_raw = result["closed_at"]
+   530	            if isinstance(closed_at_raw, datetime):
+   531	                closed_at = closed_at_raw
+   532	            else:
+   533	                closed_at = datetime.fromisoformat(str(closed_at_raw).replace("Z", "+00:00"))
+   534	            if closed_at.tzinfo is None:
+   535	                closed_at = closed_at.replace(tzinfo=ZoneInfo("UTC"))
+   536	            affected_dates.add(closed_at.date())
+   537	    finally:
+   538	        scheduler.settings.telegram.send_paper_results = prior_send
+   539	
+   540	    if not config.dry_run and applied > 0:
+   541	        _append_repair_audit(
+   542	            scheduler,
+   543	            run_id=run_id,
+   544	            backup_path=config.backup_path,
+   545	            counts={"backfill_applied": applied, "backfill_failures": failures},
+   546	        )
+   547	
+   548	    return {
+   549	        "run_id": run_id,
+   550	        "applied": applied,
+   551	        "skipped": skipped,
+   552	        "failures": failures,
+   553	        "skipped_unknown": skipped_unknown,
+   554	        "affected_report_dates": sorted(d.isoformat() for d in affected_dates),
+   555	    }
+   556	
+   557	
+   558	def reconcile_wallet(scheduler: NautilusRuntimeContext, config: RepairConfig) -> dict[str, Any]:
+   559	    drift = _wallet_drift(scheduler)
+   560	    needs_fix = (
+   561	        abs(drift["cash_delta"]) > WALLET_EPSILON
+   562	        or abs(drift["realized_pnl_delta"]) > WALLET_EPSILON
+   563	    )
+   564	    if not needs_fix:
+   565	        return {"applied": False, "drift": drift}
+   566	
+   567	    if config.dry_run:
+   568	        return {"applied": False, "would_apply": True, "drift": drift}
+   569	
+   570	    if config.backup_path is None:
+   571	        raise MissingBackupError(mode="wallet repair")
+   572	
+   573	    _backup_sqlite(scheduler, config.backup_path)
+   574	    replay_cash, replay_pnl, open_count = _replay_wallet(scheduler)
+   575	    starting = float(scheduler.settings.paper_trading.starting_balance_usdc)
+   576	    open_rows = scheduler.persistence.restore_open_positions()
+   577	    open_stake = sum(float(row.get("stake_usdc") or 0.0) for row in open_rows)
+   578	    snapshot = PaperWalletSnapshot(
+   579	        starting_balance=starting,
+   580	        cash_balance=replay_cash,
+   581	        realized_pnl=replay_pnl,
+   582	        equity=replay_cash + open_stake,
+   583	        open_position_count=open_count,
+   584	        created_at=utc_now(),
+   585	    )
+   586	    scheduler.persistence.sqlite.insert_wallet_snapshot(snapshot)
+   587	    return {"applied": True, "drift": drift}
+   588	
+   589	
+   590	async def regenerate_reports(scheduler: NautilusRuntimeContext, config: RepairConfig, dates: list[str]) -> dict[str, Any]:
+   591	    if not dates:
+   592	        return {"regenerated": []}
+   593	    today = datetime.now(ZoneInfo(scheduler.settings.app.timezone)).date().isoformat()
+   594	    regenerated: list[str] = []
+   595	    for report_date in dates:
+   596	        if report_date != today:
+   597	            LOGGER.warning(
+   598	                "Skipping daily report regeneration for %s (only today supported in v1)",
+   599	                report_date,
+   600	            )
+   601	            continue
+   602	        if config.dry_run:
+   603	            regenerated.append(report_date)
+   604	            continue
+   605	        existing = scheduler.persistence.query_json(
+   606	            "daily_reports",
+   607	            where="WHERE report_date = ?",
+   608	            params=(report_date,),
+   609	            limit=10,
+   610	        )
+   611	        for row in existing:
+   612	            report_id = row.get("report_id")
+   613	            if report_id:
+   614	                with scheduler.persistence.sqlite._lock, scheduler.persistence.sqlite._conn:
+   615	                    scheduler.persistence.sqlite._conn.execute(
+   616	                        "DELETE FROM daily_reports WHERE report_id = ?",
+   617	                        (report_id,),
+   618	                    )
+   619	        report = await scheduler.generate_daily_report()
+   620	        if report is not None:
+   621	            regenerated.append(report_date)
+   622	    return {"regenerated": regenerated}
+   623	
+   624	
+   625	async def build_runtime(config: RepairConfig) -> NautilusRuntimeContext:
+   626	    from polysignal_lab.nautilus_runtime.runtime_context_factory import (
+   627	        build_nautilus_runtime_context,
+   628	    )
+   629	
+   630	    settings = load_settings(config.config_path)
+   631	    return build_nautilus_runtime_context(settings, base_dir=config.data_dir)
+   632	
+   633	
+   634	def validate_config(config: RepairConfig) -> int | None:
+   635	    if not config.dry_run and config.backup_path is None:
+   636	        print("--backup is required when using --apply", file=sys.stderr)
+   637	        return 2
+   638	    if config.mode not in {"audit", "backfill", "wallet", "reports", "all"}:
+   639	        print(f"Unknown mode: {config.mode}", file=sys.stderr)
+   640	        return 2
+   641	    return None
+   642	
+   643	
+   644	async def run_repair_async(config: RepairConfig) -> int:
+   645	    error_code = validate_config(config)
+   646	    if error_code is not None:
+   647	        return error_code
+   648	
+   649	    runtime = await build_runtime(config)
+   650	    exit_code = 0
+   651	    report_dates: list[str] = []
+   652	
+   653	    if config.mode in {"audit", "all"}:
+   654	        audit_report = await audit(runtime, config)
+   655	        print(json.dumps(audit_report.to_dict(), indent=2, default=str))
+   656	
+   657	    if config.mode in {"backfill", "all"}:
+   658	        backfill_report = await backfill(runtime, config)
+   659	        print(json.dumps(backfill_report, indent=2, default=str))
+   660	        report_dates = backfill_report.get("affected_report_dates", [])
+   661	        if backfill_report.get("failures", 0) > 0:
+   662	            exit_code = 1
+   663	
+   664	    if config.mode in {"wallet", "all"}:
+   665	        wallet_report = reconcile_wallet(runtime, config)
+   666	        print(json.dumps(wallet_report, indent=2, default=str))
+   667	
+   668	    if config.mode in {"reports", "all"}:
+   669	        reports_report = await regenerate_reports(runtime, config, report_dates)
+   670	        print(json.dumps(reports_report, indent=2, default=str))
+   671	
+   672	    runtime.persistence.close()
+   673	    return exit_code
+   674	
+   675	
+   676	def run_repair(config: RepairConfig) -> int:
+   677	    return anyio.run(run_repair_async, config)
+   678	
+   679	
+   680	def _build_config_from_args(args: argparse.Namespace) -> RepairConfig:
+   681	    dry_run = not args.apply
+   682	    return RepairConfig(
+   683	        config_path=Path(args.config) if args.config else None,
+   684	        data_dir=Path(args.data_dir),
+   685	        mode=args.mode,
+   686	        dry_run=dry_run,
+   687	        backup_path=Path(args.backup) if args.backup else None,
+   688	        since=_parse_date(args.since),
+   689	        until=_parse_date(args.until),
+   690	        market_id=args.market_id,
+   691	        position_id=args.position_id,
+   692	        publish_telegram=args.publish_telegram,
+   693	        force_correct=args.force_correct,
+   694	    )
+   695	
+   696	
+   697	def main(argv: list[str] | None = None) -> int:
+   698	    parser = argparse.ArgumentParser(description=__doc__)
+   699	    parser.add_argument("--config", default=None, help="Path to signal_bot.yaml")
+   700	    parser.add_argument("--data-dir", default=".", help="Project base directory")
+   701	    parser.add_argument(
+   702	        "--mode",
+   703	        default="audit",
+   704	        choices=["audit", "backfill", "wallet", "reports", "all"],
+   705	    )
+   706	    parser.add_argument(
+   707	        "--apply",
+   708	        action="store_true",
+   709	        help="Apply mutations (default is dry-run)",
+   710	    )
+   711	    parser.add_argument("--backup", default=None, help="SQLite backup path (required with --apply)")
+   712	    parser.add_argument("--since", default=None, help="Filter OPEN positions opened on/after date (YYYY-MM-DD)")
+   713	    parser.add_argument("--until", default=None, help="Filter OPEN positions opened on/before date (YYYY-MM-DD)")
+   714	    parser.add_argument("--market-id", default=None, dest="market_id")
+   715	    parser.add_argument("--position-id", default=None, dest="position_id")
+   716	    parser.add_argument("--publish-telegram", action="store_true", dest="publish_telegram")
+   717	    parser.add_argument("--force-correct", action="store_true", dest="force_correct")
+   718	    args = parser.parse_args(argv)
+   719	    logging.basicConfig(level=logging.INFO)
+   720	    return run_repair(_build_config_from_args(args))
+   721	
+   722	
+   723	if __name__ == "__main__":
+   724	    raise SystemExit(main())

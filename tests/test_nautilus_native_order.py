@@ -14,18 +14,11 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
-import sys
-
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from importlib import import_module
-from types import ModuleType
 from typing import cast
 
-import pytest
-
-from polysignal_lab.alpha.types import AlphaCore
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
@@ -219,11 +212,7 @@ def test_submit_approved_decision_quantizes_price_before_instrument_converter() 
 
 
 
-def test_submit_approved_decision_preserves_price_precision_when_price_type_available(
-    monkeypatch,
-) -> None:
-    import polysignal_lab.nautilus_runtime.native_order as native_order
-
+def test_submit_approved_decision_preserves_price_precision_when_price_type_available() -> None:
     strategy = FakeStrategy()
 
     class FakePrice:
@@ -242,13 +231,6 @@ def test_submit_approved_decision_preserves_price_precision_when_price_type_avai
         def make_price(self, value: float) -> FakePrice:
             return FakePrice(str(value))
 
-    def fake_optional_attr(module_name: str, attr_name: str) -> object | None:
-        if attr_name == "Price":
-            return FakePrice
-        return None
-
-    monkeypatch.setattr(native_order, "_optional_nautilus_attr", fake_optional_attr)
-
     approved = _approved(OrderIntent.TAKER_IOC)
     approved = ApprovedDecision(
         signal=approved.signal.model_copy(update={"max_entry_price": 0.75}),
@@ -262,8 +244,9 @@ def test_submit_approved_decision_preserves_price_precision_when_price_type_avai
         instrument_id_resolver=lambda _token_id: FakeInstrument(),
     )
 
-    assert order.price.raw == "0.730"
-    assert order.price.precision == 3
+    price = cast(FakePrice, order.price)
+    assert price.raw == "0.730"
+    assert price.precision == 3
 
 
 
@@ -307,89 +290,7 @@ def test_submit_approved_decision_does_not_require_available_shares() -> None:
         approved,
         fixed_stake_usdc=10.0,
         best_ask=0.50,
-        instrument_id_resolver=lambda value: value,
+        instrument_id_resolver=lambda value: f"{value}.POLYMARKET",
     )
 
     assert order is strategy.submitted_orders[-1]
-
-
-def _load_static_native_strategy(
-    monkeypatch: pytest.MonkeyPatch,
-    strategy_base: type[object],
-    strategy_config: object,
-) -> type[object]:
-    runtime_module_name = "polysignal_lab.nautilus_runtime.native_strategy"
-    missing = object()
-    previous_runtime_module = sys.modules.get(runtime_module_name, missing)
-    _ = sys.modules.pop(runtime_module_name, None)
-
-    nautilus_module = ModuleType("nautilus_trader")
-    common_module = ModuleType("nautilus_trader.common")
-    actor_module = ModuleType("nautilus_trader.common.actor")
-    config_module = ModuleType("nautilus_trader.config")
-    strategy_module = ModuleType("nautilus_trader.trading.strategy")
-    trading_module = ModuleType("nautilus_trader.trading")
-
-    class FakeActor:
-        def __init__(self, *, config: object) -> None:
-            self.actor_config = config
-
-    actor_module.Actor = FakeActor
-    config_module.ActorConfig = lambda: "actor-config"
-    config_module.StrategyConfig = lambda: strategy_config
-    strategy_module.Strategy = strategy_base
-
-    nautilus_module.common = common_module
-    nautilus_module.config = config_module
-    nautilus_module.trading = trading_module
-    common_module.actor = actor_module
-    trading_module.strategy = strategy_module
-
-    monkeypatch.setitem(sys.modules, "nautilus_trader", nautilus_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.common", common_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.common.actor", actor_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.config", config_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.trading", trading_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.trading.strategy", strategy_module)
-
-    try:
-        module = import_module(runtime_module_name)
-        return cast(type[object], module.PolySignalNativeStrategy)
-    finally:
-        if previous_runtime_module is missing:
-            _ = sys.modules.pop(runtime_module_name, None)
-        else:
-            sys.modules[runtime_module_name] = previous_runtime_module
-
-
-def test_static_native_strategy_initializes_nautilus_base(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeNautilusBase:
-        def __init__(self, *, config: object) -> None:
-            self.nautilus_config: object = config
-
-    class FakeRegistry:
-        def by_condition(self, _condition_id: str) -> None:
-            return None
-
-    strategy_type = _load_static_native_strategy(
-        monkeypatch,
-        FakeNautilusBase,
-        "strategy-config",
-    )
-    strategy = strategy_type(
-        core=cast(AlphaCore, object()),
-        assembler=FakeAssemblerForRuntimeType(),
-        condition_ids=(),
-        strategy_name="ptb_diff",
-        registry=FakeRegistry(),
-    )
-
-    assert getattr(strategy, "nautilus_config") == "strategy-config"
-
-
-class FakeAssemblerForRuntimeType:
-    def build(self, condition_id: str) -> None:
-        _ = condition_id
-        return None

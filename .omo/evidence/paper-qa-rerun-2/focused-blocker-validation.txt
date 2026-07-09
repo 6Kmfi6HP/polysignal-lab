@@ -1,0 +1,7 @@
+parseable repair result: pass marker=repair_parse=pass
+incomplete position skip: pass marker=repair_incomplete_position=pass
+incomplete cache guard: pass marker=cache_guard=pass
+SPLIT daily report counting: pass marker=split_report=pass
+malformed persisted rows filtered: pass marker=malformed_persisted_rows=pass
+focused_tests: pass marker=46 passed
+focused_blocker_validation=pass

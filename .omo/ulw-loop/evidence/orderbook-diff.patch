@@ -1,0 +1,1152 @@
+diff --git a/src/polysignal_lab/app/readonly_smoke_public.py b/src/polysignal_lab/app/readonly_smoke_public.py
+index 0b6cd3b..d89431f 100644
+--- a/src/polysignal_lab/app/readonly_smoke_public.py
++++ b/src/polysignal_lab/app/readonly_smoke_public.py
+@@ -1,5 +1,5 @@
+ """
+-Input: __future__, __future__.annotations, re, typing, typing.Final, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.app.readonly_smoke_types
++Input: __future__, __future__.annotations, re, typing, typing.Final, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.app.readonly_smoke_types, polysignal_lab.data.orderbook_payload
+ Output: make_public_client, check_gamma_events, check_clob_book, check_clob_404, check_binance_spot, public_get, raw_public_get, response_json, surface, gamma_events
+ Pos: Application code
+ 
+@@ -28,12 +28,13 @@ from polysignal_lab.app.readonly_smoke_types import (
+     SurfacePayload,
+ )
+ from polysignal_lab.config import Settings
++from polysignal_lab.data.orderbook_payload import parse_order_book_payload
+ from polysignal_lab.domain.market import Market
+ from polysignal_lab.domain.orderbook import OrderBook
+ from polysignal_lab.domain.spot import SpotPrice
+ from polysignal_lab.utils import safe_float, utc_now
+ 
+-JSON_VALUE_ADAPTER: Final = TypeAdapter(JsonValue)
++JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
+ INVALID_CLOB_TOKEN_ID: Final = "polysignal-readonly-smoke-invalid-token"
+ PUBLIC_HEADERS: Final = {
+     "Accept": "application/json",
+@@ -126,7 +127,7 @@ async def public_get(client: httpx.AsyncClient, endpoint: PublicEndpoint) -> Sur
+     if status_code is None or status_code >= 400:
+         return response
+     try:
+-        payload = JSON_VALUE_ADAPTER.validate_python(response.payload)
++        payload: JsonValue = JSON_VALUE_ADAPTER.validate_python(response.payload)
+     except (TypeError, ValueError) as exc:
+         evidence = response.evidence
+         evidence["ok"] = False
+@@ -229,7 +230,7 @@ def flatten_markets(payloads: list[JsonObject]) -> list[JsonObject]:
+             for market in event_markets:
+                 if isinstance(market, dict):
+                     merged = {**event, **market}
+-                    merged.setdefault("eventSlug", event.get("slug"))
++                    _ = merged.setdefault("eventSlug", event.get("slug"))
+                     out.append(merged)
+         else:
+             out.append(event)
+@@ -269,7 +270,7 @@ def book_from_payload(payload: JsonValue | None) -> OrderBook | None:
+     if not isinstance(payload, dict):
+         return None
+     try:
+-        return OrderBook.from_polymarket(payload)
++        return parse_order_book_payload(payload)
+     except (TypeError, ValueError):
+         return None
+ 
+diff --git a/src/polysignal_lab/data/FOLDER_INDEX.md b/src/polysignal_lab/data/FOLDER_INDEX.md
+index 80e8106..ee642e5 100644
+--- a/src/polysignal_lab/data/FOLDER_INDEX.md
++++ b/src/polysignal_lab/data/FOLDER_INDEX.md
+@@ -6,8 +6,11 @@
+ **Files**:
+ - `state.py` - Exports parse_source_timestamp and 3 more
+ - `rate_limiter.py` - Exports AsyncRateLimiter
++- `polymarket_clob_ws.py` - Exports PolymarketMarketWebSocket
++- `polymarket_clob_rest.py` - Exports PolymarketCLOBRestClient
+ - `public_market_data_client.py` - Exports PublicMarketDataClient
+ - `price_to_beat_provider.py` - Exports _CryptoPriceResponse and 3 more
++- `orderbook_payload.py` - Exports parse_order_book_payload
+ - `polymarket_rtds_ws.py` - Exports PolymarketRtdsPriceFeed
+ - `polymarket_market_discovery.py` - Exports MarketDiscovery
+ - `market_snapshot.py` - Exports MarketSnapshotBuilder
+diff --git a/src/polysignal_lab/data/polymarket_market_discovery.py b/src/polysignal_lab/data/polymarket_market_discovery.py
+index a43b59f..c142973 100644
+--- a/src/polysignal_lab/data/polymarket_market_discovery.py
++++ b/src/polysignal_lab/data/polymarket_market_discovery.py
+@@ -1,5 +1,5 @@
+ """
+-Input: __future__, __future__.annotations, json, re, datetime, datetime.timedelta, typing, typing.Final, httpx, pydantic
++Input: __future__, __future__.annotations, json, re, datetime, datetime.timedelta, typing, typing.Final, typing.Protocol, httpx, pydantic
+ Output: MarketDiscovery
+ Pos: Application code
+ 
+@@ -17,7 +17,7 @@ from __future__ import annotations
+ import json
+ import re
+ from datetime import timedelta
+-from typing import Final
++from typing import Final, Protocol
+ 
+ import httpx
+ from pydantic import JsonValue, TypeAdapter
+@@ -29,17 +29,51 @@ from polysignal_lab.utils import utc_now
+ 
+ JsonObject = dict[str, JsonValue]
+ GAMMA_PAGE_LIMIT: Final = 200
+-JSON_VALUE_ADAPTER: Final = TypeAdapter(JsonValue)
++JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
++
++
++class _JsonResponse(Protocol):
++    def raise_for_status(self) -> None: ...
++
++    def json(self) -> JsonValue: ...
++
++
++class _AsyncJsonClient(Protocol):
++    async def get(self, url: str, *, params: dict[str, str] | None = None) -> _JsonResponse: ...
++
++
++class _HttpxJsonResponse:
++    def __init__(self, response: httpx.Response) -> None:
++        self._response: httpx.Response = response
++
++    def raise_for_status(self) -> None:
++        _ = self._response.raise_for_status()
++
++    def json(self) -> JsonValue:
++        return JSON_VALUE_ADAPTER.validate_python(self._response.json())
++
++
++class _HttpxAsyncJsonClient:
++    def __init__(self) -> None:
++        self._client: httpx.AsyncClient = httpx.AsyncClient(timeout=15.0)
++
++    async def get(self, url: str, *, params: dict[str, str] | None = None) -> _JsonResponse:
++        return _HttpxJsonResponse(await self._client.get(url, params=params))
+ 
+ 
+ class MarketDiscovery:
+-    def __init__(self, config: PolymarketDataConfig, market_config: MarketConfig, client: httpx.AsyncClient | None = None):
+-        self.config = config
+-        self.market_config = market_config
+-        self.client = client or httpx.AsyncClient(timeout=15.0)
++    def __init__(
++        self,
++        config: PolymarketDataConfig,
++        market_config: MarketConfig,
++        client: _AsyncJsonClient | None = None,
++    ):
++        self.config: PolymarketDataConfig = config
++        self.market_config: MarketConfig = market_config
++        self.client: _AsyncJsonClient = client or _HttpxAsyncJsonClient()
+ 
+-    def replace_client(self, client: httpx.AsyncClient | None = None) -> httpx.AsyncClient:
+-        self.client = client or httpx.AsyncClient(timeout=15.0)
++    def replace_client(self, client: _AsyncJsonClient | None = None) -> _AsyncJsonClient:
++        self.client = client or _HttpxAsyncJsonClient()
+         return self.client
+ 
+     async def discover(
+@@ -82,31 +116,28 @@ class MarketDiscovery:
+             stale_grace_sec=stale_grace_sec,
+         )
+ 
+-    def _parse_response(self, response: httpx.Response) -> JsonValue:
++    def _parse_response(self, response: _JsonResponse) -> JsonValue:
+         response.raise_for_status()
+         return JSON_VALUE_ADAPTER.validate_python(response.json())
+ 
+-    def _request(
++    async def _request_async(
+         self,
+         url: str,
+         *,
+         params: dict[str, str] | None = None,
+-        is_async: bool = False,
+-        sync_client: httpx.Client | None = None,
+-    ):
+-        """Execute a GET request.
+-
+-        When *is_async* is ``True`` the caller must ``await`` the returned
+-        coroutine.  When ``False`` the result is returned directly.
+-        """
+-        if is_async:
+-            async def _do():
+-                response = await self.client.get(url, params=params)
+-                return self._parse_response(response)
+-            return _do()
+-        response = sync_client.get(url, params=params)
++    ) -> JsonValue:
++        response = await self.client.get(url, params=params)
+         return self._parse_response(response)
+ 
++    def _request_sync(
++        self,
++        url: str,
++        *,
++        sync_client: httpx.Client,
++        params: dict[str, str] | None = None,
++    ) -> JsonValue:
++        return self._parse_response(_HttpxJsonResponse(sync_client.get(url, params=params)))
++
+     def _markets_from_payloads(
+         self,
+         payloads: list[JsonObject],
+@@ -174,10 +205,9 @@ class MarketDiscovery:
+             "limit": str(GAMMA_PAGE_LIMIT),
+             "offset": str(offset),
+         }
+-        payload = self._request(
++        payload = self._request_sync(
+             f"{self.config.gamma_base_url}/events",
+             params=params,
+-            is_async=False,
+             sync_client=client,
+         )
+         return _gamma_events_from_json(payload)
+@@ -191,10 +221,9 @@ class MarketDiscovery:
+             "limit": str(GAMMA_PAGE_LIMIT),
+             "offset": str(offset),
+         }
+-        payload = await self._request(
++        payload = await self._request_async(
+             f"{self.config.gamma_base_url}/events",
+             params=params,
+-            is_async=True,
+         )
+         return _gamma_events_from_json(payload)
+ 
+@@ -276,10 +305,9 @@ class MarketDiscovery:
+ 
+     async def _fetch_gamma_market_by_slug(self, slug: str) -> JsonObject | None:
+         try:
+-            payload = await self._request(
++            payload = await self._request_async(
+                 f"{self.config.gamma_base_url}/markets",
+                 params={"slug": slug},
+-                is_async=True,
+             )
+         except (httpx.HTTPError, TypeError, ValueError):
+             return None
+@@ -288,7 +316,7 @@ class MarketDiscovery:
+ 
+     async def _fetch_gamma_slug_payload(self, url: str) -> JsonObject | None:
+         try:
+-            payload = await self._request(url, is_async=True)
++            payload = await self._request_async(url)
+         except (httpx.HTTPError, TypeError, ValueError):
+             return None
+         return payload if isinstance(payload, dict) else None
+@@ -298,10 +326,9 @@ class MarketDiscovery:
+ 
+     def _fetch_gamma_market_by_slug_sync(self, client: httpx.Client, slug: str) -> JsonObject | None:
+         try:
+-            payload = self._request(
++            payload = self._request_sync(
+                 f"{self.config.gamma_base_url}/markets",
+                 params={"slug": slug},
+-                is_async=False,
+                 sync_client=client,
+             )
+         except (httpx.HTTPError, TypeError, ValueError):
+@@ -311,7 +338,7 @@ class MarketDiscovery:
+ 
+     def _fetch_gamma_slug_payload_sync(self, client: httpx.Client, url: str) -> JsonObject | None:
+         try:
+-            payload = self._request(url, is_async=False, sync_client=client)
++            payload = self._request_sync(url, sync_client=client)
+         except (httpx.HTTPError, TypeError, ValueError):
+             return None
+         return payload if isinstance(payload, dict) else None
+@@ -324,7 +351,7 @@ class MarketDiscovery:
+                 for market in event_markets:
+                     if isinstance(market, dict):
+                         merged = {**event, **market}
+-                        merged.setdefault("eventSlug", event.get("slug"))
++                        _ = merged.setdefault("eventSlug", event.get("slug"))
+                         out.append(merged)
+             else:
+                 out.append(event)
+@@ -394,7 +421,7 @@ def _json_list(raw: JsonValue | None) -> list[JsonValue]:
+         return raw
+     if isinstance(raw, str):
+         try:
+-            decoded = json.loads(raw)
++            decoded = JSON_VALUE_ADAPTER.validate_python(json.loads(raw))
+         except json.JSONDecodeError:
+             return []
+         return decoded if isinstance(decoded, list) else []
+diff --git a/src/polysignal_lab/domain/orderbook.py b/src/polysignal_lab/domain/orderbook.py
+index 744cb87..d69fe7f 100644
+--- a/src/polysignal_lab/domain/orderbook.py
++++ b/src/polysignal_lab/domain/orderbook.py
+@@ -1,5 +1,5 @@
+ """
+-Input: __future__, __future__.annotations, datetime, datetime.datetime, typing, typing.Any, pydantic, pydantic.BaseModel, pydantic.Field, pydantic.computed_field
++Input: __future__, __future__.annotations, datetime, datetime.datetime, pydantic, pydantic.BaseModel, pydantic.Field, pydantic.computed_field
+ Output: BookLevel, OrderBook
+ Pos: Application code
+ 
+@@ -15,11 +15,10 @@ Pos: Application code
+ from __future__ import annotations
+ 
+ from datetime import datetime
+-from typing import Any
+ 
+ from pydantic import BaseModel, Field, computed_field
+ 
+-from polysignal_lab.utils import safe_float, utc_now
++from polysignal_lab.utils import utc_now
+ 
+ 
+ class BookLevel(BaseModel):
+@@ -80,23 +79,3 @@ class OrderBook(BaseModel):
+             if level.price <= max_price:
+                 total_usdc += level.price * level.size
+         return total_usdc
+-
+-    @classmethod
+-    def from_polymarket(cls, payload: dict[str, Any], received_at: datetime | None = None) -> "OrderBook":
+-        bids = [BookLevel(price=safe_float(x.get("price"), 0.0) or 0.0, size=safe_float(x.get("size"), 0.0) or 0.0) for x in payload.get("bids", [])]
+-        asks = [BookLevel(price=safe_float(x.get("price"), 0.0) or 0.0, size=safe_float(x.get("size"), 0.0) or 0.0) for x in payload.get("asks", [])]
+-        return cls(
+-            market_id=str(payload.get("market")) if payload.get("market") is not None else None,
+-            token_id=str(payload.get("asset_id") or payload.get("token_id") or payload.get("assetId")),
+-            bids=sorted(bids, key=lambda x: x.price, reverse=True),
+-            asks=sorted(asks, key=lambda x: x.price),
+-            last_trade_price=safe_float(payload.get("last_trade_price") or payload.get("lastTradePrice")),
+-            last_trade_size=safe_float(payload.get("last_trade_size") or payload.get("lastTradeSize") or payload.get("size")),
+-            last_trade_side=str(payload.get("side")) if payload.get("side") is not None else None,
+-            last_trade_timestamp=str(payload.get("last_trade_timestamp") or payload.get("timestamp")) if (payload.get("last_trade_timestamp") or payload.get("timestamp")) is not None else None,
+-            min_order_size=safe_float(payload.get("min_order_size")),
+-            tick_size=safe_float(payload.get("tick_size")),
+-            source_timestamp=str(payload.get("timestamp")) if payload.get("timestamp") is not None else None,
+-            hash=payload.get("hash"),
+-            received_at=received_at or utc_now(),
+-        )
+diff --git a/tests/test_market_data.py b/tests/test_market_data.py
+index bfe9e42..9946a11 100644
+--- a/tests/test_market_data.py
++++ b/tests/test_market_data.py
+@@ -1,5 +1,5 @@
+ """
+-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path
++Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path, pydantic, pytest, typing, typing.assert_type, typing_extensions, typing_extensions.override, polysignal_lab.data.orderbook_payload
+ Output: test_fake_market_data_client_matches_protocol, test_binance_feed_url_and_parse_message, test_polymarket_ws_book_message_updates_registry, test_last_trade_does_not_refresh_orderbook_depth_freshness, test_books_for_market_hides_stale_marked_book_but_get_keeps_raw, test_market_snapshot_builder_hides_stale_marked_book_from_signal_inputs, test_market_snapshot_builder_handles_missing_side_for_trade_metrics, test_websocket_event_types_reconciliation
+ Pos: Test Layer - Unit/Integration tests
+ 
+@@ -19,11 +19,14 @@ from datetime import datetime, timedelta, timezone
+ from pathlib import Path
+ 
+ from pydantic import JsonValue, TypeAdapter
++import pytest
+ from typing import assert_type
++from typing_extensions import override
+ 
+ from polysignal_lab.config import BinanceDataConfig, MarketConfig, PolymarketDataConfig
+ from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
+ from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
++from polysignal_lab.data.orderbook_payload import JsonObject, parse_order_book_payload
+ from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
+ from polysignal_lab.data.public_market_data_client import PublicMarketDataClient
+ from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
+@@ -31,11 +34,14 @@ from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
+ from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
+ from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
+ from polysignal_lab.domain.enums import Side
++from polysignal_lab.domain.market import Market
+ from factories import BookFactoryConfig, SpotFactoryConfig, sample_book, sample_spot
+ from polysignal_lab.domain.orderbook import OrderBook
+ 
+ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "public_market_payloads.json"
+-FIXTURE_ADAPTER = TypeAdapter(dict[str, JsonValue])
++FIXTURE_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
++JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
++COUNTERS_ADAPTER: TypeAdapter[dict[str, int]] = TypeAdapter(dict[str, int])
+ 
+ 
+ def _fixtures() -> dict[str, JsonValue]:
+@@ -62,7 +68,7 @@ class FakeResponse:
+ 
+ class FakeAsyncClient:
+     def __init__(self, payloads: list[JsonValue]) -> None:
+-        self.payloads = payloads
++        self.payloads: list[JsonValue] = payloads
+         self.calls: list[FakeRequest] = []
+ 
+     async def get(
+@@ -76,23 +82,34 @@ class FakeAsyncClient:
+         return FakeResponse(payload)
+ 
+ 
+-class _FakePublicMarketData:
++class _FakePublicMarketData(PublicMarketDataClient):
++    @override
+     async def get_book(self, token_id: str) -> OrderBook:
+         raise NotImplementedError
+ 
++    @override
+     async def get_books(self, token_ids: list[str]) -> list[OrderBook]:
+         return []
+ 
++    @override
+     async def get_mid(self, token_id: str) -> float | None:
+         return None
+ 
++    @override
+     async def get_spread(self, token_id: str) -> float | None:
+         return None
+ 
+ 
+ def test_fake_market_data_client_matches_protocol() -> None:
+-    client: PublicMarketDataClient = _FakePublicMarketData()
+-    assert_type(client, PublicMarketDataClient)
++    def public_client() -> PublicMarketDataClient:
++        return _FakePublicMarketData()
++
++    client = public_client()
++    _ = assert_type(client, PublicMarketDataClient)
++
++
++def _metric_counters(registry: OrderBookRegistry) -> dict[str, int]:
++    return COUNTERS_ADAPTER.validate_python(getattr(registry.metrics, "counters"))
+ 
+ def _gamma_market_payload(
+     *,
+@@ -183,7 +200,7 @@ def test_last_trade_does_not_refresh_orderbook_depth_freshness() -> None:
+     assert registry.is_fill_eligible("tok", 10_000, now) is False
+ 
+ 
+-def test_books_for_market_hides_stale_marked_book_but_get_keeps_raw(market) -> None:
++def test_books_for_market_hides_stale_marked_book_but_get_keeps_raw(market: Market) -> None:
+     registry = OrderBookRegistry()
+     up_book = sample_book(market.token_for(Side.UP).token_id, BookFactoryConfig(ask=0.82))
+     down_book = sample_book(market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=0.18))
+@@ -198,7 +215,7 @@ def test_books_for_market_hides_stale_marked_book_but_get_keeps_raw(market) -> N
+     assert registry.get(up_book.token_id) == up_book
+     assert registry.is_fill_eligible(up_book.token_id, 10_000, up_book.received_at) is False
+     assert (
+-        registry.metrics.snapshot()["counters"].get(
++        _metric_counters(registry).get(
+             "paper_fill_rejected_TICK_SIZE_CHANGE_RESEED_REQUIRED"
+         )
+         == 1
+@@ -206,7 +223,7 @@ def test_books_for_market_hides_stale_marked_book_but_get_keeps_raw(market) -> N
+ 
+ 
+ async def test_market_snapshot_builder_hides_stale_marked_book_from_signal_inputs(
+-    market,
++    market: Market,
+ ) -> None:
+     books = OrderBookRegistry()
+     spots = SpotRegistry()
+@@ -229,7 +246,7 @@ async def test_market_snapshot_builder_hides_stale_marked_book_from_signal_input
+ 
+ 
+ async def test_market_snapshot_builder_handles_missing_side_for_trade_metrics(
+-    market,
++    market: Market,
+ ) -> None:
+     partial_market = market.model_copy(
+         update={"outcome_tokens": [market.token_for(Side.UP)]}
+@@ -257,23 +274,22 @@ def test_websocket_event_types_reconciliation() -> None:
+     assert state is not None
+     assert registry.is_fill_eligible("token-up", 10000, utc_now()) is False
+     assert state.stale_reason == "TICK_SIZE_CHANGE_RESEED_REQUIRED"
+-    assert registry.metrics.snapshot()["counters"].get("ws_event_tick_size_change") == 1
++    assert _metric_counters(registry).get("ws_event_tick_size_change") == 1
+ 
+     ws.handle_message({"event_type": "some_unknown_event_type"})
+-    assert registry.metrics.snapshot()["counters"].get("ws_event_unknown_some_unknown_event_type") == 1
++    assert _metric_counters(registry).get("ws_event_unknown") == 1
++    assert _metric_counters(registry).get("ws_event_unknown_some_unknown_event_type") is None
+ 
+ 
+ def test_order_book_parses_hash_field() -> None:
+-    from polysignal_lab.domain.orderbook import OrderBook
+-
+-    payload = {
++    payload: JsonObject = {
+         "market": "market-1",
+         "asset_id": "token-up",
+         "hash": "test-hash-value",
+         "bids": [],
+         "asks": [],
+     }
+-    book = OrderBook.from_polymarket(payload)
++    book = parse_order_book_payload(payload)
+     assert book.hash == "test-hash-value"
+ 
+ 
+@@ -305,7 +321,7 @@ def test_registry_reconciliation_methods() -> None:
+     delta_book = OrderBook(token_id="token-1", source_timestamp="1710000000100", received_at=now)
+     registry.update_from_delta(delta_book)
+     assert registry.get("token-1") is None
+-    assert registry.metrics.snapshot()["counters"].get("delta_without_snapshot") == 1
++    assert _metric_counters(registry).get("delta_without_snapshot") == 1
+ 
+     # 2. Snapshot creates eligibility
+     snapshot_book = OrderBook(token_id="token-1", source_timestamp="1710000000000", received_at=now)
+@@ -321,7 +337,7 @@ def test_registry_reconciliation_methods() -> None:
+     regressed_book = OrderBook(token_id="token-1", source_timestamp="1700000000000", received_at=now)
+     registry.update_from_delta(regressed_book)
+     assert registry.is_fill_eligible("token-1", 10000, now) is False
+-    assert registry.metrics.snapshot()["counters"].get("book_sequence_invalid") == 1
++    assert _metric_counters(registry).get("book_sequence_invalid") == 1
+ 
+ 
+ async def test_gamma_active_market_discovery_paginates_filters_and_extracts_token_ids() -> None:
+@@ -350,7 +366,7 @@ async def test_gamma_active_market_discovery_paginates_filters_and_extracts_toke
+ 
+ 
+ async def test_gamma_discovery_skips_future_active_crypto_windows() -> None:
+-    payloads = [
++    payloads: JsonValue = [
+         {
+             "id": "event-future",
+             "slug": "btc-updown-5m-4102444800",
+@@ -387,7 +403,7 @@ async def test_gamma_discovery_skips_future_active_crypto_windows() -> None:
+ 
+ 
+ async def test_gamma_discovery_fetches_current_slot_by_slug_when_list_has_only_future_windows(
+-    monkeypatch,
++    monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+     from polysignal_lab.data import polymarket_market_discovery as discovery_module
+ 
+@@ -419,7 +435,7 @@ async def test_gamma_discovery_fetches_current_slot_by_slug_when_list_has_only_f
+ 
+ 
+ async def test_gamma_discovery_fetches_current_5m_and_15m_crypto_slots(
+-    monkeypatch,
++    monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+     from polysignal_lab.data import polymarket_market_discovery as discovery_module
+ 
+@@ -465,7 +481,9 @@ async def test_gamma_discovery_fetches_current_5m_and_15m_crypto_slots(
+     )
+ 
+ 
+-async def test_gamma_discovery_includes_next_period_market_when_requested(monkeypatch) -> None:
++async def test_gamma_discovery_includes_next_period_market_when_requested(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
+     from polysignal_lab.data import polymarket_market_discovery as discovery_module
+ 
+     now = datetime(2026, 6, 23, 22, 41, tzinfo=timezone.utc)
+@@ -494,7 +512,9 @@ async def test_gamma_discovery_includes_next_period_market_when_requested(monkey
+     assert [market.market_id for market in markets] == ["market-current", "market-next"]
+ 
+ 
+-async def test_gamma_discovery_keeps_recently_ended_slot_with_stale_grace(monkeypatch) -> None:
++async def test_gamma_discovery_keeps_recently_ended_slot_with_stale_grace(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
+     from polysignal_lab.data import polymarket_market_discovery as discovery_module
+ 
+     now = datetime(2026, 6, 23, 22, 45, 3, tzinfo=timezone.utc)
+@@ -516,7 +536,9 @@ async def test_gamma_discovery_keeps_recently_ended_slot_with_stale_grace(monkey
+ 
+     assert [market.market_id for market in markets] == ["market-previous"]
+ 
+-async def test_gamma_discovery_maps_current_slot_tokens_by_outcome_label(monkeypatch) -> None:
++async def test_gamma_discovery_maps_current_slot_tokens_by_outcome_label(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
+     from polysignal_lab.data import polymarket_market_discovery as discovery_module
+ 
+     now = datetime(2026, 6, 23, 22, 41, tzinfo=timezone.utc)
+@@ -543,7 +565,9 @@ async def test_gamma_discovery_maps_current_slot_tokens_by_outcome_label(monkeyp
+     assert markets[0].token_for(Side.DOWN).token_id == "token-down"
+ 
+ 
+-async def test_gamma_discovery_dedupes_list_and_current_slug_payload(monkeypatch) -> None:
++async def test_gamma_discovery_dedupes_list_and_current_slug_payload(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
+     from polysignal_lab.data import polymarket_market_discovery as discovery_module
+ 
+     now = datetime(2026, 6, 23, 22, 41, tzinfo=timezone.utc)
+@@ -606,7 +630,7 @@ def test_clob_ws_exposes_connection_and_invalid_event_metrics() -> None:
+     assert ws.subscribed_token_count == 2
+     assert ws.reconnect_count == 1
+     assert ws.last_error == "network reset"
+-    assert registry.metrics.snapshot()["counters"]["ws_decode_errors"] == 1
++    assert _metric_counters(registry)["ws_decode_errors"] == 1
+ 
+ 
+ def test_binance_feed_exposes_connection_metrics() -> None:
+diff --git a/tests/test_orderbook_snapshot.py b/tests/test_orderbook_snapshot.py
+index cbd60a4..5d45b2c 100644
+--- a/tests/test_orderbook_snapshot.py
++++ b/tests/test_orderbook_snapshot.py
+@@ -1,6 +1,6 @@
+ """
+-Input: __future__, __future__.annotations, datetime, datetime.timedelta, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.OrderBook, polysignal_lab.utils, polysignal_lab.utils.utc_now, factories, factories.BookFactoryConfig
+-Output: test_orderbook_best_bid_ask_spread_depth, test_orderbook_from_polymarket_payload, test_staleness_detection, test_snapshot_builder_derived_metrics
++Input: __future__, __future__.annotations, datetime, datetime.timedelta, pytest, polysignal_lab.data.orderbook_payload, polysignal_lab.utils, polysignal_lab.utils.utc_now, factories, factories.BookFactoryConfig
++Output: test_orderbook_best_bid_ask_spread_depth, test_parse_orderbook_from_polymarket_payload, test_parse_orderbook_rejects_missing_token_id, test_parse_orderbook_ignores_invalid_levels, test_staleness_detection, test_snapshot_builder_derived_metrics
+ Pos: Test Layer - Unit/Integration tests
+ 
+ 🔄 Self-reference: When this file changes, update this header
+@@ -16,7 +16,13 @@ from __future__ import annotations
+ 
+ from datetime import timedelta
+ 
+-from polysignal_lab.domain.orderbook import OrderBook
++import pytest
++
++from polysignal_lab.data.orderbook_payload import (
++    InvalidOrderBookPayload,
++    JsonObject,
++    parse_order_book_payload,
++)
+ from polysignal_lab.utils import utc_now
+ from factories import BookFactoryConfig, sample_book
+ 
+@@ -25,25 +31,53 @@ def test_orderbook_best_bid_ask_spread_depth():
+     book = sample_book("token", BookFactoryConfig(ask=0.60, bid=0.57, size=100))
+     assert book.best_ask == 0.60
+     assert book.best_bid == 0.57
++    assert book.spread is not None
+     assert round(book.spread, 2) == 0.03
+     assert book.depth_until(0.65) > 60
+ 
+ 
+-def test_orderbook_from_polymarket_payload():
+-    payload = {
++def test_parse_orderbook_from_polymarket_payload():
++    payload: JsonObject = {
+         "market": "m1",
+         "asset_id": "tok1",
+         "bids": [{"price": "0.45", "size": "100"}],
+         "asks": [{"price": "0.46", "size": "150"}],
+         "last_trade_price": "0.455",
+     }
+-    book = OrderBook.from_polymarket(payload)
++    book = parse_order_book_payload(payload)
+     assert book.market_id == "m1"
+     assert book.token_id == "tok1"
+     assert book.best_bid == 0.45
+     assert book.best_ask == 0.46
+ 
+ 
++def test_parse_orderbook_rejects_missing_token_id():
++    with pytest.raises(InvalidOrderBookPayload):
++        _ = parse_order_book_payload({"bids": [], "asks": []})
++
++
++def test_parse_orderbook_ignores_invalid_levels():
++    book = parse_order_book_payload(
++        {
++            "asset_id": "tok1",
++            "bids": [
++                {"price": "-0.1", "size": "10"},
++                {"price": "NaN", "size": "10"},
++                {"price": "0.44", "size": "0"},
++                {"price": "0.45", "size": "10"},
++            ],
++            "asks": [
++                {"price": "0", "size": "10"},
++                {"price": "0.47", "size": "-1"},
++                {"price": "0.48", "size": "12"},
++            ],
++        }
++    )
++
++    assert [(level.price, level.size) for level in book.bids] == [(0.45, 10.0)]
++    assert [(level.price, level.size) for level in book.asks] == [(0.48, 12.0)]
++
++
+ def test_staleness_detection():
+     book = sample_book("token")
+     assert book.is_fresh(1500)
+diff --git a/tests/test_polymarket_clob_rest.py b/tests/test_polymarket_clob_rest.py
+index 583c819..c1fedf8 100644
+--- a/tests/test_polymarket_clob_rest.py
++++ b/tests/test_polymarket_clob_rest.py
+@@ -1,5 +1,5 @@
+ """
+-Input: __future__, __future__.annotations, inspect, pytest, polysignal_lab.config, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.data.polymarket_clob_rest, polysignal_lab.data.polymarket_clob_rest.PolymarketCLOBRestClient, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.OrderBook
++Input: __future__, __future__.annotations, inspect, pytest, pydantic, pydantic.JsonValue, polysignal_lab.config, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.data.orderbook_payload, polysignal_lab.data.polymarket_clob_rest, polysignal_lab.data.polymarket_clob_rest.PolymarketCLOBRestClient, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.OrderBook, typing_extensions, typing_extensions.override
+ Output: test_clob_rest_constructor_does_not_expose_sdk_client, test_clob_rest_instance_does_not_expose_sdk_client, test_get_books_uses_batch_path, test_get_books_falls_back_to_single_book_requests_when_batch_fails
+ Pos: Test Layer - Unit/Integration tests
+ 
+@@ -17,8 +17,11 @@ import inspect
+ 
+ 
+ import pytest
++from pydantic import JsonValue
++from typing_extensions import override
+ 
+ from polysignal_lab.config import PolymarketDataConfig
++from polysignal_lab.data.orderbook_payload import parse_order_book_payload
+ from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
+ from polysignal_lab.domain.orderbook import OrderBook
+ 
+@@ -43,7 +46,7 @@ async def test_get_books_uses_batch_path(monkeypatch: pytest.MonkeyPatch) -> Non
+     client = PolymarketCLOBRestClient(PolymarketDataConfig())
+     requested_token_ids: list[str] = []
+ 
+-    def fake_batch(token_ids: list[str]) -> list[object]:
++    def fake_batch(token_ids: list[str]) -> list[JsonValue]:
+         requested_token_ids.extend(token_ids)
+         return [
+             {
+@@ -85,12 +88,14 @@ async def test_get_books_falls_back_to_single_book_requests_when_batch_fails() -
+             super().__init__(PolymarketDataConfig())
+             self.single_requests: list[str] = []
+ 
+-        def _get_order_books_batch_sync(self, token_ids: list[str]) -> list[object]:
++        @override
++        def _get_order_books_batch_sync(self, token_ids: list[str]) -> list[JsonValue]:
+             raise RuntimeError("batch unavailable")
+ 
++        @override
+         async def get_book(self, token_id: str) -> OrderBook:
+             self.single_requests.append(token_id)
+-            return OrderBook.from_polymarket(
++            return parse_order_book_payload(
+                 {
+                     "market": f"market-{token_id}",
+                     "asset_id": token_id,
+diff --git a/src/polysignal_lab/data/orderbook_payload.py b/src/polysignal_lab/data/orderbook_payload.py
+new file mode 100644
+index 0000000..3c90e89
+--- /dev/null
++++ b/src/polysignal_lab/data/orderbook_payload.py
+@@ -0,0 +1,101 @@
++"""
++Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, typing, typing.Final, typing.TypeAlias, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, typing_extensions, typing_extensions.override, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.BookLevel, polysignal_lab.domain.orderbook.OrderBook, polysignal_lab.utils
++Output: InvalidOrderBookPayload, parse_order_book_payload
++Pos: Application code
++
++🔄 Self-reference: When this file changes, update this header
++"""
++
++
++
++
++
++
++
++
++from __future__ import annotations
++
++from collections.abc import Mapping
++from dataclasses import dataclass
++from datetime import datetime
++from typing import Final, TypeAlias
++
++from pydantic import JsonValue, TypeAdapter
++from typing_extensions import override
++
++from polysignal_lab.domain.orderbook import BookLevel, OrderBook
++from polysignal_lab.utils import safe_float, utc_now
++
++JsonObject: TypeAlias = Mapping[str, JsonValue]
++JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
++
++
++@dataclass(frozen=True, slots=True)
++class InvalidOrderBookPayload(ValueError):
++    reason: str
++
++    @override
++    def __str__(self) -> str:
++        return self.reason
++
++
++def parse_order_book_payload(
++    payload: JsonObject,
++    received_at: datetime | None = None,
++) -> OrderBook:
++    return OrderBook(
++        market_id=_optional_text(payload.get("market")),
++        token_id=_token_id(payload),
++        bids=sorted(_levels(payload.get("bids")), key=lambda level: level.price, reverse=True),
++        asks=sorted(_levels(payload.get("asks")), key=lambda level: level.price),
++        last_trade_price=safe_float(payload.get("last_trade_price") or payload.get("lastTradePrice")),
++        last_trade_size=safe_float(
++            payload.get("last_trade_size") or payload.get("lastTradeSize") or payload.get("size")
++        ),
++        last_trade_side=_optional_text(payload.get("side")),
++        last_trade_timestamp=_optional_text(payload.get("last_trade_timestamp") or payload.get("timestamp")),
++        min_order_size=safe_float(payload.get("min_order_size")),
++        tick_size=safe_float(payload.get("tick_size")),
++        source_timestamp=_optional_text(payload.get("timestamp")),
++        hash=_optional_text(payload.get("hash")),
++        received_at=received_at or utc_now(),
++    )
++
++
++def json_object(value: JsonValue) -> JsonObject:
++    validated = JSON_VALUE_ADAPTER.validate_python(value)
++    if isinstance(validated, dict):
++        return {str(key): item for key, item in validated.items()}
++    raise InvalidOrderBookPayload("order book payload must be a JSON object")
++
++
++def _levels(raw: JsonValue | None) -> list[BookLevel]:
++    if not isinstance(raw, list):
++        return []
++    levels: list[BookLevel] = []
++    for item in raw:
++        if not isinstance(item, dict):
++            continue
++        level = json_object(item)
++        price = safe_float(level.get("price"))
++        size = safe_float(level.get("size"))
++        if price is None or size is None or price <= 0 or size <= 0:
++            continue
++        levels.append(
++            BookLevel(
++                price=price,
++                size=size,
++            )
++        )
++    return levels
++
++
++def _token_id(payload: JsonObject) -> str:
++    raw = payload.get("asset_id") or payload.get("token_id") or payload.get("assetId")
++    if raw in (None, ""):
++        raise InvalidOrderBookPayload("order book payload missing token id")
++    return str(raw)
++
++
++def _optional_text(value: JsonValue | None) -> str | None:
++    return str(value) if value is not None else None
+diff --git a/src/polysignal_lab/data/polymarket_clob_rest.py b/src/polysignal_lab/data/polymarket_clob_rest.py
+new file mode 100644
+index 0000000..383e415
+--- /dev/null
++++ b/src/polysignal_lab/data/polymarket_clob_rest.py
+@@ -0,0 +1,144 @@
++"""
++Input: __future__, __future__.annotations, anyio.to_thread, typing, typing.Final, typing.Protocol, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.config, polysignal_lab.data.orderbook_payload, polysignal_lab.data.rate_limiter, polysignal_lab.domain.orderbook, polysignal_lab.utils
++Output: PolymarketCLOBRestClient
++Pos: Application code
++
++🔄 Self-reference: When this file changes, update this header
++"""
++
++
++
++
++
++
++
++
++from __future__ import annotations
++
++from typing import TYPE_CHECKING, Final, Protocol
++
++from anyio.to_thread import run_sync
++import httpx
++from pydantic import JsonValue, TypeAdapter, ValidationError
++
++from polysignal_lab.config import PolymarketDataConfig
++from polysignal_lab.data.orderbook_payload import (
++    InvalidOrderBookPayload,
++    JsonObject,
++    json_object,
++    parse_order_book_payload,
++)
++from polysignal_lab.data.rate_limiter import AsyncRateLimiter
++from polysignal_lab.domain.orderbook import OrderBook
++from polysignal_lab.utils import safe_float, utc_now
++
++JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
++
++if TYPE_CHECKING:
++    from py_clob_client_v2.clob_types import BookParams as _BookParams
++
++
++class _RestResponse(Protocol):
++    def raise_for_status(self) -> None: ...
++
++    def json(self) -> JsonValue: ...
++
++
++class _RestClient(Protocol):
++    async def get(self, url: str, *, params: dict[str, str] | None = None) -> _RestResponse: ...
++
++
++class _HttpxRestResponse:
++    def __init__(self, response: httpx.Response) -> None:
++        self._response: httpx.Response = response
++
++    def raise_for_status(self) -> None:
++        _ = self._response.raise_for_status()
++
++    def json(self) -> JsonValue:
++        return JSON_VALUE_ADAPTER.validate_python(self._response.json())
++
++
++class _HttpxRestClient:
++    def __init__(self) -> None:
++        self._client: httpx.AsyncClient = httpx.AsyncClient(timeout=10.0)
++
++    async def get(self, url: str, *, params: dict[str, str] | None = None) -> _RestResponse:
++        return _HttpxRestResponse(await self._client.get(url, params=params))
++
++
++class _BatchOrderBookClient(Protocol):
++    def get_order_books(self, params: list[_BookParams]) -> JsonValue: ...
++
++
++class PolymarketCLOBRestClient:
++    def __init__(
++        self,
++        config: PolymarketDataConfig,
++        client: _RestClient | None = None,
++    ) -> None:
++        self.config: PolymarketDataConfig = config
++        self.client: _RestClient = client or _HttpxRestClient()
++        self._sdk_client_instance: _BatchOrderBookClient | None = None
++        self.rate_limiter: AsyncRateLimiter = AsyncRateLimiter(config.rest_rate_limit_per_sec)
++
++    async def get_book(self, token_id: str) -> OrderBook:
++        payload = await self._get_public_json("/book", token_id)
++        return parse_order_book_payload(payload, received_at=utc_now())
++
++    async def get_mid(self, token_id: str) -> float | None:
++        payload = await self._get_public_json("/midpoint", token_id)
++        return safe_float(payload.get("mid_price") or payload.get("mid") or payload.get("midpoint"))
++
++    async def get_spread(self, token_id: str) -> float | None:
++        payload = await self._get_public_json("/spread", token_id)
++        return safe_float(payload.get("spread"))
++
++    async def get_books(self, token_ids: list[str]) -> list[OrderBook]:
++        if not token_ids:
++            return []
++        try:
++            return await self._get_books_batch(token_ids)
++        except (InvalidOrderBookPayload, RuntimeError, ValidationError):
++            return [await self.get_book(token_id) for token_id in token_ids]
++
++    async def _get_books_batch(self, token_ids: list[str]) -> list[OrderBook]:
++        await self.rate_limiter.wait()
++        received_at = utc_now()
++        payloads = await run_sync(self._get_order_books_batch_sync, token_ids)
++        return [
++            parse_order_book_payload(_sdk_book_payload(payload), received_at=received_at)
++            for payload in payloads
++        ]
++
++    def _get_order_books_batch_sync(self, token_ids: list[str]) -> list[JsonValue]:
++        from py_clob_client_v2.clob_types import BookParams
++
++        params = [BookParams(token_id=token_id) for token_id in token_ids]
++        payload = JSON_VALUE_ADAPTER.validate_python(self._sdk_client().get_order_books(params))
++        return payload if isinstance(payload, list) else []
++
++    def _sdk_client(self) -> _BatchOrderBookClient:
++        if self._sdk_client_instance is None:
++            from py_clob_client_v2 import ClobClient as PublicCLOBClient
++
++            client: _BatchOrderBookClient = PublicCLOBClient(
++                host=self.config.clob_base_url,
++                chain_id=self.config.chain_id,
++            )
++            self._sdk_client_instance = client
++        return self._sdk_client_instance
++
++    async def _get_public_json(self, path: str, token_id: str) -> JsonObject:
++        await self.rate_limiter.wait()
++        response = await self.client.get(
++            f"{self.config.clob_base_url}{path}",
++            params={"token_id": token_id},
++        )
++        response.raise_for_status()
++        payload = JSON_VALUE_ADAPTER.validate_python(response.json())
++        return json_object(payload)
++
++
++def _sdk_book_payload(book: JsonValue) -> JsonObject:
++    return json_object(book)
+diff --git a/src/polysignal_lab/data/polymarket_clob_ws.py b/src/polysignal_lab/data/polymarket_clob_ws.py
+new file mode 100644
+index 0000000..82fcbf3
+--- /dev/null
++++ b/src/polysignal_lab/data/polymarket_clob_ws.py
+@@ -0,0 +1,178 @@
++"""
++Input: __future__, __future__.annotations, collections.abc, collections.abc.Awaitable, collections.abc.Callable, json, queue, queue.Queue, typing, typing.Final, typing.TypeAlias, anyio, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, websockets, polysignal_lab.config, polysignal_lab.data.orderbook_payload, polysignal_lab.data.state, polysignal_lab.domain.orderbook, polysignal_lab.utils
++Output: PolymarketMarketWebSocket
++Pos: Application code
++
++🔄 Self-reference: When this file changes, update this header
++"""
++
++
++
++
++
++
++
++
++from __future__ import annotations
++
++from collections.abc import Awaitable, Callable
++import json
++from queue import Queue
++from typing import Final, TypeAlias
++
++import anyio
++from pydantic import JsonValue, TypeAdapter
++import websockets
++
++from polysignal_lab.config import PolymarketDataConfig
++from polysignal_lab.data.orderbook_payload import InvalidOrderBookPayload, parse_order_book_payload
++from polysignal_lab.data.state import OrderBookRegistry
++from polysignal_lab.domain.orderbook import BookLevel, OrderBook
++from polysignal_lab.utils import new_id, safe_float, utc_now
++
++JsonObject = dict[str, JsonValue]
++JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
++ReseedHook: TypeAlias = Callable[[list[str]], Awaitable[None]]
++
++
++class PolymarketMarketWebSocket:
++    def __init__(self, config: PolymarketDataConfig, registry: OrderBookRegistry):
++        self.config: PolymarketDataConfig = config
++        self.registry: OrderBookRegistry = registry
++        self.resolved_events: Queue[JsonObject] = Queue()
++        self.running: bool = False
++        self.connected: bool = False
++        self.reconnect_count: int = 0
++        self.last_error: str | None = None
++        self.subscribed_token_count: int = 0
++        self.reseed_hook: ReseedHook | None = None
++
++    async def subscribe(self, token_ids: list[str]) -> None:
++        self.running = True
++        payload = {"assets_ids": token_ids, "type": "market", "custom_feature_enabled": True}
++        while self.running:
++            try:
++                if self.reseed_hook is not None:
++                    await self.reseed_hook(token_ids)
++                async with websockets.connect(self.config.market_ws_url, ping_interval=20, ping_timeout=20) as ws:
++                    self.note_connected(token_ids=token_ids)
++                    await ws.send(json.dumps(payload))
++                    async for message in ws:
++                        self.handle_message(message)
++            except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as exc:
++                self.note_reconnect(exc)
++                await anyio.sleep(2.0)
++
++    def stop(self) -> None:
++        self.running = False
++        self.connected = False
++
++    def note_connected(self, *, token_ids: list[str]) -> None:
++        self.connected = True
++        self.last_error = None
++        self.subscribed_token_count = len(token_ids)
++
++    def note_reconnect(self, error: BaseException) -> None:
++        self.connected = False
++        self.reconnect_count += 1
++        self.last_error = str(error)
++
++    def handle_message(self, message: str | bytes | JsonObject | list[JsonValue]) -> None:
++        payload = self._payload(message)
++        if isinstance(payload, list):
++            for item in payload:
++                if isinstance(item, dict):
++                    self.handle_message(item)
++            return
++        if not isinstance(payload, dict):
++            return
++        event_type = payload.get("event_type") or payload.get("type")
++        match event_type:
++            case "book":
++                try:
++                    self.registry.update_from_snapshot(
++                        parse_order_book_payload(payload, received_at=utc_now())
++                    )
++                except InvalidOrderBookPayload:
++                    self.registry.metrics.inc("ws_invalid_book_payload")
++            case "price_change" | "price_changes":
++                self._apply_price_change(payload)
++            case "best_bid_ask":
++                self._apply_best_bid_ask(payload)
++            case "last_trade_price":
++                self._apply_last_trade(payload)
++            case "tick_size_change":
++                self.registry.metrics.inc("ws_event_tick_size_change")
++                token_id = _token_id(payload)
++                if token_id:
++                    self.registry.mark_stale(token_id, "TICK_SIZE_CHANGE_RESEED_REQUIRED")
++            case "market_resolved":
++                self.registry.metrics.inc("ws_event_market_resolved")
++                self.resolved_events.put_nowait({"event_id": new_id("resolved"), **payload})
++            case "new_market" | None:
++                return
++            case _:
++                self.registry.metrics.inc("ws_event_unknown")
++
++    def _payload(self, message: str | bytes | JsonObject | list[JsonValue]) -> JsonValue | list[JsonValue]:
++        if isinstance(message, (str, bytes)):
++            try:
++                decoded = JSON_VALUE_ADAPTER.validate_python(json.loads(message))
++            except json.JSONDecodeError:
++                self.registry.metrics.inc("ws_decode_errors")
++                return {}
++            return decoded if isinstance(decoded, (dict, list)) else {}
++        return message
++
++    def _apply_price_change(self, payload: JsonObject) -> None:
++        raw_changes = payload.get("price_changes") or payload.get("changes") or [payload]
++        if not isinstance(raw_changes, list):
++            return
++        for change in raw_changes:
++            if isinstance(change, dict):
++                self._apply_single_price_change(change)
++
++    def _apply_single_price_change(self, change: JsonObject) -> None:
++        token_id = _token_id(change)
++        if token_id is None:
++            return
++        book = self.registry.get(token_id)
++        if not book:
++            self.registry.update_from_delta(OrderBook(token_id=token_id, received_at=utc_now()))
++            return
++        price = safe_float(change.get("price"))
++        size = safe_float(change.get("size"), 0.0)
++        if price is None or size is None:
++            return
++        updated = book.model_copy(deep=True)
++        target = updated.bids if str(change.get("side") or "").upper() == "BUY" else updated.asks
++        target[:] = [level for level in target if level.price != price]
++        if size > 0:
++            target.append(BookLevel(price=price, size=size))
++        updated.bids = sorted(updated.bids, key=lambda level: level.price, reverse=True)
++        updated.asks = sorted(updated.asks, key=lambda level: level.price)
++        updated.received_at = utc_now()
++        self._apply_best_bid_ask(change)
++        self.registry.update_from_delta(updated)
++
++    def _apply_best_bid_ask(self, payload: JsonObject) -> None:
++        token_id = _token_id(payload)
++        if token_id is None:
++            return
++        best_bid = safe_float(payload.get("best_bid"))
++        best_ask = safe_float(payload.get("best_ask"))
++        self.registry.update_telemetry(token_id, best_bid, best_ask)
++
++    def _apply_last_trade(self, payload: JsonObject) -> None:
++        token_id = _token_id(payload)
++        if token_id is None:
++            return
++        price = safe_float(payload.get("price") or payload.get("last_trade_price"))
++        if price is None:
++            return
++        self.registry.update_last_trade(token_id, price)
++
++
++def _token_id(payload: JsonObject) -> str | None:
++    raw = payload.get("asset_id") or payload.get("token_id") or payload.get("assetId")
++    return str(raw) if raw else None

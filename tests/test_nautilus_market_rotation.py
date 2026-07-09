@@ -579,6 +579,7 @@ def test_market_rotation_actor_refresh_checks_still_active_ptb_sequentially(
         "asyncio.create_task",
         lambda coro: _record_task(created, cast(Coroutine[Any, Any, object], coro)),
     )
+    actor.publish_data = lambda data_type, data: None
 
     try:
         actor.on_start()
@@ -874,7 +875,17 @@ def test_market_rotation_actor_on_start_uses_clock_timer_when_available(
                 }
             )
 
-    setattr(actor, "clock", FakeClock())
+    fake_clock = FakeClock()
+    monkeypatch.setattr(
+        MarketRotationActor,
+        "clock",
+        property(lambda self: fake_clock),
+    )
+    actor.publish_data = lambda data_type, data: None
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.market_rotation._register_polysignal_data_types_if_available",
+        lambda: None,
+    )
     monkeypatch.setattr(
         "asyncio.create_task",
         lambda coro: _record_task(created, cast(Coroutine[Any, Any, object], coro)),
@@ -1021,7 +1032,9 @@ def test_market_rotation_actor_refresh_async_publishes_ptb(
     assert any(isinstance(item, PolySignalPriceToBeatData) for item in published)
 
 
-def test_market_rotation_actor_on_stop_cancels_clock_without_feed_lifecycle() -> None:
+def test_market_rotation_actor_on_stop_cancels_clock_without_feed_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     cancelled: list[str] = []
     settings = Settings()
     settings.runtime.nautilus.market_rotation.enabled = False
@@ -1034,7 +1047,19 @@ def test_market_rotation_actor_on_stop_cancels_clock_without_feed_lifecycle() ->
         anchor_store=None,
         health=None,
     )
-    actor.clock = SimpleNamespace(cancel_timer=lambda name: cancelled.append(str(name)))
+    fake_clock = SimpleNamespace(
+        cancel_timer=lambda name: cancelled.append(str(name)),
+    )
+    monkeypatch.setattr(
+        MarketRotationActor,
+        "clock",
+        property(lambda self: fake_clock),
+    )
+    actor.publish_data = lambda data_type, data: None
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.market_rotation._register_polysignal_data_types_if_available",
+        lambda: None,
+    )
 
     actor.on_stop()
 

@@ -1,0 +1,14 @@
+surface: filesystem report validation
+invocation: test -s .omo/evidence/paper-qa-rerun-15.md && rg 'manualQa|verdict: PASS' .omo/evidence/paper-qa-rerun-15.md
+verdict: PASS
+manualQa:
+      verdict: PASS
+      verdict: PASS
+      exactInvocation: `test -s .omo/evidence/paper-qa-rerun-15.md && rg 'manualQa|verdict: PASS' .omo/evidence/paper-qa-rerun-15.md`
+      verdict: PASS
+      verdict: PASS
+      verdict: PASS
+      verdict: PASS
+      verdict: PASS
+      verdict: PASS
+VERDICT: PASS

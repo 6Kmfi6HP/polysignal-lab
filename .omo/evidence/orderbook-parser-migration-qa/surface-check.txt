@@ -1,0 +1,12 @@
+path=.omo/ulw-loop/evidence/orderbook-surface.txt
+size=120
+lines=6
+missing=[]
+content:
+surface=orderbook_payload_to_registry
+token_id=token-surface
+best_bid=0.44
+best_ask=0.47
+hash=surface-hash
+verdict=pass
+surface_check=PASS

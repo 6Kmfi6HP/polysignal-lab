@@ -1,0 +1,12 @@
+surface: CLI deliverable verification
+invocation: test -s .omo/evidence/paper-qa-rerun-9.md && rg "manualQa|surfaceEvidence|adversarialCases|artifactRefs|VERDICT: (PASS|FAIL)" .omo/evidence/paper-qa-rerun-9.md
+observable: deliverable non-empty and required sections/verdict present
+
+nonempty PASS bytes=3879
+3:VERDICT: FAIL
+7:## manualQa
+9:### surfaceEvidence
+11:| scenario id | criterion reference | surface | exact invocation | verdict | artifactRefs |
+21:### adversarialCases
+23:| scenario id | criterion reference | adversarial class | expected behavior | verdict | artifactRefs |
+29:### artifactRefs

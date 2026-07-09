@@ -15,10 +15,11 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import assert_never
+from typing import Any
 
-from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
-from polysignal_lab.domain.paper_result import PaperTradeResult
+from factories import sample_paper_trade_result
+
+from polysignal_lab.domain.enums import TradeResultStatus
 from polysignal_lab.paper.strategy_stats import build_strategy_leaderboard_rows
 
 
@@ -29,27 +30,20 @@ def _trade(
     pnl_usdc: float = 1.0,
     roi: float = 0.1,
     signal_id: str = "sig-1",
-) -> PaperTradeResult:
-    return PaperTradeResult(
+) -> dict[str, Any]:
+    return sample_paper_trade_result(
         signal_id=signal_id,
         paper_position_id=f"pos-{signal_id}",
         strategy=strategy,
-        asset="BTC",
-        timeframe="5m",
         market_id=f"market-{signal_id}",
         market_slug=f"market-{signal_id}",
-        side=Side.UP,
-        entry_price=0.50,
-        shares=20.0,
-        stake_usdc=10.0,
-        exit_mode=ExitMode.RESOLUTION,
         outcome_value=1.0 if result == TradeResultStatus.WIN else 0.0,
         settlement_value=10.0 + pnl_usdc,
         pnl_usdc=pnl_usdc,
         roi=roi,
-        result=result,
-        opened_at=datetime(2026, 6, 21, tzinfo=timezone.utc),
-        closed_at=datetime(2026, 6, 22, tzinfo=timezone.utc),
+        result=result.value,
+        opened_at=datetime(2026, 6, 21, tzinfo=timezone.utc).isoformat(),
+        closed_at=datetime(2026, 6, 22, tzinfo=timezone.utc).isoformat(),
     )
 
 

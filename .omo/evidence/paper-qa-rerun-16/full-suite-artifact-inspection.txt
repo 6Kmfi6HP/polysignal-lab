@@ -1,0 +1,62 @@
+-rw-r--r-- 1 debian debian 1885 Jul  9 10:42 .omo/ulw-loop/evidence/paper-post-r10-full-pytest-rerun.txt
+
+--- tail -n 80 ---
+........................................................................ [ 10%]
+........................................................................ [ 20%]
+........................................................................ [ 31%]
+........................................................................ [ 41%]
+........................................................................ [ 51%]
+........................................................................ [ 62%]
+........................................................................ [ 72%]
+........................................................................ [ 82%]
+........................................................................ [ 93%]
+................................................                         [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+EXIT_CODE=0
+  File: .omo/ulw-loop/evidence/paper-post-r10-full-pytest-rerun.txt
+  Size: 1885      	Blocks: 8          IO Block: 4096   regular file
+Device: 8,1	Inode: 1707178     Links: 1
+Access: (0644/-rw-r--r--)  Uid: ( 1000/  debian)   Gid: ( 1000/  debian)
+Access: 2026-07-09 10:45:32.309858748 +0200
+Modify: 2026-07-09 10:42:12.959558542 +0200
+Change: 2026-07-09 10:42:12.959558542 +0200
+ Birth: 2026-07-09 08:13:48.199757725 +0200
+
+--- head ---
+........................................................................ [ 10%]
+........................................................................ [ 20%]
+........................................................................ [ 31%]
+........................................................................ [ 41%]
+........................................................................ [ 51%]
+........................................................................ [ 62%]
+........................................................................ [ 72%]
+........................................................................ [ 82%]
+........................................................................ [ 93%]
+................................................                         [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+--- grep summary markers ---
+10:................................................                         [100%]
+13:  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+17:  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+
+METADATA_EXIT_CODE=0

@@ -1,0 +1,25 @@
+Surface: pyscn quality scan
+Invocation: uv tool run pyscn analyze src tests --json
+Started: 2026-07-09T01:53:27+02:00
+📊 Unified JSON report generated: /home/debian/polysignal-lab/.pyscn/reports/analyze_20260709_015332.json
+
+📊 Analysis Summary:
+Health Score: 62/100 (Grade: C)
+Total time: 5090ms
+
+📈 Detailed Scores:
+  Complexity:      65/100 ⚠️  (avg: 6.8, high-risk: 6 functions)
+  Dead Code:      100/100 ✅  (0 issues, 0 critical)
+  Duplication:     60/100 ⚠️  (11.5% fragments cloned, 33 groups)
+  Coupling (CBO):  60/100 ⚠️  (avg: 3.5, 25/220 high-coupling)
+  Cohesion (LCOM): 90/100 ✅  (avg: 1.4, 8/276 high-lcom)
+  Dependencies:    70/100 ⚠️  (no cycles, depth: 13)
+  Architecture:    82/100 👍  (82% compliant)
+
+
+--------------------------------------------------
+[Badge] Add this to your README to show off your score:
+[![pyscn quality](https://img.shields.io/badge/pyscn-C-orange)](https://pyscn.ludo-tech.org)
+--------------------------------------------------
+Exit: 0
+Finished: 2026-07-09T01:53:32+02:00

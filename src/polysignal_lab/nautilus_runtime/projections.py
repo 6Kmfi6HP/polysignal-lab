@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, inspect, inspect.Parameter
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, inspect, inspect.Parameter, math
 Output: project_order_event, project_fill_event, project_position, project_account, project_portfolio_snapshot
 Pos: Application code
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from inspect import Parameter, signature
+import math
 from typing import SupportsFloat, cast
 
 
@@ -76,12 +77,20 @@ def project_fill_event(event: object) -> dict[str, object]:
 def project_position(position: object) -> dict[str, object]:
     position_id = _text_attr(position, "id")
     is_closed = bool(getattr(position, "is_closed", False))
+    quantity = _optional_float_attr(position, "signed_qty")
+    avg_entry_price = _optional_float_attr(position, "avg_px_open")
+    stake_usdc = (
+        abs(quantity) * avg_entry_price
+        if quantity is not None and avg_entry_price is not None
+        else None
+    )
     return {
         "paper_position_id": position_id,
         "position_id": position_id,
         "instrument_id": _text_attr(position, "instrument_id"),
-        "quantity": _float_attr(position, "signed_qty"),
-        "avg_entry_price": _float_attr(position, "avg_px_open"),
+        "quantity": quantity,
+        "avg_entry_price": avg_entry_price,
+        "stake_usdc": stake_usdc,
         "realized_pnl": _float_attr(position, "realized_pnl"),
         "status": "CLOSED" if is_closed else "OPEN",
         "is_closed": is_closed,
@@ -172,6 +181,45 @@ def _float_attr(source: object, name: str) -> float:
     if callable(value):
         value = value()
     return _to_float(value)
+
+
+def _optional_float_attr(source: object, name: str) -> float | None:
+    value = getattr(source, name, None)
+    if callable(value):
+        value = value()
+    return _to_float_or_none(value)
+
+
+def _to_float_or_none(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        parsed_values = [
+            parsed
+            for item in cast(Mapping[object, object], value).values()
+            if (parsed := _to_float_or_none(item)) is not None
+        ]
+        return sum(parsed_values) if parsed_values else None
+    for name in ("as_double", "as_decimal"):
+        numeric = getattr(value, name, None)
+        if callable(numeric):
+            try:
+                return _to_float_or_none(numeric())
+            except (TypeError, ValueError):
+                pass
+    try:
+        parsed = float(
+            value
+            if isinstance(value, (int, float, str, bytes, bytearray))
+            else cast(SupportsFloat, value)
+        )
+        return parsed if math.isfinite(parsed) else None
+    except (TypeError, ValueError):
+        try:
+            parsed = float(str(value))
+        except (TypeError, ValueError):
+            return None
+        return parsed if math.isfinite(parsed) else None
 
 
 def _text_attr(source: object, name: str) -> str:

@@ -1,0 +1,7 @@
+src/polysignal_lab/app/scheduler_reporting.py pure LOC: 33
+src/polysignal_lab/app/scheduler_reporting_types.py pure LOC: 57
+src/polysignal_lab/app/scheduler_reporting_equity.py pure LOC: 81
+src/polysignal_lab/app/scheduler_reporting_sources.py pure LOC: 236
+src/polysignal_lab/app/scheduler_reporting_build.py pure LOC: 94
+src/polysignal_lab/domain/paper_result.py pure LOC: 182
+src/polysignal_lab/domain/paper_report.py pure LOC: 144

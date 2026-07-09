@@ -1,0 +1,18 @@
+COMMAND: PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_paper_report_boundaries.py tests/test_storage_restore.py -q
+..............................................                           [100%]
+EXIT_CODE: 0
+
+COMMAND: PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_paper_report_boundaries.py tests/test_storage_restore.py tests/test_nautilus_reporting_cache_source.py tests/test_reporting.py tests/test_strategy_stats.py -q
+.............................................................            [100%]
+EXIT_CODE: 0
+
+COMMAND: PYTHONDONTWRITEBYTECODE=1 uv run python - <<PY [direct huge-int paper/report/storage probe]
+wallet_float 0.0
+report_float 0.0
+trade_result_float 0.0
+optional_float None
+confidence_bucket low
+daily_report 0.0 0.0 8.0
+insert_invalid invalid paper_trade_results.entry_price: not numeric
+query_json []
+EXIT_CODE: 0

@@ -1,0 +1,9 @@
+manual_qa_started=2026-07-09T05:30:03Z
+settlement_zero_money None
+project_position_missing_money {'paper_position_id': 'P-missing-money', 'position_id': 'P-missing-money', 'instrument_id': 'btc-5m-test-UP', 'quantity': None, 'avg_entry_price': None, 'stake_usdc': None, 'realized_pnl': 0.0, 'status': 'OPEN', 'is_closed': False, 'ts': '2026-06-21T00:00:00.000000Z'}
+system_events_query []
+latest_health None
+daily_reports []
+idempotent_existing_malformed MalformedSQLitePayloadError
+manual_qa_finished=2026-07-09T05:30:04Z
+cleanup=removed paper-final-zero-money-manual.sqlite3; no server browser tmux container port spawned

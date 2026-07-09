@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.datetime, typing, typing.Any, pydantic, pydantic.BaseModel, pydantic.Field, pydantic.computed_field
+Input: __future__, __future__.annotations, datetime, datetime.datetime, pydantic, pydantic.BaseModel, pydantic.Field, pydantic.computed_field
 Output: BookLevel, OrderBook
 Pos: Application code
 
@@ -15,11 +15,10 @@ Pos: Application code
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
 
-from polysignal_lab.utils import safe_float, utc_now
+from polysignal_lab.utils import utc_now
 
 
 class BookLevel(BaseModel):
@@ -80,23 +79,3 @@ class OrderBook(BaseModel):
             if level.price <= max_price:
                 total_usdc += level.price * level.size
         return total_usdc
-
-    @classmethod
-    def from_polymarket(cls, payload: dict[str, Any], received_at: datetime | None = None) -> "OrderBook":
-        bids = [BookLevel(price=safe_float(x.get("price"), 0.0) or 0.0, size=safe_float(x.get("size"), 0.0) or 0.0) for x in payload.get("bids", [])]
-        asks = [BookLevel(price=safe_float(x.get("price"), 0.0) or 0.0, size=safe_float(x.get("size"), 0.0) or 0.0) for x in payload.get("asks", [])]
-        return cls(
-            market_id=str(payload.get("market")) if payload.get("market") is not None else None,
-            token_id=str(payload.get("asset_id") or payload.get("token_id") or payload.get("assetId")),
-            bids=sorted(bids, key=lambda x: x.price, reverse=True),
-            asks=sorted(asks, key=lambda x: x.price),
-            last_trade_price=safe_float(payload.get("last_trade_price") or payload.get("lastTradePrice")),
-            last_trade_size=safe_float(payload.get("last_trade_size") or payload.get("lastTradeSize") or payload.get("size")),
-            last_trade_side=str(payload.get("side")) if payload.get("side") is not None else None,
-            last_trade_timestamp=str(payload.get("last_trade_timestamp") or payload.get("timestamp")) if (payload.get("last_trade_timestamp") or payload.get("timestamp")) is not None else None,
-            min_order_size=safe_float(payload.get("min_order_size")),
-            tick_size=safe_float(payload.get("tick_size")),
-            source_timestamp=str(payload.get("timestamp")) if payload.get("timestamp") is not None else None,
-            hash=payload.get("hash"),
-            received_at=received_at or utc_now(),
-        )

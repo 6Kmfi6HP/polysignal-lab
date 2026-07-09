@@ -1,0 +1,12 @@
+storage_missing_side=pass observed=False
+storage_missing_opened_at=pass observed=False
+storage_invalid_opened_at=pass observed=False
+dashboard_missing_side=pass observed=False
+dashboard_missing_opened_at=pass observed=False
+dashboard_invalid_opened_at=pass observed=False
+live_settlement_unmatched_token_side=pass observed=None
+live_settlement_missing_opened_at=pass observed=None
+live_settlement_invalid_opened_at=fail observed=raised ValueError: Invalid isoformat string: 'not-a-date'
+repair_import_without_nautilus_trader=pass observed=False
+repair_missing_side=pass observed=None
+failed checks: ['live_settlement_invalid_opened_at']

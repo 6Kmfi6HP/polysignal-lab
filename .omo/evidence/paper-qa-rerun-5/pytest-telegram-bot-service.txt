@@ -1,0 +1,29 @@
+
+==================================== ERRORS ====================================
+_____________ ERROR collecting tests/test_telegram_bot_service.py ______________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_telegram_bot_service.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_telegram_bot_service.py:27: in <module>
+    from polysignal_lab.publish.telegram_bot import TelegramBotService
+src/polysignal_lab/publish/telegram_bot.py:39: in <module>
+    from polysignal_lab.nautilus_runtime.observability import StrategyControl
+src/polysignal_lab/nautilus_runtime/__init__.py:16: in <module>
+    from polysignal_lab.nautilus_runtime.node import (
+src/polysignal_lab/nautilus_runtime/node.py:57: in <module>
+    from polysignal_lab.nautilus_runtime.node_builder import (
+src/polysignal_lab/nautilus_runtime/node_builder.py:30: in <module>
+    from polysignal_lab.nautilus_runtime.node_builder_components import (
+src/polysignal_lab/nautilus_runtime/node_builder_components.py:11: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+src/polysignal_lab/nautilus_runtime/custom_data_state.py:22: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+src/polysignal_lab/nautilus_runtime/custom_data_types.py:16: in <module>
+    from nautilus_trader.core.data import Data
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+=========================== short test summary info ============================
+ERROR tests/test_telegram_bot_service.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!

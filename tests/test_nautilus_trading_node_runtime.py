@@ -244,6 +244,7 @@ async def test_run_nautilus_cli_async_starts_and_stops_observability_writer(monk
         return SimpleNamespace(
             node=FakeTradingNode(),
             websocket_tasks=[],
+            context=SimpleNamespace(settings=settings, telegram_bot=None),
             scheduler=SimpleNamespace(
                 stop=_stop_scheduler,
                 settings=settings,

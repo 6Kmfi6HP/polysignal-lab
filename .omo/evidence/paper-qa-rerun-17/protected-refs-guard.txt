@@ -1,0 +1,12 @@
+scenario: C4 protected refs guard
+surface: CLI git from repo root
+invocation: git status --short -- refs @refs docs/nautilus_reference ; git diff --name-only -- refs @refs docs/nautilus_reference
+observable: both protected-output sections empty and process exit code 0
+started: 2026-07-09T11:27:10+02:00
+protected_status_begin
+protected_status_end
+protected_diff_begin
+protected_diff_end
+finished: 2026-07-09T11:27:10+02:00
+exit_code: 0
+verdict: PASS

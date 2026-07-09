@@ -1,0 +1,8 @@
+scenario: C3 git diff whitespace/integrity check
+surface: CLI git from repo root
+invocation: git diff --check
+observable: process exit code 0 and no whitespace error output
+started: 2026-07-09T11:26:06+02:00
+finished: 2026-07-09T11:26:06+02:00
+exit_code: 0
+verdict: PASS

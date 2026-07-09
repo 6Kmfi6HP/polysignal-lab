@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, inspect, pytest, polysignal_lab.config, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.data.polymarket_clob_rest, polysignal_lab.data.polymarket_clob_rest.PolymarketCLOBRestClient, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.OrderBook
+Input: __future__, __future__.annotations, inspect, pytest, pydantic, pydantic.JsonValue, polysignal_lab.config, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.data.orderbook_payload, polysignal_lab.data.polymarket_clob_rest, polysignal_lab.data.polymarket_clob_rest.PolymarketCLOBRestClient, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.OrderBook, typing_extensions, typing_extensions.override
 Output: test_clob_rest_constructor_does_not_expose_sdk_client, test_clob_rest_instance_does_not_expose_sdk_client, test_get_books_uses_batch_path, test_get_books_falls_back_to_single_book_requests_when_batch_fails
 Pos: Test Layer - Unit/Integration tests
 
@@ -17,8 +17,11 @@ import inspect
 
 
 import pytest
+from pydantic import JsonValue
+from typing_extensions import override
 
 from polysignal_lab.config import PolymarketDataConfig
+from polysignal_lab.data.orderbook_payload import parse_order_book_payload
 from polysignal_lab.data.polymarket_clob_rest import PolymarketCLOBRestClient
 from polysignal_lab.domain.orderbook import OrderBook
 
@@ -43,7 +46,7 @@ async def test_get_books_uses_batch_path(monkeypatch: pytest.MonkeyPatch) -> Non
     client = PolymarketCLOBRestClient(PolymarketDataConfig())
     requested_token_ids: list[str] = []
 
-    def fake_batch(token_ids: list[str]) -> list[object]:
+    def fake_batch(token_ids: list[str]) -> list[JsonValue]:
         requested_token_ids.extend(token_ids)
         return [
             {
@@ -85,12 +88,14 @@ async def test_get_books_falls_back_to_single_book_requests_when_batch_fails() -
             super().__init__(PolymarketDataConfig())
             self.single_requests: list[str] = []
 
-        def _get_order_books_batch_sync(self, token_ids: list[str]) -> list[object]:
+        @override
+        def _get_order_books_batch_sync(self, token_ids: list[str]) -> list[JsonValue]:
             raise RuntimeError("batch unavailable")
 
+        @override
         async def get_book(self, token_id: str) -> OrderBook:
             self.single_requests.append(token_id)
-            return OrderBook.from_polymarket(
+            return parse_order_book_payload(
                 {
                     "market": f"market-{token_id}",
                     "asset_id": token_id,

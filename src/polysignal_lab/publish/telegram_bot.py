@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, html, logging, collections.abc, collections.abc.Callable, datetime, datetime.UTC, datetime.datetime, datetime.time
-Output: StrategyControl, TelegramBotService
+Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Callable, datetime, datetime.UTC, datetime.datetime, datetime.time, telegram, polysignal_lab.app.services.persistence_service, polysignal_lab.config, polysignal_lab.data.state, polysignal_lab.nautilus_runtime.observability, polysignal_lab.paper.strategy_stats, polysignal_lab.publish.telegram_render, polysignal_lab.signal_layer.formatter, polysignal_lab.utils
+Output: TelegramBotService, _position_display_payload
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,14 +14,13 @@ Pos: Application code
 
 from __future__ import annotations
 
-import html
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, time, timedelta, timezone
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardMarkup, Update
 from telegram.constants import ChatType, ParseMode
 from telegram.error import NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.ext import (
@@ -36,10 +35,9 @@ from telegram.ext import (
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.config import TelegramConfig
 from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry
-from polysignal_lab.domain.paper_position import PaperPosition
-from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
 from polysignal_lab.nautilus_runtime.observability import StrategyControl
 from polysignal_lab.paper.strategy_stats import build_strategy_leaderboard_rows
+from polysignal_lab.publish import telegram_render
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.utils import new_id, utc_iso
 
@@ -58,7 +56,7 @@ class TelegramBotService:
         markets: MarketRegistry,
         formatter: MessageFormatter,
         scheduler: Any | None = None,
-        application: Application | None = None,
+        application: Application[Any, Any, Any, Any, Any, Any] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.config = config
@@ -341,34 +339,42 @@ class TelegramBotService:
             return "暂无 open paper positions。"
         blocks: list[str] = []
         for row in rows:
-            position = PaperPosition.model_validate(row)
-            book = self.books.get(position.token_id)
+            payload = _position_display_payload(row)
+            if not payload.get("side"):
+                continue
+            token_id = str(payload.get("token_id") or "")
+            book = self.books.get(token_id) if token_id else None
             mark = book.best_bid if book is not None else None
+            entry_price = float(payload.get("entry_price") or 0.0)
+            shares = float(payload.get("shares") or 0.0)
+            stake_usdc = float(payload.get("stake_usdc") or 0.0)
             lines = [
-                f"📈 {self._safe(position.asset)} {self._safe(position.timeframe)} · {self._safe(position.side.value)}",
-                f"Strategy  {self._safe(position.strategy)}",
-                f"Entry     {position.entry_price:.4f}",
+                f"📈 {self._safe(payload.get('asset'))} {self._safe(payload.get('timeframe'))} · {self._safe(payload.get('side'))}",
+                f"Strategy  {self._safe(payload.get('strategy'))}",
+                f"Entry     {entry_price:.4f}",
             ]
             if mark is None:
                 lines.extend(["Mark      n/a (live book unavailable)", "PnL       n/a"])
             else:
-                pnl = (mark - position.entry_price) * position.shares
-                roi = pnl / position.stake_usdc if position.stake_usdc else 0.0
+                pnl = (mark - entry_price) * shares
+                roi = pnl / stake_usdc if stake_usdc else 0.0
                 sign = "+" if pnl >= 0 else ""
                 lines.extend(
                     [
                         f"Mark      {mark:.4f}",
-                        f"Shares    {position.shares:.4f}",
+                        f"Shares    {shares:.4f}",
                         f"PnL       {sign}{pnl:.2f} USDC ({sign}{roi:.2%})",
                     ]
                 )
             lines.extend(
                 [
-                    f"Opened    {self._format_age(position.opened_at)}",
-                    f"ID        {self._safe(position.paper_position_id)}",
+                    f"Opened    {self._format_age(payload.get('opened_at'))}",
+                    f"ID        {self._safe(payload.get('paper_position_id'))}",
                 ]
             )
             blocks.append("\n".join(lines))
+        if not blocks:
+            return "暂无 open paper positions。"
         return "\n\n".join(blocks)
 
     def _format_signals(self) -> str:
@@ -398,7 +404,8 @@ class TelegramBotService:
         )
 
     def _format_rejected_signal(self, row: dict[str, Any]) -> str:
-        candidate = row.get("candidate") if isinstance(row.get("candidate"), dict) else {}
+        raw_candidate = row.get("candidate")
+        candidate = raw_candidate if isinstance(raw_candidate, dict) else {}
         return "\n".join(
             [
                 f"🔴 rejected · {self._safe(candidate.get('asset', '?'))} {self._safe(candidate.get('timeframe', '?'))} {self._safe(candidate.get('action', '?'))} {self._safe(candidate.get('side', '?'))}",
@@ -413,8 +420,7 @@ class TelegramBotService:
             return "暂无 daily report。"
         payload = reports[0]
         try:
-            report = DailyReport.model_validate(payload)
-            return self.formatter.daily_report_message(report)
+            return self.formatter.daily_report_message(payload)
         except Exception:
             self.logger.exception("Invalid daily report payload")
             return "\n".join(
@@ -450,21 +456,14 @@ class TelegramBotService:
         if scope == "today":
             since, until = self._today_closed_bounds()
         rows_raw = self.persistence.restore_closed_trade_results(since=since, until=until)
-        results: list[PaperTradeResult] = []
-        for payload in rows_raw:
-            try:
-                results.append(PaperTradeResult.model_validate(payload))
-            except Exception:
-                self.logger.exception("Invalid paper trade result payload")
-        rows = build_strategy_leaderboard_rows(results)
+        rows = build_strategy_leaderboard_rows(rows_raw)
         return self.formatter.strategy_leaderboard_message(rows, scope=scope)
 
     def _strategy_names(self) -> list[str]:
         return [name for name in self.strategy_names if name]
 
     def _toggle_callback_for(self, name: str) -> str | None:
-        data = f"tg:{name}"
-        return data if len(data.encode("utf-8")) <= 64 else None
+        return telegram_render.toggle_callback_for(name)
 
     def _is_strategy_enabled(self, name: str) -> bool:
         return self.strategy_control.is_strategy_enabled(name)
@@ -495,16 +494,10 @@ class TelegramBotService:
         return "\n".join(lines)
 
     def _strategies_keyboard(self) -> InlineKeyboardMarkup:
-        rows: list[list[InlineKeyboardButton]] = []
-        for name in self._strategy_names():
-            callback_data = self._toggle_callback_for(name)
-            if callback_data is None:
-                continue
-            enabled = self._is_strategy_enabled(name)
-            label = f"{'⏸' if enabled else '▶️'} {name}"
-            rows.append([InlineKeyboardButton(label, callback_data=callback_data)])
-        rows.append([InlineKeyboardButton("⬅️ 返回", callback_data="bk")])
-        return InlineKeyboardMarkup(rows)
+        return telegram_render.strategies_keyboard(
+            self._strategy_names(),
+            is_enabled=self._is_strategy_enabled,
+        )
 
     def _toggle_strategy(self, data: str) -> tuple[str, InlineKeyboardMarkup | None]:
         if not data.startswith("tg:"):
@@ -531,36 +524,13 @@ class TelegramBotService:
         return self._format_strategies(), self._strategies_keyboard()
 
     def _main_keyboard(self) -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("💼 持仓", callback_data="p"),
-                    InlineKeyboardButton("📊 状态", callback_data="st"),
-                ],
-                [
-                    InlineKeyboardButton("📡 最近信号", callback_data="sg"),
-                    InlineKeyboardButton("⚙️ 策略", callback_data="str"),
-                ],
-                [InlineKeyboardButton("📋 每日报告", callback_data="dy")],
-                [InlineKeyboardButton("🏆 策略战绩", callback_data="lb")],
-            ]
-        )
+        return telegram_render.main_keyboard()
 
     def _leaderboard_keyboard(self, scope: Literal["all", "today"]) -> InlineKeyboardMarkup:
-        if scope == "today":
-            toggle_row = [
-                InlineKeyboardButton("📅 今日 ✓", callback_data="lbt"),
-                InlineKeyboardButton("📈 累计", callback_data="lb"),
-            ]
-        else:
-            toggle_row = [
-                InlineKeyboardButton("📅 今日", callback_data="lbt"),
-                InlineKeyboardButton("📈 累计 ✓", callback_data="lb"),
-            ]
-        return InlineKeyboardMarkup([toggle_row, [InlineKeyboardButton("⬅️ 返回", callback_data="bk")]])
+        return telegram_render.leaderboard_keyboard(scope)
 
     def _back_keyboard(self) -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ 返回", callback_data="bk")]])
+        return telegram_render.back_keyboard()
 
     async def _reply_rendered(
         self,
@@ -641,30 +611,22 @@ class TelegramBotService:
         )
 
     def _safe(self, value: object) -> str:
-        return html.escape(str(value))
+        return telegram_render.safe_text(value)
 
     def _parse_time(self, value: object) -> datetime | None:
-        if value is None:
-            return None
-        if isinstance(value, datetime):
-            return value
-        try:
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except ValueError:
-            return None
+        return telegram_render.parse_time(value)
 
     def _format_age(self, value: object) -> str:
-        dt = self._parse_time(value)
-        if dt is None:
-            return "unknown"
-        seconds = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
-        if seconds < 60:
-            return f"{seconds}s ago"
-        if seconds < 3600:
-            return f"{seconds // 60}m ago"
-        return f"{seconds // 3600}h{(seconds % 3600) // 60}m ago"
+        return telegram_render.format_age(value)
 
     def _truncate(self, text: str) -> str:
-        if len(text) <= self.config.max_message_chars:
-            return text
-        return text[: self.config.max_message_chars - 32] + "\n[truncated for Telegram]"
+        return telegram_render.truncate_text(text, self.config.max_message_chars)
+
+
+def _position_display_payload(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize open-position rows for Telegram display without PaperPosition."""
+    return telegram_render.position_display_payload(row)
+
+
+def _row_float(row: dict[str, Any], *keys: str) -> float | None:
+    return telegram_render.row_float(row, *keys)

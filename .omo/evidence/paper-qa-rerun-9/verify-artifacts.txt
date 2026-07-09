@@ -1,0 +1,176 @@
+surface: CLI evidence artifact inspection
+invocation: bash -lc artifact validation script in /home/debian/polysignal-lab
+observable: required files are non-empty and required PASS/no-violation strings are present
+
+EXISTS PASS .omo/ulw-loop/evidence/paper-post-r10-focused-rerun.txt bytes=1195
+EXISTS PASS .omo/ulw-loop/evidence/paper-post-r10-full-pytest-rerun.txt bytes=1885
+EXISTS PASS .omo/ulw-loop/evidence/paper-post-r10-rg-rerun.txt bytes=182
+EXISTS PASS .omo/ulw-loop/evidence/paper-post-r10-basedpyright-rerun.txt bytes=23473
+EXISTS PASS .omo/ulw-loop/evidence/paper-post-zero-money-manual-qa.txt bytes=624
+EXISTS FAIL .omo/ulw-loop/evidence/paper-post-r10-diff-check.txt
+EXISTS PASS .omo/ulw-loop/evidence/paper-post-r10-refs-check.txt bytes=196
+
+-- focused signals --
+4:  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+8:  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+
+-- full pytest signals --
+13:  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+17:  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+
+-- rg direct account/positions/cache signals --
+1:src/polysignal_lab/app/scheduler_reporting.py:296:    account = nautilus_cache.account()
+2:src/polysignal_lab/app/scheduler_reporting.py:315:    positions = nautilus_cache.positions()
+
+-- basedpyright signals --
+2:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:26:5 - warning: "_projection_float" is private and used outside of the module in which it is declared (reportPrivateUsage)
+3:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:47:25 - warning: Type `Any` is not allowed (reportExplicitAny)
+4:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:116:35 - warning: Type `Any` is not allowed (reportExplicitAny)
+5:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:126:12 - warning: Return type, "dict[Unknown, Unknown] | dict[str, object]", is partially unknown (reportUnknownVariableType)
+6:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:134:28 - warning: Unnecessary "cast" call; type is already "str | datetime | None" (reportUnnecessaryCast)
+7:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:199:9 - warning: Result of call expression is of type "object" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+8:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:217:36 - warning: Unnecessary isinstance call; "dict[str, Any]" is always an instance of "dict[Unknown, Unknown]" (reportUnnecessaryIsInstance)
+9:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:230:48 - warning: Type `Any` is not allowed (reportExplicitAny)
+10:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:242:22 - warning: Argument type is Any
+12:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:248:32 - warning: Type of "row" is unknown (reportUnknownVariableType)
+13:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:306:9 - warning: Unnecessary "cast" call; type is already "dict[str, object] | None" (reportUnnecessaryCast)
+14:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:320:17 - warning: Type of "position" is unknown (reportUnknownVariableType)
+15:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:321:67 - warning: Argument type is unknown
+17:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:333:9 - warning: Type of "balance" is unknown (reportUnknownVariableType)
+18:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:336:16 - warning: Type of "get" is partially unknown
+20:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:336:16 - warning: Argument type is unknown
+22:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:338:34 - warning: Argument type is partially unknown
+25:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:357:21 - warning: Unnecessary "cast" call; type is already "list[dict[str, Any]]" (reportUnnecessaryCast)
+26:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:358:24 - warning: Type `Any` is not allowed (reportExplicitAny)
+27:  /home/debian/polysignal-lab/src/polysignal_lab/app/scheduler_reporting.py:459:44 - warning: Argument type is partially unknown
+31:  /home/debian/polysignal-lab/tests/test_nautilus_reporting_cache_source.py:19:52 - warning: "_report_equity_inputs" is private and used outside of the module in which it is declared (reportPrivateUsage)
+32:  /home/debian/polysignal-lab/tests/test_nautilus_reporting_cache_source.py:66:27 - warning: Return type of lambda, "list[Unknown]", is partially unknown (reportUnknownLambdaType)
+33:  /home/debian/polysignal-lab/tests/test_nautilus_reporting_cache_source.py:84:27 - warning: Return type of lambda, "list[Unknown]", is partially unknown (reportUnknownLambdaType)
+34:  /home/debian/polysignal-lab/tests/test_nautilus_reporting_cache_source.py:128:27 - warning: Return type of lambda, "list[Unknown]", is partially unknown (reportUnknownLambdaType)
+36:  /home/debian/polysignal-lab/tests/test_paper_calibration.py:21:50 - warning: "_paper_trade_result_from_projection" is private and used outside of the module in which it is declared (reportPrivateUsage)
+38:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:27:14 - warning: Type annotation for attribute `status_code` is required because this class is not decorated with `@final` (reportUnannotatedClassAttribute)
+39:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:28:14 - warning: Type annotation for attribute `_payload` is required because this class is not decorated with `@final` (reportUnannotatedClassAttribute)
+40:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:36:14 - warning: Type annotation for attribute `timeout` is required because this class is not decorated with `@final` (reportUnannotatedClassAttribute)
+41:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:49:25 - warning: "url" is not accessed (reportUnusedParameter)
+42:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:49:35 - warning: "params" is not accessed (reportUnusedParameter)
+43:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:65:14 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+44:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:65:14 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+45:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:72:62 - warning: Argument type is unknown
+47:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:94:27 - warning: Type of parameter "market" is unknown (reportUnknownParameterType)
+48:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:94:27 - warning: Type annotation is missing for parameter "market" (reportMissingParameterType)
+49:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:97:5 - warning: Type of "settlement_resolver" is Any (reportAny)
+50:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:97:5 - warning: Type of "resolve_market" is Any (reportAny)
+51:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:102:5 - warning: Type of "persistence" is Any (reportAny)
+52:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:102:5 - warning: Type of "insert_paper_trade_result" is Any (reportAny)
+53:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:103:5 - warning: Type of "persistence" is Any (reportAny)
+54:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:103:5 - warning: Type of "append_log" is Any (reportAny)
+55:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:104:5 - warning: Type of "persistence" is Any (reportAny)
+56:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:104:5 - warning: Type of "insert_system_event" is Any (reportAny)
+57:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:105:5 - warning: Type of "persistence" is Any (reportAny)
+58:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:105:5 - warning: Type of "query_json" is Any (reportAny)
+59:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:107:24 - warning: Type of "persistence" is Any (reportAny)
+60:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:113:5 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+61:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:113:5 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+62:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:115:24 - warning: Argument type is unknown
+64:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:123:5 - warning: Result of call expression is of type "list[Market]" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+65:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:136:5 - warning: Type of parameter "tmp_path" is unknown (reportUnknownParameterType)
+66:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:136:5 - warning: Type annotation is missing for parameter "tmp_path" (reportMissingParameterType)
+67:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:140:24 - warning: Argument type is unknown
+69:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:165:9 - warning: Argument type is partially unknown
+72:  /home/debian/polysignal-lab/tests/test_scheduler_cancelled_markets.py:165:16 - warning: Type of parameter "s" is unknown (reportUnknownLambdaType)
+74:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:73:5 - warning: Type of "settlement_resolver" is Any (reportAny)
+75:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:73:5 - warning: Type of "resolve_market" is Any (reportAny)
+76:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:77:5 - warning: Type of "persistence" is Any (reportAny)
+77:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:77:5 - warning: Type of "insert_paper_trade_result" is Any (reportAny)
+78:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:78:5 - warning: Type of "persistence" is Any (reportAny)
+79:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:78:5 - warning: Type of "append_log" is Any (reportAny)
+80:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:79:5 - warning: Type of "persistence" is Any (reportAny)
+81:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:79:5 - warning: Type of "insert_system_event" is Any (reportAny)
+82:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:80:5 - warning: Type of "persistence" is Any (reportAny)
+83:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:80:5 - warning: Type of "query_json" is Any (reportAny)
+84:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:81:5 - warning: Type of "settings" is Any (reportAny)
+85:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:81:5 - warning: Type of "telegram" is Any (reportAny)
+86:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:92:9 - warning: Argument type is partially unknown
+89:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:92:16 - warning: Type of parameter "s" is unknown (reportUnknownLambdaType)
+90:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:97:60 - warning: Type of parameter "monkeypatch" is unknown (reportUnknownParameterType)
+91:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:97:60 - warning: Type annotation is missing for parameter "monkeypatch" (reportMissingParameterType)
+92:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:102:5 - warning: Type of "setattr" is unknown (reportUnknownMemberType)
+93:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:102:71 - warning: Type of parameter "s" is unknown (reportUnknownLambdaType)
+94:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:120:5 - warning: Type of "persistence" is Any (reportAny)
+95:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:120:5 - warning: Type of "insert_paper_trade_result" is Any (reportAny)
+96:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:120:5 - warning: Type of "assert_not_called" is Any (reportAny)
+97:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:124:76 - warning: Type of parameter "monkeypatch" is unknown (reportUnknownParameterType)
+98:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:124:76 - warning: Type annotation is missing for parameter "monkeypatch" (reportMissingParameterType)
+99:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:125:22 - warning: Argument type is unknown
+101:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:150:57 - warning: Type of parameter "monkeypatch" is unknown (reportUnknownParameterType)
+102:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:150:57 - warning: Type annotation is missing for parameter "monkeypatch" (reportMissingParameterType)
+103:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:151:22 - warning: Argument type is unknown
+105:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:167:5 - warning: Type of "persistence" is Any (reportAny)
+106:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:167:5 - warning: Type of "insert_paper_trade_result" is Any (reportAny)
+107:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:167:5 - warning: Type of "assert_not_called" is Any (reportAny)
+108:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:171:52 - warning: Type of parameter "monkeypatch" is unknown (reportUnknownParameterType)
+109:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:171:52 - warning: Type annotation is missing for parameter "monkeypatch" (reportMissingParameterType)
+110:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:172:22 - warning: Argument type is unknown
+112:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:195:61 - warning: Type of parameter "monkeypatch" is unknown (reportUnknownParameterType)
+113:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:195:61 - warning: Type annotation is missing for parameter "monkeypatch" (reportMissingParameterType)
+114:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:196:22 - warning: Argument type is unknown
+116:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:199:34 - warning: "kwargs" is not accessed (reportUnusedParameter)
+117:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:220:5 - warning: Type of "persistence" is Any (reportAny)
+118:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:221:5 - warning: Type of "persistence" is Any (reportAny)
+119:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:233:60 - warning: Type of parameter "monkeypatch" is unknown (reportUnknownParameterType)
+120:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:233:60 - warning: Type annotation is missing for parameter "monkeypatch" (reportMissingParameterType)
+121:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:234:22 - warning: Argument type is unknown
+123:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:252:5 - warning: Type of "persistence" is Any (reportAny)
+124:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:252:5 - warning: Type of "insert_system_event" is Any (reportAny)
+125:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:252:5 - warning: Type of "assert_called_once" is Any (reportAny)
+126:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:256:68 - warning: Type of parameter "monkeypatch" is unknown (reportUnknownParameterType)
+127:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:256:68 - warning: Type annotation is missing for parameter "monkeypatch" (reportMissingParameterType)
+128:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:260:5 - warning: Result of call expression is of type "object" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+129:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:261:5 - warning: Type of "setattr" is unknown (reportUnknownMemberType)
+130:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:261:71 - warning: Type of parameter "s" is unknown (reportUnknownLambdaType)
+131:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:279:5 - warning: Type of "persistence" is Any (reportAny)
+132:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:279:5 - warning: Type of "insert_paper_trade_result" is Any (reportAny)
+133:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:279:5 - warning: Type of "assert_not_called" is Any (reportAny)
+134:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:283:69 - warning: Type of parameter "monkeypatch" is unknown (reportUnknownParameterType)
+135:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:283:69 - warning: Type annotation is missing for parameter "monkeypatch" (reportMissingParameterType)
+136:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:287:5 - warning: Result of call expression is of type "object" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+137:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:288:5 - warning: Type of "setattr" is unknown (reportUnknownMemberType)
+138:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:288:71 - warning: Type of parameter "s" is unknown (reportUnknownLambdaType)
+139:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:306:5 - warning: Type of "persistence" is Any (reportAny)
+140:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:306:5 - warning: Type of "insert_paper_trade_result" is Any (reportAny)
+141:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:306:5 - warning: Type of "assert_not_called" is Any (reportAny)
+142:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:310:74 - warning: Type of parameter "monkeypatch" is unknown (reportUnknownParameterType)
+143:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:310:74 - warning: Type annotation is missing for parameter "monkeypatch" (reportMissingParameterType)
+144:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:315:5 - warning: Type of "setattr" is unknown (reportUnknownMemberType)
+145:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:315:71 - warning: Type of parameter "s" is unknown (reportUnknownLambdaType)
+146:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:333:5 - warning: Type of "persistence" is Any (reportAny)
+147:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:333:5 - warning: Type of "insert_paper_trade_result" is Any (reportAny)
+148:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:333:5 - warning: Type of "assert_not_called" is Any (reportAny)
+149:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:344:5 - warning: Result of call expression is of type "object" and is not used; assign to variable "_" if this is intentional (reportUnusedCallResult)
+150:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:345:64 - warning: Argument type is partially unknown
+153:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:345:71 - warning: Type of parameter "s" is unknown (reportUnknownLambdaType)
+154:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:363:5 - warning: Type of "persistence" is Any (reportAny)
+155:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:363:5 - warning: Type of "insert_paper_trade_result" is Any (reportAny)
+156:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:363:5 - warning: Type of "assert_not_called" is Any (reportAny)
+157:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:385:64 - warning: Argument type is partially unknown
+160:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:385:71 - warning: Type of parameter "s" is unknown (reportUnknownLambdaType)
+161:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:403:5 - warning: Type of "persistence" is Any (reportAny)
+162:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:403:5 - warning: Type of "insert_paper_trade_result" is Any (reportAny)
+163:  /home/debian/polysignal-lab/tests/test_scheduler_settlement_resolution.py:403:5 - warning: Type of "assert_not_called" is Any (reportAny)
+165:  /home/debian/polysignal-lab/tests/test_settlement.py:20:50 - warning: "_paper_trade_result_from_projection" is private and used outside of the module in which it is declared (reportPrivateUsage)
+166:0 errors, 135 warnings, 0 notes
+
+-- manual QA signals --
+1:manual_qa_started=2026-07-09T05:30:03Z
+2:settlement_zero_money None
+3:project_position_missing_money {'paper_position_id': 'P-missing-money', 'position_id': 'P-missing-money', 'instrument_id': 'btc-5m-test-UP', 'quantity': None, 'avg_entry_price': None, 'stake_usdc': None, 'realized_pnl': 0.0, 'status': 'OPEN', 'is_closed': False, 'ts': '2026-06-21T00:00:00.000000Z'}
+8:manual_qa_finished=2026-07-09T05:30:04Z
+9:cleanup=removed paper-final-zero-money-manual.sqlite3; no server browser tmux container port spawned
+
+-- diff check signals --
+
+-- refs check signals --
+1:git status --short -- refs @refs docs/nautilus_reference
+2:missing path (ok if not present): refs
+3:missing path (ok if not present): @refs
+5:git diff --name-only -- refs @refs docs/nautilus_reference

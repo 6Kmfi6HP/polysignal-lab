@@ -1,0 +1,15 @@
+WORKING: final narrow cleanup receipt
+Surface: CLI process/tmux audit
+Invocation: tmux ls; pgrep -af "ulw-qa|python.*paper-qa-rerun|uvicorn.*polysignal|vite.*polysignal|pytest.*paper" | rg -v "pgrep|rg|cleanup-process-check"
+Expected observable: no tmux server and no matching QA-spawned process rows.
+Started: 2026-07-09T02:45:48+02:00
+---
+[tmux ls]
+no server running on /tmp/tmux-1000/default
+
+[qa-spawned process matches excluding audit commands]
+none
+Cleanup verdict: PASS - no QA-spawned process rows remain.
+---
+Exit: 0
+Finished: 2026-07-09T02:45:48+02:00

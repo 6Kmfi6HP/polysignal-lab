@@ -1,35 +1,22 @@
-"""
-Input: __future__, __future__.annotations, collections, collections.defaultdict, collections.abc, collections.abc.Iterable, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.PaperTradeResult
-Output: build_strategy_leaderboard_rows
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any, assert_never
 
 from polysignal_lab.domain.enums import TradeResultStatus
-from polysignal_lab.domain.paper_result import PaperTradeResult
+from polysignal_lab.domain.paper_result import trade_result_float, trade_result_status, trade_result_text
 from polysignal_lab.paper.report import _is_closed_result
 
 
 def build_strategy_leaderboard_rows(
-    results: Iterable[PaperTradeResult],
+    results: Iterable[Mapping[str, Any]],
 ) -> list[dict[str, float | int | str]]:
     closed = [r for r in results if _is_closed_result(r)]
     rows: dict[str, dict[str, float | int | str]] = {}
     roi_sum: dict[str, float] = defaultdict(float)
     for result in closed:
-        strategy = result.strategy
+        strategy = trade_result_text(result, "strategy")
         entry = rows.setdefault(
             strategy,
             {
@@ -44,14 +31,21 @@ def build_strategy_leaderboard_rows(
             },
         )
         entry["closed_positions"] = int(entry["closed_positions"]) + 1
-        if result.result == TradeResultStatus.WIN:
-            entry["win_count"] = int(entry["win_count"]) + 1
-        elif result.result == TradeResultStatus.LOSS:
-            entry["loss_count"] = int(entry["loss_count"]) + 1
-        elif result.result == TradeResultStatus.VOID:
-            entry["void_count"] = int(entry["void_count"]) + 1
-        entry["total_pnl_usdc"] = float(entry["total_pnl_usdc"]) + result.pnl_usdc
-        roi_sum[strategy] += result.roi
+        match trade_result_status(result):
+            case TradeResultStatus.WIN:
+                entry["win_count"] = int(entry["win_count"]) + 1
+            case TradeResultStatus.LOSS:
+                entry["loss_count"] = int(entry["loss_count"]) + 1
+            case TradeResultStatus.VOID:
+                entry["void_count"] = int(entry["void_count"]) + 1
+            case TradeResultStatus.SPLIT:
+                pass
+            case TradeResultStatus.UNKNOWN:
+                pass
+            case unreachable:
+                assert_never(unreachable)
+        entry["total_pnl_usdc"] = float(entry["total_pnl_usdc"]) + trade_result_float(result, "pnl_usdc")
+        roi_sum[strategy] += trade_result_float(result, "roi")
     for strategy, entry in rows.items():
         count = int(entry["closed_positions"])
         entry["average_roi"] = roi_sum[strategy] / count if count else 0.0

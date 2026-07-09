@@ -1,0 +1,13 @@
+WORKING: manual paper blocker Python driver - running real imports and assertions
+Surface: CLI Python driver
+Invocation: PYTHONPATH=tests uv run python - <<PY (inline assertions for repair parser, incomplete cache guard, SPLIT daily report, malformed persisted paper rows)
+Expected observable: process exits 0 and prints four pass lines: repair_parse, cache_guard, split_report, malformed_persisted_rows.
+Started: 2026-07-09T02:44:13+02:00
+---
+repair_parse=pass pt_20260709004414661108_3d3363cc WIN
+cache_guard=pass (1000.0, 1000.0, 0)
+split_report=pass 1 2.0
+malformed_persisted_rows=pass []
+---
+Exit: 0
+Finished: 2026-07-09T02:44:14+02:00

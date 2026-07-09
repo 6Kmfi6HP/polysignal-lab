@@ -17,12 +17,12 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 from typing import Protocol, TypeVar, cast
 
-from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.enums import OrderIntent
+from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 
@@ -69,8 +69,11 @@ def submit_approved_decision(
         best_ask=best_ask,
     )
     instrument = instrument_id_resolver(spec.instrument_id)
-    order_side = _order_side(spec.side, reduce_only=spec.reduce_only)
-    time_in_force = _time_in_force(spec.intent)
+    order_side = PolymarketEnumParser.to_nautilus_order_side(
+        spec.side,
+        reduce_only=spec.reduce_only,
+    )
+    time_in_force = PolymarketEnumParser.to_nautilus_time_in_force(spec.intent)
     expire_time = None
     if spec.intent == OrderIntent.PASSIVE_GTD:
         clock = now or (lambda: datetime.now(UTC))
@@ -90,22 +93,6 @@ def submit_approved_decision(
     return order
 
 
-def _order_side(side: Side, *, reduce_only: bool) -> object:
-    if reduce_only:
-        return OrderSide.SELL
-    if side in {Side.UP, Side.DOWN}:
-        return OrderSide.BUY
-    raise ValueError(f"unsupported side for Nautilus order: {side}")
-
-
-def _time_in_force(intent: OrderIntent) -> object:
-    if intent == OrderIntent.PASSIVE_GTD:
-        return TimeInForce.GTD
-    if intent == OrderIntent.TAKER_FOK:
-        return TimeInForce.FOK
-    return TimeInForce.IOC
-
-
 def _instrument_id(instrument: object) -> object:
     value = cast(object, getattr(instrument, "id", instrument))
     if isinstance(value, str):
@@ -116,22 +103,21 @@ def _instrument_id(instrument: object) -> object:
 def _price_value(instrument: object, value: float) -> object:
     precision = _precision(instrument, "price_precision")
     price_text = _decimal_str(value, precision)
-    if precision is not None:
-        return Price.from_str(price_text)
     maker = cast(object, getattr(instrument, "make_price", None))
     if callable(maker):
-        return cast(Callable[[float], object], maker)(value)
+        maker_value = Decimal(price_text) if precision is not None else value
+        return cast(Callable[[Decimal | float], object], maker)(maker_value)
     return Price.from_str(price_text)
 
 
 def _quantity_value(instrument: object, value: float) -> object:
     precision = _precision(instrument, "size_precision")
-    if precision is not None:
-        return Quantity.from_str(_decimal_str(value, precision))
+    quantity_text = _decimal_str(value, precision)
     maker = cast(object, getattr(instrument, "make_qty", None))
     if callable(maker):
-        return cast(Callable[[float], object], maker)(value)
-    return Quantity.from_str(_decimal_str(value, precision))
+        maker_value = Decimal(quantity_text) if precision is not None else value
+        return cast(Callable[[Decimal | float], object], maker)(maker_value)
+    return Quantity.from_str(quantity_text)
 
 
 def _precision(instrument: object, attr: str) -> int | None:

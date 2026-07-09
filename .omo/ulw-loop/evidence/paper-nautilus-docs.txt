@@ -1,0 +1,4 @@
+docs_consulted=pass
+docs/nautilus_reference/developer_guide/adapters.md lines 1470-1500: adapter conversion belongs at client dispatch; engine owns venue-state reconciliation.
+docs/nautilus_reference/developer_guide/adapters.md lines 2620-2665: LiveExecutionClient subclasses provide order/fill/position reports.
+docs/nautilus_reference/developer_guide/spec_exec_testing.md lines 360-385: orders verified via Nautilus cache OrderStatus.ACCEPTED.

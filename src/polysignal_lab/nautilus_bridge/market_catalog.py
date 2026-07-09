@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, typing
-Output: polymarket_instrument_id, InstrumentTokenMeta, MarketPairMeta, MarketCatalog
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, importlib, typing
+Output: InstrumentTokenMeta, MarketPairMeta, MarketCatalog
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -17,19 +17,20 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from importlib import import_module
 from typing import cast
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
 
 
-from polysignal_lab.nautilus_bridge.instrument_mapping import polymarket_instrument_id
-
-
 @dataclass(frozen=True, slots=True)
 class InstrumentTokenMeta:
     token_id: str
     side: Side
+    outcome: str | None = None
+    description: str | None = None
+    expiry: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +59,20 @@ class MarketPairMeta:
             timeframe=market.timeframe,
             start_ts=market.start_ts,
             end_ts=market.end_ts,
-            up=InstrumentTokenMeta(token_id=up_token.token_id, side=Side.UP),
-            down=InstrumentTokenMeta(token_id=down_token.token_id, side=Side.DOWN),
+            up=InstrumentTokenMeta(
+                token_id=up_token.token_id,
+                side=Side.UP,
+                outcome=up_token.outcome_name,
+                description=market.question,
+                expiry=market.end_ts,
+            ),
+            down=InstrumentTokenMeta(
+                token_id=down_token.token_id,
+                side=Side.DOWN,
+                outcome=down_token.outcome_name,
+                description=market.question,
+                expiry=market.end_ts,
+            ),
         )
 
     @classmethod
@@ -77,8 +90,20 @@ class MarketPairMeta:
             timeframe=cast(str, getattr(meta, "timeframe")),
             start_ts=start_ts,
             end_ts=end_ts,
-            up=InstrumentTokenMeta(token_id=cast(str, getattr(meta, "up_token_id")), side=Side.UP),
-            down=InstrumentTokenMeta(token_id=cast(str, getattr(meta, "down_token_id")), side=Side.DOWN),
+            up=InstrumentTokenMeta(
+                token_id=cast(str, getattr(meta, "up_token_id")),
+                side=Side.UP,
+                outcome=cast(str | None, getattr(meta, "up_outcome", None)),
+                description=cast(str | None, getattr(meta, "question", None)),
+                expiry=end_ts,
+            ),
+            down=InstrumentTokenMeta(
+                token_id=cast(str, getattr(meta, "down_token_id")),
+                side=Side.DOWN,
+                outcome=cast(str | None, getattr(meta, "down_outcome", None)),
+                description=cast(str | None, getattr(meta, "question", None)),
+                expiry=end_ts,
+            ),
         )
 
 
@@ -123,5 +148,26 @@ class MarketCatalog:
         pair = self.by_token(token_id)
         if pair is None:
             return None
-        resolver = self._instrument_id_resolver or polymarket_instrument_id
-        return resolver(pair.condition_id, token_id)
+        resolver = self._instrument_id_resolver
+        if resolver is not None:
+            return resolver(pair.condition_id, token_id)
+
+        condition = pair.condition_id.strip()
+        token = str(token_id).strip()
+        if not condition:
+            raise ValueError("condition_id must not be empty")
+        if not token:
+            raise ValueError("token_id must not be empty")
+        try:
+            helper = cast(
+                Callable[[str, str], object],
+                getattr(
+                    import_module("nautilus_trader.adapters.polymarket"),
+                    "get_polymarket_instrument_id",
+                ),
+            )
+        except (ModuleNotFoundError, AttributeError) as exc:
+            raise RuntimeError(
+                "Nautilus Polymarket adapter is required to resolve instrument IDs"
+            ) from exc
+        return str(helper(condition, token))

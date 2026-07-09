@@ -1,0 +1,11 @@
+wallet_float 0.0
+report_float 0.0
+trade_result_float 0.0
+optional_float None
+confidence_bucket low
+daily_report 0.0 0.0 8.0
+calibration {'ptb_diff|BTC|5m|low': {'strategy': 'ptb_diff', 'asset': 'BTC', 'timeframe': '5m', 'confidence_bucket': 'low', 'sample_size': 1, 'wins': 1, 'losses': 0, 'average_entry_price': 0.5, 'average_return': 0.0, 'calibration_status': 'insufficient_data'}}
+insert_invalid invalid paper_trade_results.entry_price: not numeric
+query_json []
+digit_limit_query_json []
+EXIT_CODE=0

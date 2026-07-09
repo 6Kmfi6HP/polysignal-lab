@@ -1,0 +1,6 @@
+tests/test_reporting.py 210
+tests/test_paper_report_boundaries.py 192
+src/polysignal_lab/paper/report.py 219
+src/polysignal_lab/paper/report_aggregates.py 100
+src/polysignal_lab/paper/report_rejections.py 53
+src/polysignal_lab/storage/sqlite_store.py 560

@@ -1,0 +1,304 @@
+     1	"""
+     2	Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, types, types.SimpleNamespace, unittest.mock, unittest.mock.AsyncMock, unittest.mock.Mock, pytest, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting.check_settlements
+     3	Output: test_resolved_numeric_half_payout_closes_as_void_with_provenance, test_unknown_settlement_skips_open_projection, test_cancelled_decision_uses_refund_path, test_check_settlements_is_idempotent_per_position, test_chain_conflict_settlement_logs_system_event
+     4	Pos: Test Layer - Unit/Integration tests
+     5	
+     6	🔄 Self-reference: When this file changes, update this header
+     7	"""
+     8	
+     9	
+    10	
+    11	
+    12	
+    13	
+    14	from __future__ import annotations
+    15	
+    16	from collections.abc import Mapping
+    17	from types import SimpleNamespace
+    18	from unittest.mock import AsyncMock, Mock
+    19	
+    20	import pytest
+    21	
+    22	from polysignal_lab.app.scheduler_reporting import check_settlements
+    23	from polysignal_lab.domain.enums import MarketStatus, Side, TradeResultStatus
+    24	from polysignal_lab.domain.market import Market, OutcomeToken
+    25	from polysignal_lab.domain.paper_result import trade_result_status
+    26	from polysignal_lab.paper.settlement_sources import ResolutionDecision
+    27	
+    28	
+    29	def _market(status: MarketStatus = MarketStatus.ACTIVE) -> Market:
+    30	    return Market(
+    31	        market_id="market-1",
+    32	        market_slug="slug",
+    33	        condition_id="0x" + "1" * 64,
+    34	        asset="BTC",
+    35	        timeframe="5m",
+    36	        status=status,
+    37	        outcome_tokens=[
+    38	            OutcomeToken(token_id="token-up", side=Side.UP, outcome_name="Up", market_id="market-1"),
+    39	            OutcomeToken(token_id="token-down", side=Side.DOWN, outcome_name="Down", market_id="market-1"),
+    40	        ],
+    41	    )
+    42	
+    43	
+    44	def _projection(
+    45	    *,
+    46	    token_id: str = "token-up",
+    47	    side: Side = Side.UP,
+    48	    quantity: float = 25.0,
+    49	    entry_price: float = 0.40,
+    50	) -> dict[str, object]:
+    51	    return {
+    52	        "paper_position_id": "pos-1",
+    53	        "position_id": "pos-1",
+    54	        "market_id": "market-1",
+    55	        "token_id": token_id,
+    56	        "side": side.value,
+    57	        "quantity": quantity,
+    58	        "avg_entry_price": entry_price,
+    59	        "signal_id": "sig-1",
+    60	        "strategy": "ptb_diff",
+    61	        "asset": "BTC",
+    62	        "timeframe": "5m",
+    63	        "opened_at": "2026-06-22T00:00:00+00:00",
+    64	        "is_closed": False,
+    65	    }
+    66	
+    67	
+    68	def _scheduler(market: Market, decision: ResolutionDecision) -> Mock:
+    69	    scheduler = Mock()
+    70	    scheduler.settlement_resolver = AsyncMock()
+    71	    scheduler.settlement_resolver.resolve_market.return_value = decision
+    72	    scheduler.markets = SimpleNamespace(get=Mock(return_value=market), upsert_many=Mock())
+    73	    scheduler.nautilus_cache = object()
+    74	    scheduler.nautilus_portfolio = None
+    75	    scheduler.persistence.insert_paper_trade_result.return_value = None
+    76	    scheduler.persistence.append_log.return_value = None
+    77	    scheduler.persistence.insert_system_event.return_value = None
+    78	    scheduler.persistence.query_json.return_value = []
+    79	    scheduler.settings.telegram.send_paper_results = False
+    80	    return scheduler
+    81	
+    82	
+    83	def _patch_positions(monkeypatch: pytest.MonkeyPatch) -> None:
+    84	    """Override _nautilus_positions to return the default projected position dict."""
+    85	    import polysignal_lab.app._settlement_check as settlement_mod
+    86	
+    87	    monkeypatch.setattr(
+    88	        settlement_mod,
+    89	        "_nautilus_positions",
+    90	        lambda s: [_projection()],
+    91	    )
+    92	
+    93	
+    94	@pytest.mark.anyio
+    95	async def test_unresolved_projection_side_skips_settlement(monkeypatch) -> None:
+    96	    import polysignal_lab.app._settlement_check as settlement_mod
+    97	
+    98	    projection = _projection(token_id="token-missing")
+    99	    del projection["side"]
+   100	    monkeypatch.setattr(settlement_mod, "_nautilus_positions", lambda s: [projection])
+   101	    scheduler = _scheduler(
+   102	        _market(),
+   103	        ResolutionDecision(
+   104	            "market-1",
+   105	            "0x" + "1" * 64,
+   106	            "resolved",
+   107	            "chain",
+   108	            {"token-missing": 1.0},
+   109	            False,
+   110	            (),
+   111	            {"settlement_source": "chain"},
+   112	        ),
+   113	    )
+   114	
+   115	    results = await check_settlements(scheduler)
+   116	
+   117	    assert results == []
+   118	    scheduler.persistence.insert_paper_trade_result.assert_not_called()
+   119	
+   120	
+   121	@pytest.mark.anyio
+   122	async def test_resolved_numeric_half_payout_closes_as_void_with_provenance(monkeypatch) -> None:
+   123	    _patch_positions(monkeypatch)
+   124	    scheduler = _scheduler(
+   125	        _market(),
+   126	        ResolutionDecision(
+   127	            "market-1",
+   128	            "0x" + "1" * 64,
+   129	            "resolved",
+   130	            "chain",
+   131	            {"token-up": 0.5, "token-down": 0.5},
+   132	            False,
+   133	            (),
+   134	            {"settlement_source": "chain", "condition_id": "0x" + "1" * 64},
+   135	        ),
+   136	    )
+   137	
+   138	    results = await check_settlements(scheduler)
+   139	
+   140	    assert len(results) == 1
+   141	    assert trade_result_status(results[0]) == TradeResultStatus.VOID
+   142	    assert results[0]["outcome_value"] == 0.5
+   143	    assert results[0]["settlement_value"] == 12.5
+   144	    assert results[0]["details"]["settlement_source"] == "chain"
+   145	
+   146	
+   147	@pytest.mark.anyio
+   148	async def test_unknown_settlement_skips_open_projection(monkeypatch) -> None:
+   149	    _patch_positions(monkeypatch)
+   150	    decision = ResolutionDecision(
+   151	        "market-1",
+   152	        "0x" + "1" * 64,
+   153	        "unknown",
+   154	        "none",
+   155	        {},
+   156	        False,
+   157	        (),
+   158	        {"reason": "NO_RESOLVED_EVIDENCE"},
+   159	    )
+   160	    scheduler = _scheduler(_market(MarketStatus.ACTIVE), decision)
+   161	
+   162	    results = await check_settlements(scheduler)
+   163	
+   164	    assert results == []
+   165	    scheduler.persistence.insert_paper_trade_result.assert_not_called()
+   166	
+   167	
+   168	@pytest.mark.anyio
+   169	async def test_cancelled_decision_uses_refund_path(monkeypatch) -> None:
+   170	    _patch_positions(monkeypatch)
+   171	    scheduler = _scheduler(
+   172	        _market(MarketStatus.CLOSED),
+   173	        ResolutionDecision(
+   174	            "market-1",
+   175	            "0x" + "1" * 64,
+   176	            "cancelled",
+   177	            "gamma",
+   178	            {},
+   179	            False,
+   180	            (),
+   181	            {"settlement_source": "gamma"},
+   182	        ),
+   183	    )
+   184	
+   185	    results = await check_settlements(scheduler)
+   186	
+   187	    assert trade_result_status(results[0]) == TradeResultStatus.VOID
+   188	    assert results[0]["outcome_value"] == 0.40
+   189	    assert results[0]["settlement_value"] == 10.0
+   190	
+   191	
+   192	@pytest.mark.anyio
+   193	async def test_check_settlements_is_idempotent_per_position(monkeypatch) -> None:
+   194	    _patch_positions(monkeypatch)
+   195	    stored: list[dict[str, object]] = []
+   196	
+   197	    def query_json(table: str, **kwargs: object) -> list[dict[str, object]]:
+   198	        if table == "paper_trade_results":
+   199	            return list(stored)
+   200	        return []
+   201	
+   202	    def insert_paper_trade_result(result: Mapping[str, object]) -> None:
+   203	        stored.append(dict(result))
+   204	
+   205	    scheduler = _scheduler(
+   206	        _market(),
+   207	        ResolutionDecision(
+   208	            "market-1",
+   209	            "0x" + "1" * 64,
+   210	            "resolved",
+   211	            "chain",
+   212	            {"token-up": 1.0, "token-down": 0.0},
+   213	            False,
+   214	            (),
+   215	            {"settlement_source": "chain"},
+   216	        ),
+   217	    )
+   218	    scheduler.persistence.query_json = query_json
+   219	    scheduler.persistence.insert_paper_trade_result = insert_paper_trade_result
+   220	
+   221	    first = await check_settlements(scheduler)
+   222	    second = await check_settlements(scheduler)
+   223	
+   224	    assert len(first) == 1
+   225	    assert second == []
+   226	    assert len(stored) == 1
+   227	    assert stored[0]["paper_position_id"] == "pos-1"
+   228	
+   229	
+   230	@pytest.mark.anyio
+   231	async def test_chain_conflict_settlement_logs_system_event(monkeypatch) -> None:
+   232	    _patch_positions(monkeypatch)
+   233	    scheduler = _scheduler(
+   234	        _market(),
+   235	        ResolutionDecision(
+   236	            "market-1",
+   237	            "0x" + "1" * 64,
+   238	            "resolved",
+   239	            "chain",
+   240	            {"token-up": 1.0, "token-down": 0.0},
+   241	            True,
+   242	            ("gamma",),
+   243	            {"settlement_source": "chain", "settlement_conflict": True},
+   244	        ),
+   245	    )
+   246	
+   247	    results = await check_settlements(scheduler)
+   248	
+   249	    assert trade_result_status(results[0]) == TradeResultStatus.WIN
+   250	    scheduler.persistence.insert_system_event.assert_called_once()
+   251	
+   252	
+   253	@pytest.mark.anyio
+   254	async def test_settlement_skips_projection_without_resolvable_side(monkeypatch) -> None:
+   255	    import polysignal_lab.app._settlement_check as settlement_mod
+   256	
+   257	    projection = _projection(token_id="unmapped-token")
+   258	    projection.pop("side")
+   259	    monkeypatch.setattr(settlement_mod, "_nautilus_positions", lambda s: [projection])
+   260	    scheduler = _scheduler(
+   261	        _market(),
+   262	        ResolutionDecision(
+   263	            "market-1",
+   264	            "0x" + "1" * 64,
+   265	            "resolved",
+   266	            "chain",
+   267	            {"unmapped-token": 1.0},
+   268	            False,
+   269	            (),
+   270	            {"settlement_source": "chain"},
+   271	        ),
+   272	    )
+   273	
+   274	    results = await check_settlements(scheduler)
+   275	
+   276	    assert results == []
+   277	    scheduler.persistence.insert_paper_trade_result.assert_not_called()
+   278	
+   279	
+   280	@pytest.mark.anyio
+   281	async def test_settlement_skips_projection_without_opened_timestamp(monkeypatch) -> None:
+   282	    import polysignal_lab.app._settlement_check as settlement_mod
+   283	
+   284	    projection = _projection()
+   285	    projection.pop("opened_at")
+   286	    monkeypatch.setattr(settlement_mod, "_nautilus_positions", lambda s: [projection])
+   287	    scheduler = _scheduler(
+   288	        _market(),
+   289	        ResolutionDecision(
+   290	            "market-1",
+   291	            "0x" + "1" * 64,
+   292	            "resolved",
+   293	            "chain",
+   294	            {"token-up": 1.0},
+   295	            False,
+   296	            (),
+   297	            {"settlement_source": "chain"},
+   298	        ),
+   299	    )
+   300	
+   301	    results = await check_settlements(scheduler)
+   302	
+   303	    assert results == []
+   304	    scheduler.persistence.insert_paper_trade_result.assert_not_called()

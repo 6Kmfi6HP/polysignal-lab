@@ -1,0 +1,221 @@
+594 .omo/ulw-loop/evidence/orderbook-diff.patch
+1:diff --git a/src/polysignal_lab/app/readonly_smoke_public.py b/src/polysignal_lab/app/readonly_smoke_public.py
+3:--- a/src/polysignal_lab/app/readonly_smoke_public.py
+4:+++ b/src/polysignal_lab/app/readonly_smoke_public.py
+7:-Input: __future__, __future__.annotations, re, typing, typing.Final, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.app.readonly_smoke_types
+8:+Input: __future__, __future__.annotations, re, typing, typing.Final, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.app.readonly_smoke_types, polysignal_lab.data.orderbook_payload
+16:+from polysignal_lab.data.orderbook_payload import parse_order_book_payload
+24:-        return OrderBook.from_polymarket(payload)
+25:+        return parse_order_book_payload(payload)
+29:diff --git a/src/polysignal_lab/data/FOLDER_INDEX.md b/src/polysignal_lab/data/FOLDER_INDEX.md
+31:--- a/src/polysignal_lab/data/FOLDER_INDEX.md
+32:+++ b/src/polysignal_lab/data/FOLDER_INDEX.md
+37:+- `polymarket_clob_ws.py` - Exports PolymarketMarketWebSocket
+38:+- `polymarket_clob_rest.py` - Exports PolymarketCLOBRestClient
+41:+- `orderbook_payload.py` - Exports parse_order_book_payload
+45:diff --git a/src/polysignal_lab/domain/orderbook.py b/src/polysignal_lab/domain/orderbook.py
+47:--- a/src/polysignal_lab/domain/orderbook.py
+48:+++ b/src/polysignal_lab/domain/orderbook.py
+51:-Input: __future__, __future__.annotations, datetime, datetime.datetime, typing, typing.Any, pydantic, pydantic.BaseModel, pydantic.Field, pydantic.computed_field
+52:+Input: __future__, __future__.annotations, datetime, datetime.datetime, pydantic, pydantic.BaseModel, pydantic.Field, pydantic.computed_field
+60:-from typing import Any
+64:-from polysignal_lab.utils import safe_float, utc_now
+65:+from polysignal_lab.utils import utc_now
+73:-
+74:-    @classmethod
+75:-    def from_polymarket(cls, payload: dict[str, Any], received_at: datetime | None = None) -> "OrderBook":
+76:-        bids = [BookLevel(price=safe_float(x.get("price"), 0.0) or 0.0, size=safe_float(x.get("size"), 0.0) or 0.0) for x in payload.get("bids", [])]
+77:-        asks = [BookLevel(price=safe_float(x.get("price"), 0.0) or 0.0, size=safe_float(x.get("size"), 0.0) or 0.0) for x in payload.get("asks", [])]
+78:-        return cls(
+79:-            market_id=str(payload.get("market")) if payload.get("market") is not None else None,
+80:-            token_id=str(payload.get("asset_id") or payload.get("token_id") or payload.get("assetId")),
+81:-            bids=sorted(bids, key=lambda x: x.price, reverse=True),
+82:-            asks=sorted(asks, key=lambda x: x.price),
+83:-            last_trade_price=safe_float(payload.get("last_trade_price") or payload.get("lastTradePrice")),
+84:-            last_trade_size=safe_float(payload.get("last_trade_size") or payload.get("lastTradeSize") or payload.get("size")),
+85:-            last_trade_side=str(payload.get("side")) if payload.get("side") is not None else None,
+86:-            last_trade_timestamp=str(payload.get("last_trade_timestamp") or payload.get("timestamp")) if (payload.get("last_trade_timestamp") or payload.get("timestamp")) is not None else None,
+87:-            min_order_size=safe_float(payload.get("min_order_size")),
+88:-            tick_size=safe_float(payload.get("tick_size")),
+89:-            source_timestamp=str(payload.get("timestamp")) if payload.get("timestamp") is not None else None,
+90:-            hash=payload.get("hash"),
+91:-            received_at=received_at or utc_now(),
+92:-        )
+93:diff --git a/tests/test_market_data.py b/tests/test_market_data.py
+95:--- a/tests/test_market_data.py
+96:+++ b/tests/test_market_data.py
+99:-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path
+100:+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path, polysignal_lab.data.orderbook_payload
+108:+from polysignal_lab.data.orderbook_payload import parse_order_book_payload
+116:-    from polysignal_lab.domain.orderbook import OrderBook
+117:-
+125:-    book = OrderBook.from_polymarket(payload)
+126:+    book = parse_order_book_payload(payload)
+130:diff --git a/tests/test_orderbook_snapshot.py b/tests/test_orderbook_snapshot.py
+132:--- a/tests/test_orderbook_snapshot.py
+133:+++ b/tests/test_orderbook_snapshot.py
+136:-Input: __future__, __future__.annotations, datetime, datetime.timedelta, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.OrderBook, polysignal_lab.utils, polysignal_lab.utils.utc_now, factories, factories.BookFactoryConfig
+137:-Output: test_orderbook_best_bid_ask_spread_depth, test_orderbook_from_polymarket_payload, test_staleness_detection, test_snapshot_builder_derived_metrics
+138:+Input: __future__, __future__.annotations, datetime, datetime.timedelta, polysignal_lab.data.orderbook_payload, polysignal_lab.utils, polysignal_lab.utils.utc_now, factories, factories.BookFactoryConfig
+139:+Output: test_orderbook_best_bid_ask_spread_depth, test_parse_orderbook_from_polymarket_payload, test_staleness_detection, test_snapshot_builder_derived_metrics
+147:-from polysignal_lab.domain.orderbook import OrderBook
+148:+from polysignal_lab.data.orderbook_payload import parse_order_book_payload
+156:+    assert book.spread is not None
+161:-def test_orderbook_from_polymarket_payload():
+162:+def test_parse_orderbook_from_polymarket_payload():
+170:-    book = OrderBook.from_polymarket(payload)
+171:+    book = parse_order_book_payload(payload)
+175:diff --git a/tests/test_polymarket_clob_rest.py b/tests/test_polymarket_clob_rest.py
+177:--- a/tests/test_polymarket_clob_rest.py
+178:+++ b/tests/test_polymarket_clob_rest.py
+181:-Input: __future__, __future__.annotations, inspect, pytest, polysignal_lab.config, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.data.polymarket_clob_rest, polysignal_lab.data.polymarket_clob_rest.PolymarketCLOBRestClient, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.OrderBook
+182:+Input: __future__, __future__.annotations, inspect, pytest, polysignal_lab.config, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.data.orderbook_payload, polysignal_lab.data.polymarket_clob_rest, polysignal_lab.data.polymarket_clob_rest.PolymarketCLOBRestClient, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.OrderBook
+190:+from polysignal_lab.data.orderbook_payload import parse_order_book_payload
+198:-            return OrderBook.from_polymarket(
+199:+            return parse_order_book_payload(
+203:diff --git a/src/polysignal_lab/data/orderbook_payload.py b/src/polysignal_lab/data/orderbook_payload.py
+206:--- /dev/null
+207:+++ b/src/polysignal_lab/data/orderbook_payload.py
+209:+"""
+210:+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, datetime, datetime.datetime, typing, typing.Final, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.domain.orderbook, polysignal_lab.domain.orderbook.BookLevel, polysignal_lab.domain.orderbook.OrderBook, polysignal_lab.utils
+211:+Output: parse_order_book_payload
+212:+Pos: Application code
+213:+
+214:+🔄 Self-reference: When this file changes, update this header
+215:+"""
+216:+
+217:+
+218:+
+219:+
+220:+
+221:+
+222:+
+223:+
+224:+from __future__ import annotations
+225:+
+226:+from collections.abc import Mapping
+227:+from datetime import datetime
+228:+from typing import Final
+229:+
+230:+from pydantic import JsonValue, TypeAdapter
+231:+
+232:+from polysignal_lab.domain.orderbook import BookLevel, OrderBook
+233:+from polysignal_lab.utils import safe_float, utc_now
+234:+
+235:+JsonObject = Mapping[str, object]
+236:+JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
+237:+
+238:+
+239:+def parse_order_book_payload(
+240:+    payload: JsonObject,
+241:+    received_at: datetime | None = None,
+242:+) -> OrderBook:
+243:+    return OrderBook(
+244:+        market_id=_optional_text(payload.get("market")),
+245:+        token_id=_token_id(payload),
+246:+        bids=sorted(_levels(payload.get("bids")), key=lambda level: level.price, reverse=True),
+247:+        asks=sorted(_levels(payload.get("asks")), key=lambda level: level.price),
+248:+        last_trade_price=safe_float(payload.get("last_trade_price") or payload.get("lastTradePrice")),
+249:+        last_trade_size=safe_float(
+250:+            payload.get("last_trade_size") or payload.get("lastTradeSize") or payload.get("size")
+251:+        ),
+252:+        last_trade_side=_optional_text(payload.get("side")),
+253:+        last_trade_timestamp=_optional_text(payload.get("last_trade_timestamp") or payload.get("timestamp")),
+254:+        min_order_size=safe_float(payload.get("min_order_size")),
+255:+        tick_size=safe_float(payload.get("tick_size")),
+256:+        source_timestamp=_optional_text(payload.get("timestamp")),
+257:+        hash=_optional_text(payload.get("hash")),
+258:+        received_at=received_at or utc_now(),
+259:+    )
+260:+
+261:+
+262:+def json_object(value: JsonValue) -> JsonObject:
+263:+    validated = JSON_VALUE_ADAPTER.validate_python(value)
+264:+    if isinstance(validated, dict):
+265:+        return {str(key): item for key, item in validated.items()}
+266:+    return {}
+267:+
+268:+
+269:+def _levels(raw: object | None) -> list[BookLevel]:
+270:+    if not isinstance(raw, list):
+271:+        return []
+272:+    levels: list[BookLevel] = []
+273:+    for item in raw:
+274:+        if not isinstance(item, dict):
+275:+            continue
+276:+        levels.append(
+277:+            BookLevel(
+278:+                price=safe_float(item.get("price"), 0.0) or 0.0,
+279:+                size=safe_float(item.get("size"), 0.0) or 0.0,
+280:+            )
+281:+        )
+282:+    return levels
+283:+
+284:+
+285:+def _token_id(payload: JsonObject) -> str:
+286:+    raw = payload.get("asset_id") or payload.get("token_id") or payload.get("assetId")
+287:+    return str(raw or "")
+288:+
+289:+
+290:+def _optional_text(value: object | None) -> str | None:
+291:+    return str(value) if value is not None else None
+292:diff --git a/src/polysignal_lab/data/polymarket_clob_rest.py b/src/polysignal_lab/data/polymarket_clob_rest.py
+295:--- /dev/null
+296:+++ b/src/polysignal_lab/data/polymarket_clob_rest.py
+298:+"""
+299:+Input: __future__, __future__.annotations, anyio.to_thread, typing, typing.Final, typing.Protocol, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.config, polysignal_lab.data.orderbook_payload, polysignal_lab.data.rate_limiter, polysignal_lab.domain.orderbook, polysignal_lab.utils
+300:+Output: PolymarketCLOBRestClient
+301:+Pos: Application code
+302:+
+303:+🔄 Self-reference: When this file changes, update this header
+304:+"""
+305:+
+306:+
+307:+
+308:+
+309:+
+310:+
+311:+
+312:+
+313:+from __future__ import annotations
+314:+
+315:+from typing import Final, Protocol
+316:+
+317:+from anyio.to_thread import run_sync
+318:+import httpx
+319:+from pydantic import JsonValue, TypeAdapter
+320:+
+321:+from polysignal_lab.config import PolymarketDataConfig
+322:+from polysignal_lab.data.orderbook_payload import JsonObject, json_object, parse_order_book_payload
+323:+from polysignal_lab.data.rate_limiter import AsyncRateLimiter
+324:+from polysignal_lab.domain.orderbook import OrderBook
+325:+from polysignal_lab.utils import safe_float, utc_now
+326:+
+327:+JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
+328:+
+329:+
+330:+class _RestResponse(Protocol):
+331:+    def raise_for_status(self) -> object: ...
+332:+
+333:+    def json(self) -> object: ...
+334:+
+335:+
+336:+class _RestClient(Protocol):
+337:+    async def get(self, url: str, *, params: dict[str, str] | None = None) -> _RestResponse: ...
+338:+
+339:+
+340:+class PolymarketCLOBRestClient:
+341:+    def __init__(
+342:+        self,
+343:+        config: PolymarketDataConfig,
+344:+        client: _RestClient | None = None,
+345:+    ) -> None:
+346:+        self.config: PolymarketDataConfig = config
+347:+        self.client: _RestClient = client or httpx.AsyncClient(timeout=10.0)
+348:+        self._sdk_client_instance: object | None = None
+349:+        self.rate_limiter: AsyncRateLimiter = AsyncRateLimiter(config.rest_rate_limit_per_sec)
+350:+
+351:+    async def get_book(self, token_id: str) -> OrderBook:
+352:+        payload = await self._get_public_json("/book", token_id)
+353:+        return parse_order_book_payload(payload, received_at=utc_now())
+354:+

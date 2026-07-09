@@ -1,0 +1,21 @@
+surface=S5 evidence non-empty check
+exact invocation: find .omo/evidence/paper-qa-rerun-8 -maxdepth 1 -type f -printf '%p %s
+' plus test -s for report/log artifacts
+
+.omo/evidence/paper-qa-rerun-8/direct-probes.log 612
+.omo/evidence/paper-qa-rerun-8/evidence-nonempty.log 166
+.omo/evidence/paper-qa-rerun-8/final-scope-check.log 3776
+.omo/evidence/paper-qa-rerun-8/protected-refs-docs.log 1382
+.omo/evidence/paper-qa-rerun-8/pytest-focused.log 386
+.omo/evidence/paper-qa-rerun-8/pytest-system-focused.log 445
+
+-- test -s referenced artifacts --
+.omo/evidence/paper-qa-rerun-8.md nonempty_status=0
+.omo/evidence/paper-qa-rerun-8/pytest-focused.log nonempty_status=0
+.omo/evidence/paper-qa-rerun-8/pytest-system-focused.log nonempty_status=0
+.omo/evidence/paper-qa-rerun-8/direct-probes.log nonempty_status=0
+.omo/evidence/paper-qa-rerun-8/protected-refs-docs.log nonempty_status=0
+.omo/evidence/paper-qa-rerun-8/final-scope-check.log nonempty_status=0
+
+-- self check --
+.omo/evidence/paper-qa-rerun-8/evidence-nonempty.log nonempty_status=0

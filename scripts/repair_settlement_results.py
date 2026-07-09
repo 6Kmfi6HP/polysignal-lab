@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# noqa: SIZE_OK  — self-contained offline repair CLI; splitting is outside this security fix
 """Offline repair for missed paper settlement persistence.
 
 Stop the polysignal-lab / polysignal-nautilus container (or any process holding
@@ -24,30 +25,30 @@ Example::
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import logging
+import sqlite3
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-from polysignal_lab.app.scheduler_reporting import _store_paper_result
+from polysignal_lab.app._settlement_check import _store_paper_result
 from polysignal_lab.config import load_settings
-from polysignal_lab.nautilus_runtime.runtime_context_factory import (
-    NautilusRuntimeContext,
-    build_nautilus_runtime_context,
-)
-from polysignal_lab.domain.enums import ExitMode, PositionStatus, TradeResultStatus
+from polysignal_lab.domain.enums import ExitMode, PositionStatus, Side, TradeResultStatus
 from polysignal_lab.domain.market import Market
-from polysignal_lab.domain.paper_position import PaperPosition
-from polysignal_lab.domain.paper_result import PaperTradeResult, PaperWalletSnapshot
+import anyio
+
+from polysignal_lab.domain.paper_result import InvalidPaperTradeResultRow, PaperWalletSnapshot
 from polysignal_lab.paper.settlement_sources import ResolutionDecision
 from polysignal_lab.utils import new_id, utc_iso, utc_now
+
+if TYPE_CHECKING:
+    from polysignal_lab.nautilus_runtime.runtime_context_factory import NautilusRuntimeContext
 
 WALLET_EPSILON = 1e-6
 LOGGER = logging.getLogger("polysignal_lab.repair_settlement")
@@ -68,7 +69,7 @@ class RepairConfig:
     force_correct: bool
 
 
-@dataclass
+@dataclass(slots=True)  # noqa: MUTABLE_OK  — audit report accumulates class buckets during one run
 class AuditReport:
     run_id: str
     classes: dict[str, Any] = field(default_factory=dict)
@@ -80,6 +81,14 @@ class AuditReport:
             "classes": self.classes,
             "skipped_unknown": self.skipped_unknown,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class MissingBackupError(RuntimeError):
+    mode: str
+
+    def __str__(self) -> str:
+        return f"--backup is required when applying {self.mode}"
 
 
 def new_run_id() -> str:
@@ -108,10 +117,40 @@ def _parse_date(value: str | None) -> date | None:
     return date.fromisoformat(value)
 
 
-def _position_in_range(position: PaperPosition, since: date | None, until: date | None) -> bool:
-    opened = position.opened_at
+def _position_id(position: dict[str, Any]) -> str:
+    return str(position.get("paper_position_id") or position.get("position_id") or "")
+
+
+def _position_opened_at(position: dict[str, Any]) -> datetime | None:
+    raw = position.get("opened_at") or position.get("ts") or position.get("created_at")
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, datetime):
+        opened = raw
+    else:
+        try:
+            opened = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
     if opened.tzinfo is None:
         opened = opened.replace(tzinfo=ZoneInfo("UTC"))
+    return opened
+
+
+def _position_side(position: dict[str, Any]) -> Side | None:
+    raw = position.get("side")
+    if raw in (None, ""):
+        return None
+    try:
+        return Side(str(raw).upper())
+    except ValueError:
+        return None
+
+
+def _position_in_range(position: dict[str, Any], since: date | None, until: date | None) -> bool:
+    opened = _position_opened_at(position)
+    if opened is None:
+        return False
     opened_date = opened.date()
     if since is not None and opened_date < since:
         return False
@@ -152,63 +191,85 @@ def _load_market(scheduler: NautilusRuntimeContext, market_id: str) -> Market | 
 
 
 def _settle_for_repair(
-    position: PaperPosition,
+    position: dict[str, Any],
     market: Market,
     decision: ResolutionDecision,
-) -> PaperTradeResult | None:
-    if decision.status == "cancelled":
-        outcome_value = position.entry_price
-        settlement_value = position.stake_usdc
-        pnl = 0.0
-        roi = 0.0
-        result_status = TradeResultStatus.VOID
-    elif decision.status == "resolved":
-        outcome_value = decision.outcome_value_for(position.token_id)
-        if outcome_value is None:
-            return None
-        settlement_value = position.shares * float(outcome_value)
-        pnl = settlement_value - position.stake_usdc
-        roi = pnl / position.stake_usdc if position.stake_usdc else 0.0
-        if outcome_value == 1.0:
-            result_status = TradeResultStatus.WIN
-        elif outcome_value == 0.0:
-            result_status = TradeResultStatus.LOSS
-        elif 0.0 < outcome_value < 1.0:
-            result_status = TradeResultStatus.VOID
-        else:
-            result_status = TradeResultStatus.WIN if pnl > 0 else TradeResultStatus.LOSS
-    else:
+) -> dict[str, Any] | None:
+    entry_price = _repair_float(position, "entry_price")
+    shares = _repair_float(position, "shares")
+    stake_usdc = _repair_float(position, "stake_usdc")
+    if entry_price is None or shares is None or stake_usdc is None:
         return None
+    opened_at = _position_opened_at(position)
+    side = _position_side(position)
+    if opened_at is None or side is None:
+        return None
+    token_id = str(position.get("token_id") or "")
+    match decision.status:  # noqa: MATCH_OK  — external resolver status string, not a closed variant
+        case "cancelled":
+            outcome_value = entry_price
+            settlement_value = stake_usdc
+            pnl = 0.0
+            roi = 0.0
+            result_status = TradeResultStatus.VOID
+        case "resolved":
+            outcome_value = decision.outcome_value_for(token_id)
+            if outcome_value is None:
+                return None
+            settlement_value = shares * float(outcome_value)
+            pnl = settlement_value - stake_usdc
+            roi = pnl / stake_usdc if stake_usdc else 0.0
+            if outcome_value == 1.0:
+                result_status = TradeResultStatus.WIN
+            elif outcome_value == 0.0:
+                result_status = TradeResultStatus.LOSS
+            elif 0.0 < outcome_value < 1.0:
+                result_status = TradeResultStatus.VOID
+            else:
+                result_status = TradeResultStatus.WIN if pnl > 0 else TradeResultStatus.LOSS
+        case _:
+            return None
     closed_at = utc_now()
-    result = PaperTradeResult(
-        signal_id=position.signal_id,
-        paper_position_id=position.paper_position_id,
-        strategy=position.strategy,
-        asset=position.asset,
-        timeframe=position.timeframe,
-        market_id=market.market_id,
-        market_slug=market.market_slug,
-        side=position.side,
-        entry_price=position.entry_price,
-        shares=position.shares,
-        stake_usdc=position.stake_usdc,
-        exit_mode=ExitMode.RESOLUTION,
-        outcome_value=float(outcome_value),
-        settlement_value=settlement_value,
-        pnl_usdc=pnl,
-        roi=roi,
-        result=result_status,
-        opened_at=position.opened_at,
-        closed_at=closed_at,
-        details={
+    position["status"] = PositionStatus.CLOSED.value
+    position["closed_at"] = closed_at.isoformat()
+    position["is_closed"] = True
+    return {
+        "paper_trade_id": new_id("pt", _position_id(position), closed_at.isoformat()),
+        "signal_id": str(position.get("signal_id") or ""),
+        "paper_position_id": _position_id(position),
+        "strategy": str(position.get("strategy") or ""),
+        "asset": str(position.get("asset") or ""),
+        "timeframe": str(position.get("timeframe") or ""),
+        "market_id": market.market_id,
+        "market_slug": market.market_slug,
+        "side": side.value,
+        "entry_price": entry_price,
+        "shares": shares,
+        "stake_usdc": stake_usdc,
+        "exit_mode": ExitMode.RESOLUTION.value,
+        "outcome_value": float(outcome_value),
+        "settlement_value": settlement_value,
+        "pnl_usdc": pnl,
+        "roi": roi,
+        "result": result_status.value,
+        "opened_at": opened_at.isoformat(),
+        "closed_at": closed_at.isoformat(),
+        "details": {
             "resolved_outcome": market.resolved_outcome.value if market.resolved_outcome else None,
-            "confidence": position.signal_confidence,
+            "confidence": position.get("signal_confidence"),
             **decision.details,
         },
-    )
-    position.status = PositionStatus.CLOSED
-    position.closed_at = closed_at
-    return result
+    }
+
+
+def _repair_float(position: dict[str, Any], key: str) -> float | None:
+    value = position.get(key)
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _replay_wallet(scheduler: NautilusRuntimeContext) -> tuple[float, float, int]:
@@ -254,18 +315,18 @@ def _is_c5_candidate(existing: dict[str, Any]) -> bool:
 
 async def _resolve_position(
     scheduler: NautilusRuntimeContext,
-    position: PaperPosition,
+    position: dict[str, Any],
     market: Market,
 ) -> ResolutionDecision:
     return await scheduler.settlement_resolver.resolve_market(market)
 
 
-def _planned_result_label(decision: ResolutionDecision, position: PaperPosition) -> str | None:
+def _planned_result_label(decision: ResolutionDecision, position: dict[str, Any]) -> str | None:
     if decision.status == "cancelled":
         return TradeResultStatus.VOID.value
     if decision.status != "resolved":
         return None
-    outcome_value = decision.outcome_value_for(position.token_id)
+    outcome_value = decision.outcome_value_for(str(position.get("token_id") or ""))
     if outcome_value is None:
         return None
     if outcome_value == 1.0:
@@ -285,24 +346,25 @@ async def audit(scheduler: NautilusRuntimeContext, config: RepairConfig) -> Audi
 
     open_rows = scheduler.persistence.restore_open_positions()
     for row in open_rows:
-        position = PaperPosition.model_validate(row)
-        if config.position_id and position.paper_position_id != config.position_id:
+        position = dict(row)
+        position_id = _position_id(position)
+        if config.position_id and position_id != config.position_id:
             continue
-        if config.market_id and position.market_id != config.market_id:
+        if config.market_id and position.get("market_id") != config.market_id:
             continue
         if not _position_in_range(position, config.since, config.until):
             continue
-        if _existing_result_for_position(scheduler, position.paper_position_id):
+        if _existing_result_for_position(scheduler, position_id):
             if config.force_correct:
-                existing = _existing_result_for_position(scheduler, position.paper_position_id)
+                existing = _existing_result_for_position(scheduler, position_id)
                 if existing and _is_c5_candidate(existing):
-                    c5.append({"paper_position_id": position.paper_position_id, "market_id": position.market_id})
+                    c5.append({"paper_position_id": position_id, "market_id": position.get("market_id")})
             continue
-        market = _load_market(scheduler, position.market_id)
+        market = _load_market(scheduler, str(position.get("market_id") or ""))
         if market is None:
             report.skipped_unknown.append(
                 {
-                    "paper_position_id": position.paper_position_id,
+                    "paper_position_id": position_id,
                     "reason": "MARKET_NOT_FOUND",
                 }
             )
@@ -311,37 +373,33 @@ async def audit(scheduler: NautilusRuntimeContext, config: RepairConfig) -> Audi
         if decision.status in {"resolved", "cancelled"}:
             c1.append(
                 {
-                    "paper_position_id": position.paper_position_id,
-                    "market_id": position.market_id,
+                    "paper_position_id": position_id,
+                    "market_id": position.get("market_id"),
                     "planned_result": _planned_result_label(decision, position),
                 }
             )
         elif decision.status == "unknown":
             report.skipped_unknown.append(
                 {
-                    "paper_position_id": position.paper_position_id,
+                    "paper_position_id": position_id,
                     "reason": str(decision.details.get("reason") or "NO_RESOLVED_EVIDENCE"),
                 }
             )
 
-    closed_rows = scheduler.persistence.query_json(
-        "paper_positions",
-        where="WHERE status = ?",
-        params=(PositionStatus.CLOSED.value,),
-        limit=100_000,
-    )
+    closed_rows = scheduler.persistence.restore_closed_positions()
     for row in closed_rows:
-        position = PaperPosition.model_validate(row)
-        if config.position_id and position.paper_position_id != config.position_id:
+        position = dict(row)
+        position_id = _position_id(position)
+        if config.position_id and position_id != config.position_id:
             continue
-        if config.market_id and position.market_id != config.market_id:
+        if config.market_id and position.get("market_id") != config.market_id:
             continue
-        if _existing_result_for_position(scheduler, position.paper_position_id):
-            existing = _existing_result_for_position(scheduler, position.paper_position_id)
+        if _existing_result_for_position(scheduler, position_id):
+            existing = _existing_result_for_position(scheduler, position_id)
             if existing and _is_c5_candidate(existing):
-                c5.append({"paper_position_id": position.paper_position_id, "market_id": position.market_id})
+                c5.append({"paper_position_id": position_id, "market_id": position.get("market_id")})
             continue
-        c2.append({"paper_position_id": position.paper_position_id, "market_id": position.market_id})
+        c2.append({"paper_position_id": position_id, "market_id": position.get("market_id")})
 
     drift = _wallet_drift(scheduler)
     report.classes = {
@@ -386,7 +444,7 @@ async def backfill(scheduler: NautilusRuntimeContext, config: RepairConfig) -> d
     run_id = new_run_id()
     if not config.dry_run:
         if config.backup_path is None:
-            raise ValueError("--backup is required when applying")
+            raise MissingBackupError(mode="backfill")
         _backup_sqlite(scheduler, config.backup_path)
 
     applied = 0
@@ -402,21 +460,22 @@ async def backfill(scheduler: NautilusRuntimeContext, config: RepairConfig) -> d
     try:
         open_rows = scheduler.persistence.restore_open_positions()
         for row in open_rows:
-            position = PaperPosition.model_validate(row)
-            if config.position_id and position.paper_position_id != config.position_id:
+            position = dict(row)
+            position_id = _position_id(position)
+            if config.position_id and position_id != config.position_id:
                 continue
-            if config.market_id and position.market_id != config.market_id:
+            if config.market_id and position.get("market_id") != config.market_id:
                 continue
             if not _position_in_range(position, config.since, config.until):
                 continue
-            if _existing_result_for_position(scheduler, position.paper_position_id) and not config.force_correct:
+            if _existing_result_for_position(scheduler, position_id) and not config.force_correct:
                 skipped += 1
                 continue
 
-            market = _load_market(scheduler, position.market_id)
+            market = _load_market(scheduler, str(position.get("market_id") or ""))
             if market is None:
                 skipped_unknown.append(
-                    {"paper_position_id": position.paper_position_id, "reason": "MARKET_NOT_FOUND"}
+                    {"paper_position_id": position_id, "reason": "MARKET_NOT_FOUND"}
                 )
                 continue
 
@@ -424,7 +483,7 @@ async def backfill(scheduler: NautilusRuntimeContext, config: RepairConfig) -> d
             if decision.status == "unknown":
                 skipped_unknown.append(
                     {
-                        "paper_position_id": position.paper_position_id,
+                        "paper_position_id": position_id,
                         "reason": str(decision.details.get("reason") or "NO_RESOLVED_EVIDENCE"),
                     }
                 )
@@ -432,18 +491,16 @@ async def backfill(scheduler: NautilusRuntimeContext, config: RepairConfig) -> d
             if decision.status not in {"resolved", "cancelled"}:
                 continue
 
-            work_position = position if not config.dry_run else position.model_copy(deep=True)
+            work_position = position if not config.dry_run else dict(position)
             result = _settle_for_repair(work_position, market, decision)
             if result is None:
                 skipped_unknown.append(
-                    {"paper_position_id": position.paper_position_id, "reason": "NO_PAYOUT_FOR_TOKEN"}
+                    {"paper_position_id": position_id, "reason": "NO_PAYOUT_FOR_TOKEN"}
                 )
                 continue
 
             if config.force_correct and not config.dry_run:
-                for stale in _existing_results_for_position(
-                    scheduler, position.paper_position_id
-                ):
+                for stale in _existing_results_for_position(scheduler, position_id):
                     paper_trade_id = stale.get("paper_trade_id")
                     if isinstance(paper_trade_id, str):
                         publish_id = stale.get("publish_id")
@@ -456,20 +513,24 @@ async def backfill(scheduler: NautilusRuntimeContext, config: RepairConfig) -> d
                 applied += 1
                 LOGGER.info(
                     "Dry-run would settle %s -> %s",
-                    position.paper_position_id,
-                    result.result.value,
+                    position_id,
+                    result["result"],
                 )
                 continue
 
             try:
                 await _store_paper_result(scheduler, result, work_position)
-            except Exception as exc:
+            except (InvalidPaperTradeResultRow, KeyError, OSError, sqlite3.Error, TypeError, ValueError) as exc:
                 failures += 1
-                LOGGER.error("Failed to persist repair for %s: %s", position.paper_position_id, exc)
+                LOGGER.error("Failed to persist repair for %s: %s", position_id, exc)
                 continue
 
             applied += 1
-            closed_at = result.closed_at
+            closed_at_raw = result["closed_at"]
+            if isinstance(closed_at_raw, datetime):
+                closed_at = closed_at_raw
+            else:
+                closed_at = datetime.fromisoformat(str(closed_at_raw).replace("Z", "+00:00"))
             if closed_at.tzinfo is None:
                 closed_at = closed_at.replace(tzinfo=ZoneInfo("UTC"))
             affected_dates.add(closed_at.date())
@@ -507,7 +568,7 @@ def reconcile_wallet(scheduler: NautilusRuntimeContext, config: RepairConfig) ->
         return {"applied": False, "would_apply": True, "drift": drift}
 
     if config.backup_path is None:
-        raise ValueError("--backup is required when applying")
+        raise MissingBackupError(mode="wallet repair")
 
     _backup_sqlite(scheduler, config.backup_path)
     replay_cash, replay_pnl, open_count = _replay_wallet(scheduler)
@@ -562,6 +623,10 @@ async def regenerate_reports(scheduler: NautilusRuntimeContext, config: RepairCo
 
 
 async def build_runtime(config: RepairConfig) -> NautilusRuntimeContext:
+    from polysignal_lab.nautilus_runtime.runtime_context_factory import (
+        build_nautilus_runtime_context,
+    )
+
     settings = load_settings(config.config_path)
     return build_nautilus_runtime_context(settings, base_dir=config.data_dir)
 
@@ -609,7 +674,7 @@ async def run_repair_async(config: RepairConfig) -> int:
 
 
 def run_repair(config: RepairConfig) -> int:
-    return asyncio.run(run_repair_async(config))
+    return anyio.run(run_repair_async, config)
 
 
 def _build_config_from_args(args: argparse.Namespace) -> RepairConfig:

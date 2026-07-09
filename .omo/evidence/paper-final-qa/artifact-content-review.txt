@@ -1,0 +1,84 @@
+surface: CLI artifact content review
+invocation: sed/rg/tail over required .omo/ulw-loop/evidence paper-final artifacts plus focused pytest rerun artifact
+observable: PASS iff artifacts and rerun show RED/GREEN boolean-money, reporting/storage/settlement test surfaces, full pytest, type/check/compile/diff/protected-path guards
+
+boolean-money RED evidence:
+17:E           Failed: DID NOT RAISE InvalidPaperTradeResultRow
+55:        # When/Then: restore fails closed instead of coercing true to one.
+64:FAILED tests/test_storage_restore.py::test_sqlite_store_rejects_boolean_money_paper_trade_rows
+65:FAILED tests/test_storage_restore.py::test_sqlite_store_excludes_open_position_events_with_boolean_money
+
+boolean-money GREEN evidence:
+..                                                                       [100%]
+
+final focused pytest artifact:
+..............                                                           [100%]
+
+final full pytest artifact:
+........................................................................ [ 10%]
+........................................................................ [ 20%]
+........................................................................ [ 30%]
+........................................................................ [ 41%]
+........................................................................ [ 51%]
+........................................................................ [ 61%]
+........................................................................ [ 72%]
+........................................................................ [ 82%]
+........................................................................ [ 92%]
+....................................................                     [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+local focused rerun covering reporting/storage/settlement:
+surface: pytest focused reporting/storage/settlement rerun
+invocation: .venv/bin/python -m pytest -q tests/test_storage_restore.py::test_sqlite_store_rejects_boolean_money_paper_trade_rows tests/test_storage_restore.py::test_sqlite_store_excludes_open_position_events_with_boolean_money tests/test_reporting.py::test_daily_report_counts_split_as_closed_without_win_loss_void tests/test_scheduler_settlement_resolution.py tests/test_settlement.py
+observable: PASS iff pytest exits 0 with selected tests passed
+
+WORKING: running focused pytest for reporting/storage/settlement after split and boolean-money fix
+...........................                                              [100%]
+
+exit_code=0
+
+concept split/report import evidence:
+src/polysignal_lab/app/scheduler_reporting_sources.py:17:from polysignal_lab.paper.report_rejections import is_rejected_paper_order_payload
+src/polysignal_lab/app/scheduler_reporting_sources.py:245:            if not is_rejected_paper_order_payload(order, _paper_order_metrics(order)):
+src/polysignal_lab/paper/report.py:3:Output: normalize_paper_reject_reason, is_rejected_paper_order_payload, PaperReportService
+src/polysignal_lab/paper/report.py:36:    is_rejected_paper_order_payload,
+src/polysignal_lab/paper/report.py:37:    normalize_paper_reject_reason,
+src/polysignal_lab/paper/report.py:168:            if is_rejected_paper_order_payload(order, metrics):
+src/polysignal_lab/paper/report.py:169:                normalized = normalize_paper_reject_reason(
+src/polysignal_lab/paper/report_rejections.py:5:PAPER_FILL_REJECTED = "PAPER_FILL_REJECTED"
+src/polysignal_lab/paper/report_rejections.py:14:PAPER_MALFORMED_ORDERBOOK = "PAPER_MALFORMED_ORDERBOOK"
+src/polysignal_lab/paper/report_rejections.py:35:    "MALFORMED_ORDERBOOK": PAPER_MALFORMED_ORDERBOOK,
+src/polysignal_lab/paper/report_rejections.py:39:def normalize_paper_reject_reason(reason: str | None) -> str:
+src/polysignal_lab/paper/report_rejections.py:41:        return PAPER_FILL_REJECTED
+src/polysignal_lab/paper/report_rejections.py:44:    return _REASON_MAP.get(reason, PAPER_FILL_REJECTED)
+src/polysignal_lab/paper/report_rejections.py:47:def is_rejected_paper_order_payload(
+src/polysignal_lab/paper/FOLDER_INDEX.md:10:- `report.py` - Exports normalize_paper_reject_reason and 2 more
+src/polysignal_lab/app/scheduler_reporting_build.py:23:from polysignal_lab.paper.report_rejections import is_rejected_paper_order_payload
+src/polysignal_lab/app/scheduler_reporting_build.py:36:        if is_rejected_paper_order_payload(order, _paper_order_metrics(order))
+
+report LOC evidence:
+src/polysignal_lab/paper/report.py 219
+src/polysignal_lab/paper/report_aggregates.py 90
+src/polysignal_lab/paper/report_rejections.py 52
+
+static/guard evidence:
+no violations in 14 file(s)
+PASS compileall src tests
+PASS git diff --check
+PASS no protected refs/docs/nautilus_reference changes
+  /home/debian/polysignal-lab/tests/test_storage_restore.py:842:16 - warning: Argument type is Any
+    Argument corresponds to parameter "x" in function "__new__" (reportAny)
+0 errors, 443 warnings, 0 notes
+
+protected path current check:
+
+verdict=PASS

@@ -70,12 +70,12 @@ class FakeCache:
         return [FakeTrade()] if str(instrument_id) == self.instrument_id else []
 
 
-def _catalog(monkeypatch) -> MarketCatalog:
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_bridge.market_catalog.polymarket_instrument_id",
-        lambda condition_id, token_id: f"{condition_id}-{token_id}.POLYMARKET",
+def _catalog(_monkeypatch) -> MarketCatalog:
+    catalog = MarketCatalog(
+        instrument_id_resolver=lambda condition_id, token_id: (
+            f"{condition_id}-{token_id}.POLYMARKET"
+        ),
     )
-    catalog = MarketCatalog()
     catalog.register(
         MarketPairMeta(
             market_id="btc-5m",

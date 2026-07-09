@@ -24,7 +24,7 @@ from polysignal_lab.nautilus_runtime.node_signals import (
 
 def _rebind_market_discovery_client(context: NautilusRuntimeContext) -> None:
     """Replace the startup-phase HTTP client with a fresh connection for live runtime."""
-    if context.market_universe is None:
+    if getattr(context, "market_universe", None) is None:
         return
     discovery = getattr(context.market_universe, "discovery", None)
     if discovery is None:

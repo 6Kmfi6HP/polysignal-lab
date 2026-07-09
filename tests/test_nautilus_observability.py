@@ -35,7 +35,7 @@ from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
     NautilusEventStoreAdapter,
     NautilusNotifierAdapter,
-    ObservabilityActor,
+    ObservabilityService,
 )
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.utils import utc_now
@@ -104,11 +104,11 @@ class NonLockingOperationalErrorTelemetryStore(FakeStore):
         raise sqlite3.OperationalError("disk I/O error")
 
 
-# ── ObservabilityActor tests ──────────────────────────────────────────────────
+# ── ObservabilityService tests ──────────────────────────────────────────────────
 
 def test_startup_message_includes_sandbox_book_type() -> None:
     publisher = FakePublisher()
-    actor = ObservabilityActor(notifier=NautilusNotifierAdapter(publisher))
+    actor = ObservabilityService(notifier=NautilusNotifierAdapter(publisher))
 
     asyncio.run(
         actor.notify_startup(
@@ -130,7 +130,7 @@ def test_startup_message_includes_sandbox_book_type() -> None:
 
 def test_record_decision_writes_to_nautilus_decision_stream() -> None:
     store = FakeStore()
-    actor = ObservabilityActor(store=store)
+    actor = ObservabilityService(store=store)
 
     decision = AlphaDecision(
         strategy="test", asset="BTC", timeframe="5m",
@@ -151,7 +151,7 @@ def test_record_decision_writes_to_nautilus_decision_stream() -> None:
 
 
 def test_observability_actor_isolates_best_effort_telemetry_write_failure() -> None:
-    actor = ObservabilityActor(store=FailingTelemetryStore())
+    actor = ObservabilityService(store=FailingTelemetryStore())
 
     actor.record_decision(_decision(), accepted=True)
     actor.drain_telemetry_once()
@@ -169,7 +169,7 @@ def test_observability_actor_isolates_accepted_signal_notifier_failure() -> None
         entry_reference_price=0.5, max_entry_price=0.55,
         seconds_to_close=120, data_freshness_ms=100, reason_codes=["EDGE"], metrics={},
     )
-    actor = ObservabilityActor(
+    actor = ObservabilityService(
         accepted_signal_notifier=lambda _signal, _stake: (_ for _ in ()).throw(RuntimeError("telegram failed"))
     )
 
@@ -187,7 +187,7 @@ def test_observability_actor_isolates_accepted_signal_notifier_failure() -> None
 
 def test_best_effort_telemetry_queue_drops_when_full_and_marks_health() -> None:
     store = FakeStore()
-    actor = ObservabilityActor(store=store, telemetry_queue_size=1, telemetry_autostart=False)
+    actor = ObservabilityService(store=store, telemetry_queue_size=1, telemetry_autostart=False)
 
     actor.record_decision(_decision(market_id="m1"), accepted=True)
     actor.record_decision(_decision(market_id="m2"), accepted=True)
@@ -201,7 +201,7 @@ def test_best_effort_telemetry_queue_drops_when_full_and_marks_health() -> None:
 
 def test_best_effort_telemetry_writer_drains_queued_events() -> None:
     store = FakeStore()
-    actor = ObservabilityActor(store=store, telemetry_queue_size=8, telemetry_autostart=False)
+    actor = ObservabilityService(store=store, telemetry_queue_size=8, telemetry_autostart=False)
 
     actor.record_decision(_decision(), accepted=True)
     actor.drain_telemetry_once()
@@ -211,7 +211,7 @@ def test_best_effort_telemetry_writer_drains_queued_events() -> None:
 
 def test_telemetry_writer_retries_transient_sqlite_lock() -> None:
     store = FlakyLockedTelemetryStore()
-    actor = ObservabilityActor(store=store, telemetry_queue_size=8, telemetry_autostart=False)
+    actor = ObservabilityService(store=store, telemetry_queue_size=8, telemetry_autostart=False)
 
     actor.record_decision(_decision(), accepted=True)
     actor.drain_telemetry_once()
@@ -224,7 +224,7 @@ def test_telemetry_writer_retries_transient_sqlite_lock() -> None:
 
 def test_telemetry_writer_stops_after_bounded_sqlite_lock_retries() -> None:
     store = AlwaysLockedTelemetryStore()
-    actor = ObservabilityActor(
+    actor = ObservabilityService(
         store=store,
         telemetry_queue_size=8,
         telemetry_autostart=False,
@@ -245,7 +245,7 @@ def test_telemetry_writer_stops_after_bounded_sqlite_lock_retries() -> None:
 
 def test_telemetry_writer_does_not_retry_non_lock_sqlite_operational_error() -> None:
     store = NonLockingOperationalErrorTelemetryStore()
-    actor = ObservabilityActor(
+    actor = ObservabilityService(
         store=store,
         telemetry_queue_size=8,
         telemetry_autostart=False,
@@ -266,7 +266,7 @@ def test_telemetry_writer_does_not_retry_non_lock_sqlite_operational_error() -> 
 
 def test_stop_returns_without_sync_drain_when_best_effort_store_blocks() -> None:
     store = BlockingTelemetryStore()
-    actor = ObservabilityActor(store=store, telemetry_queue_size=8, telemetry_autostart=False)
+    actor = ObservabilityService(store=store, telemetry_queue_size=8, telemetry_autostart=False)
     actor.record_decision(_decision(), accepted=True)
 
     stop_thread = threading.Thread(target=actor.stop)
@@ -286,7 +286,7 @@ def test_stop_returns_without_sync_drain_when_best_effort_store_blocks() -> None
 
 def test_record_signal_writes_to_signal_stream() -> None:
     store = FakeStore()
-    actor = ObservabilityActor(store=store)
+    actor = ObservabilityService(store=store)
     signal = SignalCandidate.build(
         strategy="test",
         asset="BTC",
@@ -321,7 +321,7 @@ def test_record_decision_event_store_persists_system_event_without_signal_id(
         SQLiteStore(tmp_path / "nautilus-observability.sqlite3"),
         StateStore(tmp_path / "state"),
     )
-    actor = ObservabilityActor(store=NautilusEventStoreAdapter(persistence))
+    actor = ObservabilityService(store=NautilusEventStoreAdapter(persistence))
 
     decision = AlphaDecision(
         strategy="test", asset="BTC", timeframe="5m",
@@ -347,7 +347,7 @@ def test_record_decision_event_store_persists_system_event_without_signal_id(
 
 def test_record_rejected_decision_writes_duplicate_signal_candidate_payload() -> None:
     store = FakeStore()
-    actor = ObservabilityActor(store=store)
+    actor = ObservabilityService(store=store)
     candidate = SignalCandidate.build(
         strategy="test",
         asset="BTC",
@@ -387,7 +387,7 @@ def test_record_decision_and_duplicate_rejection_write_jsonl_payloads(tmp_path: 
         SQLiteStore(tmp_path / "nautilus-observability.sqlite3"),
         StateStore(tmp_path / "state"),
     )
-    actor = ObservabilityActor(store=NautilusEventStoreAdapter(persistence))
+    actor = ObservabilityService(store=NautilusEventStoreAdapter(persistence))
     decision = AlphaDecision(
         strategy="test",
         asset="BTC",
@@ -490,7 +490,7 @@ def _rejected(reason_code: str = "DUPLICATE_SIGNAL") -> SimpleNamespace:
 
 def test_repeated_identical_rejected_decision_is_persisted_once_within_ttl() -> None:
     store = FakeStore()
-    actor = ObservabilityActor(store=store)
+    actor = ObservabilityService(store=store)
 
     for _ in range(50):
         actor.record_rejected_decision(_rejected())
@@ -500,7 +500,7 @@ def test_repeated_identical_rejected_decision_is_persisted_once_within_ttl() -> 
 
 def test_rejected_decision_with_different_reason_is_persisted() -> None:
     store = FakeStore()
-    actor = ObservabilityActor(store=store)
+    actor = ObservabilityService(store=store)
 
     actor.record_rejected_decision(_rejected("DUPLICATE_SIGNAL"))
     actor.record_rejected_decision(_rejected("STALE_ORDERBOOK"))
@@ -514,7 +514,7 @@ def test_rejected_decision_is_persisted_again_after_ttl(monkeypatch: pytest.Monk
     clock = {"now": 1000.0}
     monkeypatch.setattr(obs_module.time, "monotonic", lambda: clock["now"])
     store = FakeStore()
-    actor = ObservabilityActor(store=store)
+    actor = ObservabilityService(store=store)
 
     actor.record_rejected_decision(_rejected())
     clock["now"] += 61.0
@@ -525,7 +525,7 @@ def test_rejected_decision_is_persisted_again_after_ttl(monkeypatch: pytest.Monk
 
 def test_repeated_identical_rejected_nautilus_decision_is_persisted_once_within_ttl() -> None:
     store = FakeStore()
-    actor = ObservabilityActor(store=store)
+    actor = ObservabilityService(store=store)
 
     for _ in range(50):
         actor.record_decision(_decision(), accepted=False)
@@ -536,7 +536,7 @@ def test_repeated_identical_rejected_nautilus_decision_is_persisted_once_within_
 
 def test_accepted_decisions_are_never_suppressed() -> None:
     store = FakeStore()
-    actor = ObservabilityActor(store=store)
+    actor = ObservabilityService(store=store)
 
     actor.record_decision(_decision(), accepted=True)
     actor.record_decision(_decision(), accepted=True)
@@ -556,7 +556,7 @@ def test_accepted_decisions_are_never_suppressed() -> None:
 
 def test_record_nautilus_projection_events_write_projected_rows() -> None:
     store = FakeStore()
-    actor = ObservabilityActor(store=store)
+    actor = ObservabilityService(store=store)
 
     actor.record_nautilus_order_event(
         SimpleNamespace(
@@ -615,7 +615,7 @@ def test_record_nautilus_projection_events_write_projected_rows() -> None:
 
 def test_nautilus_projection_events_with_integer_timestamps_get_unique_event_ids() -> None:
     persistence = FakePersistence()
-    actor = ObservabilityActor(store=NautilusEventStoreAdapter(persistence))
+    actor = ObservabilityService(store=NautilusEventStoreAdapter(persistence))
 
     actor.record_nautilus_order_event(
         SimpleNamespace(
@@ -665,7 +665,7 @@ def test_nautilus_projection_events_with_integer_timestamps_get_unique_event_ids
 
 
 def test_event_count_increments() -> None:
-    actor = ObservabilityActor()
+    actor = ObservabilityService()
     assert actor.event_count == 0
     decision = AlphaDecision(
         strategy="t", asset="BTC", timeframe="5m",
@@ -710,18 +710,6 @@ class FakePersistence:
 
     def insert_rejected_signal(self, rejected: object) -> None:
         self.calls.append(("insert_rejected_signal", rejected))
-
-    def insert_paper_order(self, order: object) -> None:
-        self.calls.append(("insert_paper_order", order))
-
-    def upsert_paper_order(self, order: object) -> None:
-        self.calls.append(("upsert_paper_order", order))
-
-    def insert_paper_fill(self, fill: object) -> None:
-        self.calls.append(("insert_paper_fill", fill))
-
-    def upsert_paper_position(self, position: object) -> None:
-        self.calls.append(("upsert_paper_position", position))
 
     def insert_paper_trade_result(self, result: object) -> None:
         self.calls.append(("insert_paper_trade_result", result))

@@ -1,0 +1,5 @@
+Surface: whitespace diff check
+Invocation: git diff --check
+Started: 2026-07-09T01:51:51+02:00
+Exit: 0
+Finished: 2026-07-09T01:51:51+02:00

@@ -1,0 +1,127 @@
+     1	"""
+     2	Input: __future__, __future__.annotations, datetime, datetime.date, factories, factories.MarketFactoryConfig, factories.sample_market, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._paper_trade_result_from_projection, polysignal_lab.domain.enums
+     3	Output: test_paper_settlement_engine_module_is_removed, test_projection_settlement_builds_result_from_nautilus_position_row, test_unknown_projection_does_not_inflate_win_rate
+     4	Pos: Test Layer - Unit/Integration tests
+     5	
+     6	🔄 Self-reference: When this file changes, update this header
+     7	"""
+     8	
+     9	
+    10	
+    11	
+    12	
+    13	
+    14	
+    15	from __future__ import annotations
+    16	
+    17	from datetime import date
+    18	
+    19	from factories import MarketFactoryConfig, sample_market, sample_paper_trade_result
+    20	from polysignal_lab.app.scheduler_reporting import _paper_trade_result_from_projection
+    21	from polysignal_lab.domain.enums import (
+    22	    MarketStatus,
+    23	    Side,
+    24	    TradeResultStatus,
+    25	)
+    26	from polysignal_lab.paper.report import PaperReportService
+    27	
+    28	
+    29	def _resolved_market(outcome: Side | None, status: MarketStatus = MarketStatus.RESOLVED):
+    30	    return sample_market(
+    31	        MarketFactoryConfig(asset="BTC", timeframe="5m", seconds_to_close=-1)
+    32	    ).model_copy(update={"status": status, "resolved_outcome": outcome})
+    33	
+    34	
+    35	def test_paper_settlement_engine_module_is_removed() -> None:
+    36	    from pathlib import Path
+    37	
+    38	    assert not Path("src/polysignal_lab/paper/settlement.py").exists()
+    39	
+    40	
+    41	def test_projection_settlement_builds_result_from_nautilus_position_row() -> None:
+    42	    market = _resolved_market(Side.UP)
+    43	
+    44	    result = _paper_trade_result_from_projection(
+    45	        {
+    46	            "position_id": "pos-1",
+    47	            "signal_id": "sig-up",
+    48	            "strategy": "ptb_diff",
+    49	            "asset": "BTC",
+    50	            "timeframe": "5m",
+    51	            "quantity": 25.0,
+    52	            "avg_entry_price": 0.40,
+    53	            "token_id": market.token_for(Side.UP).token_id,
+    54	            "ts": date(2026, 6, 21).isoformat(),
+    55	        },
+    56	        market=market,
+    57	        outcome_value=1.0,
+    58	        details={"source": "test"},
+    59	    )
+    60	
+    61	    assert result is not None
+    62	    assert result["result"] == TradeResultStatus.WIN.value
+    63	    assert result["outcome_value"] == 1.0
+    64	    assert result["settlement_value"] == 25.0
+    65	    assert result["pnl_usdc"] == 15.0
+    66	    assert result["paper_position_id"] == "pos-1"
+    67	
+    68	
+    69	def test_projection_settlement_rejects_missing_opened_timestamp() -> None:
+    70	    market = _resolved_market(Side.UP)
+    71	
+    72	    result = _paper_trade_result_from_projection(
+    73	        {
+    74	            "position_id": "pos-no-time",
+    75	            "signal_id": "sig-no-time",
+    76	            "strategy": "ptb_diff",
+    77	            "asset": "BTC",
+    78	            "timeframe": "5m",
+    79	            "quantity": 25.0,
+    80	            "avg_entry_price": 0.40,
+    81	            "token_id": market.token_for(Side.UP).token_id,
+    82	        },
+    83	        market=market,
+    84	        outcome_value=1.0,
+    85	        details={"source": "test"},
+    86	    )
+    87	
+    88	    assert result is None
+    89	
+    90	
+    91	def test_unknown_projection_does_not_inflate_win_rate() -> None:
+    92	    unknown = sample_paper_trade_result(
+    93	        signal_id="sig-unknown",
+    94	        paper_position_id="pos-unknown",
+    95	        market_id="market-unknown",
+    96	        market_slug="market-unknown",
+    97	        outcome_value=0.0,
+    98	        settlement_value=0.0,
+    99	        pnl_usdc=0.0,
+   100	        roi=0.0,
+   101	        result=TradeResultStatus.UNKNOWN.value,
+   102	        opened_at=date(2026, 6, 21).isoformat(),
+   103	    )
+   104	    win = sample_paper_trade_result(
+   105	        signal_id="sig-win",
+   106	        paper_position_id="pos-win",
+   107	        market_id="market-win",
+   108	        market_slug="market-win",
+   109	        opened_at=date(2026, 6, 21).isoformat(),
+   110	    )
+   111	
+   112	    report = PaperReportService().build_daily_report(
+   113	        report_date=date(2026, 6, 22),
+   114	        starting_equity=1000.0,
+   115	        ending_equity=1010.0,
+   116	        total_signals=2,
+   117	        paper_orders=2,
+   118	        paper_fills=2,
+   119	        rejected_paper_orders=0,
+   120	        open_positions=1,
+   121	        results=[unknown, win],
+   122	    )
+   123	
+   124	    assert report.closed_positions == 1
+   125	    assert report.win_count == 1
+   126	    assert report.win_rate == 1.0
+   127	    assert report.total_pnl_usdc == 10.0

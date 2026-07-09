@@ -1,0 +1,122 @@
+surface: CLI evidence audit
+exact invocation: test -s and cat protocol/timestamp RED/GREEN evidence files
+
+===== .omo/ulw-loop/evidence/paper-r10-protocol-callable-red.txt =====
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_report_equity_inputs_requires_reporting_cache_protocol __________
+
+    def test_report_equity_inputs_requires_reporting_cache_protocol() -> None:
+        invalid_caches = (
+            SimpleNamespace(),
+            SimpleNamespace(account=123, positions=lambda: []),
+            SimpleNamespace(account=lambda: None, positions=[]),
+        )
+    
+        for cache in invalid_caches:
+            scheduler = SimpleNamespace(
+                settings=_settings(),
+                nautilus_cache=cache,
+            )
+    
+>           assert _report_equity_inputs(scheduler) == (1_000.0, 1_000.0, 0)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_nautilus_reporting_cache_source.py:160: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/polysignal_lab/app/scheduler_reporting.py:278: in _report_equity_inputs
+    return _report_equity_inputs_from_nautilus_cache(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+nautilus_cache = namespace(account=123, positions=<function test_report_equity_inputs_requires_reporting_cache_protocol.<locals>.<lambda> at 0x7fd6a547e140>)
+nautilus_portfolio = None, starting_equity = 1000.0
+
+    def _report_equity_inputs_from_nautilus_cache(
+        nautilus_cache: _NautilusReportingCache,
+        *,
+        nautilus_portfolio: object | None = None,
+        starting_equity: float,
+    ) -> tuple[float, float, int]:
+        from polysignal_lab.nautilus_runtime.projections import (
+            project_account,
+            project_portfolio_snapshot,
+            project_position,
+        )
+    
+>       account = nautilus_cache.account()
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: 'int' object is not callable
+
+src/polysignal_lab/app/scheduler_reporting.py:297: TypeError
+=========================== short test summary info ============================
+FAILED tests/test_nautilus_reporting_cache_source.py::test_report_equity_inputs_requires_reporting_cache_protocol
+
+===== .omo/ulw-loop/evidence/paper-r10-protocol-callable-green.txt =====
+.                                                                        [100%]
+
+===== .omo/ulw-loop/evidence/paper-storage-timestamp-red.txt =====
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_sqlite_store_skips_malformed_timestamp_paper_trade_rows _________
+
+tmp_path = PosixPath('/tmp/pytest-of-debian/pytest-1658/test_sqlite_store_skips_malfor0')
+
+    def test_sqlite_store_skips_malformed_timestamp_paper_trade_rows(tmp_path: Path) -> None:
+        # Given: a persisted trade-result row whose timestamp payload cannot be parsed.
+        db_path = tmp_path / "restore.sqlite3"
+        store = SQLiteStore(db_path)
+        invalid = sample_paper_trade_result(paper_trade_id="pt-malformed-timestamp")
+        invalid["opened_at"] = "not-a-date"
+    
+        with sqlite3.connect(db_path) as conn:
+            _ = conn.execute(
+                """INSERT INTO paper_trade_results(
+                    paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    invalid["paper_trade_id"],
+                    invalid["signal_id"],
+                    invalid["strategy"],
+                    invalid["asset"],
+                    invalid["timeframe"],
+                    invalid["market_id"],
+                    invalid["result"],
+                    invalid["pnl_usdc"],
+                    invalid["roi"],
+                    invalid["closed_at"],
+                    json.dumps(invalid),
+                ),
+            )
+    
+        # When/Then: restore/query excludes the bad row instead of raising ValueError.
+>       assert store.query_json("paper_trade_results") == []
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_storage_restore.py:261: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/polysignal_lab/storage/sqlite_store.py:405: in query_json
+    valid_results.append(dict(parse_paper_trade_result_row(payload)))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/polysignal_lab/domain/paper_result.py:131: in parse_paper_trade_result_row
+    if parse_dt(cast(str | datetime | None, value)) is None:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = 'not-a-date'
+
+    def parse_dt(value: str | datetime | None) -> datetime | None:
+        if value is None or isinstance(value, datetime):
+            return value
+        text = value.replace("Z", "+00:00")
+>       return datetime.fromisoformat(text)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       ValueError: Invalid isoformat string: 'not-a-date'
+
+src/polysignal_lab/utils.py:42: ValueError
+=========================== short test summary info ============================
+FAILED tests/test_storage_restore.py::test_sqlite_store_skips_malformed_timestamp_paper_trade_rows
+
+===== .omo/ulw-loop/evidence/paper-storage-timestamp-green.txt =====
+.                                                                        [100%]
+
+observable: PASS iff RED artifacts are non-empty and show failing pytest output, GREEN artifacts are non-empty and show passing pytest output.

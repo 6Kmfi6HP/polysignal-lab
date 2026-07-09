@@ -1,0 +1,8 @@
+surface=CLI/data
+invocation=PYTHONDONTWRITEBYTECODE=1 pytest -q tests/test_nautilus_reporting_cache_source.py && rg -n "nautilus_cache\.(account|positions)\(" src/polysignal_lab/app/scheduler_reporting.py
+
+.......                                                                  [100%]
+
+-- direct method evidence --
+296:    account = nautilus_cache.account()
+315:    positions = nautilus_cache.positions()

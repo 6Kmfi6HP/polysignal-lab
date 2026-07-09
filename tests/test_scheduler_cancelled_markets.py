@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from pydantic import JsonValue
 
-from polysignal_lab.app.scheduler_reporting import check_settlements
+from polysignal_lab.app._settlement_check import check_settlements
 from polysignal_lab.config import Settings
 from polysignal_lab.domain.enums import MarketStatus, Side, TradeResultStatus
 from polysignal_lab.nautilus_runtime.runtime_context_factory import build_nautilus_runtime_context
@@ -47,7 +47,7 @@ class FakeGammaClient:
         return None
 
     async def get(self, url: str, params: dict[str, str] | None = None) -> FakeGammaResponse:
-        payload = {
+        payload: dict[str, JsonValue] = {
             "id": "gamma-cancelled-1",
             "conditionId": "0xcondition",
             "slug": "btc-updown-5m-cancelled",
@@ -81,10 +81,12 @@ def _projection(market_id: str, token_id: str) -> dict[str, object]:
         "side": Side.UP.value,
         "quantity": 25.0,
         "avg_entry_price": 0.40,
+        "stake_usdc": 10.0,
         "signal_id": "sig-cancelled",
         "strategy": "ptb_diff",
         "asset": "BTC",
         "timeframe": "5m",
+        "opened_at": "2026-06-22T00:00:00+00:00",
         "is_closed": False,
     }
 
@@ -171,6 +173,6 @@ async def test_runtime_settles_cancelled_market_as_void_refund(
     results = await check_settlements(scheduler)
 
     result_rows = runtime.sqlite.query_json("paper_trade_results")
-    assert [result.result for result in results] == [TradeResultStatus.VOID]
-    assert results[0].settlement_value == 10.0
+    assert [result["result"] for result in results] == [TradeResultStatus.VOID.value]
+    assert results[0]["settlement_value"] == 10.0
     assert [row["result"] for row in result_rows] == ["VOID"]

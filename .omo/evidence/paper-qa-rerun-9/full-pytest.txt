@@ -1,0 +1,264 @@
+surface=CLI/data
+invocation=PYTHONDONTWRITEBYTECODE=1 pytest
+
+
+==================================== ERRORS ====================================
+____________________ ERROR collecting tests/test_config.py _____________________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_config.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_config.py:23: in <module>
+    from polysignal_lab.nautilus_runtime.strategy_builder import _build_nautilus_config_strategy_schedule
+src/polysignal_lab/nautilus_runtime/strategy_builder.py:23: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+src/polysignal_lab/nautilus_runtime/custom_data_state.py:22: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+src/polysignal_lab/nautilus_runtime/custom_data_types.py:16: in <module>
+    from nautilus_trader.core.data import Data
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+__________ ERROR collecting tests/test_nautilus_cache_market_data.py ___________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_cache_market_data.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_cache_market_data.py:28: in <module>
+    from polysignal_lab.nautilus_runtime.cache_market_data import (
+src/polysignal_lab/nautilus_runtime/cache_market_data.py:20: in <module>
+    from polysignal_lab.nautilus_runtime.strategy.helpers import _maybe_float
+src/polysignal_lab/nautilus_runtime/strategy/__init__.py:13: in <module>
+    from polysignal_lab.nautilus_runtime.strategy.helpers import (  # noqa: F401
+src/polysignal_lab/nautilus_runtime/strategy/helpers.py:32: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+src/polysignal_lab/nautilus_runtime/custom_data_state.py:22: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+src/polysignal_lab/nautilus_runtime/custom_data_types.py:16: in <module>
+    from nautilus_trader.core.data import Data
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+_____________ ERROR collecting tests/test_nautilus_cross_market.py _____________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_cross_market.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_cross_market.py:33: in <module>
+    from polysignal_lab.nautilus_runtime.strategies.cross_market_bot import (
+src/polysignal_lab/nautilus_runtime/strategies/__init__.py:3: in <module>
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+src/polysignal_lab/nautilus_runtime/native_strategy.py:21: in <module>
+    from nautilus_trader.config import StrategyConfig
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+_____________ ERROR collecting tests/test_nautilus_custom_data.py ______________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_custom_data.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_custom_data.py:19: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_types import (
+src/polysignal_lab/nautilus_runtime/custom_data_types.py:16: in <module>
+    from nautilus_trader.core.data import Data
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+_____________ ERROR collecting tests/test_nautilus_enum_parser.py ______________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_enum_parser.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_enum_parser.py:4: in <module>
+    from nautilus_trader.model.enums import OrderSide
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+_________ ERROR collecting tests/test_nautilus_instrument_load_ids.py __________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_instrument_load_ids.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_instrument_load_ids.py:5: in <module>
+    from polysignal_lab.nautilus_runtime.node_builder import _instrument_load_ids
+src/polysignal_lab/nautilus_runtime/node_builder.py:30: in <module>
+    from polysignal_lab.nautilus_runtime.node_builder_components import (
+src/polysignal_lab/nautilus_runtime/node_builder_components.py:11: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+src/polysignal_lab/nautilus_runtime/custom_data_state.py:22: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+src/polysignal_lab/nautilus_runtime/custom_data_types.py:16: in <module>
+    from nautilus_trader.core.data import Data
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+___________ ERROR collecting tests/test_nautilus_market_rotation.py ____________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_market_rotation.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_market_rotation.py:34: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_types import (
+src/polysignal_lab/nautilus_runtime/custom_data_types.py:16: in <module>
+    from nautilus_trader.core.data import Data
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+________ ERROR collecting tests/test_nautilus_market_view_assembler.py _________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_market_view_assembler.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_market_view_assembler.py:23: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+src/polysignal_lab/nautilus_runtime/custom_data_state.py:22: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+src/polysignal_lab/nautilus_runtime/custom_data_types.py:16: in <module>
+    from nautilus_trader.core.data import Data
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+_____________ ERROR collecting tests/test_nautilus_native_exit.py ______________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_native_exit.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_native_exit.py:21: in <module>
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+src/polysignal_lab/nautilus_runtime/native_strategy.py:21: in <module>
+    from nautilus_trader.config import StrategyConfig
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+_____________ ERROR collecting tests/test_nautilus_native_order.py _____________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_native_order.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_native_order.py:25: in <module>
+    from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy, submit_approved_decision
+src/polysignal_lab/nautilus_runtime/native_order.py:20: in <module>
+    from nautilus_trader.model.identifiers import InstrumentId
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+_________________ ERROR collecting tests/test_nautilus_node.py _________________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_node.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_node.py:29: in <module>
+    from polysignal_lab.nautilus_runtime.node import (
+src/polysignal_lab/nautilus_runtime/node.py:57: in <module>
+    from polysignal_lab.nautilus_runtime.node_builder import (
+src/polysignal_lab/nautilus_runtime/node_builder.py:30: in <module>
+    from polysignal_lab.nautilus_runtime.node_builder_components import (
+src/polysignal_lab/nautilus_runtime/node_builder_components.py:11: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+src/polysignal_lab/nautilus_runtime/custom_data_state.py:22: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+src/polysignal_lab/nautilus_runtime/custom_data_types.py:16: in <module>
+    from nautilus_trader.core.data import Data
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+____________ ERROR collecting tests/test_nautilus_order_mapping.py _____________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_order_mapping.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_order_mapping.py:23: in <module>
+    from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
+src/polysignal_lab/nautilus_runtime/order_mapping.py:20: in <module>
+    from polysignal_lab.nautilus_runtime.order_plan import build_order_spec
+src/polysignal_lab/nautilus_runtime/order_plan.py:23: in <module>
+    from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
+src/polysignal_lab/nautilus_bridge/enum_parser.py:5: in <module>
+    from nautilus_trader.model.enums import OrderSide
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+____________ ERROR collecting tests/test_nautilus_sidecar_actor.py _____________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_sidecar_actor.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_sidecar_actor.py:18: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_types import (
+src/polysignal_lab/nautilus_runtime/custom_data_types.py:16: in <module>
+    from nautilus_trader.core.data import Data
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+____________ ERROR collecting tests/test_nautilus_strategy_base.py _____________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_strategy_base.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_strategy_base.py:34: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+src/polysignal_lab/nautilus_runtime/custom_data_state.py:22: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+src/polysignal_lab/nautilus_runtime/custom_data_types.py:16: in <module>
+    from nautilus_trader.core.data import Data
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+__________ ERROR collecting tests/test_nautilus_strategy_wrappers.py ___________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_strategy_wrappers.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_strategy_wrappers.py:30: in <module>
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+src/polysignal_lab/nautilus_runtime/native_strategy.py:21: in <module>
+    from nautilus_trader.config import StrategyConfig
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+_________ ERROR collecting tests/test_nautilus_trading_node_runtime.py _________
+ImportError while importing test module '/home/debian/polysignal-lab/tests/test_nautilus_trading_node_runtime.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_nautilus_trading_node_runtime.py:29: in <module>
+    from polysignal_lab.nautilus_runtime.node import run_nautilus_cli_async
+src/polysignal_lab/nautilus_runtime/node.py:57: in <module>
+    from polysignal_lab.nautilus_runtime.node_builder import (
+src/polysignal_lab/nautilus_runtime/node_builder.py:30: in <module>
+    from polysignal_lab.nautilus_runtime.node_builder_components import (
+src/polysignal_lab/nautilus_runtime/node_builder_components.py:11: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+src/polysignal_lab/nautilus_runtime/custom_data_state.py:22: in <module>
+    from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+src/polysignal_lab/nautilus_runtime/custom_data_types.py:16: in <module>
+    from nautilus_trader.core.data import Data
+E   ModuleNotFoundError: No module named 'nautilus_trader'
+=============================== warnings summary ===============================
+../.local/lib/python3.11/site-packages/fastapi/testclient.py:1
+  /home/debian/.local/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR tests/test_config.py
+ERROR tests/test_nautilus_cache_market_data.py
+ERROR tests/test_nautilus_cross_market.py
+ERROR tests/test_nautilus_custom_data.py
+ERROR tests/test_nautilus_enum_parser.py
+ERROR tests/test_nautilus_instrument_load_ids.py
+ERROR tests/test_nautilus_market_rotation.py
+ERROR tests/test_nautilus_market_view_assembler.py
+ERROR tests/test_nautilus_native_exit.py
+ERROR tests/test_nautilus_native_order.py
+ERROR tests/test_nautilus_node.py
+ERROR tests/test_nautilus_order_mapping.py
+ERROR tests/test_nautilus_sidecar_actor.py
+ERROR tests/test_nautilus_strategy_base.py
+ERROR tests/test_nautilus_strategy_wrappers.py
+ERROR tests/test_nautilus_trading_node_runtime.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 16 errors during collection !!!!!!!!!!!!!!!!!!!
+1 skipped, 1 warning, 16 errors in 2.94s

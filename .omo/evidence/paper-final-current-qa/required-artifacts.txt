@@ -1,0 +1,14 @@
+surface=CLI/data
+invocation=python pathlib stat required evidence artifacts
+PASS	28	.omo/ulw-loop/evidence/paper-final-no-excuse.txt
+PASS	80	.omo/ulw-loop/evidence/paper-final-focused-pytest.txt
+PASS	82533	.omo/ulw-loop/evidence/paper-final-basedpyright.txt
+PASS	1885	.omo/ulw-loop/evidence/paper-final-full-pytest.txt
+PASS	18	.omo/ulw-loop/evidence/paper-final-compileall.txt
+PASS	22	.omo/ulw-loop/evidence/paper-final-diff-check.txt
+PASS	55	.omo/ulw-loop/evidence/paper-final-refs-check.txt
+PASS	207	.omo/ulw-loop/evidence/paper-final-loc.txt
+PASS	1842	.omo/ulw-loop/evidence/paper-final-import-rg.txt
+PASS	1443	.omo/ulw-loop/evidence/paper-final-debug-audit.md
+overall=PASS
+exit_code=0

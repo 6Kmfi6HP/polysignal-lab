@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, json, re, datetime, datetime.timedelta, typing, typing.Final, httpx, pydantic
+Input: __future__, __future__.annotations, json, re, datetime, datetime.timedelta, typing, typing.Final, typing.Protocol, httpx, pydantic
 Output: MarketDiscovery
 Pos: Application code
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import timedelta
-from typing import Final
+from typing import Final, Protocol
 
 import httpx
 from pydantic import JsonValue, TypeAdapter
@@ -29,17 +29,51 @@ from polysignal_lab.utils import utc_now
 
 JsonObject = dict[str, JsonValue]
 GAMMA_PAGE_LIMIT: Final = 200
-JSON_VALUE_ADAPTER: Final = TypeAdapter(JsonValue)
+JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
+
+
+class _JsonResponse(Protocol):
+    def raise_for_status(self) -> None: ...
+
+    def json(self) -> JsonValue: ...
+
+
+class _AsyncJsonClient(Protocol):
+    async def get(self, url: str, *, params: dict[str, str] | None = None) -> _JsonResponse: ...
+
+
+class _HttpxJsonResponse:
+    def __init__(self, response: httpx.Response) -> None:
+        self._response: httpx.Response = response
+
+    def raise_for_status(self) -> None:
+        _ = self._response.raise_for_status()
+
+    def json(self) -> JsonValue:
+        return JSON_VALUE_ADAPTER.validate_python(self._response.json())
+
+
+class _HttpxAsyncJsonClient:
+    def __init__(self) -> None:
+        self._client: httpx.AsyncClient = httpx.AsyncClient(timeout=15.0)
+
+    async def get(self, url: str, *, params: dict[str, str] | None = None) -> _JsonResponse:
+        return _HttpxJsonResponse(await self._client.get(url, params=params))
 
 
 class MarketDiscovery:
-    def __init__(self, config: PolymarketDataConfig, market_config: MarketConfig, client: httpx.AsyncClient | None = None):
-        self.config = config
-        self.market_config = market_config
-        self.client = client or httpx.AsyncClient(timeout=15.0)
+    def __init__(
+        self,
+        config: PolymarketDataConfig,
+        market_config: MarketConfig,
+        client: _AsyncJsonClient | None = None,
+    ):
+        self.config: PolymarketDataConfig = config
+        self.market_config: MarketConfig = market_config
+        self.client: _AsyncJsonClient = client or _HttpxAsyncJsonClient()
 
-    def replace_client(self, client: httpx.AsyncClient | None = None) -> httpx.AsyncClient:
-        self.client = client or httpx.AsyncClient(timeout=15.0)
+    def replace_client(self, client: _AsyncJsonClient | None = None) -> _AsyncJsonClient:
+        self.client = client or _HttpxAsyncJsonClient()
         return self.client
 
     async def discover(
@@ -82,30 +116,27 @@ class MarketDiscovery:
             stale_grace_sec=stale_grace_sec,
         )
 
-    def _parse_response(self, response: httpx.Response) -> JsonValue:
+    def _parse_response(self, response: _JsonResponse) -> JsonValue:
         response.raise_for_status()
         return JSON_VALUE_ADAPTER.validate_python(response.json())
 
-    def _request(
+    async def _request_async(
         self,
         url: str,
         *,
         params: dict[str, str] | None = None,
-        is_async: bool = False,
-        sync_client: httpx.Client | None = None,
-    ):
-        """Execute a GET request.
-
-        When *is_async* is ``True`` the caller must ``await`` the returned
-        coroutine.  When ``False`` the result is returned directly.
-        """
-        if is_async:
-            async def _do():
-                response = await self.client.get(url, params=params)
-                return self._parse_response(response)
-            return _do()
-        response = sync_client.get(url, params=params)
+    ) -> JsonValue:
+        response = await self.client.get(url, params=params)
         return self._parse_response(response)
+
+    def _request_sync(
+        self,
+        url: str,
+        *,
+        sync_client: httpx.Client,
+        params: dict[str, str] | None = None,
+    ) -> JsonValue:
+        return self._parse_response(_HttpxJsonResponse(sync_client.get(url, params=params)))
 
     def _markets_from_payloads(
         self,
@@ -174,10 +205,9 @@ class MarketDiscovery:
             "limit": str(GAMMA_PAGE_LIMIT),
             "offset": str(offset),
         }
-        payload = self._request(
+        payload = self._request_sync(
             f"{self.config.gamma_base_url}/events",
             params=params,
-            is_async=False,
             sync_client=client,
         )
         return _gamma_events_from_json(payload)
@@ -191,10 +221,9 @@ class MarketDiscovery:
             "limit": str(GAMMA_PAGE_LIMIT),
             "offset": str(offset),
         }
-        payload = await self._request(
+        payload = await self._request_async(
             f"{self.config.gamma_base_url}/events",
             params=params,
-            is_async=True,
         )
         return _gamma_events_from_json(payload)
 
@@ -276,10 +305,9 @@ class MarketDiscovery:
 
     async def _fetch_gamma_market_by_slug(self, slug: str) -> JsonObject | None:
         try:
-            payload = await self._request(
+            payload = await self._request_async(
                 f"{self.config.gamma_base_url}/markets",
                 params={"slug": slug},
-                is_async=True,
             )
         except (httpx.HTTPError, TypeError, ValueError):
             return None
@@ -288,7 +316,7 @@ class MarketDiscovery:
 
     async def _fetch_gamma_slug_payload(self, url: str) -> JsonObject | None:
         try:
-            payload = await self._request(url, is_async=True)
+            payload = await self._request_async(url)
         except (httpx.HTTPError, TypeError, ValueError):
             return None
         return payload if isinstance(payload, dict) else None
@@ -298,10 +326,9 @@ class MarketDiscovery:
 
     def _fetch_gamma_market_by_slug_sync(self, client: httpx.Client, slug: str) -> JsonObject | None:
         try:
-            payload = self._request(
+            payload = self._request_sync(
                 f"{self.config.gamma_base_url}/markets",
                 params={"slug": slug},
-                is_async=False,
                 sync_client=client,
             )
         except (httpx.HTTPError, TypeError, ValueError):
@@ -311,7 +338,7 @@ class MarketDiscovery:
 
     def _fetch_gamma_slug_payload_sync(self, client: httpx.Client, url: str) -> JsonObject | None:
         try:
-            payload = self._request(url, is_async=False, sync_client=client)
+            payload = self._request_sync(url, sync_client=client)
         except (httpx.HTTPError, TypeError, ValueError):
             return None
         return payload if isinstance(payload, dict) else None
@@ -324,7 +351,7 @@ class MarketDiscovery:
                 for market in event_markets:
                     if isinstance(market, dict):
                         merged = {**event, **market}
-                        merged.setdefault("eventSlug", event.get("slug"))
+                        _ = merged.setdefault("eventSlug", event.get("slug"))
                         out.append(merged)
             else:
                 out.append(event)
@@ -394,7 +421,7 @@ def _json_list(raw: JsonValue | None) -> list[JsonValue]:
         return raw
     if isinstance(raw, str):
         try:
-            decoded = json.loads(raw)
+            decoded = JSON_VALUE_ADAPTER.validate_python(json.loads(raw))
         except json.JSONDecodeError:
             return []
         return decoded if isinstance(decoded, list) else []

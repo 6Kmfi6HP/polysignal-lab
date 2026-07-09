@@ -11,14 +11,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import field
 from types import MappingProxyType
-from typing import cast
 
 import pyarrow as pa
 from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass
-from typing_extensions import override
 
-_POLYSIGNAL_DATA_TYPES_REGISTERED = False
+_polysignal_data_types_registered = False
 
 # --------------------------------------------------------------------------
 #  Arrow support
@@ -104,6 +102,9 @@ class PolySignalMarketMetaData(Data, _FrozenData):
     end_ts_ns: int | None = None
     up_token_id: str = ""
     down_token_id: str = ""
+    question: str | None = None
+    up_outcome: str | None = None
+    down_outcome: str | None = None
     _schema = _EMPTY_ARROW_SCHEMA
 
     def __post_init__(self) -> None:
@@ -149,7 +150,6 @@ class PolySignalMarketUniverseData(Data, _FrozenData):
         self._ts_init = int(ts_init)
         object.__setattr__(self, "_frozen", True)
 
-    @override
     def to_dict(self) -> dict[str, object]:
         return {
             "epoch": self.epoch,
@@ -171,24 +171,45 @@ class PolySignalMarketUniverseData(Data, _FrozenData):
         raw.pop("type", None)
         raw.pop("data_type", None)
         return cls(
-            epoch=int(raw["epoch"]),
-            active_condition_ids=tuple(raw["active_condition_ids"]),  # type: ignore[arg-type]
-            entered_condition_ids=tuple(raw["entered_condition_ids"]),  # type: ignore[arg-type]
-            exited_condition_ids=tuple(raw["exited_condition_ids"]),  # type: ignore[arg-type]
-            condition_to_up_token=dict(cast(Mapping[str, str], raw["condition_to_up_token"])),
-            condition_to_down_token=dict(cast(Mapping[str, str], raw["condition_to_down_token"])),
-            condition_to_asset=dict(cast(Mapping[str, str], raw["condition_to_asset"])),
-            condition_to_timeframe=dict(cast(Mapping[str, str], raw["condition_to_timeframe"])),
-            ts_event=int(raw["ts_event"]),
-            ts_init=int(raw["ts_init"]),
+            epoch=_require_int(raw["epoch"], "epoch"),
+            active_condition_ids=_require_str_tuple(
+                raw["active_condition_ids"],
+                "active_condition_ids",
+            ),
+            entered_condition_ids=_require_str_tuple(
+                raw["entered_condition_ids"],
+                "entered_condition_ids",
+            ),
+            exited_condition_ids=_require_str_tuple(
+                raw["exited_condition_ids"],
+                "exited_condition_ids",
+            ),
+            condition_to_up_token=_require_str_mapping(
+                raw["condition_to_up_token"],
+                "condition_to_up_token",
+            ),
+            condition_to_down_token=_require_str_mapping(
+                raw["condition_to_down_token"],
+                "condition_to_down_token",
+            ),
+            condition_to_asset=_require_str_mapping(
+                raw["condition_to_asset"],
+                "condition_to_asset",
+            ),
+            condition_to_timeframe=_require_str_mapping(
+                raw["condition_to_timeframe"],
+                "condition_to_timeframe",
+            ),
+            ts_event=_require_int(raw["ts_event"], "ts_event"),
+            ts_init=_require_int(raw["ts_init"], "ts_init"),
         )
 
 
 # @customdataclass registers all types at class definition time, so the
 # legacy register_polysignal_data_types() is a no-op at runtime. Tests
-# that monkeypatch _POLYSIGNAL_DATA_TYPES_REGISTERED can still exercise
+# that monkeypatch _polysignal_data_types_registered can still exercise
 # the function body.
-_POLYSIGNAL_DATA_TYPES_REGISTERED = True
+_polysignal_data_types_registered = True
 
 
 def register_polysignal_data_types() -> None:
@@ -200,7 +221,7 @@ def register_polysignal_data_types() -> None:
     # @customdataclass auto-registers at class definition time, so no-op.
     # If called during a re-import (e.g., test isolation), ignore the
     # duplicate-registration KeyError that Nautilus raises.
-    if _POLYSIGNAL_DATA_TYPES_REGISTERED:
+    if _polysignal_data_types_registered:
         return
 
     from nautilus_trader.serialization.base import register_serializable_type
@@ -215,3 +236,31 @@ def register_polysignal_data_types() -> None:
             register_serializable_type(cls, cls.to_dict, cls.from_dict)
         except KeyError:
             pass  # already registered by @customdataclass
+
+
+def _require_int(value: object, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        raise TypeError(f"{field_name} must be int-compatible")
+    return int(value)
+
+
+def _require_str_tuple(value: object, field_name: str) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        raise TypeError(f"{field_name} must be a list or tuple of strings")
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise TypeError(f"{field_name} must contain only strings")
+        items.append(item)
+    return tuple(items)
+
+
+def _require_str_mapping(value: object, field_name: str) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{field_name} must be a mapping of strings")
+    items: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            raise TypeError(f"{field_name} must contain only string keys and values")
+        items[key] = item
+    return items

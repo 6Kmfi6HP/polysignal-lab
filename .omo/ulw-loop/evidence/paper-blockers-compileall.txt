@@ -1,0 +1,1 @@
+compileall=pass src tests scripts

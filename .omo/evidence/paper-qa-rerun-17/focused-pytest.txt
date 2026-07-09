@@ -1,0 +1,9 @@
+scenario: C1 focused tests
+surface: CLI pytest from repo root
+invocation: PYTHONDONTWRITEBYTECODE=1 uv run pytest -q tests/test_storage_restore.py::test_sqlite_store_rejects_zero_money_paper_trade_rows tests/test_storage_restore.py::test_sqlite_store_excludes_open_position_events_with_zero_money tests/test_storage_restore.py::test_sqlite_store_rejects_paper_trade_rows_with_invalid_exit_mode tests/test_storage_restore.py::test_sqlite_store_rejects_paper_trade_rows_missing_market_slug tests/test_nautilus_reporting_cache_source.py
+observable: process exit code 0
+started: 2026-07-09T11:24:29+02:00
+............                                                             [100%]
+finished: 2026-07-09T11:24:30+02:00
+exit_code: 0
+verdict: PASS

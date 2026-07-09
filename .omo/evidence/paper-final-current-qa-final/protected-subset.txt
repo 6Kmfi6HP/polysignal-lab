@@ -1,0 +1,6 @@
+surface: git protected subset check
+exact invocation 1: git status --short -- refs @refs docs/nautilus_reference
+git_status_exit_code: 0
+exact invocation 2: git diff --name-only -- refs @refs docs/nautilus_reference
+git_diff_exit_code: 0
+exit_code: 0

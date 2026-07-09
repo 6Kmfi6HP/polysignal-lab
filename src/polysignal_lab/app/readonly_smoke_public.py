@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, re, typing, typing.Final, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.app.readonly_smoke_types
+Input: __future__, __future__.annotations, re, typing, typing.Final, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.app.readonly_smoke_types, polysignal_lab.data.orderbook_payload
 Output: make_public_client, check_gamma_events, check_clob_book, check_clob_404, check_binance_spot, public_get, raw_public_get, response_json, surface, gamma_events
 Pos: Application code
 
@@ -28,12 +28,13 @@ from polysignal_lab.app.readonly_smoke_types import (
     SurfacePayload,
 )
 from polysignal_lab.config import Settings
+from polysignal_lab.data.orderbook_payload import parse_order_book_payload
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.orderbook import OrderBook
 from polysignal_lab.domain.spot import SpotPrice
 from polysignal_lab.utils import safe_float, utc_now
 
-JSON_VALUE_ADAPTER: Final = TypeAdapter(JsonValue)
+JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
 INVALID_CLOB_TOKEN_ID: Final = "polysignal-readonly-smoke-invalid-token"
 PUBLIC_HEADERS: Final = {
     "Accept": "application/json",
@@ -126,7 +127,7 @@ async def public_get(client: httpx.AsyncClient, endpoint: PublicEndpoint) -> Sur
     if status_code is None or status_code >= 400:
         return response
     try:
-        payload = JSON_VALUE_ADAPTER.validate_python(response.payload)
+        payload: JsonValue = JSON_VALUE_ADAPTER.validate_python(response.payload)
     except (TypeError, ValueError) as exc:
         evidence = response.evidence
         evidence["ok"] = False
@@ -229,7 +230,7 @@ def flatten_markets(payloads: list[JsonObject]) -> list[JsonObject]:
             for market in event_markets:
                 if isinstance(market, dict):
                     merged = {**event, **market}
-                    merged.setdefault("eventSlug", event.get("slug"))
+                    _ = merged.setdefault("eventSlug", event.get("slug"))
                     out.append(merged)
         else:
             out.append(event)
@@ -269,7 +270,7 @@ def book_from_payload(payload: JsonValue | None) -> OrderBook | None:
     if not isinstance(payload, dict):
         return None
     try:
-        return OrderBook.from_polymarket(payload)
+        return parse_order_book_payload(payload)
     except (TypeError, ValueError):
         return None
 

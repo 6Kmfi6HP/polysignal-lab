@@ -1,0 +1,42 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_sqlite_store_rejects_paper_trade_rows_missing_exit_mode _________
+
+tmp_path = PosixPath('/tmp/pytest-of-debian/pytest-1679/test_sqlite_store_rejects_pape0')
+
+    def test_sqlite_store_rejects_paper_trade_rows_missing_exit_mode(tmp_path: Path) -> None:
+        # Given: a persisted trade-result row missing the required settlement mode.
+        store = SQLiteStore(tmp_path / "restore.sqlite3")
+        incomplete = sample_paper_trade_result(paper_trade_id="pt-missing-exit-mode")
+        del incomplete["exit_mode"]
+    
+        with store._lock, store._conn:
+            store._conn.execute(
+                """INSERT INTO paper_trade_results(
+                    paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    incomplete["paper_trade_id"],
+                    incomplete["signal_id"],
+                    incomplete["strategy"],
+                    incomplete["asset"],
+                    incomplete["timeframe"],
+                    incomplete["market_id"],
+                    incomplete["result"],
+                    incomplete["pnl_usdc"],
+                    incomplete["roi"],
+                    incomplete["closed_at"],
+                    json.dumps(incomplete),
+                ),
+            )
+    
+        # When/Then: restore/query excludes it instead of accepting an incomplete settlement row.
+>       assert store.query_json("paper_trade_results") == []
+E       AssertionError: assert [{'schema_ver...s-test', ...}] == []
+E         
+E         Left contains one more item: {'schema_version': 1, 'paper_trade_id': 'pt-missing-exit-mode', 'signal_id': 'sig-test', 'paper_position_id': 'pos-test', ...}
+E         Use -v to get more diff
+
+tests/test_storage_restore.py:406: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_storage_restore.py::test_sqlite_store_rejects_paper_trade_rows_missing_exit_mode

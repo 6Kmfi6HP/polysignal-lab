@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, types, types.SimpleNamespace, unittest.mock, unittest.mock.AsyncMock, unittest.mock.Mock, pytest, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting.check_settlements
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, types, types.SimpleNamespace, unittest.mock, unittest.mock.AsyncMock, unittest.mock.Mock, pytest, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting.check_settlements
 Output: test_resolved_numeric_half_payout_closes_as_void_with_provenance, test_unknown_settlement_skips_open_projection, test_cancelled_decision_uses_refund_path, test_check_settlements_is_idempotent_per_position, test_chain_conflict_settlement_logs_system_event
 Pos: Test Layer - Unit/Integration tests
 
@@ -13,14 +13,16 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from polysignal_lab.app.scheduler_reporting import check_settlements
+from polysignal_lab.app._settlement_check import check_settlements
 from polysignal_lab.domain.enums import MarketStatus, Side, TradeResultStatus
 from polysignal_lab.domain.market import Market, OutcomeToken
+from polysignal_lab.domain.paper_result import trade_result_status
 from polysignal_lab.paper.settlement_sources import ResolutionDecision
 
 
@@ -45,6 +47,7 @@ def _projection(
     side: Side = Side.UP,
     quantity: float = 25.0,
     entry_price: float = 0.40,
+    stake_usdc: float = 10.0,
 ) -> dict[str, object]:
     return {
         "paper_position_id": "pos-1",
@@ -54,10 +57,12 @@ def _projection(
         "side": side.value,
         "quantity": quantity,
         "avg_entry_price": entry_price,
+        "stake_usdc": stake_usdc,
         "signal_id": "sig-1",
         "strategy": "ptb_diff",
         "asset": "BTC",
         "timeframe": "5m",
+        "opened_at": "2026-06-22T00:00:00+00:00",
         "is_closed": False,
     }
 
@@ -89,6 +94,33 @@ def _patch_positions(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.anyio
+async def test_unresolved_projection_side_skips_settlement(monkeypatch) -> None:
+    import polysignal_lab.app._settlement_check as settlement_mod
+
+    projection = _projection(token_id="token-missing")
+    del projection["side"]
+    monkeypatch.setattr(settlement_mod, "_nautilus_positions", lambda s: [projection])
+    scheduler = _scheduler(
+        _market(),
+        ResolutionDecision(
+            "market-1",
+            "0x" + "1" * 64,
+            "resolved",
+            "chain",
+            {"token-missing": 1.0},
+            False,
+            (),
+            {"settlement_source": "chain"},
+        ),
+    )
+
+    results = await check_settlements(scheduler)
+
+    assert results == []
+    scheduler.persistence.insert_paper_trade_result.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_resolved_numeric_half_payout_closes_as_void_with_provenance(monkeypatch) -> None:
     _patch_positions(monkeypatch)
     scheduler = _scheduler(
@@ -108,10 +140,10 @@ async def test_resolved_numeric_half_payout_closes_as_void_with_provenance(monke
     results = await check_settlements(scheduler)
 
     assert len(results) == 1
-    assert results[0].result == TradeResultStatus.VOID
-    assert results[0].outcome_value == 0.5
-    assert results[0].settlement_value == 12.5
-    assert results[0].details["settlement_source"] == "chain"
+    assert trade_result_status(results[0]) == TradeResultStatus.VOID
+    assert results[0]["outcome_value"] == 0.5
+    assert results[0]["settlement_value"] == 12.5
+    assert results[0]["details"]["settlement_source"] == "chain"
 
 
 @pytest.mark.anyio
@@ -154,9 +186,9 @@ async def test_cancelled_decision_uses_refund_path(monkeypatch) -> None:
 
     results = await check_settlements(scheduler)
 
-    assert results[0].result == TradeResultStatus.VOID
-    assert results[0].outcome_value == 0.40
-    assert results[0].settlement_value == 10.0
+    assert trade_result_status(results[0]) == TradeResultStatus.VOID
+    assert results[0]["outcome_value"] == 0.40
+    assert results[0]["settlement_value"] == 10.0
 
 
 @pytest.mark.anyio
@@ -169,8 +201,8 @@ async def test_check_settlements_is_idempotent_per_position(monkeypatch) -> None
             return list(stored)
         return []
 
-    def insert_paper_trade_result(result: object) -> None:
-        stored.append(result.model_dump())  # type: ignore[union-attr]
+    def insert_paper_trade_result(result: Mapping[str, object]) -> None:
+        stored.append(dict(result))
 
     scheduler = _scheduler(
         _market(),
@@ -216,5 +248,156 @@ async def test_chain_conflict_settlement_logs_system_event(monkeypatch) -> None:
 
     results = await check_settlements(scheduler)
 
-    assert results[0].result == TradeResultStatus.WIN
+    assert trade_result_status(results[0]) == TradeResultStatus.WIN
     scheduler.persistence.insert_system_event.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_settlement_skips_projection_without_resolvable_side(monkeypatch) -> None:
+    import polysignal_lab.app._settlement_check as settlement_mod
+
+    projection = _projection(token_id="unmapped-token")
+    projection.pop("side")
+    monkeypatch.setattr(settlement_mod, "_nautilus_positions", lambda s: [projection])
+    scheduler = _scheduler(
+        _market(),
+        ResolutionDecision(
+            "market-1",
+            "0x" + "1" * 64,
+            "resolved",
+            "chain",
+            {"unmapped-token": 1.0},
+            False,
+            (),
+            {"settlement_source": "chain"},
+        ),
+    )
+
+    results = await check_settlements(scheduler)
+
+    assert results == []
+    scheduler.persistence.insert_paper_trade_result.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_settlement_skips_projection_without_opened_timestamp(monkeypatch) -> None:
+    import polysignal_lab.app._settlement_check as settlement_mod
+
+    projection = _projection()
+    projection.pop("opened_at")
+    monkeypatch.setattr(settlement_mod, "_nautilus_positions", lambda s: [projection])
+    scheduler = _scheduler(
+        _market(),
+        ResolutionDecision(
+            "market-1",
+            "0x" + "1" * 64,
+            "resolved",
+            "chain",
+            {"token-up": 1.0},
+            False,
+            (),
+            {"settlement_source": "chain"},
+        ),
+    )
+
+    results = await check_settlements(scheduler)
+
+    assert results == []
+    scheduler.persistence.insert_paper_trade_result.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_settlement_skips_projection_with_invalid_opened_timestamp(monkeypatch) -> None:
+    import polysignal_lab.app._settlement_check as settlement_mod
+
+    projection = _projection()
+    projection["opened_at"] = "not-a-date"
+    monkeypatch.setattr(settlement_mod, "_nautilus_positions", lambda s: [projection])
+    scheduler = _scheduler(
+        _market(),
+        ResolutionDecision(
+            "market-1",
+            "0x" + "1" * 64,
+            "resolved",
+            "chain",
+            {"token-up": 1.0},
+            False,
+            (),
+            {"settlement_source": "chain"},
+        ),
+    )
+
+    results = await check_settlements(scheduler)
+
+    assert results == []
+    scheduler.persistence.insert_paper_trade_result.assert_not_called()
+
+
+@pytest.mark.parametrize("field", ["quantity", "avg_entry_price", "stake_usdc"])
+@pytest.mark.anyio
+async def test_settlement_skips_projection_with_missing_money_field(
+    monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    import polysignal_lab.app._settlement_check as settlement_mod
+
+    projection = _projection()
+    projection.pop(field)
+    monkeypatch.setattr(settlement_mod, "_nautilus_positions", lambda s: [projection])
+    scheduler = _scheduler(
+        _market(),
+        ResolutionDecision(
+            "market-1",
+            "0x" + "1" * 64,
+            "resolved",
+            "chain",
+            {"token-up": 1.0},
+            False,
+            (),
+            {"settlement_source": "chain"},
+        ),
+    )
+
+    results = await check_settlements(scheduler)
+
+    assert results == []
+    scheduler.persistence.insert_paper_trade_result.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("quantity", float("nan")),
+        ("avg_entry_price", float("inf")),
+        ("stake_usdc", float("nan")),
+        ("quantity", 0.0),
+        ("avg_entry_price", 0.0),
+        ("stake_usdc", 0.0),
+    ],
+)
+@pytest.mark.anyio
+async def test_settlement_skips_projection_with_invalid_numeric_money(
+    monkeypatch: pytest.MonkeyPatch, field: str, value: float
+) -> None:
+    import polysignal_lab.app._settlement_check as settlement_mod
+
+    projection = _projection()
+    projection[field] = value
+    monkeypatch.setattr(settlement_mod, "_nautilus_positions", lambda s: [projection])
+    scheduler = _scheduler(
+        _market(),
+        ResolutionDecision(
+            "market-1",
+            "0x" + "1" * 64,
+            "resolved",
+            "chain",
+            {"token-up": 1.0},
+            False,
+            (),
+            {"settlement_source": "chain"},
+        ),
+    )
+
+    results = await check_settlements(scheduler)
+
+    assert results == []
+    scheduler.persistence.insert_paper_trade_result.assert_not_called()

@@ -1,0 +1,1 @@
+PASS .debug-journal.md removed and .git/info/exclude entry cleared

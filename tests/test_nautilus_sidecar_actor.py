@@ -178,7 +178,13 @@ def test_market_rotation_actor_uses_clock_timer_for_startup(monkeypatch) -> None
         market_universe=FakeUniverse(),
         catalog=MarketCatalog(),
     )
-    actor.clock = FakeClock()
+    fake_clock = FakeClock()
+    monkeypatch.setattr(
+        MarketRotationActor,
+        "clock",
+        property(lambda self: fake_clock),
+    )
+    actor.publish_data = lambda data_type, data: None
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.market_rotation.register_polysignal_data_types",
         lambda: None,

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market, polysignal_lab.domain.market.OutcomeToken, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_bridge.market_catalog.MarketCatalog, polysignal_lab.nautilus_bridge.market_catalog.MarketPairMeta
-Output: test_market_catalog_registers_binary_yes_no_pair, test_market_catalog_token_meta_returns_registered_side_metadata, test_market_catalog_rejects_non_binary_market, test_market_catalog_derives_instrument_id_from_condition_and_token, test_market_catalog_uses_injected_instrument_id_resolver
+Output: test_market_catalog_registers_binary_yes_no_pair, test_market_catalog_token_meta_returns_registered_side_metadata, test_market_catalog_rejects_non_binary_market, test_market_catalog_derives_instrument_id_from_condition_and_token, test_market_catalog_uses_injected_instrument_id_resolver, test_market_catalog_from_sidecar_metadata_keeps_optional_binary_option_fields
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,11 +14,18 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
+
 import pytest
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import OutcomeToken
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
+from polysignal_lab.nautilus_bridge.market_catalog import (
+    InstrumentTokenMeta,
+    MarketCatalog,
+    MarketPairMeta,
+)
 from factories import MarketFactoryConfig, sample_market
 
 
@@ -34,6 +41,9 @@ def test_market_catalog_registers_binary_yes_no_pair() -> None:
     assert catalog.by_token(market.token_for(Side.DOWN).token_id) == pair
     assert pair.up.token_id == market.token_for(Side.UP).token_id
     assert pair.down.token_id == market.token_for(Side.DOWN).token_id
+    assert pair.up.outcome == market.token_for(Side.UP).outcome_name
+    assert pair.up.description == market.question
+    assert pair.up.expiry == market.end_ts
 
 
 def test_market_catalog_token_meta_returns_registered_side_metadata() -> None:
@@ -69,9 +79,14 @@ def test_market_catalog_derives_instrument_id_from_condition_and_token(monkeypat
     catalog = MarketCatalog()
     catalog.register(pair)
 
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_bridge.market_catalog.polymarket_instrument_id",
-        lambda condition_id, token_id: f"{condition_id}-{token_id}.POLYMARKET",
+    monkeypatch.setitem(
+        sys.modules,
+        "nautilus_trader.adapters.polymarket",
+        SimpleNamespace(
+            get_polymarket_instrument_id=lambda condition_id, token_id: (
+                f"{condition_id}-{token_id}.POLYMARKET"
+            )
+        ),
     )
 
     assert catalog.instrument_id_for_token(pair.up.token_id) == f"{pair.condition_id}-{pair.up.token_id}.POLYMARKET"
@@ -94,3 +109,35 @@ def test_market_catalog_uses_injected_instrument_id_resolver() -> None:
         f"test-{pair.condition_id}-{pair.up.token_id}.POLYMARKET"
     )
     assert seen == [(pair.condition_id, pair.up.token_id)]
+
+
+def test_instrument_token_meta_keeps_positional_constructors_compatible() -> None:
+    meta = InstrumentTokenMeta("token", Side.UP)
+
+    assert meta.side == Side.UP
+    assert meta.outcome is None
+
+
+def test_market_catalog_from_sidecar_metadata_keeps_optional_binary_option_fields() -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    pair = MarketPairMeta.from_metadata(
+        SimpleNamespace(
+            market_id=market.market_id,
+            market_slug=market.market_slug,
+            condition_id=market.condition_id,
+            asset=market.asset,
+            timeframe=market.timeframe,
+            start_ts_ns=1,
+            end_ts_ns=int(market.end_ts.timestamp() * 1_000_000_000) if market.end_ts is not None else None,
+            up_token_id=market.token_for(Side.UP).token_id,
+            down_token_id=market.token_for(Side.DOWN).token_id,
+            question=market.question,
+            up_outcome=market.token_for(Side.UP).outcome_name,
+            down_outcome=market.token_for(Side.DOWN).outcome_name,
+        )
+    )
+
+    assert pair.up.outcome == market.token_for(Side.UP).outcome_name
+    assert pair.down.outcome == market.token_for(Side.DOWN).outcome_name
+    assert pair.up.description == market.question
+    assert pair.up.expiry == market.end_ts

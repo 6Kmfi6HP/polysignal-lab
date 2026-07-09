@@ -1,0 +1,210 @@
+surface=CLI/data
+invocation=git status --short && find .omo/ulw-loop/evidence ... && sed existing R10 artifacts
+
+ D scripts/__init__.py
+ M scripts/repair_settlement_results.py
+ M skills-lock.json
+ M src/polysignal_lab/app/_settlement_check.py
+ M src/polysignal_lab/app/readonly_smoke_public.py
+ M src/polysignal_lab/app/scheduler_reporting.py
+ M src/polysignal_lab/app/scheduler_reporting_storage.py
+ M src/polysignal_lab/app/services/persistence_service.py
+ M src/polysignal_lab/app/services/publish_service.py
+ M src/polysignal_lab/dashboard/app.py
+ M src/polysignal_lab/data/FOLDER_INDEX.md
+ M src/polysignal_lab/data/polymarket_market_discovery.py
+ M src/polysignal_lab/domain/FOLDER_INDEX.md
+ M src/polysignal_lab/domain/enums.py
+ M src/polysignal_lab/domain/market.py
+ M src/polysignal_lab/domain/orderbook.py
+ D src/polysignal_lab/domain/paper_order.py
+ D src/polysignal_lab/domain/paper_position.py
+ M src/polysignal_lab/domain/paper_result.py
+ M src/polysignal_lab/nautilus_bridge/FOLDER_INDEX.md
+ D src/polysignal_lab/nautilus_bridge/instrument_mapping.py
+ M src/polysignal_lab/nautilus_bridge/market_catalog.py
+ M src/polysignal_lab/nautilus_runtime/FOLDER_INDEX.md
+ M src/polysignal_lab/nautilus_runtime/__init__.py
+ M src/polysignal_lab/nautilus_runtime/custom_data_types.py
+ M src/polysignal_lab/nautilus_runtime/native_order.py
+ M src/polysignal_lab/nautilus_runtime/node.py
+ M src/polysignal_lab/nautilus_runtime/node_builder.py
+ M src/polysignal_lab/nautilus_runtime/node_shared.py
+ M src/polysignal_lab/nautilus_runtime/observability_persistence.py
+ M src/polysignal_lab/nautilus_runtime/order_plan.py
+ M src/polysignal_lab/nautilus_runtime/projections.py
+ M src/polysignal_lab/nautilus_runtime/sidecar_data.py
+ M src/polysignal_lab/paper/report.py
+ M src/polysignal_lab/paper/strategy_stats.py
+ M src/polysignal_lab/publish/telegram_bot.py
+ M src/polysignal_lab/signal_layer/formatter.py
+ M src/polysignal_lab/storage/sqlite_schema.py
+ M src/polysignal_lab/storage/sqlite_store.py
+ M tests/FOLDER_INDEX.md
+ M tests/factories.py
+ M tests/test_dashboard.py
+ M tests/test_market_data.py
+ M tests/test_market_parsing.py
+ M tests/test_nautilus_cache_market_data.py
+ M tests/test_nautilus_custom_data.py
+ M tests/test_nautilus_full_paper_runtime_smoke.py
+ D tests/test_nautilus_instrument_mapping.py
+ M tests/test_nautilus_market_catalog.py
+ M tests/test_nautilus_market_rotation.py
+ M tests/test_nautilus_native_order.py
+ M tests/test_nautilus_node.py
+ M tests/test_nautilus_observability.py
+ M tests/test_nautilus_platform_boundary.py
+ M tests/test_nautilus_projections.py
+ M tests/test_nautilus_sidecar_actor.py
+ M tests/test_nautilus_trading_node_runtime.py
+ M tests/test_order_intent.py
+ M tests/test_orderbook_snapshot.py
+ M tests/test_paper_calibration.py
+ M tests/test_polymarket_clob_rest.py
+ M tests/test_publish_service.py
+ M tests/test_reporting.py
+ M tests/test_scheduler_cancelled_markets.py
+ M tests/test_scheduler_settlement_resolution.py
+ M tests/test_settlement.py
+ M tests/test_storage_reporting_publish.py
+ M tests/test_storage_restore.py
+ M tests/test_strategy_stats.py
+ M tests/test_telegram_bot_service.py
+?? .agents/skills/ask-matt/
+?? .claude/skills/ask-matt
+?? .omo/evidence/orderbook-corrected-manual-qa.md
+?? .omo/evidence/orderbook-corrected-parser-rereview-code-review.md
+?? .omo/evidence/orderbook-corrected-security-review-gate-review.md
+?? .omo/evidence/orderbook-data-boundary-parser-migration-code-review.md
+?? .omo/evidence/orderbook-final-code-review.md
+?? .omo/evidence/orderbook-final-gate-review.md
+?? .omo/evidence/orderbook-final-qa-recheck.md
+?? .omo/evidence/orderbook-final-qa-review.md
+?? .omo/evidence/orderbook-parser-migration-qa/
+?? .omo/evidence/orderbook-parser-migration-security-gate-review.md
+?? .omo/evidence/orderbook-phase4-gate-review.md
+?? .omo/evidence/orderbook-phase4-safe-slice-gate-review.md
+?? .omo/evidence/paper-code-review-rerun-2.md
+?? .omo/evidence/paper-code-review-rerun-3.md
+?? .omo/evidence/paper-code-review-rerun-4.md
+?? .omo/evidence/paper-code-review-rerun-5.md
+?? .omo/evidence/paper-code-review-rerun-6.md
+?? .omo/evidence/paper-code-review-rerun-7.md
+?? .omo/evidence/paper-code-review-rerun-8.md
+?? .omo/evidence/paper-code-review-rerun.md
+?? .omo/evidence/paper-code-review.md
+?? .omo/evidence/paper-context-rerun-2.md
+?? .omo/evidence/paper-context-rerun-3.md
+?? .omo/evidence/paper-context-rerun-4.md
+?? .omo/evidence/paper-context-rerun-5.md
+?? .omo/evidence/paper-context-rerun-7.md
+?? .omo/evidence/paper-context-rerun-8.md
+?? .omo/evidence/paper-context-rerun-9.md
+?? .omo/evidence/paper-context-rerun.md
+?? .omo/evidence/paper-goal-verification-rerun-2.md
+?? .omo/evidence/paper-goal-verification-rerun-3.md
+?? .omo/evidence/paper-goal-verification-rerun-4.md
+?? .omo/evidence/paper-goal-verification-rerun-5-gate-review.md
+?? .omo/evidence/paper-goal-verification-rerun-5.md
+?? .omo/evidence/paper-goal-verification-rerun-6.md
+?? .omo/evidence/paper-goal-verification-rerun-7.md
+?? .omo/evidence/paper-goal-verification-rerun-8.md
+?? .omo/evidence/paper-goal-verification-rerun-9.md
+?? .omo/evidence/paper-goal-verification-rerun.md
+?? .omo/evidence/paper-goal-verification-review.md
+?? .omo/evidence/paper-qa-execution-review.md
+?? .omo/evidence/paper-qa-execution-review/
+?? .omo/evidence/paper-qa-rerun-2.md
+?? .omo/evidence/paper-qa-rerun-2/
+?? .omo/evidence/paper-qa-rerun-3.md
+?? .omo/evidence/paper-qa-rerun-4.md
+?? .omo/evidence/paper-qa-rerun-5.md
+?? .omo/evidence/paper-qa-rerun-5/
+?? .omo/evidence/paper-qa-rerun-6.md
+?? .omo/evidence/paper-qa-rerun-6/
+?? .omo/evidence/paper-qa-rerun-7.md
+?? .omo/evidence/paper-qa-rerun-7/
+?? .omo/evidence/paper-qa-rerun-8.md
+?? .omo/evidence/paper-qa-rerun-8/
+?? .omo/evidence/paper-qa-rerun-9/
+?? .omo/evidence/paper-qa-rerun.md
+?? .omo/evidence/paper-qa-rerun/
+?? .omo/evidence/paper-security-rerun-2.md
+?? .omo/evidence/paper-security-rerun-3.md
+?? .omo/evidence/paper-security-rerun-4.md
+?? .omo/evidence/paper-security-rerun-5.md
+?? .omo/evidence/paper-security-rerun-6.md
+?? .omo/evidence/paper-security-rerun-7.md
+?? .omo/evidence/paper-security-rerun-8.md
+?? .omo/evidence/paper-security-rerun-9.md
+?? .omo/evidence/paper-security-rerun.md
+?? .omo/evidence/paper-security-review.md
+?? .omo/ulw-loop/
+?? docs/architecture-nautilus-alignment.md
+?? docs/superpowers/plans/2026-07-09-architecture-boundary-cleanup.md
+?? src/polysignal_lab/data/orderbook_payload.py
+?? src/polysignal_lab/data/polymarket_clob_rest.py
+?? src/polysignal_lab/data/polymarket_clob_ws.py
+?? src/polysignal_lab/nautilus_bridge/enum_parser.py
+?? src/polysignal_lab/nautilus_runtime/node_builder_components.py
+?? tests/test_nautilus_enum_parser.py
+?? tests/test_nautilus_instrument_load_ids.py
+?? tests/test_nautilus_static_native_strategy.py
+?? tests/test_repair_settlement_results.py
+
+-- existing artifact sizes --
+.omo/ulw-loop/evidence/paper-post-r10-focused-rerun.txt 1195 bytes
+.omo/ulw-loop/evidence/paper-post-r10-full-pytest-rerun.txt 1885 bytes
+.omo/ulw-loop/evidence/paper-post-zero-money-manual-qa.txt 624 bytes
+.omo/ulw-loop/evidence/paper-post-r10-rg-rerun.txt 182 bytes
+
+===== .omo/ulw-loop/evidence/paper-post-zero-money-manual-qa.txt =====
+manual_qa_started=2026-07-09T05:30:03Z
+settlement_zero_money None
+project_position_missing_money {'paper_position_id': 'P-missing-money', 'position_id': 'P-missing-money', 'instrument_id': 'btc-5m-test-UP', 'quantity': None, 'avg_entry_price': None, 'stake_usdc': None, 'realized_pnl': 0.0, 'status': 'OPEN', 'is_closed': False, 'ts': '2026-06-21T00:00:00.000000Z'}
+system_events_query []
+latest_health None
+daily_reports []
+idempotent_existing_malformed MalformedSQLitePayloadError
+manual_qa_finished=2026-07-09T05:30:04Z
+cleanup=removed paper-final-zero-money-manual.sqlite3; no server browser tmux container port spawned
+
+===== .omo/ulw-loop/evidence/paper-post-r10-focused-rerun.txt =====
+.......................................................                  [100%]
+=============================== warnings summary ===============================
+tests/test_scheduler_cancelled_markets.py::test_cancelled_gamma_refresh_reaches_registry_and_storage
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+tests/test_scheduler_cancelled_markets.py::test_cancelled_gamma_refresh_reaches_registry_and_storage
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+===== .omo/ulw-loop/evidence/paper-post-r10-full-pytest-rerun.txt =====
+........................................................................ [ 10%]
+........................................................................ [ 20%]
+........................................................................ [ 31%]
+........................................................................ [ 41%]
+........................................................................ [ 52%]
+........................................................................ [ 62%]
+........................................................................ [ 72%]
+........................................................................ [ 83%]
+........................................................................ [ 93%]
+...........................................                              [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:827: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893
+  /home/debian/polysignal-lab/.venv/lib/python3.14/site-packages/nautilus_trader/persistence/catalog/parquet.py:893: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`).Please use a specific unit instead.
+    period: pd.Timedelta = pd.Timedelta(days=1),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+===== .omo/ulw-loop/evidence/paper-post-r10-rg-rerun.txt =====
+src/polysignal_lab/app/scheduler_reporting.py:296:    account = nautilus_cache.account()
+src/polysignal_lab/app/scheduler_reporting.py:315:    positions = nautilus_cache.positions()

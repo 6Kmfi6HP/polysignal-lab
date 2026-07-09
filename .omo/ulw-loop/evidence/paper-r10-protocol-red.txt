@@ -1,0 +1,41 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_report_equity_inputs_requires_reporting_cache_protocol __________
+
+    def test_report_equity_inputs_requires_reporting_cache_protocol() -> None:
+        scheduler = SimpleNamespace(
+            settings=_settings(),
+            nautilus_cache=SimpleNamespace(),
+        )
+    
+>       assert _report_equity_inputs(scheduler) == (1_000.0, 1_000.0, 0)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_nautilus_reporting_cache_source.py:153: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/polysignal_lab/app/scheduler_reporting.py:277: in _report_equity_inputs
+    return _report_equity_inputs_from_nautilus_cache(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+nautilus_cache = namespace(), nautilus_portfolio = None
+starting_equity = 1000.0
+
+    def _report_equity_inputs_from_nautilus_cache(
+        nautilus_cache: _NautilusReportingCache,
+        *,
+        nautilus_portfolio: object | None = None,
+        starting_equity: float,
+    ) -> tuple[float, float, int]:
+        from polysignal_lab.nautilus_runtime.projections import (
+            project_account,
+            project_portfolio_snapshot,
+            project_position,
+        )
+    
+>       account = nautilus_cache.account()
+                  ^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'account'
+
+src/polysignal_lab/app/scheduler_reporting.py:296: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_nautilus_reporting_cache_source.py::test_report_equity_inputs_requires_reporting_cache_protocol

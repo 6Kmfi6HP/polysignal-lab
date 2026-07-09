@@ -1,0 +1,15 @@
+surface: CLI cleanup receipt
+exact invocation: record QA-spawned runtime resources and teardown state
+started: 2026-07-09T14:52:13+02:00
+
+server_spawned_by_this_qa: no
+browser_spawned_by_this_qa: no
+tmux_spawned_by_this_qa: no
+container_spawned_by_this_qa: no
+port_bound_by_this_qa: no
+temp_resources_spawned_by_this_qa: Python tempfile.TemporaryDirectory inside security probe; automatically removed before probe exit
+cleanup_action_required: none
+cleanup_verdict: PASS
+
+finished: 2026-07-09T14:52:13+02:00
+exit_status: 0

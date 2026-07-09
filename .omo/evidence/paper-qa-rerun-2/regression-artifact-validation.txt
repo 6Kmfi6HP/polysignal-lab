@@ -1,0 +1,5 @@
+full pytest artifact validity: pass marker='661 passed' path=.omo/ulw-loop/evidence/paper-full-pytest.txt bytes=1917
+security scope: pass marker='no violations in 4 file(s)' path=.omo/ulw-loop/evidence/paper-no-excuse-security-scope.txt bytes=27
+diff check: pass marker='diff_check=pass' path=.omo/ulw-loop/evidence/paper-diff-check.txt bytes=16
+refs clean: pass marker='refs_check=pass no refs/@refs/docs/nautilus_reference changed' path=.omo/ulw-loop/evidence/paper-refs-check.txt bytes=62
+regression_artifact_validation=pass

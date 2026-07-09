@@ -1,0 +1,5 @@
+H1 parser extraction broke behavior: disconfirmed by focused pytest 32 passed and surface driver token/bid/ask/hash assertions.
+H2 parser extraction left production from_polymarket calls: disconfirmed by rg; only test/doc strings remain.
+H3 parser extraction affected Nautilus adjacent market-data/strategy behavior: disconfirmed by broad affected pytest 101 passed and compileall pass.
+H4 malformed public payloads can create empty-token books: fixed and disconfirmed by InvalidOrderBookPayload test plus surface fail_closed=True.
+H5 untrusted WS event types can create unbounded metric keys: fixed and disconfirmed by test expecting fixed ws_event_unknown counter only.

@@ -19,10 +19,11 @@ from datetime import date, datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+from factories import sample_paper_trade_result
 from polysignal_lab.dashboard.app import create_dashboard_app
-from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
 from polysignal_lab.domain.anchor_price import AnchorPrice
-from polysignal_lab.domain.paper_result import DailyReport, PaperTradeResult
+from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
+from polysignal_lab.domain.paper_result import DailyReport
 from polysignal_lab.domain.strategy_readiness import StrategyMarketStatus
 from polysignal_lab.paper.report import PaperReportService
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
@@ -269,12 +270,28 @@ def test_duplicate_ids_are_idempotent_or_reported(tmp_path, snapshot, settings):
     store.insert_signal(sig)
     store.insert_rejected_signal(lifecycle.rejected)
     store.insert_rejected_signal(lifecycle.rejected)
-    store.insert_paper_order(lifecycle.order)
-    store.insert_paper_order(lifecycle.order)
-    store.insert_paper_fill(lifecycle.fill)
-    store.insert_paper_fill(lifecycle.fill)
-    store.upsert_paper_position(lifecycle.position)
-    store.upsert_paper_position(lifecycle.position)
+    store.insert_system_event({
+        "event_id": "evt-order-dup",
+        "event_type": "nautilus_order",
+        "severity": "info",
+        "created_at": str(lifecycle.order["created_at"]),
+        **lifecycle.order,
+    })
+    store.insert_system_event({
+        "event_id": "evt-fill-dup",
+        "event_type": "nautilus_fill",
+        "severity": "info",
+        "created_at": str(lifecycle.fill["created_at"]),
+        **lifecycle.fill,
+    })
+    store.insert_system_event({
+        "event_id": "evt-pos-dup",
+        "event_type": "nautilus_position",
+        "severity": "info",
+        "created_at": str(lifecycle.position["opened_at"]),
+        **lifecycle.position,
+        "ts": lifecycle.position["opened_at"],
+    })
     store.insert_paper_trade_result(lifecycle.result)
     store.insert_paper_trade_result(lifecycle.result)
     store.insert_wallet_snapshot(lifecycle.wallet)
@@ -289,13 +306,10 @@ def test_duplicate_ids_are_idempotent_or_reported(tmp_path, snapshot, settings):
     # Then: duplicates are idempotent by ID, and conflicting payload reuse is explicit.
     assert store.counts()["signals"] == 1
     assert store.counts()["rejected_signals"] == 1
-    assert store.counts()["paper_orders"] == 1
-    assert store.counts()["paper_fills"] == 1
-    assert store.counts()["paper_positions"] == 1
     assert store.counts()["paper_trade_results"] == 1
     assert store.counts()["daily_reports"] == 1
     assert store.counts()["telegram_publishes"] == 1
-    assert store.counts()["system_events"] == 1
+    assert store.counts()["system_events"] == 4
     assert store.query_json("paper_wallet_snapshots")[0]["cash_balance"] == 990.0
     with pytest.raises(DuplicateRecordError, match=sig.signal_id):
         store.insert_signal(conflicting_signal)
@@ -320,7 +334,7 @@ def test_report_calculates_daily_metrics(settings):
 
 def test_formatter_result_and_daily_messages_are_paper_only() -> None:
     # Given: paper result and daily report domain records.
-    result = PaperTradeResult(
+    result = sample_paper_trade_result(
         signal_id="sig1",
         paper_position_id="pos1",
         strategy="ptb_diff",
@@ -328,17 +342,17 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
         timeframe="5m",
         market_id="market1",
         market_slug="btc-updown-5m",
-        side=Side.UP,
+        side=Side.UP.value,
         entry_price=0.62,
         shares=16.129,
         stake_usdc=10.0,
-        exit_mode=ExitMode.RESOLUTION,
+        exit_mode=ExitMode.RESOLUTION.value,
         outcome_value=1.0,
         settlement_value=16.129,
         pnl_usdc=6.129,
         roi=0.6129,
-        result=TradeResultStatus.WIN,
-        opened_at=date(2026, 6, 21),
+        result=TradeResultStatus.WIN.value,
+        opened_at=date(2026, 6, 21).isoformat(),
     )
     report = DailyReport(
         report_date=date(2026, 6, 21),

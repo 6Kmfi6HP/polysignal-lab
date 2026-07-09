@@ -18,7 +18,7 @@ from datetime import date
 
 from factories import MarketFactoryConfig, sample_market
 
-from polysignal_lab.app.scheduler_reporting import _paper_trade_result_from_projection
+from polysignal_lab.app._settlement_check import _paper_trade_result_from_projection
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.paper.report import PaperReportService
 
@@ -40,6 +40,7 @@ def _paper_result_from_confidence(confidence: float, resolved_outcome: Side):
             "side": Side.UP.value,
             "quantity": 20.0,
             "avg_entry_price": 0.50,
+            "stake_usdc": 10.0,
             "signal_confidence": confidence,
             "ts": date(2026, 6, 24).isoformat(),
         },
@@ -52,6 +53,8 @@ def _paper_result_from_confidence(confidence: float, resolved_outcome: Side):
 def test_calibration_buckets_use_signal_confidence_from_paper_flow() -> None:
     high_result = _paper_result_from_confidence(0.82, Side.UP)
     medium_result = _paper_result_from_confidence(0.60, Side.DOWN)
+    assert high_result is not None
+    assert medium_result is not None
 
     report = PaperReportService().build_daily_report(
         report_date=date(2026, 6, 24),
