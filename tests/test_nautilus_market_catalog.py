@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market, polysignal_lab.domain.market.OutcomeToken, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_bridge.market_catalog.MarketCatalog, polysignal_lab.nautilus_bridge.market_catalog.MarketPairMeta
-Output: test_market_catalog_registers_binary_yes_no_pair, test_market_catalog_token_meta_returns_registered_side_metadata, test_market_catalog_rejects_non_binary_market, test_market_catalog_derives_instrument_id_from_condition_and_token, test_market_catalog_uses_injected_instrument_id_resolver, test_market_catalog_from_sidecar_metadata_keeps_optional_binary_option_fields
+Output: test_market_catalog_registers_binary_yes_no_pair, test_register_replacement_removes_previous_token_indexes, test_market_catalog_token_meta_returns_registered_side_metadata, test_market_catalog_rejects_non_binary_market, test_market_catalog_derives_instrument_id_from_condition_and_token, test_market_catalog_uses_injected_instrument_id_resolver, test_market_catalog_from_sidecar_metadata_keeps_optional_binary_option_fields
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -44,6 +44,40 @@ def test_market_catalog_registers_binary_yes_no_pair() -> None:
     assert pair.up.outcome == market.token_for(Side.UP).outcome_name
     assert pair.up.description == market.question
     assert pair.up.expiry == market.end_ts
+
+
+def test_register_replacement_removes_previous_token_indexes() -> None:
+    catalog = MarketCatalog(instrument_id_resolver=lambda condition_id, token_id: token_id)
+    first = MarketPairMeta(
+        market_id="market-1",
+        market_slug="market-1",
+        condition_id="condition-1",
+        asset="BTC",
+        timeframe="5m",
+        start_ts=None,
+        end_ts=None,
+        up=InstrumentTokenMeta("up-old", Side.UP),
+        down=InstrumentTokenMeta("down-old", Side.DOWN),
+    )
+    replacement = MarketPairMeta(
+        market_id="market-1",
+        market_slug="market-1",
+        condition_id="condition-1",
+        asset="BTC",
+        timeframe="5m",
+        start_ts=None,
+        end_ts=None,
+        up=InstrumentTokenMeta("up-new", Side.UP),
+        down=InstrumentTokenMeta("down-new", Side.DOWN),
+    )
+
+    catalog.register(first)
+    catalog.register(replacement)
+
+    assert catalog.by_token("up-old") is None
+    assert catalog.by_token("down-old") is None
+    assert catalog.by_token("up-new") == replacement
+    assert catalog.by_token("down-new") == replacement
 
 
 def test_market_catalog_token_meta_returns_registered_side_metadata() -> None:

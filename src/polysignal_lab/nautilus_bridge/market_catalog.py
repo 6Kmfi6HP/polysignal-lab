@@ -118,6 +118,11 @@ class MarketCatalog:
         self._instrument_id_resolver = instrument_id_resolver
 
     def register(self, pair: MarketPairMeta) -> None:
+        previous = self._by_condition.get(pair.condition_id)
+        if previous is not None:
+            self._condition_by_token.pop(previous.up.token_id, None)
+            self._condition_by_token.pop(previous.down.token_id, None)
+
         self._by_condition[pair.condition_id] = pair
         self._condition_by_token[pair.up.token_id] = pair.condition_id
         self._condition_by_token[pair.down.token_id] = pair.condition_id
