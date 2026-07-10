@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, datetime, datetime.datetime, datetime.timezone, types, types.SimpleNamespace, polysignal_lab.alpha.cross_market_core
-Output: test_group_assembler_rejects_excessive_skew, test_group_assembler_accepts_acceptable_skew, test_cross_market_wrapper_evaluate_group_returns_decisions, test_cross_market_wrapper_submits_via_callback, test_cross_market_basket_tags_present, test_cross_market_leg_failure_marks_basket, test_cross_market_state_roundtrip, test_cross_market_wrapper_matches_legacy_alpha_output, test_cross_market_wrapper_fok_depth_counts_asks_through_max_entry, AllowAllPolicy
+Output: test_group_assembler_rejects_excessive_skew, test_group_assembler_rejects_equally_stale_views, test_group_assembler_rejects_missing_freshness, test_group_assembler_honors_per_call_age_limit, test_group_assembler_accepts_acceptable_skew, test_cross_market_wrapper_evaluate_group_returns_decisions, test_cross_market_wrapper_submits_via_callback, test_cross_market_basket_tags_present, test_cross_market_leg_failure_marks_basket, test_cross_market_state_roundtrip, test_cross_market_wrapper_matches_legacy_alpha_output, test_cross_market_wrapper_fok_depth_counts_asks_through_max_entry, AllowAllPolicy
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -194,8 +194,66 @@ def test_group_assembler_rejects_excessive_skew() -> None:
     assert group is None
 
 
+def test_group_assembler_rejects_equally_stale_views() -> None:
+    assembler = MarketGroupViewAssembler(
+        max_source_skew_ms=5_000,
+        max_view_age_ms=10_000,
+    )
+    now = datetime.now(timezone.utc)
+
+    group = assembler.assemble(
+        relation_id="rel-stale",
+        views_by_condition_id={
+            "a": _view("a", freshness_ms=120_000),
+            "b": _view("b", freshness_ms=121_000),
+        },
+        created_at=now,
+    )
+
+    assert group is None
+
+
+def test_group_assembler_rejects_missing_freshness() -> None:
+    view = _view("b", freshness_ms=100)
+    view_without_freshness = replace(
+        view,
+        freshness=replace(view.freshness, max_ms=None),
+    )
+    assembler = MarketGroupViewAssembler(max_view_age_ms=2_000)
+
+    group = assembler.assemble(
+        relation_id="rel-missing",
+        views_by_condition_id={
+            "a": _view("a", freshness_ms=100),
+            "b": view_without_freshness,
+        },
+        created_at=datetime.now(timezone.utc),
+    )
+
+    assert group is None
+
+
+def test_group_assembler_honors_per_call_age_limit() -> None:
+    assembler = MarketGroupViewAssembler(max_view_age_ms=2_000)
+
+    group = assembler.assemble(
+        relation_id="rel-call-limit",
+        views_by_condition_id={
+            "a": _view("a", freshness_ms=200),
+            "b": _view("b", freshness_ms=200),
+        },
+        created_at=datetime.now(timezone.utc),
+        max_view_age_ms=100,
+    )
+
+    assert group is None
+
+
 def test_group_assembler_accepts_acceptable_skew() -> None:
-    assembler = MarketGroupViewAssembler(max_source_skew_ms=2000)
+    assembler = MarketGroupViewAssembler(
+        max_source_skew_ms=2_000,
+        max_view_age_ms=2_000,
+    )
     now = datetime.now(timezone.utc)
     group = assembler.assemble(
         relation_id="rel-1",
