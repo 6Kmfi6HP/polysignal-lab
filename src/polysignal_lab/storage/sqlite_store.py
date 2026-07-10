@@ -615,25 +615,64 @@ class SQLiteStore:
         columns: tuple[str, ...],
         values: tuple[Any, ...],
     ) -> None:
-        sql, params = self._build_query(
-            table, where=f"WHERE {key} = ?", params=(record_id,)
-        )
-        existing = self._conn.execute(sql, params).fetchone()
-        payload = values[-1]
-        if existing:
-            existing_payload = _payload_json(existing)
-            if existing_payload is None:
-                raise MalformedSQLitePayloadError(
-                    table=table,
-                    key=key,
-                    record_id=record_id,
-                )
-            if existing_payload == json.loads(payload):
-                return
-            raise DuplicateRecordError(table=table, key=key, record_id=record_id)
+        payload_json = values[-1]
+        if self._skip_duplicate_payload_row(
+            table=table,
+            key_column=key,
+            key_value=record_id,
+            payload_json=payload_json,
+        ):
+            return
         placeholders = ",".join("?" for _ in columns)
         column_sql = ",".join(columns)
         self._conn.execute(
             f"INSERT INTO {table}({column_sql}) VALUES({placeholders})",
             values,
+        )
+
+    def _skip_duplicate_payload_row(
+        self,
+        *,
+        table: str,
+        key_column: str,
+        key_value: str,
+        payload_json: str,
+    ) -> bool:
+        existing = self._conn.execute(
+            f"SELECT payload_json FROM {table} WHERE {key_column} = ?",
+            (key_value,),
+        ).fetchone()
+        if existing is None:
+            return False
+        existing_payload = _payload_json(existing)
+        if existing_payload is None:
+            raise MalformedSQLitePayloadError(
+                table=table,
+                key=key_column,
+                record_id=key_value,
+            )
+        if existing_payload == json.loads(payload_json):
+            return True
+        raise DuplicateRecordError(table=table, key=key_column, record_id=key_value)
+
+    def _insert_payload_row(
+        self,
+        *,
+        table: str,
+        key_column: str,
+        key_value: str,
+        created_at: str,
+        payload: object,
+    ) -> None:
+        payload_json = self._json(payload)
+        if self._skip_duplicate_payload_row(
+            table=table,
+            key_column=key_column,
+            key_value=key_value,
+            payload_json=payload_json,
+        ):
+            return
+        self._conn.execute(
+            f"INSERT INTO {table} ({key_column}, created_at, payload_json) VALUES (?, ?, ?)",
+            (key_value, created_at, payload_json),
         )

@@ -26,6 +26,17 @@ from polysignal_lab.domain.paper_result import (
 )
 from polysignal_lab.storage.sqlite_store import MalformedSQLitePayloadError, SQLiteStore
 from polysignal_lab.utils import utc_now
+from signal_helpers import ptb_signal_from_snapshot
+
+
+def test_payload_insert_preserves_duplicate_detection(tmp_path, snapshot, settings) -> None:
+    store = SQLiteStore(tmp_path / "db.sqlite3")
+    payload = ptb_signal_from_snapshot(snapshot, settings)
+
+    store.insert_signal(payload)
+    store.insert_signal(payload)
+
+    assert store.counts()["signals"] == 1
 
 
 def test_sqlite_store_restores_wallet_reports_and_leaderboard(tmp_path):

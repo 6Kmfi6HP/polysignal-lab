@@ -14,11 +14,33 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from unittest.mock import patch
+
 from polysignal_lab.config import MarketConfig, PolymarketDataConfig, BinanceDataConfig
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
+from polysignal_lab.data.market_discovery_helpers import build_current_slot_slugs
 from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
 from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
+
+
+def test_market_discovery_current_slot_slugs_uses_shared_helper() -> None:
+    fixed_now = datetime(2026, 7, 9, 12, 3, tzinfo=UTC)
+    discovery = MarketDiscovery(PolymarketDataConfig(), MarketConfig())
+
+    with patch(
+        "polysignal_lab.data.polymarket_market_discovery.utc_now",
+        return_value=fixed_now,
+    ):
+        direct = build_current_slot_slugs(
+            assets=list(discovery.market_config.assets),
+            timeframes=list(discovery.market_config.timeframes),
+            now_ts=int(fixed_now.timestamp()),
+        )
+        from_discovery = discovery._current_slot_slugs()
+
+    assert from_discovery == direct
 
 
 def test_market_discovery_flattens_and_parses_crypto_updown():

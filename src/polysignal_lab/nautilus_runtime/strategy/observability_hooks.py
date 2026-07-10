@@ -71,18 +71,17 @@ def record_decision(
     *,
     accepted: bool,
 ) -> None:
-    if strategy.observability is None:
-        return
-    try:
-        strategy.observability.record_decision(decision, accepted)
-    except (OSError, sqlite3.Error):
-        strategy._note_runtime_progress("telemetry_side_effect_failed")
+    record_observability(
+        strategy,
+        lambda obs: obs.record_decision(decision, accepted),
+    )
 
 
 def record_rejected(strategy: _ObservabilityStrategy, rejected: object) -> None:
-    if strategy.observability is None:
-        return
-    strategy.observability.record_rejected_decision(rejected)
+    record_observability(
+        strategy,
+        lambda obs: obs.record_rejected_decision(rejected),
+    )
 
 
 def record_nautilus_order(

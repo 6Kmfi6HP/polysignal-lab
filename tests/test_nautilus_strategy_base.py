@@ -3677,10 +3677,8 @@ def test_native_strategy_does_not_swallow_durable_signal_persistence_failure() -
         strategy.evaluate_condition("condition-btc-5m")
 
 
-def test_native_strategy_does_not_swallow_durable_rejection_persistence_failure() -> None:
+def test_native_strategy_rejection_persistence_failure_does_not_block_evaluate() -> None:
     import sqlite3
-
-    import pytest
 
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
@@ -3701,6 +3699,7 @@ def test_native_strategy_does_not_swallow_durable_rejection_persistence_failure(
                 "candidate": None,
             })()
 
+    phases: list[str] = []
     strategy = PolySignalNativeStrategy(
         core=FakeCore([_decision()]),
         assembler=_assembler(_MockView()),
@@ -3708,11 +3707,13 @@ def test_native_strategy_does_not_swallow_durable_rejection_persistence_failure(
         strategy_name="ptb_diff",
         policy=RejectingPolicy(),
         observability=FailingRejectedObservability(),
+        progress_callback=phases.append,
         **_native_projections(),
     )
 
-    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
-        strategy.evaluate_condition("condition-btc-5m")
+    strategy.evaluate_condition("condition-btc-5m")
+
+    assert "telemetry_side_effect_failed" in phases
 
 
 def test_native_strategy_fill_and_position_callbacks_bridge_to_observability() -> None:
