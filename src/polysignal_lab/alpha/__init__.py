@@ -22,7 +22,8 @@ from polysignal_lab.alpha.mid_price_sizing_core import MidPriceSizingAlphaCore
 from polysignal_lab.alpha.ninety_nine_cent_sniper_core import NinetyNineCentSniperAlphaCore
 from polysignal_lab.alpha.one_cent_buy_core import OneCentBuyAlphaCore
 from polysignal_lab.alpha.pre_order_market_core import PreOrderMarketAlphaCore
-from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore, decision_to_signal, market_view_from_snapshot
+from polysignal_lab.alpha.legacy_snapshot_adapter import decision_to_signal, market_view_from_snapshot
+from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
 from polysignal_lab.alpha.skew_mean_reversion_core import SkewMeanReversionAlphaCore
 from polysignal_lab.alpha.vwap_momentum_core import TradeHistory, VWAPMomentumAlphaCore
 from polysignal_lab.alpha.state import json_safe_state, restore_utc_datetime

@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from typing import Any, Protocol
 
-from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
+from polysignal_lab.alpha.legacy_snapshot_adapter import market_view_from_snapshot
 from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.domain.snapshot import MarketSnapshot

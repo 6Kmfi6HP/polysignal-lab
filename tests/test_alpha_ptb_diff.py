@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Final
 
-from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore, market_view_from_snapshot
+from polysignal_lab.alpha.legacy_snapshot_adapter import market_view_from_snapshot
+from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
 from polysignal_lab.domain.strategy_config import PTBDiffConfig, PTBTriggerConfig
@@ -141,3 +142,14 @@ def test_ptb_snapshot_without_outcome_tokens_produces_no_view() -> None:
     )
 
     assert market_view_from_snapshot(malformed_snapshot) is None
+
+
+def test_legacy_snapshot_adapter_owns_snapshot_conversion() -> None:
+    from polysignal_lab.alpha.legacy_snapshot_adapter import market_view_from_snapshot
+    from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
+
+    assert callable(market_view_from_snapshot)
+    assert not hasattr(PTBDiffAlphaCore, "market_view_from_snapshot")
+    assert "market_view_from_snapshot" not in dir(
+        __import__("polysignal_lab.alpha.ptb_diff_core", fromlist=["ptb_diff_core"])
+    )

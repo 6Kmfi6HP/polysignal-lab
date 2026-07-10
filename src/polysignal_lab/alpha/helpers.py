@@ -235,13 +235,9 @@ def evaluate_from_snapshot_for_test(
     core: object,
     snapshot: object,
 ) -> list[AlphaDecision]:
-    """Evaluate an alpha core using a MarketSnapshot for testing. Uses lazy import to avoid circular dependency with ptb_diff_core."""
-    from importlib import import_module
+    """Evaluate an alpha core using a MarketSnapshot for testing."""
+    from polysignal_lab.alpha.legacy_snapshot_adapter import market_view_from_snapshot
 
-    market_view_from_snapshot = getattr(
-        import_module("polysignal_lab.alpha.ptb_diff_core"),
-        "market_view_from_snapshot",
-    )
     view = market_view_from_snapshot(snapshot)
     evaluate = getattr(core, "evaluate")
     return [] if view is None else evaluate(view)

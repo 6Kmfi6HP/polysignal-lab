@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore, decision_to_signal, market_view_from_snapshot
+from polysignal_lab.alpha.legacy_snapshot_adapter import decision_to_signal, market_view_from_snapshot
+from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
 from polysignal_lab.config import Settings
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate

@@ -23,7 +23,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 from polysignal_lab.domain.strategy_config import LateConsensusConfig
 from polysignal_lab.alpha.late_consensus_core import LateConsensusAlphaCore
-from polysignal_lab.alpha.ptb_diff_core import decision_to_signal, market_view_from_snapshot
+from polysignal_lab.alpha.legacy_snapshot_adapter import decision_to_signal, market_view_from_snapshot
 from factories import sample_snapshot
 
 

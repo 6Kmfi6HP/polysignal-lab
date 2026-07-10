@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
+from polysignal_lab.alpha.legacy_snapshot_adapter import market_view_from_snapshot
 from polysignal_lab.alpha.types import AlphaCore, AlphaDecision
 from polysignal_lab.domain.snapshot import MarketSnapshot
 

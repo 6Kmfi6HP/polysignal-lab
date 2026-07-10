@@ -23,7 +23,7 @@ from polysignal_lab.signal_layer.deduper import SignalDeduper
 from polysignal_lab.signal_layer.gate import SignalGate
 from signal_helpers import ptb_signal_from_snapshot, ptb_signals_from_snapshot
 from polysignal_lab.alpha.late_consensus_core import LateConsensusAlphaCore
-from polysignal_lab.alpha.ptb_diff_core import decision_to_signal, market_view_from_snapshot
+from polysignal_lab.alpha.legacy_snapshot_adapter import decision_to_signal, market_view_from_snapshot
 from polysignal_lab.utils import utc_now
 
 
