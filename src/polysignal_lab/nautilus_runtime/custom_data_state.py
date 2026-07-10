@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, typing, typing.Protocol, polysignal_lab.alpha.types
-Output: PriceToBeatView, CustomDataApplyResult, CustomDataSnapshotProvider, StrategyCustomDataState
+Output: event_datetime, PriceToBeatView, CustomDataApplyResult, CustomDataSnapshotProvider, StrategyCustomDataState
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -20,6 +20,12 @@ from typing import Protocol
 
 from polysignal_lab.alpha.types import SpotView
 from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+
+
+def event_datetime(ts_event: int) -> datetime:
+    if ts_event <= 0:
+        raise ValueError("CustomData ts_event must be a positive Unix nanosecond timestamp")
+    return datetime.fromtimestamp(ts_event / 1_000_000_000, UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +79,7 @@ class StrategyCustomDataState:
                 from_anchor_service=data.from_anchor_service,
                 anchor_source=data.anchor_source,
                 anchor_lag_ms=data.anchor_lag_ms,
-                updated_at=datetime.now(UTC),
+                updated_at=event_datetime(data.ts_event),
             )
             return CustomDataApplyResult(price_to_beat_condition_id=data.condition_id)
         return CustomDataApplyResult()

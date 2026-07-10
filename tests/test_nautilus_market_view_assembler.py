@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, polysignal_lab.alpha.types, polysignal_lab.alpha.types.SideBookView, polysignal_lab.alpha.types.TradeView, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side
-Output: test_assembler_builds_coherent_market_view, test_assembler_returns_none_when_down_leg_missing, test_assembler_builds_view_when_optional_custom_data_missing, test_strategy_custom_data_state_applies_snapshots_for_assembler, FakeBookProvider
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, pytest, polysignal_lab.alpha.types, polysignal_lab.alpha.types.SideBookView, polysignal_lab.alpha.types.TradeView, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side
+Output: test_assembler_builds_coherent_market_view, test_assembler_returns_none_when_down_leg_missing, test_assembler_builds_view_when_optional_custom_data_missing, test_strategy_custom_data_state_applies_snapshots_for_assembler, test_price_to_beat_state_uses_event_time, test_price_to_beat_state_rejects_missing_event_time, FakeBookProvider
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -15,6 +15,8 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 from datetime import UTC, datetime
+
+import pytest
 
 from polysignal_lab.alpha.types import SideBookView, TradeView
 from polysignal_lab.domain.enums import Side
@@ -133,3 +135,41 @@ def test_strategy_custom_data_state_applies_snapshots_for_assembler() -> None:
     assert spot.asset == "BTC"
     assert ptb is not None
     assert ptb.verified is True
+
+
+def test_price_to_beat_state_uses_event_time() -> None:
+    ts_event = 1_788_451_200_123_456_789
+    data = PolySignalPriceToBeatData(
+        condition_id="condition-1",
+        value=99_500.0,
+        source="anchor",
+        verified=True,
+        from_anchor_service=True,
+        anchor_source="chainlink",
+        anchor_lag_ms=7,
+        ts_event=ts_event,
+        ts_init=ts_event + 10,
+    )
+
+    state = StrategyCustomDataState()
+    state.apply(data)
+
+    ptb = state.ptb_for("condition-1")
+    assert ptb is not None
+    assert ptb.updated_at == datetime.fromtimestamp(ts_event / 1_000_000_000, UTC)
+
+
+def test_price_to_beat_state_rejects_missing_event_time() -> None:
+    state = StrategyCustomDataState()
+    data = PolySignalPriceToBeatData(
+        condition_id="condition-1",
+        value=99_500.0,
+        source="anchor",
+        ts_event=0,
+        ts_init=0,
+    )
+
+    with pytest.raises(ValueError, match="ts_event"):
+        state.apply(data)
+
+    assert state.ptb_for("condition-1") is None
