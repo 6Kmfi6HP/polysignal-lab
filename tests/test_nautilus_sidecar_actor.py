@@ -170,6 +170,9 @@ def test_market_rotation_actor_uses_clock_timer_for_startup(monkeypatch) -> None
         async def refresh_once(self):
             return []
 
+        def refresh_once_sync(self):
+            return []
+
     settings = Settings()
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
     actor = MarketRotationActor(

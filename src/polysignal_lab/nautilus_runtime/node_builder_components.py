@@ -9,6 +9,7 @@ from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+from polysignal_lab.nautilus_runtime.market_discovery_worker import MarketDiscoveryWorker
 
 logger = logging.getLogger(__name__)
 
@@ -158,10 +159,14 @@ def wire_live_node_runtime(
 ) -> dict[str, object]:
     from polysignal_lab.nautilus_runtime.node import _build_market_rotation_actor
 
+    refresh_once_sync = getattr(runtime_market_universe, "refresh_once_sync")
+    discovery_worker = MarketDiscoveryWorker(refresh_once_sync)
+
     market_rotation_actor = _build_market_rotation_actor(
         settings=settings,
         startup_markets=configured_markets,
         market_universe=runtime_market_universe,
+        discovery_worker=discovery_worker,
         registry=registry,
         store=store,
         health=health,

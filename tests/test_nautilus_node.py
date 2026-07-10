@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, asyncio, logging, signal, threading, time, types, types.SimpleNamespace, typing
+Input: __future__, __future__.annotations, asyncio, logging, signal, threading, time, types, types.SimpleNamespace, typing, polysignal_lab.nautilus_runtime.market_discovery_worker
 Output: test_live_engine_config_builders_import_configs_from_config_module, test_build_live_node_uses_livenode_builder, test_build_live_node_uses_configured_non_default_trader_id, test_build_live_node_returns_nautilus_runtime_components, test_build_live_node_injects_shared_projections_and_no_manual_sync_components, test_build_live_node_gives_each_strategy_own_custom_data_state, test_build_live_node_uses_static_runtime_classes, test_build_live_node_registers_market_rotation_actor, test_all_native_strategies_share_runtime_policy, test_build_live_node_uses_sandbox_execution_not_matching_client
 Pos: Test Layer - Unit/Integration tests
 
@@ -341,6 +341,8 @@ def test_build_live_node_uses_static_runtime_classes(monkeypatch) -> None:
 
 
 def test_build_live_node_registers_market_rotation_actor(monkeypatch) -> None:
+    from polysignal_lab.nautilus_runtime.market_discovery_worker import MarketDiscoveryWorker
+
     _patch_nautilus_placeholders(monkeypatch)
 
     class FakeRotationActor:
@@ -352,6 +354,11 @@ def test_build_live_node_registers_market_rotation_actor(monkeypatch) -> None:
             self.kwargs = kwargs
             self.strategy_name = kwargs["strategy_name"]
 
+    class FakeUniverse:
+        def refresh_once_sync(self):
+            return []
+
+
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
         lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
@@ -361,7 +368,7 @@ def test_build_live_node_registers_market_rotation_actor(monkeypatch) -> None:
         lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
     )
 
-    universe = object()
+    universe = FakeUniverse()
     health = object()
     runtime = build_live_node(
         condition_ids=("condition-btc-5m",),
@@ -374,6 +381,10 @@ def test_build_live_node_registers_market_rotation_actor(monkeypatch) -> None:
     assert node.trader.actors[0] is runtime["market_rotation_actor"]
     assert isinstance(runtime["market_rotation_actor"], FakeRotationActor)
     assert runtime["market_rotation_actor"].kwargs["market_universe"] is universe
+    assert isinstance(
+        runtime["market_rotation_actor"].kwargs["discovery_worker"],
+        MarketDiscoveryWorker,
+    )
     assert runtime["market_rotation_actor"].kwargs["health"] is health
 
 

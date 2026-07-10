@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, asyncio, sys, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, typing
+Input: __future__, __future__.annotations, asyncio, sys, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, typing, polysignal_lab.nautilus_runtime.market_discovery_worker
 Output: test_full_paper_runtime_builds_node_without_live_execution, test_build_live_node_uses_cache_backed_market_data_provider, test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit, test_market_rotation_actor_rotates_single_native_strategy_without_rebuild
 Pos: Test Layer - Unit/Integration tests
 
@@ -206,6 +206,8 @@ def _patch_live_node_builder_fakes(monkeypatch: pytest.MonkeyPatch) -> SimpleNam
 
 
 def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    from polysignal_lab.nautilus_runtime.market_discovery_worker import MarketDiscoveryWorker
+
     _install_fake_polymarket_id_helper(monkeypatch)
     fakes = _patch_live_node_builder_fakes(monkeypatch)
 
@@ -244,6 +246,10 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pyte
     assert "portfolio" in runtime
     assert runtime["cache"] is not None
     assert runtime["portfolio"] is not None
+    assert isinstance(
+        getattr(runtime["market_rotation_actor"], "_discovery_worker"),
+        MarketDiscoveryWorker,
+    )
 
 
 def test_build_live_node_uses_cache_backed_market_data_provider(monkeypatch: pytest.MonkeyPatch) -> None:

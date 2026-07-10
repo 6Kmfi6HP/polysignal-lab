@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, logging, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, typing, typing.Protocol, nautilus_trader.common.actor
+Input: __future__, __future__.annotations, logging, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, typing, typing.Protocol, nautilus_trader.common.actor, polysignal_lab.nautilus_runtime.market_discovery_worker
 Output: _MarketUniverse, _Health, MarketRotationActor
 Pos: Application code
 
@@ -33,6 +33,10 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
     register_polysignal_data_types,
 )
+from polysignal_lab.nautilus_runtime.market_discovery_worker import (
+    MarketDiscoveryResult,
+    MarketDiscoveryWorker,
+)
 from polysignal_lab.nautilus_runtime.sidecar_data import (
     CustomDataPublisher,
     market_metadata,
@@ -55,9 +59,14 @@ class _MarketUniverse(Protocol):
 
 class _Health(Protocol):
     def mark_ok(self, name: str, **metrics: object) -> None: ...
+    def mark_degraded(
+        self,
+        name: str,
+        error: str | None = None,
+        **metrics: object,
+    ) -> None: ...
 
     def mark_down(self, name: str, error: str | None = None, **metrics: object) -> None: ...
-
 
 
 class MarketRotationActor(Actor):
@@ -68,6 +77,7 @@ class MarketRotationActor(Actor):
         startup_markets: tuple[Market, ...],
         market_universe: _MarketUniverse,
         catalog: MarketCatalog,
+        discovery_worker: MarketDiscoveryWorker | None = None,
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
     ) -> None:
@@ -82,6 +92,11 @@ class MarketRotationActor(Actor):
         self.market_universe: _MarketUniverse = market_universe
         self.catalog: MarketCatalog = catalog
         self.health: _Health | None = health
+        self._discovery_worker = (
+            discovery_worker
+            if discovery_worker is not None
+            else MarketDiscoveryWorker(market_universe.refresh_once_sync)
+        )
         self.publisher: CustomDataPublisher = CustomDataPublisher(publisher=self)
         self.spots: SpotRegistry = SpotRegistry()
         self.anchor_prices: AnchorPriceService | None = (
@@ -95,6 +110,7 @@ class MarketRotationActor(Actor):
         )
         self._active_by_condition: dict[str, Market] = _markets_by_condition(startup_markets)
         self._epoch: int = 0
+        self._requested_epoch: int = self._epoch
         self._last_published_ptb: dict[str, _PriceToBeatSignature] = {}
         self._refresh_in_flight: bool = False
 
@@ -144,10 +160,13 @@ class MarketRotationActor(Actor):
             )
 
     def on_stop(self) -> None:
-        clock = getattr(self, "clock", None)
-        cancel_timer = getattr(clock, "cancel_timer", None)
-        if callable(cancel_timer):
-            _ = cancel_timer(REFRESH_TIMER_NAME)
+        try:
+            clock = getattr(self, "clock", None)
+            cancel_timer = getattr(clock, "cancel_timer", None)
+            if callable(cancel_timer):
+                _ = cancel_timer(REFRESH_TIMER_NAME)
+        finally:
+            self._discovery_worker.close()
 
     async def refresh_once(self) -> tuple[Market, ...]:
         try:
@@ -163,11 +182,13 @@ class MarketRotationActor(Actor):
     def _apply_refreshed_markets(
         self,
         refreshed_markets: tuple[Market, ...],
+        *,
+        epoch: int | None = None,
     ) -> tuple[Market, ...]:
         current = _markets_by_condition(refreshed_markets)
         previous = self._active_by_condition
         if _universe_signature(current) == _universe_signature(previous):
-            return self._finish_unchanged_refresh(current)
+            return self._finish_unchanged_refresh(current, epoch=epoch)
 
         entered_condition_ids = tuple(
             condition_id for condition_id in current if condition_id not in previous
@@ -175,7 +196,7 @@ class MarketRotationActor(Actor):
         exited_condition_ids = tuple(
             condition_id for condition_id in previous if condition_id not in current
         )
-        next_epoch = self._epoch + 1
+        next_epoch = self._epoch + 1 if epoch is None else epoch
         self._publish_market_universe(
             epoch=next_epoch,
             markets=tuple(current.values()),
@@ -205,8 +226,12 @@ class MarketRotationActor(Actor):
     def _finish_unchanged_refresh(
         self,
         current: dict[str, Market],
+        *,
+        epoch: int | None = None,
     ) -> tuple[Market, ...]:
         self._active_by_condition = current
+        if epoch is not None:
+            self._epoch = epoch
         self._mark_ok(
             active_count=len(current),
             entered_count=0,
@@ -237,23 +262,38 @@ class MarketRotationActor(Actor):
             _ = self._last_published_ptb.pop(condition_id, None)
 
     def _on_refresh_timer(self, _event: object = None) -> None:
-        """Nautilus Timer callback — refresh runs synchronously on the actor thread."""
-        if self._refresh_in_flight:
-            return
-        self._refresh_in_flight = True
-        try:
-            self._run_refresh_sync()
-        finally:
-            self._refresh_in_flight = False
+        """Poll and apply discovery on the Actor thread, then request the next refresh."""
+        result = self._discovery_worker.take_result()
+        if result is not None:
+            self._requested_epoch = max(self._requested_epoch, result.epoch)
+            self._apply_discovery_result(result)
 
-    def _run_refresh_sync(self) -> None:
+        next_epoch = max(self._epoch, self._requested_epoch) + 1
+        if self._discovery_worker.request(next_epoch):
+            self._requested_epoch = next_epoch
+
+    def _apply_discovery_result(self, result: MarketDiscoveryResult) -> None:
+        if result.epoch <= self._epoch:
+            return
+        if result.error is not None:
+            self._mark_degraded(
+                error=result.error,
+                phase="market_discovery",
+                result_epoch=result.epoch,
+            )
+            return
         try:
-            refreshed_markets = tuple(self.market_universe.refresh_once_sync())
-            _ = self._apply_refreshed_markets(refreshed_markets)
-            self._publish_price_to_beat_batch_sync(self.active_markets())
+            markets = self._apply_refreshed_markets(
+                result.markets,
+                epoch=result.epoch,
+            )
+            self._publish_price_to_beat_batch_sync(markets)
         except Exception as exc:
-            logger.exception("market_rotation phase=refresh failed epoch=%s", self._epoch)
-            self._mark_down(exc, phase="refresh")
+            logger.exception(
+                "market_rotation phase=refresh_apply failed result_epoch=%s",
+                result.epoch,
+            )
+            self._mark_down(exc, phase="refresh_apply", result_epoch=result.epoch)
 
     async def _refresh_async(self) -> None:
         """Async entry point retained for tests and direct callers."""
@@ -261,7 +301,9 @@ class MarketRotationActor(Actor):
             return
         self._refresh_in_flight = True
         try:
-            self._run_refresh_sync()
+            _ = await self.refresh_once()
+        except Exception:
+            return
         finally:
             self._refresh_in_flight = False
 
@@ -364,6 +406,16 @@ class MarketRotationActor(Actor):
     def _mark_ok(self, **metrics: object) -> None:
         if self.health is not None:
             self.health.mark_ok("market_rotation", **metrics)
+
+    def _mark_degraded(self, error: str, **metrics: object) -> None:
+        if self.health is not None:
+            self.health.mark_degraded(
+                "market_rotation",
+                error,
+                epoch=self._epoch,
+                **metrics,
+            )
+
 
     def _mark_down(self, exc: Exception, **metrics: object) -> None:
         if self.health is not None:

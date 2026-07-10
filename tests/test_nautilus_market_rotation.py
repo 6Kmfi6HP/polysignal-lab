@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, asyncio, sys, collections.abc, collections.abc.Coroutine, datetime, datetime.UTC, datetime.datetime, datetime.timedelta
-Output: test_market_universe_data_round_trips, test_market_universe_data_is_immutable, test_market_metadata_is_immutable, test_market_rotation_actor_initial_publish_and_diff_executes_intercepted_ptb_coroutines, test_market_rotation_actor_refresh_publishes_changed_ptb_for_still_active_market, test_market_rotation_actor_refresh_skips_unchanged_ptb_for_still_active_market, test_market_rotation_actor_refresh_continues_after_single_market_ptb_failure, test_market_rotation_actor_refresh_checks_still_active_ptb_sequentially, test_market_rotation_actor_keeps_last_good_state_on_publish_failure, test_market_rotation_actor_refresh_timer_marks_down_refresh_failures
+Input: __future__, __future__.annotations, asyncio, sys, collections.abc, collections.abc.Coroutine, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, threading, time
+Output: test_market_universe_data_round_trips, test_market_universe_data_is_immutable, test_market_metadata_is_immutable, test_market_rotation_actor_initial_publish_and_diff_executes_intercepted_ptb_coroutines, test_market_rotation_actor_refresh_publishes_changed_ptb_for_still_active_market, test_market_rotation_actor_refresh_skips_unchanged_ptb_for_still_active_market, test_market_rotation_actor_refresh_continues_after_single_market_ptb_failure, test_market_rotation_actor_refresh_checks_still_active_ptb_sequentially, test_market_rotation_actor_keeps_last_good_state_on_publish_failure, test_market_rotation_actor_refresh_timer_marks_down_refresh_failures, test_market_rotation_timer_does_not_call_discovery_inline, test_market_discovery_worker_returns_immutable_tuple_result, test_market_discovery_worker_coalesces_requests_until_result_is_taken, test_market_discovery_worker_close_detaches_in_flight_result, test_market_discovery_worker_returns_transport_errors, test_market_rotation_applies_completed_worker_result_on_actor_thread, test_market_rotation_ignores_stale_worker_result, test_market_rotation_error_result_preserves_markets_and_degrades_health, test_market_rotation_timer_keeps_epoch_when_worker_coalesces_request
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -18,6 +18,8 @@ import asyncio
 import sys
 from collections.abc import Coroutine
 from datetime import UTC, datetime, timedelta
+from threading import Event, get_ident
+from time import monotonic, sleep
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -35,6 +37,10 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
+)
+from polysignal_lab.nautilus_runtime.market_discovery_worker import (
+    MarketDiscoveryResult,
+    MarketDiscoveryWorker,
 )
 from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
 
@@ -91,12 +97,76 @@ class _HealthRecorder:
     def __init__(self) -> None:
         self.ok: list[tuple[str, dict[str, object]]] = []
         self.down: list[tuple[str, str | None, dict[str, object]]] = []
+        self.degraded: list[tuple[str, str | None, dict[str, object]]] = []
 
     def mark_ok(self, name: str, **metrics: object) -> None:
         self.ok.append((name, metrics))
 
+    def mark_degraded(
+        self,
+        name: str,
+        error: str | None = None,
+        **metrics: object,
+    ) -> None:
+        self.degraded.append((name, error, metrics))
+
     def mark_down(self, name: str, error: str | None = None, **metrics: object) -> None:
         self.down.append((name, error, metrics))
+
+
+class _StubDiscoveryWorker:
+    def __init__(
+        self,
+        *,
+        result: MarketDiscoveryResult | None = None,
+        request_result: bool = True,
+    ) -> None:
+        self.result = result
+        self.request_result = request_result
+        self.requests: list[int] = []
+        self.closed = False
+
+    def request(self, epoch: int) -> bool:
+        self.requests.append(epoch)
+        return self.request_result
+
+    def take_result(self) -> MarketDiscoveryResult | None:
+        result = self.result
+        self.result = None
+        return result
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _rotation_actor(
+    *,
+    discovery_worker: _StubDiscoveryWorker,
+    startup_markets: tuple[Market, ...] = (),
+    market_universe: object | None = None,
+    health: _HealthRecorder | None = None,
+) -> MarketRotationActor:
+    settings = Settings()
+    settings.runtime.nautilus.sidecar.spot_source = "disabled"
+    return MarketRotationActor(
+        settings=settings,
+        startup_markets=startup_markets,
+        market_universe=cast(Any, market_universe or _Universe([[]])),
+        catalog=MarketCatalog(),
+        discovery_worker=cast(Any, discovery_worker),
+        anchor_store=None,
+        health=health,
+    )
+
+
+def _take_worker_result(worker: MarketDiscoveryWorker) -> MarketDiscoveryResult:
+    deadline = monotonic() + 2.0
+    while monotonic() < deadline:
+        result = worker.take_result()
+        if result is not None:
+            return result
+        sleep(0.001)
+    raise AssertionError("market discovery worker did not complete")
 
 
 class _NoopPersistence:
@@ -901,7 +971,239 @@ def test_market_rotation_actor_on_start_uses_clock_timer_when_available(
         _close_recorded_tasks(created)
 
 
-def test_market_rotation_actor_refresh_timer_runs_sync_after_removing_async_offload(
+def test_market_rotation_timer_does_not_call_discovery_inline() -> None:
+    calls: list[str] = []
+
+    class BlockingUniverse:
+        async def refresh_once(self) -> list[Market]:
+            return []
+
+        def refresh_once_sync(self) -> list[Market]:
+            calls.append("transport")
+            return []
+
+    class FakeWorker:
+        def request(self, epoch: int) -> bool:
+            calls.append(f"request:{epoch}")
+            return True
+
+        def take_result(self) -> None:
+            return None
+
+        def close(self) -> None:
+            calls.append("close")
+
+    actor = MarketRotationActor(
+        settings=Settings(),
+        startup_markets=(),
+        market_universe=BlockingUniverse(),
+        catalog=MarketCatalog(),
+        discovery_worker=cast(Any, FakeWorker()),
+        anchor_store=None,
+        health=None,
+    )
+
+    actor._on_refresh_timer(None)
+
+    assert calls == ["request:1"]
+
+
+def test_market_discovery_worker_returns_immutable_tuple_result() -> None:
+    market = _market("condition-a")
+    source = [market]
+    worker = MarketDiscoveryWorker(lambda: source)
+    try:
+        assert worker.request(7) is True
+        result = _take_worker_result(worker)
+        source.append(_market("condition-b"))
+
+        assert result.epoch == 7
+        assert result.markets == (market,)
+        assert result.error is None
+        with pytest.raises(AttributeError):
+            setattr(result, "epoch", 8)
+    finally:
+        worker.close()
+
+
+def test_market_discovery_worker_coalesces_requests_until_result_is_taken() -> None:
+    started = Event()
+    release = Event()
+    transport_threads: list[int] = []
+
+    def refresh() -> list[Market]:
+        transport_threads.append(get_ident())
+        started.set()
+        if not release.wait(timeout=2.0):
+            raise TimeoutError("test did not release discovery")
+        return [_market("condition-a")]
+
+    worker = MarketDiscoveryWorker(refresh)
+    caller_thread = get_ident()
+    try:
+        assert worker.request(1) is True
+        assert started.wait(timeout=2.0)
+        assert worker.take_result() is None
+        assert worker.request(2) is False
+
+        release.set()
+        result = _take_worker_result(worker)
+        assert result.epoch == 1
+        assert worker.request(2) is True
+        second_result = _take_worker_result(worker)
+        assert second_result.epoch == 2
+        assert transport_threads[0] != caller_thread
+        assert transport_threads == [transport_threads[0], transport_threads[0]]
+    finally:
+        release.set()
+        worker.close()
+
+    worker.close()
+    assert worker.request(3) is False
+
+
+def test_market_discovery_worker_close_detaches_in_flight_result() -> None:
+    started = Event()
+    release = Event()
+    finished = Event()
+
+    def refresh() -> list[Market]:
+        started.set()
+        if not release.wait(timeout=2.0):
+            raise TimeoutError("test did not release discovery")
+        finished.set()
+        return [_market("condition-a")]
+
+    worker = MarketDiscoveryWorker(refresh)
+    try:
+        assert worker.request(1) is True
+        assert started.wait(timeout=2.0)
+
+        worker.close()
+
+        assert worker.request(2) is False
+        assert worker.take_result() is None
+        release.set()
+        assert finished.wait(timeout=2.0)
+        assert worker.take_result() is None
+    finally:
+        release.set()
+        worker.close()
+
+
+def test_market_discovery_worker_returns_transport_errors() -> None:
+    def fail_refresh() -> list[Market]:
+        raise RuntimeError("gamma unavailable")
+
+    worker = MarketDiscoveryWorker(fail_refresh)
+    try:
+        assert worker.request(4) is True
+        result = _take_worker_result(worker)
+    finally:
+        worker.close()
+
+    assert result == MarketDiscoveryResult(
+        epoch=4,
+        markets=(),
+        error="RuntimeError: gamma unavailable",
+    )
+
+
+def test_market_rotation_applies_completed_worker_result_on_actor_thread() -> None:
+    market_a = _market("condition-a")
+    market_b = _market("condition-b")
+    worker = _StubDiscoveryWorker(
+        result=MarketDiscoveryResult(epoch=2, markets=(market_b,)),
+    )
+    actor = _rotation_actor(
+        discovery_worker=worker,
+        startup_markets=(market_a,),
+    )
+    actor_thread = get_ident()
+    publication_threads: list[int] = []
+    published: list[object] = []
+
+    def publish(_data_type: object, data: object) -> None:
+        publication_threads.append(get_ident())
+        published.append(data)
+
+    actor.publish_data = publish
+    cast(Any, actor)._publish_price_to_beat_batch_sync = (
+        lambda _markets: publication_threads.append(get_ident())
+    )
+
+    actor._on_refresh_timer(None)
+
+    assert actor.active_markets() == (market_b,)
+    assert actor._epoch == 2
+    assert worker.requests == [3]
+    assert publication_threads
+    assert set(publication_threads) == {actor_thread}
+    assert any(isinstance(item, PolySignalMarketUniverseData) for item in published)
+    assert any(isinstance(item, PolySignalMarketMetaData) for item in published)
+
+
+def test_market_rotation_ignores_stale_worker_result() -> None:
+    market_a = _market("condition-a")
+    worker = _StubDiscoveryWorker(
+        result=MarketDiscoveryResult(
+            epoch=1,
+            markets=(_market("condition-b"),),
+        ),
+    )
+    actor = _rotation_actor(
+        discovery_worker=worker,
+        startup_markets=(market_a,),
+    )
+    actor._epoch = 2
+    published: list[object] = []
+    actor.publish_data = lambda _data_type, data: published.append(data)
+
+    actor._on_refresh_timer(None)
+
+    assert actor.active_markets() == (market_a,)
+    assert actor._epoch == 2
+    assert worker.requests == [3]
+    assert published == []
+
+
+def test_market_rotation_error_result_preserves_markets_and_degrades_health() -> None:
+    market = _market("condition-a")
+    health = _HealthRecorder()
+    worker = _StubDiscoveryWorker(
+        result=MarketDiscoveryResult(
+            epoch=2,
+            markets=(),
+            error="RuntimeError: gamma unavailable",
+        ),
+    )
+    actor = _rotation_actor(
+        discovery_worker=worker,
+        startup_markets=(market,),
+        health=health,
+    )
+    published: list[object] = []
+    actor.publish_data = lambda _data_type, data: published.append(data)
+
+    actor._on_refresh_timer(None)
+
+    assert actor.active_markets() == (market,)
+    assert published == []
+    assert worker.requests == [3]
+    assert health.degraded == [
+        (
+            "market_rotation",
+            "RuntimeError: gamma unavailable",
+            {
+                "epoch": 0,
+                "phase": "market_discovery",
+                "result_epoch": 2,
+            },
+        ),
+    ]
+
+
+def test_market_rotation_actor_refresh_async_clears_in_flight_after_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
@@ -931,20 +1233,19 @@ def test_market_rotation_actor_refresh_timer_runs_sync_after_removing_async_offl
     assert actor._refresh_in_flight is False
 
 
-def test_market_rotation_actor_refresh_timer_skips_when_refresh_in_flight() -> None:
-    actor = MarketRotationActor(
-        settings=Settings(),
-        startup_markets=(),
-        market_universe=_Universe([[]]),
-        catalog=MarketCatalog(),
-        anchor_store=None,
-        health=None,
+def test_market_rotation_timer_keeps_epoch_when_worker_coalesces_request() -> None:
+    universe = _Universe([[]])
+    worker = _StubDiscoveryWorker(request_result=False)
+    actor = _rotation_actor(
+        discovery_worker=worker,
+        market_universe=universe,
     )
-    actor._refresh_in_flight = True
 
     actor._on_refresh_timer()
 
-    assert actor.market_universe.calls == 0
+    assert worker.requests == [1]
+    assert actor._requested_epoch == 0
+    assert universe.calls == 0
 
 
 def test_market_universe_service_refresh_once_sync_uses_sync_discovery_and_closes_client(
@@ -1036,6 +1337,7 @@ def test_market_rotation_actor_on_stop_cancels_clock_without_feed_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cancelled: list[str] = []
+    worker = _StubDiscoveryWorker()
     settings = Settings()
     settings.runtime.nautilus.market_rotation.enabled = False
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
@@ -1044,6 +1346,7 @@ def test_market_rotation_actor_on_stop_cancels_clock_without_feed_lifecycle(
         startup_markets=(),
         market_universe=_Universe([[]]),
         catalog=MarketCatalog(),
+        discovery_worker=cast(Any, worker),
         anchor_store=None,
         health=None,
     )
@@ -1064,4 +1367,5 @@ def test_market_rotation_actor_on_stop_cancels_clock_without_feed_lifecycle(
     actor.on_stop()
 
     assert cancelled == ["market_rotation_refresh"]
+    assert worker.closed is True
     assert not hasattr(actor, "rtds_feed")
