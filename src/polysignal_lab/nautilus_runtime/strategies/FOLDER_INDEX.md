@@ -1,11 +1,9 @@
 ## 📁 strategies/
 
 **Architecture**:
-- Application code
+- Application code (legacy package stub — cross-market bot removed; native strategies built via `strategy_builder.py`)
 
 **Files**:
-- `cross_market_bot.py` - Exports CrossMarketNautilusStrategy
-- `base.py` - Application code
 - `__init__.py` - Application code
 
 🔄 **Self-reference**: When files in this folder change, update this index and PROJECT_INDEX.md

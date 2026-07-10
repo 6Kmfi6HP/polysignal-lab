@@ -158,10 +158,8 @@ def wire_live_node_runtime(
     observability: object | None = None,
 ) -> dict[str, object]:
     from polysignal_lab.nautilus_runtime.node import _build_market_rotation_actor
-
     refresh_once_sync = getattr(runtime_market_universe, "refresh_once_sync")
     discovery_worker = MarketDiscoveryWorker(refresh_once_sync)
-
     market_rotation_actor = _build_market_rotation_actor(
         settings=settings,
         startup_markets=configured_markets,

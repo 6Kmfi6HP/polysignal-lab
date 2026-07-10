@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from importlib import import_module
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import cast
 
 import pytest
@@ -24,8 +24,42 @@ def _load_static_native_strategy(
     common_module = ModuleType("nautilus_trader.common")
     actor_module = ModuleType("nautilus_trader.common.actor")
     config_module = ModuleType("nautilus_trader.config")
+    core_module = ModuleType("nautilus_trader.core")
+    core_data_module = ModuleType("nautilus_trader.core.data")
+    model_module = ModuleType("nautilus_trader.model")
+    model_custom_module = ModuleType("nautilus_trader.model.custom")
+    model_identifiers_module = ModuleType("nautilus_trader.model.identifiers")
+    model_objects_module = ModuleType("nautilus_trader.model.objects")
+    model_enums_module = ModuleType("nautilus_trader.model.enums")
     strategy_module = ModuleType("nautilus_trader.trading.strategy")
     trading_module = ModuleType("nautilus_trader.trading")
+
+    class FakeData:
+        pass
+
+    def fake_customdataclass(cls: type[object]) -> type[object]:
+        return cls
+
+    fake_order_side = SimpleNamespace(BUY="BUY", SELL="SELL")
+    fake_order_status = SimpleNamespace(
+        INITIALIZED="INITIALIZED",
+        SUBMITTED="SUBMITTED",
+        ACCEPTED="ACCEPTED",
+        REJECTED="REJECTED",
+        CANCELED="CANCELED",
+        EXPIRED="EXPIRED",
+        FILLED="FILLED",
+    )
+    fake_time_in_force = SimpleNamespace(GTC="GTC", GTD="GTD", IOC="IOC", FOK="FOK")
+
+    setattr(core_data_module, "Data", FakeData)
+    setattr(model_custom_module, "customdataclass", fake_customdataclass)
+    setattr(model_identifiers_module, "InstrumentId", str)
+    setattr(model_objects_module, "Price", object)
+    setattr(model_objects_module, "Quantity", object)
+    setattr(model_enums_module, "OrderSide", fake_order_side)
+    setattr(model_enums_module, "OrderStatus", fake_order_status)
+    setattr(model_enums_module, "TimeInForce", fake_time_in_force)
 
     class FakeActor:
         def __init__(self, *, config: object) -> None:
@@ -37,14 +71,28 @@ def _load_static_native_strategy(
     setattr(strategy_module, "Strategy", strategy_base)
     setattr(nautilus_module, "common", common_module)
     setattr(nautilus_module, "config", config_module)
+    setattr(nautilus_module, "core", core_module)
+    setattr(nautilus_module, "model", model_module)
     setattr(nautilus_module, "trading", trading_module)
     setattr(common_module, "actor", actor_module)
+    setattr(core_module, "data", core_data_module)
+    setattr(model_module, "custom", model_custom_module)
+    setattr(model_module, "enums", model_enums_module)
+    setattr(model_module, "identifiers", model_identifiers_module)
+    setattr(model_module, "objects", model_objects_module)
     setattr(trading_module, "strategy", strategy_module)
 
     monkeypatch.setitem(sys.modules, "nautilus_trader", nautilus_module)
     monkeypatch.setitem(sys.modules, "nautilus_trader.common", common_module)
     monkeypatch.setitem(sys.modules, "nautilus_trader.common.actor", actor_module)
     monkeypatch.setitem(sys.modules, "nautilus_trader.config", config_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.core", core_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.core.data", core_data_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.model", model_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.model.custom", model_custom_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.model.enums", model_enums_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.model.identifiers", model_identifiers_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.model.objects", model_objects_module)
     monkeypatch.setitem(sys.modules, "nautilus_trader.trading", trading_module)
     monkeypatch.setitem(sys.modules, "nautilus_trader.trading.strategy", strategy_module)
 
@@ -83,6 +131,7 @@ def test_static_native_strategy_initializes_nautilus_base(
         condition_ids=(),
         strategy_name="ptb_diff",
         registry=FakeRegistry(),
+        policy=SimpleNamespace(),
     )
 
     assert getattr(strategy, "nautilus_config") == "strategy-config"

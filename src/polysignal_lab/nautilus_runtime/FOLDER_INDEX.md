@@ -22,6 +22,8 @@
 - `native_strategy.py` - Exports PolySignalNativeStrategy
 - `native_order.py` - Exports submit_approved_decision and 2 more
 - `market_rotation.py` - Exports _MarketUniverse and 2 more
+- `market_discovery_worker.py` - Exports MarketDiscoveryWorker
+- `optional_imports.py` - Exports load_live_runtime_symbols and optional Nautilus import gateway
 - `live_node.py` - Exports assert_no_live_polymarket_execution and 7 more
 - `group_views.py` - Exports MarketGroupViewAssembler
 - `decision_policy_actor.py` - Exports NautilusDecisionPolicyActor

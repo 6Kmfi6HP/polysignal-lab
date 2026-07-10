@@ -8,13 +8,15 @@
 
 | Metric | Score | Grade |
 |--------|-------|-------|
-| **Overall Health** | **76/100** | **B** |
-| Coupling (CBO) | 55/100 | ❌ |
+| **Overall Health** | **86/100** | **B** |
+| Coupling (CBO) | 75/100 | 👍 (7/137 high-coupling) |
 | Cohesion (LCOM) | 90/100 | ✅ |
 | Dependencies | 70/100 | ⚠️ (no cycles, depth=13) |
 | Architecture | 81/100 | 👍 |
 
-**Hotspots**: High coupling drags the score. 26/225 classes have CBO ≥ 8.
+**Hotspots**: High coupling improved after remediation (7 classes CBO ≥ 8, down from 26). `PolySignalNativeStrategy` reduced to 513 lines / CBO 11 but remains the largest runtime class.
+
+> **Remediation update (2026-07-10)**: See `docs/architecture-remediation-results-2026-07-09.md` for measured before/after metrics and commit list.
 
 ---
 
@@ -37,26 +39,22 @@
 
 | Issue | Location | Severity |
 |-------|----------|----------|
-| **Lazy dynamic imports instead of static imports** | `live_node.py`, `node_builder.py` use `importlib.import_module()` + `getattr()` to load `LiveNode`, `TraderId`, `NautilusStrategy` | 🔴 **High** |
-| **Nautilus core types typed as `object`** | `LiveNode: object \| None = None`, `NautilusActor: type[object] | None = None` in `node_builder.py:76-79` | 🔴 **High** |
+| **Optional lazy imports for Nautilus extras** | `optional_imports.py`, `live_node.py` | 🟢 **Accepted boundary** |
+| **Nautilus core types typed as `object` in stubs** | `node_builder.py` runtime placeholders | 🟡 Medium |
 | **try/except wrapping Nautilus imports** | `strategy/helpers.py:21-27` wraps imports in `try: ... except ModuleNotFoundError` | 🟡 Medium |
 | **No proper adapter layer** | `data/polymarket_clob_rest.py` and `data/polymarket_clob_ws.py` bypass the Nautilus adapter pattern — they should be structured as `LiveDataClient` + `InstrumentProvider` implementations, not standalone HTTP/WS clients | 🟡 Medium |
 | **Custom type stubs replace inline imports** | `node_builder.py` uses stub placeholders + `_ensure_nautilus_imports()` for what should be plain `from nautilus_trader.live import LiveNode` | 🟡 Medium |
 
-### 🔴 Dynamic Import Anti-pattern (Detail)
+### 🔴 Dynamic Import Pattern (Detail — Accepted Optional Boundary)
 
-The `live_node.py` lazy-import pattern breaks IDE tooling, static analysis, and type checking:
+`live_node.py` loads Nautilus symbols through `optional_imports.load_live_runtime_symbols()` so the default package import graph does not require `nautilus_trader`. This is an intentional optional-dependency gate, not a missing static-import refactor for the default runtime.
 
 ```python
-# live_node.py:159-172
-def _ensure_live_imports() -> None:
-    global LiveNode, TraderId, Environment, PolymarketLiveDataClientFactory
-    live_mod = importlib.import_module("nautilus_trader.live")
-    LiveNode = getattr(live_mod, "LiveNode")  # typed as 'object'
-    ...
+# live_node.py — optional extra path only
+from polysignal_lab.nautilus_runtime.optional_imports import load_live_runtime_symbols
 ```
 
-This means `LiveNode` is `object | None` at module level, and every method that uses it needs `cast()` or `getattr()` calls — losing all type safety and making the code fragile to Nautilus API changes.
+IDE/type-checker limitations at this boundary remain acceptable tradeoffs until Nautilus becomes a hard dependency.
 
 ---
 
@@ -67,7 +65,7 @@ This means `LiveNode` is `object | None` at module level, and every method that 
 `domain/orderbook.py` (113 lines):
 - `OrderBook(BaseModel)`, `BookLevel(BaseModel)` — Pydantic models
 - Nautilus already provides: `OrderBook`, `L2OrderBook`, `L3OrderBook` with delta updates, sequence numbers, serialization, and reconciliation
-- The custom `OrderBookRegistry` in `data/state.py:65` has `books`, `states`, `telemetries`, `trade_events` dicts — replicating Nautilus's built-in cache
+- The custom `OrderBookRegistry` in `data/state.py` is a **compatibility / read-only projection path** for legacy snapshots and dashboards — not the Nautilus runtime execution truth (Cache owns live books in the Nautilus path).
 
 **Impact**: Missing Nautilus features like correct book reconstruction, out-of-order delta handling, and serialization for replay.
 
@@ -107,15 +105,15 @@ This means `LiveNode` is `object | None` at module level, and every method that 
 
 | Class | CBO | Lines | File | Problem |
 |-------|-----|-------|------|---------|
-| **PolySignalNativeStrategy** | **25** | **724** | `nautilus_runtime/native_strategy.py:100` | 🔴 **Biggest problem** — handles strategy lifecycle, decision pipeline, order submission, observability, subscriptions, instrument resolution |
-| **TelegramBotService** | **22** | **713** | `publish/telegram_bot.py:45` | 🔴 Mixes rendering, callback routing, bot lifecycle, rate limiting, inline keyboard building |
-| **MarketRotationActor** | **17** | **405** | `nautilus_runtime/market_rotation.py:63` | 🟡 High coupling to markets, anchors, prices |
-| **Settings** | **17** | **391** | `config.py:327` | 🟡 Central config conglomerate — expected but could be modularized |
-| **StrategyConfig** | **17** | **396** | `domain/strategy_config.py:362` | 🟡 Enum-density from 13+ strategy configs — expected |
+| **PolySignalNativeStrategy** | **11** | **513** | `nautilus_runtime/native_strategy.py:108` | 🟡 Still large (LCOM4=31) but reduced — shared policy injection and pipeline extraction helped |
+| **TelegramBotService** | **11** | **713** | `publish/telegram_bot.py:45` | 🔴 Mixes rendering, callback routing, bot lifecycle, rate limiting, inline keyboard building |
+| **MarketRotationActor** | **10** | **~405** | `nautilus_runtime/market_rotation.py` | 🟡 Discovery now offloaded to `MarketDiscoveryWorker` |
+| **DecisionPolicyActor** | **9** | — | `nautilus_runtime/decision_policy.py` | 🟡 Shared policy owner |
+| **SQLiteStore** | **9** | **639** | `storage/sqlite_store.py` | 🟡 Observability projection store |
 
-### 🔴 PolySignalNativeStrategy (LCOM=5, 724 lines)
+### 🟡 PolySignalNativeStrategy (LCOM4=31, 513 lines)
 
-The worst offender. Responsibilities include:
+Still the largest runtime class. Responsibilities include:
 - Strategy lifecycle (`on_start`, `on_stop`)
 - Market data subscription management
 - Market condition evaluation
@@ -200,7 +198,12 @@ The decision pipeline (`decision_pipeline.py:133`) has LCOM issues (`NativeDecis
 
 ## 6. Dead Code Status
 
-### ✅ Already Cleaned (Recent Refactoring)
+### ✅ Remediated in 2026-07-10 plan
+
+Also deleted during `refactor/nautilus-architecture-remediation`:
+- `nautilus_runtime/projection_recorder.py`
+- `nautilus_runtime/strategies/cross_market_bot.py`
+- Unused helpers in `decision_pipeline.py`, `native_strategy.py`, `persistence_service.persist_state()`
 
 The following were deleted in recent commits (`7adf7f5`, `5bf737dc`, `643c9e4`):
 - **17 legacy strategies** from `src/polysignal_lab/strategies/` (entire directory)
@@ -232,31 +235,23 @@ Contains `_CrashHandler` and related utilities. Check if imported anywhere and w
 
 **No circular dependencies found** ✅ (0 cycles — good).
 
-Dependency depth: 13 layers. Some areas to watch:
+Dependency depth: 12 layers (was 13). Some areas to watch:
 
 - `nautilus_runtime/` is the deepest module — its files depend on `nautilus_bridge/`, `domain/`, `alpha/`, `signal_layer/`, `storage/`, `observability/`, `config`, `utils`
-- `PolySignalNativeStrategy` (CBO=25) imports from 9 different internal modules
+- `PolySignalNativeStrategy` (CBO=11) imports from fewer internal modules after pipeline extraction
 - BOTTLENECK: `nautilus_runtime/decision_policy.py` is imported by both `native_strategy.py` and `decision_pipeline.py`, creating a wide surface area
 
 ---
 
 ## 8. Recommendations by Priority
 
-### 🔴 Must Fix (Architecture)
+### 🔴 Must Fix (Architecture) — Deferred
 
-1. **Replace dynamic imports with static imports in `live_node.py` and `node_builder.py`** — This is the biggest architectural debt. `importlib.import_module()` + `getattr()` bypasses Python's import system, breaks type checking, and makes the code fragile to Nautilus API changes.
-
-2. **Break up `PolySignalNativeStrategy` (724 lines, CBO=25)** — Split into focused classes. At minimum extract: order management, observability recording, market subscription management. This will also reduce coupling to 9+ internal modules.
+1. **Further decompose `PolySignalNativeStrategy` (513 lines, CBO=11, LCOM4=31)** — Partial remediation complete; additional splits still recommended.
 
 ### 🟡 Should Fix (Quality)
 
-3. **Break up `TelegramBotService` (713 lines, CBO=22)** — Extract rendering, inline keyboard building, and callback routing into separate modules.
-
-4. **Refactor `SignalGate` (CBO=15, LCOM=7)** — Each of its 10+ check methods should be a `GateCheck` policy object, not methods on the class.
-
-5. **Refactor high-cognitive-complexity functions** — `_calibration_from_reports` (Cog=37), `MarketUniverseService.fetch_resolved` (Cog=35), `_paper_trade_result_from_projection` (Cog=30), `PolySignalNativeStrategy.on_order_filled` (Cog=16)
-
-6. **Clean up empty `strategies/` directory** — Remove the staging area with no .py files.
+2. **Break up `TelegramBotService` (713 lines, CBO=11)** — Extract rendering, inline keyboard building, and callback routing into separate modules.
 
 ### 🟢 Nice to Have
 
@@ -277,12 +272,13 @@ Dependency depth: 13 layers. Some areas to watch:
 | Total Python files | 150 |
 | Test lines | ~49,685 |
 | Largest runtime module | `nautilus_runtime/` (38 files) |
-| Largest file | `nautilus_runtime/native_strategy.py` (724 lines) |
+| Largest file | `nautilus_runtime/native_strategy.py` (513 lines) |
 | Second largest | `publish/telegram_bot.py` (713 lines) |
-| Third largest | `alpha/vwap_momentum_core.py` (689 lines) |
+| Third largest | `alpha/vwap_momentum_core.py` (556 lines; history/state extracted) |
+| High-coupling classes (CBO ≥ 8) | 7 |
 | Total modules | 14 (alpha, app, dashboard, data, domain, nautilus_bridge, nautilus_runtime, observability, paper, publish, signal_layer, storage, strategies(empty), utils) |
 | Dependency cycles | 0 ✅ |
 
 ---
 
-*Generated by pyscn + manual codebase exploration on 2026-07-09.*
+*Generated by pyscn + manual codebase exploration on 2026-07-09. Metrics refreshed after remediation on 2026-07-10 — see `docs/architecture-remediation-results-2026-07-09.md`.*
