@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, sys, collections.abc, collections.abc.Callable, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, datetime.timedelta
-Output: test_native_strategy_on_save_load_delegates_to_core_via_encode_decode, test_native_strategy_on_save_persists_only_core_state, test_native_strategy_on_load_restores_core_without_runtime_order_truth, test_runtime_strategy_fok_depth_counts_asks_through_max_entry, test_native_strategy_records_rejection_when_order_mapping_fails, test_native_strategy_blocks_duplicate_in_flight_signal_submission, test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data, test_static_native_strategy_does_not_bypass_custom_data_lifecycle, test_native_strategy_generates_signal_from_on_data_callback, test_native_strategy_constructor_requires_injected_projections
+Output: test_native_strategy_on_save_load_delegates_to_core_via_encode_decode, test_native_strategy_on_save_persists_only_core_state, test_native_strategy_on_load_restores_core_without_runtime_order_truth, test_runtime_strategy_fok_depth_counts_asks_through_max_entry, test_native_strategy_records_rejection_when_order_mapping_fails, test_native_strategy_blocks_duplicate_in_flight_signal_submission, test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data, test_static_native_strategy_does_not_bypass_custom_data_lifecycle, test_native_strategy_generates_signal_from_on_data_callback, test_native_strategy_requires_shared_policy, test_native_strategy_constructor_requires_injected_projections
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -131,6 +131,7 @@ def _minimal_native_strategy(
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name=strategy_name,
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
 
@@ -618,6 +619,7 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -696,6 +698,7 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -782,6 +785,21 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
     assert len(strategy.execution_results) == 0
 
 
+def test_native_strategy_requires_shared_policy() -> None:
+    import pytest
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    with pytest.raises(TypeError, match="policy"):
+        PolySignalNativeStrategy(
+            core=FakeCore([]),
+            assembler=_assembler(None),
+            condition_ids=(),
+            strategy_name="ptb_diff",
+            registry=_test_market_catalog(),
+        )
+
+
 def test_native_strategy_constructor_requires_injected_projections() -> None:
     import pytest
 
@@ -796,6 +814,7 @@ def test_native_strategy_constructor_requires_injected_projections() -> None:
             assembler=_assembler(None),
             condition_ids=(),
             strategy_name="ptb_diff",
+            policy=RuntimeFakePolicy(),
         )
 
 
@@ -814,6 +833,7 @@ def test_native_strategy_constructor_requires_injected_assembler() -> None:
             assembler=cast(Any, None),
             condition_ids=(),
             strategy_name="ptb_diff",
+            policy=RuntimeFakePolicy(),
             registry=_test_market_catalog(),
         )
 
@@ -846,6 +866,7 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
         assembler=_assembler(None),
         condition_ids=(),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=_test_market_catalog(),
     )
 
@@ -899,6 +920,7 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m", "condition-btc-retired"),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=_test_market_catalog(),
     )
     strategy._active_condition_ids = {"condition-btc-5m"}
@@ -931,6 +953,7 @@ def test_native_strategy_reports_progress_on_internal_evaluation_heartbeat() -> 
         assembler=_assembler(_MockView()),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
         progress_callback=progress_events.append,
     )
@@ -949,6 +972,7 @@ def test_native_strategy_reports_progress_on_start_without_market_data() -> None
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
         progress_callback=progress_events.append,
     )
@@ -967,6 +991,7 @@ def test_native_strategy_drops_unknown_project_owned_data_with_metric() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
     strategy.progress_callback = lambda phase: observed.append((phase, None))
@@ -985,6 +1010,7 @@ def test_malformed_project_owned_data_does_not_poison_later_valid_market_metadat
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
 
@@ -1019,6 +1045,7 @@ def test_native_strategy_unknown_quote_tick_instrument_is_dropped_with_metric() 
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
     strategy.progress_callback = phases.append
@@ -1101,6 +1128,7 @@ def test_native_strategy_partial_market_data_mappings_are_dropped_without_evalua
                 assembler=_assembler(None),
                 condition_ids=("condition-btc-5m",),
                 strategy_name="ptb_diff",
+                policy=RuntimeFakePolicy(),
                 **_native_projections(registry),
                 progress_callback=phases.append,
             )
@@ -1151,6 +1179,7 @@ def test_native_strategy_unknown_market_data_instruments_are_dropped_with_metric
             assembler=_assembler(None),
             condition_ids=("condition-btc-5m",),
             strategy_name="ptb_diff",
+            policy=RuntimeFakePolicy(),
             **_native_projections(),
             progress_callback=phases.append,
         )
@@ -1173,6 +1202,7 @@ def test_native_strategy_drops_unknown_project_owned_data_with_condition_id() ->
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
     strategy.progress_callback = lambda phase: observed.append((phase, None))
@@ -1195,6 +1225,7 @@ def test_native_strategy_readiness_gate_skips_missing_required_market_view_input
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
     strategy.core.evaluate = lambda view: calls.append(view) or []  # type: ignore[method-assign]
@@ -1232,9 +1263,9 @@ def test_native_strategy_routes_decisions_through_policy_actor_decide() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=ActorPolicy(),
         **_native_projections(),
     )
-    strategy.policy = ActorPolicy()  # type: ignore[assignment]
     strategy._submit_approved = lambda approved, *, view: submitted.append((approved, view))  # type: ignore[method-assign]
     view = _MockView()
 
@@ -1386,6 +1417,7 @@ def test_native_strategy_resolved_instrument_allows_cache_without_instrument_api
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         **_native_projections(),
     )
@@ -1408,6 +1440,7 @@ def test_native_strategy_does_not_submit_when_approved_decision_view_lacks_book(
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
         progress_callback=phases.append,
     )
@@ -1481,6 +1514,7 @@ def test_native_strategy_readiness_gate_skips_real_market_view_with_empty_quote_
         assembler=_assembler(_real_market_view_with_empty_quote_depth()),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         progress_callback=phases.append,
         **_native_projections(),
     )
@@ -1506,6 +1540,7 @@ def test_native_strategy_constructor_without_registry_fails_clearly() -> None:
             assembler=_assembler(None),
             condition_ids=(),
             strategy_name="ptb_diff",
+            policy=RuntimeFakePolicy(),
             instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         )
 
@@ -1518,6 +1553,7 @@ def test_native_strategy_bounds_rejected_decisions_to_prevent_memory_leak() -> N
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
 
@@ -1535,6 +1571,7 @@ def test_native_strategy_bounds_submitted_orders_to_prevent_memory_leak() -> Non
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
 
@@ -1595,6 +1632,7 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -1702,6 +1740,7 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
         assembler=assembler,
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
     second = FakeNativeStrategy(
@@ -1710,6 +1749,7 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
         assembler=assembler,
         condition_ids=("condition-btc-5m",),
         strategy_name="late_consensus",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -1820,6 +1860,7 @@ def test_native_strategy_universe_update_subscribes_entered_market_once() -> Non
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -1913,6 +1954,7 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -1984,6 +2026,7 @@ def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> (
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2057,6 +2100,7 @@ def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> No
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2107,6 +2151,7 @@ def test_native_strategy_active_market_without_metadata_stays_pending_until_meta
         assembler=_assembler(None),
         condition_ids=(),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=_test_market_catalog(),
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
     )
@@ -2225,6 +2270,7 @@ def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
         assembler=_assembler(None),
         condition_ids=(),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2281,6 +2327,7 @@ def test_native_strategy_active_market_without_subscribe_hooks_still_marks_wired
         assembler=_assembler(None),
         condition_ids=(),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2321,6 +2368,7 @@ def test_native_strategy_exited_market_is_gated_even_if_late_tick_arrives() -> N
         assembler=_assembler(view),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
     strategy.on_data(
@@ -2508,6 +2556,7 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2604,6 +2653,7 @@ def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         book_type="L1_MBP",
         registry=registry,
     )
@@ -2676,6 +2726,7 @@ def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() ->
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2745,6 +2796,7 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
         unsubscribe_exited=False,
     )
@@ -2818,6 +2870,7 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_sta
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2917,6 +2970,7 @@ def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
         assembler=_assembler(view),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -3003,6 +3057,7 @@ def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_on
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m", "condition-eth-5m"),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -3051,6 +3106,7 @@ def test_native_strategy_routes_ptb_custom_data_to_matching_active_condition_onl
         assembler=cast(MarketViewAssembler, cast(object, assembler)),
         condition_ids=("condition-active",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=_test_market_catalog(),
     )
 
@@ -3181,8 +3237,8 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
             from_anchor_service=True,
             anchor_source="chainlink",
             anchor_lag_ms=5,
-            ts_event=0,
-            ts_init=0,
+            ts_event=1_700_000_000_000_000_000,
+            ts_init=1_700_000_000_000_000_000,
         )
     )
     fake_cache = FakeCache()
@@ -3208,6 +3264,7 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
         assembler=assembler,
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -3407,6 +3464,7 @@ def test_native_strategy_attributes_inactive_registered_down_order_and_fill_from
         assembler=_assembler(None),
         condition_ids=(),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         registry=registry,
     )
     down_instrument_id = _test_instrument_id("condition-btc-exited-5m", "down-exited-token")
@@ -3464,6 +3522,7 @@ def test_order_submitted_observability_failure_does_not_block_core_event() -> No
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         observability=FailingObservability(),
         progress_callback=phases.append,
         **_native_projections(),
@@ -3695,6 +3754,7 @@ def test_native_strategy_fill_and_position_callbacks_bridge_to_observability() -
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         observability=observability,
         **_native_projections(),
     )
@@ -3771,6 +3831,7 @@ def test_native_strategy_notifies_core_before_fill_handler() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="vwap_momentum",
+        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
 
@@ -3832,6 +3893,7 @@ def test_native_strategy_l1_subscribes_data_names_and_snapshot_request() -> None
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         book_type="L1_MBP",
         **_native_projections(),
     )
@@ -3872,6 +3934,7 @@ def test_native_strategy_l1_skips_snapshot_when_hook_missing() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         book_type="L1_MBP",
         **_native_projections(),
     )
@@ -3909,6 +3972,7 @@ def test_native_strategy_l1_subscribes_all_data_names() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         book_type="L1_MBP",
         progress_callback=phases.append,
         **_native_projections(),
@@ -3949,6 +4013,7 @@ def test_native_strategy_l2_subscribes_all_data_names() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
         book_type="L2_MBP",
         **_native_projections(),
     )

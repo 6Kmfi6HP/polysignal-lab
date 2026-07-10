@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.FreshnessView, polysignal_lab.alpha.types.MarketView
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.FreshnessView, polysignal_lab.alpha.types.MarketView, polysignal_lab.nautilus_runtime.decision_policy
 Output: test_evaluate_condition_does_not_run_custom_exit_scan, test_native_strategy_has_no_custom_exit_evaluation_api
 Pos: Test Layer - Unit/Integration tests
 
@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
 
@@ -73,6 +74,7 @@ def _native_strategy() -> PolySignalNativeStrategy:
         assembler=Assembler(),
         condition_ids=("condition-1",),
         strategy_name="test",
+        policy=DecisionPolicyActor(),
         registry=Registry(),
         instrument_id_resolver=lambda value: value,
     )

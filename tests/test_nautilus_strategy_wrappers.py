@@ -205,6 +205,7 @@ def test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data(
         assembler=FakeAssembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name=strategy_name,
+        policy=FakePolicy(),
         data_names=COMPAT_DATA_NAMES,
         registry=MarketCatalog(),
     )
@@ -219,6 +220,7 @@ def test_each_wrapper_preserves_custom_data_names(strategy_name: str) -> None:
         assembler=FakeAssembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name=strategy_name,
+        policy=FakePolicy(),
         data_names=("custom_feed",),
         registry=MarketCatalog(),
     )
@@ -272,11 +274,13 @@ def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved
 
 def test_stateful_core_round_trips_through_shared_state_codec() -> None:
     core = FakeCore([])
+    policy = FakePolicy()
     strategy = PolySignalNativeStrategy(
         core=core,
         assembler=FakeAssembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=policy,
         registry=MarketCatalog(),
     )
 
@@ -287,6 +291,7 @@ def test_stateful_core_round_trips_through_shared_state_codec() -> None:
         assembler=FakeAssembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
+        policy=policy,
         registry=MarketCatalog(),
     )
 

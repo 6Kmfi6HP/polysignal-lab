@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, asyncio, logging, signal, threading, time, types, types.SimpleNamespace, typing
-Output: test_live_engine_config_builders_import_configs_from_config_module, test_build_live_node_uses_livenode_builder, test_build_live_node_uses_configured_non_default_trader_id, test_build_live_node_returns_nautilus_runtime_components, test_build_live_node_injects_shared_projections_and_no_manual_sync_components, test_build_live_node_gives_each_strategy_own_custom_data_state, test_build_live_node_uses_static_runtime_classes, test_build_live_node_registers_market_rotation_actor, test_build_live_node_registers_policy_actor_when_runtime_class_exists, test_build_live_node_uses_sandbox_execution_not_matching_client
+Output: test_live_engine_config_builders_import_configs_from_config_module, test_build_live_node_uses_livenode_builder, test_build_live_node_uses_configured_non_default_trader_id, test_build_live_node_returns_nautilus_runtime_components, test_build_live_node_injects_shared_projections_and_no_manual_sync_components, test_build_live_node_gives_each_strategy_own_custom_data_state, test_build_live_node_uses_static_runtime_classes, test_build_live_node_registers_market_rotation_actor, test_all_native_strategies_share_runtime_policy, test_build_live_node_uses_sandbox_execution_not_matching_client
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -364,7 +364,7 @@ def test_build_live_node_registers_market_rotation_actor(monkeypatch) -> None:
     assert runtime["market_rotation_actor"].kwargs["health"] is health
 
 
-def test_build_live_node_registers_policy_actor_when_runtime_class_exists(monkeypatch) -> None:
+def test_all_native_strategies_share_runtime_policy(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
     from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
@@ -395,14 +395,23 @@ def test_build_live_node_registers_policy_actor_when_runtime_class_exists(monkey
         lambda: (FakeStrategy, FakeRotationActor, FakePolicyActor),
     )
 
-    runtime = build_live_node(condition_ids=("condition-btc-5m",))
+    settings = Settings()
+    settings.strategies.set_explicit_strategy_names(("vwap_momentum", "ptb_diff"))
+    settings.strategies.vwap_momentum.enabled = True
+    settings.strategies.ptb_diff.enabled = True
+
+    runtime = build_live_node(
+        settings=settings,
+        condition_ids=("condition-btc-5m",),
+    )
     node = runtime["node"]
 
     assert len(node.trader.actors) == 2
     assert node.trader.actors[0] is runtime["market_rotation_actor"]
     assert node.trader.actors[1] is runtime["policy"]
     assert isinstance(runtime["policy"], FakePolicyActor)
-    assert runtime["strategies"][0].policy is runtime["policy"]
+    assert len(runtime["strategies"]) == 2
+    assert all(strategy.policy is runtime["policy"] for strategy in runtime["strategies"])
 
 def test_build_live_node_uses_sandbox_execution_not_matching_client(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)

@@ -117,7 +117,7 @@ class PolySignalNativeStrategy(Strategy):
         assembler: _Assembler | None,
         condition_ids: Sequence[str],
         strategy_name: str,
-        policy: DecisionPolicyActor | None = None,
+        policy: DecisionPolicyActor,
         fixed_stake_usdc: float = 10.0,
         data_names: Sequence[str] = DEFAULT_NATIVE_DATA_NAMES,
         book_type: str = "L2_MBP",
@@ -142,7 +142,7 @@ class PolySignalNativeStrategy(Strategy):
         self.assembler: _Assembler = resolved_assembler
         self.condition_ids: tuple[str, ...] = tuple(condition_ids)
         self.strategy_name: str = strategy_name
-        self.policy: DecisionPolicyActor = policy or DecisionPolicyActor()
+        self.policy: DecisionPolicyActor = policy
         self.fixed_stake_usdc: float = fixed_stake_usdc
         self.data_names: tuple[str, ...] = tuple(data_names)
         self.book_type: str = book_type
