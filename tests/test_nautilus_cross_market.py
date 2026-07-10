@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, datetime, datetime.datetime, datetime.timezone, types, types.SimpleNamespace, polysignal_lab.alpha.cross_market_core
-Output: test_group_assembler_rejects_excessive_skew, test_group_assembler_rejects_equally_stale_views, test_group_assembler_rejects_missing_freshness, test_group_assembler_honors_per_call_age_limit, test_group_assembler_accepts_acceptable_skew, test_cross_market_wrapper_evaluate_group_returns_decisions, test_cross_market_wrapper_submits_via_callback, test_cross_market_basket_tags_present, test_cross_market_leg_failure_marks_basket, test_cross_market_state_roundtrip, test_cross_market_wrapper_matches_legacy_alpha_output, test_cross_market_wrapper_fok_depth_counts_asks_through_max_entry, AllowAllPolicy
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.replace, datetime, datetime.datetime, datetime.timezone, types, types.SimpleNamespace, polysignal_lab.alpha.cross_market_core
+Output: test_group_assembler_rejects_excessive_skew, test_group_assembler_rejects_equally_stale_views, test_group_assembler_rejects_missing_freshness, test_group_assembler_honors_per_call_age_limit, test_group_assembler_accepts_acceptable_skew, test_cross_market_pair_id_reaches_native_order_tags, test_cross_market_decisions_use_native_decision_pipeline, test_cross_market_leg_failure_marks_basket, test_cross_market_state_roundtrip, AllowAllPolicy
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,6 +14,7 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -24,14 +25,21 @@ from polysignal_lab.alpha.types import (
     FreshnessView,
     MarketGroupView,
     MarketView,
-    OrderIntentSpec,
     SideBookView,
 )
-from polysignal_lab.domain.enums import OrderIntent, Side
-from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
+from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.nautilus_runtime.decision_policy import (
+    ApprovedDecision,
+    DecisionPolicyActor,
+    RejectedDecision,
+    candidate_from_decision,
+)
 from polysignal_lab.nautilus_runtime.group_views import MarketGroupViewAssembler
-from polysignal_lab.nautilus_runtime.strategies.cross_market_bot import (
-    CrossMarketNautilusStrategy,
+from polysignal_lab.nautilus_runtime.native_order import submit_approved_decision
+from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
+    DecisionPipeline,
+    DecisionPipelineState,
 )
 
 
@@ -128,51 +136,46 @@ def _group(
     )
 
 
-class AllowAllPolicy:
+class AllowAllPolicy(DecisionPolicyActor):
     """Policy that approves every decision without gate/arbiter checks."""
-
-    def __init__(self):
-        self.group_decisions: list[AlphaDecision] = []
 
     def decide(
         self, decision: AlphaDecision, view: MarketView
     ) -> ApprovedDecision:
-        from polysignal_lab.domain.signal import SignalCandidate
-
-        self.group_decisions.append(decision)
-        return ApprovedDecision(
-            signal=SignalCandidate.build(
-                strategy=decision.strategy,
-                asset=decision.asset,
-                timeframe=decision.timeframe,
-                market_id=decision.market_id,
-                market_slug=decision.market_slug,
-                condition_id=decision.condition_id,
-                token_id=decision.token_id,
-                side=decision.side,
-                confidence=decision.confidence,
-                entry_reference_price=decision.entry_reference_price,
-                max_entry_price=decision.max_entry_price,
-                seconds_to_close=decision.seconds_to_close,
-                data_freshness_ms=decision.data_freshness_ms,
-                reason_codes=list(decision.reason_codes),
-                metrics=dict(decision.metrics),
-            )
-        )
+        return ApprovedDecision(signal=candidate_from_decision(decision, view))
 
 
-def _strategy(
-    core: CrossMarketAlphaCore | None = None,
-    submitter: object = None,
-) -> CrossMarketNautilusStrategy:
-    return CrossMarketNautilusStrategy(
-        core=core or _core(),
-        assembler=None,
-        condition_ids=["cond-btc", "cond-eth"],
-        strategy_name="cross_market_bot",
-        policy=AllowAllPolicy(),
-        submitter=submitter,
-    )
+class _RecordingSink:
+    def __init__(self, submitted: list[ApprovedDecision]) -> None:
+        self.submitted = submitted
+
+    def submit_order(
+        self,
+        approved: ApprovedDecision,
+        *,
+        view: MarketView,
+    ) -> object:
+        _ = view
+        self.submitted.append(approved)
+        return SimpleNamespace(order_id=f"order-{len(self.submitted)}")
+
+    def remember_metrics(self, order: object, approved: ApprovedDecision) -> None:
+        _ = order, approved
+
+    def record_signal(self, signal: SignalCandidate) -> None:
+        _ = signal
+
+    def notify_accepted(self, signal: SignalCandidate) -> None:
+        _ = signal
+
+    def record_decision(self, decision: AlphaDecision, *, accepted: bool) -> None:
+        _ = decision, accepted
+
+    def record_rejected(self, rejected: RejectedDecision) -> None:
+        _ = rejected
+
+    def note_progress(self, event: str) -> None:
+        _ = event
 
 
 # ── MarketGroupViewAssembler tests ──────────────────────────────────────────
@@ -269,48 +272,73 @@ def test_group_assembler_accepts_acceptable_skew() -> None:
     assert group.relation_id == "rel-1"
 
 
-# ── CrossMarketNautilusStrategy tests ──────────────────────────────────────
+def test_cross_market_pair_id_reaches_native_order_tags() -> None:
+    # Given
+    group = _group()
+    decision = _core().evaluate_group(group)[0]
+    view = group.views_by_condition_id[decision.condition_id]
+    approved = AllowAllPolicy().decide(decision, view)
+
+    class RecordingOrderFactory:
+        def limit(self, **kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(**kwargs)
+
+    class RecordingStrategy:
+        def __init__(self) -> None:
+            self.order_factory = RecordingOrderFactory()
+            self.submitted: list[SimpleNamespace] = []
+
+        def submit_order(self, order: SimpleNamespace) -> None:
+            self.submitted.append(order)
+
+    strategy = RecordingStrategy()
+
+    # When
+    order = submit_approved_decision(
+        strategy,
+        approved,
+        fixed_stake_usdc=10.0,
+        best_ask=view.book_for(approved.signal.side).best_ask,
+        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+    )
+
+    # Then
+    assert strategy.submitted == [order]
+    assert "pair_id=btc-eth-rel" in order.tags
 
 
-def test_cross_market_wrapper_evaluate_group_returns_decisions() -> None:
-    strategy = _strategy()
-    specs = strategy.evaluate_group(_group())
-    assert len(specs) >= 2
-    # instrument_id is the token_id, derived from the view
-    for spec in specs:
-        assert spec.pair_id == "btc-eth-rel"
+def test_cross_market_decisions_use_native_decision_pipeline() -> None:
+    # Given
+    group = _group()
+    decisions = tuple(_core().evaluate_group(group))
+    submitted: list[ApprovedDecision] = []
+    state = DecisionPipelineState()
+    pipeline = DecisionPipeline(
+        AllowAllPolicy(),
+        is_active_condition=lambda _condition_id: True,
+    )
+    sink = _RecordingSink(submitted)
 
+    # When
+    for decision in decisions:
+        view = group.views_by_condition_id[decision.condition_id]
+        pipeline.handle_decision(decision, view, state=state, sink=sink)
 
-def test_cross_market_wrapper_submits_via_callback() -> None:
-    submitted: list = []
-
-    def fake_submitter(spec):
-        submitted.append(spec)
-
-    strategy = _strategy(submitter=fake_submitter)
-    specs = strategy.evaluate_group(_group())
-    assert len(specs) >= 2
-    assert len(submitted) >= 2
-
-
-def test_cross_market_basket_tags_present() -> None:
-    strategy = _strategy()
-    specs = strategy.evaluate_group(_group())
-    for spec in specs:
-        assert "pair_id" in spec.tags
+    # Then
+    assert len(submitted) == len(decisions)
+    assert len(state.submitted_orders) == len(decisions)
 
 
 def test_cross_market_leg_failure_marks_basket() -> None:
     core = _core()
-    strategy = _strategy(core)
-    strategy.on_leg_failure("btc-eth-rel", "cond-btc", Side.UP)
+    core.on_leg_failure("btc-eth-rel", "cond-btc", Side.UP)
     basket = core._active_baskets.get("btc-eth-rel", {})
     assert basket.get("failed") is True
 
 
 def test_cross_market_state_roundtrip() -> None:
     """Core state encodes basket state and decodes back."""
-    from polysignal_lab.nautilus_bridge.state import encode_state, decode_state
+    from polysignal_lab.nautilus_bridge.state import decode_state, save_strategy_state
 
     core = _core()
     core._active_baskets["btc-eth-rel"] = {
@@ -318,105 +346,7 @@ def test_cross_market_state_roundtrip() -> None:
         "markets": {"cond-btc", "cond-eth"},
         "failed": False,
     }
-    raw = encode_state("cross_market_bot", {"core": core.save_state()})
+    raw = save_strategy_state("cross_market_bot", core)
     decoded = decode_state("cross_market_bot", raw)
-    assert decoded is not None
-    assert "core" in decoded
-    assert "_active_baskets" in decoded["core"]
-
-
-def test_cross_market_wrapper_matches_legacy_alpha_output() -> None:
-    """Nautilus wrapper must emit one spec per alpha decision for the same group."""
-    core = _core()
-    g = _group()
-    legacy_decisions = core.evaluate_group(g)
-    strategy = _strategy(core)
-    specs = strategy.evaluate_group(g)
-    assert len(specs) == len(legacy_decisions)
-    # Each spec should carry the legacy decision's condition_id in tags
-    for spec, decision in zip(specs, legacy_decisions):
-        assert spec.pair_id == decision.metrics.get(
-            "pair_id", decision.order_intent.pair_id if decision.order_intent else None
-        )
-
-
-
-def test_cross_market_wrapper_fok_depth_counts_asks_through_max_entry() -> None:
-    base_view = _view("cond-btc", ask=0.50)
-    view = replace(
-        base_view,
-        up=replace(
-            base_view.up,
-            ask_levels=((0.50, 10.0), (0.52, 10.0), (0.53, 100.0)),
-        ),
-    )
-    group = replace(_group(), views_by_condition_id={"cond-btc": view})
-
-    class FokCore:
-        def evaluate_group(self, group):
-            return [
-                AlphaDecision(
-                    strategy="cross_market_bot",
-                    asset="BTC",
-                    timeframe="5m",
-                    market_id=view.market_id,
-                    market_slug=view.market_slug,
-                    condition_id=view.condition_id,
-                    token_id=view.up.token_id,
-                    side=Side.UP,
-                    confidence=0.8,
-                    entry_reference_price=0.50,
-                    max_entry_price=0.52,
-                    seconds_to_close=view.seconds_to_close,
-                    data_freshness_ms=view.freshness.max_ms,
-                    reason_codes=("TEST",),
-                    metrics={},
-                    order_intent=OrderIntentSpec(
-                        intent=OrderIntent.TAKER_FOK,
-                        pair_id="pair-1",
-                    ),
-                    hedge_leg=False,
-                )
-            ]
-
-    class PreserveIntentPolicy:
-        def decide(self, decision, view):
-            from polysignal_lab.domain.signal import SignalCandidate
-
-            intent = decision.order_intent
-            return ApprovedDecision(
-                signal=SignalCandidate.build(
-                    strategy=decision.strategy,
-                    asset=decision.asset,
-                    timeframe=decision.timeframe,
-                    market_id=decision.market_id,
-                    market_slug=decision.market_slug,
-                    condition_id=decision.condition_id,
-                    token_id=decision.token_id,
-                    side=decision.side,
-                    confidence=decision.confidence,
-                    entry_reference_price=decision.entry_reference_price,
-                    max_entry_price=decision.max_entry_price,
-                    seconds_to_close=decision.seconds_to_close,
-                    data_freshness_ms=decision.data_freshness_ms,
-                    reason_codes=list(decision.reason_codes),
-                    metrics=dict(decision.metrics),
-                    order_intent=intent.intent,
-                    pair_id=intent.pair_id,
-                )
-            )
-
-    strategy = CrossMarketNautilusStrategy(
-        core=FokCore(),
-        assembler=None,
-        condition_ids=["cond-btc"],
-        strategy_name="cross_market_bot",
-        policy=PreserveIntentPolicy(),
-        fixed_stake_usdc=10.0,
-    )
-
-    specs = strategy.evaluate_group(group)
-
-    assert len(specs) == 1
-    assert specs[0].intent == OrderIntent.TAKER_FOK
-    assert specs[0].quantity == 20.0
+    assert isinstance(decoded, Mapping)
+    assert "_active_baskets" in decoded

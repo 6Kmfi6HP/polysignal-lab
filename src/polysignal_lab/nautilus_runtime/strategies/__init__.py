@@ -1,7 +1,6 @@
 """Nautilus strategy wrappers."""
 
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-from polysignal_lab.nautilus_runtime.strategies.cross_market_bot import CrossMarketNautilusStrategy
 
 DEFAULT_DATA_NAMES = (
     "order_book_deltas",
@@ -12,6 +11,5 @@ DEFAULT_DATA_NAMES = (
 
 __all__ = [
     "DEFAULT_DATA_NAMES",
-    "CrossMarketNautilusStrategy",
     "PolySignalNativeStrategy",
 ]

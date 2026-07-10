@@ -123,6 +123,9 @@ def build_order_tags(
         "order_intent": intent.value,
     }
     add_optional_source_tags(tags, source)
+    pair_id = pair_id_for(source)
+    if pair_id is not None:
+        tags["pair_id"] = pair_id
     add_time_in_force_tags(tags, source=source, intent=intent, expiry_seconds=expiry_seconds)
     return tags
 
