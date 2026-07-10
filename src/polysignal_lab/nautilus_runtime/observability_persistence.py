@@ -9,7 +9,6 @@ Pos: Observability persistence routing — enums, protocols, adapters, and share
 from __future__ import annotations
 
 import sqlite3
-import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from enum import Enum

@@ -43,7 +43,6 @@ async def run_nautilus_cli_async(
     # the runtime construction and sidecar helpers that this function
     # orchestrates.
     from polysignal_lab.nautilus_runtime.node import (
-        _NautilusNodeLike,
         _finalize_async_cli_runtime,
         _notify_async_cli_startup,
         _run_async_node_with_report_loop,

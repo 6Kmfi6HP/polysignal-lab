@@ -17,7 +17,7 @@ from __future__ import annotations
 import sqlite3
 
 from polysignal_lab.observability.health import HealthSnapshot
-from polysignal_lab.utils import new_id, utc_iso, utc_now
+from polysignal_lab.utils import new_id, utc_iso
 
 
 def note_storage_success(scheduler: object, store_name: str) -> None:

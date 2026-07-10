@@ -24,7 +24,7 @@ from polysignal_lab.alpha.types import AlphaDecision, AlphaOrderEvent, MarketVie
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 if TYPE_CHECKING:
-    from polysignal_lab.domain.snapshot import MarketSnapshot
+    pass
 
 
 class BinaryMomentumAlphaCore:

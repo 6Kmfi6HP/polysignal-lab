@@ -18,7 +18,6 @@ import asyncio
 import signal
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-from typing import cast
 
 
 _SignalHandler = signal.Handlers | int | Callable[..., object] | None

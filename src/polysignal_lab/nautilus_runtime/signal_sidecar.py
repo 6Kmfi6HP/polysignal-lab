@@ -19,8 +19,8 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from datetime import UTC, date, datetime
-from typing import Protocol, cast, runtime_checkable
+from datetime import date
+from typing import Protocol, cast
 
 from polysignal_lab.app import scheduler_health
 from polysignal_lab.app.services.publish_service import PublishService

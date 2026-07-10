@@ -33,7 +33,6 @@ from polysignal_lab.nautilus_runtime.node_builder_components import (
     configured_condition_ids as _configured_condition_ids,
     create_market_projection_components as _create_market_projection_components,
     instrument_load_ids as _instrument_load_ids,
-    runtime_components as _runtime_components,
     wire_live_node_runtime,
 )
 from polysignal_lab.nautilus_runtime.observability import ObservabilityService

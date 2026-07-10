@@ -12,7 +12,7 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Protocol, cast

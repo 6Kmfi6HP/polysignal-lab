@@ -14,8 +14,6 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import datetime
 
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.utils import utc_now

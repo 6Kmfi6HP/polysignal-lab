@@ -19,7 +19,7 @@ from datetime import timezone
 import asyncio
 import logging
 from collections.abc import Callable, Sequence
-from typing import Any, cast
+from typing import cast
 
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
@@ -40,11 +40,11 @@ from polysignal_lab.nautilus_runtime.signal_sidecar import (
     _InteractiveTelegramBotThread,
     _NautilusReportLoopThread,
     _notify_accepted_signal,
-    _start_interactive_telegram_bot_thread,
-    _start_nautilus_report_loop_thread,
-    _stop_interactive_telegram_bot_thread,
-    _stop_nautilus_report_loop_thread,
-    _stop_nautilus_services,
+    _start_interactive_telegram_bot_thread,  # noqa: F401  # re-exported for tests and lazy imports
+    _start_nautilus_report_loop_thread,  # noqa: F401
+    _stop_interactive_telegram_bot_thread,  # noqa: F401
+    _stop_nautilus_report_loop_thread,  # noqa: F401
+    _stop_nautilus_services,  # noqa: F401
 )
 from polysignal_lab.nautilus_runtime.node_cli import (
     run_nautilus_cli_async as run_nautilus_cli_async,
@@ -55,22 +55,22 @@ from polysignal_lab.nautilus_runtime.observability import (
     ObservabilityService,
 )
 from polysignal_lab.nautilus_runtime.node_builder import (
-    LiveNode,
+    LiveNode,  # noqa: F401
     NautilusRuntimeBundle,
     NautilusRuntimeContext,
     build_nautilus_runtime_context,
-    PolymarketInstrumentProviderConfig,
+    PolymarketInstrumentProviderConfig,  # noqa: F401
     _NautilusNodeLike,
     _NativeStrategyLike,
-    _load_runtime_classes,
+    _load_runtime_classes,  # noqa: F401
     _runtime_class_triple,
     build_live_node,
-    build_nautilus_runtime,
+    build_nautilus_runtime,  # noqa: F401
 )
 from polysignal_lab.nautilus_runtime.strategy_builder import (
-    _build_native_strategies,
-    _build_policy,
-    _native_core_for,
+    _build_native_strategies,  # noqa: F401
+    _build_policy,  # noqa: F401
+    _native_core_for,  # noqa: F401
     build_control,
 )
 from polysignal_lab.nautilus_runtime.node_shared import (
@@ -79,10 +79,10 @@ from polysignal_lab.nautilus_runtime.node_shared import (
 )
 from polysignal_lab.nautilus_runtime.node_sidecar import (
     _strategy_names_from_bundle,
-    _start_async_cli_sidecars,
-    _notify_async_cli_startup,
-    _run_async_node_with_report_loop,
-    _finalize_async_cli_runtime,
+    _start_async_cli_sidecars,  # noqa: F401
+    _notify_async_cli_startup,  # noqa: F401
+    _run_async_node_with_report_loop,  # noqa: F401
+    _finalize_async_cli_runtime,  # noqa: F401
     _run_sync_cli_main,
     _finalize_sync_cli_runtime,
 )

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from polysignal_lab.alpha.helpers import evaluate_from_snapshot_for_test
 from polysignal_lab.alpha.state import json_safe_state, restore_utc_datetime
@@ -27,7 +27,7 @@ from polysignal_lab.domain.enums import Side
 if TYPE_CHECKING:
     # ``from __future__ import annotations`` keeps this as a string — no import
     # of ``domain.snapshot`` happens at module scope (alpha-core purity).
-    from polysignal_lab.domain.snapshot import MarketSnapshot
+    pass
 
 
 @dataclass(frozen=True)

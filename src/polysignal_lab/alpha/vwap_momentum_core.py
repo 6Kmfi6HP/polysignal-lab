@@ -38,7 +38,7 @@ from polysignal_lab.domain.trade import Trade
 if TYPE_CHECKING:
     # ``from __future__ import annotations`` keeps this a string — no import of
     # ``domain.snapshot`` at module scope (alpha-core purity).
-    from polysignal_lab.domain.snapshot import MarketSnapshot
+    pass
 
 
 @dataclass(frozen=True)

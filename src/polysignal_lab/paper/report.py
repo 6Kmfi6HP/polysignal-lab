@@ -219,7 +219,6 @@ class PaperReportService:
             count = row["closed_positions"] or 1
             row["average_roi"] = roi_sum[key] / count
             wins = row["win_count"]
-            losses = row["loss_count"]
             row["win_rate"] = wins / count if count else 0.0
         return dict(rows)
 
