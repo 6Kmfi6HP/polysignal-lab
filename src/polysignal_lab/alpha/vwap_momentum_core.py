@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections, collections.defaultdict, typing, typing.TYPE_CHECKING, typing.Any, typing.Mapping, polysignal_lab.alpha.state, polysignal_lab.alpha.state.json_safe_state
-Output: TradeHistory, VWAPMomentumAlphaCore
+Output: VWAPMomentumAlphaCore
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -30,6 +30,8 @@ from polysignal_lab.alpha.types import (
     SideBookView,
     TradeView,
 )
+from polysignal_lab.alpha.vwap_state import encode_vwap_state, restore_vwap_state_fields
+from polysignal_lab.alpha.vwap_trade_history import TradeHistory
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.trade import Trade
 
@@ -37,113 +39,6 @@ if TYPE_CHECKING:
     # ``from __future__ import annotations`` keeps this a string — no import of
     # ``domain.snapshot`` at module scope (alpha-core purity).
     from polysignal_lab.domain.snapshot import MarketSnapshot
-
-
-class TradeHistory:
-    """Time-windowed trade history per (market_id, side) key.
-
-    Mirrors PolyBullLabs' deque of Trade objects used for VWAP,
-    deviation, and momentum calculations.
-    """
-
-    def __init__(self) -> None:
-        # key -> list[Trade] sorted oldest-first
-        self._trades: dict[str, list[Trade]] = defaultdict(list)
-
-    def push(self, key: str, price: float, size: float, timestamp: float) -> None:
-        self._trades[key].append(Trade(price=price, size=size, timestamp=timestamp))
-
-    def remove(self, key: str, price: float, size: float, timestamp: float) -> None:
-        trades = self._trades.get(key)
-        if not trades:
-            return
-        for idx in range(len(trades) - 1, -1, -1):
-            trade = trades[idx]
-            if (
-                trade.price == price
-                and trade.size == size
-                and trade.timestamp == timestamp
-            ):
-                del trades[idx]
-                if not trades:
-                    self._trades.pop(key, None)
-                return
-
-    def _prune(self, key: str, window_sec: float, now: float) -> None:
-        """Trim trades older than ``window_sec`` from storage.
-
-        Momentum needs the band around ``now - window_sec`` while VWAP needs the
-        recent window itself. We keep only data that could still affect either
-        calculation, plus the newest trade so ``latest_price`` remains available.
-        """
-        trades = self._trades.get(key)
-        if not trades:
-            return
-        cutoff = now - window_sec
-        idx = 0
-        while idx < len(trades) - 1 and trades[idx].timestamp < cutoff:
-            idx += 1
-        if idx > 0:
-            self._trades[key] = trades[idx:]
-
-    def trades_in_window(self, key: str, window_sec: float, now: float) -> list[Trade]:
-        """Return trades within the window WITHOUT modifying storage."""
-        trades = self._trades.get(key)
-        if not trades:
-            return []
-        cutoff = now - window_sec
-        return [t for t in trades if t.timestamp >= cutoff]
-
-    def vwap(self, key: str, window_sec: float, now: float) -> float | None:
-        trades = self.trades_in_window(key, window_sec, now)
-        if not trades:
-            return None
-        total_vol = sum(t.size for t in trades)
-        if total_vol <= 0:
-            return None
-        return sum(t.price * t.size for t in trades) / total_vol
-
-    def momentum(self, key: str, window_sec: float, now: float) -> float | None:
-        """Price change vs arithmetic mean price ~window_sec seconds ago.
-
-        Uses a time-band approach matching PolyBullLabs:
-        takes all trades in [now - window_sec - 1.5, now - window_sec + 1.5]
-        (a 3-second band), computes the arithmetic mean of prices in that
-        band, and returns the fractional change from that mean to the
-        current price.
-
-        Returns None if no trades are found in the band.
-        """
-        trades = self._trades.get(key)
-        if not trades:
-            return None
-
-        band_start = now - window_sec - 1.5
-        band_end = now - window_sec + 1.5
-
-        band_prices = [t.price for t in trades if band_start <= t.timestamp <= band_end]
-
-        if not band_prices:
-            return None
-
-        mean_price_ago = sum(band_prices) / len(band_prices)
-        if mean_price_ago <= 0:
-            return None
-
-        current_price = self.latest_price(key)
-        if current_price is None or current_price <= 0:
-            return None
-
-        return (current_price - mean_price_ago) / mean_price_ago
-
-    def latest_price(self, key: str) -> float | None:
-        trades = self._trades.get(key)
-        if not trades:
-            return None
-        return trades[-1].price
-
-    def clear_key(self, key: str) -> None:
-        self._trades.pop(key, None)
 
 
 @dataclass(frozen=True)
@@ -631,59 +526,31 @@ class VWAPMomentumAlphaCore:
             self._seen_trade_signatures.pop(key, None)
     def save_state(self) -> Mapping[str, object]:
         return json_safe_state(
-            {
-                "trades": {
-                    k: [
-                        {"price": t.price, "size": t.size, "timestamp": t.timestamp}
-                        for t in v
-                    ]
-                    for k, v in self.trades._trades.items()
-                },
-                "can_enter": dict(self._can_enter),
-                "last_trade_signatures": self._last_trade_signatures,
-                "seen_trade_signatures": self._seen_trade_signatures,
-                "pending_hedges": self._pending_hedges,
-            }
+            encode_vwap_state(
+                {
+                    "trades": {
+                        key: [
+                            {"price": trade.price, "size": trade.size, "timestamp": trade.timestamp}
+                            for trade in trades
+                        ]
+                        for key, trades in self.trades._trades.items()
+                    },
+                    "can_enter": dict(self._can_enter),
+                    "last_trade_signatures": self._last_trade_signatures,
+                    "seen_trade_signatures": self._seen_trade_signatures,
+                    "pending_hedges": self._pending_hedges,
+                }
+            )
         )
 
     def load_state(self, payload: Mapping[str, object]) -> None:
-        trades_raw = payload.get("trades", {}) or {}
-        if not isinstance(trades_raw, Mapping):
-            trades_raw = {}
-        new_trades = TradeHistory()
-        for k, lst in trades_raw.items():
-            for t in lst:
-                new_trades.push(
-                    str(k), float(t["price"]), float(t["size"]), float(t["timestamp"])
-                )
-        self.trades = new_trades
-
-        can_enter_raw = payload.get("can_enter", {}) or {}
-        if not isinstance(can_enter_raw, Mapping):
-            can_enter_raw = {}
-        self._can_enter = defaultdict(
-            lambda: True, {str(k): bool(v) for k, v in can_enter_raw.items()}
-        )
-
-        sigs_raw = payload.get("last_trade_signatures", {}) or {}
-        if not isinstance(sigs_raw, Mapping):
-            sigs_raw = {}
-        self._last_trade_signatures = {str(k): tuple(v) for k, v in sigs_raw.items()}
-
-        seen_raw = payload.get("seen_trade_signatures", {}) or {}
-        if not isinstance(seen_raw, Mapping):
-            seen_raw = {}
-        self._seen_trade_signatures = defaultdict(
-            set,
-            {str(k): {tuple(sig) for sig in v} for k, v in seen_raw.items()},
-        )
-
-        hedges_raw = payload.get("pending_hedges", {}) or {}
-        if not isinstance(hedges_raw, Mapping):
-            hedges_raw = {}
-        self._pending_hedges = {
-            str(k): (Side(v[0]), float(v[1])) for k, v in hedges_raw.items()
-        }
+        (
+            self.trades,
+            self._can_enter,
+            self._last_trade_signatures,
+            self._seen_trade_signatures,
+            self._pending_hedges,
+        ) = restore_vwap_state_fields(payload)
         # Transient pending-sample bookkeeping is not persisted.
         self._pending_signal_samples = {}
         self._pending_signal_samples_hold = {}

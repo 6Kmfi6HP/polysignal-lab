@@ -20,7 +20,8 @@ from dataclasses import replace
 from polysignal_lab.alpha.legacy_snapshot_adapter import market_view_from_snapshot
 from polysignal_lab.alpha.state import restore_utc_datetime
 from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, TradeView
-from polysignal_lab.alpha.vwap_momentum_core import TradeHistory, VWAPMomentumAlphaCore
+from polysignal_lab.alpha.vwap_trade_history import TradeHistory
+from polysignal_lab.alpha.vwap_momentum_core import VWAPMomentumAlphaCore
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.strategy_config import VWAPMomentumConfig
 from alpha_helpers import evaluate_core_from_snapshot
@@ -352,3 +353,36 @@ def test_vwap_core_state_roundtrip() -> None:
     from polysignal_lab.alpha import TradeHistory as ExportedTradeHistory
 
     assert ExportedTradeHistory is TradeHistory
+
+
+def test_vwap_duplicate_trade_does_not_change_signal_inputs() -> None:
+    config = _fast_config()
+    core = VWAPMomentumAlphaCore(config)
+    snapshot = _snapshot()
+    trade_ts = snapshot.created_at
+    snapshot = snapshot.model_copy(
+        update={
+            "metrics": {
+                "up_trades": (TradeView(price=0.60, size=2.0, side=Side.UP.value, ts=trade_ts),),
+                "down_trades": (TradeView(price=0.42, size=1.0, side=Side.DOWN.value, ts=trade_ts),),
+            }
+        }
+    )
+    _seed_band(core, snapshot.market.market_id, snapshot.created_at.timestamp())
+
+    first = evaluate_core_from_snapshot(core, snapshot)
+    second = evaluate_core_from_snapshot(core, snapshot)
+
+    assert second == first
+
+
+def test_vwap_state_round_trip_preserves_pending_hedge() -> None:
+    config = _fast_config(hedge_enabled=True)
+    core = VWAPMomentumAlphaCore(config)
+    market_id = "btc-5m-hedge"
+    core._pending_hedges[market_id] = (Side.DOWN, 10.0)
+
+    restored = VWAPMomentumAlphaCore(config)
+    restored.load_state(core.save_state())
+
+    assert restored.save_state() == core.save_state()

@@ -25,7 +25,8 @@ from polysignal_lab.alpha.pre_order_market_core import PreOrderMarketAlphaCore
 from polysignal_lab.alpha.legacy_snapshot_adapter import decision_to_signal, market_view_from_snapshot
 from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
 from polysignal_lab.alpha.skew_mean_reversion_core import SkewMeanReversionAlphaCore
-from polysignal_lab.alpha.vwap_momentum_core import TradeHistory, VWAPMomentumAlphaCore
+from polysignal_lab.alpha.vwap_momentum_core import VWAPMomentumAlphaCore
+from polysignal_lab.alpha.vwap_trade_history import TradeHistory
 from polysignal_lab.alpha.state import json_safe_state, restore_utc_datetime
 from polysignal_lab.alpha.types import (
     AlphaCore,
