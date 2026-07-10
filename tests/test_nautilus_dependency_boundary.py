@@ -15,6 +15,7 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 import importlib
+import sys
 import tomllib
 from pathlib import Path
 
@@ -35,6 +36,17 @@ def test_nautilus_is_optional_polymarket_extra_not_default_dependency() -> None:
     assert optional_deps["nautilus"] == [
         "nautilus_trader[polymarket]==1.229.0; python_version >= '3.12'"
     ]
+
+def test_optional_import_gateway_does_not_import_nautilus_at_module_import() -> None:
+    sys.modules.pop("nautilus_trader", None)
+
+    module = importlib.import_module(
+        "polysignal_lab.nautilus_runtime.optional_imports"
+    )
+
+    assert module is not None
+    assert "nautilus_trader" not in sys.modules
+
 
 def test_nautilus_node_does_not_import_scheduler_compat_shadow_wallet() -> None:
     source = Path("src/polysignal_lab/nautilus_runtime/node.py").read_text()

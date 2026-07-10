@@ -20,6 +20,7 @@ from collections.abc import Callable, Mapping
 from typing import Protocol, cast
 
 from polysignal_lab.config import Settings, load_settings
+from polysignal_lab.nautilus_runtime.optional_imports import load_live_runtime_symbols
 
 PAPER_EXEC_CLIENT_ID = "POLYSIGNAL_PM_PAPER"
 POLYMARKET_CLIENT_ID = "POLYMARKET"
@@ -193,16 +194,12 @@ def _ensure_live_imports() -> None:
             )
         return
 
-    live_mod = importlib.import_module("nautilus_trader.live")
-    common_mod = importlib.import_module("nautilus_trader.common")
-    identifiers_mod = importlib.import_module("nautilus_trader.model.identifiers")
-    polymarket_mod = importlib.import_module("nautilus_trader.adapters.polymarket")
-    sandbox_factory_mod = importlib.import_module("nautilus_trader.adapters.sandbox.factory")
-    LiveNode = live_mod.LiveNode
-    Environment = common_mod.Environment
-    TraderId = cast(Callable[[str], object], identifiers_mod.TraderId)
-    PolymarketLiveDataClientFactory = polymarket_mod.PolymarketLiveDataClientFactory
-    SandboxLiveExecClientFactory = sandbox_factory_mod.SandboxLiveExecClientFactory
+    symbols = load_live_runtime_symbols()
+    LiveNode = symbols.live_node
+    TraderId = cast(Callable[[str], object], symbols.trader_id)
+    Environment = symbols.environment
+    PolymarketLiveDataClientFactory = symbols.polymarket_data_factory
+    SandboxLiveExecClientFactory = symbols.sandbox_exec_factory
     if mod is not None:
         mod.LiveNode = LiveNode
         mod.TraderId = TraderId
