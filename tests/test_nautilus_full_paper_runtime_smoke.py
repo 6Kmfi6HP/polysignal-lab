@@ -174,17 +174,28 @@ def _patch_live_node_builder_fakes(monkeypatch: pytest.MonkeyPatch) -> SimpleNam
     monkeypatch.setattr(live_node_mod, "PolymarketLiveDataClientFactory", FakePolymarketLiveDataClientFactory)
     monkeypatch.setattr(live_node_mod, "SandboxLiveExecClientFactory", FakeSandboxLiveExecClientFactory)
     from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
+    from polysignal_lab.nautilus_runtime.decision_policy_actor import (
+        NautilusDecisionPolicyActor,
+    )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     monkeypatch.setattr(
         node_mod,
         "_load_runtime_classes",
-        lambda: (PolySignalNativeStrategy, MarketRotationActor),
+        lambda: (
+            PolySignalNativeStrategy,
+            MarketRotationActor,
+            NautilusDecisionPolicyActor,
+        ),
     )
     monkeypatch.setattr(
         node_builder_mod,
         "_load_runtime_classes",
-        lambda: (PolySignalNativeStrategy, MarketRotationActor),
+        lambda: (
+            PolySignalNativeStrategy,
+            MarketRotationActor,
+            NautilusDecisionPolicyActor,
+        ),
     )
 
     return SimpleNamespace(

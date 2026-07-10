@@ -110,6 +110,19 @@ def test_live_engine_config_builders_import_configs_from_config_module(monkeypat
     ]
 
 
+def test_runtime_class_loader_requires_three_classes(monkeypatch: pytest.MonkeyPatch) -> None:
+    import polysignal_lab.nautilus_runtime.node_builder as module
+
+    monkeypatch.setattr(
+        module,
+        "_load_runtime_classes",
+        lambda: (object, object),
+    )
+
+    with pytest.raises(ValueError, match="three runtime classes"):
+        module._runtime_class_triple()
+
+
 def _patch_nautilus_placeholders(monkeypatch):
     """Monkeypatch LiveNode builder placeholders so tests run without Nautilus."""
 
@@ -209,11 +222,11 @@ def _patch_nautilus_placeholders(monkeypatch):
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeRuntimeStrategy, FakeRuntimeActor),
+        lambda: (FakeRuntimeStrategy, FakeRuntimeActor, DecisionPolicyActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeRuntimeStrategy, FakeRuntimeActor),
+        lambda: (FakeRuntimeStrategy, FakeRuntimeActor, DecisionPolicyActor),
     )
     return FakeLiveNode
 
@@ -312,11 +325,11 @@ def test_build_live_node_uses_static_runtime_classes(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStaticStrategy, FakeStaticActor),
+        lambda: (FakeStaticStrategy, FakeStaticActor, DecisionPolicyActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStaticStrategy, FakeStaticActor),
+        lambda: (FakeStaticStrategy, FakeStaticActor, DecisionPolicyActor),
     )
 
     runtime = build_live_node(condition_ids=("condition-btc-5m",))
@@ -341,11 +354,11 @@ def test_build_live_node_registers_market_rotation_actor(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
     )
 
     universe = object()
@@ -449,11 +462,11 @@ def test_build_live_node_forwards_unsubscribe_exited_to_native_strategy(
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
@@ -493,11 +506,11 @@ def test_build_live_node_skips_disabled_native_strategies(
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
@@ -535,11 +548,11 @@ def test_build_live_node_passes_l1_snapshot_interval_to_native_strategies(
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
@@ -587,11 +600,11 @@ def test_build_live_node_injects_runtime_progress_callback(monkeypatch, tmp_path
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
     )
 
     runtime = build_live_node(settings=settings, condition_ids=("condition-btc-5m",))

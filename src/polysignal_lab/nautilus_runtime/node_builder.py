@@ -140,7 +140,7 @@ def _ensure_nautilus_imports() -> None:
         mod.PolymarketInstrumentProviderConfig = PolymarketInstrumentProviderConfig
 
 
-def _load_runtime_classes() -> tuple[type[object], ...]:
+def _load_runtime_classes() -> tuple[type[object], type[object], type[object]]:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
     from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
     from polysignal_lab.nautilus_runtime.decision_policy_actor import NautilusDecisionPolicyActor
@@ -154,13 +154,10 @@ def _load_runtime_classes() -> tuple[type[object], ...]:
 
 def _runtime_class_triple() -> tuple[type[object], type[object], type[object]]:
     classes = _load_runtime_classes()
-    if len(classes) == 2:
-        strategy_cls, rotation_actor_cls = classes
-        return strategy_cls, rotation_actor_cls, DecisionPolicyActor
-    if len(classes) == 3:
-        strategy_cls, rotation_actor_cls, policy_actor_cls = classes
-        return strategy_cls, rotation_actor_cls, policy_actor_cls
-    raise RuntimeError(f"Expected 2 or 3 Nautilus runtime classes, got {len(classes)}")
+    if len(classes) != 3:
+        raise ValueError("_load_runtime_classes must return three runtime classes")
+    strategy_cls, rotation_actor_cls, policy_actor_cls = classes
+    return strategy_cls, rotation_actor_cls, policy_actor_cls
 
 
 def _create_configured_live_node(
