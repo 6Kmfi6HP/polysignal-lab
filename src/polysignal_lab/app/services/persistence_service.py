@@ -123,21 +123,6 @@ class PersistenceService:
     def write_state(self, name: str, value: Any) -> None:
         self.state.write(name, value)
 
-    def persist_state(
-        self,
-        *,
-        wallet_snapshot: Any,
-        open_positions: list[dict[str, Any]],
-        market_cache: list[dict[str, Any]],
-        signal_dedupe: Any,
-    ) -> None:
-        self.append_log("paper_wallet_snapshots", wallet_snapshot)
-        self.insert_wallet_snapshot(wallet_snapshot)
-        self.write_state("paper_wallet", wallet_snapshot)
-        self.write_state("open_positions", open_positions)
-        self.write_state("market_cache", market_cache)
-        self.write_state("signal_dedupe", signal_dedupe)
-
     def delete_paper_result_rows(
         self, paper_trade_id: str, publish_id: str | None
     ) -> None:

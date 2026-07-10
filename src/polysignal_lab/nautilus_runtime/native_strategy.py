@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import cast
 
 from nautilus_trader.config import StrategyConfig
@@ -77,11 +77,9 @@ from polysignal_lab.nautilus_runtime.strategy.order_events import (
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     InstrumentSubscriptionManager,
     MarketSubscriptionState,
-    call_subscription as _call_subscription_fn,
     clear_condition_subscription_state as _clear_condition_subscription_state_fn,
     condition_instruments as _condition_instruments_fn,
     refresh_asset_conditions as _refresh_asset_conditions_fn,
-    retry_market_instrument_requests as _retry_market_instrument_requests_fn,
     subscribe_market_conditions as _subscribe_market_conditions_fn,
     subscribe_market_instrument as _subscribe_market_instrument_fn,
     unsubscribe_market_conditions as _unsubscribe_market_conditions_fn,
@@ -447,15 +445,6 @@ class PolySignalNativeStrategy(Strategy):
                 return cached
         return resolved
 
-    def _token_id_from_view_instrument(self, view: MarketView, instrument_id: str) -> str | None:
-        up_instrument = str(self._resolved_instrument(view.up.token_id))
-        if instrument_id == up_instrument:
-            return view.up.token_id
-        down_instrument = str(self._resolved_instrument(view.down.token_id))
-        if instrument_id == down_instrument:
-            return view.down.token_id
-        return None
-
     def _call_core(self, method_name: str, event: AlphaOrderEvent) -> None:
         _call_core_hook(self, method_name, event)
 
@@ -502,16 +491,6 @@ class PolySignalNativeStrategy(Strategy):
     def _refresh_asset_conditions(self) -> None:
         _refresh_asset_conditions_fn(self)
 
-    def _retry_market_instrument_requests(
-        self,
-        condition_ids: Sequence[str],
-        *,
-        retry_after: timedelta | None = None,
-    ) -> None:
-        _retry_market_instrument_requests_fn(
-            self, condition_ids, retry_after=retry_after
-        )
-
     def _subscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
         _subscribe_market_conditions_fn(self, condition_ids)
 
@@ -529,14 +508,6 @@ class PolySignalNativeStrategy(Strategy):
 
     def _unsubscribe_market_instrument(self, instrument_id: object) -> bool:
         return _unsubscribe_market_instrument_fn(self, instrument_id)
-
-    def _call_subscription(
-        self,
-        callback: Callable[..., object],
-        *args: object,
-        **kwargs: object,
-    ) -> bool:
-        return _call_subscription_fn(self, callback, *args, **kwargs)
 
     def subscribe_data(self, data_type: object) -> None:
         super().subscribe_data(data_type)
