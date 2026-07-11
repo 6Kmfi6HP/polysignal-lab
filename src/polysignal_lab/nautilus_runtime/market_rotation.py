@@ -89,8 +89,13 @@ class MarketRotationActor(Actor):
             if anchor_store is not None
             else None
         )
+        if settings.data.polymarket.use_crypto_price_api:
+            raise ValueError(
+                "crypto-price API fallback is unsupported in MarketRotationActor; "
+                "publish PriceToBeat through a worker or Nautilus CustomData source"
+            )
         self.ptb_provider: PriceToBeatProvider = PriceToBeatProvider(
-            use_crypto_price_api=settings.data.polymarket.use_crypto_price_api,
+            use_crypto_price_api=False,
             anchor_store=anchor_store,
         )
         self._active_by_condition: dict[str, Market] = _markets_by_condition(startup_markets)
@@ -152,13 +157,13 @@ class MarketRotationActor(Actor):
     async def refresh_once(self) -> tuple[Market, ...]:
         try:
             refreshed_markets = tuple(await self.market_universe.refresh_once())
+            markets = self._apply_refreshed_markets(refreshed_markets)
+            self._publish_price_to_beat_batch_sync(markets)
+            return markets
         except Exception as exc:
             logger.exception("market_rotation phase=refresh failed epoch=%s", self._epoch)
             self._mark_down(exc, phase="refresh")
-            raise
-        markets = self._apply_refreshed_markets(refreshed_markets)
-        self._publish_price_to_beat_batch_sync(markets)
-        return markets
+            return ()
 
     def _apply_refreshed_markets(
         self,
@@ -261,7 +266,9 @@ class MarketRotationActor(Actor):
             return
         self._refresh_in_flight = True
         try:
-            self._run_refresh_sync()
+            _ = await self.refresh_once()
+        except Exception:
+            return
         finally:
             self._refresh_in_flight = False
 

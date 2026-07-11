@@ -15,14 +15,55 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 import importlib
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
+
+
+def _run_python(code: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def test_default_package_import_does_not_require_nautilus() -> None:
     module = importlib.import_module("polysignal_lab")
 
     assert module is not None
+
+
+def test_alpha_package_import_does_not_require_nautilus() -> None:
+    result = _run_python(
+        "import importlib, sys; "
+        "module = importlib.import_module('polysignal_lab.alpha'); "
+        "print(module.__name__); "
+        "print('nautilus_loaded', 'nautilus_trader' in sys.modules); "
+        "print('has_spec', hasattr(module, 'NautilusOrderSpec'))"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "polysignal_lab.alpha"
+    assert "nautilus_loaded False" in result.stdout
+    assert "has_spec False" in result.stdout
+
+
+def test_order_plan_dto_import_does_not_require_nautilus() -> None:
+    result = _run_python(
+        "import sys; "
+        "from polysignal_lab.nautilus_runtime.order_plan import NautilusOrderSpec, OrderSubmissionPlan; "
+        "print(OrderSubmissionPlan.__name__); "
+        "print('alias_same', NautilusOrderSpec is OrderSubmissionPlan); "
+        "print('nautilus_loaded', 'nautilus_trader' in sys.modules)"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "OrderSubmissionPlan"
+    assert "alias_same True" in result.stdout
+    assert "nautilus_loaded False" in result.stdout
 
 
 def test_nautilus_is_optional_polymarket_extra_not_default_dependency() -> None:

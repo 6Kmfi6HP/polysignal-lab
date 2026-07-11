@@ -27,6 +27,12 @@ class SignalDeduper:
     _seen: dict[str, float] = field(default_factory=dict)
     _lock: Lock = field(default_factory=Lock)
 
+    def contains(self, signal: SignalCandidate) -> bool:
+        now = time.time()
+        with self._lock:
+            seen_at = self._seen.get(signal.dedupe_key)
+            return seen_at is not None and now - seen_at <= self.ttl_sec
+
     def is_duplicate(self, signal: SignalCandidate) -> bool:
         now = time.time()
         with self._lock:

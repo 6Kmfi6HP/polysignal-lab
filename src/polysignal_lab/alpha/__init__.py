@@ -24,7 +24,8 @@ from polysignal_lab.alpha.one_cent_buy_core import OneCentBuyAlphaCore
 from polysignal_lab.alpha.pre_order_market_core import PreOrderMarketAlphaCore
 from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore, decision_to_signal, market_view_from_snapshot
 from polysignal_lab.alpha.skew_mean_reversion_core import SkewMeanReversionAlphaCore
-from polysignal_lab.alpha.vwap_momentum_core import TradeHistory, VWAPMomentumAlphaCore
+from polysignal_lab.alpha.vwap_momentum_core import VWAPMomentumAlphaCore
+from polysignal_lab.alpha.vwap_trade_history import TradeHistory
 from polysignal_lab.alpha.state import json_safe_state, restore_utc_datetime
 from polysignal_lab.alpha.types import (
     AlphaCore,
@@ -35,7 +36,6 @@ from polysignal_lab.alpha.types import (
     GroupAlphaCore,
     MarketGroupView,
     MarketView,
-    NautilusOrderSpec,
     OrderIntentSpec,
     SideBookView,
     SpotView,
@@ -60,7 +60,6 @@ __all__ = [
     "MidPriceSizingAlphaCore",
     "MarketGroupView",
     "MarketView",
-    "NautilusOrderSpec",
     "NinetyNineCentSniperAlphaCore",
     "OneCentBuyAlphaCore",
     "OrderIntentSpec",

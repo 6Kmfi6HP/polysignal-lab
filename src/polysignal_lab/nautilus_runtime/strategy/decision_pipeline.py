@@ -13,15 +13,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
-from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, MarketView, NautilusOrderSpec
+from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, MarketView
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
+    BatchArbitrationResult,
     DecisionPolicyActor,
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy, submit_approved_decision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
+from polysignal_lab.nautilus_runtime.order_plan import NautilusOrderSpec
 from polysignal_lab.nautilus_runtime.strategy.helpers import _market_view_ready
 
 
@@ -181,6 +183,22 @@ class DecisionPipeline:
             market_view_ready=_market_view_ready,
             note_progress=sink.note_progress,
         )
+
+    def try_batch_arbitrate(
+        self,
+        decisions: list[tuple[AlphaDecision, MarketView]],
+    ) -> BatchArbitrationResult:
+        return self._resolve_policy().batch_arbitrate(decisions)
+
+    def record_batch_rejection(
+        self,
+        rejected: RejectedDecision,
+        decision: AlphaDecision,
+        *,
+        state: DecisionPipelineState,
+        sink: NativeDecisionSink,
+    ) -> None:
+        _record_rejection(rejected, decision, state=state, sink=sink)
 
     @staticmethod
     def _on_duplicate(

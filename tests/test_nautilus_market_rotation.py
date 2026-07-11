@@ -605,6 +605,7 @@ def test_market_rotation_actor_keeps_last_good_state_on_publish_failure(
     settings = Settings()
     settings.runtime.nautilus.sidecar.spot_source = "disabled"
     settings.runtime.nautilus.market_rotation.enabled = False
+    health = _HealthRecorder()
     universe = _Universe(
         [
             [_market("condition-a"), _market("condition-b")],
@@ -613,7 +614,7 @@ def test_market_rotation_actor_keeps_last_good_state_on_publish_failure(
     actor = MarketRotationActor(settings=settings,
     startup_markets=(_market("condition-a"),),
     market_universe=universe, catalog=MarketCatalog(), anchor_store=None,
-    health=None,)
+    health=health,)
     actor.publish_data = lambda data_type, data: published.append(data)
 
     async def fake_none_ptb(market: Market) -> PriceToBeatResult:
@@ -648,12 +649,16 @@ def test_market_rotation_actor_keeps_last_good_state_on_publish_failure(
 
         actor.publish_data = fail_on_changed_universe
 
-        with pytest.raises(RuntimeError, match="universe publish failed"):
-            asyncio.run(actor.refresh_once())
+        asyncio.run(actor._refresh_async())
 
+        assert actor._refresh_in_flight is False
         assert [market.condition_id for market in actor.active_markets()] == ["condition-a"]
         assert [item for item in published if isinstance(item, PolySignalMarketUniverseData)][-1] == first_epoch
         assert actor._epoch == first_epoch.epoch
+        assert any(
+            "universe publish failed" in str(error)
+            for _, error, _ in health.down
+        )
     finally:
         _close_recorded_tasks(created)
 
@@ -678,6 +683,76 @@ def test_market_rotation_actor_refresh_timer_marks_down_refresh_failures() -> No
         ("market_rotation", "refresh failed", {"epoch": 0, "phase": "refresh"}),
     ]
 
+
+def test_market_rotation_actor_refresh_async_marks_down_on_apply_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: _refresh_async must log+mark_down when _apply_refreshed_markets
+
+    fails, not silently swallow via bare except Exception: return.
+    """
+    settings = Settings()
+    settings.runtime.nautilus.sidecar.spot_source = "disabled"
+    settings.runtime.nautilus.market_rotation.enabled = False
+    health = _HealthRecorder()
+    actor = MarketRotationActor(
+        settings=settings,
+        startup_markets=(_market("condition-a"),),
+        market_universe=_Universe([[_market("condition-b")]]),
+        catalog=MarketCatalog(),
+        anchor_store=None,
+        health=health,
+    )
+    actor.publish_data = lambda data_type, data: None
+
+    def fail_apply(markets: tuple[Market, ...]) -> tuple[Market, ...]:
+        raise RuntimeError("apply failed")
+
+    monkeypatch.setattr(actor, "_apply_refreshed_markets", fail_apply)
+
+    asyncio.run(actor._refresh_async())
+
+    assert actor._refresh_in_flight is False
+    assert health.down == [
+        ("market_rotation", "apply failed", {"epoch": 0, "phase": "refresh"}),
+    ]
+    assert [market.condition_id for market in actor.active_markets()] == ["condition-a"]
+
+
+def test_market_rotation_actor_refresh_async_marks_down_on_publish_data_failure() -> None:
+    """Regression: _refresh_async must mark health down when _publish_market_universe
+    raises during apply, matching _run_refresh_sync's error reporting contract.
+    """
+    settings = Settings()
+    settings.runtime.nautilus.sidecar.spot_source = "disabled"
+    settings.runtime.nautilus.market_rotation.enabled = False
+    health = _HealthRecorder()
+    actor = MarketRotationActor(
+        settings=settings,
+        startup_markets=(_market("condition-a"),),
+        market_universe=_Universe([[_market("condition-a"), _market("condition-b")]]),
+        catalog=MarketCatalog(),
+        anchor_store=None,
+        health=health,
+    )
+
+    def fail_on_change(data_type: object, data: object) -> None:
+        if (
+            isinstance(data, PolySignalMarketUniverseData)
+            and "condition-b" in data.entered_condition_ids
+        ):
+            raise RuntimeError("universe publish failed")
+
+    actor.publish_data = fail_on_change
+
+    asyncio.run(actor._refresh_async())
+
+    assert actor._refresh_in_flight is False
+    assert [market.condition_id for market in actor.active_markets()] == ["condition-a"]
+    assert any(
+        "universe publish failed" in str(error)
+        for _, error, _ in health.down
+    )
 
 @pytest.mark.anyio
 async def test_market_rotation_actor_refresh_preloads_next_period_via_market_universe_service(
@@ -901,7 +976,59 @@ def test_market_rotation_actor_on_start_uses_clock_timer_when_available(
         _close_recorded_tasks(created)
 
 
-def test_market_rotation_actor_refresh_timer_runs_sync_after_removing_async_offload(
+def test_market_rotation_rejects_crypto_price_http_fallback() -> None:
+    settings = Settings()
+    settings.data.polymarket.use_crypto_price_api = True
+
+    with pytest.raises(ValueError, match="crypto-price API.*Actor"):
+        MarketRotationActor(
+            settings=settings,
+            startup_markets=(),
+            market_universe=_Universe([[]]),
+            catalog=MarketCatalog(),
+            anchor_store=None,
+            health=None,
+        )
+
+
+def test_market_rotation_timer_publishes_ptb_via_get_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published: list[object] = []
+    market = _market("condition-a")
+    market.price_to_beat = 100000.0  # let real get_sync resolve from metadata
+    actor = MarketRotationActor(
+        settings=Settings(),
+        startup_markets=(),
+        market_universe=_Universe([[market]]),
+        catalog=MarketCatalog(),
+        anchor_store=None,
+        health=None,
+    )
+
+    # Provider is always fixed with crypto-price API disabled
+    assert actor.ptb_provider.use_crypto_price_api is False
+
+    # Prove timer PTB path never triggers crypto HTTP
+    def _fail_on_crypto(*args: Any, **kwargs: Any) -> None:
+        msg = "timer PTB must not reach _fetch_crypto_price_api_sync"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(
+        actor.ptb_provider,
+        "_fetch_crypto_price_api_sync",
+        _fail_on_crypto,
+    )
+
+    actor.publish_data = lambda data_type, data: published.append(data)
+
+    actor._on_refresh_timer()
+
+    assert actor._refresh_in_flight is False
+    assert any(isinstance(item, PolySignalPriceToBeatData) for item in published)
+
+
+def test_market_rotation_actor_refresh_timer_applies_discovery_and_publishes_ptb(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
@@ -925,7 +1052,7 @@ def test_market_rotation_actor_refresh_timer_runs_sync_after_removing_async_offl
     monkeypatch.setattr(actor, "_apply_refreshed_markets", apply)
     monkeypatch.setattr(actor, "_publish_price_to_beat_batch_sync", publish)
 
-    asyncio.run(actor._refresh_async())
+    actor._on_refresh_timer()
 
     assert calls == ["apply", "ptb"]
     assert actor._refresh_in_flight is False

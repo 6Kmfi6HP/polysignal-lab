@@ -22,12 +22,7 @@ from importlib import import_module
 from types import ModuleType, SimpleNamespace
 from typing import Any, Protocol, cast
 
-from polysignal_lab.alpha.types import (
-    AlphaDecision,
-    MarketView,
-    NautilusOrderSpec,
-    OrderIntentSpec,
-)
+from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
@@ -230,9 +225,7 @@ def _decision() -> AlphaDecision:
         data_freshness_ms=20,
         reason_codes=("PTB_DIFF_THRESHOLD_OK",),
         metrics={"diff_usd": 120.0},
-        order_intent=OrderIntentSpec(
-            intent=OrderIntent.PASSIVE_GTD, expiry_seconds=45, pair_id="pair-1"
-        ),
+        order_intent=OrderIntentSpec(intent=OrderIntent.PASSIVE_GTD, expiry_seconds=45),
         hedge_leg=False,
     )
 
@@ -320,7 +313,9 @@ def test_native_strategy_on_load_restores_core_without_runtime_order_truth() -> 
 from polysignal_lab.domain.signal import SignalCandidate  # noqa: E402
 from polysignal_lab.nautilus_runtime.decision_policy import (  # noqa: E402
     ApprovedDecision,
+    BatchArbitrationResult,
     DecisionPolicyActor,
+    RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.native_strategy import (  # noqa: E402
     PolySignalNativeStrategy,
@@ -374,7 +369,106 @@ class RuntimeFakePolicy(DecisionPolicyActor):
         )
         return ApprovedDecision(signal=candidate)
 
+    def batch_arbitrate(
+        self, decisions: list[tuple[AlphaDecision, MarketView]]
+    ) -> BatchArbitrationResult:
+        return BatchArbitrationResult(decision for decision, _ in decisions)
 
+
+def test_native_strategy_fails_closed_when_batch_arbitration_raises() -> None:
+    decision = AlphaDecision(
+        strategy="ptb_diff",
+        asset="BTC",
+        timeframe="5m",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        condition_id="condition-btc-5m",
+        token_id="up-token",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.50,
+        max_entry_price=0.52,
+        seconds_to_close=60,
+        data_freshness_ms=20,
+        reason_codes=("TEST",),
+        metrics={},
+    )
+    phases: list[str] = []
+
+    class FailingBatchPolicy(RuntimeFakePolicy):
+        batch_called = False
+
+        def batch_arbitrate(
+            self, decisions: list[tuple[AlphaDecision, MarketView]]
+        ) -> list[AlphaDecision]:
+            _ = decisions
+            self.batch_called = True
+            raise RuntimeError("arbiter unavailable")
+
+    class CapturingStrategy(PolySignalNativeStrategy):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.submitted: list[object] = []
+
+        def _submit_approved(
+            self, approved: ApprovedDecision, *, view: MarketView
+        ) -> object:
+            _ = approved, view
+            self.submitted.append(object())
+            return self.submitted[-1]
+
+    policy = FailingBatchPolicy()
+    strategy = CapturingStrategy(
+        core=FakeCore([decision]),
+        assembler=_assembler(_MockView()),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        policy=policy,
+        progress_callback=phases.append,
+        **_native_projections(),
+    )
+
+    strategy.evaluate_condition("condition-btc-5m")
+
+    assert policy.batch_called is True
+    assert strategy.submitted == []
+    assert "arbitration_failed" in phases
+
+
+def test_native_strategy_records_batch_rejections_once() -> None:
+    decision = _decision()
+
+    class RejectionPolicy(RuntimeFakePolicy):
+        def batch_arbitrate(
+            self, decisions: list[tuple[AlphaDecision, MarketView]]
+        ) -> BatchArbitrationResult:
+            return BatchArbitrationResult(
+                (),
+                [
+                    (
+                        decisions[0][0],
+                        RejectedDecision(
+                            reason_code="ARBITRATION_SUPPRESSED",
+                            detail={},
+                        ),
+                    )
+                ],
+            )
+
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([decision]),
+        assembler=_assembler(_MockView()),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        policy=RejectionPolicy(),
+        **_native_projections(),
+    )
+
+    strategy.evaluate_condition("condition-btc-5m")
+
+    assert [rejected.reason_code for rejected in strategy.rejected_decisions] == [
+        "ARBITRATION_SUPPRESSED"
+    ]
 
 
 def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
@@ -394,7 +488,7 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
         data_freshness_ms=20,
         reason_codes=("TEST",),
         metrics={},
-        order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK, pair_id="pair-1"),
+        order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK),
         hedge_leg=False,
     )
 
@@ -487,7 +581,7 @@ def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
         data_freshness_ms=20,
         reason_codes=("TEST",),
         metrics={},
-        order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK, pair_id="pair-1"),
+        order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK),
         hedge_leg=False,
     )
 
@@ -553,7 +647,13 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
     ]
 
     strategy.on_order_filled(
-        SimpleNamespace(order_id="order-1", fill_price=0.5, shares=1.0, tags={})
+        SimpleNamespace(
+            order_id="order-1",
+            fill_price=0.5,
+            shares=1.0,
+            tags={},
+            ts_event=datetime(2026, 1, 1, tzinfo=UTC),
+        )
     )
     strategy.evaluate_condition("condition-btc-5m")
     assert strategy.submitted == [
@@ -3641,6 +3741,11 @@ def test_native_strategy_does_not_swallow_durable_rejection_persistence_failure(
                 "detail": {},
                 "candidate": None,
             })()
+
+        def batch_arbitrate(
+            self, decisions: list[tuple[AlphaDecision, MarketView]]
+        ) -> BatchArbitrationResult:
+            return BatchArbitrationResult(decision for decision, _ in decisions)
 
     strategy = PolySignalNativeStrategy(
         core=FakeCore([_decision()]),

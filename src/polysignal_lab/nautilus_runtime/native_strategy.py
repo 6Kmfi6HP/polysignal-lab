@@ -401,7 +401,23 @@ class PolySignalNativeStrategy(Strategy):
             self._note_runtime_progress("readiness_miss")
             return
         market_view = cast(MarketView, view)
-        for decision in self.core.evaluate(market_view):
+        batch = [
+            (decision, market_view)
+            for decision in self.core.evaluate(market_view)
+        ]
+        try:
+            batch_result = self._decision_pipeline.try_batch_arbitrate(batch)
+        except Exception:
+            self._note_runtime_progress("arbitration_failed")
+            return
+        for decision, rejected in batch_result.rejections:
+            self._decision_pipeline.record_batch_rejection(
+                rejected,
+                decision,
+                state=self._pipeline_state,
+                sink=self._decision_sink,
+            )
+        for decision in batch_result:
             self._handle_decision(decision, market_view)
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:

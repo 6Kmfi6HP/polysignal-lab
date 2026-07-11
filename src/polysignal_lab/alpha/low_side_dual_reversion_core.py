@@ -14,7 +14,6 @@ Pos: Application code
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from polysignal_lab.alpha.helpers import (
@@ -45,10 +44,6 @@ class LowSideDualReversionAlphaCore:
 
     def _pair_effective_cost(self, leg1_price: float, leg2_price: float) -> float:
         return leg1_price + leg2_price + 2.0 * self.config.fee_rate + self.config.slippage_buffer
-
-    @staticmethod
-    def _utc_now() -> datetime:
-        return datetime.now(timezone.utc)
 
     def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
         record_two_leg_fill(
@@ -146,7 +141,7 @@ class LowSideDualReversionAlphaCore:
         return [] if best_price is None else self._build_decisions(view, best_price)
 
     def _try_hedge(self, view: MarketView, position: dict[str, Any]) -> list[AlphaDecision]:
-        hedge = position_hedge_context(position, self._utc_now())
+        hedge = position_hedge_context(position, view.created_at)
         decisions: list[AlphaDecision] = []
 
         hedge_book = view.book_for(hedge.hedge_side)

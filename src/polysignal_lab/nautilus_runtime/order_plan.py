@@ -15,12 +15,29 @@ Pos: Application code
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import SupportsFloat, cast
 
-from polysignal_lab.alpha.types import AlphaDecision, NautilusOrderSpec, OrderIntentSpec
-from polysignal_lab.domain.enums import OrderIntent
+from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
+
+
+@dataclass(frozen=True, slots=True)
+class OrderSubmissionPlan:
+    instrument_id: str
+    side: Side
+    price: float
+    quantity: float
+    intent: OrderIntent
+    expiry_seconds: int | None
+    pair_id: str | None
+    reduce_only: bool
+    hedge_leg: bool
+    tags: Mapping[str, str]
+
+
+NautilusOrderSpec = OrderSubmissionPlan
 
 
 def build_order_spec(
@@ -28,14 +45,14 @@ def build_order_spec(
     *,
     fixed_stake_usdc: float,
     best_ask: float | None,
-) -> NautilusOrderSpec:
+) -> OrderSubmissionPlan:
     intent = resolve_order_intent(source)
     expiry_seconds = expiry_seconds_for(source)
     pair_id = pair_id_for(source)
     metrics = dict(cast(Mapping[str, object], source.metrics))
     price = resolve_order_price(source, intent=intent, best_ask=best_ask)
     quantity = resolve_order_quantity(metrics, fixed_stake_usdc=fixed_stake_usdc, price=price)
-    return NautilusOrderSpec(
+    return OrderSubmissionPlan(
         instrument_id=str(source.token_id),
         side=source.side,
         price=price,
@@ -148,6 +165,8 @@ def add_time_in_force_tags(
     intent: OrderIntent,
     expiry_seconds: int | None,
 ) -> None:
+    from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
+
     tags["time_in_force"] = PolymarketEnumParser.to_nautilus_time_in_force(intent).name
     if intent == OrderIntent.PASSIVE_GTD:
         if expiry_seconds is not None:

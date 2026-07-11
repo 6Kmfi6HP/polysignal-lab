@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from typing import Callable, Protocol
 
-from polysignal_lab.alpha.types import NautilusOrderSpec
-
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.custom_data_types import (

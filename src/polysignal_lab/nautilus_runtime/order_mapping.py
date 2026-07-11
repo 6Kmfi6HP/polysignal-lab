@@ -14,10 +14,10 @@ Pos: Application code
 
 from __future__ import annotations
 
-from polysignal_lab.alpha.types import AlphaDecision, NautilusOrderSpec
+from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
-from polysignal_lab.nautilus_runtime.order_plan import build_order_spec
+from polysignal_lab.nautilus_runtime.order_plan import NautilusOrderSpec, build_order_spec
 
 
 def order_spec_from_decision(

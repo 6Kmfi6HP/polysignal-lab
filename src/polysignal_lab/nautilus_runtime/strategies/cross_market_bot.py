@@ -16,12 +16,7 @@ from nautilus_trader.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
 from polysignal_lab.alpha.cross_market_core import CrossMarketAlphaCore
-from polysignal_lab.alpha.types import (
-    AlphaDecision,
-    MarketGroupView,
-    MarketView,
-    NautilusOrderSpec,
-)
+from polysignal_lab.alpha.types import AlphaDecision, MarketGroupView, MarketView
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_bridge.state import save_strategy_state, load_strategy_state
@@ -31,6 +26,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
+from polysignal_lab.nautilus_runtime.order_plan import NautilusOrderSpec
 
 
 class CrossMarketNautilusStrategy(Strategy):

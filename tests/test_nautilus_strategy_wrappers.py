@@ -25,6 +25,7 @@ from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
+    BatchArbitrationResult,
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -97,6 +98,10 @@ class FakePolicy:
             detail={},
             candidate=_signal_from_decision(decision),
         )
+    def batch_arbitrate(
+        self, decisions: list[tuple[AlphaDecision, MarketView]]
+    ) -> BatchArbitrationResult:
+        return BatchArbitrationResult(decision for decision, _ in decisions)
 
 
 def _view() -> MarketView:

@@ -153,20 +153,6 @@ class AlphaFillEvent(AlphaOrderEvent):
     liquidity_side: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class NautilusOrderSpec:
-    instrument_id: str
-    side: Side
-    price: float
-    quantity: float
-    intent: OrderIntent
-    expiry_seconds: int | None
-    pair_id: str | None
-    reduce_only: bool
-    hedge_leg: bool
-    tags: Mapping[str, str]
-
-
 class StatefulAlphaCore(AlphaCore, Protocol):
     def on_order_submitted(self, event: AlphaOrderEvent) -> None: ...
     def on_order_accepted(self, event: AlphaOrderEvent) -> None: ...

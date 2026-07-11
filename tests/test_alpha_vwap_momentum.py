@@ -19,7 +19,7 @@ from dataclasses import replace
 
 from polysignal_lab.alpha.ptb_diff_core import market_view_from_snapshot
 from polysignal_lab.alpha.state import restore_utc_datetime
-from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, TradeView
+from polysignal_lab.alpha.types import AlphaFillEvent, AlphaOrderEvent, TradeView
 from polysignal_lab.alpha.vwap_momentum_core import TradeHistory, VWAPMomentumAlphaCore
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.strategy_config import VWAPMomentumConfig
