@@ -95,7 +95,8 @@ def test_alpha_decision_carries_order_intent_spec() -> None:
     assert decision.reason_codes == ("PTB_DIFF_THRESHOLD_OK",)
 
 
-from polysignal_lab.alpha.types import AlphaFillEvent, AlphaOrderEvent, MarketGroupView, NautilusOrderSpec
+from polysignal_lab.alpha.types import AlphaFillEvent, AlphaOrderEvent, MarketGroupView
+from polysignal_lab.nautilus_runtime.order_plan import NautilusOrderSpec
 
 
 def test_market_group_view_carries_relation_members() -> None:

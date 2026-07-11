@@ -123,7 +123,7 @@ def _live_node_strategies_and_cache(
     registry: MarketCatalog,
     market_rotation_actor: object,
     observability: object | None,
-) -> tuple[Sequence[NativeStrategyLike], object, object]:
+) -> tuple[object, object, Sequence[NativeStrategyLike]]:
     from polysignal_lab.nautilus_runtime.node import (
         _attach_cache_projections,
         _build_native_strategies,

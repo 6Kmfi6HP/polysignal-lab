@@ -54,13 +54,17 @@ class PreOrderMarketAlphaCore:
     def _utc_now() -> datetime:
         return datetime.now(timezone.utc)
 
+    def _now_from(self, view: MarketView) -> datetime:
+        """Return the logical clock time from the view."""
+        return view.created_at
+
     def _has_started(self, view: MarketView) -> bool:
-        return view.start_ts is None or self._utc_now() >= view.start_ts
+        return view.start_ts is None or self._now_from(view) >= view.start_ts
 
     def _is_in_pre_order_window(self, view: MarketView) -> bool:
         if view.start_ts is None:
             return False
-        now_ts = self._utc_now().timestamp()
+        now_ts = self._now_from(view).timestamp()
         return view.start_ts.timestamp() - self.config.seconds_before_open <= now_ts < view.start_ts.timestamp() + self.config.seconds_after_open_expiry
 
     def on_order_submitted(self, event: AlphaOrderEvent) -> None:
@@ -114,7 +118,7 @@ class PreOrderMarketAlphaCore:
             return []
 
         decisions: list[AlphaDecision] = []
-        now = self._utc_now()
+        now = self._now_from(view)
         for price, shares in self.config.ladder:
             for side in SIDES:
                 ask = view.ask_for(side)

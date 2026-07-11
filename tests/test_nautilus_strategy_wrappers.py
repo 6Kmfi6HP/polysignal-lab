@@ -98,6 +98,12 @@ class FakePolicy:
             candidate=_signal_from_decision(decision),
         )
 
+    def batch_arbitrate(
+        self, decisions: list[tuple[AlphaDecision, MarketView]]
+    ) -> list[AlphaDecision]:
+        """Pass-through: return all decisions unfiltered (fail-closed for tests)."""
+        return [d for d, _ in decisions]
+
 
 def _view() -> MarketView:
     now = datetime(2026, 1, 1, tzinfo=UTC)

@@ -50,6 +50,10 @@ class LowSideDualReversionAlphaCore:
     def _utc_now() -> datetime:
         return datetime.now(timezone.utc)
 
+    def _now_from(self, view: MarketView) -> datetime:
+        """Return the logical clock time from the view."""
+        return view.created_at
+
     def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
         record_two_leg_fill(
             self._positions,
@@ -146,7 +150,7 @@ class LowSideDualReversionAlphaCore:
         return [] if best_price is None else self._build_decisions(view, best_price)
 
     def _try_hedge(self, view: MarketView, position: dict[str, Any]) -> list[AlphaDecision]:
-        hedge = position_hedge_context(position, self._utc_now())
+        hedge = position_hedge_context(position, self._now_from(view))
         decisions: list[AlphaDecision] = []
 
         hedge_book = view.book_for(hedge.hedge_side)

@@ -59,6 +59,10 @@ class DumpHedgeAlphaCore:
     def _utc_now() -> datetime:
         return datetime.now(timezone.utc)
 
+    def _now_from(self, view: MarketView) -> datetime:
+        """Return the logical clock time from the view."""
+        return view.created_at
+
     # -- guard helpers -------------------------------------------------------
 
     def _validate_inputs(self, view: MarketView) -> bool:
@@ -114,7 +118,7 @@ class DumpHedgeAlphaCore:
     def _is_in_detection_window(self, view: MarketView) -> bool:
         if view.start_ts is None:
             return False
-        elapsed = (self._utc_now() - view.start_ts).total_seconds()
+        elapsed = (self._now_from(view) - view.start_ts).total_seconds()
         return 0 <= elapsed <= self.config.detection_window_minutes * 60.0
 
     def on_order_accepted(self, event: AlphaOrderEvent) -> None:
@@ -160,7 +164,7 @@ class DumpHedgeAlphaCore:
         return self._evaluate_sides(view)
 
     def _try_hedge_or_stop(self, view: MarketView, position: dict[str, Any]) -> list[AlphaDecision]:
-        hedge = position_hedge_context(position, self._utc_now())
+        hedge = position_hedge_context(position, self._now_from(view))
         hedge_ask = view.ask_for(hedge.hedge_side)
         decisions: list[AlphaDecision] = []
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "active_work_id": "complete-prd-old-remove-demo-019eec90",
+  "active_work_id": "nautilus-architecture-remediation-019f4a73",
   "works": {
     "complete-prd-old-remove-demo-019eec90": {
       "work_id": "complete-prd-old-remove-demo-019eec90",
@@ -11,6 +11,16 @@
       ],
       "status": "active",
       "worktree_path": null
+    },
+    "nautilus-architecture-remediation-019f4a73": {
+      "work_id": "nautilus-architecture-remediation-019f4a73",
+      "active_plan": ".omo/plans/nautilus-architecture-remediation.md",
+      "plan_name": "nautilus-architecture-remediation",
+      "session_ids": [
+        "codex:019f4a73-8982-7a63-85a6-6b734c750d9a"
+      ],
+      "status": "active",
+      "worktree_path": "/home/debian/polysignal-lab/.worktrees/nautilus-architecture-remediation"
     }
   }
 }

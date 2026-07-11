@@ -8,6 +8,7 @@ Pos: Observability persistence routing — enums, protocols, adapters, and share
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -18,6 +19,9 @@ from typing import Protocol
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.utils import utc_iso
+
+
+logger = logging.getLogger(__name__)
 
 
 class PersistenceClass(Enum):
@@ -161,7 +165,10 @@ class NautilusEventStoreAdapter:
             ):
                 raise
         if self._append_log is not None:
-            self._append_log(self._streams[table], payload)
+            try:
+                self._append_log(self._streams[table], payload)
+            except (OSError, TypeError):
+                logger.exception("JSONL append failed for table %s", table)
 
     def insert_many_json(self, table: str, rows: Sequence[Mapping[str, object]]) -> None:
         for row in rows:

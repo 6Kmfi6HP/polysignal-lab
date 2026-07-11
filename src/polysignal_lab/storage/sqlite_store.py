@@ -654,25 +654,3 @@ class SQLiteStore:
         if existing_payload == json.loads(payload_json):
             return True
         raise DuplicateRecordError(table=table, key=key_column, record_id=key_value)
-
-    def _insert_payload_row(
-        self,
-        *,
-        table: str,
-        key_column: str,
-        key_value: str,
-        created_at: str,
-        payload: object,
-    ) -> None:
-        payload_json = self._json(payload)
-        if self._skip_duplicate_payload_row(
-            table=table,
-            key_column=key_column,
-            key_value=key_value,
-            payload_json=payload_json,
-        ):
-            return
-        self._conn.execute(
-            f"INSERT INTO {table} ({key_column}, created_at, payload_json) VALUES (?, ?, ?)",
-            (key_value, created_at, payload_json),
-        )

@@ -116,5 +116,17 @@ class TradeHistory:
             return None
         return trades[-1].price
 
+    def prune(self, key: str, window_sec: float, now: float) -> None:
+        """Public wrapper for _prune — trim trades older than window_sec."""
+        self._prune(key, window_sec, now)
+
+    def trades_for_key(self, key: str) -> list[Trade]:
+        """Return trades for a key (may be mutated externally)."""
+        return self._trades.get(key, [])
+
+    def all_trades(self) -> dict[str, list[Trade]]:
+        """Return a snapshot of all trades by key."""
+        return dict(self._trades)
+
     def clear_key(self, key: str) -> None:
         self._trades.pop(key, None)

@@ -25,12 +25,12 @@ from typing import Any, Protocol, cast
 from polysignal_lab.alpha.types import (
     AlphaDecision,
     MarketView,
-    NautilusOrderSpec,
     OrderIntentSpec,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+from polysignal_lab.nautilus_runtime.order_plan import NautilusOrderSpec
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
 

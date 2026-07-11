@@ -261,6 +261,58 @@ class DecisionPolicyActor:
         )
         return any(id(item) == id(candidate) for item in kept)
 
+    def batch_arbitrate(
+        self,
+        decisions: list[tuple[AlphaDecision, MarketView]],
+    ) -> list[AlphaDecision]:
+        """Batch-arbitrate multiple decisions so ``suppress_ambiguous`` can detect opposite-side conflicts.
+
+        Returns only the decisions whose candidates survive arbitration.  The
+        gate and consensus steps are NOT applied here — callers should pass each
+        surviving decision through ``evaluate()`` individually.
+        """
+        if not decisions:
+            return []
+        candidates, strategy_priorities, strategy_config_indexes, market_config_indexes = (
+            self._build_batch_arbitration_state(decisions)
+        )
+        kept_set = {
+            id(c)
+            for c in self.arbiter.arbitrate(
+                candidates,
+                strategy_priorities=strategy_priorities,
+                strategy_config_indexes=strategy_config_indexes,
+                market_config_indexes=market_config_indexes,
+            )
+        }
+        return [
+            decision
+            for idx, (decision, _) in enumerate(decisions)
+            if id(candidates[idx]) in kept_set
+        ]
+
+    @staticmethod
+    def _build_batch_arbitration_state(
+        decisions: list[tuple[AlphaDecision, MarketView]],
+    ) -> tuple[
+        list[SignalCandidate],
+        dict[str, int],
+        dict[str, int],
+        dict[str, int],
+    ]:
+        """Build candidate list and index dicts from a list of (decision, view) pairs."""
+        candidates: list[SignalCandidate] = []
+        strategy_priorities: dict[str, int] = {}
+        strategy_config_indexes: dict[str, int] = {}
+        market_config_indexes: dict[str, int] = {}
+        for idx, (decision, view) in enumerate(decisions):
+            candidate = candidate_from_decision(decision, view)
+            candidates.append(candidate)
+            _ = strategy_priorities.setdefault(candidate.strategy, idx)
+            _ = strategy_config_indexes.setdefault(candidate.strategy, idx)
+            _ = market_config_indexes.setdefault(candidate.market_id, idx)
+        return candidates, strategy_priorities, strategy_config_indexes, market_config_indexes
+
     def _candidate_from_decision(
         self, decision: AlphaDecision, view: MarketView
     ) -> SignalCandidate:

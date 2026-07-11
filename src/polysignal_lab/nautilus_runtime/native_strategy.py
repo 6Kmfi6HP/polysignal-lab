@@ -399,7 +399,14 @@ class PolySignalNativeStrategy(Strategy):
             self._note_runtime_progress("readiness_miss")
             return
         market_view = cast(MarketView, view)
-        for decision in self.core.evaluate(market_view):
+        decisions = list(self.core.evaluate(market_view))
+        try:
+            survivors = self._decision_pipeline.try_batch_arbitrate(
+                [(d, market_view) for d in decisions],
+            ) if len(decisions) > 1 else decisions
+        except Exception:
+            survivors = decisions
+        for decision in survivors:
             self._handle_decision(decision, market_view)
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:

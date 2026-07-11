@@ -512,8 +512,8 @@ class VWAPMomentumAlphaCore:
 
 
     def _prune_trade_state(self, key: str, window_sec: float, now: float) -> None:
-        self.trades._prune(key, window_sec, now)
-        trades = self.trades._trades.get(key)
+        self.trades.prune(key, window_sec, now)
+        trades = self.trades.trades_for_key(key)
         if not trades:
             self._seen_trade_signatures.pop(key, None)
             return
@@ -533,7 +533,7 @@ class VWAPMomentumAlphaCore:
                             {"price": trade.price, "size": trade.size, "timestamp": trade.timestamp}
                             for trade in trades
                         ]
-                        for key, trades in self.trades._trades.items()
+                        for key, trades in self.trades.all_trades().items()
                     },
                     "can_enter": dict(self._can_enter),
                     "last_trade_signatures": self._last_trade_signatures,

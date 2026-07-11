@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, typing, typing.SupportsFloat, typing.cast, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.NautilusOrderSpec
-Output: build_order_spec, resolve_order_intent, explicit_order_intent, resolve_order_price, resolve_order_quantity, build_order_tags, add_optional_source_tags, add_time_in_force_tags, expiry_seconds_for, pair_id_for
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, typing, typing.SupportsFloat, typing.cast, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.OrderIntentSpec
+Output: build_order_spec, resolve_order_intent, explicit_order_intent, resolve_order_price, resolve_order_quantity, build_order_tags, add_optional_source_tags, add_time_in_force_tags, expiry_seconds_for, pair_id_for, OrderSubmissionPlan, NautilusOrderSpec
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -15,12 +15,36 @@ Pos: Application code
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import SupportsFloat, cast
 
-from polysignal_lab.alpha.types import AlphaDecision, NautilusOrderSpec, OrderIntentSpec
+from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
+
+
+@dataclass(frozen=True, slots=True)
+class OrderSubmissionPlan:
+    """Runtime order specification built from an ``AlphaDecision``.
+
+    Migrated from the pure-alpha layer to the runtime layer (formerly
+    ``alpha.types.NautilusOrderSpec``).
+    """
+
+    instrument_id: str
+    side: object  # enum is runtime-dependent
+    price: float
+    quantity: float
+    intent: OrderIntent
+    expiry_seconds: int | None
+    pair_id: str | None
+    reduce_only: bool
+    hedge_leg: bool
+    tags: Mapping[str, str]
+
+# Backward-compat alias — new code should import ``OrderSubmissionPlan``.
+NautilusOrderSpec = OrderSubmissionPlan
 
 
 def build_order_spec(
@@ -28,14 +52,14 @@ def build_order_spec(
     *,
     fixed_stake_usdc: float,
     best_ask: float | None,
-) -> NautilusOrderSpec:
+) -> OrderSubmissionPlan:
     intent = resolve_order_intent(source)
     expiry_seconds = expiry_seconds_for(source)
     pair_id = pair_id_for(source)
     metrics = dict(cast(Mapping[str, object], source.metrics))
     price = resolve_order_price(source, intent=intent, best_ask=best_ask)
     quantity = resolve_order_quantity(metrics, fixed_stake_usdc=fixed_stake_usdc, price=price)
-    return NautilusOrderSpec(
+    return OrderSubmissionPlan(
         instrument_id=str(source.token_id),
         side=source.side,
         price=price,

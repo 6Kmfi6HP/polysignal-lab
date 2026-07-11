@@ -13,13 +13,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
-from polysignal_lab.alpha.types import AlphaDecision, MarketView, NautilusOrderSpec
+from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     DecisionPolicyActor,
     RejectedDecision,
 )
+from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 from polysignal_lab.nautilus_runtime.strategy.helpers import _market_view_ready
 
@@ -29,7 +30,7 @@ def map_approved_to_order_spec(
     *,
     view: MarketView,
     fixed_stake_usdc: float,
-) -> NautilusOrderSpec:
+) -> OrderSubmissionPlan:
     signal = approved.signal
     book = view.book_for(signal.side)
     return order_spec_from_decision(
@@ -154,6 +155,22 @@ class DecisionPipeline:
             market_view_ready=_market_view_ready,
             note_progress=sink.note_progress,
         )
+
+    def try_batch_arbitrate(
+        self,
+        decisions: list[tuple[AlphaDecision, MarketView]],
+    ) -> list[AlphaDecision]:
+        """Batch-arbitrate multiple (decision, view) pairs against each other.
+
+        This lets ``suppress_ambiguous`` detect opposite-side conflicts within
+        a single evaluation epoch.  Survivors still need individual
+        ``handle_decision()`` calls for gate/consensus evaluation.
+        """
+        if not decisions:
+            return []
+        policy = self._resolve_policy()
+        survivors = policy.batch_arbitrate(decisions)
+        return survivors
 
     @staticmethod
     def _on_duplicate(
