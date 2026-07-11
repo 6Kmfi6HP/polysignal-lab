@@ -14,7 +14,6 @@ Pos: Application code
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from polysignal_lab.alpha.helpers import (
@@ -54,14 +53,6 @@ class DumpHedgeAlphaCore:
     @staticmethod
     def _pair_effective_cost(leg1_price: float, leg2_price: float) -> float:
         return leg1_price + leg2_price + 2.0 * _FEE_RATE + _SLIPPAGE_BUFFER
-
-    @staticmethod
-    def _utc_now() -> datetime:
-        return datetime.now(timezone.utc)
-
-    def _now_from(self, view: MarketView) -> datetime:
-        """Return the logical clock time from the view."""
-        return view.created_at
 
     # -- guard helpers -------------------------------------------------------
 
@@ -118,7 +109,7 @@ class DumpHedgeAlphaCore:
     def _is_in_detection_window(self, view: MarketView) -> bool:
         if view.start_ts is None:
             return False
-        elapsed = (self._now_from(view) - view.start_ts).total_seconds()
+        elapsed = (view.created_at - view.start_ts).total_seconds()
         return 0 <= elapsed <= self.config.detection_window_minutes * 60.0
 
     def on_order_accepted(self, event: AlphaOrderEvent) -> None:
@@ -164,7 +155,7 @@ class DumpHedgeAlphaCore:
         return self._evaluate_sides(view)
 
     def _try_hedge_or_stop(self, view: MarketView, position: dict[str, Any]) -> list[AlphaDecision]:
-        hedge = position_hedge_context(position, self._now_from(view))
+        hedge = position_hedge_context(position, view.created_at)
         hedge_ask = view.ask_for(hedge.hedge_side)
         decisions: list[AlphaDecision] = []
 

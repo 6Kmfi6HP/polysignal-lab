@@ -25,6 +25,7 @@ from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
+    BatchArbitrationResult,
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -100,9 +101,8 @@ class FakePolicy:
 
     def batch_arbitrate(
         self, decisions: list[tuple[AlphaDecision, MarketView]]
-    ) -> list[AlphaDecision]:
-        """Pass-through: return all decisions unfiltered (fail-closed for tests)."""
-        return [d for d, _ in decisions]
+    ) -> BatchArbitrationResult:
+        return BatchArbitrationResult(decision for decision, _ in decisions)
 
 
 def _view() -> MarketView:

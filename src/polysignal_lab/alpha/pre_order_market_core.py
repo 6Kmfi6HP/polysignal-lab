@@ -14,7 +14,7 @@ Pos: Application code
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from polysignal_lab.alpha.helpers import (
@@ -50,9 +50,8 @@ class PreOrderMarketAlphaCore:
     def _pair_effective_cost(leg1_price: float, leg2_price: float) -> float:
         return leg1_price + leg2_price + 2.0 * _FEE_RATE + _SLIPPAGE_BUFFER
 
-    @staticmethod
-    def _utc_now() -> datetime:
-        return datetime.now(timezone.utc)
+    def _now_from(self, view: MarketView) -> datetime:
+        return view.created_at
 
     def _now_from(self, view: MarketView) -> datetime:
         """Return the logical clock time from the view."""

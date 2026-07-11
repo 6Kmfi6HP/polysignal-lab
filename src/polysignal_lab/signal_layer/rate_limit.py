@@ -28,6 +28,23 @@ class ChannelRateLimiter:
     _market: dict[str, deque[float]] = field(default_factory=lambda: defaultdict(deque))
     _lock: Lock = field(default_factory=Lock)
 
+    def can_allow(self, market_ids: list[str]) -> bool:
+        now = time.time()
+        cutoff = now - 3600
+        with self._lock:
+            global_count = sum(ts >= cutoff for ts in self._global)
+            if global_count + len(market_ids) > self.max_per_hour:
+                return False
+            counts = {
+                market_id: sum(ts >= cutoff for ts in self._market[market_id])
+                for market_id in set(market_ids)
+            }
+            for market_id in market_ids:
+                counts[market_id] += 1
+                if counts[market_id] > self.max_per_market:
+                    return False
+            return True
+
     def allow(self, market_id: str) -> bool:
         now = time.time()
         cutoff = now - 3600

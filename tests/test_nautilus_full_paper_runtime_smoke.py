@@ -357,7 +357,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
                     data_freshness_ms=20,
                     reason_codes=("TEST",),
                     metrics={},
-                    order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK, pair_id="pair-1"),
+                    order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK),
                     hedge_leg=False,
                 )
             ]
@@ -390,6 +390,11 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
             )
             return ApprovedDecision(signal=candidate)
 
+        def batch_arbitrate(self, decisions):
+            from polysignal_lab.nautilus_runtime.decision_policy import BatchArbitrationResult
+
+            return BatchArbitrationResult(decision for decision, _ in decisions)
+
     class FakeStrategy(PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
@@ -399,6 +404,9 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
 
         def submit_order(self, order):
             self.submitted.append(order)
+
+        def request_instrument(self, instrument_id):
+            _ = instrument_id
 
     market = _sample_market()
     registry = MarketCatalog()
@@ -609,7 +617,7 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
                     data_freshness_ms=20,
                     reason_codes=("TEST",),
                     metrics={},
-                    order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK, pair_id=f"pair-{view.condition_id}"),
+                    order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK),
                     hedge_leg=False,
                 )
             ]
@@ -642,6 +650,11 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
             )
             return ApprovedDecision(signal=candidate)
 
+        def batch_arbitrate(self, decisions):
+            from polysignal_lab.nautilus_runtime.decision_policy import BatchArbitrationResult
+
+            return BatchArbitrationResult(decision for decision, _ in decisions)
+
     class FakeStrategy(PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
@@ -651,6 +664,9 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
 
         def submit_order(self, order):
             self.submitted.append(order)
+
+        def request_instrument(self, instrument_id):
+            _ = instrument_id
 
     def market(
         *,

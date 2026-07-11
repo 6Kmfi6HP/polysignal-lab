@@ -38,6 +38,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicyActor,
     RejectedDecision,
 )
+from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
 from polysignal_lab.utils import utc_now
@@ -359,6 +360,196 @@ def test_missing_side_book_rejects_as_missing_orderbook() -> None:
     assert result.detail["lag_ms"] is None
 
 
+def test_batch_arbitration_keeps_opposite_legs_in_same_pair() -> None:
+    actor = DecisionPolicyActor(
+        gate=_gate(dedupe_enabled=False),
+        arbiter=SignalArbiter(),
+    )
+    up = _decision(
+        side=Side.UP,
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD,
+            expiry_seconds=300,
+            pair_id="pair-1",
+        ),
+    )
+    down = _decision(
+        side=Side.DOWN,
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD,
+            expiry_seconds=300,
+            pair_id="pair-1",
+        ),
+    )
+
+    assert actor.batch_arbitrate([(up, _view()), (down, _view())]) == [up, down]
+
+
+def test_invalid_batch_candidate_cannot_suppress_valid_opposite_candidate() -> None:
+    actor = _actor_for("accepted")
+    invalid = _decision(side=Side.UP, max_entry_price=0.10)
+    valid = _decision(side=Side.DOWN, max_entry_price=0.90)
+    view = _view_for("accepted")
+
+    assert actor.batch_arbitrate([(invalid, view), (valid, view)]) == [valid]
+
+
+def test_batch_prevalidation_does_not_consume_gate_state_for_suppressed_candidate() -> None:
+    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=True))
+    up = _decision(side=Side.UP)
+    down = _decision(side=Side.DOWN)
+    view = _view()
+
+    assert actor.batch_arbitrate([(up, view), (down, view)]) == []
+    assert actor.gate.deduper.snapshot() == {}
+    assert len(actor.gate.rate_limiter._global) == 0
+
+
+def test_batch_arbitration_rejects_incomplete_pair_without_committing_gate_state() -> None:
+    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=True))
+    up = _decision(
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD,
+            expiry_seconds=300,
+            pair_id="pair-1",
+        )
+    )
+
+    result = actor.batch_arbitrate([(up, _view())])
+
+    assert result == []
+    assert [(decision, rejected.reason_code) for decision, rejected in result.rejections] == [
+        (up, "INCOMPLETE_PAIR")
+    ]
+    assert actor.gate.deduper.snapshot() == {}
+    assert len(actor.gate.rate_limiter._global) == 0
+
+
+def test_batch_arbitration_rejects_duplicate_pair_leg() -> None:
+    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=False))
+    up = _decision(
+        side=Side.UP,
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD,
+            expiry_seconds=300,
+            pair_id="pair-1",
+        ),
+    )
+    duplicate_up = replace(up, token_id="token-up-duplicate")
+    down = _decision(
+        side=Side.DOWN,
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD,
+            expiry_seconds=300,
+            pair_id="pair-1",
+        ),
+    )
+
+    result = actor.batch_arbitrate([(up, _view()), (duplicate_up, _view()), (down, _view())])
+
+    assert result == []
+    assert [rejected.reason_code for _, rejected in result.rejections] == [
+        "MALFORMED_PAIR",
+        "MALFORMED_PAIR",
+        "MALFORMED_PAIR",
+    ]
+
+
+def test_batch_arbitration_records_ambiguity_rejections() -> None:
+    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=False))
+    up = _decision(side=Side.UP)
+    down = _decision(side=Side.DOWN)
+
+    result = actor.batch_arbitrate([(up, _view()), (down, _view())])
+
+    assert result == []
+    assert [rejected.reason_code for _, rejected in result.rejections] == [
+        "ARBITRATION_SUPPRESSED",
+        "ARBITRATION_SUPPRESSED",
+    ]
+
+
+def test_batch_arbitration_returns_survivors_in_original_input_order() -> None:
+    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=False))
+    beta = _decision(strategy="beta", market_id="market-2", token_id="token-beta")
+    alpha = _decision(strategy="alpha", market_id="market-1", token_id="token-alpha")
+
+    result = actor.batch_arbitrate([(beta, _view(market_id="market-2")), (alpha, _view())])
+
+    assert result == [beta, alpha]
+
+
+def test_batch_commit_handoff_requires_exact_market_view_identity() -> None:
+    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=True))
+    decision = _decision()
+    view = _view()
+    stale_view = replace(view, up=replace(view.up, freshness_ms=101))
+
+    assert actor.batch_arbitrate([(decision, view)]) == [decision]
+
+    result = actor.evaluate(decision, stale_view)
+
+    assert isinstance(result, RejectedDecision)
+    assert result.reason_code == "STALE_ORDERBOOK"
+    assert isinstance(actor.evaluate(decision, view), ApprovedDecision)
+
+
+def test_complete_pair_commits_policy_for_both_legs_before_evaluation() -> None:
+    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=True, max_signals_per_market=2))
+    up = _decision(
+        side=Side.UP,
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD,
+            expiry_seconds=300,
+            pair_id="pair-1",
+        ),
+    )
+    down = _decision(
+        side=Side.DOWN,
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD,
+            expiry_seconds=300,
+            pair_id="pair-1",
+        ),
+    )
+    view = _view()
+
+    assert actor.batch_arbitrate([(down, view), (up, view)]) == [down, up]
+    assert isinstance(actor.evaluate(down, view), ApprovedDecision)
+    assert isinstance(actor.evaluate(up, view), ApprovedDecision)
+
+
+def test_complete_pair_rejects_before_mutating_gate_when_capacity_is_insufficient() -> None:
+    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=True, max_signals_per_market=1))
+    up = _decision(
+        side=Side.UP,
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD,
+            expiry_seconds=300,
+            pair_id="pair-1",
+        ),
+    )
+    down = _decision(
+        side=Side.DOWN,
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD,
+            expiry_seconds=300,
+            pair_id="pair-1",
+        ),
+    )
+    view = _view()
+
+    result = actor.batch_arbitrate([(up, view), (down, view)])
+
+    assert result == []
+    assert [rejected.reason_code for _, rejected in result.rejections] == [
+        "CHANNEL_RATE_LIMIT",
+        "CHANNEL_RATE_LIMIT",
+    ]
+    assert actor.gate.deduper.snapshot() == {}
+    assert len(actor.gate.rate_limiter._global) == 0
+
+
 def _actor_for(case: str) -> DecisionPolicyActor:
     if case == "dedupe":
         return DecisionPolicyActor(gate=_gate(dedupe_enabled=True))
@@ -370,14 +561,17 @@ def _actor_for(case: str) -> DecisionPolicyActor:
 
 
 def _gate(
-    *, dedupe_enabled: bool, max_signals_per_hour: int = 60
+    *,
+    dedupe_enabled: bool,
+    max_signals_per_hour: int = 60,
+    max_signals_per_market: int = 50,
 ) -> SignalGate:
     return SignalGate(
         SignalConfig(
             min_confidence_to_publish=0.50,
             dedupe_enabled=dedupe_enabled,
             max_signals_per_hour=max_signals_per_hour,
-            max_signals_per_market=50,
+            max_signals_per_market=max_signals_per_market,
         ),
         PolymarketDataConfig(max_book_staleness_ms=100),
         BinanceDataConfig(max_price_staleness_ms=100),
@@ -418,6 +612,9 @@ def _view_for(case: str) -> MarketView:
 def _decision(
     *,
     strategy: str = "alpha",
+    market_id: str = "market-1",
+    token_id: str | None = None,
+    side: Side = Side.UP,
     confidence: float = 0.75,
     seconds_to_close: int | None = 120,
     max_entry_price: float = 0.60,
@@ -428,11 +625,11 @@ def _decision(
         strategy=strategy,
         asset="BTC",
         timeframe="5m",
-        market_id="market-1",
+        market_id=market_id,
         market_slug="btc-updown-5m-test",
         condition_id="condition-1",
-        token_id="token-up",
-        side=Side.UP,
+        token_id=token_id or ("token-up" if side == Side.UP else "token-down"),
+        side=side,
         confidence=confidence,
         entry_reference_price=0.45,
         max_entry_price=max_entry_price,
@@ -447,6 +644,7 @@ def _decision(
 
 def _view(
     *,
+    market_id: str = "market-1",
     market_is_active: bool = True,
     ask: float = 0.45,
     spread: float = 0.03,
@@ -463,8 +661,8 @@ def _view(
     )
     down = replace(up, token_id="token-down")
     return MarketView(
-        view_id="view-1",
-        market_id="market-1",
+        view_id=f"view-{market_id}",
+        market_id=market_id,
         market_slug="btc-updown-5m-test",
         condition_id="condition-1",
         asset="BTC",

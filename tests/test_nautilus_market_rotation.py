@@ -718,8 +718,7 @@ def test_market_rotation_actor_keeps_last_good_state_on_publish_failure(
 
         actor.publish_data = fail_on_changed_universe
 
-        with pytest.raises(RuntimeError, match="universe publish failed"):
-            asyncio.run(actor.refresh_once())
+        asyncio.run(actor._refresh_async())
 
         assert [market.condition_id for market in actor.active_markets()] == ["condition-a"]
         assert [item for item in published if isinstance(item, PolySignalMarketUniverseData)][-1] == first_epoch

@@ -153,7 +153,6 @@ class AlphaFillEvent(AlphaOrderEvent):
     liquidity_side: str | None
 
 
-
 class StatefulAlphaCore(AlphaCore, Protocol):
     def on_order_submitted(self, event: AlphaOrderEvent) -> None: ...
     def on_order_accepted(self, event: AlphaOrderEvent) -> None: ...

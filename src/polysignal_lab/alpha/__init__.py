@@ -43,7 +43,6 @@ from polysignal_lab.alpha.types import (
     StatefulAlphaCore,
     TradeView,
 )
-from polysignal_lab.nautilus_runtime.order_plan import NautilusOrderSpec
 
 __all__ = [
     "AlphaCore",
@@ -62,7 +61,6 @@ __all__ = [
     "MidPriceSizingAlphaCore",
     "MarketGroupView",
     "MarketView",
-    "NautilusOrderSpec",
     "NinetyNineCentSniperAlphaCore",
     "OneCentBuyAlphaCore",
     "OrderIntentSpec",

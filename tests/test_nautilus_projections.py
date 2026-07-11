@@ -14,14 +14,199 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from types import SimpleNamespace
 
+import pytest
+
+from polysignal_lab.nautilus_runtime.strategy import event_projection
 from polysignal_lab.nautilus_runtime.projections import (
     project_fill_event,
     project_order_event,
     project_portfolio_snapshot,
     project_position,
 )
+
+
+def test_project_order_event_converts_nautilus_nanoseconds_to_utc() -> None:
+    event = SimpleNamespace(ts_event=1_788_451_200_123_456_789)
+
+    projected = event_projection.project_order_event(
+        event,
+        registry=None,
+        strategy_name="alpha",
+        metrics_lookup=lambda _: {},
+    )
+
+    assert projected.ts_event == datetime.fromtimestamp(1_788_451_200.1234567, UTC)
+
+
+class _NaiveTimezone(tzinfo):
+    def utcoffset(self, dt: datetime | None) -> None:
+        return None
+
+    def dst(self, dt: datetime | None) -> None:
+        return None
+
+
+class _BadTimezone(tzinfo):
+    def utcoffset(self, dt: datetime | None) -> timedelta:
+        raise TypeError("malformed timezone")
+
+    def dst(self, dt: datetime | None) -> None:
+        return None
+
+
+class _RuntimeErrorTimezone(tzinfo):
+    def utcoffset(self, dt: datetime | None) -> timedelta:
+        raise RuntimeError("malformed timezone")
+
+    def dst(self, dt: datetime | None) -> None:
+        return None
+
+
+def test_project_order_event_normalizes_malformed_timezone_error() -> None:
+    event = SimpleNamespace(ts_event=datetime(2026, 1, 1, tzinfo=_BadTimezone()))
+
+    with pytest.raises(ValueError, match="ts_event datetime"):
+        event_projection.project_order_event(
+            event,
+            registry=None,
+            strategy_name="alpha",
+            metrics_lookup=lambda _: {},
+        )
+
+
+def test_project_order_event_normalizes_runtime_timezone_error() -> None:
+    event = SimpleNamespace(ts_event=datetime(2026, 1, 1, tzinfo=_RuntimeErrorTimezone()))
+
+    with pytest.raises(ValueError, match="ts_event datetime"):
+        event_projection.project_order_event(
+            event,
+            registry=None,
+            strategy_name="alpha",
+            metrics_lookup=lambda _: {},
+        )
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    (
+        0,
+        -1,
+        True,
+        1.0,
+        "1",
+        None,
+        datetime(2026, 1, 1),
+        datetime(2026, 1, 1, tzinfo=_NaiveTimezone()),
+        10**100,
+    ),
+)
+def test_project_order_event_rejects_invalid_event_time(timestamp: object) -> None:
+    event = SimpleNamespace(ts_event=timestamp)
+
+    with pytest.raises(ValueError, match="ts_event"):
+        event_projection.project_order_event(
+            event,
+            registry=None,
+            strategy_name="alpha",
+            metrics_lookup=lambda _: {},
+        )
+
+
+def test_project_order_event_rejects_missing_event_time() -> None:
+    with pytest.raises(ValueError, match="ts_event"):
+        event_projection.project_order_event(
+            SimpleNamespace(),
+            registry=None,
+            strategy_name="alpha",
+            metrics_lookup=lambda _: {},
+        )
+
+
+def test_project_order_event_normalizes_timezone_aware_test_double() -> None:
+    event = SimpleNamespace(
+        ts_event=datetime(2026, 1, 1, 12, tzinfo=timezone(timedelta(hours=-5)))
+    )
+
+    projected = event_projection.project_order_event(
+        event,
+        registry=None,
+        strategy_name="alpha",
+        metrics_lookup=lambda _: {},
+    )
+
+    assert projected.ts_event == datetime(2026, 1, 1, 17, tzinfo=UTC)
+
+
+def test_fill_follow_up_builds_view_at_event_time() -> None:
+    created_at = datetime.fromtimestamp(1_788_451_200.1234567, UTC)
+    decision = SimpleNamespace(condition_id="condition-btc-5m")
+
+    class MetricsTracker:
+        def metrics_for_event(self, event: object) -> dict[str, object]:
+            _ = event
+            return {}
+
+        def forget(self, event: object, order: object) -> None:
+            _ = event, order
+
+    class Assembler:
+        def __init__(self) -> None:
+            self.created_at: datetime | None = None
+
+        def build(
+            self, condition_id: str, *, created_at: datetime | None = None
+        ) -> object:
+            assert condition_id == "condition-btc-5m"
+            self.created_at = created_at
+            return object()
+
+    class Core:
+        def on_order_filled(self, event: object) -> tuple[object, ...]:
+            _ = event
+            return (decision,)
+
+    class Strategy:
+        registry = None
+        strategy_name = "alpha"
+        _active_condition_ids = {"condition-btc-5m"}
+        _metrics_tracker = MetricsTracker()
+
+        def __init__(self) -> None:
+            self.core = Core()
+            self.assembler = Assembler()
+            self.handled: list[tuple[object, object]] = []
+
+        def _note_runtime_progress(self, phase: str) -> None:
+            _ = phase
+
+        def _record_nautilus_fill(
+            self, event: object, metrics: object
+        ) -> None:
+            _ = event, metrics
+
+        def _require_assembler(self) -> Assembler:
+            return self.assembler
+
+        def _handle_decision(self, decision: object, view: object) -> None:
+            self.handled.append((decision, view))
+
+    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+
+    strategy = Strategy()
+    handle_order_filled(
+        strategy,
+        SimpleNamespace(
+            ts_event=1_788_451_200_123_456_789,
+            last_px=0.5,
+            last_qty=1.0,
+        ),
+    )
+
+    assert strategy.assembler.created_at == created_at
+    assert len(strategy.handled) == 1
 
 
 class _FloatLike:

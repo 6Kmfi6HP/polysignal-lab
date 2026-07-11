@@ -1,6 +1,6 @@
 """
-Input: __future__, collections.abc, dataclasses, polysignal_lab.alpha.types, polysignal_lab.nautilus_runtime.decision_policy, polysignal_lab.nautilus_runtime.order_mapping, polysignal_lab.nautilus_runtime.strategy.helpers
-Output: DecisionPipelineState, NativeDecisionSink, DecisionPipeline, handle_policy_decision, map_approved_to_order_spec
+Input: __future__, collections.abc, dataclasses, polysignal_lab.alpha.types, polysignal_lab.nautilus_runtime.decision_policy, polysignal_lab.nautilus_runtime.native_order, polysignal_lab.nautilus_runtime.order_mapping, polysignal_lab.nautilus_runtime.strategy.helpers
+Output: DecisionPipelineState, NativeDecisionSink, DecisionPipeline, handle_policy_decision, submit_approved_for_view, should_notify_core_fill, map_approved_to_order_spec
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -13,16 +13,44 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
-from polysignal_lab.alpha.types import AlphaDecision, MarketView
+from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, MarketView
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
+    BatchArbitrationResult,
     DecisionPolicyActor,
     RejectedDecision,
 )
-from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan
+from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy, submit_approved_decision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
+from polysignal_lab.nautilus_runtime.order_plan import NautilusOrderSpec
 from polysignal_lab.nautilus_runtime.strategy.helpers import _market_view_ready
+
+
+def should_notify_core_fill(core: object, event: AlphaFillEvent) -> bool:
+    checker = getattr(core, "should_notify_fill", None)
+    if callable(checker):
+        return bool(checker(event))
+    return True
+
+
+def submit_approved_for_view(
+    strategy: OrderSubmittingStrategy[object],
+    approved: ApprovedDecision,
+    *,
+    view: MarketView,
+    fixed_stake_usdc: float,
+    instrument_id_resolver: Callable[[str], object],
+) -> object:
+    signal = approved.signal
+    book = view.book_for(signal.side)
+    return submit_approved_decision(
+        strategy,
+        approved,
+        fixed_stake_usdc=fixed_stake_usdc,
+        best_ask=book.best_ask,
+        instrument_id_resolver=instrument_id_resolver,
+    )
 
 
 def map_approved_to_order_spec(
@@ -30,7 +58,7 @@ def map_approved_to_order_spec(
     *,
     view: MarketView,
     fixed_stake_usdc: float,
-) -> OrderSubmissionPlan:
+) -> NautilusOrderSpec:
     signal = approved.signal
     book = view.book_for(signal.side)
     return order_spec_from_decision(
@@ -159,18 +187,18 @@ class DecisionPipeline:
     def try_batch_arbitrate(
         self,
         decisions: list[tuple[AlphaDecision, MarketView]],
-    ) -> list[AlphaDecision]:
-        """Batch-arbitrate multiple (decision, view) pairs against each other.
+    ) -> BatchArbitrationResult:
+        return self._resolve_policy().batch_arbitrate(decisions)
 
-        This lets ``suppress_ambiguous`` detect opposite-side conflicts within
-        a single evaluation epoch.  Survivors still need individual
-        ``handle_decision()`` calls for gate/consensus evaluation.
-        """
-        if not decisions:
-            return []
-        policy = self._resolve_policy()
-        survivors = policy.batch_arbitrate(decisions)
-        return survivors
+    def record_batch_rejection(
+        self,
+        rejected: RejectedDecision,
+        decision: AlphaDecision,
+        *,
+        state: DecisionPipelineState,
+        sink: NativeDecisionSink,
+    ) -> None:
+        _record_rejection(rejected, decision, state=state, sink=sink)
 
     @staticmethod
     def _on_duplicate(
@@ -216,6 +244,32 @@ class DecisionPipeline:
         sink: NativeDecisionSink,
     ) -> None:
         _record_rejection(rejected, decision, state=state, sink=sink)
+
+    def try_map_approved_spec(
+        self,
+        approved: ApprovedDecision,
+        *,
+        decision: AlphaDecision,
+        view: MarketView,
+        fixed_stake_usdc: float,
+        spec_transform: Callable[[NautilusOrderSpec, AlphaDecision], NautilusOrderSpec]
+        | None = None,
+    ) -> NautilusOrderSpec | RejectedDecision:
+        try:
+            spec = map_approved_to_order_spec(
+                approved,
+                view=view,
+                fixed_stake_usdc=fixed_stake_usdc,
+            )
+        except ValueError:
+            return RejectedDecision(
+                reason_code="ORDER_MAPPING_FAILED",
+                detail={"condition_id": decision.condition_id},
+                candidate=approved.signal,
+            )
+        if spec_transform is not None:
+            spec = spec_transform(spec, decision)
+        return spec
 
 
 def handle_policy_decision(

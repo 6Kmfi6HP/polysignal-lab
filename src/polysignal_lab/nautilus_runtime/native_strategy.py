@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 from nautilus_trader.config import StrategyConfig
@@ -77,9 +77,11 @@ from polysignal_lab.nautilus_runtime.strategy.order_events import (
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     InstrumentSubscriptionManager,
     MarketSubscriptionState,
+    call_subscription as _call_subscription_fn,
     clear_condition_subscription_state as _clear_condition_subscription_state_fn,
     condition_instruments as _condition_instruments_fn,
     refresh_asset_conditions as _refresh_asset_conditions_fn,
+    retry_market_instrument_requests as _retry_market_instrument_requests_fn,
     subscribe_market_conditions as _subscribe_market_conditions_fn,
     subscribe_market_instrument as _subscribe_market_instrument_fn,
     unsubscribe_market_conditions as _unsubscribe_market_conditions_fn,
@@ -115,7 +117,7 @@ class PolySignalNativeStrategy(Strategy):
         assembler: _Assembler | None,
         condition_ids: Sequence[str],
         strategy_name: str,
-        policy: DecisionPolicyActor,
+        policy: DecisionPolicyActor | None = None,
         fixed_stake_usdc: float = 10.0,
         data_names: Sequence[str] = DEFAULT_NATIVE_DATA_NAMES,
         book_type: str = "L2_MBP",
@@ -140,6 +142,8 @@ class PolySignalNativeStrategy(Strategy):
         self.assembler: _Assembler = resolved_assembler
         self.condition_ids: tuple[str, ...] = tuple(condition_ids)
         self.strategy_name: str = strategy_name
+        if policy is None:
+            raise TypeError("policy must be an injected shared DecisionPolicyActor")
         self.policy: DecisionPolicyActor = policy
         self.fixed_stake_usdc: float = fixed_stake_usdc
         self.data_names: tuple[str, ...] = tuple(data_names)
@@ -399,14 +403,23 @@ class PolySignalNativeStrategy(Strategy):
             self._note_runtime_progress("readiness_miss")
             return
         market_view = cast(MarketView, view)
-        decisions = list(self.core.evaluate(market_view))
+        batch = [
+            (decision, market_view)
+            for decision in self.core.evaluate(market_view)
+        ]
         try:
-            survivors = self._decision_pipeline.try_batch_arbitrate(
-                [(d, market_view) for d in decisions],
-            ) if len(decisions) > 1 else decisions
+            batch_result = self._decision_pipeline.try_batch_arbitrate(batch)
         except Exception:
-            survivors = decisions
-        for decision in survivors:
+            self._note_runtime_progress("arbitration_failed")
+            return
+        for decision, rejected in batch_result.rejections:
+            self._decision_pipeline.record_batch_rejection(
+                rejected,
+                decision,
+                state=self._pipeline_state,
+                sink=self._decision_sink,
+            )
+        for decision in batch_result:
             self._handle_decision(decision, market_view)
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
@@ -451,6 +464,15 @@ class PolySignalNativeStrategy(Strategy):
             if cached is not None:
                 return cached
         return resolved
+
+    def _token_id_from_view_instrument(self, view: MarketView, instrument_id: str) -> str | None:
+        up_instrument = str(self._resolved_instrument(view.up.token_id))
+        if instrument_id == up_instrument:
+            return view.up.token_id
+        down_instrument = str(self._resolved_instrument(view.down.token_id))
+        if instrument_id == down_instrument:
+            return view.down.token_id
+        return None
 
     def _call_core(self, method_name: str, event: AlphaOrderEvent) -> None:
         _call_core_hook(self, method_name, event)
@@ -498,6 +520,16 @@ class PolySignalNativeStrategy(Strategy):
     def _refresh_asset_conditions(self) -> None:
         _refresh_asset_conditions_fn(self)
 
+    def _retry_market_instrument_requests(
+        self,
+        condition_ids: Sequence[str],
+        *,
+        retry_after: timedelta | None = None,
+    ) -> None:
+        _retry_market_instrument_requests_fn(
+            self, condition_ids, retry_after=retry_after
+        )
+
     def _subscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
         _subscribe_market_conditions_fn(self, condition_ids)
 
@@ -515,6 +547,14 @@ class PolySignalNativeStrategy(Strategy):
 
     def _unsubscribe_market_instrument(self, instrument_id: object) -> bool:
         return _unsubscribe_market_instrument_fn(self, instrument_id)
+
+    def _call_subscription(
+        self,
+        callback: Callable[..., object],
+        *args: object,
+        **kwargs: object,
+    ) -> bool:
+        return _call_subscription_fn(self, callback, *args, **kwargs)
 
     def subscribe_data(self, data_type: object) -> None:
         super().subscribe_data(data_type)

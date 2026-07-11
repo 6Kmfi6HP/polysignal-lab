@@ -8,6 +8,8 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from polysignal_lab.alpha.dump_hedge_core import DumpHedgeAlphaCore
 from polysignal_lab.alpha.types import AlphaFillEvent, AlphaOrderEvent
 from polysignal_lab.domain.enums import Side
@@ -48,6 +50,43 @@ def _fill(snapshot, side: Side, price: float) -> AlphaFillEvent:
         shares=10.0,
         liquidity_side=None,
     )
+
+
+def test_dump_detection_uses_fixed_view_time_when_wall_clock_is_unavailable(
+    monkeypatch,
+) -> None:
+    fixed_time = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    first = sample_snapshot(up_ask=0.60, down_ask=0.50).model_copy(
+        update={
+            "created_at": fixed_time,
+            "market": sample_snapshot().market.model_copy(
+                update={"start_ts": fixed_time - timedelta(seconds=30)}
+            ),
+        }
+    )
+    second = sample_snapshot(up_ask=0.10, down_ask=0.50).model_copy(
+        update={"created_at": fixed_time, "market": first.market}
+    )
+    core = DumpHedgeAlphaCore(DumpHedgeConfig())
+
+    class NoWallClockDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            raise AssertionError("dump hedge must use MarketView.created_at")
+
+    import polysignal_lab.alpha.dump_hedge_core as dump_hedge_module
+
+    monkeypatch.setattr(
+        dump_hedge_module,
+        "datetime",
+        NoWallClockDateTime,
+        raising=False,
+    )
+    evaluate_core_from_snapshot(core, first)
+    decisions = evaluate_core_from_snapshot(core, second)
+
+    assert decisions
+    assert decisions[0].reason_codes[0] == "DUMP_DETECTED"
 
 
 def test_dump_candidate_generation_does_not_consume_dump_guard() -> None:

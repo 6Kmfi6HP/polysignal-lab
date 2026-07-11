@@ -8,7 +8,7 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from polysignal_lab.alpha.pre_order_market_core import PreOrderMarketAlphaCore
 from polysignal_lab.alpha.types import AlphaFillEvent, AlphaOrderEvent
@@ -43,6 +43,37 @@ def _order(decision, *, order_id: str = "order-1") -> AlphaOrderEvent:
         ts_event=utc_now(),
         metrics={},
     )
+
+
+def test_pre_order_expiry_uses_fixed_view_time_when_wall_clock_is_unavailable(
+    monkeypatch,
+) -> None:
+    fixed_time = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    snapshot = sample_snapshot(up_ask=0.50, down_ask=0.50).model_copy(
+        update={
+            "created_at": fixed_time,
+            "market": sample_snapshot().market.model_copy(
+                update={
+                    "start_ts": fixed_time + timedelta(seconds=120),
+                    "end_ts": fixed_time + timedelta(seconds=300),
+                }
+            ),
+        }
+    )
+    core = PreOrderMarketAlphaCore(PreOrderMarketConfig())
+
+    class NoWallClockDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            raise AssertionError("pre-order expiry must use MarketView.created_at")
+
+    import polysignal_lab.alpha.pre_order_market_core as pre_order_module
+
+    monkeypatch.setattr(pre_order_module, "datetime", NoWallClockDateTime)
+    decisions = evaluate_core_from_snapshot(core, snapshot)
+
+    assert decisions
+    assert {decision.order_intent.expiry_seconds for decision in decisions} == {150}
 
 
 def test_pre_order_candidates_repeat_until_order_submitted() -> None:

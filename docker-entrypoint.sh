@@ -4,18 +4,18 @@ set -e
 cd "${APP_DIR:-/app}"
 export PYTHONPATH=src
 
-case "${1:-scheduler}" in
+case "${1:-nautilus}" in
   scheduler)
-    echo "[entrypoint] Starting PolySignal Lab scheduler loop (real Polymarket data)..."
-    exec python -m polysignal_lab.app.main --mode scheduler --config config/signal_bot.yaml
-    ;;
-  dashboard)
-    echo "[entrypoint] Starting PolySignal Lab dashboard..."
-    exec python -m polysignal_lab.app.main --mode dashboard --config config/signal_bot.yaml
+    echo "[entrypoint] scheduler execution mode is retired; use nautilus"
+    exit 2
     ;;
   nautilus)
     echo "[entrypoint] Starting PolySignal Lab on Nautilus runtime..."
     exec python -m polysignal_lab.app.main --mode nautilus --config config/signal_bot.yaml
+    ;;
+  dashboard)
+    echo "[entrypoint] Starting PolySignal Lab dashboard..."
+    exec python -m polysignal_lab.app.main --mode dashboard --config config/signal_bot.yaml
     ;;
   test)
     echo "[entrypoint] Running test suite..."
@@ -29,7 +29,7 @@ case "${1:-scheduler}" in
     exec /bin/bash
     ;;
   *)
-    echo "Usage: $0 {scheduler|nautilus|dashboard|test|shell|smoke}"
+    echo "Usage: $0 {nautilus|dashboard|test|shell|smoke}"
     exit 1
     ;;
 esac

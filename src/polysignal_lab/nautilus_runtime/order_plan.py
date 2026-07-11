@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, typing, typing.SupportsFloat, typing.cast, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.OrderIntentSpec
-Output: build_order_spec, resolve_order_intent, explicit_order_intent, resolve_order_price, resolve_order_quantity, build_order_tags, add_optional_source_tags, add_time_in_force_tags, expiry_seconds_for, pair_id_for, OrderSubmissionPlan, NautilusOrderSpec
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, typing, typing.SupportsFloat, typing.cast, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.NautilusOrderSpec
+Output: build_order_spec, resolve_order_intent, explicit_order_intent, resolve_order_price, resolve_order_quantity, build_order_tags, add_optional_source_tags, add_time_in_force_tags, expiry_seconds_for, pair_id_for
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -19,21 +19,14 @@ from dataclasses import dataclass
 from typing import SupportsFloat, cast
 
 from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec
-from polysignal_lab.domain.enums import OrderIntent
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
 
 
 @dataclass(frozen=True, slots=True)
 class OrderSubmissionPlan:
-    """Runtime order specification built from an ``AlphaDecision``.
-
-    Migrated from the pure-alpha layer to the runtime layer (formerly
-    ``alpha.types.NautilusOrderSpec``).
-    """
-
     instrument_id: str
-    side: object  # enum is runtime-dependent
+    side: Side
     price: float
     quantity: float
     intent: OrderIntent
@@ -43,7 +36,7 @@ class OrderSubmissionPlan:
     hedge_leg: bool
     tags: Mapping[str, str]
 
-# Backward-compat alias — new code should import ``OrderSubmissionPlan``.
+
 NautilusOrderSpec = OrderSubmissionPlan
 
 
@@ -175,6 +168,8 @@ def add_time_in_force_tags(
     intent: OrderIntent,
     expiry_seconds: int | None,
 ) -> None:
+    from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
+
     tags["time_in_force"] = PolymarketEnumParser.to_nautilus_time_in_force(intent).name
     if intent == OrderIntent.PASSIVE_GTD:
         if expiry_seconds is not None:

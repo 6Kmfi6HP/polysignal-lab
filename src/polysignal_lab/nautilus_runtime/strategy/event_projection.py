@@ -17,7 +17,7 @@ from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _condition_id_from_catalog_instrument,
-    _datetime_or_now,
+    event_datetime,
     _event_side,
     _fallback_fill_price,
     _identifier_text,
@@ -111,7 +111,7 @@ def project_order_event(
         order_id=str(_value(event, "order_id", _value(event, "id", ""))),
         client_order_id=_optional_str(_value(event, "client_order_id")),
         reason=_optional_str(_value(event, "reason")),
-        ts_event=_datetime_or_now(_value(event, "ts_event", _value(event, "timestamp"))),
+        ts_event=event_datetime(_value(event, "ts_event", _value(event, "timestamp"))),
         metrics=metrics,
     )
 

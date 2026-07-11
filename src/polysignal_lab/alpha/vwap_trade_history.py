@@ -120,13 +120,13 @@ class TradeHistory:
         """Public wrapper for _prune — trim trades older than window_sec."""
         self._prune(key, window_sec, now)
 
-    def trades_for_key(self, key: str) -> list[Trade]:
-        """Return trades for a key (may be mutated externally)."""
-        return self._trades.get(key, [])
+    def trades_for_key(self, key: str) -> tuple[Trade, ...]:
+        """Return an immutable snapshot of trades for ``key``."""
+        return tuple(self._trades.get(key, ()))
 
-    def all_trades(self) -> dict[str, list[Trade]]:
-        """Return a snapshot of all trades by key."""
-        return dict(self._trades)
+    def all_trades(self) -> dict[str, tuple[Trade, ...]]:
+        """Return immutable per-key snapshots of all stored trades."""
+        return {key: tuple(trades) for key, trades in self._trades.items()}
 
     def clear_key(self, key: str) -> None:
         self._trades.pop(key, None)

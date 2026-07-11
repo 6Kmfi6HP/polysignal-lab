@@ -18,6 +18,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 from dataclasses import dataclass, field
+from threading import Lock
 
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import OrderIntent
@@ -78,20 +79,85 @@ class SignalGate:
         self.binance_config = binance_config
         self.deduper = deduper or SignalDeduper(signal_config.dedupe_ttl_sec)
         self.rate_limiter = rate_limiter or ChannelRateLimiter(signal_config.max_signals_per_hour, signal_config.max_signals_per_market)
+        self._commit_lock = Lock()
 
     def evaluate(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateDecision:
-        checks: list[GateCheck] = [
-            self._market_active,
-            self._time_window,
-            self._book_freshness,
-            self._spot_freshness,
-            self._spread,
-            self._max_entry,
-            self._gtd_expiry,
-            self._confidence,
-            self._dedupe,
-            self._rate_limit,
+        prevalidated = self.prevalidate(candidate, snapshot)
+        if not prevalidated.accepted:
+            return prevalidated
+        return self.commit([candidate])[0]
+
+    def commit(self, candidates: list[SignalCandidate]) -> list[GateDecision]:
+        """Atomically reserve stateful gate capacity for an eligible candidate unit."""
+        with self._commit_lock:
+            duplicate = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if self.signal_config.dedupe_enabled and self.deduper.contains(candidate)
+                ),
+                None,
+            )
+            if duplicate is not None:
+                return self._commit_rejections(candidates, "DUPLICATE_SIGNAL", duplicate)
+            if len({candidate.dedupe_key for candidate in candidates}) != len(candidates):
+                return self._commit_rejections(candidates, "DUPLICATE_SIGNAL", candidates[0])
+            if not self.rate_limiter.can_allow([candidate.market_id for candidate in candidates]):
+                return self._commit_rejections(candidates, "CHANNEL_RATE_LIMIT", candidates[0])
+            for candidate in candidates:
+                if self.signal_config.dedupe_enabled and self.deduper.is_duplicate(candidate):
+                    return self._commit_rejections(candidates, "DUPLICATE_SIGNAL", candidate)
+                if not self.rate_limiter.allow(candidate.market_id):
+                    return self._commit_rejections(candidates, "CHANNEL_RATE_LIMIT", candidate)
+        return [GateDecision(True, signal=candidate) for candidate in candidates]
+
+    def _commit_rejections(
+        self,
+        candidates: list[SignalCandidate],
+        reason_code: str,
+        source: SignalCandidate,
+    ) -> list[GateDecision]:
+        return [
+            GateDecision(
+                False,
+                rejected=RejectedSignal(
+                    candidate=candidate,
+                    gate_name="commit",
+                    reason_code=reason_code,
+                    details=self._rejection_details(
+                        candidate,
+                        GateRejection(reason_code, {"source_signal_id": source.signal_id}),
+                    ),
+                ),
+            )
+            for candidate in candidates
         ]
+
+    def prevalidate(
+        self, candidate: SignalCandidate, snapshot: MarketSnapshot
+    ) -> GateDecision:
+        """Check candidate eligibility without consuming dedupe or rate-limit state."""
+        return self._evaluate_checks(
+            candidate,
+            snapshot,
+            [
+                self._market_active,
+                self._time_window,
+                self._book_freshness,
+                self._spot_freshness,
+                self._spread,
+                self._max_entry,
+                self._gtd_expiry,
+                self._confidence,
+            ],
+        )
+
+    def _evaluate_checks(
+        self,
+        candidate: SignalCandidate,
+        snapshot: MarketSnapshot,
+        checks: list[GateCheck],
+    ) -> GateDecision:
         log = logging.getLogger("polysignal_lab.gate")
         for check in checks:
             rejection = check(candidate, snapshot)

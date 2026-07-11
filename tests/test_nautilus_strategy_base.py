@@ -321,6 +321,7 @@ def test_native_strategy_on_load_restores_core_without_runtime_order_truth() -> 
 from polysignal_lab.domain.signal import SignalCandidate  # noqa: E402
 from polysignal_lab.nautilus_runtime.decision_policy import (  # noqa: E402
     ApprovedDecision,
+    BatchArbitrationResult,
     DecisionPolicyActor,
 )
 from polysignal_lab.nautilus_runtime.native_strategy import (  # noqa: E402
@@ -374,6 +375,11 @@ class RuntimeFakePolicy(DecisionPolicyActor):
             hedge_leg=decision.hedge_leg,
         )
         return ApprovedDecision(signal=candidate)
+
+    def batch_arbitrate(
+        self, decisions: list[tuple[AlphaDecision, MarketView]]
+    ) -> BatchArbitrationResult:
+        return BatchArbitrationResult(decision for decision, _ in decisions)
 
 
 
@@ -554,7 +560,13 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
     ]
 
     strategy.on_order_filled(
-        SimpleNamespace(order_id="order-1", fill_price=0.5, shares=1.0, tags={})
+        SimpleNamespace(
+            order_id="order-1",
+            fill_price=0.5,
+            shares=1.0,
+            tags={},
+            ts_event=datetime.now(UTC),
+        )
     )
     strategy.evaluate_condition("condition-btc-5m")
     assert strategy.submitted == [
@@ -3698,6 +3710,11 @@ def test_native_strategy_rejection_persistence_failure_does_not_block_evaluate()
                 "detail": {},
                 "candidate": None,
             })()
+
+        def batch_arbitrate(
+            self, decisions: list[tuple[AlphaDecision, MarketView]]
+        ) -> BatchArbitrationResult:
+            return BatchArbitrationResult(decision for decision, _ in decisions)
 
     phases: list[str] = []
     strategy = PolySignalNativeStrategy(

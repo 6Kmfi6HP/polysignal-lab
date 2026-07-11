@@ -89,7 +89,9 @@ def _market_view_ready(view: object) -> bool:
 
 
 class _Assembler(Protocol):
-    def build(self, condition_id: str) -> object | None: ...
+    def build(
+        self, condition_id: str, *, created_at: datetime | None = None
+    ) -> object | None: ...
 
 
 class _Observability(Protocol):
@@ -303,8 +305,20 @@ def _fallback_fill_price(
     return None
 
 
-def _datetime_or_now(value: object) -> datetime:
-    return value if isinstance(value, datetime) else datetime.now(UTC)
+def event_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        try:
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("ts_event datetime must be timezone-aware")
+            return value.astimezone(UTC)
+        except Exception as exc:
+            raise ValueError("ts_event datetime must be timezone-aware") from exc
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError("ts_event must be a positive Unix nanosecond timestamp")
+    try:
+        return datetime.fromtimestamp(value / 1_000_000_000, UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise ValueError("ts_event must be a positive Unix nanosecond timestamp") from exc
 
 
 def _subscribe_custom_data(

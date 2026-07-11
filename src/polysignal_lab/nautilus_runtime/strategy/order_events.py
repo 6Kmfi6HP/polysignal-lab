@@ -141,7 +141,10 @@ def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
         for decision in cast(Iterable[AlphaDecision], decisions):
             if decision.condition_id not in strategy._active_condition_ids:
                 continue
-            view = strategy._require_assembler().build(decision.condition_id)  # type: ignore[attr-defined]
+            view = strategy._require_assembler().build(  # type: ignore[attr-defined]
+                decision.condition_id,
+                created_at=alpha_event.ts_event,
+            )
             if view is None:
                 continue
             strategy._handle_decision(decision, cast(MarketView, view))
