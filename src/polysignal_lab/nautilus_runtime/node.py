@@ -98,41 +98,35 @@ def _attach_cache_projections(
     assembler: MarketViewAssembler,
     strategies: Sequence[_NativeStrategyLike],
 ) -> tuple[object, object]:
-    from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
     from polysignal_lab.nautilus_runtime.node_builder_components import (
         CacheBoundBookDataProvider,
     )
 
+    _ = registry
     kernel = getattr(node, "kernel", None)
     nautilus_cache = getattr(node, "cache", None) or getattr(kernel, "cache", None)
     nautilus_portfolio = getattr(node, "portfolio", None) or getattr(kernel, "portfolio", None)
 
     books = getattr(assembler, "books", None)
+    if not isinstance(books, CacheBoundBookDataProvider):
+        raise RuntimeError("MarketView assembler must use CacheBoundBookDataProvider")
     if nautilus_cache is None:
-        # Leave CacheBoundBookDataProvider unbound: reads fail closed until Cache exists.
+        # Leave unbound: reads fail closed until Cache exists.
         return nautilus_cache, nautilus_portfolio
 
-    if isinstance(books, CacheBoundBookDataProvider):
-        books.bind_cache(nautilus_cache)
-    else:
-        # Unexpected provider types are replaced with a bound Cache provider.
-        assembler.books = NautilusCacheMarketDataProvider(
-            nautilus_cache,
-            catalog=registry,
-        )
-
-    bound_books = assembler.books
+    books.bind_cache(nautilus_cache)
     for strategy in strategies:
         strategy_assembler = getattr(strategy, "assembler", None)
         if strategy_assembler is None:
             continue
         strategy_books = getattr(strategy_assembler, "books", None)
+        if strategy_books is books:
+            continue
         if isinstance(strategy_books, CacheBoundBookDataProvider):
-            if strategy_books is not bound_books:
-                strategy_books.bind_cache(nautilus_cache)
+            strategy_books.bind_cache(nautilus_cache)
             continue
         if hasattr(strategy_assembler, "books"):
-            strategy_assembler.books = bound_books
+            strategy_assembler.books = books
     return nautilus_cache, nautilus_portfolio
 
 
@@ -162,6 +156,7 @@ def _load_runtime_trader_state(node: _NautilusNodeLike) -> None:
 
 
 def _is_runtime_policy_actor(policy: DecisionPolicy) -> bool:
+    """True when policy is the thin Nautilus Actor adapter, not pure DecisionPolicy."""
     return (
         type(policy) is not DecisionPolicy
         and callable(getattr(policy, "on_save", None))
