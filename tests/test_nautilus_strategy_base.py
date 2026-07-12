@@ -152,6 +152,11 @@ def _load_static_native_strategy(
     config_module = ModuleType("nautilus_trader.config")
     strategy_module = ModuleType("nautilus_trader.trading.strategy")
     trading_module = ModuleType("nautilus_trader.trading")
+    model_module = ModuleType("nautilus_trader.model")
+    identifiers_module = ModuleType("nautilus_trader.model.identifiers")
+
+    class FakeClientId(str):
+        pass
 
     class FakeActor:
         def __init__(self, *, config: object) -> None:
@@ -161,12 +166,15 @@ def _load_static_native_strategy(
     config_module.ActorConfig = lambda: "actor-config"
     config_module.StrategyConfig = lambda: strategy_config
     strategy_module.Strategy = strategy_base
+    identifiers_module.ClientId = FakeClientId
 
     nautilus_module.common = common_module
     nautilus_module.config = config_module
     nautilus_module.trading = trading_module
+    nautilus_module.model = model_module
     common_module.actor = actor_module
     trading_module.strategy = strategy_module
+    model_module.identifiers = identifiers_module
 
     monkeypatch.setitem(sys.modules, "nautilus_trader", nautilus_module)
     monkeypatch.setitem(sys.modules, "nautilus_trader.common", common_module)
@@ -174,6 +182,8 @@ def _load_static_native_strategy(
     monkeypatch.setitem(sys.modules, "nautilus_trader.config", config_module)
     monkeypatch.setitem(sys.modules, "nautilus_trader.trading", trading_module)
     monkeypatch.setitem(sys.modules, "nautilus_trader.trading.strategy", strategy_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.model", model_module)
+    monkeypatch.setitem(sys.modules, "nautilus_trader.model.identifiers", identifiers_module)
 
     try:
         module = import_module(runtime_module_name)
@@ -608,7 +618,8 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
         def subscribe_data(
             self, data_type: object, *args: object, **kwargs: object
         ) -> None:
-            self.custom_subscriptions.append(data_type)
+            _ = args
+            self.custom_subscriptions.append((data_type, kwargs.get("client_id")))
 
     strategy_type = _load_static_native_strategy(monkeypatch, FakeBase, "cfg")
 
@@ -687,7 +698,8 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
         def subscribe_data(
             self, data_type: object, *args: object, **kwargs: object
         ) -> None:
-            self.custom_subscriptions.append(data_type)
+            _ = args
+            self.custom_subscriptions.append((data_type, kwargs.get("client_id")))
 
     strategy_type = _load_static_native_strategy(monkeypatch, FakeBase, "cfg")
 
@@ -718,12 +730,15 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
     strategy.on_start()
 
     assert cast(FakeMsgBus, getattr(strategy, "_msgbus")).calls == []
-    custom_subscriptions = cast(list[object], getattr(strategy, "custom_subscriptions"))
-    assert {getattr(data_type, "type", data_type) for data_type in custom_subscriptions} == {
-        PolySignalSpotData,
-        PolySignalPriceToBeatData,
-        PolySignalMarketMetaData,
-        PolySignalMarketUniverseData,
+    custom_subscriptions = cast(list[tuple[object, object | None]], getattr(strategy, "custom_subscriptions"))
+    assert {
+        getattr(data_type, "type", data_type): str(client_id)
+        for data_type, client_id in custom_subscriptions
+    } == {
+        PolySignalSpotData: "POLYSIGNAL_SPOT",
+        PolySignalPriceToBeatData: "POLYSIGNAL_SIDECAR",
+        PolySignalMarketMetaData: "POLYSIGNAL_SIDECAR",
+        PolySignalMarketUniverseData: "POLYSIGNAL_SIDECAR",
     }
 
     strategy.on_data(
@@ -3235,7 +3250,7 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
             self.trades = {"up-token.POLYMARKET": [FakeTrade()]}
 
         def order_book(self, instrument_id):
-            return self.books[instrument_id]
+            return self.books[str(instrument_id)]
 
         def trade_ticks(self, instrument_id):
             return self.trades.get(str(instrument_id), [])
@@ -3905,7 +3920,7 @@ def test_native_strategy_notifies_core_before_fill_handler() -> None:
 # ── L1 subscription selection tests ──────────────────────────────────────────
 
 
-def test_native_strategy_l1_subscribes_data_names_and_snapshot_request() -> None:
+def test_native_strategy_l1_subscribes_data_names_without_snapshot_request() -> None:
     from types import SimpleNamespace
 
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -3947,47 +3962,7 @@ def test_native_strategy_l1_subscribes_data_names_and_snapshot_request() -> None
     assert strategy.subscribed_quotes == ["up-token.POLYMARKET"]
     assert strategy.subscribed_trades == ["up-token.POLYMARKET"]
     assert strategy.subscribed_deltas == ["up-token.POLYMARKET"]
-    assert strategy.snapshot_requests == ["up-token.POLYMARKET"]
-
-
-def test_native_strategy_l1_skips_snapshot_when_hook_missing() -> None:
-    from types import SimpleNamespace
-
-    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-
-    class FakeNativeStrategy(PolySignalNativeStrategy):
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
-            self.cache = SimpleNamespace(instrument=lambda instrument_id: object())
-            self.subscribed_quotes: list[str] = []
-            self.subscribed_trades: list[str] = []
-            self.subscribed_deltas: list[str] = []
-
-        def subscribe_quote_ticks(self, instrument_id):
-            self.subscribed_quotes.append(str(instrument_id))
-
-        def subscribe_trade_ticks(self, instrument_id):
-            self.subscribed_trades.append(str(instrument_id))
-
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
-            _ = args, kwargs
-            self.subscribed_deltas.append(str(instrument_id))
-
-    strategy = FakeNativeStrategy(
-        core=FakeCore([]),
-        assembler=_assembler(None),
-        condition_ids=("condition-btc-5m",),
-        strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
-        book_type="L1_MBP",
-        **_native_projections(),
-    )
-
-    strategy._subscribe_market_instrument("up-token.POLYMARKET")
-
-    assert strategy.subscribed_quotes == ["up-token.POLYMARKET"]
-    assert strategy.subscribed_trades == ["up-token.POLYMARKET"]
-    assert strategy.subscribed_deltas == ["up-token.POLYMARKET"]
+    assert strategy.snapshot_requests == []
 
 
 def test_native_strategy_l1_subscribes_all_data_names() -> None:

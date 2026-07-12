@@ -19,6 +19,8 @@ import websockets
 from nautilus_trader.config import LiveDataClientConfig
 from nautilus_trader.data.messages import RequestData, SubscribeData, UnsubscribeData
 from nautilus_trader.live.data_client import LiveDataClient
+from nautilus_trader.live.factories import LiveDataClientFactory
+from nautilus_trader.model.data import CustomData, DataType
 from nautilus_trader.model.identifiers import ClientId
 
 from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalSpotData
@@ -150,19 +152,25 @@ class PolymarketRtdsSpotDataClient(LiveDataClient):
             else received_ns
         )
         self._handle_data(
-            PolySignalSpotData(
-                asset=asset,
-                symbol=symbol.upper().replace("/", ""),
-                price=price,
-                source="polymarket_rtds",
-                freshness_ms=0,
-                ts_event=event_ns,
-                ts_init=received_ns,
+            CustomData(
+                data_type=DataType(PolySignalSpotData),
+                data=PolySignalSpotData(
+                    asset=asset,
+                    symbol=symbol.upper().replace("/", ""),
+                    price=price,
+                    source="polymarket_rtds",
+                    freshness_ms=0,
+                    ts_event=event_ns,
+                    ts_init=received_ns,
+                ),
             )
         )
 
     def _framework_timestamp_ns(self) -> int:
-        timestamp_ns = getattr(self.clock, "timestamp_ns", None)
+        clock = getattr(self, "_clock", None)
+        if clock is None:
+            clock = getattr(self, "clock", None)
+        timestamp_ns = getattr(clock, "timestamp_ns", None)
         if not callable(timestamp_ns):
             raise RuntimeError("Nautilus framework clock is required for spot data")
         value = int(timestamp_ns())
@@ -237,7 +245,7 @@ def _timestamp_ns(value: datetime) -> int:
     return int(current.timestamp() * 1_000_000_000)
 
 
-class PolymarketRtdsSpotDataClientFactory:
+class PolymarketRtdsSpotDataClientFactory(LiveDataClientFactory):
     @staticmethod
     def create(
         loop: asyncio.AbstractEventLoop,

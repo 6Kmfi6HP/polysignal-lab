@@ -215,7 +215,7 @@ runtime:
     execution_mode: paper_sandbox
     allow_live_polymarket_execution: false
     intercept_os_signals: false
-    sandbox_book_type: L1_MBP
+    sandbox_book_type: L2_MBP
     polymarket_data:
       enabled: true
       ws_max_subscriptions_per_connection: 200

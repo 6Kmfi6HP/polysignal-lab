@@ -198,7 +198,8 @@ def test_build_paper_live_node_uses_polymarket_data_and_sandbox_exec(
     assert getattr(exec_config, "venue") == POLYMARKET_CLIENT_ID
     assert getattr(exec_config, "account_type") == "CASH"
     assert getattr(exec_config, "oms_type") == "NETTING"
-    assert getattr(exec_config, "starting_balances") == ["1234.0 USDC"]
+    assert getattr(exec_config, "starting_balances") == ["1234.0 pUSD"]
+    assert getattr(exec_config, "base_currency") == "pUSD"
 
 
 def test_build_paper_live_node_registers_managed_rtds_spot_client(
@@ -223,7 +224,7 @@ def test_build_paper_live_node_registers_managed_rtds_spot_client(
     assert getattr(spot_config, "assets") == ("BTC", "ETH")
 
 
-def test_build_polymarket_data_client_config_enables_dynamic_instrument_loading(
+def test_build_polymarket_data_client_config_uses_dynamic_loading_without_bulk_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_live_node_fakes(monkeypatch)
@@ -239,7 +240,7 @@ def test_build_polymarket_data_client_config_enables_dynamic_instrument_loading(
     assert getattr(polymarket, "auto_load_max_retries") == 12
     assert getattr(polymarket, "subscribe_new_markets") is True
     assert getattr(polymarket, "ws_max_subscriptions_per_connection") == 200
-    assert getattr(polymarket, "update_instruments_interval_mins") == 1
+    assert getattr(polymarket, "update_instruments_interval_mins") == 0
 
 
 def test_build_paper_live_node_bounds_cache_tick_capacity(
@@ -315,7 +316,8 @@ def test_build_sandbox_exec_client_config_uses_paper_venue_and_routes_to_polymar
     assert getattr(sandbox_config, "venue") == POLYMARKET_CLIENT_ID
     assert getattr(sandbox_config, "account_type") == "CASH"
     assert getattr(sandbox_config, "oms_type") == "NETTING"
-    assert getattr(sandbox_config, "starting_balances") == ["4321.0 USDC"]
+    assert getattr(sandbox_config, "starting_balances") == ["4321.0 pUSD"]
+    assert getattr(sandbox_config, "base_currency") == "pUSD"
     assert getattr(sandbox_config, "book_type") == settings.runtime.nautilus.sandbox_book_type
     assert getattr(sandbox_config, "use_reduce_only") is True
     routing = getattr(sandbox_config, "routing")

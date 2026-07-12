@@ -48,7 +48,6 @@ class _SubscriptionStrategy(Protocol):
     def subscribe_order_book_deltas(
         self, instrument_id: object, *, book_type: object
     ) -> object: ...
-    def request_order_book_snapshot(self, instrument_id: object) -> object: ...
     def unsubscribe_quote_ticks(self, instrument_id: object) -> object: ...
     def unsubscribe_trade_ticks(self, instrument_id: object) -> object: ...
     def unsubscribe_order_book_deltas(self, instrument_id: object) -> object: ...
@@ -154,10 +153,6 @@ def subscribe_market_instrument(
         strategy.subscribe_order_book_deltas,
         instrument_id,
         book_type=book_type,
-    ):
-        subscribed = False
-    if strategy.book_type == "L1_MBP" and not call_subscription(
-        strategy, strategy.request_order_book_snapshot, instrument_id
     ):
         subscribed = False
     return subscribed

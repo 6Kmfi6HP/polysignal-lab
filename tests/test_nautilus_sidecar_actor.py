@@ -31,25 +31,6 @@ class FakePublisher:
         self.published.append(data)
 
 
-def test_custom_data_publisher_publishes_spot_without_local_store() -> None:
-    publisher = FakePublisher()
-    actor = CustomDataPublisher(publisher=publisher)
-
-    actor.publish_spot(
-        asset="BTC",
-        symbol="BTCUSD",
-        price=100001.0,
-        source="polymarket_rtds",
-        freshness_ms=9,
-        ts_event=1,
-        ts_init=2,
-    )
-
-    assert isinstance(publisher.published[-1], PolySignalSpotData)
-    assert not hasattr(actor, "sidecar")
-    assert not hasattr(actor, "registry")
-
-
 def test_custom_data_publisher_publishes_price_to_beat_without_local_store() -> None:
     publisher = FakePublisher()
     actor = CustomDataPublisher(publisher=publisher)
@@ -117,6 +98,58 @@ def test_market_rotation_actor_accepts_managed_rtds_source() -> None:
     )
 
     assert actor.settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
+
+
+def test_market_rotation_actor_subscribes_to_managed_rtds_spot_and_does_not_republish(
+    monkeypatch,
+) -> None:
+    from polysignal_lab.config import Settings
+    from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+    from polysignal_lab.nautilus_runtime import market_rotation
+    from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
+
+    class FakeUniverse:
+        async def refresh_once(self):
+            return []
+
+        def refresh_once_sync(self):
+            return []
+
+    settings = Settings()
+    settings.runtime.nautilus.sidecar.spot_source = "polymarket_rtds"
+    settings.runtime.nautilus.market_rotation.enabled = False
+    actor = MarketRotationActor(
+        settings=settings,
+        startup_markets=(),
+        market_universe=FakeUniverse(),
+        catalog=MarketCatalog(),
+    )
+    subscriptions: list[tuple[object, object | None]] = []
+    published: list[object] = []
+    actor.subscribe_data = lambda data_type, client_id=None: subscriptions.append(
+        (data_type, client_id)
+    )
+    actor.publish_data = lambda data_type, data: published.append(data)
+    monkeypatch.setattr(market_rotation, "_register_polysignal_data_types_if_available", lambda: None)
+
+    actor.on_start()
+    published.clear()
+    actor.on_data(
+        PolySignalSpotData(
+            asset="BTC",
+            symbol="BTCUSD",
+            price=100000.0,
+            source="polymarket_rtds",
+            freshness_ms=0,
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+
+    assert len(subscriptions) == 1
+    assert getattr(subscriptions[0][0], "type", subscriptions[0][0]) is PolySignalSpotData
+    assert str(subscriptions[0][1]) == "POLYSIGNAL_SPOT"
+    assert published == []
 
 
 def test_market_rotation_actor_does_not_construct_legacy_rtds_feed() -> None:

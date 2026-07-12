@@ -86,7 +86,7 @@ def test_yaml_runtime_book_type_values_are_explicit() -> None:
     production = Settings.from_yaml("config/signal_bot.yaml")
     lab = Settings.from_yaml("config/signal_bot.lab.yaml")
 
-    assert production.runtime.nautilus.sandbox_book_type == "L1_MBP"
+    assert production.runtime.nautilus.sandbox_book_type == "L2_MBP"
     assert lab.runtime.nautilus.sandbox_book_type == "L2_MBP"
     assert production.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
     assert lab.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
@@ -108,7 +108,7 @@ def test_production_yaml_declares_nautilus_runtime_section() -> None:
 
     assert settings.runtime.nautilus.trader_id == "PolySignal-Nautilus-001"
     assert settings.runtime.nautilus.python == "3.12"
-    assert settings.runtime.nautilus.sandbox_book_type == "L1_MBP"
+    assert settings.runtime.nautilus.sandbox_book_type == "L2_MBP"
     assert settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
 
 

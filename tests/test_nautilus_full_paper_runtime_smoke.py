@@ -280,6 +280,10 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
             coro.close()
         return DummyTask()
 
+    class FakeClock:
+        def timestamp_ns(self) -> int:
+            return 1_700_000_000_000_000_000
+
     class FakeLevel:
         def __init__(self, price: float, size: float) -> None:
             self.price = price
@@ -308,7 +312,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
             }
 
         def order_book(self, instrument_id):
-            return self.books[instrument_id]
+            return self.books[str(instrument_id)]
 
     class FakeOrderFactory:
         def limit(self, **kwargs):
@@ -435,6 +439,8 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
         strategy.on_data(data)
 
     actor.publish_data = publish_and_route
+    fake_clock = FakeClock()
+    monkeypatch.setattr(MarketRotationActor, "clock", property(lambda self: fake_clock))
 
     def fake_get(_market):
         nonlocal ptb_ran
@@ -463,6 +469,17 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
             received_at=datetime.now(UTC),
         )
     )
+    strategy.on_data(
+        PolySignalSpotData(
+            asset="BTC",
+            symbol="BTCUSD",
+            price=100000.0,
+            source="polymarket_rtds",
+            freshness_ms=0,
+            ts_event=fake_clock.timestamp_ns(),
+            ts_init=fake_clock.timestamp_ns(),
+        )
+    )
     strategy.on_order_book_deltas(SimpleNamespace(instrument_id="condition-btc-5m-down-token.POLYMARKET"))
     strategy.on_order_book_deltas(SimpleNamespace(instrument_id="condition-btc-5m-up-token.POLYMARKET"))
     strategy.on_trade_tick(
@@ -477,7 +494,7 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
     assert ptb_ran is True
     assert any(isinstance(item, PolySignalMarketMetaData) for item in published)
     assert any(isinstance(item, PolySignalPriceToBeatData) for item in published)
-    assert any(isinstance(item, PolySignalSpotData) for item in published)
+    assert not any(isinstance(item, PolySignalSpotData) for item in published)
     assert strategy.submitted != []
     assert str(strategy.submitted[-1]["instrument_id"]) == "condition-btc-5m-up-token.POLYMARKET"
 

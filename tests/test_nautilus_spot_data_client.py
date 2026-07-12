@@ -13,14 +13,23 @@ from types import SimpleNamespace
 
 import pytest
 
+from nautilus_trader.model.data import CustomData
+
 from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalSpotData
 from polysignal_lab.nautilus_runtime.spot_data_client import (
     PolymarketRtdsSpotDataClient,
+    PolymarketRtdsSpotDataClientFactory,
 )
 from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _spot_data_client_id,
     _subscribe_custom_data,
 )
+
+
+def test_rtds_client_factory_implements_nautilus_factory_contract() -> None:
+    from nautilus_trader.live.factories import LiveDataClientFactory
+
+    assert issubclass(PolymarketRtdsSpotDataClientFactory, LiveDataClientFactory)
 
 
 def _client(*, assets: set[str]) -> tuple[PolymarketRtdsSpotDataClient, list[object]]:
@@ -30,6 +39,12 @@ def _client(*, assets: set[str]) -> tuple[PolymarketRtdsSpotDataClient, list[obj
     received: list[object] = []
     client._handle_data = received.append
     return client, received
+
+
+def test_rtds_client_uses_the_nautilus_clock() -> None:
+    client, _ = _client(assets={"BTC"})
+
+    assert client._framework_timestamp_ns() == 2_000_000_000
 
 
 
@@ -66,17 +81,19 @@ async def test_managed_rtds_client_waits_for_subscription_before_reader_start() 
         }
     )
 
-    assert received == [
-        PolySignalSpotData(
-            asset="BTC",
-            symbol="BTCUSD",
-            price=100.5,
-            source="polymarket_rtds",
-            freshness_ms=0,
-            ts_event=2_000_000_000_000,
-            ts_init=2_000_000_000,
-        )
-    ]
+    assert len(received) == 1
+    wrapped = received[0]
+    assert isinstance(wrapped, CustomData)
+    assert wrapped.data_type.type is PolySignalSpotData
+    assert wrapped.data == PolySignalSpotData(
+        asset="BTC",
+        symbol="BTCUSD",
+        price=100.5,
+        source="polymarket_rtds",
+        freshness_ms=0,
+        ts_event=2_000_000_000_000,
+        ts_init=2_000_000_000,
+    )
 
 
 def test_native_spot_subscription_routes_to_managed_client() -> None:

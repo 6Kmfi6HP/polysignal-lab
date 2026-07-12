@@ -25,7 +25,6 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
-    PolySignalSpotData,
 )
 
 
@@ -46,28 +45,6 @@ def _data_type(payload_cls: type[object]) -> object:
 class CustomDataPublisher:
     def __init__(self, *, publisher: _Publisher) -> None:
         self.publisher: _Publisher = publisher
-
-    def publish_spot(
-        self,
-        *,
-        asset: str,
-        symbol: str,
-        price: float,
-        source: str,
-        freshness_ms: int | None,
-        ts_event: int,
-        ts_init: int,
-    ) -> None:
-        data = PolySignalSpotData(
-            asset=asset,
-            symbol=symbol,
-            price=price,
-            source=source,
-            freshness_ms=freshness_ms,
-            ts_event=ts_event,
-            ts_init=ts_init,
-        )
-        self.publisher.publish_data(_data_type(PolySignalSpotData), data)
 
     def publish_price_to_beat(
         self,

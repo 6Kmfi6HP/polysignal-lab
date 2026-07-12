@@ -21,7 +21,10 @@ from collections.abc import Callable, Mapping
 from typing import cast
 
 from polysignal_lab.config import Settings, load_settings
-from polysignal_lab.nautilus_runtime.custom_data_types import SPOT_DATA_CLIENT_ID
+from polysignal_lab.nautilus_runtime.custom_data_types import (
+    SIDECAR_DATA_CLIENT_ID,
+    SPOT_DATA_CLIENT_ID,
+)
 from polysignal_lab.nautilus_runtime.optional_imports import load_live_runtime_symbols
 
 PAPER_EXEC_CLIENT_ID = "POLYSIGNAL_PM_PAPER"
@@ -225,10 +228,13 @@ def build_polymarket_rtds_spot_data_client_config(settings: Settings) -> object:
 
 
 def build_data_engine_config() -> object:
+    from nautilus_trader.model.identifiers import ClientId
+
     live_data_engine_config = _import_callable("nautilus_trader.config", "LiveDataEngineConfig")
     return live_data_engine_config(
         validate_data_sequence=True,
         graceful_shutdown_on_exception=True,
+        external_clients=[ClientId(SIDECAR_DATA_CLIENT_ID)],
     )
 
 
@@ -256,7 +262,7 @@ def build_polymarket_data_client_config(
     return polymarket_data_config(
         instrument_config=instrument_config,
         ws_max_subscriptions_per_connection=nautilus_runtime.polymarket_data.ws_max_subscriptions_per_connection,
-        update_instruments_interval_mins=1,
+        update_instruments_interval_mins=0,
         subscribe_new_markets=nautilus_runtime.market_rotation.allow_adapter_new_market_events,
         auto_load_missing_instruments=True,
         auto_load_debounce_ms=100,
@@ -272,8 +278,8 @@ def build_sandbox_exec_client_config(settings: Settings) -> object:
     routing_config = _import_callable("nautilus_trader.config", "RoutingConfig")
     return sandbox_exec_config(
         venue=POLYMARKET_CLIENT_ID,
-        starting_balances=[f"{float(settings.paper_trading.starting_balance_usdc)} USDC"],
-        base_currency="USDC",
+        starting_balances=[f"{float(settings.paper_trading.starting_balance_usdc)} pUSD"],
+        base_currency="pUSD",
         oms_type="NETTING",
         account_type="CASH",
         book_type=settings.runtime.nautilus.sandbox_book_type,

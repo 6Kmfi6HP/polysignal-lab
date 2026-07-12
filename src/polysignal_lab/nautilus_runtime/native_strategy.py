@@ -104,6 +104,7 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _identity_instrument_id,
     _market_view_ready,
     _nautilus_instrument_id,
+    _sidecar_data_client_id,
     _spot_data_client_id,
     _subscribe_custom_data,
     classify_project_owned_data,
@@ -319,9 +320,21 @@ class PolySignalNativeStrategy(Strategy):
             PolySignalSpotData,
             client_id=_spot_data_client_id(),
         )
-        _subscribe_custom_data(self, PolySignalPriceToBeatData)
-        _subscribe_custom_data(self, PolySignalMarketMetaData)
-        _subscribe_custom_data(self, PolySignalMarketUniverseData)
+        _subscribe_custom_data(
+            self,
+            PolySignalPriceToBeatData,
+            client_id=_sidecar_data_client_id(),
+        )
+        _subscribe_custom_data(
+            self,
+            PolySignalMarketMetaData,
+            client_id=_sidecar_data_client_id(),
+        )
+        _subscribe_custom_data(
+            self,
+            PolySignalMarketUniverseData,
+            client_id=_sidecar_data_client_id(),
+        )
         self._start_evaluation_heartbeat()
 
     def _start_evaluation_heartbeat(self) -> None:
@@ -703,6 +716,3 @@ class PolySignalNativeStrategy(Strategy):
         **kwargs: object,
     ) -> bool:
         return _call_subscription_fn(self, callback, *args, **kwargs)
-
-    def subscribe_data(self, data_type: object) -> None:
-        super().subscribe_data(data_type)

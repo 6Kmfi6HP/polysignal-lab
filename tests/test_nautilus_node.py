@@ -39,7 +39,11 @@ from polysignal_lab.nautilus_runtime.node import (
     _start_interactive_telegram_bot_thread,
     _stop_interactive_telegram_bot_thread,
 )
-from polysignal_lab.nautilus_runtime.live_node import PAPER_EXEC_CLIENT_ID, SPOT_DATA_CLIENT_ID
+from polysignal_lab.nautilus_runtime.live_node import (
+    PAPER_EXEC_CLIENT_ID,
+    SIDECAR_DATA_CLIENT_ID,
+    SPOT_DATA_CLIENT_ID,
+)
 
 if TYPE_CHECKING:
     from polysignal_lab.publish.telegram_publisher import TelegramPublisher
@@ -81,8 +85,13 @@ def _fake_runtime_context(**overrides):
 @pytest.fixture(autouse=True)
 def _patch_live_node_config_imports(monkeypatch):
     def _fake_import_callable(module_name: str, attr_name: str):
-        def _factory(**kwargs):
-            return SimpleNamespace(module_name=module_name, attr_name=attr_name, **kwargs)
+        def _factory(*args: object, **kwargs: object):
+            return SimpleNamespace(
+                module_name=module_name,
+                attr_name=attr_name,
+                args=args,
+                **kwargs,
+            )
 
         return _factory
 
@@ -168,16 +177,23 @@ def test_live_engine_config_builders_import_configs_from_config_module(monkeypat
     def _recording_import_callable(module_name: str, attr_name: str):
         calls.append((module_name, attr_name))
 
-        def _factory(**kwargs):
-            return SimpleNamespace(module_name=module_name, attr_name=attr_name, **kwargs)
+        def _factory(*args: object, **kwargs: object):
+            return SimpleNamespace(
+                module_name=module_name,
+                attr_name=attr_name,
+                args=args,
+                **kwargs,
+            )
 
         return _factory
 
     monkeypatch.setattr(live_node, "_import_callable", _recording_import_callable)
 
-    live_node.build_data_engine_config()
+    live_data_engine_config = live_node.build_data_engine_config()
     live_node.build_exec_engine_config()
 
+    external_clients = getattr(live_data_engine_config, "external_clients")
+    assert str(external_clients[0]) == SIDECAR_DATA_CLIENT_ID
     assert calls == [
         ("nautilus_trader.config", "LiveDataEngineConfig"),
         ("nautilus_trader.config", "LiveExecEngineConfig"),

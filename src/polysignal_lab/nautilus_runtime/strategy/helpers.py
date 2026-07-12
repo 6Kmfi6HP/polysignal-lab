@@ -36,6 +36,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
     PolySignalSpotData,
+    SIDECAR_DATA_CLIENT_ID,
     SPOT_DATA_CLIENT_ID,
 )
 from polysignal_lab.nautilus_runtime.projections import _tags  # noqa: F401
@@ -321,12 +322,20 @@ def event_datetime(value: object) -> datetime:
         raise ValueError("ts_event must be a positive Unix nanosecond timestamp") from exc
 
 
-def _spot_data_client_id() -> object | None:
+def _data_client_id(value: str) -> object | None:
     try:
         from nautilus_trader.model.identifiers import ClientId
     except ModuleNotFoundError:
         return None
-    return ClientId(SPOT_DATA_CLIENT_ID)
+    return ClientId(value)
+
+
+def _spot_data_client_id() -> object | None:
+    return _data_client_id(SPOT_DATA_CLIENT_ID)
+
+
+def _sidecar_data_client_id() -> object | None:
+    return _data_client_id(SIDECAR_DATA_CLIENT_ID)
 
 
 def _subscribe_custom_data(

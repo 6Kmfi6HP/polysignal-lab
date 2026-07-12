@@ -21,6 +21,7 @@ from typing import Protocol
 
 from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import ActorConfig
+from nautilus_trader.model.identifiers import ClientId
 
 from polysignal_lab.config import Settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
@@ -33,6 +34,7 @@ from polysignal_lab.nautilus_bridge.spot_anchor_state import SpotAnchorState
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
     PolySignalSpotData,
+    SPOT_DATA_CLIENT_ID,
     register_polysignal_data_types,
 )
 from polysignal_lab.nautilus_runtime.market_discovery_worker import (
@@ -151,7 +153,10 @@ class MarketRotationActor(Actor):
         if self.settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds":
             subscribe_data = getattr(self, "subscribe_data", None)
             if callable(subscribe_data):
-                subscribe_data(_data_type(PolySignalSpotData))
+                subscribe_data(
+                    _data_type(PolySignalSpotData),
+                    client_id=ClientId(SPOT_DATA_CLIENT_ID),
+                )
         now = self._framework_now()
         if self._epoch == 0:
             next_epoch = self._epoch + 1
@@ -371,15 +376,6 @@ class MarketRotationActor(Actor):
 
     def _on_spot(self, spot: SpotPrice) -> None:
         self._spot_state.update(spot)
-        self.publisher.publish_spot(
-            asset=spot.asset,
-            symbol=spot.symbol,
-            price=spot.price,
-            source=spot.source,
-            freshness_ms=spot.freshness_ms(),
-            ts_event=timestamp_ns(spot.event_time),
-            ts_init=timestamp_ns(spot.received_at),
-        )
         if not self._spot_state.enabled:
             return
         for market in self.active_markets():
