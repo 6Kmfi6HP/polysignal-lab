@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, pathlib, pathlib.Path, polysignal_lab.observability.safety, polysignal_lab.observability.safety.scan
-Output: find_forbidden_sdk_imports, test_polymarket_sdk_imports_are_adapter_only, test_polymarket_sdk_import_allowlist_accepts_absolute_adapter_path, test_forbidden_sdk_import_fixture_is_detected, test_safety_scan_reports_deliberate_forbidden_fixture_directory, test_safety_scan_reports_deliberate_forbidden_fixture_file, test_safety_scan_repo_root_exempts_only_deliberate_fixture_path, test_safety_scan_skips_agent_worktrees_but_not_source, test_safety_scan_checks_hidden_claude_dirs_outside_agent_worktrees, test_safety_scan_blocks_create_task_in_nautilus_actor_fallback_paths, test_safety_scan_detects_aliased_legacy_imports_in_guarded_paths
+Output: find_forbidden_sdk_imports, test_polymarket_sdk_imports_are_adapter_only, test_polymarket_sdk_import_allowlist_accepts_absolute_adapter_path, test_forbidden_sdk_import_fixture_is_detected, test_safety_scan_reports_deliberate_forbidden_fixture_directory, test_safety_scan_reports_deliberate_forbidden_fixture_file, test_safety_scan_repo_root_exempts_only_deliberate_fixture_path, test_safety_scan_skips_agent_worktrees_but_not_source, test_safety_scan_checks_hidden_claude_dirs_outside_agent_worktrees, test_safety_scan_blocks_create_task_in_nautilus_actor_fallback_paths, test_safety_scan_detects_aliased_legacy_imports_in_guarded_paths, test_safety_scan_blocks_relative_legacy_imports_in_guarded_paths
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -170,5 +170,40 @@ def test_safety_scan_detects_aliased_legacy_imports_in_guarded_paths(
         (
             "src/polysignal_lab/nautilus_runtime/legacy_imports.py",
             "import polysignal_lab.data.polymarket_clob_rest as legacy_rest",
+        ),
+    ]
+
+
+def test_safety_scan_blocks_relative_legacy_imports_in_guarded_paths(
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / "src" / "polysignal_lab" / "nautilus_runtime"
+    runtime_dir.mkdir(parents=True)
+    source = runtime_dir / "relative_legacy_imports.py"
+    source.write_text(
+        "from ..data.state import MarketRegistry\n"
+        "from ..data.state import OrderBookRegistry\n"
+        "from ...data.state import *\n"
+        "from ..data.polymarket_clob_ws import Client\n"
+        "from ..data.polymarket_clob_rest import Client\n",
+        encoding="utf-8",
+    )
+
+    assert scan(tmp_path) == [
+        (
+            "src/polysignal_lab/nautilus_runtime/relative_legacy_imports.py",
+            "from ..data.state import OrderBookRegistry",
+        ),
+        (
+            "src/polysignal_lab/nautilus_runtime/relative_legacy_imports.py",
+            "from ...data.state import *",
+        ),
+        (
+            "src/polysignal_lab/nautilus_runtime/relative_legacy_imports.py",
+            "from ..data.polymarket_clob_ws import",
+        ),
+        (
+            "src/polysignal_lab/nautilus_runtime/relative_legacy_imports.py",
+            "from ..data.polymarket_clob_rest import",
         ),
     ]

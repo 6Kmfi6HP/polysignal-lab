@@ -183,23 +183,40 @@ def _legacy_dual_path_imports(text: str) -> list[str]:
     except SyntaxError:
         return []
 
-    state_module = "polysignal_lab.data.state"
-    clob_modules = {
-        "polysignal_lab.data.polymarket_clob_ws",
-        "polysignal_lab.data.polymarket_clob_rest",
-    }
     findings: list[str] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            if node.module == state_module and any(
-                alias.name == "OrderBookRegistry" for alias in node.names
+        if isinstance(node, ast.ImportFrom) and node.module:
+            relative_prefix = "." * node.level
+            state_module = (
+                f"{relative_prefix}data.state"
+                if node.level
+                else "polysignal_lab.data.state"
+            )
+            clob_modules = {
+                f"{relative_prefix}data.polymarket_clob_ws"
+                if node.level
+                else "polysignal_lab.data.polymarket_clob_ws",
+                f"{relative_prefix}data.polymarket_clob_rest"
+                if node.level
+                else "polysignal_lab.data.polymarket_clob_rest",
+            }
+            import_module = f"{relative_prefix}{node.module}"
+            imported_names = {alias.name for alias in node.names}
+            if import_module == state_module and (
+                "OrderBookRegistry" in imported_names
+                or node.level > 0 and "*" in imported_names
             ):
-                findings.append(f"from {state_module} import OrderBookRegistry")
-            elif node.module in clob_modules:
-                findings.append(f"from {node.module} import")
+                symbol = "*" if "*" in imported_names else "OrderBookRegistry"
+                findings.append(f"from {import_module} import {symbol}")
+            elif import_module in clob_modules:
+                findings.append(f"from {import_module} import")
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name not in clob_modules | {state_module}:
+                if alias.name not in {
+                    "polysignal_lab.data.state",
+                    "polysignal_lab.data.polymarket_clob_ws",
+                    "polysignal_lab.data.polymarket_clob_rest",
+                }:
                     continue
                 symbol = f"import {alias.name}"
                 if alias.asname:
