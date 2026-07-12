@@ -172,7 +172,7 @@ def _is_legacy_dual_path_guarded(base: Path, path: Path) -> bool:
     if path.suffix != ".py":
         return False
     return any(
-        part in {"nautilus_runtime", "nautilus_bridge", "signal_layer"}
+        part in {"alpha", "nautilus_runtime", "nautilus_bridge", "signal_layer"}
         for part in path.parts
     )
 
@@ -187,10 +187,16 @@ def _legacy_dual_path_imports(text: str) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
             relative_prefix = "." * node.level
+            import_module = f"{relative_prefix}{node.module}"
             state_module = (
                 f"{relative_prefix}data.state"
                 if node.level
                 else "polysignal_lab.data.state"
+            )
+            data_module = (
+                f"{relative_prefix}data"
+                if node.level
+                else "polysignal_lab.data"
             )
             clob_modules = {
                 f"{relative_prefix}data.polymarket_clob_ws"
@@ -200,16 +206,21 @@ def _legacy_dual_path_imports(text: str) -> list[str]:
                 if node.level
                 else "polysignal_lab.data.polymarket_clob_rest",
             }
-            import_module = f"{relative_prefix}{node.module}"
             imported_names = {alias.name for alias in node.names}
             if import_module == state_module and (
-                "OrderBookRegistry" in imported_names
-                or node.level > 0 and "*" in imported_names
+                "OrderBookRegistry" in imported_names or "*" in imported_names
             ):
                 symbol = "*" if "*" in imported_names else "OrderBookRegistry"
                 findings.append(f"from {import_module} import {symbol}")
             elif import_module in clob_modules:
                 findings.append(f"from {import_module} import")
+            elif import_module == data_module:
+                for name in ("state", "polymarket_clob_ws", "polymarket_clob_rest"):
+                    if name in imported_names:
+                        findings.append(f"from {import_module} import {name}")
+                if "OrderBookRegistry" in imported_names or "*" in imported_names:
+                    symbol = "*" if "*" in imported_names else "OrderBookRegistry"
+                    findings.append(f"from {import_module} import {symbol}")
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name not in {

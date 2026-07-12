@@ -45,6 +45,7 @@ Legacy OrderBook/CLOB modules may remain only as non-live residue for tests or q
 - `src/polysignal_lab/nautilus_runtime/`
 - `src/polysignal_lab/nautilus_bridge/` (except accepted anchor/spot helpers that are not book truth)
 - `src/polysignal_lab/signal_layer/`
+- `src/polysignal_lab/alpha/`
 
 ## Sandbox / paper defaults
 

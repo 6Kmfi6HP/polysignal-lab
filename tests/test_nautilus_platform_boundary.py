@@ -451,6 +451,7 @@ def test_runtime_decision_paths_block_legacy_orderbook_and_clob_reattachment() -
         Path("src/polysignal_lab/nautilus_runtime"),
         Path("src/polysignal_lab/nautilus_bridge"),
         Path("src/polysignal_lab/signal_layer"),
+        Path("src/polysignal_lab/alpha"),
     )
     findings: list[str] = []
     for root in roots:
