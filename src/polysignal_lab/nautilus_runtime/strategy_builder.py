@@ -21,7 +21,7 @@ from polysignal_lab.config import Settings
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.node_builder import (
     _NativeStrategyLike,
     _runtime_class_triple,
@@ -157,9 +157,9 @@ def _build_nautilus_config_strategy_schedule(settings: Settings) -> list[Strateg
 def _build_policy(
     settings: Settings,
     *,
-    policy_type: type[object] = DecisionPolicyActor,
-) -> DecisionPolicyActor:
-    policy_factory = cast(Callable[..., DecisionPolicyActor], policy_type)
+    policy_type: type[object] = DecisionPolicy,
+) -> DecisionPolicy:
+    policy_factory = cast(Callable[..., DecisionPolicy], policy_type)
     schedule = _build_nautilus_config_strategy_schedule(settings)
     # NOTE: These instances are fallbacks. In the Nautilus bootstrap flow,
     # Disabled strategies are restored from persistence in node lifecycle.
@@ -181,8 +181,8 @@ def _build_policy(
     )
 
 
-def build_control(policy: DecisionPolicyActor) -> DecisionPolicyControl:
-    """Build a StrategyControl adapter from a DecisionPolicyActor."""
+def build_control(policy: DecisionPolicy) -> DecisionPolicyControl:
+    """Build a StrategyControl adapter from a DecisionPolicy."""
     return DecisionPolicyControl(policy)
 
 
@@ -199,7 +199,7 @@ def _build_paper_risk_gate(settings: Settings, registry: MarketCatalog) -> Paper
 def _build_native_strategies(
     settings: Settings,
     assembler: MarketViewAssembler,
-    policy: DecisionPolicyActor,
+    policy: DecisionPolicy,
     condition_ids: Sequence[str],
     registry: MarketCatalog,
     observability: ObservabilityService | None,
@@ -233,7 +233,7 @@ def _build_native_strategies(
 def _build_native_strategy(
     settings: Settings,
     assembler: MarketViewAssembler,
-    policy: DecisionPolicyActor,
+    policy: DecisionPolicy,
     condition_ids: Sequence[str],
     registry: MarketCatalog,
     observability: ObservabilityService | None,
@@ -272,7 +272,7 @@ def _create_native_strategy(
     strategy_type: Callable[..., _NativeStrategyLike],
     settings: Settings,
     assembler: MarketViewAssembler,
-    policy: DecisionPolicyActor,
+    policy: DecisionPolicy,
     *,
     configured_condition_ids: Sequence[str],
     strategy_name: str,

@@ -19,6 +19,7 @@ import importlib.util
 import sys
 from collections.abc import Coroutine
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -230,6 +231,9 @@ def test_full_paper_runtime_builds_node_without_live_execution(monkeypatch: pyte
 
 def test_build_live_node_uses_cache_backed_market_data_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
+    from polysignal_lab.nautilus_runtime.node_builder_components import (
+        CacheBoundBookDataProvider,
+    )
 
     _install_fake_polymarket_id_helper(monkeypatch)
     fakes = _patch_trading_node_fakes(monkeypatch)
@@ -237,8 +241,13 @@ def test_build_live_node_uses_cache_backed_market_data_provider(monkeypatch: pyt
     runtime = fakes.node_mod.build_live_node(Settings(), markets=(_sample_market(),))
 
     assembler = cast(SimpleNamespace, runtime["assembler"])
-    assert isinstance(assembler.books, NautilusCacheMarketDataProvider)
+    assert isinstance(assembler.books, CacheBoundBookDataProvider)
+    assert assembler.books.is_bound
+    assert isinstance(assembler.books._provider, NautilusCacheMarketDataProvider)
     assert "book_data_provider" not in runtime
+    assert "EmptyBookDataProvider" not in Path(
+        "src/polysignal_lab/nautilus_runtime/node_builder_components.py"
+    ).read_text(encoding="utf-8")
 
 
 def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkeypatch: pytest.MonkeyPatch) -> None:

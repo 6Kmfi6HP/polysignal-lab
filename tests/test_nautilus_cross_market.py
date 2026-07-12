@@ -31,7 +31,7 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
-    DecisionPolicyActor,
+    DecisionPolicy,
     RejectedDecision,
     candidate_from_decision,
 )
@@ -136,7 +136,7 @@ def _group(
     )
 
 
-class AllowAllPolicy(DecisionPolicyActor):
+class AllowAllPolicy(DecisionPolicy):
     """Policy that approves every decision without gate/arbiter checks."""
 
     def decide(

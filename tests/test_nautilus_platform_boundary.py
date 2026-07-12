@@ -17,7 +17,6 @@ from __future__ import annotations
 import importlib
 import sys
 import tomllib
-import pytest
 from pathlib import Path
 from typing import cast
 
@@ -439,6 +438,29 @@ def test_default_runtime_has_no_asyncio_actor_scheduling_fallbacks() -> None:
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
+
+def test_runtime_decision_paths_block_legacy_orderbook_and_clob_reattachment() -> None:
+    forbidden = (
+        "from polysignal_lab.data.state import OrderBookRegistry",
+        "OrderBookRegistry()",
+        "from polysignal_lab.data.polymarket_clob_ws import",
+        "from polysignal_lab.data.polymarket_clob_rest import",
+        "EmptyBookDataProvider",
+    )
+    roots = (
+        Path("src/polysignal_lab/nautilus_runtime"),
+        Path("src/polysignal_lab/nautilus_bridge"),
+        Path("src/polysignal_lab/signal_layer"),
+    )
+    findings: list[str] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+    assert findings == []
+
 
 def test_large_nautilus_runtime_functions_stay_under_limit() -> None:
     import ast

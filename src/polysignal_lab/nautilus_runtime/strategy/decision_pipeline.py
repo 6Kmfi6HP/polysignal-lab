@@ -19,7 +19,7 @@ from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     BatchArbitrationResult,
-    DecisionPolicyActor,
+    DecisionPolicy,
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy, submit_approved_decision
@@ -140,17 +140,17 @@ class NativeDecisionSinkImpl:
 class DecisionPipeline:
     def __init__(
         self,
-        policy: DecisionPolicyActor | Callable[[], DecisionPolicyActor],
+        policy: DecisionPolicy | Callable[[], DecisionPolicy],
         *,
         is_active_condition: Callable[[str], bool],
     ) -> None:
         self._policy = policy
         self._is_active_condition = is_active_condition
 
-    def _resolve_policy(self) -> DecisionPolicyActor:
-        if callable(self._policy) and not isinstance(self._policy, DecisionPolicyActor):
-            return cast(DecisionPolicyActor, self._policy())
-        return cast(DecisionPolicyActor, self._policy)
+    def _resolve_policy(self) -> DecisionPolicy:
+        if callable(self._policy) and not isinstance(self._policy, DecisionPolicy):
+            return cast(DecisionPolicy, self._policy())
+        return cast(DecisionPolicy, self._policy)
 
     def handle_decision(
         self,
@@ -281,7 +281,7 @@ def handle_policy_decision(
     decision: AlphaDecision,
     view: MarketView,
     *,
-    policy: DecisionPolicyActor,
+    policy: DecisionPolicy,
     active_condition_ids: set[str],
     submitted_signal_keys: set[str],
     submit_approved: Callable[[ApprovedDecision, MarketView], object],

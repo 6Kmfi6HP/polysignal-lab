@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from polysignal_lab.config import Settings
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.runtime_context_factory import (
     validate_native_runtime_settings,
 )
@@ -287,11 +287,11 @@ def _patch_nautilus_placeholders(monkeypatch):
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeRuntimeStrategy, FakeRuntimeActor, DecisionPolicyActor),
+        lambda: (FakeRuntimeStrategy, FakeRuntimeActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeRuntimeStrategy, FakeRuntimeActor, DecisionPolicyActor),
+        lambda: (FakeRuntimeStrategy, FakeRuntimeActor, DecisionPolicy),
     )
     return FakeTradingNode
 
@@ -392,11 +392,11 @@ def test_build_live_node_uses_static_runtime_classes(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStaticStrategy, FakeStaticActor, DecisionPolicyActor),
+        lambda: (FakeStaticStrategy, FakeStaticActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStaticStrategy, FakeStaticActor, DecisionPolicyActor),
+        lambda: (FakeStaticStrategy, FakeStaticActor, DecisionPolicy),
     )
 
     runtime = build_live_node(condition_ids=("condition-btc-5m",))
@@ -428,11 +428,11 @@ def test_build_live_node_registers_market_rotation_actor(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
 
     universe = FakeUniverse()
@@ -458,13 +458,13 @@ def test_build_live_node_registers_market_rotation_actor(monkeypatch) -> None:
 def test_all_native_strategies_share_runtime_policy(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
-    from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+    from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 
     class FakeRotationActor:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    class FakePolicyActor(DecisionPolicyActor):
+    class FakePolicyActor(DecisionPolicy):
         def on_save(self) -> dict[str, bytes]:
             return {}
 
@@ -559,11 +559,11 @@ def test_build_live_node_forwards_unsubscribe_exited_to_native_strategy(
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
@@ -603,11 +603,11 @@ def test_build_live_node_skips_disabled_native_strategies(
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
@@ -645,11 +645,11 @@ def test_build_live_node_uses_paper_trading_fixed_stake_for_native_strategies(
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
@@ -684,11 +684,11 @@ def test_build_live_node_passes_l1_snapshot_interval_to_native_strategies(
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._native_core_for",
@@ -736,11 +736,11 @@ def test_build_live_node_injects_runtime_progress_callback(monkeypatch, tmp_path
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
-        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicy),
     )
 
     runtime = build_live_node(settings=settings, condition_ids=("condition-btc-5m",))
@@ -767,9 +767,9 @@ def test_runtime_progress_callback_suppresses_heartbeat_write_failures(monkeypat
     _runtime_progress_callback(settings)("evaluation_heartbeat")
 
 def test_build_control_adapts_policy() -> None:
-    from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+    from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 
-    policy = DecisionPolicyActor()
+    policy = DecisionPolicy()
     ctrl = build_control(policy)
 
     assert ctrl.is_strategy_enabled("vwap_momentum")
@@ -874,7 +874,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
             "sidecar": object(),
             "node": SimpleNamespace(),
             "strategies": [],
-            "policy": DecisionPolicyActor(),
+            "policy": DecisionPolicy(),
         },
     )
 

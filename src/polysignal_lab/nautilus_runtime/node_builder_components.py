@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Protocol
 
-from polysignal_lab.alpha.types import TradeView
+from polysignal_lab.alpha.types import SideBookView, TradeView
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
@@ -18,14 +19,53 @@ class NativeStrategyLike(Protocol):
     strategy_name: str
 
 
-class EmptyBookDataProvider:
-    def book_for_token(self, token_id: str, *, now: object | None = None) -> None:
-        _ = token_id, now
-        return None
+class CacheBoundBookDataProvider:
+    """Cache-backed books provider bound once after TradingNode cache exists.
+
+    Unbound reads fail closed (None / empty). Live composition must call
+    ``bind_cache`` after node build; empty-book bootstrap is not a live path.
+    """
+
+    def __init__(self, catalog: MarketCatalog) -> None:
+        self._catalog: MarketCatalog = catalog
+        self._provider: object | None = None
+
+    @property
+    def is_bound(self) -> bool:
+        return self._provider is not None
+
+    def bind_cache(self, cache: object) -> None:
+        if cache is None:
+            raise RuntimeError("MarketView books require a Nautilus Cache")
+        from polysignal_lab.nautilus_runtime.cache_market_data import (
+            NautilusCacheMarketDataProvider,
+        )
+
+        self._provider = NautilusCacheMarketDataProvider(cache, catalog=self._catalog)
+
+    def book_for_token(
+        self,
+        token_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> SideBookView | None:
+        provider = self._provider
+        if provider is None:
+            return None
+        book_for_token = getattr(provider, "book_for_token", None)
+        if not callable(book_for_token):
+            return None
+        return book_for_token(token_id, now=now)
 
     def trades_for_token(self, token_id: str) -> tuple[TradeView, ...]:
-        _ = token_id
-        return ()
+        provider = self._provider
+        if provider is None:
+            return ()
+        trades_for_token = getattr(provider, "trades_for_token", None)
+        if not callable(trades_for_token):
+            return ()
+        rows = trades_for_token(token_id)
+        return tuple(rows)
 
 
 class StaticMarketUniverse:
@@ -47,7 +87,7 @@ def create_market_projection_components(
     custom_data = StrategyCustomDataState()
     assembler = MarketViewAssembler(
         catalog=catalog,
-        books=EmptyBookDataProvider(),
+        books=CacheBoundBookDataProvider(catalog),
         custom_data=custom_data,
     )
     return catalog, assembler

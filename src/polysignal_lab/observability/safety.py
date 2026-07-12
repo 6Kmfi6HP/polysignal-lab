@@ -68,6 +68,15 @@ LOCAL_PAPER_ISOLATION_SYMBOLS: Final = (
     "condition_id_for_instrument",
     "token_id_for_instrument",
 )
+# Dual-path residue that must not re-enter live runtime / decision / trading wiring.
+LEGACY_DUAL_PATH_SYMBOLS: Final = (
+    "from polysignal_lab.data.state import OrderBookRegistry",
+    "from polysignal_lab.data.state import OrderBookRegistry,",
+    "OrderBookRegistry()",
+    "from polysignal_lab.data.polymarket_clob_ws import",
+    "from polysignal_lab.data.polymarket_clob_rest import",
+    "EmptyBookDataProvider",
+)
 ACTOR_SCHEDULING_FALLBACK_SYMBOLS: Final = ("asyncio.create_task(",)
 ACTOR_SCHEDULING_FALLBACK_PATHS: Final = {
     Path("src/polysignal_lab/nautilus_runtime/market_rotation.py"),
@@ -106,6 +115,8 @@ def scan(root: str | Path) -> list[tuple[str, str]]:
             symbols.extend(LOCAL_PAPER_ISOLATION_SYMBOLS)
         if _is_actor_scheduling_fallback_path(base, path):
             symbols.extend(ACTOR_SCHEDULING_FALLBACK_SYMBOLS)
+        if _is_legacy_dual_path_guarded(base, path):
+            symbols.extend(LEGACY_DUAL_PATH_SYMBOLS)
         for symbol in symbols:
             if symbol in text:
                 if _is_submit_order_allowed_for_nautilus_strategy(path) and symbol == "submit_order":
@@ -147,6 +158,18 @@ def _is_actor_scheduling_fallback_path(base: Path, path: Path) -> bool:
         rel_text.endswith(target.as_posix()) or path_text.endswith(target.as_posix())
         for target in ACTOR_SCHEDULING_FALLBACK_PATHS
     )
+
+
+def _is_legacy_dual_path_guarded(base: Path, path: Path) -> bool:
+    """Guard runtime/decision/trading packages against legacy book/CLOB reattachment."""
+    _ = base
+    if path.suffix != ".py":
+        return False
+    return any(
+        part in {"nautilus_runtime", "nautilus_bridge", "signal_layer"}
+        for part in path.parts
+    )
+
 
 
 def _is_submit_order_allowed_for_nautilus_strategy(path: Path) -> bool:

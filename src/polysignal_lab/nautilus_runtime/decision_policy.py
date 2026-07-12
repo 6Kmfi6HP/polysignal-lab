@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, dataclasses, dataclasses.dataclass, typing, typing.cast, polysignal_lab.alpha.types
-Output: ApprovedDecision, RejectedDecision, candidate_from_decision, _MarketAdapter, _BookAdapter, _SpotAdapter, _GateSnapshotAdapter, DecisionPolicyActor
+Output: ApprovedDecision, RejectedDecision, candidate_from_decision, _MarketAdapter, _BookAdapter, _SpotAdapter, _GateSnapshotAdapter, DecisionPolicy
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -166,7 +166,7 @@ class _GateSnapshotAdapter:
         return self.view.ask_for(side)
 
 
-class DecisionPolicyActor:
+class DecisionPolicy:
     """Decision gate, arbitration, and consensus for signal evaluation.
 
     Runs before Nautilus order submission; Nautilus RiskEngine still owns
@@ -378,7 +378,7 @@ class DecisionPolicyActor:
                 and rejection is None
                 and not (decision.order_intent and decision.order_intent.pair_id)
             ),
-            key=DecisionPolicyActor._candidate_sort_key,
+            key=DecisionPolicy._candidate_sort_key,
         )
 
     def _arbitrated_candidate_ids(self, unpaired: list[_BatchEntry]) -> set[int]:
@@ -455,7 +455,7 @@ class DecisionPolicyActor:
             if pair_id is not None:
                 pairs_by_id.setdefault(pair_id, []).append(entry)
         pair_groups = [
-            sorted(group, key=DecisionPolicyActor._candidate_sort_key)
+            sorted(group, key=DecisionPolicy._candidate_sort_key)
             for _, group in sorted(pairs_by_id.items())
         ]
         return pair_groups + [

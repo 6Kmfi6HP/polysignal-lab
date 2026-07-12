@@ -32,7 +32,7 @@ from polysignal_lab.nautilus_bridge.market_catalog import (
 from polysignal_lab.nautilus_bridge.state import save_strategy_state, load_strategy_state
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
-    DecisionPolicyActor,
+    DecisionPolicy,
 )
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.custom_data_types import (
@@ -43,7 +43,6 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
 )
 from polysignal_lab.nautilus_runtime.native_order import (
     OrderSubmittingStrategy,
-    submit_approved_decision,
 )
 from polysignal_lab.nautilus_runtime.native_strategy_exit import NativeExitPolicy
 from polysignal_lab.nautilus_runtime.strategy.custom_data_handlers import route_strategy_data
@@ -51,6 +50,7 @@ from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
     DecisionPipeline,
     DecisionPipelineState,
     NativeDecisionSinkImpl,
+    submit_approved_for_view,
 )
 from polysignal_lab.nautilus_runtime.strategy.event_projection import (
     ApprovedSignalMetricsTracker,
@@ -121,7 +121,7 @@ class PolySignalNativeStrategy(Strategy):
         assembler: _Assembler | None,
         condition_ids: Sequence[str],
         strategy_name: str,
-        policy: DecisionPolicyActor | None = None,
+        policy: DecisionPolicy | None = None,
         fixed_stake_usdc: float = 10.0,
         paper_risk_gate: object | None = None,
         exit_model: object | None = None,
@@ -158,11 +158,11 @@ class PolySignalNativeStrategy(Strategy):
         assembler: _Assembler,
         condition_ids: Sequence[str],
         strategy_name: str,
-        policy: DecisionPolicyActor | None,
+        policy: DecisionPolicy | None,
         registry: MarketCatalog,
     ) -> None:
         if policy is None:
-            raise TypeError("policy must be an injected shared DecisionPolicyActor")
+            raise TypeError("policy must be an injected shared DecisionPolicy")
         self.core = core
         self.custom_data = StrategyCustomDataState()
         resolved_assembler = _assembler_with_custom_data(assembler, self.custom_data)
@@ -378,7 +378,7 @@ class PolySignalNativeStrategy(Strategy):
         )
 
     def on_order_book_deltas(self, deltas: object) -> None:
-        condition_id = self._condition_from_order_book_deltas(deltas)
+        condition_id = self._condition_from_market_data(deltas)
         if condition_id is None:
             return
         self._evaluate_market_data_condition(condition_id, event=deltas)
@@ -398,35 +398,23 @@ class PolySignalNativeStrategy(Strategy):
             self._note_runtime_progress("dropped_frame")
         return condition_id
 
-    def _condition_from_order_book_deltas(self, deltas: object) -> str | None:
-        return self._condition_from_market_data(deltas)
-
     def on_quote_tick(self, tick: object) -> None:
-        condition_id = self._condition_from_quote_tick(tick)
+        condition_id = self._condition_from_market_data(tick)
         if condition_id is None:
             return
         self._evaluate_market_data_condition(condition_id, event=tick)
 
-    def _condition_from_quote_tick(self, tick: object) -> str | None:
-        return self._condition_from_market_data(tick)
-
     def on_order_book(self, book: object) -> None:
-        condition_id = self._condition_from_order_book(book)
+        condition_id = self._condition_from_market_data(book)
         if condition_id is None:
             return
         self._evaluate_market_data_condition(condition_id, event=book)
 
-    def _condition_from_order_book(self, book: object) -> str | None:
-        return self._condition_from_market_data(book)
-
     def on_trade_tick(self, tick: object) -> None:
-        condition_id = self._condition_from_trade_tick(tick)
+        condition_id = self._condition_from_market_data(tick)
         if condition_id is None:
             return
         self._evaluate_market_data_condition(condition_id, event=tick)
-
-    def _condition_from_trade_tick(self, tick: object) -> str | None:
-        return self._condition_from_market_data(tick)
 
     def _evaluate_market_data_condition(
         self,
@@ -560,14 +548,12 @@ class PolySignalNativeStrategy(Strategy):
         self, approved: ApprovedDecision, *, view: MarketView
     ) -> object:
         signal = approved.signal
-        book = view.book_for(signal.side)
         # Subclasses supplied by Nautilus/tests provide the native submit surface.
-        order = submit_approved_decision(
+        order = submit_approved_for_view(
             cast(OrderSubmittingStrategy[object], cast(object, self)),
             approved,
+            view=view,
             fixed_stake_usdc=self.fixed_stake_usdc,
-            best_ask=book.best_ask,
-            best_bid=getattr(book, "best_bid", None),
             instrument_id_resolver=self._resolved_instrument,
             now=self._framework_now,
         )

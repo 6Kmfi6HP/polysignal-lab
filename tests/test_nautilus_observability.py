@@ -37,7 +37,7 @@ from polysignal_lab.nautilus_runtime.observability import (
     NautilusNotifierAdapter,
     ObservabilityService,
 )
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.utils import utc_now
 
 
@@ -680,7 +680,7 @@ def test_event_count_increments() -> None:
 
 
 def test_decision_policy_control_proxies_disable() -> None:
-    policy = DecisionPolicyActor()
+    policy = DecisionPolicy()
     ctrl = DecisionPolicyControl(policy)
 
     assert ctrl.is_strategy_enabled("vwap_momentum")
@@ -689,7 +689,7 @@ def test_decision_policy_control_proxies_disable() -> None:
 
 
 def test_decision_policy_control_returns_status_payload() -> None:
-    policy = DecisionPolicyActor()
+    policy = DecisionPolicy()
     ctrl = DecisionPolicyControl(policy)
 
     ctrl.set_strategy_enabled("test_strat", enabled=False)

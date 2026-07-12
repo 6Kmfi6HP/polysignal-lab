@@ -35,7 +35,7 @@ from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
-    DecisionPolicyActor,
+    DecisionPolicy,
     RejectedDecision,
     candidate_from_decision,
 )
@@ -89,7 +89,7 @@ def test_decision_policy_preserves_gate_first_failure_reasons(
 
 
 def test_manual_disable_uses_pipeline_reason_without_touching_gate() -> None:
-    actor = DecisionPolicyActor(
+    actor = DecisionPolicy(
         gate=_ExplodingGate(),
         consensus=_ExplodingConsensus(),
         disabled_strategies={"alpha"},
@@ -102,7 +102,7 @@ def test_manual_disable_uses_pipeline_reason_without_touching_gate() -> None:
 
 
 def test_dependency_disable_uses_pipeline_reason_without_touching_gate() -> None:
-    actor = DecisionPolicyActor(
+    actor = DecisionPolicy(
         gate=_ExplodingGate(),
         consensus=_ExplodingConsensus(),
         disabled_strategies={"base"},
@@ -136,7 +136,7 @@ def test_approved_decision_preserves_order_intent_fields() -> None:
 
 
 def test_approved_decision_includes_consensus_signal_when_engine_merges() -> None:
-    actor = DecisionPolicyActor(
+    actor = DecisionPolicy(
         gate=_gate(dedupe_enabled=False),
         consensus=ConsensusEngine(window_sec=45, enabled=True),
     )
@@ -191,11 +191,11 @@ def test_decision_policy_module_imports_without_nautilus_dependency() -> None:
 
     assert "nautilus_trader" not in source
     module = importlib.import_module("polysignal_lab.nautilus_runtime.decision_policy")
-    assert module.DecisionPolicyActor is DecisionPolicyActor
+    assert module.DecisionPolicy is DecisionPolicy
 
 
 def test_decision_policy_actor_exposes_domain_state_not_nautilus_lifecycle() -> None:
-    actor = DecisionPolicyActor(disabled_strategies={"manual"})
+    actor = DecisionPolicy(disabled_strategies={"manual"})
 
     assert callable(actor.save_state)
     assert callable(actor.load_state)
@@ -210,7 +210,7 @@ def test_nautilus_decision_policy_actor_constructs_without_nautilus_installed() 
 
     actor = NautilusDecisionPolicyActor(disabled_strategies={"manual"})
 
-    assert isinstance(actor, DecisionPolicyActor)
+    assert isinstance(actor, DecisionPolicy)
     assert actor.save_state()["disabled_strategies"] == ["manual"]
 
 
@@ -287,7 +287,7 @@ def test_runtime_classes_expose_registerable_nautilus_policy_actor(monkeypatch) 
         node.trader.add_actor(actor)
 
         assert isinstance(actor, FakeActor)
-        assert isinstance(actor, DecisionPolicyActor)
+        assert isinstance(actor, DecisionPolicy)
         assert actor.actor_config == "actor-config"
         assert node.trader.actors == [actor]
     finally:
@@ -298,14 +298,14 @@ def test_runtime_classes_expose_registerable_nautilus_policy_actor(monkeypatch) 
 
 
 def test_state_round_trips_disabled_strategies_and_dependencies() -> None:
-    actor = DecisionPolicyActor(
+    actor = DecisionPolicy(
         disabled_strategies={"base", "manual"},
         dependencies={"dependent": ("base", "other")},
         strategy_freshness_policies={
             "dependent": FreshnessPolicy(max_orderbook_staleness_ms=1000)
         },
     )
-    restored = DecisionPolicyActor()
+    restored = DecisionPolicy()
 
     restored.load_state(actor.save_state())
 
@@ -320,7 +320,7 @@ def test_state_round_trips_disabled_strategies_and_dependencies() -> None:
 
 
 def test_load_state_preserves_preseeded_disabled_strategies_and_dependencies() -> None:
-    actor = DecisionPolicyActor(
+    actor = DecisionPolicy(
         disabled_strategies={"vwap_momentum"},
         dependencies={"dependent": ("vwap_momentum",)},
     )
@@ -353,7 +353,7 @@ def test_load_state_preserves_preseeded_disabled_strategies_and_dependencies() -
 def test_decision_policy_preserves_strategy_freshness_policy(
     policy: FreshnessPolicy, view_kwargs: dict[str, int], expected_reason: str
 ) -> None:
-    actor = DecisionPolicyActor(
+    actor = DecisionPolicy(
         gate=_gate(dedupe_enabled=False),
         strategy_freshness_policies={"alpha": policy},
     )
@@ -391,7 +391,7 @@ def test_missing_side_book_rejects_as_missing_orderbook() -> None:
 
 
 def test_batch_arbitration_keeps_opposite_legs_in_same_pair() -> None:
-    actor = DecisionPolicyActor(
+    actor = DecisionPolicy(
         gate=_gate(dedupe_enabled=False),
         arbiter=SignalArbiter(),
     )
@@ -425,7 +425,7 @@ def test_invalid_batch_candidate_cannot_suppress_valid_opposite_candidate() -> N
 
 
 def test_batch_prevalidation_does_not_consume_gate_state_for_suppressed_candidate() -> None:
-    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=True))
+    actor = DecisionPolicy(gate=_gate(dedupe_enabled=True))
     up = _decision(side=Side.UP)
     down = _decision(side=Side.DOWN)
     view = _view()
@@ -436,7 +436,7 @@ def test_batch_prevalidation_does_not_consume_gate_state_for_suppressed_candidat
 
 
 def test_batch_arbitration_rejects_incomplete_pair_without_committing_gate_state() -> None:
-    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=True))
+    actor = DecisionPolicy(gate=_gate(dedupe_enabled=True))
     up = _decision(
         order_intent=OrderIntentSpec(
             OrderIntent.PASSIVE_GTD,
@@ -456,7 +456,7 @@ def test_batch_arbitration_rejects_incomplete_pair_without_committing_gate_state
 
 
 def test_batch_arbitration_rejects_duplicate_pair_leg() -> None:
-    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=False))
+    actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
     up = _decision(
         side=Side.UP,
         order_intent=OrderIntentSpec(
@@ -486,7 +486,7 @@ def test_batch_arbitration_rejects_duplicate_pair_leg() -> None:
 
 
 def test_batch_arbitration_records_ambiguity_rejections() -> None:
-    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=False))
+    actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
     up = _decision(side=Side.UP)
     down = _decision(side=Side.DOWN)
 
@@ -500,7 +500,7 @@ def test_batch_arbitration_records_ambiguity_rejections() -> None:
 
 
 def test_batch_arbitration_returns_survivors_in_original_input_order() -> None:
-    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=False))
+    actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
     beta = _decision(strategy="beta", market_id="market-2", token_id="token-beta")
     alpha = _decision(strategy="alpha", market_id="market-1", token_id="token-alpha")
 
@@ -510,7 +510,7 @@ def test_batch_arbitration_returns_survivors_in_original_input_order() -> None:
 
 
 def test_batch_commit_handoff_requires_exact_market_view_identity() -> None:
-    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=True))
+    actor = DecisionPolicy(gate=_gate(dedupe_enabled=True))
     decision = _decision()
     view = _view()
     stale_view = replace(view, up=replace(view.up, freshness_ms=101))
@@ -525,7 +525,7 @@ def test_batch_commit_handoff_requires_exact_market_view_identity() -> None:
 
 
 def test_complete_pair_commits_policy_for_both_legs_before_evaluation() -> None:
-    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=True, max_signals_per_market=2))
+    actor = DecisionPolicy(gate=_gate(dedupe_enabled=True, max_signals_per_market=2))
     up = _decision(
         side=Side.UP,
         order_intent=OrderIntentSpec(
@@ -550,7 +550,7 @@ def test_complete_pair_commits_policy_for_both_legs_before_evaluation() -> None:
 
 
 def test_complete_pair_rejects_before_mutating_gate_when_capacity_is_insufficient() -> None:
-    actor = DecisionPolicyActor(gate=_gate(dedupe_enabled=True, max_signals_per_market=1))
+    actor = DecisionPolicy(gate=_gate(dedupe_enabled=True, max_signals_per_market=1))
     up = _decision(
         side=Side.UP,
         order_intent=OrderIntentSpec(
@@ -580,14 +580,14 @@ def test_complete_pair_rejects_before_mutating_gate_when_capacity_is_insufficien
     assert len(actor.gate.rate_limiter._global) == 0
 
 
-def _actor_for(case: str) -> DecisionPolicyActor:
+def _actor_for(case: str) -> DecisionPolicy:
     if case == "dedupe":
-        return DecisionPolicyActor(gate=_gate(dedupe_enabled=True))
+        return DecisionPolicy(gate=_gate(dedupe_enabled=True))
     if case == "rate_limit":
-        return DecisionPolicyActor(
+        return DecisionPolicy(
             gate=_gate(dedupe_enabled=False, max_signals_per_hour=1)
         )
-    return DecisionPolicyActor(gate=_gate(dedupe_enabled=False))
+    return DecisionPolicy(gate=_gate(dedupe_enabled=False))
 
 
 def _gate(

@@ -14,7 +14,7 @@ from typing import Protocol
 
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.observability_persistence import (
     AcceptedSignalNotifier,
     NautilusEventStoreAdapter,
@@ -282,9 +282,9 @@ class StrategyControl(Protocol):
 
 
 class DecisionPolicyControl:
-    """Adapts DecisionPolicyActor to StrategyControl protocol."""
-    def __init__(self, policy: DecisionPolicyActor) -> None:
-        self._policy: DecisionPolicyActor = policy
+    """Adapts DecisionPolicy to StrategyControl protocol."""
+    def __init__(self, policy: DecisionPolicy) -> None:
+        self._policy: DecisionPolicy = policy
 
     def set_strategy_enabled(self, name: str, enabled: bool) -> None:
         self._policy.set_strategy_enabled(name, enabled)

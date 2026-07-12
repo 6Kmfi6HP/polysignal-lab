@@ -332,7 +332,7 @@ from polysignal_lab.domain.signal import SignalCandidate  # noqa: E402
 from polysignal_lab.nautilus_runtime.decision_policy import (  # noqa: E402
     ApprovedDecision,
     BatchArbitrationResult,
-    DecisionPolicyActor,
+    DecisionPolicy,
 )
 from polysignal_lab.nautilus_runtime.native_strategy import (  # noqa: E402
     PolySignalNativeStrategy,
@@ -356,7 +356,7 @@ class _MockView:
         return datetime.now(UTC)
 
 
-class RuntimeFakePolicy(DecisionPolicyActor):
+class RuntimeFakePolicy(DecisionPolicy):
     def evaluate(self, decision: AlphaDecision, view: MarketView) -> ApprovedDecision:
         _ = view
         candidate = SignalCandidate.build(
@@ -971,7 +971,7 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         strategy.clock.timestamp_ns() / 1_000_000_000,
         UTC,
     )
-    strategy._condition_from_quote_tick = lambda _tick: "condition-btc-5m"
+    strategy._condition_from_market_data = lambda _tick: "condition-btc-5m"
     strategy.on_quote_tick(SimpleNamespace(ts_event=1))
     assert strategy._last_market_data_evaluation_at["condition-btc-5m"] == datetime.fromtimestamp(
         strategy.clock.timestamp_ns() / 1_000_000_000,
@@ -3743,7 +3743,7 @@ def test_native_strategy_rejection_persistence_failure_does_not_block_evaluate()
             _ = rejected
             raise sqlite3.OperationalError("database is locked")
 
-    class RejectingPolicy(DecisionPolicyActor):
+    class RejectingPolicy(DecisionPolicy):
         def evaluate(self, decision: AlphaDecision, view: MarketView):
             _ = view
             return type("Rejected", (), {

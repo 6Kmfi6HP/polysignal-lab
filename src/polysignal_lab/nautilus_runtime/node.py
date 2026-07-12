@@ -26,7 +26,7 @@ from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.node_probes import (
     _runtime_heartbeat_path,
     _runtime_startup_marker_path,
@@ -99,26 +99,47 @@ def _attach_cache_projections(
     strategies: Sequence[_NativeStrategyLike],
 ) -> tuple[object, object]:
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
+    from polysignal_lab.nautilus_runtime.node_builder_components import (
+        CacheBoundBookDataProvider,
+    )
 
     kernel = getattr(node, "kernel", None)
     nautilus_cache = getattr(node, "cache", None) or getattr(kernel, "cache", None)
     nautilus_portfolio = getattr(node, "portfolio", None) or getattr(kernel, "portfolio", None)
-    books = NautilusCacheMarketDataProvider(
-        nautilus_cache,
-        catalog=registry,
-    )
-    assembler.books = books
+
+    books = getattr(assembler, "books", None)
+    if nautilus_cache is None:
+        # Leave CacheBoundBookDataProvider unbound: reads fail closed until Cache exists.
+        return nautilus_cache, nautilus_portfolio
+
+    if isinstance(books, CacheBoundBookDataProvider):
+        books.bind_cache(nautilus_cache)
+    else:
+        # Unexpected provider types are replaced with a bound Cache provider.
+        assembler.books = NautilusCacheMarketDataProvider(
+            nautilus_cache,
+            catalog=registry,
+        )
+
+    bound_books = assembler.books
     for strategy in strategies:
         strategy_assembler = getattr(strategy, "assembler", None)
+        if strategy_assembler is None:
+            continue
+        strategy_books = getattr(strategy_assembler, "books", None)
+        if isinstance(strategy_books, CacheBoundBookDataProvider):
+            if strategy_books is not bound_books:
+                strategy_books.bind_cache(nautilus_cache)
+            continue
         if hasattr(strategy_assembler, "books"):
-            strategy_assembler.books = books
+            strategy_assembler.books = bound_books
     return nautilus_cache, nautilus_portfolio
 
 
 def _register_runtime_trader_components(
     node: _NautilusNodeLike,
     market_rotation_actor: object,
-    policy: DecisionPolicyActor,
+    policy: DecisionPolicy,
     strategies: Sequence[_NativeStrategyLike],
 ) -> None:
     node.trader.add_actor(market_rotation_actor)
@@ -140,9 +161,9 @@ def _load_runtime_trader_state(node: _NautilusNodeLike) -> None:
     load()
 
 
-def _is_runtime_policy_actor(policy: DecisionPolicyActor) -> bool:
+def _is_runtime_policy_actor(policy: DecisionPolicy) -> bool:
     return (
-        type(policy) is not DecisionPolicyActor
+        type(policy) is not DecisionPolicy
         and callable(getattr(policy, "on_save", None))
         and callable(getattr(policy, "on_load", None))
     )
@@ -219,7 +240,7 @@ def _build_nautilus_runtime_bundle(
     context.nautilus_portfolio = components.get("portfolio")
     context.market_catalog = components.get("registry")
     context.paper_execution_metadata = paper_execution_metadata
-    policy = cast(DecisionPolicyActor, components["policy"])
+    policy = cast(DecisionPolicy, components["policy"])
     bot = context.telegram_bot
     if bot is not None:
         bot.strategy_control = build_control(policy)

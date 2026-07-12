@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
 
@@ -75,7 +75,7 @@ def _native_strategy() -> PolySignalNativeStrategy:
         assembler=Assembler(),
         condition_ids=("condition-1",),
         strategy_name="test",
-        policy=DecisionPolicyActor(),
+        policy=DecisionPolicy(),
         registry=Registry(),
         instrument_id_resolver=lambda value: value,
     )
@@ -181,7 +181,7 @@ def test_native_strategy_uses_exit_model_against_native_open_position() -> None:
         assembler=Assembler(),
         condition_ids=("condition-1",),
         strategy_name="ptb_diff",
-        policy=DecisionPolicyActor(),
+        policy=DecisionPolicy(),
         registry=Registry(),
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         exit_model=SimpleNamespace(

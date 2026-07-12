@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, asyncio, importlib, logging, sys, collections.abc, collections.abc.Callable, collections.abc.Sequence, dataclasses
-Output: build_nautilus_runtime_context, build_live_node, build_nautilus_runtime, _TraderLike, _Disposable, _NautilusNodeLike, _NativeStrategyLike, _EmptyBookDataProvider, _StaticMarketUniverse, NautilusRuntimeContext
+Output: build_nautilus_runtime_context, build_live_node, build_nautilus_runtime, _TraderLike, _Disposable, _NautilusNodeLike, _NativeStrategyLike, CacheBoundBookDataProvider, _StaticMarketUniverse, NautilusRuntimeContext
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -26,7 +26,7 @@ from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.node_builder_components import (
     NativeStrategyLike,
     StaticMarketUniverse as _StaticMarketUniverse,
@@ -71,7 +71,7 @@ class _RuntimeBuildParts(NamedTuple):
     config: object
     registry: MarketCatalog
     assembler: MarketViewAssembler
-    policy: DecisionPolicyActor
+    policy: DecisionPolicy
 
 
 # Stub placeholder -- _ensure_nautilus_imports() overwrites it at runtime.

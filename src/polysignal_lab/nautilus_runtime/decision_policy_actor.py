@@ -21,14 +21,14 @@ from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import ActorConfig
 
 from polysignal_lab.nautilus_bridge.state import JsonValue, decode_state, encode_state
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 
 
-class NautilusDecisionPolicyActor(DecisionPolicyActor, Actor):
+class NautilusDecisionPolicyActor(DecisionPolicy, Actor):
     """Nautilus lifecycle seam for the pure decision policy engine.
 
     Inherits Actor directly so the class is Nautilus-registerable. The
-    on_save/on_load lifecycle hooks call DecisionPolicyActor.save_state() /
+    on_save/on_load lifecycle hooks call DecisionPolicy.save_state() /
     load_state() and encode/decode through the Nautilus state bridge.
     """
 
@@ -36,7 +36,7 @@ class NautilusDecisionPolicyActor(DecisionPolicyActor, Actor):
 
     def __init__(self, **kwargs: object) -> None:
         Actor.__init__(self, config=ActorConfig())
-        DecisionPolicyActor.__init__(self, **kwargs)
+        DecisionPolicy.__init__(self, **kwargs)
 
     def on_save(self) -> dict[str, bytes]:
         payload = cast(Mapping[str, JsonValue], self.save_state())
