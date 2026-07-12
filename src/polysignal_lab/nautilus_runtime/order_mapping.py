@@ -24,11 +24,13 @@ def order_spec_from_decision(
     decision: ApprovedDecision | AlphaDecision | SignalCandidate,
     fixed_stake_usdc: float,
     best_ask: float | None = None,
+    best_bid: float | None = None,
 ) -> OrderSubmissionPlan:
     return build_order_spec(
         _decision_source(decision),
         fixed_stake_usdc=fixed_stake_usdc,
         best_ask=best_ask,
+        best_bid=best_bid,
     )
 
 

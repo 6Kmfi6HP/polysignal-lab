@@ -24,6 +24,7 @@ from polysignal_lab.alpha.helpers import (
     active_unhedged_position,
     build_order_decision,
     build_hedge_order_decision,
+    binary_pair_effective_cost,
     enabled_for_view,
     evaluate_from_snapshot_for_test,
     position_hedge_context,
@@ -34,9 +35,6 @@ from polysignal_lab.alpha.helpers import (
 from polysignal_lab.alpha.stats import RollingPriceStats
 from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
-
-_FEE_RATE = 0.01
-_SLIPPAGE_BUFFER = 0.01
 
 
 class DumpHedgeAlphaCore:
@@ -49,12 +47,6 @@ class DumpHedgeAlphaCore:
         self._positions: dict[str, dict[str, Any]] = {}
         self._dump_detected: set[str] = set()
         self._last_price: dict[str, float] = {}
-
-    @staticmethod
-    def _pair_effective_cost(leg1_price: float, leg2_price: float) -> float:
-        return leg1_price + leg2_price + 2.0 * _FEE_RATE + _SLIPPAGE_BUFFER
-
-    # -- guard helpers -------------------------------------------------------
 
     def _validate_inputs(self, view: MarketView) -> bool:
         return enabled_for_view(self.config, view)
@@ -160,7 +152,7 @@ class DumpHedgeAlphaCore:
         decisions: list[AlphaDecision] = []
 
         if hedge_ask is not None:
-            cost = self._pair_effective_cost(hedge.filled_price, hedge_ask)
+            cost = binary_pair_effective_cost(hedge.filled_price, hedge_ask)
             if cost <= self.config.pair_cost_cap:
                 decision = build_hedge_order_decision(
                     HedgeDecisionContext(
@@ -185,7 +177,7 @@ class DumpHedgeAlphaCore:
                     decisions.append(decision)
 
         if hedge.elapsed_seconds >= self.config.stop_loss_max_wait_seconds and hedge_ask is not None:
-            cost = self._pair_effective_cost(hedge.filled_price, hedge_ask)
+            cost = binary_pair_effective_cost(hedge.filled_price, hedge_ask)
             if cost <= self.config.stop_loss_pair_cap:
                 decision = build_hedge_order_decision(
                     HedgeDecisionContext(

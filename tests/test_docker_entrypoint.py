@@ -11,6 +11,12 @@ def test_entrypoint_defaults_to_nautilus() -> None:
     assert "--mode nautilus" in source
 
 
+def test_dockerfile_defaults_to_nautilus() -> None:
+    source = Path("Dockerfile").read_text(encoding="utf-8")
+    assert 'CMD ["nautilus"]' in source
+    assert 'CMD ["scheduler"]' not in source
+
+
 def test_entrypoint_retires_scheduler_execution_mode() -> None:
     source = _script()
     scheduler = source.split("scheduler)", 1)[1].split(";;", 1)[0]

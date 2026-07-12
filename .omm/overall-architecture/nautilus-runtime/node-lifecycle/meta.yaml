@@ -1,0 +1,9 @@
+created: 2026-07-11T22:51:47.620Z
+updated: 2026-07-11T22:51:47.621Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: node-lifecycle
+children: []
+parentPath:
+  - nautilus-runtime

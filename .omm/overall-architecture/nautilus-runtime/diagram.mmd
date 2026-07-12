@@ -1,0 +1,29 @@
+graph LR
+    node-lifecycle["Node Lifecycle\nnode.py, live_node.py, node_builder.py"]
+    native-strategy["Native Strategy\nnative_strategy.py, strategy_builder.py"]
+    decision-policy["Decision Policy\ndecision_policy.py, decision_policy_actor.py"]
+    custom-data["Custom Data\ncustom_data_types.py, custom_data_state.py"]
+    market-rotation["Market Rotation\nmarket_rotation.py"]
+    order-mgmt["Order Management\nnative_order.py, order_plan.py, order_mapping.py"]
+    paper-risk["Paper Risk\npaper_risk.py"]
+    projections["Projections\nprojections.py"]
+    sidecar["Sidecar\nnode_sidecar.py, sidecar_data.py, signal_sidecar.py"]
+    strategy-sub["Strategy Subsystem\nstrategy/"]
+    observability["Observability\nobservability.py, telemetry_writer.py"]
+    strategy-schedule["Strategy Schedule\nstrategy_schedule.py"]
+    node-cli["Node CLI\nnode_cli.py"]
+
+    node-lifecycle -->|"creates"| native-strategy
+    node-lifecycle -->|"configures"| custom-data
+    native-strategy -->|"consults"| decision-policy
+    native-strategy -->|"uses"| market-rotation
+    native-strategy -->|"sends"| order-mgmt
+    native-strategy -->|"reads"| sidecar
+    order-mgmt -->|"checks"| paper-risk
+    order-mgmt -->|"projects"| projections
+    strategy-sub -->|"drives"| native-strategy
+    native-strategy -->|"reports"| observability
+    node-cli -->|"starts"| node-lifecycle
+
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e
+    classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e

@@ -67,6 +67,11 @@ class StrategyCustomDataState:
                 price=data.price,
                 source=data.source,
                 freshness_ms=data.freshness_ms,
+                received_at=(
+                    event_datetime(data.ts_init)
+                    if data.ts_init > 0
+                    else None
+                ),
             )
             self._spots[spot.asset.upper()] = spot
             return CustomDataApplyResult(spot_asset=spot.asset.upper())

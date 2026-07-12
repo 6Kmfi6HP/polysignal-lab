@@ -1,0 +1,1 @@
+SQLite database housed in data/*.sqlite files. Tables for signals, paper trades, order history, account snapshots, and daily reports. Schema versioning via sqlite_schema.py with upgrade paths for schema changes.

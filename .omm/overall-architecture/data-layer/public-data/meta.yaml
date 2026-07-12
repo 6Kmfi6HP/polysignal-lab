@@ -1,0 +1,9 @@
+created: 2026-07-11T22:44:14.544Z
+updated: 2026-07-11T22:44:14.545Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: public-data
+children: []
+parentPath:
+  - data-layer

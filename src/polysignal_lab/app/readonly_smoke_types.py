@@ -64,12 +64,14 @@ class SurfaceEvidence(TypedDict):
 
 
 class SafetyEvidence(TypedDict):
+    status: Literal["ok", "not_run"]
     ok: bool
     finding_count: int
     detail: str | None
 
 
 class SchedulerSnapshotEvidence(TypedDict):
+    status: Literal["created", "not_run"]
     created: bool
     market_count: int
     token_count: int
@@ -78,12 +80,13 @@ class SchedulerSnapshotEvidence(TypedDict):
 
 
 class HealthSnapshotEvidence(TypedDict):
-    status: Literal["ok", "degraded", "down"]
+    status: Literal["ok", "degraded", "down", "not_run"]
     generated_at: str | None
     components: list[JsonObject]
 
 
 class DashboardEvidence(TypedDict):
+    status: Literal["ok", "not_run"]
     ok: bool
     endpoint_count: int
     detail: str | None

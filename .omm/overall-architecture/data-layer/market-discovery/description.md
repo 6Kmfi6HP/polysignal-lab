@@ -1,0 +1,1 @@
+Discovers available Polymarket markets by fetching event groups and filtering for configured conditions (e.g., crypto Up/Down markets). Uses Gamma API for event listings and CLOB REST for market details.

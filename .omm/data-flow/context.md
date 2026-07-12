@@ -1,0 +1,1 @@
+All external data is read-only public market data. Signals are generated on each cycle from fresh snapshots. The flow is batch-oriented per cycle: fetch all market data, compute all signals, process through gates, then push results to Nautilus and storage. No real-time streaming during alpha computation.

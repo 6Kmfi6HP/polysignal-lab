@@ -82,6 +82,60 @@ def _scheduler(market: Market, decision: ResolutionDecision) -> Mock:
     return scheduler
 
 
+def test_nautilus_positions_prefers_open_cache_and_enriches_catalog_identity() -> None:
+    import polysignal_lab.app._settlement_check as settlement_mod
+    from polysignal_lab.nautilus_bridge.market_catalog import (
+        InstrumentTokenMeta,
+        MarketCatalog,
+        MarketPairMeta,
+    )
+
+    catalog = MarketCatalog(
+        instrument_id_resolver=lambda _condition_id, token_id: f"{token_id}.POLYMARKET"
+    )
+    catalog.register(
+        MarketPairMeta(
+            market_id="market-1",
+            market_slug="slug",
+            condition_id="condition-1",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("token-up", Side.UP),
+            down=InstrumentTokenMeta("token-down", Side.DOWN),
+        )
+    )
+    position = SimpleNamespace(
+        id="position-1",
+        instrument_id="token-up.POLYMARKET",
+        signed_qty=25.0,
+        avg_px_open=0.40,
+        realized_pnl=0.0,
+        is_closed=False,
+    )
+    calls: list[str] = []
+
+    class Cache:
+        def positions_open(self):
+            calls.append("positions_open")
+            return [position]
+
+        def positions(self):
+            calls.append("positions")
+            return []
+
+    scheduler = SimpleNamespace(nautilus_cache=Cache(), market_catalog=catalog)
+
+    rows = settlement_mod._nautilus_positions(scheduler)
+
+    assert calls == ["positions_open"]
+    assert rows[0]["market_id"] == "market-1"
+    assert rows[0]["condition_id"] == "condition-1"
+    assert rows[0]["token_id"] == "token-up"
+    assert rows[0]["side"] == Side.UP.value
+
+
 def _patch_positions(monkeypatch: pytest.MonkeyPatch) -> None:
     """Override _nautilus_positions to return the default projected position dict."""
     import polysignal_lab.app._settlement_check as settlement_mod
@@ -144,6 +198,9 @@ async def test_resolved_numeric_half_payout_closes_as_void_with_provenance(monke
     assert results[0]["outcome_value"] == 0.5
     assert results[0]["settlement_value"] == 12.5
     assert results[0]["details"]["settlement_source"] == "chain"
+    assert results[0]["details"]["native_settlement_mode"] == "report_only"
+    assert results[0]["details"]["native_position_mutation"] == "not_supported"
+    assert results[0]["details"]["native_position_status"] == "open_projection"
 
 
 @pytest.mark.anyio

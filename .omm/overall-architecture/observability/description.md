@@ -1,0 +1,1 @@
+Observability infrastructure: structured logging with configurable levels, Prometheus-compatible metrics collection, health check endpoint, runtime health monitoring (strategy health, data freshness, connection status), and a safety scanner that blocks disallowed execution patterns.

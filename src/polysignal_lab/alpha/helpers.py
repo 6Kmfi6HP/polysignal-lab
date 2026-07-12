@@ -53,6 +53,16 @@ def depth_weighted_ask(book: SideBookView, shares: int) -> float | None:
     return total_cost / shares
 
 
+def binary_pair_effective_cost(
+    leg1_price: float,
+    leg2_price: float,
+    *,
+    fee_rate: float = 0.01,
+    slippage_buffer: float = 0.01,
+) -> float:
+    return leg1_price + leg2_price + 2.0 * fee_rate + slippage_buffer
+
+
 @dataclass(frozen=True, slots=True)
 class OrderDecisionSpec:
     confidence: float

@@ -3,6 +3,8 @@
 > **Status:** Design Proposal  
 > **Date:** 2026-07-08  
 > **Scope:** Assessment of existing custom implementations and a phased migration plan toward alignment with the official `nautilus_trader.adapters.polymarket` API.
+>
+> **Historical note:** This proposal predates the locked 1.229.0 `TradingNode` migration and contains superseded current-state claims (including legacy paper DTOs and old ingress paths). Use `docs/NAUTILUS_BRIDGE_BOUNDARY.md` and `docs/architecture-review-2026-07-09.md` for current architecture guidance.
 
 ---
 

@@ -1,0 +1,19 @@
+graph TD
+    routes["Routes\nroutes/"]
+    features["Features\nfeatures/"]
+    components["Components\ncomponents/"]
+    contexts["Context\ncontext/"]
+    hooks["Hooks\nhooks/"]
+    lib["Lib Utilities\nlib/"]
+    api-layer["API Layer\nlib/api/"]
+    styles["Styles\nstyles/"]
+
+    routes -->|"renders"| features
+    features -->|"uses"| components
+    features -->|"accesses"| contexts
+    features -->|"calls"| api-layer
+    components -->|"uses"| hooks
+    components -->|"uses"| lib
+    api-layer -->|"fetches"| dashboard-backend
+
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e

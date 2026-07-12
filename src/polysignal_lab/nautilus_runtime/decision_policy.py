@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import cast
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, SideBookView, SpotView
@@ -62,10 +63,12 @@ def candidate_from_decision(decision: AlphaDecision, view: MarketView) -> Signal
         data_freshness_ms=decision.data_freshness_ms,
         reason_codes=list(decision.reason_codes),
         metrics=dict(decision.metrics),
+        created_at=view.created_at,
         snapshot_id=view.view_id,
         order_intent=decision.order_intent.intent if decision.order_intent else None,
         expiry_seconds=decision.order_intent.expiry_seconds if decision.order_intent else None,
         pair_id=decision.order_intent.pair_id if decision.order_intent else None,
+        reduce_only=decision.order_intent.reduce_only if decision.order_intent else False,
         hedge_leg=decision.hedge_leg,
     )
 
@@ -120,7 +123,11 @@ class _BookAdapter:
 class _SpotAdapter:
     spot: SpotView
 
-    def freshness_ms(self, _now: object = None) -> int:
+    def freshness_ms(self, now: object = None) -> int:
+        if isinstance(now, datetime):
+            dynamic = self.spot.freshness_ms_at(now)
+            if dynamic is not None:
+                return dynamic
         return self.spot.freshness_ms if self.spot.freshness_ms is not None else _UNKNOWN_LAG_MS
 
 

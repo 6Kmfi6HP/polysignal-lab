@@ -1,0 +1,8 @@
+graph LR
+    sqlite-store["SQLite Store\nsqlite_store.py"]:::store
+    sqlite-schema["SQLite Schema\nsqlite_schema.py"]:::store
+    jsonl-store["JSONL Log Store\njsonl_store.py"]:::store
+    state-store["State Store\nstate_store.py"]:::store
+
+    sqlite-schema -->|"defines"| sqlite-store
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e

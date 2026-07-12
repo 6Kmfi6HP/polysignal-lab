@@ -56,7 +56,10 @@ class _NautilusNodeLike(Protocol):
     trader: _TraderLike
 
     def build(self) -> None: ...
-    def run(self) -> None: ...
+    def run(self, raise_exception: bool = False) -> None: ...
+    async def run_async(self) -> None: ...
+    def stop(self) -> None: ...
+    async def stop_async(self) -> None: ...
 
 
 class _RuntimeBuildParts(NamedTuple):
@@ -71,11 +74,8 @@ class _RuntimeBuildParts(NamedTuple):
     policy: DecisionPolicyActor
 
 
-# Stub placeholders -- _ensure_nautilus_imports() overwrites them at runtime.
-# Monkeypatch surface (py3.11 tests): LiveNode, PolymarketInstrumentProviderConfig,
-# including string path polysignal_lab.nautilus_runtime.node_builder.LiveNode.
+# Stub placeholder -- _ensure_nautilus_imports() overwrites it at runtime.
 # Do not expand this gateway with import-time static Nautilus imports.
-LiveNode: object | None = None
 PolymarketInstrumentProviderConfig: Callable[..., object] = SimpleNamespace
 
 
@@ -85,7 +85,7 @@ _NativeStrategyLike = NativeStrategyLike
 
 @dataclass(slots=True)
 class NautilusRuntimeBundle:
-    """Wired Nautilus LiveNode runtime components."""
+    """Wired Nautilus TradingNode runtime components."""
 
     context: NautilusRuntimeContext
     components: dict[str, object]
@@ -96,38 +96,14 @@ class NautilusRuntimeBundle:
 
 
 def _ensure_nautilus_imports() -> None:
-    """Lazy-import Nautilus LiveNode and instrument provider into module globals.
-
-    Uses module-level placeholders so tests on py3.11 can monkeypatch before
-    the first real call triggers the import chain.  Reads the guard from
-    ``sys.modules`` so a ``monkeypatch.setattr`` on the string path always
-    takes effect even if this function's ``__globals__`` references a stale
-    module object.
-
-    Only LiveNode and PolymarketInstrumentProviderConfig are loaded here —
-    those are the symbols tests patch. Construction still goes through
-    live_node.build_paper_live_node / live_node._ensure_live_imports.
-    """
-    global LiveNode, PolymarketInstrumentProviderConfig
+    """Lazy-import the Nautilus instrument provider configuration."""
+    global PolymarketInstrumentProviderConfig
 
     mod = sys.modules.get(__name__)
-    module_live_node = getattr(mod, "LiveNode", None) if mod is not None else None
-    current_live_node = module_live_node if module_live_node is not None else LiveNode
-    if current_live_node is not None:
-        LiveNode = current_live_node
-        if mod is not None:
-            PolymarketInstrumentProviderConfig = cast(
-                Callable[..., object],
-                getattr(mod, "PolymarketInstrumentProviderConfig", PolymarketInstrumentProviderConfig),
-            )
+    module_provider = getattr(mod, "PolymarketInstrumentProviderConfig", None) if mod is not None else None
+    if module_provider is not None and module_provider is not SimpleNamespace:
+        PolymarketInstrumentProviderConfig = cast(Callable[..., object], module_provider)
         return
-
-    # Delegate LiveNode import to live_node's lazy-import gateway, then re-read
-    # the module attribute (from-import would capture a pre-ensure None).
-    from polysignal_lab.nautilus_runtime import live_node as live_node_mod
-
-    live_node_mod._ensure_live_imports()
-    LiveNode = live_node_mod.LiveNode
 
     provider_mod = importlib.import_module("nautilus_trader.adapters.polymarket.providers")
     PolymarketInstrumentProviderConfig = cast(
@@ -135,7 +111,6 @@ def _ensure_nautilus_imports() -> None:
         provider_mod.PolymarketInstrumentProviderConfig,
     )
     if mod is not None:
-        mod.LiveNode = LiveNode
         mod.PolymarketInstrumentProviderConfig = PolymarketInstrumentProviderConfig
 
 
@@ -216,7 +191,7 @@ def build_live_node(
     health: object | None = None,
     observability: ObservabilityService | None = None,
 ) -> dict[str, object]:
-    """Build a LiveNode-based paper runtime wiring."""
+    """Build a TradingNode-based paper runtime wiring."""
     context = _build_runtime_context(settings, condition_ids, markets, market_universe)
     return wire_live_node_runtime(
         settings=context.settings,

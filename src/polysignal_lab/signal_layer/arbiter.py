@@ -34,11 +34,19 @@ class SignalArbiter:
         if self.conflict_policy == "suppress_ambiguous":
             sides_by_market: dict[str, set[str]] = defaultdict(set)
             for _, candidate in indexed:
-                sides_by_market[candidate.market_id].add(candidate.side.value)
+                if not candidate.reduce_only:
+                    sides_by_market[candidate.market_id].add(candidate.side.value)
+            exits_by_market = {
+                candidate.market_id for _, candidate in indexed if candidate.reduce_only
+            }
             indexed = [
                 item
                 for item in indexed
-                if len(sides_by_market[item[1].market_id]) <= 1
+                if item[1].reduce_only
+                or (
+                    item[1].market_id not in exits_by_market
+                    and len(sides_by_market[item[1].market_id]) <= 1
+                )
             ]
 
         return [

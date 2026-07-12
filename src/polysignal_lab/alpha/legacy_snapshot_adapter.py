@@ -97,5 +97,6 @@ def decision_to_signal(decision: AlphaDecision, snapshot_id: str | None, freshne
         order_intent=decision.order_intent.intent if decision.order_intent else None,
         expiry_seconds=decision.order_intent.expiry_seconds if decision.order_intent else None,
         pair_id=decision.order_intent.pair_id if decision.order_intent else None,
+        reduce_only=decision.order_intent.reduce_only if decision.order_intent else False,
         hedge_leg=decision.hedge_leg,
     )

@@ -90,21 +90,26 @@ class SignalGate:
     def commit(self, candidates: list[SignalCandidate]) -> list[GateDecision]:
         """Atomically reserve stateful gate capacity for an eligible candidate unit."""
         with self._commit_lock:
+            stateful_candidates = [candidate for candidate in candidates if not candidate.reduce_only]
             duplicate = next(
                 (
                     candidate
-                    for candidate in candidates
-                    if self.signal_config.dedupe_enabled and self.deduper.contains(candidate)
+                    for candidate in stateful_candidates
+                    if self.signal_config.dedupe_enabled
+                    and self.deduper.contains(candidate)
                 ),
                 None,
             )
             if duplicate is not None:
                 return self._commit_rejections(candidates, "DUPLICATE_SIGNAL", duplicate)
-            if len({candidate.dedupe_key for candidate in candidates}) != len(candidates):
-                return self._commit_rejections(candidates, "DUPLICATE_SIGNAL", candidates[0])
-            if not self.rate_limiter.can_allow([candidate.market_id for candidate in candidates]):
-                return self._commit_rejections(candidates, "CHANNEL_RATE_LIMIT", candidates[0])
-            for candidate in candidates:
+            if len({candidate.dedupe_key for candidate in stateful_candidates}) != len(stateful_candidates):
+                return self._commit_rejections(candidates, "DUPLICATE_SIGNAL", stateful_candidates[0])
+            entry_candidates = stateful_candidates
+            if entry_candidates and not self.rate_limiter.can_allow(
+                [candidate.market_id for candidate in entry_candidates]
+            ):
+                return self._commit_rejections(candidates, "CHANNEL_RATE_LIMIT", entry_candidates[0])
+            for candidate in stateful_candidates:
                 if self.signal_config.dedupe_enabled and self.deduper.is_duplicate(candidate):
                     return self._commit_rejections(candidates, "DUPLICATE_SIGNAL", candidate)
                 if not self.rate_limiter.allow(candidate.market_id):
@@ -118,7 +123,9 @@ class SignalGate:
         source: SignalCandidate,
     ) -> list[GateDecision]:
         return [
-            GateDecision(
+            GateDecision(True, signal=candidate)
+            if candidate.reduce_only
+            else GateDecision(
                 False,
                 rejected=RejectedSignal(
                     candidate=candidate,
@@ -278,6 +285,8 @@ class SignalGate:
         return None if snapshot.market.is_active else GateRejection("MARKET_NOT_ACTIVE")
 
     def _time_window(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
+        if candidate.reduce_only:
+            return None
         if candidate.order_intent == OrderIntent.PASSIVE_GTD and candidate.expiry_seconds is not None:
             return None
         if candidate.seconds_to_close is None or candidate.seconds_to_close <= 0:
@@ -295,6 +304,8 @@ class SignalGate:
         )
 
     def _spot_freshness(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
+        if candidate.reduce_only:
+            return None
         return self._check_configured_freshness(
             candidate,
             snapshot,
@@ -326,7 +337,7 @@ class SignalGate:
         )
 
     def _spread(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
-        if candidate.order_intent == OrderIntent.PASSIVE_GTD:
+        if candidate.reduce_only or candidate.order_intent == OrderIntent.PASSIVE_GTD:
             return None
         book = snapshot.book_for(candidate.side)
         max_spread = candidate.metrics.get("max_spread", 0.12)
@@ -335,7 +346,7 @@ class SignalGate:
         return GateRejection("SPREAD_TOO_WIDE")
 
     def _max_entry(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
-        if candidate.order_intent == OrderIntent.PASSIVE_GTD:
+        if candidate.order_intent == OrderIntent.PASSIVE_GTD or candidate.reduce_only:
             return None
         ask = snapshot.ask_for(candidate.side)
         if ask is None or ask > candidate.max_entry_price:
@@ -352,14 +363,24 @@ class SignalGate:
         return None
 
     def _confidence(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
-        return None if candidate.confidence >= self.signal_config.min_confidence_to_publish else GateRejection("CONFIDENCE_TOO_LOW")
+        if candidate.reduce_only:
+            return None
+        return (
+            None
+            if candidate.confidence >= self.signal_config.min_confidence_to_publish
+            else GateRejection("CONFIDENCE_TOO_LOW")
+        )
 
     def _dedupe(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
+        if candidate.reduce_only:
+            return None
         if self.signal_config.dedupe_enabled and self.deduper.is_duplicate(candidate):
             return GateRejection("DUPLICATE_SIGNAL")
         return None
 
     def _rate_limit(self, candidate: SignalCandidate, snapshot: MarketSnapshot) -> GateRejection | None:
+        if candidate.reduce_only:
+            return None
         if not self.rate_limiter.allow(candidate.market_id):
             return GateRejection("CHANNEL_RATE_LIMIT")
         return None

@@ -40,7 +40,7 @@ Auto-generated project index maintained by the Fractal Multi-level Index System.
     ├── dashboard/ (2 files)
     ├── data/ (13 files)
     ├── domain/ (15 files)
-    ├── nautilus_bridge/ (4 files)
+    ├── nautilus_bridge/ (5 files)
       ├── strategies/ (1 files)
     ├── nautilus_runtime/ (29 files)
       ├── strategies/ (3 files)

@@ -254,7 +254,7 @@ class HealthLivenessConfig(BaseModel):
 
 class HealthRestartGateConfig(BaseModel):
     enabled: bool = True
-    critical_components: tuple[str, ...] = ("runtime", "scheduler", "sqlite")
+    critical_components: tuple[str, ...] = ("runtime", "sqlite")
     critical_down_sec: int = 300
     min_consecutive_failures: int = 5
     docker_healthcheck_fails_on_restart_recommended: bool = False
@@ -267,7 +267,7 @@ class HealthConfig(BaseModel):
 
 
 class NautilusSidecarConfig(BaseModel):
-    spot_source: str = "disabled"
+    spot_source: Literal["disabled", "polymarket_rtds"] = "disabled"
     price_to_beat_source: str = "anchor_or_gamma"
 
 
@@ -290,6 +290,15 @@ class NautilusMarketRotationConfig(BaseModel):
     allow_adapter_new_market_events: bool = False
 
 
+class NautilusStatePersistenceConfig(BaseModel):
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 6379
+    username_env: str | None = None
+    password_env: str | None = None
+    ssl: bool = False
+
+
 class NautilusRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -309,6 +318,9 @@ class NautilusRuntimeConfig(BaseModel):
     )
     market_rotation: NautilusMarketRotationConfig = Field(
         default_factory=NautilusMarketRotationConfig
+    )
+    state_persistence: NautilusStatePersistenceConfig = Field(
+        default_factory=NautilusStatePersistenceConfig
     )
 
     @model_validator(mode="after")

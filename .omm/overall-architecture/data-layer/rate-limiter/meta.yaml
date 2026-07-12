@@ -1,0 +1,9 @@
+created: 2026-07-11T22:44:15.039Z
+updated: 2026-07-11T22:44:15.039Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: rate-limiter
+children: []
+parentPath:
+  - data-layer

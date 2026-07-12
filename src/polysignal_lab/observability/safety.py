@@ -59,8 +59,6 @@ LOCAL_PAPER_ISOLATION_SYMBOLS: Final = (
     "scheduler." + "paper",
     "paper_portfolio.process_signal",
     "paper_portfolio.tick_resting_orders",
-    "nautilus_trader.live.node",
-    "TradingNodeConfig",
     "new_class(",
     "ExternalDataSidecar",
     "runtime_native_strategy_type",

@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from polysignal_lab.domain.paper_result import DailyReport
@@ -21,7 +21,7 @@ from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.config import Settings
 from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
-from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry
+from polysignal_lab.data.state import MarketRegistry
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.paper.settlement_resolver import SettlementResolver
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
@@ -29,6 +29,58 @@ from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
+
+
+SPOT_DEPENDENT_NATIVE_STRATEGIES: Final = frozenset(
+    {
+        "binary_momentum",
+        "cross_market_bot",
+        "dump_hedge",
+        "fibonacci_bot",
+        "late_consensus",
+        "low_side_dual_reversion",
+        "mid_price_sizing",
+        "ninety_nine_cent_sniper",
+        "one_cent_buy",
+        "pre_order_market",
+        "ptb_diff",
+        "skew_mean_reversion",
+        "vwap_momentum",
+    }
+)
+
+
+SUPPORTED_NATIVE_SPOT_SOURCES: Final = frozenset({"disabled", "polymarket_rtds"})
+
+
+def validate_native_runtime_settings(settings: Settings) -> None:
+    """Reject native strategies without a managed spot-data ingress."""
+    if not settings.paper_trading.enabled:
+        raise RuntimeError(
+            "paper_trading.enabled must be true for the paper_sandbox Nautilus runtime"
+        )
+    spot_source = str(settings.runtime.nautilus.sidecar.spot_source).strip().lower()
+    if spot_source not in SUPPORTED_NATIVE_SPOT_SOURCES:
+        raise RuntimeError(
+            f"unsupported native spot source: {spot_source!r}; "
+            "expected 'disabled' or 'polymarket_rtds'"
+        )
+    if spot_source != "disabled":
+        return
+
+    unavailable = tuple(
+        name
+        for name in settings.strategies.explicit_strategy_names()
+        if name in SPOT_DEPENDENT_NATIVE_STRATEGIES
+        and bool(getattr(settings.strategies, name).enabled)
+    )
+    if unavailable:
+        names = ", ".join(unavailable)
+        raise RuntimeError(
+            "Nautilus native runtime has enabled spot-dependent strategies "
+            f"({names}) but no managed spot data ingress; configure a Nautilus "
+            "spot data client before starting the runtime"
+        )
 
 
 class _PlaceholderStrategyControl:
@@ -68,7 +120,7 @@ def _maybe_create_telegram_bot(
         persistence=persistence,
         strategy_control=_PlaceholderStrategyControl(),
         strategy_names=_strategy_names_from_settings(settings),
-        books=OrderBookRegistry(),
+        books=None,
         markets=markets,
         formatter=formatter,
     )
@@ -116,6 +168,7 @@ class NautilusRuntimeContext:
     # Runtime state bag (mutable)
     nautilus_cache: object | None = None
     nautilus_portfolio: object | None = None
+    market_catalog: object | None = None
     telegram_bot: object | None = None
     paper_execution_metadata: object | None = None
     strategy_schedule: object | None = None
@@ -135,6 +188,7 @@ def build_nautilus_runtime_context(
     base_dir: str | Path = '.',
 ) -> NautilusRuntimeContext:
     """Build the services needed by the Nautilus runtime path."""
+    validate_native_runtime_settings(settings)
     markets = MarketRegistry()
     formatter = MessageFormatter(settings.telegram.max_message_chars)
     publisher = TelegramPublisher(settings.telegram)

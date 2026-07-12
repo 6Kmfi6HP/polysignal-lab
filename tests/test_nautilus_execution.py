@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, pathlib, pathlib.Path
-Output: test_project_source_contains_no_local_paper_symbols
+Output: test_project_source_contains_no_local_paper_symbols, test_native_runtime_contains_no_legacy_market_state_symbols
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -47,5 +47,26 @@ def test_project_source_contains_no_local_paper_symbols() -> None:
             for symbol in LOCAL_PAPER_FORBIDDEN_TEXT
             if symbol in text
         )
+
+    assert findings == []
+
+
+def test_native_runtime_contains_no_legacy_market_state_symbols() -> None:
+    forbidden = (
+        "OrderBookRegistry",
+        "polysignal_lab.domain.orderbook",
+        "polysignal_lab.data.orderbook_payload",
+        "polysignal_lab.domain.trade",
+        "trade_events",
+        "SpotRegistry",
+        "AnchorPriceService",
+    )
+    runtime_root = Path("src/polysignal_lab/nautilus_runtime")
+    findings = [
+        f"{path}:{symbol}"
+        for path in runtime_root.rglob("*.py")
+        for symbol in forbidden
+        if symbol in path.read_text(encoding="utf-8")
+    ]
 
     assert findings == []

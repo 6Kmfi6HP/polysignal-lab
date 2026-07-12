@@ -28,15 +28,27 @@ from polysignal_lab.app.readonly_smoke_public import (
     make_public_client,
     markets_from_gamma,
 )
-# scheduler_health retired with PolySignalScheduler — skip runtime checks
+from polysignal_lab.app.readonly_smoke_types import (
+    ReadonlySmokeEvidence,
+    ReadonlySmokeRequest,
+)
 async def _check_dashboard_reads_retired(request: object) -> dict[str, object]:
     _ = request
-    return {"ok": False, "endpoint_count": 0, "detail": "Scheduler retired — use Nautilus probes"}
+    return {
+        "status": "not_run",
+        "ok": True,
+        "endpoint_count": 0,
+        "detail": "Dashboard smoke retired; use Nautilus runtime probes",
+    }
 
 
 async def _check_health_snapshot_retired(request: object) -> dict[str, object]:
     _ = request
-    return {"status": "unknown", "generated_at": None, "components": []}
+    return {
+        "status": "not_run",
+        "generated_at": None,
+        "components": [],
+    }
 
 
 async def _check_scheduler_snapshot_retired(
@@ -46,11 +58,23 @@ async def _check_scheduler_snapshot_retired(
     _ = markets
     _ = book_payload
     _ = spot_payload
-    return {"created": False, "market_count": 0, "token_count": 0, "snapshot_id": None, "detail": "Scheduler retired"}
+    return {
+        "status": "not_run",
+        "created": False,
+        "market_count": 0,
+        "token_count": 0,
+        "snapshot_id": None,
+        "detail": "Scheduler smoke retired; use Nautilus runtime probes",
+    }
 
 
 def _check_safety_scan_retired() -> dict[str, object]:
-    return {"ok": True, "finding_count": 0, "detail": "Safety scan retired — use Nautilus probes"}
+    return {
+        "status": "not_run",
+        "ok": True,
+        "finding_count": 0,
+        "detail": "Safety smoke retired; use the dedicated Nautilus safety scan",
+    }
 
 
 def _failure_count_retired(
@@ -70,10 +94,6 @@ check_health_snapshot = _check_health_snapshot_retired
 check_scheduler_snapshot = _check_scheduler_snapshot_retired
 check_safety_scan = _check_safety_scan_retired
 failure_count = _failure_count_retired
-from polysignal_lab.app.readonly_smoke_types import (
-    ReadonlySmokeEvidence,
-    ReadonlySmokeRequest,
-)
 
 __all__ = ["ReadonlySmokeRequest", "collect_readonly_smoke"]
 

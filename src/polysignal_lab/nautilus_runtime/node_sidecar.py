@@ -38,6 +38,8 @@ from polysignal_lab.nautilus_runtime.signal_sidecar import (
     _stop_nautilus_services,
 )
 
+logger = logging.getLogger("polysignal_lab.nautilus_runtime.node_sidecar")
+
 
 def _strategy_names_from_bundle(bundle: NautilusRuntimeBundle) -> list[str]:
     strategies = bundle.components.get("strategies", ())
@@ -79,6 +81,30 @@ async def _notify_async_cli_startup(
         runtime_logger.exception("Nautilus startup notification failed")
 
 
+async def _run_node_async(node: _NautilusNodeLike) -> None:
+    run_async = getattr(node, "run_async", None)
+    if callable(run_async):
+        result = run_async()
+        if inspect.isawaitable(result):
+            await result
+        return
+    run = getattr(node, "run")
+    result = await asyncio.to_thread(run)
+    if inspect.isawaitable(result):
+        await result
+
+
+async def _stop_node_async(node: _NautilusNodeLike) -> None:
+    stop_async = getattr(node, "stop_async", None)
+    if callable(stop_async):
+        result = stop_async()
+    else:
+        stop = getattr(node, "stop", None)
+        result = await asyncio.to_thread(stop) if callable(stop) else None
+    if inspect.isawaitable(result):
+        await result
+
+
 async def _run_async_node_with_report_loop(
     node: _NautilusNodeLike,
     context: NautilusRuntimeContext,
@@ -86,7 +112,7 @@ async def _run_async_node_with_report_loop(
 ) -> None:
     report_task = asyncio.create_task(_run_nautilus_report_loop(context, event))
     try:
-        run_task = asyncio.create_task(asyncio.to_thread(node.run))
+        run_task = asyncio.create_task(_run_node_async(node))
         stop_waiter = asyncio.create_task(event.wait())
         done, pending = await asyncio.wait(
             [run_task, stop_waiter],
@@ -97,14 +123,24 @@ async def _run_async_node_with_report_loop(
                 _ = stop_waiter.cancel()
             await run_task
         elif stop_waiter in done:
-            stopper = getattr(node, "stop", None)
-            if callable(stopper):
-                _ = stopper()
-            await run_task
+            await _stop_node_async(node)
+            try:
+                await asyncio.wait_for(run_task, timeout=30.0)
+            except asyncio.TimeoutError:
+                logger.error("Nautilus node did not stop within 30 seconds")
+                _ = run_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await run_task
+        for task in pending:
+            _ = task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
     finally:
         _ = report_task.cancel()
         with suppress(asyncio.CancelledError):
             await report_task
+        if isinstance(node, _Disposable):
+            node.dispose()
 
 
 async def _finalize_async_cli_runtime(
@@ -164,7 +200,7 @@ def _run_sync_cli_main(
     if strategy_names:
         _dump_thread_stacks(f"{settings.storage.jsonl_dir.rstrip('/')}/crash.log")
         runtime_logger.warning(
-            "LiveNode.run returned unexpectedly with %d strategies active",
+            "TradingNode.run returned unexpectedly with %d strategies active",
             len(strategy_names),
         )
     return telegram_bot_thread, report_loop_thread

@@ -306,6 +306,8 @@ def test_project_position_uses_nautilus_position_fields() -> None:
         signed_qty=20.0,
         avg_px_open=0.50,
         realized_pnl=1.25,
+        ts_opened=1_788_451_200_123_456_789,
+        ts_closed=1_788_451_201_123_456_789,
         is_closed=False,
     )
 
@@ -320,6 +322,8 @@ def test_project_position_uses_nautilus_position_fields() -> None:
     assert row["realized_pnl"] == 1.25
     assert row["status"] == "OPEN"
     assert row["is_closed"] is False
+    assert row["opened_at"] == "2026-09-03T16:00:00.123457Z"
+    assert row["closed_at"] == "2026-09-03T16:00:01.123457Z"
 
 
 def test_project_position_leaves_missing_money_unknown() -> None:

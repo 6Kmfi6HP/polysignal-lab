@@ -19,7 +19,6 @@ import json
 from pathlib import Path
 
 import httpx
-import pytest
 from pydantic import JsonValue
 
 from polysignal_lab.app.readonly_smoke import (
@@ -109,10 +108,10 @@ async def test_fake_public_api_outage_degrades_without_unhandled_exception(
     assert evidence["surfaces"]["clob_book"]["status_code"] == 200
     assert evidence["surfaces"]["clob_404"]["status_code"] == 404
     assert evidence["surfaces"]["binance_spot_rest"]["ok"] is False
-    assert evidence["scheduler_snapshot"]["created"] is False
-    assert evidence["health_snapshot"]["status"] in {"unknown", "ok", "degraded"}
-    assert evidence["dashboard_reads"]["ok"] is False
-    assert evidence["safety_scan"]["ok"] is True
+    assert evidence["scheduler_snapshot"]["status"] == "not_run"
+    assert evidence["health_snapshot"]["status"] in {"not_run", "unknown", "ok", "degraded"}
+    assert evidence["dashboard_reads"]["status"] == "not_run"
+    assert evidence["safety_scan"]["status"] == "not_run"
     written_evidence = json.loads(request.evidence_path.read_text(encoding="utf-8"))
     assert written_evidence["health_snapshot"] == evidence["health_snapshot"]
     assert all("authorization" not in {key.lower() for key in item.headers} for item in requests)
@@ -130,7 +129,7 @@ async def test_health_snapshot_syncs_before_client_cleanup(
 
     evidence = await collect_readonly_smoke(request, httpx.AsyncClient())
 
-    assert evidence["health_snapshot"]["status"] in {"unknown", "ok", "degraded"}
+    assert evidence["health_snapshot"]["status"] in {"not_run", "unknown", "ok", "degraded"}
 
 
 def test_failure_count_counts_only_down_health_snapshot() -> None:

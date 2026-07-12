@@ -1,0 +1,1 @@
+Loads application configuration from YAML files using pydantic-settings. Defines Settings model with nested configuration for data sources, strategies, signal gates, Telegram publisher, storage paths, and runtime behavior. Validates and provides parsed config to all modules.

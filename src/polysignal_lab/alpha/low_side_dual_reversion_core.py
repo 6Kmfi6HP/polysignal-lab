@@ -24,6 +24,7 @@ from polysignal_lab.alpha.helpers import (
     active_unhedged_position,
     build_order_decision,
     build_hedge_order_decision,
+    binary_pair_effective_cost,
     depth_weighted_ask,
     enabled_for_view,
     evaluate_from_snapshot_for_test,
@@ -41,9 +42,6 @@ class LowSideDualReversionAlphaCore:
         self.config = config
         self._entered_markets: set[str] = set()
         self._positions: dict[str, dict[str, Any]] = {}
-
-    def _pair_effective_cost(self, leg1_price: float, leg2_price: float) -> float:
-        return leg1_price + leg2_price + 2.0 * self.config.fee_rate + self.config.slippage_buffer
 
     def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
         record_two_leg_fill(
@@ -82,7 +80,12 @@ class LowSideDualReversionAlphaCore:
         best_cost = float("inf")
         best_price: float | None = None
         for bid_price in self.config.bid_prices:
-            cost = self._pair_effective_cost(bid_price, bid_price)
+            cost = binary_pair_effective_cost(
+                bid_price,
+                bid_price,
+                fee_rate=self.config.fee_rate,
+                slippage_buffer=self.config.slippage_buffer,
+            )
             if cost > self.config.pair_cost_cap:
                 continue
             up_ask = view.ask_for(Side.UP)
@@ -102,7 +105,12 @@ class LowSideDualReversionAlphaCore:
         seconds_to_close = view.seconds_to_close
         if seconds_to_close is None:
             return []
-        best_cost = self._pair_effective_cost(best_price, best_price)
+        best_cost = binary_pair_effective_cost(
+            best_price,
+            best_price,
+            fee_rate=self.config.fee_rate,
+            slippage_buffer=self.config.slippage_buffer,
+        )
         decisions: list[AlphaDecision] = []
         for side in SIDES:
             decision = self._decision(
@@ -147,7 +155,12 @@ class LowSideDualReversionAlphaCore:
         hedge_book = view.book_for(hedge.hedge_side)
         depth_ask = depth_weighted_ask(hedge_book, self.config.shares_per_level)
         if depth_ask is not None:
-            cost = self._pair_effective_cost(hedge.filled_price, depth_ask)
+            cost = binary_pair_effective_cost(
+                hedge.filled_price,
+                depth_ask,
+                fee_rate=self.config.fee_rate,
+                slippage_buffer=self.config.slippage_buffer,
+            )
             if cost <= self.config.pair_cost_cap:
                 decision = build_hedge_order_decision(
                     HedgeDecisionContext(
@@ -174,7 +187,12 @@ class LowSideDualReversionAlphaCore:
         if hedge.elapsed_seconds >= self.config.max_unhedged_seconds:
             stop_ask = view.ask_for(hedge.hedge_side)
             if stop_ask is not None:
-                cost = self._pair_effective_cost(hedge.filled_price, stop_ask)
+                cost = binary_pair_effective_cost(
+                    hedge.filled_price,
+                    stop_ask,
+                    fee_rate=self.config.fee_rate,
+                    slippage_buffer=self.config.slippage_buffer,
+                )
                 if cost <= self.config.stop_loss_hedge_cap:
                     decision = build_hedge_order_decision(
                         HedgeDecisionContext(

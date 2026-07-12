@@ -1,0 +1,1 @@
+External API integrations: Polymarket CLOB (REST for market data, WebSocket for real-time orderbook updates), Polymarket Gamma API for event discovery, Binance WebSocket for BTC/USDT spot reference prices, and Telegram Bot API for publishing signals and paper trading reports.

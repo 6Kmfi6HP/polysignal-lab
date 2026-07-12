@@ -1,22 +1,22 @@
 # Nautilus Bridge Boundary
 
-PolySignal Lab remains read-only and paper-safe by default. The default Python 3.11 environment, Docker runtime, and `polysignal-lab` entry point do not install NautilusTrader and do not import NautilusTrader at package import time.
+PolySignal Lab remains read-only and paper-safe by default. The project core supports Python 3.11+, while the Nautilus runtime is an explicit Python 3.12-3.14 optional environment pinned to `nautilus_trader[polymarket]==1.229.0`.
 
 ## Default Runtime
 
-- Python: project default is `>=3.11`.
-- Default install: `uv sync --extra dev`.
-- Default import check: `UV_PYTHON=/home/gyue/.local/bin/python3.11 uv run python -c "import polysignal_lab"`.
-- Default Docker path: `docker compose up -d --build --force-recreate`.
-- Default runtime does not register live Polymarket execution clients.
-- Checked-in runtime config disables actor-owned RTDS spot publishing (`runtime.nautilus.sidecar.spot_source: disabled`); explicitly setting `polymarket_rtds` is an unsupported fail-fast path until a Nautilus-managed data-client lifecycle owns that source.
+- Core install: `uv sync --extra dev`.
+- Nautilus runtime install: `uv sync --extra nautilus --python 3.12`.
+- The default application entry point resolves to the Nautilus `TradingNode` runtime; dashboard and bounded smoke are the other supported modes.
+- `scheduler` is only a compatibility CLI alias; it does not start a second trading runtime.
+- Live Polymarket execution remains disabled by configuration and safety validation.
+- The checked-in Nautilus config enables the managed `polymarket_rtds` spot data client. Setting `spot_source: disabled` while enabling a spot-dependent native strategy fails fast instead of silently running without required data.
 
 ## Bridge Runtime
 
 ## Node Surface Status
 
-The default Nautilus bridge enters through `nautilus_trader.live.LiveNode.builder(...)`.
-The legacy `nautilus_trader.live.node.TradingNode` import path and `TradingNodeConfig` construction surface are absent from the default runtime.
+The default Nautilus bridge enters through `nautilus_trader.live.node.TradingNode` with `nautilus_trader.config.TradingNodeConfig`.
+The node registers data and execution client factories through `add_data_client_factory(...)` and `add_exec_client_factory(...)`. The legacy `LiveNode.builder(...)` fluent surface is not part of NautilusTrader 1.229.0.
 
 The default runtime boundary is:
 
@@ -25,6 +25,8 @@ The default runtime boundary is:
 - Strategy order submission uses Nautilus `order_factory` and `submit_order`.
 - Market views read from Nautilus cache projections plus strategy-local custom data derived from Nautilus `CustomData` callbacks.
 - Market identity uses a `MarketCatalog` business-key boundary keyed by condition/token; no reverse instrument truth source is kept outside Nautilus.
+- Native generic exits are strategy-local reduce-only decisions built from Nautilus Cache positions and submitted through the native order factory; they are not a replacement execution engine. The Sandbox adapter is configured without contingent orders, so TP/SL/max-hold remains an explicit bridge responsibility.
+- Settlement resolution remains report-only unless a supported Nautilus execution settlement authority is available; the resolver must not mutate Cache, Portfolio, Account, or Position directly.
 - No `NautilusMatchingPaperExecutionClient`, `NautilusOrchestrator`, `NautilusDataIngestor`, `PaperWallet` runtime ledger, installed-source patch, private engine monkeypatch, shared external sidecar store, dynamic runtime class factory, or reverse instrument registry is allowed.
 
 NautilusTrader is isolated behind the optional dependency group:
@@ -59,7 +61,7 @@ If neither path works, the bridge package remains source-present but disabled on
 
 ## Safety Boundary
 
-Default code must not import, instantiate, or register live execution classes or helper scripts from the Nautilus Polymarket adapter. Default code must not read these environment variables:
+Default code must not import, instantiate, or register live execution classes or helper scripts from the Nautilus Polymarket adapter. The native build preflight may read the listed credential environment variables only to fail closed before constructing the credentialed market-data client; it must never log, persist, or use those values for live execution.
 
 - `POLYMARKET_PK`
 - `POLYMARKET_FUNDER`
@@ -110,15 +112,15 @@ http://127.0.0.1:8081/health?fresh=nautilus_bridge
 - `test_nautilus_execution.py`: 9/20 pass (11 auto-generated `AlphaOrderEvent` mocks misaligned with `PaperExecutionResult` API — framework scaffolding, not regression).
 - Pre-existing known failure: `test_telegram_interactive_yaml_defaults_load` (unrelated).
 - 27 commits from plan baseline (aa04094..bb1a6c2), plus 8 pre-existing Task 9 commits.
-- Default runtime: Nautilus `LiveNode` owns lifecycle, data engine, execution engine, cache, portfolio, and sandbox execution.
-- Node surface: default path uses `LiveNode.builder(...)`; the legacy `TradingNode` import/config construction surface is absent from runtime source.
+- Default runtime: Nautilus `TradingNode` owns lifecycle, data engine, execution engine, cache, portfolio, and sandbox execution.
+- Node surface: default path uses `TradingNodeConfig` plus `TradingNode.add_data_client_factory(...)` and `TradingNode.add_exec_client_factory(...)`; the `LiveNode.builder(...)` surface is not available in locked NautilusTrader 1.229.0.
 - Data: Polymarket market data uses `PolymarketLiveDataClientFactory`; spot/PTB/market metadata uses Nautilus `CustomData` and strategy-local derived state.
 - Market identity: `MarketCatalog` is the business-key boundary for condition/token lookup; Nautilus/cache remains the instrument truth source.
-- Execution: paper execution uses `SandboxLiveExecClientFactory`; no PolySignal-owned simulator, wallet, FAK/FOK/GTD executor, fill model, exit engine, or local resting-order store remains.
+- Execution: paper execution uses `SandboxLiveExecClientFactory`; no PolySignal-owned simulator, wallet, FAK/FOK/GTD executor, fill model, or local resting-order store remains. Generic exits use reduce-only orders submitted through the native factory and remain subject to Nautilus lifecycle events.
 - Strategy: `PolySignalNativeStrategy` submits orders through Nautilus `order_factory` and `submit_order`; fillability and order lifecycle are delegated to Nautilus sandbox/cache/portfolio.
 - Market views: alpha views are read-only projections from Nautilus cache plus strategy-local custom data state and `MarketCatalog` condition/token lookup.
 - Observability: dashboard/report rows are read-only projections from Nautilus events/cache/portfolio; no local paper ledger drives runtime state.
-- Safety: project-wide source scan blocks live Polymarket execution symbols, legacy paper wheel symbols, legacy TradingNode import/config construction surface, dynamic runtime class factories, shared external sidecar store, reverse instrument registry, and actor-owned asyncio scheduling fallbacks.
+- Safety: project-wide source scan blocks live Polymarket execution symbols, legacy paper wheel symbols, live execution factories, dynamic runtime class factories, shared external sidecar store, reverse instrument registry, and actor-owned asyncio scheduling fallbacks.
 
 Worktree branch: `nautilus-full-runtime-migration` (now merged — see below).
 
@@ -137,4 +139,4 @@ After fixing 11 execution test failures, safety scan, and adding the blocking lo
 - Docker runtime: `polysignal-nautilus` now blocks on SIGTERM/SIGINT (container stays alive instead of restart-looping).
 - `docker compose up -d --force-recreate`: both polysignal-lab (Nautilus) and dashboard containers healthy.
 - `docker compose ps`: `Up 37 seconds (healthy)`.
-- `curl http://127.0.0.1:8081/health`: responds (dashboard reads legacy SQLite data; Nautilus-specific health components will appear when LiveNode runtime projections are active).
+- `curl http://127.0.0.1:8081/health`: responds (dashboard reads legacy SQLite data; Nautilus-specific health components will appear when `TradingNode` runtime projections are active).

@@ -1,0 +1,9 @@
+created: 2026-07-11T22:51:49.044Z
+updated: 2026-07-11T22:51:49.044Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: node-cli
+children: []
+parentPath:
+  - nautilus-runtime

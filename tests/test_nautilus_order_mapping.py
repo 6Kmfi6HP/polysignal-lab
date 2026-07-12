@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.OrderIntentSpec, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side
-Output: test_taker_fak_maps_to_ioc_limit_at_best_ask_and_checks_depth, test_order_spec_tags_include_signal_display_metadata, test_taker_fok_maps_to_fok_without_depth_precheck, test_fok_order_mapping_does_not_pre_reject_missing_depth, test_passive_gtd_maps_expiry_seconds_to_gtd_tags, test_contracts_metric_overrides_fixed_stake_quantity_for_hedge, test_approved_signal_candidate_preserves_gtd_expiry_and_pair_metadata, test_late_consensus_maps_to_current_favorite_ask_not_price_ceiling, test_missing_order_intent_uses_paper_safe_taker_at_max_entry_price
+Output: test_taker_fak_maps_to_ioc_limit_at_best_ask_and_checks_depth, test_reduce_only_order_intent_reaches_native_order_plan, test_order_spec_tags_include_signal_display_metadata, test_taker_fok_maps_to_fok_without_depth_precheck, test_fok_order_mapping_does_not_pre_reject_missing_depth, test_passive_gtd_maps_expiry_seconds_to_gtd_tags, test_contracts_metric_overrides_fixed_stake_quantity_for_hedge, test_approved_signal_candidate_preserves_gtd_expiry_and_pair_metadata, test_late_consensus_maps_to_current_favorite_ask_not_price_ceiling, test_missing_order_intent_uses_paper_safe_taker_at_max_entry_price
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -32,6 +32,7 @@ def _decision(
     intent: OrderIntent | None = None,
     expiry_seconds: int | None = None,
     max_price: float = 0.50,
+    reduce_only: bool = False,
 ) -> AlphaDecision:
     return AlphaDecision(
         strategy="ptb_diff",
@@ -50,7 +51,8 @@ def _decision(
         reason_codes=("TEST",),
         metrics={},
         order_intent=OrderIntentSpec(
-            intent=intent, expiry_seconds=expiry_seconds, pair_id="pair-1"
+            intent=intent, expiry_seconds=expiry_seconds, pair_id="pair-1",
+            reduce_only=reduce_only,
         )
         if intent
         else None,
@@ -71,6 +73,18 @@ def test_taker_fak_maps_to_ioc_limit_at_best_ask_and_checks_depth() -> None:
     assert spec.intent == OrderIntent.TAKER_FAK
     assert spec.tags["time_in_force"] == "IOC"
     assert spec.tags["fill_policy"] == "FAK"
+
+
+def test_reduce_only_order_intent_reaches_native_order_plan() -> None:
+    spec = order_spec_from_decision(
+        _decision(intent=OrderIntent.TAKER_FAK, reduce_only=True),
+        fixed_stake_usdc=10.0,
+        best_ask=0.50,
+        best_bid=0.45,
+    )
+
+    assert spec.reduce_only is True
+    assert spec.price == 0.45
 
 
 def test_order_spec_tags_include_signal_display_metadata() -> None:

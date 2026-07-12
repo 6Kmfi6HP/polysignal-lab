@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, datetime, datetime.timedelta, polysignal_lab.config, polysignal_lab.config.BinanceDataConfig, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.config.SignalConfig, polysignal_lab.domain.enums, polysignal_lab.domain.enums.MarketStatus
-Output: test_signal_gate_records_prd_reason_details, test_signal_deduper_prevents_duplicate_channel_publish, test_signal_rate_limiter_rejects_after_channel_limit, test_signal_candidate_carries_freshness_policy, test_gate_rejects_strategy_policy_stale_orderbook_with_details, test_gate_uses_strictest_threshold_when_global_is_lower, test_gate_uses_global_threshold_when_strategy_has_no_policy, test_gate_distinguishes_missing_orderbook_from_stale_orderbook, test_gate_distinguishes_missing_spot_from_stale_spot, test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason
+Output: test_signal_gate_records_prd_reason_details, test_signal_deduper_prevents_duplicate_channel_publish, test_signal_rate_limiter_rejects_after_channel_limit, test_signal_candidate_carries_freshness_policy, test_gate_rejects_strategy_policy_stale_orderbook_with_details, test_gate_uses_strictest_threshold_when_global_is_lower, test_gate_uses_global_threshold_when_strategy_has_no_policy, test_gate_distinguishes_missing_orderbook_from_stale_orderbook, test_gate_distinguishes_missing_spot_from_stale_spot, test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason, test_reduce_only_candidate_bypasses_entry_price_ceiling
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
-from polysignal_lab.domain.enums import MarketStatus, Side
+from polysignal_lab.domain.enums import MarketStatus, OrderIntent, Side
 from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.domain.orderbook import BookLevel, OrderBook
 from polysignal_lab.domain.freshness import FreshnessPolicy
@@ -133,7 +133,11 @@ def test_signal_candidate_carries_freshness_policy() -> None:
     }
 
 
-def _freshness_signal(policy: FreshnessPolicy | None = None) -> SignalCandidate:
+def _freshness_signal(
+    policy: FreshnessPolicy | None = None,
+    *,
+    reduce_only: bool = False,
+) -> SignalCandidate:
     return SignalCandidate.build(
         strategy="unit",
         asset="BTC",
@@ -151,6 +155,8 @@ def _freshness_signal(policy: FreshnessPolicy | None = None) -> SignalCandidate:
         freshness_policy=policy,
         reason_codes=["UNIT"],
         metrics={"max_spread": 0.20},
+        order_intent=OrderIntent.TAKER_IOC if reduce_only else None,
+        reduce_only=reduce_only,
     )
 
 
@@ -368,3 +374,96 @@ async def test_ptb_diff_stale_orderbook_candidate_has_no_fresh_reason(
         decision.rejected.details["threshold_ms"]
         == settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000
     )
+
+
+def test_reduce_only_exit_bypasses_entry_confidence_and_rate_limit() -> None:
+    gate = SignalGate(
+        SignalConfig(
+            dedupe_enabled=True,
+            min_confidence_to_publish=0.50,
+            max_signals_per_hour=1,
+            max_signals_per_market=1,
+        ),
+        PolymarketDataConfig(max_book_staleness_ms=60_000),
+        BinanceDataConfig(max_price_staleness_ms=60_000),
+    )
+    entry = _freshness_signal()
+    close = _freshness_signal(reduce_only=True).model_copy(update={"confidence": 0.10})
+    snapshot = _freshness_snapshot(book_age_ms=100, spot_age_ms=100)
+
+    assert entry.dedupe_key != close.dedupe_key
+    assert gate.evaluate(entry, snapshot).accepted is True
+    decision = gate.evaluate(close, snapshot)
+
+    assert decision.accepted is True
+
+
+    gate = SignalGate(
+        SignalConfig(dedupe_enabled=False),
+        PolymarketDataConfig(max_book_staleness_ms=60_000),
+        BinanceDataConfig(max_price_staleness_ms=60_000),
+    )
+    signal = _freshness_signal().model_copy(
+        update={
+            "max_entry_price": 0.10,
+            "order_intent": OrderIntent.TAKER_IOC,
+            "reduce_only": True,
+        }
+    )
+    snapshot = _freshness_snapshot(book_age_ms=100, spot_age_ms=100)
+
+    decision = gate.evaluate(signal, snapshot)
+
+    assert decision.accepted is True
+
+
+def test_reduce_only_exit_survives_entry_batch_rejection() -> None:
+    gate = SignalGate(
+        SignalConfig(
+            dedupe_enabled=True,
+            max_signals_per_hour=10,
+            max_signals_per_market=10,
+        ),
+        PolymarketDataConfig(max_book_staleness_ms=60_000),
+        BinanceDataConfig(max_price_staleness_ms=60_000),
+    )
+    entry = _freshness_signal()
+    close = _freshness_signal(reduce_only=True).model_copy(
+        update={"confidence": 0.10}
+    )
+    snapshot = _freshness_snapshot(book_age_ms=100, spot_age_ms=100)
+
+    assert gate.evaluate(entry, snapshot).accepted is True
+    decisions = gate.commit([entry, close])
+
+    assert decisions[0].accepted is False
+    assert decisions[0].rejected is not None
+    assert decisions[0].rejected.reason_code == "DUPLICATE_SIGNAL"
+    assert decisions[1].accepted is True
+    assert decisions[1].signal == close
+
+
+    gate = SignalGate(
+        SignalConfig(
+            dedupe_enabled=True,
+            min_confidence_to_publish=0.50,
+            max_signals_per_hour=1,
+            max_signals_per_market=1,
+        ),
+        PolymarketDataConfig(max_book_staleness_ms=60_000),
+        BinanceDataConfig(max_price_staleness_ms=60_000),
+    )
+    close = _freshness_signal(reduce_only=True).model_copy(
+        update={"confidence": 0.10, "seconds_to_close": 0}
+    )
+    snapshot = _freshness_snapshot(book_age_ms=100, spot_age_ms=100).model_copy(
+        update={"spot": None}
+    )
+    snapshot = snapshot.model_copy(
+        update={
+            "up_book": snapshot.up_book.model_copy(update={"spread": 0.9}),
+        }
+    )
+
+    assert gate.evaluate(close, snapshot).accepted is True
+    assert gate.evaluate(close, snapshot).accepted is True

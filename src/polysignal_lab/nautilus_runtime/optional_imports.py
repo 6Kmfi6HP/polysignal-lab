@@ -7,7 +7,8 @@ from importlib import import_module
 
 @dataclass(frozen=True, slots=True)
 class LiveRuntimeSymbols:
-    live_node: object
+    trading_node: object
+    trading_node_config: object
     trader_id: Callable[[str], object]
     environment: object
     polymarket_data_factory: object
@@ -15,13 +16,15 @@ class LiveRuntimeSymbols:
 
 
 def load_live_runtime_symbols() -> LiveRuntimeSymbols:
-    live_mod = import_module("nautilus_trader.live")
+    live_node_mod = import_module("nautilus_trader.live.node")
+    config_mod = import_module("nautilus_trader.config")
     common_mod = import_module("nautilus_trader.common")
     identifiers_mod = import_module("nautilus_trader.model.identifiers")
     polymarket_mod = import_module("nautilus_trader.adapters.polymarket")
     sandbox_mod = import_module("nautilus_trader.adapters.sandbox.factory")
     return LiveRuntimeSymbols(
-        live_node=live_mod.LiveNode,
+        trading_node=live_node_mod.TradingNode,
+        trading_node_config=config_mod.TradingNodeConfig,
         trader_id=identifiers_mod.TraderId,
         environment=common_mod.Environment,
         polymarket_data_factory=polymarket_mod.PolymarketLiveDataClientFactory,

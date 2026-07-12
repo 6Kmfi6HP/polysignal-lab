@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market, polysignal_lab.domain.market.OutcomeToken, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_bridge.market_catalog.MarketCatalog, polysignal_lab.nautilus_bridge.market_catalog.MarketPairMeta
-Output: test_market_catalog_registers_binary_yes_no_pair, test_register_replacement_removes_previous_token_indexes, test_market_catalog_token_meta_returns_registered_side_metadata, test_market_catalog_rejects_non_binary_market, test_market_catalog_derives_instrument_id_from_condition_and_token, test_market_catalog_uses_injected_instrument_id_resolver, test_market_catalog_from_sidecar_metadata_keeps_optional_binary_option_fields
+Output: test_market_catalog_registers_binary_yes_no_pair, test_register_replacement_removes_previous_token_indexes, test_market_catalog_token_meta_returns_registered_side_metadata, test_market_catalog_rejects_non_binary_market, test_market_catalog_derives_instrument_id_from_condition_and_token, test_market_catalog_uses_injected_instrument_id_resolver, test_market_catalog_resolves_market_from_instrument_id, test_market_catalog_from_sidecar_metadata_keeps_optional_binary_option_fields
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -143,6 +143,20 @@ def test_market_catalog_uses_injected_instrument_id_resolver() -> None:
         f"test-{pair.condition_id}-{pair.up.token_id}.POLYMARKET"
     )
     assert seen == [(pair.condition_id, pair.up.token_id)]
+
+
+def test_market_catalog_resolves_market_from_instrument_id() -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    pair = MarketPairMeta.from_market(market)
+    catalog = MarketCatalog(
+        instrument_id_resolver=lambda condition_id, token_id: f"{condition_id}:{token_id}"
+    )
+    catalog.register(pair)
+
+    instrument_id = f"{pair.condition_id}:{pair.up.token_id}"
+
+    assert catalog.market_id_for_instrument(instrument_id) == pair.market_id
+    assert catalog.market_id_for_instrument("missing") is None
 
 
 def test_instrument_token_meta_keeps_positional_constructors_compatible() -> None:

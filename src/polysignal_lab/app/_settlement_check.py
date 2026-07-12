@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import Any, cast
 
@@ -24,19 +24,64 @@ from polysignal_lab.utils import new_id, parse_dt, redact_text, utc_iso, utc_now
 
 
 def _nautilus_positions(scheduler: object) -> list[dict[str, object]]:
-    """Get projected position dicts from the Nautilus cache."""
+    """Get open position projections from the Nautilus cache."""
     from polysignal_lab.nautilus_runtime.projections import project_position
 
     nautilus_cache = getattr(scheduler, "nautilus_cache", None)
     if nautilus_cache is None:
         return []
-    positions_method = getattr(nautilus_cache, "positions", None)
+    positions_method = getattr(nautilus_cache, "positions_open", None)
+    if not callable(positions_method):
+        positions_method = getattr(nautilus_cache, "positions", None)
     if not callable(positions_method):
         return []
-    raw = positions_method()
-    if not isinstance(raw, (list, tuple)):
+    try:
+        raw = positions_method()
+    except TypeError:
+        legacy_positions = getattr(nautilus_cache, "positions", None)
+        raw = legacy_positions() if callable(legacy_positions) else ()
+    if not isinstance(raw, Iterable) or isinstance(raw, (str, bytes, bytearray)):
         return []
-    return [project_position(p) for p in raw if p is not None]
+    catalog = getattr(scheduler, "market_catalog", None)
+    projections: list[dict[str, object]] = []
+    for position in raw:
+        if position is None:
+            continue
+        projection = project_position(position)
+        try:
+            _enrich_position_identity(projection, catalog)
+        except (RuntimeError, ValueError):
+            continue
+        projections.append(projection)
+    return projections
+
+
+def _enrich_position_identity(
+    projection: dict[str, object],
+    catalog: object | None,
+) -> None:
+    if catalog is None:
+        return
+    instrument_id = str(projection.get("instrument_id") or "")
+    if not instrument_id:
+        return
+    condition_ids = getattr(catalog, "condition_ids", None)
+    by_condition = getattr(catalog, "by_condition", None)
+    instrument_id_for_token = getattr(catalog, "instrument_id_for_token", None)
+    if not callable(condition_ids) or not callable(by_condition) or not callable(instrument_id_for_token):
+        return
+    for condition_id in condition_ids():
+        pair = by_condition(condition_id)
+        if pair is None:
+            continue
+        for token_meta in (pair.up, pair.down):
+            if instrument_id_for_token(token_meta.token_id) != instrument_id:
+                continue
+            projection["token_id"] = token_meta.token_id
+            projection["condition_id"] = pair.condition_id
+            projection["market_id"] = pair.market_id
+            projection["side"] = token_meta.side.value
+            return
 
 
 def _projection_float(source: dict[str, object] | None, key: str) -> float | None:
@@ -128,11 +173,15 @@ async def _try_settle_projection(
         return None
     if _existing_result_for_position(scheduler, paper_position_id):
         return None
+    settlement_details = dict(decision.details)
+    settlement_details.setdefault("native_settlement_mode", "report_only")
+    settlement_details.setdefault("native_position_mutation", "not_supported")
+    settlement_details.setdefault("native_position_status", "open_projection")
     result = _paper_trade_result_from_projection(
         projection,
         market=market,
         outcome_value=outcome_value,
-        details=dict(decision.details),
+        details=settlement_details,
     )
     if result is None:
         return None

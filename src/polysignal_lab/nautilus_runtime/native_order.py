@@ -14,8 +14,9 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from datetime import UTC, datetime, timedelta
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
+from datetime import datetime, timedelta
 from decimal import Decimal
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
@@ -25,6 +26,7 @@ from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
+from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan
 
 OrderT = TypeVar("OrderT")
 OrderT_co = TypeVar("OrderT_co", covariant=True)
@@ -60,6 +62,7 @@ def submit_approved_decision(
     best_ask: float | None,
     instrument_id_resolver: Callable[[str], object],
     now: Callable[[], datetime] | None = None,
+    best_bid: float | None = None,
 ) -> OrderT:
     """Create and submit a Nautilus-native order from an approved alpha decision."""
 
@@ -67,8 +70,46 @@ def submit_approved_decision(
         approved,
         fixed_stake_usdc=fixed_stake_usdc,
         best_ask=best_ask,
+        best_bid=best_bid,
     )
     instrument = instrument_id_resolver(spec.instrument_id)
+    if spec.reduce_only:
+        spec = replace(
+            spec,
+            quantity=_reduce_only_quantity(strategy, instrument),
+        )
+    risk_gate = getattr(strategy, "paper_risk_gate", None)
+    validate_risk = getattr(risk_gate, "validate", None)
+    reservation_id: str | None = None
+    if callable(validate_risk):
+        raw_reservation_id = validate_risk(
+            strategy,
+            spec,
+            market_id=str(approved.signal.market_id),
+            instrument_id=str(_instrument_id(instrument)),
+        )
+        if raw_reservation_id:
+            reservation_id = str(raw_reservation_id)
+            spec = replace(
+                spec,
+                tags={**spec.tags, "reservation_id": reservation_id},
+            )
+    try:
+        return _submit_native_order(strategy, spec, instrument, now=now)
+    except Exception:
+        release = getattr(risk_gate, "release", None)
+        if reservation_id and callable(release):
+            release(reservation_id)
+        raise
+
+
+def _submit_native_order(
+    strategy: OrderSubmittingStrategy[OrderT],
+    spec: OrderSubmissionPlan,
+    instrument: object,
+    *,
+    now: Callable[[], datetime] | None,
+) -> OrderT:
     order_side = PolymarketEnumParser.to_nautilus_order_side(
         spec.side,
         reduce_only=spec.reduce_only,
@@ -76,8 +117,9 @@ def submit_approved_decision(
     time_in_force = PolymarketEnumParser.to_nautilus_time_in_force(spec.intent)
     expire_time = None
     if spec.intent == OrderIntent.PASSIVE_GTD:
-        clock = now or (lambda: datetime.now(UTC))
-        expire_time = clock() + timedelta(seconds=spec.expiry_seconds or 300)
+        if now is None:
+            raise RuntimeError("Nautilus framework clock is required for GTD expiry")
+        expire_time = now() + timedelta(seconds=spec.expiry_seconds or 300)
 
     order = strategy.order_factory.limit(
         instrument_id=_instrument_id(instrument),
@@ -91,6 +133,31 @@ def submit_approved_decision(
     )
     strategy.submit_order(order)
     return order
+
+
+def _reduce_only_quantity(strategy: object, instrument: object) -> float:
+    cache = getattr(strategy, "cache", None)
+    positions_open = getattr(cache, "positions_open", None)
+    strategy_id = getattr(strategy, "id", None)
+    if not callable(positions_open) or strategy_id is None:
+        raise ValueError("NO_REDUCIBLE_POSITION")
+    positions = positions_open(
+        instrument_id=_instrument_id(instrument),
+        strategy_id=strategy_id,
+    )
+    if not isinstance(positions, Iterable):
+        raise ValueError("NO_REDUCIBLE_POSITION")
+    signed_quantity = 0.0
+    for position in positions:
+        raw_quantity = getattr(position, "signed_qty", None)
+        if raw_quantity is None:
+            continue
+        as_double = getattr(raw_quantity, "as_double", None)
+        value = as_double() if callable(as_double) else raw_quantity
+        signed_quantity += float(value)
+    if signed_quantity <= 0:
+        raise ValueError("NO_REDUCIBLE_POSITION")
+    return signed_quantity
 
 
 def _instrument_id(instrument: object) -> object:

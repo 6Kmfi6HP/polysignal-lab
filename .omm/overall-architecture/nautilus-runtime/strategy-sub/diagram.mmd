@@ -1,0 +1,17 @@
+graph LR
+    data-boundary["Data Boundary\ndata_boundary.py"]
+    decision-pipeline["Decision Pipeline\ndecision_pipeline.py"]
+    custom-handlers["Custom Data Handlers\ncustom_data_handlers.py"]
+    order-events["Order Events\norder_events.py"]
+    event-projection["Event Projection\nevent_projection.py"]
+    subscriptions["Subscriptions\nsubscriptions.py"]
+    obs-hooks["Observability Hooks\nobservability_hooks.py"]
+    helpers["Helpers\nhelpers.py"]
+
+    data-boundary -->|"feeds"| decision-pipeline
+    custom-handlers -->|"process"| data-boundary
+    decision-pipeline -->|"generates"| order-events
+    order-events -->|"triggers"| event-projection
+    subscriptions -->|"configures"| data-boundary
+
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e

@@ -27,7 +27,7 @@ COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN mkdir -p data logs state && chmod +x /app/docker-entrypoint.sh
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["scheduler"]
+CMD ["nautilus"]
 
 # ── Nautilus runtime image (separate target; default stays paper-safe) ──
 FROM builder AS nautilus-builder

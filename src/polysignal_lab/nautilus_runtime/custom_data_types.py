@@ -17,6 +17,7 @@ from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass
 
 _polysignal_data_types_registered = False
+SPOT_DATA_CLIENT_ID = "POLYSIGNAL_SPOT"
 
 # --------------------------------------------------------------------------
 #  Arrow support

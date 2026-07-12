@@ -95,9 +95,7 @@ def test_custom_data_publisher_publishes_market_metadata_without_registering_sta
     assert not hasattr(actor, "registry")
 
 
-def test_market_rotation_actor_fails_fast_for_unmanaged_rtds_source() -> None:
-    import pytest
-
+def test_market_rotation_actor_accepts_managed_rtds_source() -> None:
     from polysignal_lab.config import Settings
     from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
     from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
@@ -111,18 +109,17 @@ def test_market_rotation_actor_fails_fast_for_unmanaged_rtds_source() -> None:
 
     settings = Settings()
     settings.runtime.nautilus.sidecar.spot_source = "polymarket_rtds"
-    with pytest.raises(RuntimeError, match="managed Nautilus data-client lifecycle"):
-        MarketRotationActor(
-            settings=settings,
-            startup_markets=(),
-            market_universe=FakeUniverse(),
-            catalog=MarketCatalog(),
-        )
+    actor = MarketRotationActor(
+        settings=settings,
+        startup_markets=(),
+        market_universe=FakeUniverse(),
+        catalog=MarketCatalog(),
+    )
+
+    assert actor.settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
 
 
-def test_market_rotation_actor_does_not_construct_unmanaged_rtds_feed() -> None:
-    import pytest
-
+def test_market_rotation_actor_does_not_construct_legacy_rtds_feed() -> None:
     from polysignal_lab.config import Settings
     from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
     from polysignal_lab.nautilus_runtime import market_rotation
@@ -135,23 +132,24 @@ def test_market_rotation_actor_does_not_construct_unmanaged_rtds_feed() -> None:
         def refresh_once_sync(self):
             return []
 
-
     settings = Settings()
     settings.runtime.nautilus.sidecar.spot_source = "polymarket_rtds"
+    actor = MarketRotationActor(
+        settings=settings,
+        startup_markets=(),
+        market_universe=FakeUniverse(),
+        catalog=MarketCatalog(),
+    )
+
+    assert actor is not None
     assert not hasattr(market_rotation, "PolymarketRtdsPriceFeed")
-    with pytest.raises(RuntimeError, match="managed Nautilus data-client lifecycle"):
-        MarketRotationActor(
-            settings=settings,
-            startup_markets=(),
-            market_universe=FakeUniverse(),
-            catalog=MarketCatalog(),
-        )
 
 def test_market_rotation_actor_uses_clock_timer_for_startup(monkeypatch) -> None:
     from datetime import timedelta
 
     from polysignal_lab.config import Settings
     from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+    from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.market_rotation import (
         REFRESH_TIMER_NAME,
         MarketRotationActor,
@@ -160,6 +158,12 @@ def test_market_rotation_actor_uses_clock_timer_for_startup(monkeypatch) -> None
     timers: list[tuple[str, timedelta, object]] = []
 
     class FakeClock:
+        def __init__(self) -> None:
+            self.now_ns = 1_782_144_000_000_000_000
+
+        def timestamp_ns(self) -> int:
+            return self.now_ns
+
         def set_timer(self, name, interval, callback):
             timers.append((name, interval, callback))
 
@@ -187,7 +191,8 @@ def test_market_rotation_actor_uses_clock_timer_for_startup(monkeypatch) -> None
         "clock",
         property(lambda self: fake_clock),
     )
-    actor.publish_data = lambda data_type, data: None
+    published: list[object] = []
+    actor.publish_data = lambda data_type, data: published.append(data)
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.market_rotation.register_polysignal_data_types",
         lambda: None,
@@ -197,3 +202,6 @@ def test_market_rotation_actor_uses_clock_timer_for_startup(monkeypatch) -> None
 
     assert timers[0][0] == REFRESH_TIMER_NAME
     assert callable(timers[0][2])
+    universe = next(item for item in published if isinstance(item, PolySignalMarketUniverseData))
+    assert universe.ts_event == fake_clock.now_ns
+    assert universe.ts_init == fake_clock.now_ns

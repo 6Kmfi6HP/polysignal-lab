@@ -15,6 +15,7 @@ Pos: Application code
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -22,15 +23,16 @@ from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import ActorConfig
 
 from polysignal_lab.config import Settings
-from polysignal_lab.data.anchor_price_service import AnchorPriceService, AnchorPriceStore
+from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
-from polysignal_lab.data.state import SpotRegistry
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.spot import SpotPrice
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
+from polysignal_lab.nautilus_bridge.spot_anchor_state import SpotAnchorState
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
+    PolySignalSpotData,
     register_polysignal_data_types,
 )
 from polysignal_lab.nautilus_runtime.market_discovery_worker import (
@@ -39,6 +41,7 @@ from polysignal_lab.nautilus_runtime.market_discovery_worker import (
 )
 from polysignal_lab.nautilus_runtime.sidecar_data import (
     CustomDataPublisher,
+    _data_type,
     market_metadata,
     timestamp_ns,
 )
@@ -49,6 +52,16 @@ REFRESH_TIMER_NAME = "market_rotation_refresh"
 
 
 _PriceToBeatSignature = tuple[float, str, bool, bool, str | None]
+
+
+def _data_datetime(value: object, *, fallback: datetime) -> datetime:
+    try:
+        timestamp_ns_value = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    if timestamp_ns_value <= 0:
+        return fallback
+    return datetime.fromtimestamp(timestamp_ns_value / 1_000_000_000, UTC)
 
 
 class _MarketUniverse(Protocol):
@@ -83,10 +96,9 @@ class MarketRotationActor(Actor):
     ) -> None:
         Actor.__init__(self, config=ActorConfig())
         spot_source = settings.runtime.nautilus.sidecar.spot_source
-        if spot_source != "disabled":
+        if spot_source not in {"disabled", "polymarket_rtds"}:
             raise RuntimeError(
-                "Nautilus sidecar spot sources require a managed Nautilus data-client lifecycle; "
-                "set runtime.nautilus.sidecar.spot_source=disabled until that seam is implemented"
+                f"unsupported Nautilus sidecar spot source: {spot_source!r}"
             )
         self.settings: Settings = settings
         self.market_universe: _MarketUniverse = market_universe
@@ -98,12 +110,7 @@ class MarketRotationActor(Actor):
             else MarketDiscoveryWorker(market_universe.refresh_once_sync)
         )
         self.publisher: CustomDataPublisher = CustomDataPublisher(publisher=self)
-        self.spots: SpotRegistry = SpotRegistry()
-        self.anchor_prices: AnchorPriceService | None = (
-            AnchorPriceService(self.spots, anchor_store)
-            if anchor_store is not None
-            else None
-        )
+        self._spot_state = SpotAnchorState(anchor_store)
         if settings.data.polymarket.use_crypto_price_api:
             raise ValueError(
                 "crypto-price API fallback is unsupported in MarketRotationActor; "
@@ -114,6 +121,7 @@ class MarketRotationActor(Actor):
             anchor_store=anchor_store,
         )
         self._active_by_condition: dict[str, Market] = _markets_by_condition(startup_markets)
+        self._register_catalog_markets(self._active_by_condition.values())
         self._epoch: int = 0
         self._requested_epoch: int = self._epoch
         self._last_published_ptb: dict[str, _PriceToBeatSignature] = {}
@@ -123,8 +131,28 @@ class MarketRotationActor(Actor):
         # Calls Actor.publish_data via MRO — Actor is now a direct base class.
         super().publish_data(data_type, data)
 
+    def _framework_now(self) -> datetime:
+        clock = getattr(self, "clock", None)
+        timestamp = getattr(clock, "timestamp_ns", None)
+        if callable(timestamp):
+            try:
+                value = int(timestamp())
+            except NotImplementedError:
+                value = 0
+            if value > 0:
+                return datetime.fromtimestamp(value / 1_000_000_000, UTC)
+
+        if getattr(self, "trader_id", None) is None:
+            return datetime(1970, 1, 1, tzinfo=UTC)
+        raise RuntimeError("Nautilus actor clock timestamp_ns is unavailable")
+
     def on_start(self) -> None:
         _register_polysignal_data_types_if_available()
+        if self.settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds":
+            subscribe_data = getattr(self, "subscribe_data", None)
+            if callable(subscribe_data):
+                subscribe_data(_data_type(PolySignalSpotData))
+        now = self._framework_now()
         if self._epoch == 0:
             next_epoch = self._epoch + 1
             self._publish_market_universe(
@@ -150,7 +178,7 @@ class MarketRotationActor(Actor):
             )
         markets = self.active_markets()
         for market in markets:
-            self.publisher.publish_market_metadata(market_metadata(market))
+            self.publisher.publish_market_metadata(market_metadata(market, timestamp=now))
         self._publish_price_to_beat_batch_sync(markets)
         if self.settings.runtime.nautilus.market_rotation.enabled:
             interval = max(int(self.settings.runtime.nautilus.market_rotation.interval_sec), 1)
@@ -184,6 +212,16 @@ class MarketRotationActor(Actor):
             self._mark_down(exc, phase="refresh")
             return ()
 
+    def _register_catalog_markets(self, markets: Iterable[Market]) -> None:
+        for market in markets:
+            try:
+                self.catalog.register(MarketPairMeta.from_market(market))
+            except (TypeError, ValueError):
+                logger.warning(
+                    "market_rotation skipped non-binary catalog registration market=%s",
+                    getattr(market, "market_id", ""),
+                )
+
     def _apply_refreshed_markets(
         self,
         refreshed_markets: tuple[Market, ...],
@@ -191,6 +229,7 @@ class MarketRotationActor(Actor):
         epoch: int | None = None,
     ) -> tuple[Market, ...]:
         current = _markets_by_condition(refreshed_markets)
+        self._register_catalog_markets(current.values())
         previous = self._active_by_condition
         if _universe_signature(current) == _universe_signature(previous):
             return self._finish_unchanged_refresh(current, epoch=epoch)
@@ -257,7 +296,9 @@ class MarketRotationActor(Actor):
         entered_condition_ids: tuple[str, ...],
     ) -> None:
         for condition_id in entered_condition_ids:
-            self.publisher.publish_market_metadata(market_metadata(current[condition_id]))
+            self.publisher.publish_market_metadata(
+                market_metadata(current[condition_id], timestamp=self._framework_now())
+            )
 
     def _clear_exited_price_to_beat(
         self,
@@ -312,7 +353,24 @@ class MarketRotationActor(Actor):
         finally:
             self._refresh_in_flight = False
 
+    def on_data(self, data: object) -> None:
+        if not isinstance(data, PolySignalSpotData):
+            return
+        received_at = _data_datetime(getattr(data, "ts_init", 0), fallback=self._framework_now())
+        event_time = _data_datetime(getattr(data, "ts_event", 0), fallback=received_at)
+        self._on_spot(
+            SpotPrice(
+                asset=data.asset,
+                symbol=data.symbol,
+                price=float(data.price),
+                source=data.source,
+                event_time=event_time,
+                received_at=received_at,
+            )
+        )
+
     def _on_spot(self, spot: SpotPrice) -> None:
+        self._spot_state.update(spot)
         self.publisher.publish_spot(
             asset=spot.asset,
             symbol=spot.symbol,
@@ -322,12 +380,12 @@ class MarketRotationActor(Actor):
             ts_event=timestamp_ns(spot.event_time),
             ts_init=timestamp_ns(spot.received_at),
         )
-        if self.anchor_prices is None:
+        if not self._spot_state.enabled:
             return
         for market in self.active_markets():
             if market.asset.upper() != spot.asset.upper():
                 continue
-            _ = self.anchor_prices.capture_for_market(market)
+            _ = self._spot_state.capture_for_market(market)
             self._publish_price_to_beat_sync(market)
 
     def active_markets(self) -> tuple[Market, ...]:
@@ -346,7 +404,7 @@ class MarketRotationActor(Actor):
         )
         if self._last_published_ptb.get(market.condition_id) == signature:
             return
-        now = datetime.now(UTC)
+        now = self._framework_now()
         self.publisher.publish_price_to_beat(
             condition_id=market.condition_id,
             value=result.value,
@@ -380,7 +438,7 @@ class MarketRotationActor(Actor):
         exited_condition_ids: tuple[str, ...],
     ) -> None:
         active_by_condition = _markets_by_condition(markets)
-        now = datetime.now(UTC)
+        now = self._framework_now()
         self.publisher.publish_market_universe(
             PolySignalMarketUniverseData(
                 epoch=epoch,

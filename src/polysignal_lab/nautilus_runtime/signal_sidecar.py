@@ -251,8 +251,20 @@ async def _run_nautilus_housekeeping_once(
     services: object,
     last_report_date: date | None,
 ) -> date | None:
+    from polysignal_lab.app._settlement_check import check_settlements
     from polysignal_lab.app.scheduler_shared import _generate_iteration_report
 
+    try:
+        settled = await check_settlements(services)
+        if settled:
+            cast(logging.Logger, getattr(services, "logger", logger)).info(
+                "Nautilus settlement projections recorded: %d",
+                len(settled),
+            )
+    except Exception:
+        cast(logging.Logger, getattr(services, "logger", logger)).exception(
+            "Nautilus settlement check failed; continuing report loop"
+        )
     return await _generate_iteration_report(services, last_report_date)
 
 

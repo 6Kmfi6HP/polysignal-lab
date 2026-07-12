@@ -1,0 +1,9 @@
+created: 2026-07-11T22:44:14.065Z
+updated: 2026-07-11T22:44:14.066Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: clob-ws
+children: []
+parentPath:
+  - data-layer

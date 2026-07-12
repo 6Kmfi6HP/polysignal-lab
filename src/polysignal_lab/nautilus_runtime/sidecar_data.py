@@ -102,8 +102,12 @@ class CustomDataPublisher:
         self.publisher.publish_data(_data_type(PolySignalMarketUniverseData), data)
 
 
-def market_metadata(market: Market) -> PolySignalMarketMetaData:
-    now = datetime.now(UTC)
+def market_metadata(
+    market: Market,
+    *,
+    timestamp: datetime,
+) -> PolySignalMarketMetaData:
+    event_ns = timestamp_ns(timestamp)
     return PolySignalMarketMetaData(
         market_id=market.market_id,
         market_slug=market.market_slug,
@@ -117,8 +121,8 @@ def market_metadata(market: Market) -> PolySignalMarketMetaData:
         question=market.question,
         up_outcome=market.token_for(Side.UP).outcome_name,
         down_outcome=market.token_for(Side.DOWN).outcome_name,
-        ts_event=timestamp_ns(now),
-        ts_init=timestamp_ns(now),
+        ts_event=event_ns,
+        ts_init=event_ns,
     )
 
 

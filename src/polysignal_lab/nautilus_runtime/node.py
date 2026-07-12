@@ -55,7 +55,6 @@ from polysignal_lab.nautilus_runtime.observability import (
     ObservabilityService,
 )
 from polysignal_lab.nautilus_runtime.node_builder import (
-    LiveNode,  # noqa: F401
     NautilusRuntimeBundle,
     NautilusRuntimeContext,
     build_nautilus_runtime_context,
@@ -127,7 +126,18 @@ def _register_runtime_trader_components(
         node.trader.add_actor(policy)
     for strategy in strategies:
         node.trader.add_strategy(strategy)
+    _load_runtime_trader_state(node)
     node.build()
+
+
+def _load_runtime_trader_state(node: _NautilusNodeLike) -> None:
+    config = getattr(node, "config", None)
+    if not bool(getattr(config, "load_state", False)):
+        return
+    load = getattr(node.trader, "load", None)
+    if not callable(load):
+        raise RuntimeError("native state persistence requires Trader.load()")
+    load()
 
 
 def _is_runtime_policy_actor(policy: DecisionPolicyActor) -> bool:
@@ -165,6 +175,11 @@ def _build_market_rotation_actor(
 async def _prepare_nautilus_runtime_context(
     settings: Settings,
 ) -> tuple[NautilusRuntimeContext, tuple[Market, ...], ObservabilityService]:
+    from polysignal_lab.nautilus_runtime.live_node import (
+        validate_polymarket_market_data_credentials,
+    )
+
+    validate_polymarket_market_data_credentials()
     context = build_nautilus_runtime_context(settings)
     context._nautilus_runtime_owned_by_live_node = True
     discovered_markets = tuple(await context.market_universe.refresh_once())
@@ -202,11 +217,22 @@ def _build_nautilus_runtime_bundle(
     }
     context.nautilus_cache = components.get("cache")
     context.nautilus_portfolio = components.get("portfolio")
+    context.market_catalog = components.get("registry")
     context.paper_execution_metadata = paper_execution_metadata
     policy = cast(DecisionPolicyActor, components["policy"])
     bot = context.telegram_bot
     if bot is not None:
         bot.strategy_control = build_control(policy)
+        nautilus_cache = context.nautilus_cache
+        if nautilus_cache is not None:
+            from polysignal_lab.nautilus_runtime.cache_market_data import (
+                NautilusCacheMarketDataProvider,
+            )
+
+            bot.books = NautilusCacheMarketDataProvider(
+                nautilus_cache,
+                catalog=cast(MarketCatalog, components["registry"]),
+            )
 
 
     return NautilusRuntimeBundle(

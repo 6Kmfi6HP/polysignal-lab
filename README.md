@@ -43,15 +43,13 @@ cd polysignal-lab
 Expected result from the current project:
 
 ```text
-120 passed, 1 warning
+All tests pass
 Safety scan passed
 ```
 
-The warning is the existing FastAPI/Starlette `httpx` deprecation warning.
-
 ## Runtime modes
 
-Supported container modes are `nautilus`, `scheduler`, `dashboard`, `test`, `shell`, and `smoke`.
+The supported runtime modes are `nautilus`, `dashboard`, and bounded `smoke`. `scheduler` remains a compatibility alias: it resolves to Nautilus runtime (or to smoke when `--once`/smoke flags are supplied); it is not a second trading runtime.
 With the production config, the Python entry point defaults to the Nautilus runtime. Explicit modes remain available for compatibility and bounded checks:
 
 ```bash
@@ -61,7 +59,7 @@ With the production config, the Python entry point defaults to the Nautilus runt
 .venv/bin/python -m polysignal_lab.app.main --mode smoke --config config/signal_bot.yaml --evidence .omo/evidence/local-smoke.json
 ```
 
-The live bounded smoke path performs public read-only Gamma `/events`, CLOB `/book`, expected CLOB 404, Binance public REST fallback, scheduler snapshot, dashboard reads, and safety scan. It records JSON evidence and does not contact authenticated or trading endpoints:
+The bounded live smoke path performs public read-only Gamma `/events`, CLOB `/book`, expected CLOB 404, and Binance public REST fallback. Retired scheduler/dashboard/safety surfaces are recorded as `not_run`; the smoke records JSON evidence and does not contact authenticated or trading endpoints:
 
 ```bash
 timeout 120 .venv/bin/python -m polysignal_lab.app.main --config config/signal_bot.yaml --once --real-readonly-smoke --evidence .omo/evidence/final-live-market-smoke.json

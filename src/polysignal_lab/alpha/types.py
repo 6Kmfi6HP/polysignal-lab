@@ -15,7 +15,7 @@ Pos: Application code
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Mapping, Protocol, Sequence
 
 from polysignal_lab.domain.enums import OrderIntent, Side
@@ -44,6 +44,26 @@ class SpotView:
     price: float
     source: str
     freshness_ms: int | None
+    received_at: datetime | None = None
+
+    def freshness_ms_at(self, now: datetime) -> int | None:
+        if self.received_at is None:
+            return self.freshness_ms
+        current = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+        received = (
+            self.received_at
+            if self.received_at.tzinfo is not None
+            else self.received_at.replace(tzinfo=UTC)
+        )
+        return max(
+            0,
+            int(
+                (
+                    current.astimezone(UTC) - received.astimezone(UTC)
+                ).total_seconds()
+                * 1000
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +115,7 @@ class OrderIntentSpec:
     intent: OrderIntent
     expiry_seconds: int | None = None
     pair_id: str | None = None
+    reduce_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,0 +1,1 @@
+The bridge boundary between signal layer and Nautilus runtime is a potential data integrity risk — if domain type conversions lose information, signal quality degrades silently. The batch processing model means signals use slightly stale market data by the time they reach the runtime.

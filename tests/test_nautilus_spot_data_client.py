@@ -1,0 +1,154 @@
+"""
+Input: __future__, types, pytest, polysignal_lab.nautilus_runtime.spot_data_client
+Output: test_managed_rtds_client_emits_spot_custom_data, test_managed_rtds_client_filters_assets
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalSpotData
+from polysignal_lab.nautilus_runtime.spot_data_client import (
+    PolymarketRtdsSpotDataClient,
+)
+from polysignal_lab.nautilus_runtime.strategy.helpers import (
+    _spot_data_client_id,
+    _subscribe_custom_data,
+)
+
+
+def _client(*, assets: set[str]) -> tuple[PolymarketRtdsSpotDataClient, list[object]]:
+    client = PolymarketRtdsSpotDataClient.__new__(PolymarketRtdsSpotDataClient)
+    client._assets = assets
+    client.clock = SimpleNamespace(timestamp_ns=lambda: 2_000_000_000)
+    received: list[object] = []
+    client._handle_data = received.append
+    return client, received
+
+
+
+@pytest.mark.asyncio
+async def test_managed_rtds_client_waits_for_subscription_before_reader_start() -> None:
+    client = PolymarketRtdsSpotDataClient.__new__(PolymarketRtdsSpotDataClient)
+    client._running = False
+    client._subscribed = False
+    client._task = None
+
+    async def fake_run() -> None:
+        await asyncio.sleep(0)
+
+    client._run = fake_run
+
+    await client._connect()
+    assert client._task is None
+
+    client._subscribed = True
+    await client._connect()
+    assert client._task is not None
+    await asyncio.sleep(0)
+    await client._disconnect()
+
+    client, received = _client(assets={"BTC"})
+
+    client.handle_message(
+        {
+            "payload": {
+                "symbol": "btc/usd",
+                "value": "100.5",
+                "timestamp": 2000,
+            }
+        }
+    )
+
+    assert received == [
+        PolySignalSpotData(
+            asset="BTC",
+            symbol="BTCUSD",
+            price=100.5,
+            source="polymarket_rtds",
+            freshness_ms=0,
+            ts_event=2_000_000_000_000,
+            ts_init=2_000_000_000,
+        )
+    ]
+
+
+def test_native_spot_subscription_routes_to_managed_client() -> None:
+    calls: list[tuple[object, object | None]] = []
+
+    class FakeStrategy:
+        def subscribe_data(self, data_type: object, client_id: object | None = None) -> None:
+            calls.append((data_type, client_id))
+
+    _subscribe_custom_data(
+        FakeStrategy(),
+        PolySignalSpotData,
+        client_id=_spot_data_client_id(),
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1] is not None
+    assert str(calls[0][1]) == "POLYSIGNAL_SPOT"
+
+
+
+
+@pytest.mark.asyncio
+async def test_managed_rtds_client_backs_off_after_clean_disconnect(monkeypatch) -> None:
+    import polysignal_lab.nautilus_runtime.spot_data_client as module
+
+    client = PolymarketRtdsSpotDataClient.__new__(PolymarketRtdsSpotDataClient)
+    client._running = True
+    client._subscribed = True
+    client._spot_config = SimpleNamespace(rtds_ws_url="ws://test")
+    client._task = None
+    sleeps: list[float] = []
+
+    class FakeWebSocket:
+        async def send(self, message: str) -> None:
+            _ = message
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    class FakeConnection:
+        async def __aenter__(self):
+            return FakeWebSocket()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(module.websockets, "connect", lambda *args, **kwargs: FakeConnection())
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+        client._running = False
+
+    monkeypatch.setattr(module.asyncio, "sleep", fake_sleep)
+
+    await client._run()
+
+    assert sleeps == [2.0]
+
+    client, received = _client(assets={"BTC"})
+
+    client.handle_message(
+        {
+            "payload": {
+                "symbol": "eth/usd",
+                "value": 2000.0,
+                "timestamp": 2000,
+            }
+        }
+    )
+
+    assert received == []

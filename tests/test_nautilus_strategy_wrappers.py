@@ -61,7 +61,13 @@ class FakeAssembler:
         self.view = view
         self.condition_ids: list[str] = []
 
-    def build(self, condition_id: str) -> MarketView | None:
+    def build(
+        self,
+        condition_id: str,
+        *,
+        created_at: datetime | None = None,
+    ) -> MarketView | None:
+        _ = created_at
         self.condition_ids.append(condition_id)
         return self.view
 

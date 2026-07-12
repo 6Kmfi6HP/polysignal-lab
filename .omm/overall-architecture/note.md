@@ -1,0 +1,1 @@
+The project was migrated from a scheduler-based architecture to NautilusTrader runtime. The scheduler mode name is kept as a compatibility alias. There is extensive documentation in docs/ covering architecture, compliance, strategy indicator flow, and signal gate rules.

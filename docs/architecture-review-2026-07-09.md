@@ -1,6 +1,10 @@
 # Architecture Review Report — 2026-07-09
 
 > **Ultrathink review**: NautilusTrader conformance, reimplemented features, technical debt.
+>
+> **Runtime API note (2026-07-11)**: The executable API truth is the installed and locked `nautilus_trader==1.229.0` wheel. The exported `docs/nautilus_reference/developer_guide/` may reflect upstream `master`; it is reference material, not a version lock. In 1.229.0, the node surface is `TradingNode` + `TradingNodeConfig`, not `LiveNode.builder(...)`.
+>
+> **Runtime boundary update (2026-07-11)**: Generic TP/SL/max-hold exits are implemented in `native_strategy_exit.py` as strategy-local reduce-only decisions over Nautilus Cache positions. Settlement resolution remains report-only because locked NautilusTrader 1.229.0 exposes no public prediction-market payout authority for the live sandbox path.
 
 ---
 
@@ -31,7 +35,7 @@
 | **Custom data types** | Uses `@customdataclass` from `nautilus_trader.model.custom` — the recommended approach |
 | **Data base class** | `PolySignalSpotData`, `PolySignalMarketMetaData` etc. inherit from `nautilus_trader.core.data.Data` |
 | **Message immutability** | `_FrozenData` mixin enforces the Nautilus message immutability design principle |
-| **LiveNode builder** | Uses Nautilus's `LiveNode.builder()` fluent API for wiring (correct pattern) |
+| **TradingNode wiring** | Uses `nautilus_trader.live.node.TradingNode` with `TradingNodeConfig`, then registers data and execution client factories through the public `add_*_client_factory(...)` methods (correct for locked 1.229.0) |
 | **Polymarket adapter** | Uses `PolymarketLiveDataClientFactory` and `PolymarketInstrumentProviderConfig` from the official adapter |
 | **Config separation** | Separates `StrartegyConfig`, `ActorConfig`, `LiveDataEngineConfig`, etc. |
 
@@ -43,7 +47,7 @@
 | **Nautilus core types typed as `object` in stubs** | `node_builder.py` runtime placeholders | 🟡 Medium |
 | **try/except wrapping Nautilus imports** | `strategy/helpers.py:21-27` wraps imports in `try: ... except ModuleNotFoundError` | 🟡 Medium |
 | **No proper adapter layer** | `data/polymarket_clob_rest.py` and `data/polymarket_clob_ws.py` bypass the Nautilus adapter pattern — they should be structured as `LiveDataClient` + `InstrumentProvider` implementations, not standalone HTTP/WS clients | 🟡 Medium |
-| **Custom type stubs replace inline imports** | `node_builder.py` uses stub placeholders + `_ensure_nautilus_imports()` for what should be plain `from nautilus_trader.live import LiveNode` | 🟡 Medium |
+| **Custom type stubs replace inline imports** | `optional_imports.py` uses the installed 1.229.0 wheel's `nautilus_trader.live.node.TradingNode` and `nautilus_trader.config.TradingNodeConfig` behind an intentional optional-dependency gate | 🟢 Accepted boundary |
 
 ### 🔴 Dynamic Import Pattern (Detail — Accepted Optional Boundary)
 
@@ -209,6 +213,7 @@ The following were deleted in recent commits (`7adf7f5`, `5bf737dc`, `643c9e4`):
 - **17 legacy strategies** from `src/polysignal_lab/strategies/` (entire directory)
 - **6 app services**: `book_feed_service`, `health_service`, `paper_portfolio_service`, `runtime_service`, `signal_pipeline`, `snapshot_service`, `spot_feed_service`
 - **nautilus_runtime dead code**: `cache_reader.py`, `runtime_classes.py`, `scheduler_bridge.py`, `state.py`, `instrument_mapping.py`, `book_data.py`, `data_ingestor.py`, `execution.py`, `execution_types.py`, `exit_policy.py`, `market_data.py`, `matching.py`, `native_exit.py`, `orchestrator.py`, `position_policy.py`, `patch_nautilus_polymarket_autoload.py`, `scheduler_compat.py`, `settlement.py`
+- **Current strategy-local exit bridge**: `native_strategy_exit.py` is active, intentionally limited to read-only Cache position inspection plus reduce-only native order decisions; it is not a fill simulator or local ledger.
 - **nautilus_bridge/strategies/** — moved to `nautilus_runtime/strategies/`
 - **27 legacy test files**
 - **domain**: `paper_order.py`, `paper_position.py`

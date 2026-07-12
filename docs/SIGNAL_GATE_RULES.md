@@ -149,8 +149,8 @@ GATE_REJECT _spot_freshness STALE_SPOT_PRICE market=<id> side=<UP|DOWN> reason=S
 
 | 现象 | 典型拒绝码 | 含义 | 优先检查 |
 |---|---|---|---|
-| 容器 healthy 但没有新信号 | `STALE_SPOT_PRICE` | spot 价格停更或超过策略 freshness 阈值 | dashboard `/health` 的 spot lag、`logs/rejected_signals.jsonl` |
-| CLOB 行情卡住 | `STALE_ORDERBOOK` | 候选方向盘口过期 | CLOB WS/REST 健康、book freshness |
+| 容器 healthy 但没有新信号 | `STALE_SPOT_PRICE` | spot 价格停更或超过策略 freshness 阈值 | Nautilus runtime health 的 spot/custom-data lag、`logs/rejected_signals.jsonl` |
+| CLOB 行情卡住 | `STALE_ORDERBOOK` | 候选方向盘口过期 | Nautilus DataEngine/cache health、book freshness |
 | 策略频繁给同一个方向 | `DUPLICATE_SIGNAL` | dedupe TTL 内重复 | `dedupe_key`, `signal.dedupe_ttl_sec` |
 | 有行情但不发 | `CONFIDENCE_TOO_LOW` | 候选置信度低于发布阈值 | `candidate.confidence`, `signal.min_confidence_to_publish` |
 | 某个市场突然不发 | `CHANNEL_RATE_LIMIT` | 市场或频道发送限额触发 | `max_signals_per_market`, `max_signals_per_hour` |
@@ -160,15 +160,16 @@ GATE_REJECT _spot_freshness STALE_SPOT_PRICE market=<id> side=<UP|DOWN> reason=S
 
 ```mermaid
 flowchart LR
-    M[MarketSnapshotBuilder] --> S[Strategy]
-    S -->|SignalCandidate| G[SignalGate]
+    D[Nautilus DataEngine / Cache + managed CustomData] --> V[MarketViewAssembler]
+    V --> S[PolySignalNativeStrategy / AlphaCore]
+    S -->|AlphaDecision| G[DecisionPolicy / SignalGate]
     G -->|RejectedSignal| RJ[rejected_signals.jsonl]
     G -->|Accepted Signal| SG[signals.jsonl]
-    SG --> PB[Telegram / Paper]
+    SG --> PB[Telegram / Nautilus Sandbox Paper]
 
     H[/api/health] --> L1[signal_gate rejected counts]
-    H --> L2[snapshot_builder max_freshness_lag_ms]
-    H --> L3[spot / book component lag]
+    H --> L2[DataEngine/cache freshness]
+    H --> L3[spot CustomData / book component lag]
 ```
 
 排查顺序：

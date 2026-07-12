@@ -14,8 +14,11 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
+from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
@@ -31,7 +34,27 @@ def test_custom_spot_data_round_trips_dict() -> None:
     assert PolySignalSpotData.from_dict(data.to_dict()) == data
 
 
-def test_custom_price_to_beat_data_round_trips_dict() -> None:
+def test_strategy_custom_data_preserves_spot_receipt_time_for_dynamic_freshness() -> None:
+    received_at = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
+    data = PolySignalSpotData(
+        asset="BTC",
+        symbol="BTCUSD",
+        price=100000.0,
+        source="managed_binance",
+        freshness_ms=5,
+        ts_event=int(received_at.timestamp() * 1_000_000_000),
+        ts_init=int(received_at.timestamp() * 1_000_000_000),
+    )
+    state = StrategyCustomDataState()
+
+    state.apply(data)
+    spot = state.spot_for("BTC")
+
+    assert spot is not None
+    assert spot.received_at == received_at
+    assert spot.freshness_ms_at(received_at + timedelta(milliseconds=250)) == 250
+
+
     data = PolySignalPriceToBeatData(
         condition_id="condition-1",
         value=100000.0,

@@ -1,0 +1,1 @@
+Telegram publishing module. Formats signals, paper trading reports, and daily summaries as Telegram messages. Supports dry-run mode (default), QA channel publishing, and configurable rate-limited message dispatch. Uses python-telegram-bot with rate limiter support.

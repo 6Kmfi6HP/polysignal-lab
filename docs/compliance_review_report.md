@@ -1,5 +1,9 @@
 # PolySignal Lab — NautilusTrader 设计合规审查报告
 
+> **历史审查快照（已过时）**：本文包含已删除的 `LiveNode.builder`、旧 scheduler 运行时和旧行号，不能作为当前架构指导。当前实现以 `docs/NAUTILUS_BRIDGE_BOUNDARY.md` 与 `docs/architecture-review-2026-07-09.md` 为准。
+>
+> **当前边界补充（2026-07-11）**：当前 generic TP/SL/max-hold bridge 位于 `native_strategy_exit.py`，仅生成 reduce-only native order decision；由于锁定的 NautilusTrader 1.229.0 没有公开的 prediction-market payout authority，settlement 仍明确为 report-only，不伪造 `PositionClosed`、Account 或 Portfolio mutation。
+
 生成日期: 2026-07-06
 
 ---

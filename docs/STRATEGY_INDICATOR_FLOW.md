@@ -1,39 +1,42 @@
 # 当前策略指标获取方法
 
-当前实现不是“策略直接请求指标 API”。链路是：
+当前 native runtime 不是策略直接请求指标 API，也不再通过独立 scheduler 组装第二套行情真相。链路是：
 
-> 外部行情源 → 本地 Registry → `MarketSnapshot` → `strategy.evaluate(snapshot)` → `SignalCandidate.metrics`
+> Gamma 市场发现 → Nautilus `TradingNode` / Polymarket `LiveDataClient` → `DataEngine` / `Cache` → `MarketViewAssembler` → `PolySignalNativeStrategy` callback → `AlphaCore.evaluate(view)` → `DecisionPipeline` / `DecisionPolicy` → Nautilus `order_factory` / `submit_order`
+
+现货与业务派生数据通过 Nautilus-managed `CustomData` 进入策略：
+
+- Polymarket RTDS managed data client 发布 `PolySignalSpotData`；
+- `MarketRotationActor` 发布市场 metadata、market universe 和 price-to-beat data；
+- `StrategyCustomDataState` 保存策略本地派生状态；
+- Nautilus cache 的 order book、trade、position、order、fill 是 runtime truth source；
+- `MarketCatalog` 只负责 condition/token 到业务 market/side 的映射，不复制 Nautilus instrument truth。
 
 ```mermaid
 flowchart TD
-    A[Polymarket 市场发现 / MarketRegistry.active] --> B[活跃 markets]
-
-    C[Polymarket CLOB WS/REST] --> D[OrderBookRegistry]
-    E[Binance Spot WS] --> F[SpotRegistry]
-    G[PriceToBeatProvider] --> H[PTB / anchor price]
-
-    B --> I[MarketSnapshotBuilder]
-    D --> I
-    F --> I
-    H --> I
-
-    I --> J[MarketSnapshot]
-    J --> K[scheduler evaluate_once]
-    K --> L[strategy.evaluate(snapshot)]
-
-    L --> M[策略内部计算指标]
-    M --> N[SignalCandidate.metrics]
-    N --> O[SignalGate / Consensus / Paper]
+    A[Gamma market discovery] --> B[TradingNode / MarketRotationActor]
+    C[Polymarket LiveDataClient] --> D[Nautilus DataEngine / Cache]
+    E[Managed RTDS LiveDataClient] --> F[PolySignal CustomData]
+    B --> F
+    B --> G[MarketCatalog]
+    D --> H[MarketViewAssembler]
+    F --> H
+    G --> H
+    H --> I[PolySignalNativeStrategy callbacks]
+    I --> J[AlphaCore.evaluate(view)]
+    J --> K[DecisionPipeline / DecisionPolicy]
+    K --> L[Nautilus order_factory / submit_order]
 ```
 
-## Snapshot 提供的基础数据
+## `MarketView` 提供的基础数据
 
-`MarketSnapshotBuilder` 从本地状态组装统一输入：
+`MarketViewAssembler` 从 Nautilus cache 投影与策略本地 `CustomData` 组装只读输入：
 
-- `OrderBookRegistry.books_for_market(market)`：UP / DOWN order book。
-- `SpotRegistry.get(asset)`：现货价格。
-- `PriceToBeatProvider.get(market)`：PTB / anchor price。
-- `FreshnessState`：order book 与 spot 的 freshness。
+- UP / DOWN order book 与 trade projections；
+- `StrategyCustomDataState` 中的现货价格；
+- price-to-beat / anchor price；
+- order book、现货和 instrument freshness；
+- `seconds_to_close` 与 `MarketCatalog` 的业务 identity。
 
 同时派生：
 
@@ -50,15 +53,16 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    OB[OrderBookRegistry.books_for_market] --> MS[MarketSnapshot]
-    SP[SpotRegistry.get(asset)] --> MS
-    PTB[PriceToBeatProvider.get] --> MS
+    OB[Nautilus cache order books / trades] --> MV[MarketView]
+    SP[StrategyCustomDataState spot] --> MV
+    PTB[StrategyCustomDataState PTB] --> MV
+    CAT[MarketCatalog business identity] --> MV
 
-    MS --> A[ask / bid]
-    MS --> B[spread]
-    MS --> C[ask_sum / ask_skew]
-    MS --> D[seconds_to_close]
-    MS --> E[spot - price_to_beat = diff_usd]
+    MV --> A[ask / bid]
+    MV --> B[spread]
+    MV --> C[ask_sum / ask_skew]
+    MV --> D[seconds_to_close]
+    MV --> E[spot - price_to_beat = diff_usd]
 ```
 
 ## 当前主配置启用策略
@@ -71,7 +75,7 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    S[MarketSnapshot] --> V[VWAP Momentum]
+    S[MarketView] --> V[VWAP Momentum]
     S --> L[Late Consensus]
     S --> P[PTB Diff]
 
@@ -131,4 +135,4 @@ flowchart TD
 
 ## 结论
 
-当前策略指标大多是每次评估时从 `MarketSnapshot` 即时派生；少数滚动指标由策略实例内部维护缓存。系统没有独立的“统一技术指标服务”，策略也不直接向外部指标 API 拉取指标。
+当前策略指标大多是每次评估时从 `MarketView` 即时派生；少数滚动指标由策略实例内部维护缓存。系统没有独立的“统一技术指标服务”，策略也不直接向外部指标 API 拉取指标。

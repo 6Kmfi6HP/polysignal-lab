@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, asyncio, logging, signal, threading, time, types, types.SimpleNamespace, typing, polysignal_lab.nautilus_runtime.market_discovery_worker
-Output: test_live_engine_config_builders_import_configs_from_config_module, test_build_live_node_uses_livenode_builder, test_build_live_node_uses_configured_non_default_trader_id, test_build_live_node_returns_nautilus_runtime_components, test_build_live_node_injects_shared_projections_and_no_manual_sync_components, test_build_live_node_gives_each_strategy_own_custom_data_state, test_build_live_node_uses_static_runtime_classes, test_build_live_node_registers_market_rotation_actor, test_all_native_strategies_share_runtime_policy, test_build_live_node_uses_sandbox_execution_not_matching_client
+Output: test_live_engine_config_builders_import_configs_from_config_module, test_build_live_node_uses_trading_node_config, test_native_runtime_rejects_disabled_paper_trading, test_build_live_node_uses_configured_non_default_trader_id, test_build_live_node_returns_nautilus_runtime_components, test_build_live_node_injects_shared_projections_and_no_manual_sync_components, test_build_live_node_gives_each_strategy_own_custom_data_state, test_build_live_node_uses_static_runtime_classes, test_build_live_node_registers_market_rotation_actor, test_all_native_strategies_share_runtime_policy, test_build_live_node_uses_sandbox_execution_not_matching_client
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -26,15 +26,20 @@ import pytest
 
 from polysignal_lab.config import Settings
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicyActor
+from polysignal_lab.nautilus_runtime.runtime_context_factory import (
+    validate_native_runtime_settings,
+)
 from polysignal_lab.nautilus_runtime.node import (
     build_live_node,
     build_control,
     run_nautilus_cli,
     run_nautilus_cli_async,
+    _load_runtime_trader_state,
+    _prepare_nautilus_runtime_context,
     _start_interactive_telegram_bot_thread,
     _stop_interactive_telegram_bot_thread,
 )
-from polysignal_lab.nautilus_runtime.live_node import PAPER_EXEC_CLIENT_ID
+from polysignal_lab.nautilus_runtime.live_node import PAPER_EXEC_CLIENT_ID, SPOT_DATA_CLIENT_ID
 
 if TYPE_CHECKING:
     from polysignal_lab.publish.telegram_publisher import TelegramPublisher
@@ -85,6 +90,75 @@ def _patch_live_node_config_imports(monkeypatch):
         "polysignal_lab.nautilus_runtime.live_node._import_callable",
         _fake_import_callable,
     )
+    for name in (
+        "POLYMARKET_API_KEY",
+        "POLYMARKET_API_SECRET",
+        "POLYMARKET_PASSPHRASE",
+        "POLYMARKET_PK",
+        "POLYMARKET_FUNDER",
+    ):
+        monkeypatch.setenv(name, "test-only-placeholder")
+
+def test_native_runtime_rejects_spot_dependent_strategy_without_spot_ingress() -> None:
+    settings = Settings()
+    settings.strategies.set_explicit_strategy_names(("ptb_diff",))
+
+    with pytest.raises(RuntimeError, match="spot data ingress"):
+        validate_native_runtime_settings(settings)
+
+
+def test_native_runtime_rejects_disabled_paper_trading() -> None:
+    settings = Settings()
+    settings.paper_trading.enabled = False
+
+    with pytest.raises(RuntimeError, match="paper_trading.enabled"):
+        validate_native_runtime_settings(settings)
+
+
+@pytest.mark.anyio
+async def test_prepare_native_runtime_checks_credentials_before_market_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.nautilus_runtime import node as node_module
+
+    for name in (
+        "POLYMARKET_API_KEY",
+        "POLYMARKET_API_SECRET",
+        "POLYMARKET_PASSPHRASE",
+        "POLYMARKET_PK",
+        "POLYMARKET_FUNDER",
+    ):
+        monkeypatch.setenv(name, "")
+
+    def fail_if_context_is_built(_settings: Settings) -> object:
+        raise AssertionError("market discovery must not start before credential preflight")
+
+    monkeypatch.setattr(
+        node_module,
+        "build_nautilus_runtime_context",
+        fail_if_context_is_built,
+    )
+
+    with pytest.raises(RuntimeError, match="POLYMARKET_API_KEY"):
+        await _prepare_nautilus_runtime_context(Settings())
+
+
+def test_load_runtime_trader_state_runs_after_manual_registration_when_enabled() -> None:
+    calls: list[str] = []
+
+    class Trader:
+        def load(self) -> None:
+            calls.append("load")
+
+    node = SimpleNamespace(
+        config=SimpleNamespace(load_state=True),
+        trader=Trader(),
+    )
+
+    _load_runtime_trader_state(node)
+
+    assert calls == ["load"]
+
 
 def test_live_engine_config_builders_import_configs_from_config_module(monkeypatch) -> None:
     from polysignal_lab.nautilus_runtime import live_node
@@ -124,54 +198,28 @@ def test_runtime_class_loader_requires_three_classes(monkeypatch: pytest.MonkeyP
 
 
 def _patch_nautilus_placeholders(monkeypatch):
-    """Monkeypatch LiveNode builder placeholders so tests run without Nautilus."""
+    """Monkeypatch TradingNode runtime placeholders so tests run without Nautilus."""
 
-    class FakeLiveNode:
-        @classmethod
-        def builder(cls, trader_id_text, trader_id, environment):
-            return FakeBuilder(trader_id_text, trader_id, environment)
+    class FakeTradingNodeConfig:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
 
-    class FakeBuilder:
-        def __init__(self, trader_id_text, trader_id, environment):
-            self.trader_id_text = trader_id_text
-            self.trader_id = trader_id
-            self.environment = environment
-            self.data_engine_config = None
-            self.exec_engine_config = None
-            self.cache_config = None
-            self.data_clients = []
-            self.exec_clients = []
-
-        def with_data_engine_config(self, config):
-            self.data_engine_config = config
-            return self
-
-        def with_exec_engine_config(self, config):
-            self.exec_engine_config = config
-            return self
-
-        def with_cache_config(self, config):
-            self.cache_config = config
-            return self
-
-        def add_data_client(self, name, factory, config):
-            self.data_clients.append((name, factory, config))
-            return self
-
-        def add_exec_client(self, name, factory, config):
-            self.exec_clients.append((name, factory, config))
-            return self
-
-        def build(self):
-            return FakeBuiltNode(self)
-
-    class FakeBuiltNode:
-        def __init__(self, builder):
-            self.builder = builder
+    class FakeTradingNode:
+        def __init__(self, *, config):
+            self.config = config
+            self.data_client_factories = []
+            self.exec_client_factories = []
             self.trader = SimpleNamespace(strategies=[], actors=[])
             self.trader.add_strategy = self.trader.strategies.append
             self.trader.add_actor = self.trader.actors.append
             self.built = False
+
+        def add_data_client_factory(self, name, factory):
+            self.data_client_factories.append((name, factory))
+
+        def add_exec_client_factory(self, name, factory):
+            self.exec_client_factories.append((name, factory))
 
         def build(self):
             self.built = True
@@ -189,9 +237,6 @@ def _patch_nautilus_placeholders(monkeypatch):
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
-
-    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node.LiveNode", FakeLiveNode)
-    monkeypatch.setattr("polysignal_lab.nautilus_runtime.node_builder.LiveNode", FakeLiveNode)
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node.PolymarketInstrumentProviderConfig",
         lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
@@ -201,8 +246,12 @@ def _patch_nautilus_placeholders(monkeypatch):
         lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
     )
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.live_node.LiveNode",
-        FakeLiveNode,
+        "polysignal_lab.nautilus_runtime.live_node.TradingNode",
+        FakeTradingNode,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.live_node.TradingNodeConfig",
+        FakeTradingNodeConfig,
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.live_node.TraderId",
@@ -228,21 +277,24 @@ def _patch_nautilus_placeholders(monkeypatch):
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
         lambda: (FakeRuntimeStrategy, FakeRuntimeActor, DecisionPolicyActor),
     )
-    return FakeLiveNode
+    return FakeTradingNode
 
 
-def test_build_live_node_uses_livenode_builder(monkeypatch) -> None:
+def test_build_live_node_uses_trading_node_config(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
     runtime = build_live_node(condition_ids=("condition-btc-5m",))
     node = runtime["node"]
-    builder = node.builder
+    config = node.config
 
-    assert builder.trader_id_text == "PolySignal-Nautilus-001"
-    assert builder.environment == "SANDBOX"
-    assert builder.data_clients[0][0] == "POLYMARKET"
-    assert builder.exec_clients[0][0] == PAPER_EXEC_CLIENT_ID
-    assert builder.exec_clients[0][0] != "POLYMARKET"
+    assert config.trader_id == "TraderId:PolySignal-Nautilus-001"
+    assert config.environment == "SANDBOX"
+    assert set(config.data_clients) == {"POLYMARKET", SPOT_DATA_CLIENT_ID}
+    assert set(config.exec_clients) == {PAPER_EXEC_CLIENT_ID}
+    assert node.data_client_factories[0][0] == "POLYMARKET"
+    assert node.data_client_factories[1][0] == SPOT_DATA_CLIENT_ID
+    assert node.exec_client_factories[0][0] == PAPER_EXEC_CLIENT_ID
+    assert node.exec_client_factories[0][0] != "POLYMARKET"
     assert node.built is True
 
 
@@ -252,10 +304,9 @@ def test_build_live_node_uses_configured_non_default_trader_id(monkeypatch) -> N
     settings.runtime.nautilus.trader_id = "PolySignal-Regression-Trader"
 
     runtime = build_live_node(settings=settings, condition_ids=("condition-btc-5m",))
-    builder = runtime["node"].builder
+    config = runtime["node"].config
 
-    assert builder.trader_id_text == "PolySignal-Regression-Trader"
-    assert builder.trader_id == "TraderId:PolySignal-Regression-Trader"
+    assert config.trader_id == "TraderId:PolySignal-Regression-Trader"
 
 def test_build_live_node_returns_nautilus_runtime_components(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
@@ -264,7 +315,7 @@ def test_build_live_node_returns_nautilus_runtime_components(monkeypatch) -> Non
     node = runtime["node"]
 
     assert node.built is True
-    assert node.builder.exec_clients[0][0] != "POLYMARKET"
+    assert next(iter(node.config.exec_clients)) != "POLYMARKET"
     assert len(node.trader.actors) == 1
     assert "paper_client" not in runtime
 
@@ -441,9 +492,7 @@ def test_build_live_node_uses_sandbox_execution_not_matching_client(monkeypatch)
     _patch_nautilus_placeholders(monkeypatch)
 
     runtime = build_live_node()
-    builder = runtime["node"].builder
-
-    assert builder.exec_clients[0][0] != "POLYMARKET"
+    assert next(iter(runtime["node"].config.exec_clients)) != "POLYMARKET"
     assert "paper_client" not in runtime
     assert "matching_client" not in runtime
 
@@ -455,6 +504,27 @@ def test_build_live_node_strategies_is_list(monkeypatch) -> None:
     runtime = build_live_node()
     assert isinstance(runtime["strategies"], list)
 
+
+def test_build_live_node_assigns_stable_native_strategy_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_nautilus_placeholders(monkeypatch)
+    settings = Settings()
+    settings.strategies.set_explicit_strategy_names(("vwap_momentum", "ptb_diff"))
+
+    runtime = build_live_node(settings=settings, condition_ids=("condition-btc-5m",))
+
+    strategies = cast(list[object], runtime["strategies"])
+    configs = [getattr(strategy, "kwargs")["config"] for strategy in strategies]
+
+    assert [getattr(config, "strategy_id") for config in configs] == [
+        "PolySignal",
+        "PolySignal",
+    ]
+    assert [getattr(config, "order_id_tag") for config in configs] == [
+        "vwap_momentum",
+        "ptb_diff",
+    ]
 
 def test_build_live_node_forwards_unsubscribe_exited_to_native_strategy(
     monkeypatch: pytest.MonkeyPatch,
@@ -539,6 +609,45 @@ def test_build_live_node_skips_disabled_native_strategies(
 
     assert runtime["strategies"] == []
     assert getattr(runtime["node"], "trader").strategies == []
+
+
+
+def test_build_live_node_uses_paper_trading_fixed_stake_for_native_strategies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_nautilus_placeholders(monkeypatch)
+    captured: dict[str, object] = {}
+
+    class FakeRotationActor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeStrategy:
+        def __init__(self, **kwargs):
+            captured["kwargs"] = kwargs
+            self.strategy_name = kwargs["strategy_name"]
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
+        lambda: (FakeStrategy, FakeRotationActor, DecisionPolicyActor),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node._native_core_for",
+        lambda _name, _cfg: object(),
+    )
+
+    settings = Settings()
+    settings.paper_trading.fixed_stake_usdc = 17.5
+    settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
+
+    build_live_node(settings=settings, condition_ids=("condition-btc-5m",))
+
+    captured_kwargs = cast(dict[str, object], captured["kwargs"])
+    assert captured_kwargs["fixed_stake_usdc"] == 17.5
 
 
 
@@ -1385,6 +1494,54 @@ async def test_run_nautilus_cli_async_surfaces_node_run_failure(monkeypatch) -> 
         await run_nautilus_cli_async()
 
 
+async def test_async_runtime_uses_framework_run_async_and_stop_async(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    run_released = asyncio.Event()
+
+    class FakeTradingNode:
+        async def run_async(self) -> None:
+            calls.append("run_async")
+            await run_released.wait()
+
+        async def stop_async(self) -> None:
+            calls.append("stop_async")
+            run_released.set()
+
+    async def _noop(*args, **kwargs):
+        _ = args, kwargs
+
+    fake_bundle = SimpleNamespace(
+        node=FakeTradingNode(),
+        websocket_tasks=[],
+        context=_fake_runtime_context(),
+        observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
+        components={"strategies": []},
+    )
+
+    async def fake_build(settings=None):
+        _ = settings
+        return fake_bundle
+
+    async def fake_report_loop(scheduler, stop_event):
+        _ = scheduler
+        stop_event.set()
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node_sidecar._run_nautilus_report_loop",
+        fake_report_loop,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.build_nautilus_runtime",
+        fake_build,
+    )
+
+    await run_nautilus_cli_async()
+
+    assert calls == ["run_async", "stop_async"]
+
+
 async def test_run_nautilus_cli_async_waits_for_node_stop_instead_of_canceling_run_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1441,11 +1598,10 @@ async def test_run_nautilus_cli_async_waits_for_node_stop_instead_of_canceling_r
 
     await run_nautilus_cli_async()
 
-    assert calls == ["stop"]
+    assert calls == ["stop", "dispose"]
 
 
-
-async def test_run_nautilus_cli_async_leaves_node_disposal_to_sync_wrapper(
+async def test_run_nautilus_cli_async_disposes_node_in_async_wrapper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeTradingNode:
@@ -1453,7 +1609,7 @@ async def test_run_nautilus_cli_async_leaves_node_disposal_to_sync_wrapper(
             return None
 
         def dispose(self):
-            raise AssertionError("async runtime must not dispose node inline")
+            return None
 
     async def _noop(*args, **kwargs):
         _ = args, kwargs

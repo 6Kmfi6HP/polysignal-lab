@@ -1,0 +1,17 @@
+created: 2026-07-11T22:52:33.745Z
+updated: 2026-07-11T22:52:34.403Z
+update_count: 5
+last_field: concern
+git_commit: d759d7b
+git_branch: main
+children:
+  - alpha-cores
+  - bridge
+  - dashboard
+  - data-layer
+  - domain-models
+  - external-data
+  - nautilus-runtime
+  - publish
+  - signal-layer
+  - storage

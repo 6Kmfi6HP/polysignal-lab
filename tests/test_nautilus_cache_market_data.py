@@ -46,7 +46,7 @@ class FakeBook:
         self.last_trade_price: float = 0.51
         self.last_trade_size: float = 2.0
         self.last_trade_timestamp: str = "2026-07-05T00:00:00Z"
-        self.received_at: datetime = datetime.now(UTC) - timedelta(milliseconds=25)
+        self.received_at: datetime = datetime(2026, 7, 5, tzinfo=UTC)
 
 
 class FakeTrade:
@@ -105,7 +105,8 @@ def test_cache_market_data_provider_reads_book_without_local_cache(monkeypatch) 
         catalog=_catalog(monkeypatch),
     )
 
-    view = provider.book_for_token("up-token")
+    now = datetime(2026, 7, 5, tzinfo=UTC) + timedelta(milliseconds=25)
+    view = provider.book_for_token("up-token", now=now)
 
     assert view is not None
     assert view.token_id == "up-token"
@@ -116,8 +117,7 @@ def test_cache_market_data_provider_reads_book_without_local_cache(monkeypatch) 
     assert view.last_trade_price == 0.51
     assert view.last_trade_size == 2.0
     assert view.last_trade_timestamp == "2026-07-05T00:00:00Z"
-    assert view.freshness_ms is not None
-    assert view.freshness_ms >= 0
+    assert view.freshness_ms == 25
 
 
 def test_cache_market_data_provider_reads_trades_without_trade_deque(monkeypatch) -> None:
@@ -167,5 +167,6 @@ def test_cache_market_data_provider_returns_none_for_unknown_token(monkeypatch) 
         catalog=_catalog(monkeypatch),
     )
 
-    assert provider.book_for_token("missing-token") is None
+    now = datetime(2026, 7, 5, tzinfo=UTC)
+    assert provider.book_for_token("missing-token", now=now) is None
     assert tuple(provider.trades_for_token("missing-token")) == ()

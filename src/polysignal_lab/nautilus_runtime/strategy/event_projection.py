@@ -102,6 +102,8 @@ def project_order_event(
         metrics["order_intent"] = tags["order_intent"]
     if "hedge_leg" not in metrics and tags.get("hedge_leg"):
         metrics["hedge_leg"] = tags["hedge_leg"] == "true"
+    if "reduce_only" not in metrics and tags.get("reduce_only"):
+        metrics["reduce_only"] = tags["reduce_only"] == "true"
     return AlphaOrderEvent(
         strategy=tags.get("strategy") or str(metrics.get("strategy") or strategy_name),
         market_id=market_id or str(_value(event, "market_id", "")),
@@ -199,6 +201,7 @@ class ApprovedSignalMetricsTracker:
             cast(Mapping[str, object], getattr(signal, "metrics", {}) or {})
         )
         _ = metrics.setdefault("dedupe_key", signal.dedupe_key)
+        _ = metrics.setdefault("reduce_only", bool(getattr(signal, "reduce_only", False)))
         signal_side = cast(object, getattr(signal, "side", None))
         signal_fields: dict[str, object] = {
             "signal_id": getattr(signal, "signal_id", None),

@@ -30,7 +30,7 @@ Bounded read-only smoke passed
 
 Observable: `timeout 120 .venv/bin/python -m polysignal_lab.app.main --config config/signal_bot.yaml --once --real-readonly-smoke --evidence .omo/evidence/final-live-market-smoke.json` exits 0 and writes non-empty JSON with `passed=true` and `failure_count=0`.
 
-The smoke covers public Gamma events, public CLOB book, expected public CLOB 404, Binance public REST fallback, scheduler snapshot creation, dashboard reads, and safety scan. If the bounded Gamma page lacks configured crypto Up/Down markets, the evidence records the generated scheduler snapshot as a public fallback-market snapshot.
+The smoke covers public Gamma events, public CLOB book, expected public CLOB 404, and Binance public REST fallback. Retired scheduler snapshot, dashboard-read, and safety surfaces are recorded as `not_run`; they are not treated as successful runtime checks.
 
 ## real Telegram QA
 

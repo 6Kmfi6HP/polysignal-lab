@@ -1,0 +1,13 @@
+graph LR
+    market-catalog["Market Catalog\nmarket_catalog.py"]:::entry
+    view-assembler["Market View Assembler\nmarket_view_assembler.py"]
+    spot-anchor["Spot Anchor State\nspot_anchor_state.py"]
+    bridge-state["Bridge State\nstate.py"]
+    enum-parser["Enum Parser\nenum_parser.py"]
+
+    market-catalog -->|"feeds"| view-assembler
+    view-assembler -->|"consumes"| spot-anchor
+    view-assembler -->|"persists"| bridge-state
+
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e

@@ -32,7 +32,8 @@ class FakeBookProvider:
         self.books: dict[str, SideBookView] = {}
         self.trades: dict[str, tuple[TradeView, ...]] = {}
 
-    def book_for_token(self, token_id: str) -> SideBookView | None:
+    def book_for_token(self, token_id: str, *, now: datetime) -> SideBookView | None:
+        _ = now
         return self.books.get(token_id)
 
     def trades_for_token(self, token_id: str) -> tuple[TradeView, ...]:
@@ -59,7 +60,8 @@ def _apply_custom_data(custom_data: StrategyCustomDataState, condition_id: str) 
             source="polymarket_rtds",
             freshness_ms=30,
             ts_event=1,
-            ts_init=2,
+            ts_init=int(datetime(2026, 1, 1, tzinfo=UTC).timestamp() * 1_000_000_000)
+            - 30_000_000,
         )
     )
     custom_data.apply(
@@ -106,7 +108,10 @@ def test_assembler_returns_none_when_down_leg_missing() -> None:
     books.books[pair.up.token_id] = SideBookView(pair.up.token_id, best_bid=0.81, best_ask=0.82, spread=0.01, freshness_ms=10)
     _apply_custom_data(custom_data, pair.condition_id)
 
-    assert assembler.build(pair.condition_id) is None
+    assert assembler.build(
+        pair.condition_id,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    ) is None
 
 
 def test_assembler_builds_view_when_optional_custom_data_missing() -> None:
@@ -114,7 +119,10 @@ def test_assembler_builds_view_when_optional_custom_data_missing() -> None:
     books.books[pair.up.token_id] = SideBookView(pair.up.token_id, best_bid=0.81, best_ask=0.82, spread=0.01, freshness_ms=10)
     books.books[pair.down.token_id] = SideBookView(pair.down.token_id, best_bid=0.17, best_ask=0.18, spread=0.01, freshness_ms=20)
 
-    view = assembler.build(pair.condition_id)
+    view = assembler.build(
+        pair.condition_id,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
 
     assert view is not None
     assert view.spot is None

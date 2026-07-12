@@ -12,6 +12,7 @@ Pos: Application code
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -35,6 +36,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
     PolySignalSpotData,
+    SPOT_DATA_CLIENT_ID,
 )
 from polysignal_lab.nautilus_runtime.projections import _tags  # noqa: F401
 
@@ -89,9 +91,7 @@ def _market_view_ready(view: object) -> bool:
 
 
 class _Assembler(Protocol):
-    def build(
-        self, condition_id: str, *, created_at: datetime | None = None
-    ) -> object | None: ...
+    def build(self, condition_id: str, *, created_at: datetime) -> object | None: ...
 
 
 class _Observability(Protocol):
@@ -321,11 +321,20 @@ def event_datetime(value: object) -> datetime:
         raise ValueError("ts_event must be a positive Unix nanosecond timestamp") from exc
 
 
+def _spot_data_client_id() -> object | None:
+    try:
+        from nautilus_trader.model.identifiers import ClientId
+    except ModuleNotFoundError:
+        return None
+    return ClientId(SPOT_DATA_CLIENT_ID)
+
+
 def _subscribe_custom_data(
     strategy: object,
     data_type: object,
     *,
     allow_fallback: bool = True,
+    client_id: object | None = None,
 ) -> None:
     resolved_data_type = _nautilus_data_type(data_type)
     if not allow_fallback:
@@ -333,7 +342,18 @@ def _subscribe_custom_data(
     fallback = getattr(strategy, "subscribe_data", None)
     if callable(fallback):
         try:
-            _ = fallback(resolved_data_type)
+            if client_id is not None:
+                parameters = inspect.signature(fallback).parameters
+                supports_client_id = "client_id" in parameters or any(
+                    parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    for parameter in parameters.values()
+                )
+            else:
+                supports_client_id = False
+            if supports_client_id:
+                _ = fallback(resolved_data_type, client_id=client_id)
+            else:
+                _ = fallback(resolved_data_type)
         except ValueError as e:
             if "not been registered" not in str(e):
                 raise

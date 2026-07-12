@@ -1,0 +1,1 @@
+Data acquisition layer that fetches public market data from Polymarket CLOB REST/WS APIs, Binance WebSocket for spot prices, and provides market discovery, orderbook snapshots, anchor prices, and resolution checking. All data is read-only via public endpoints.

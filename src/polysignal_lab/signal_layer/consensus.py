@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, collections, collections.defaultdict, datetime, datetime.datetime, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.utils, polysignal_lab.utils.utc_now
+Input: __future__, __future__.annotations, collections, collections.defaultdict, datetime, datetime.datetime, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate
 Output: ConsensusEngine
 Pos: Application code
 
@@ -16,7 +16,6 @@ from __future__ import annotations
 
 
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.utils import utc_now
 
 
 class ConsensusEngine:
@@ -28,23 +27,49 @@ class ConsensusEngine:
     def add(self, signal: SignalCandidate) -> SignalCandidate | None:
         if not self.enabled:
             return None
-        now = utc_now()
-        self._buffer = [s for s in self._buffer if (now - s.created_at).total_seconds() <= self.window_sec]
+        reference_time = max(
+            (candidate.created_at for candidate in self._buffer),
+            default=signal.created_at,
+        )
+        reference_time = max(reference_time, signal.created_at)
+        if (reference_time - signal.created_at).total_seconds() > self.window_sec:
+            return None
+        self._buffer = [
+            candidate
+            for candidate in self._buffer
+            if 0 <= (reference_time - candidate.created_at).total_seconds() <= self.window_sec
+        ]
         self._buffer.append(signal)
-        same = [s for s in self._buffer if s.market_id == signal.market_id and s.side == signal.side and s.strategy != "consensus"]
-        different_strategies = sorted({s.strategy for s in same})
+        same = [
+            candidate
+            for candidate in self._buffer
+            if candidate.market_id == signal.market_id
+            and candidate.side == signal.side
+            and candidate.strategy != "consensus"
+        ]
+        different_strategies = sorted({candidate.strategy for candidate in same})
         if len(different_strategies) < 2:
             return None
-        conflict = [s for s in self._buffer if s.market_id == signal.market_id and s.side != signal.side and s.strategy != "consensus"]
+        conflict = [
+            candidate
+            for candidate in self._buffer
+            if candidate.market_id == signal.market_id
+            and candidate.side != signal.side
+            and candidate.strategy != "consensus"
+        ]
         if conflict:
             return None
-        confidence = min(0.99, sum(s.confidence for s in same) / len(same) + 0.08)
-        base = same[-1]
-        merged_reasons = sorted({reason for s in same for reason in s.reason_codes} | {"CONSENSUS_CONFIRMED"})
+        confidence = min(0.99, sum(candidate.confidence for candidate in same) / len(same) + 0.08)
+        base = max(same, key=lambda candidate: candidate.created_at)
+        consensus_time = base.created_at
+        merged_reasons = sorted(
+            {reason for candidate in same for reason in candidate.reason_codes}
+            | {"CONSENSUS_CONFIRMED"}
+        )
         metrics = {
             "source_strategies": different_strategies,
-            "source_signal_ids": [s.signal_id for s in same],
-            "source_confidence_avg": sum(s.confidence for s in same) / len(same),
+            "source_signal_ids": [candidate.signal_id for candidate in same],
+            "source_confidence_avg": sum(candidate.confidence for candidate in same) / len(same),
         }
         return SignalCandidate.build(
             strategy="consensus",
@@ -62,6 +87,8 @@ class ConsensusEngine:
             data_freshness_ms=base.data_freshness_ms,
             reason_codes=merged_reasons,
             metrics=metrics,
+            created_at=consensus_time,
             snapshot_id=base.snapshot_id,
-            source_signal_ids=[s.signal_id for s in same],
+            source_signal_ids=[candidate.signal_id for candidate in same],
+            reduce_only=base.reduce_only,
         )

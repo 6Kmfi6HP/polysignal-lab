@@ -1,0 +1,1 @@
+Persistent storage layer with three backends: SQLite database for structured signal and paper trading data, JSONL files for append-only audit logging, and JSON state files for atomic runtime state persistence. The SQLite schema is defined and managed in sqlite_schema.py.

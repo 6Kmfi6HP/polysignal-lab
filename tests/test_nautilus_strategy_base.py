@@ -372,6 +372,7 @@ class RuntimeFakePolicy(DecisionPolicyActor):
             if decision.order_intent
             else None,
             pair_id=decision.order_intent.pair_id if decision.order_intent else None,
+            reduce_only=decision.order_intent.reduce_only if decision.order_intent else False,
             hedge_leg=decision.hedge_leg,
         )
         return ApprovedDecision(signal=candidate)
@@ -554,7 +555,7 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
     strategy.evaluate_condition("condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
-    assert strategy.submitted == ["BTC:5m:btc-5m:UP:ptb_diff"]
+    assert strategy.submitted == ["BTC:5m:btc-5m:UP:ptb_diff:entry"]
     assert [rejected.reason_code for rejected in strategy.rejected_decisions] == [
         "DUPLICATE_IN_FLIGHT_SIGNAL"
     ]
@@ -570,8 +571,8 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
     )
     strategy.evaluate_condition("condition-btc-5m")
     assert strategy.submitted == [
-        "BTC:5m:btc-5m:UP:ptb_diff",
-        "BTC:5m:btc-5m:UP:ptb_diff",
+        "BTC:5m:btc-5m:UP:ptb_diff:entry",
+        "BTC:5m:btc-5m:UP:ptb_diff:entry",
     ]
 
 def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
@@ -903,6 +904,10 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         def __init__(self) -> None:
             self.timer = None
             self.canceled: list[str] = []
+            self.now_ns = 1_782_144_000_000_000_000
+
+        def timestamp_ns(self) -> int:
+            return self.now_ns
 
         def set_timer(self, name, interval, *, callback):
             self.timer = (name, interval, callback)
@@ -947,10 +952,27 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
     callback(object())
 
     assert strategy.evaluated == ["condition-btc-5m"]
-    strategy._last_market_data_evaluation_at["condition-btc-5m"] = datetime.now(UTC)
+    strategy._last_market_data_evaluation_at["condition-btc-5m"] = datetime.fromtimestamp(
+        strategy.clock.timestamp_ns() / 1_000_000_000,
+        UTC,
+    )
+    strategy._condition_from_quote_tick = lambda _tick: "condition-btc-5m"
+    strategy.on_quote_tick(SimpleNamespace(ts_event=1))
+    assert strategy._last_market_data_evaluation_at["condition-btc-5m"] == datetime.fromtimestamp(
+        strategy.clock.timestamp_ns() / 1_000_000_000,
+        UTC,
+    )
     callback(object())
 
-    assert strategy.evaluated == ["condition-btc-5m"]
+    assert strategy.evaluated == ["condition-btc-5m", "condition-btc-5m"]
+    strategy.clock.now_ns += 11_000_000_000
+    callback(object())
+
+    assert strategy.evaluated == [
+        "condition-btc-5m",
+        "condition-btc-5m",
+        "condition-btc-5m",
+    ]
 
     strategy.on_stop()
 
@@ -1241,7 +1263,7 @@ def test_native_strategy_readiness_gate_skips_missing_required_market_view_input
         **_native_projections(),
     )
     strategy.core.evaluate = lambda view: calls.append(view) or []  # type: ignore[method-assign]
-    strategy.assembler.build = lambda _condition_id: SimpleNamespace(
+    strategy.assembler.build = lambda _condition_id, *, created_at=None: SimpleNamespace(
         condition_id="condition-btc-5m",
         up_book=None,
         down_book=None,
@@ -1288,6 +1310,8 @@ def test_native_strategy_routes_decisions_through_policy_actor_decide() -> None:
 
 
 def test_cache_market_data_provider_uses_nautilus_order_book_methods_and_ts_last() -> None:
+    from nautilus_trader.model.identifiers import InstrumentId
+
     from polysignal_lab.nautilus_runtime.cache_market_data import (
         NautilusCacheMarketDataProvider,
     )
@@ -1308,7 +1332,8 @@ def test_cache_market_data_provider_uses_nautilus_order_book_methods_and_ts_last
 
     class Cache:
         def order_book(self, instrument_id: object) -> NautilusLikeOrderBook:
-            assert instrument_id == "up-token.POLYMARKET"
+            assert isinstance(instrument_id, InstrumentId)
+            assert str(instrument_id) == "up-token.POLYMARKET"
             return NautilusLikeOrderBook()
 
         def trade_ticks(self, instrument_id: object) -> list[object]:
@@ -1336,7 +1361,8 @@ def test_cache_market_data_provider_uses_nautilus_order_book_methods_and_ts_last
     )
     provider = NautilusCacheMarketDataProvider(cast(Any, Cache()), catalog=registry)
 
-    book = provider.book_for_token("up-token")
+    now = datetime.fromtimestamp(1_800_000_000, UTC)
+    book = provider.book_for_token("up-token", now=now)
 
     assert book is not None
     assert book.best_bid == 0.49

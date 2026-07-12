@@ -176,3 +176,10 @@ class MarketCatalog:
                 "Nautilus Polymarket adapter is required to resolve instrument IDs"
             ) from exc
         return str(helper(condition, token))
+
+    def market_id_for_instrument(self, instrument_id: str) -> str | None:
+        for pair in self._by_condition.values():
+            for token_id in (pair.up.token_id, pair.down.token_id):
+                if self.instrument_id_for_token(token_id) == instrument_id:
+                    return pair.market_id
+        return None

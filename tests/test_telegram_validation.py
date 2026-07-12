@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, json, httpx, pytest, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.nautilus_runtime.runtime_context_factory, polysignal_lab.nautilus_runtime.runtime_context_factory.build_nautilus_runtime_context
-Output: test_runtime_uses_configured_telegram_publish_timeout, test_telegram_qa_default_message_is_compact, test_missing_telegram_credentials_fail_live_publish, test_malformed_telegram_credentials_fail_live_publish, test_mocked_telegram_send_returns_sent_and_redacts_token, test_failed_telegram_response_redacts_token, test_invalid_publisher_credentials_fail_without_http_request, test_telegram_qa_records_actual_dry_run_invocation, test_telegram_qa_records_actual_live_failure_invocation
+Output: test_runtime_uses_configured_telegram_publish_timeout, test_nautilus_runtime_does_not_construct_legacy_orderbook_for_telegram, test_telegram_qa_default_message_is_compact, test_missing_telegram_credentials_fail_live_publish, test_malformed_telegram_credentials_fail_live_publish, test_mocked_telegram_send_returns_sent_and_redacts_token, test_failed_telegram_response_redacts_token, test_invalid_publisher_credentials_fail_without_http_request, test_telegram_qa_records_actual_dry_run_invocation, test_telegram_qa_records_actual_live_failure_invocation
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -40,6 +40,25 @@ def test_runtime_uses_configured_telegram_publish_timeout(tmp_path) -> None:
     runtime = build_nautilus_runtime_context(settings, base_dir=tmp_path)
 
     assert runtime.publish_service.timeout_sec == 20.0
+
+
+def test_nautilus_runtime_does_not_construct_legacy_orderbook_for_telegram(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeBot:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr("polysignal_lab.publish.telegram_bot.TelegramBotService", FakeBot)
+    settings = Settings()
+    settings.telegram.interactive_enabled = True
+
+    build_nautilus_runtime_context(settings, base_dir=tmp_path)
+
+    assert captured["books"] is None
 
 
 def test_telegram_qa_default_message_is_compact() -> None:

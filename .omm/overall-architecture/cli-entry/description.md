@@ -1,0 +1,1 @@
+The main entry point for all runtime modes. Parses CLI arguments (mode, config path, flags), loads settings, and dispatches to the selected runtime: Nautilus trading node, Dashboard web server, or bounded smoke test runner. Supports RuntimeMode enum: nautilus, dashboard, smoke.

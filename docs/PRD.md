@@ -112,9 +112,9 @@ PolySignal Lab 是一个后台常驻服务，第一版不要求完整 Web UI。
 └──────────────┬─────────────┘
                ↓
 ┌────────────────────────────┐
-│ Nautilus LiveNode          │
-│ - DataEngine callbacks      │
-│ - Strategy lifecycle        │
+│ Nautilus TradingNode     │
+│ - DataEngine callbacks   │
+│ - Strategy lifecycle     │
 └──────────────┬─────────────┘
                ↓
 ┌────────────────────────────┐
@@ -145,10 +145,10 @@ Signal Channel                Nautilus Cache / Portfolio Projection
 1. 读取配置文件。
 2. 校验 Telegram bot token 和 channel id。
 3. 加载启用资产、周期、策略。
-4. 初始化 Nautilus `LiveNode.builder(...)` paper runtime。
+4. 初始化 Nautilus `TradingNode` / `TradingNodeConfig` paper runtime，并注册 data/exec client factories。
 5. 发现当前 Polymarket crypto Up/Down 市场。
 6. Nautilus data path 接收 Polymarket market data。
-7. Nautilus `CustomData` callbacks 接收 spot、price-to-beat、market metadata；默认配置禁用 actor-owned RTDS spot source。
+7. Nautilus `CustomData` callbacks 接收 spot、price-to-beat、market metadata；managed RTDS spot data client 负责现货 ingress。
 8. Nautilus strategy callbacks 构造 market view 并运行 alpha core。
 9. 信号通过 `DecisionPolicyActor` 的 gate / dedupe / consensus。
 10. 通过 gate 后发送 Telegram。
@@ -167,7 +167,7 @@ Nautilus Data / Custom Data Callback
   → TelegramMessage
   → Nautilus native order
   → Nautilus sandbox fill / position
-  → PaperSettlement projection
+  → SettlementResolver / `_settlement_check` position projection
 ```
 
 ### 9.3 纸面交易流程
@@ -493,11 +493,11 @@ runtime:
     execution_mode: paper_sandbox
     allow_live_polymarket_execution: false
     sidecar:
-      spot_source: disabled
+      spot_source: polymarket_rtds
       price_to_beat_source: anchor_or_gamma
 ```
 
-默认 checked-in Nautilus runtime 禁用 actor-owned RTDS spot source。显式配置 `runtime.nautilus.sidecar.spot_source: polymarket_rtds` 会 fail fast；该路径直到存在 Nautilus-managed data-client lifecycle 后才可启用。
+Checked-in runtime uses the Nautilus-managed RTDS `LiveDataClient` for spot ingress. Setting `spot_source: disabled` while enabling a spot-dependent native strategy fails fast; it does not silently fall back to an actor-owned sidecar.
 
 **成交拒绝原因示例：**
 
@@ -741,7 +741,6 @@ polysignal-lab/
 
     data/
       polymarket_market_discovery.py
-      polymarket_rtds_ws.py
       binance_spot_ws.py
       market_snapshot.py
       market_discovery_helpers.py
@@ -874,7 +873,7 @@ polysignal-lab/
 |------|------|
 | app/main.py | CLI 入口, runtime mode 分派 |
 | AlphaCore (alpha/) | 产生 engine-agnostic AlphaDecision |
-| NautilusLiveNode | 拥有 strategy lifecycle, market data dispatch, order lifecycle |
+| Nautilus TradingNode | 拥有 strategy lifecycle、DataEngine/ExecutionEngine、cache、portfolio 和 paper order lifecycle |
 | PolySignalNativeStrategy | 在 Nautilus callbacks 中运行 alpha core, 处理 order/fill/position events |
 | DecisionPolicyActor | gate / dedupe / consensus / arbiter 检查 |
 | NautilusDecisionPolicyActor | DecisionPolicyActor 的 Nautilus Actor 生命周期封装 |
@@ -885,7 +884,7 @@ polysignal-lab/
 | MarketViewAssembler | 从 cache 投影 + custom data 组装只读 market view |
 | TelegramPublisher | 发送信号, 结果, 日报 |
 | SignalGate (signal_layer/) | 市场活跃, 时间窗口, 新鲜度, spread, 去重, 频控 |
-| PaperSettlement | 市场结束后判断 projected position win/loss |
+| SettlementResolver / `_settlement_check` | 从 Nautilus open position projection 和 Polymarket resolution evidence 生成 PaperTradeResult projection；不伪造 native payout 或 PositionClosed |
 | Dashboard API | FastAPI 只读 JSON API + HTML 首页 |
 | Storage | SQLite + JSONL + state |
 
@@ -919,7 +918,7 @@ data:
 runtime:
   nautilus:
     sidecar:
-      spot_source: disabled
+      spot_source: polymarket_rtds
       price_to_beat_source: anchor_or_gamma
 
 signal:
@@ -937,16 +936,13 @@ paper_trading:
   max_open_positions: 10
   max_market_exposure_usdc: 30.0
   max_strategy_exposure_usdc: 100.0
-  fill_model:
-    type: best_ask_taker
-    slippage_bps: 25
-    require_depth_check: true
-    reject_if_partial: true
-    min_fill_ratio: 1.0
   exit_model:
-    mode: hold_to_resolution
-    take_profit_enabled: false
-    stop_loss_enabled: false
+    mode: hold_to_resolution_with_optional_tp_sl
+    take_profit_enabled: true
+    stop_loss_enabled: true
+    take_profit_price: 0.90
+    stop_loss_price: 0.35
+    max_hold_time_sec: 900
 
 strategies:
   vwap_momentum:
@@ -1168,7 +1164,7 @@ roi = pnl / stake_usdc
 ### Phase 5：Nautilus Paper Runtime ✅
 
 交付：
-- Nautilus LiveNode runtime。
+- Nautilus `TradingNode` / `TradingNodeConfig` runtime。
 - Nautilus native order submission。
 - Nautilus sandbox paper execution。
 - Nautilus order/fill/position/account projections。

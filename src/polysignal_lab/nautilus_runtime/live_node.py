@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, importlib, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.Protocol, typing.cast, polysignal_lab.config
-Output: assert_no_live_polymarket_execution, build_paper_live_node, build_cache_config, build_data_engine_config, build_exec_engine_config, build_polymarket_data_client_config, build_sandbox_exec_client_config, _Builder
+Output: assert_no_live_polymarket_execution, validate_polymarket_market_data_credentials, build_paper_live_node, build_cache_config, build_data_engine_config, build_exec_engine_config, build_polymarket_data_client_config, build_sandbox_exec_client_config
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -15,15 +15,44 @@ Pos: Application code
 from __future__ import annotations
 
 import importlib
+import socket
 import sys
 from collections.abc import Callable, Mapping
-from typing import Protocol, cast
+from typing import cast
 
 from polysignal_lab.config import Settings, load_settings
+from polysignal_lab.nautilus_runtime.custom_data_types import SPOT_DATA_CLIENT_ID
 from polysignal_lab.nautilus_runtime.optional_imports import load_live_runtime_symbols
 
 PAPER_EXEC_CLIENT_ID = "POLYSIGNAL_PM_PAPER"
 POLYMARKET_CLIENT_ID = "POLYMARKET"
+POLYMARKET_MARKET_DATA_CREDENTIALS = (
+    "POLYMARKET_" + "API_KEY",
+    "POLYMARKET_" + "API_SECRET",
+    "POLYMARKET_" + "PASSPHRASE",
+    "POLYMARKET_" + "PK",
+    "POLYMARKET_" + "FUNDER",
+)
+
+
+def validate_polymarket_market_data_credentials(
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    """Fail before Nautilus builds its credentialed Polymarket data client."""
+    import os
+
+    source = os.environ if environ is None else environ
+    missing = tuple(
+        name
+        for name in POLYMARKET_MARKET_DATA_CREDENTIALS
+        if not str(source.get(name) or "").strip()
+    )
+    if missing:
+        names = ", ".join(missing)
+        raise RuntimeError(
+            "Nautilus Polymarket market-data adapter requires credentials: "
+            f"{names}"
+        )
 
 
 def assert_no_live_polymarket_execution(config: object) -> None:
@@ -34,23 +63,32 @@ def assert_no_live_polymarket_execution(config: object) -> None:
         raise RuntimeError("default paper runtime refuses live Polymarket execution")
 
 
+def _validate_state_persistence_backend(settings: Settings) -> None:
+    persistence = settings.runtime.nautilus.state_persistence
+    if not persistence.enabled:
+        return
+    try:
+        with socket.create_connection(
+            (persistence.host, persistence.port),
+            timeout=1.0,
+        ):
+            return
+    except OSError as exc:
+        raise RuntimeError(
+            "Nautilus state persistence backend is unavailable: "
+            f"{persistence.host}:{persistence.port}"
+        ) from exc
+
+
 # Lazy placeholders. Tests monkeypatch these module globals (and
-# live_node._import_callable) so unit tests never import real Nautilus LiveNode.
+# live_node._import_callable) so unit tests never import real Nautilus clients.
 # Do not replace with import-time static nautilus_trader imports.
-LiveNode: object | None = None
+TradingNode: object | None = None
+TradingNodeConfig: object | None = None
 TraderId: Callable[[str], object] | None = None
 Environment: object | None = None
 PolymarketLiveDataClientFactory: object | None = None
 SandboxLiveExecClientFactory: object | None = None
-
-
-class _Builder(Protocol):
-    def with_data_engine_config(self, config: object) -> "_Builder": ...
-    def with_exec_engine_config(self, config: object) -> "_Builder": ...
-    def with_cache_config(self, config: object) -> "_Builder": ...
-    def add_data_client(self, name: str | None, factory: object, config: object) -> "_Builder": ...
-    def add_exec_client(self, name: str | None, factory: object, config: object) -> "_Builder": ...
-    def build(self) -> object: ...
 
 
 def build_paper_live_node(
@@ -61,45 +99,129 @@ def build_paper_live_node(
     if settings is None:
         settings = load_settings()
     _ensure_live_imports()
-    live_node = _required(LiveNode, "LiveNode")
+    _validate_state_persistence_backend(settings)
+    _validate_real_polymarket_data_factory_credentials()
+    trading_node_cls = cast(Callable[..., object], _required(TradingNode, "TradingNode"))
+    trading_node_config_cls = cast(
+        Callable[..., object],
+        _required(TradingNodeConfig, "TradingNodeConfig"),
+    )
     trader_id_cls = cast(Callable[[str], object], _required(TraderId, "TraderId"))
     environment = _required(Environment, "Environment")
     trader_id_text = settings.runtime.nautilus.trader_id
     trader_id = trader_id_cls(trader_id_text)
-    builder_factory = cast(object, live_node)
-    builder = cast(
-        _Builder,
-        getattr(builder_factory, "builder")(
-            trader_id_text,
-            trader_id,
-            getattr(environment, "SANDBOX"),
-        ),
-    )
     data_config = build_polymarket_data_client_config(settings, instrument_config=instrument_config)
+    data_clients, spot_source = _build_data_clients(settings, data_config)
     exec_config = build_sandbox_exec_client_config(settings)
     assert_no_live_polymarket_execution({"exec_clients": {PAPER_EXEC_CLIENT_ID: exec_config}})
-    node = (
-        builder.with_cache_config(build_cache_config())
-        .with_data_engine_config(build_data_engine_config())
-        .with_exec_engine_config(build_exec_engine_config())
-        .add_data_client(
-            POLYMARKET_CLIENT_ID,
-            _required(PolymarketLiveDataClientFactory, "PolymarketLiveDataClientFactory"),
-            data_config,
-        )
-        .add_exec_client(
-            PAPER_EXEC_CLIENT_ID,
-            _required(SandboxLiveExecClientFactory, "SandboxLiveExecClientFactory"),
-            exec_config,
-        )
-        .build()
+    node_config = trading_node_config_cls(
+        environment=getattr(environment, "SANDBOX"),
+        trader_id=trader_id,
+        cache=build_cache_config(settings),
+        data_engine=build_data_engine_config(),
+        exec_engine=build_exec_engine_config(),
+        data_clients=data_clients,
+        exec_clients={PAPER_EXEC_CLIENT_ID: exec_config},
+        load_state=settings.runtime.nautilus.state_persistence.enabled,
+        save_state=settings.runtime.nautilus.state_persistence.enabled,
     )
+    node = trading_node_cls(config=node_config)
+    _register_live_node_factories(node, spot_source)
     return node
 
 
-def build_cache_config() -> object:
+def _register_live_node_factories(node: object, spot_source: str) -> None:
+    add_data_factory = cast(
+        Callable[[str, object], None], getattr(node, "add_data_client_factory")
+    )
+    add_exec_factory = cast(
+        Callable[[str, object], None], getattr(node, "add_exec_client_factory")
+    )
+    add_data_factory(
+        POLYMARKET_CLIENT_ID,
+        _required(PolymarketLiveDataClientFactory, "PolymarketLiveDataClientFactory"),
+    )
+    if spot_source == "polymarket_rtds":
+        add_data_factory(
+            SPOT_DATA_CLIENT_ID,
+            _import_callable(
+                "polysignal_lab.nautilus_runtime.spot_data_client",
+                "PolymarketRtdsSpotDataClientFactory",
+            ),
+        )
+    add_exec_factory(
+        PAPER_EXEC_CLIENT_ID,
+        _required(SandboxLiveExecClientFactory, "SandboxLiveExecClientFactory"),
+    )
+
+
+def _build_data_clients(
+    settings: Settings,
+    data_config: object,
+) -> tuple[dict[str, object], str]:
+    spot_source = str(settings.runtime.nautilus.sidecar.spot_source).strip().lower()
+    if spot_source not in {"disabled", "polymarket_rtds"}:
+        raise RuntimeError(
+            f"unsupported native spot source: {spot_source!r}; "
+            "expected 'disabled' or 'polymarket_rtds'"
+        )
+    data_clients: dict[str, object] = {POLYMARKET_CLIENT_ID: data_config}
+    if spot_source == "polymarket_rtds":
+        data_clients[SPOT_DATA_CLIENT_ID] = build_polymarket_rtds_spot_data_client_config(
+            settings
+        )
+    return data_clients, spot_source
+
+
+def build_cache_config(settings: Settings | None = None) -> object:
     cache_config = _import_callable("nautilus_trader.config", "CacheConfig")
-    return cache_config(tick_capacity=100, bar_capacity=100)
+    if settings is None or not settings.runtime.nautilus.state_persistence.enabled:
+        return cache_config(tick_capacity=100, bar_capacity=100)
+    persistence = settings.runtime.nautilus.state_persistence
+    database_config = _import_callable("nautilus_trader.config", "DatabaseConfig")
+    username = _persistence_secret(persistence.username_env)
+    password = _persistence_secret(persistence.password_env)
+    database = database_config(
+        type="redis",
+        host=persistence.host,
+        port=persistence.port,
+        username=username,
+        password=password,
+        ssl=persistence.ssl,
+    )
+    return cache_config(
+        tick_capacity=100,
+        bar_capacity=100,
+        database=database,
+        use_trader_prefix=True,
+        use_instance_id=False,
+        flush_on_start=False,
+    )
+
+
+def _persistence_secret(env_name: str | None) -> str | None:
+    if not env_name:
+        return None
+    import os
+
+    value = os.environ.get(env_name)
+    if value is None:
+        raise RuntimeError(
+            f"native state persistence requires credential environment variable {env_name!r}"
+        )
+    return value
+
+
+def build_polymarket_rtds_spot_data_client_config(settings: Settings) -> object:
+    spot_config = _import_callable(
+        "polysignal_lab.nautilus_runtime.spot_data_client",
+        "PolymarketRtdsSpotDataClientConfig",
+    )
+    polymarket = settings.data.polymarket
+    return spot_config(
+        rtds_ws_url=polymarket.rtds_ws_url,
+        assets=tuple(polymarket.rtds_assets),
+    )
 
 
 def build_data_engine_config() -> object:
@@ -114,6 +236,9 @@ def build_exec_engine_config() -> object:
     live_exec_engine_config = _import_callable("nautilus_trader.config", "LiveExecEngineConfig")
     return live_exec_engine_config(
         reconciliation=False,
+        inflight_check_interval_ms=0,
+        open_check_interval_secs=None,
+        position_check_interval_secs=None,
         graceful_shutdown_on_exception=True,
     )
 
@@ -156,56 +281,71 @@ def build_sandbox_exec_client_config(settings: Settings) -> object:
         trade_execution=True,
         support_gtd_orders=True,
         support_contingent_orders=False,
-        use_reduce_only=False,
+        use_reduce_only=True,
         routing=routing_config(venues=frozenset({POLYMARKET_CLIENT_ID})),
     )
 
 
-def _ensure_live_imports() -> None:
-    """Lazy-import Nautilus LiveNode symbols into module globals.
+def _validate_real_polymarket_data_factory_credentials() -> None:
+    factory = PolymarketLiveDataClientFactory
+    module_name = getattr(factory, "__module__", "")
+    if isinstance(module_name, str) and module_name.startswith(
+        "nautilus_trader.adapters.polymarket"
+    ):
+        validate_polymarket_market_data_credentials()
 
-    Monkeypatch surface (keep assignable; do not switch to static imports):
-    - LiveNode, TraderId, Environment
-    - PolymarketLiveDataClientFactory, SandboxLiveExecClientFactory
-    - _import_callable (config factories used by build_* helpers)
 
-    Reads LiveNode from ``sys.modules`` so string-path monkeypatches take effect
-    even if this function's ``__globals__`` is a stale module object.
-    """
-    global LiveNode, TraderId, Environment, PolymarketLiveDataClientFactory, SandboxLiveExecClientFactory
+def _sync_live_module_globals(mod: object) -> None:
+    global TradingNodeConfig, TraderId, Environment
+    global PolymarketLiveDataClientFactory, SandboxLiveExecClientFactory
 
-    mod = sys.modules.get(__name__)
-    module_live_node = getattr(mod, "LiveNode", None) if mod is not None else None
-    current_live_node = module_live_node if module_live_node is not None else LiveNode
-    if current_live_node is not None:
-        LiveNode = current_live_node
-        if mod is not None:
-            # Only re-sync symbols tests actually monkeypatch.
-            TraderId = cast(
-                Callable[[str], object] | None,
-                getattr(mod, "TraderId", TraderId),
-            )
-            Environment = getattr(mod, "Environment", Environment)
-            PolymarketLiveDataClientFactory = getattr(
-                mod, "PolymarketLiveDataClientFactory", PolymarketLiveDataClientFactory
-            )
-            SandboxLiveExecClientFactory = getattr(
-                mod, "SandboxLiveExecClientFactory", SandboxLiveExecClientFactory
-            )
-        return
+    TradingNodeConfig = getattr(mod, "TradingNodeConfig", TradingNodeConfig)
+    TraderId = cast(Callable[[str], object] | None, getattr(mod, "TraderId", TraderId))
+    Environment = getattr(mod, "Environment", Environment)
+    PolymarketLiveDataClientFactory = getattr(
+        mod,
+        "PolymarketLiveDataClientFactory",
+        PolymarketLiveDataClientFactory,
+    )
+    SandboxLiveExecClientFactory = getattr(
+        mod,
+        "SandboxLiveExecClientFactory",
+        SandboxLiveExecClientFactory,
+    )
 
-    symbols = load_live_runtime_symbols()
-    LiveNode = symbols.live_node
-    TraderId = cast(Callable[[str], object], symbols.trader_id)
-    Environment = symbols.environment
-    PolymarketLiveDataClientFactory = symbols.polymarket_data_factory
-    SandboxLiveExecClientFactory = symbols.sandbox_exec_factory
+
+def _install_live_runtime_symbols(symbols: object, mod: object | None) -> None:
+    global TradingNode, TradingNodeConfig, TraderId, Environment
+    global PolymarketLiveDataClientFactory, SandboxLiveExecClientFactory
+
+    TradingNode = getattr(symbols, "trading_node")
+    TradingNodeConfig = getattr(symbols, "trading_node_config")
+    TraderId = cast(Callable[[str], object], getattr(symbols, "trader_id"))
+    Environment = getattr(symbols, "environment")
+    PolymarketLiveDataClientFactory = getattr(symbols, "polymarket_data_factory")
+    SandboxLiveExecClientFactory = getattr(symbols, "sandbox_exec_factory")
     if mod is not None:
-        mod.LiveNode = LiveNode
+        mod.TradingNode = TradingNode
+        mod.TradingNodeConfig = TradingNodeConfig
         mod.TraderId = TraderId
         mod.Environment = Environment
         mod.PolymarketLiveDataClientFactory = PolymarketLiveDataClientFactory
         mod.SandboxLiveExecClientFactory = SandboxLiveExecClientFactory
+
+
+def _ensure_live_imports() -> None:
+    """Lazy-import Nautilus TradingNode symbols into module globals."""
+    global TradingNode
+
+    mod = sys.modules.get(__name__)
+    current_trading_node = getattr(mod, "TradingNode", None) if mod is not None else TradingNode
+    if current_trading_node is not None:
+        TradingNode = current_trading_node
+        if mod is not None:
+            _sync_live_module_globals(mod)
+        return
+
+    _install_live_runtime_symbols(load_live_runtime_symbols(), mod)
 
 
 def _import_callable(module_name: str, attr_name: str) -> Callable[..., object]:

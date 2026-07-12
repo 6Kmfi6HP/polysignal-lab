@@ -18,7 +18,7 @@ from collections.abc import Callable
 
 import pytest
 
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 
@@ -30,6 +30,7 @@ def candidate_factory() -> Callable[..., SignalCandidate]:
         strategy: str,
         market_id: str,
         side: Side,
+        reduce_only: bool = False,
     ) -> SignalCandidate:
         token_suffix = "up" if side == Side.UP else "down"
         return SignalCandidate.build(
@@ -48,6 +49,8 @@ def candidate_factory() -> Callable[..., SignalCandidate]:
             data_freshness_ms=10,
             reason_codes=["TEST"],
             metrics={"max_spread": 0.1},
+            order_intent=OrderIntent.TAKER_IOC if reduce_only else None,
+            reduce_only=reduce_only,
         )
 
     return make_candidate
@@ -68,6 +71,27 @@ def test_arbiter_suppresses_same_market_opposite_side_conflicts(
     )
 
     assert result == []
+
+
+def test_arbiter_preserves_reduce_only_exit_against_opposite_side_entry(
+    candidate_factory: Callable[..., SignalCandidate],
+) -> None:
+    close = candidate_factory(
+        strategy="close",
+        market_id="m1",
+        side=Side.UP,
+        reduce_only=True,
+    )
+    entry = candidate_factory(strategy="entry", market_id="m1", side=Side.DOWN)
+
+    result = SignalArbiter(conflict_policy="suppress_ambiguous").arbitrate(
+        [close, entry],
+        strategy_priorities={"close": 0, "entry": 1},
+        strategy_config_indexes={"close": 0, "entry": 1},
+        market_config_indexes={"m1": 0},
+    )
+
+    assert result == [close]
 
 
 def test_arbiter_stable_sorts_by_priority_and_indexes(

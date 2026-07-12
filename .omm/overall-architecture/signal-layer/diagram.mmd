@@ -1,0 +1,14 @@
+graph LR
+    gates["Signal Gates\ngate.py"]:::entry
+    arbiter["Signal Arbiter\narbiter.py"]
+    consensus["Consensus\nconsensus.py"]
+    deduper["Deduplicator\ndeduper.py"]
+    formatter["Formatter\nformatter.py"]
+    rate-limit["Rate Limiter\nrate_limit.py"]
+
+    gates -->|"filters"| arbiter
+    arbiter -->|"prioritizes"| consensus
+    consensus -->|"aggregates"| deduper
+    deduper -->|"deduplicates"| formatter
+
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e

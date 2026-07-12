@@ -1,0 +1,1 @@
+Storage files live in the data/ directory (SQLite databases and state files) and logs/ directory (JSONL audit logs). These are runtime-generated and gitignored. The SQLite schema is versioned and managed in sqlite_schema.py with migration support.

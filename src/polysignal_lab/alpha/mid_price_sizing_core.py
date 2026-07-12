@@ -55,6 +55,9 @@ class MidPriceSizingAlphaCore:
         self._entry_prices.setdefault(key, []).append(event.fill_price)
         return []
 
+    def on_order_closed(self, event: AlphaFillEvent) -> None:
+        self.reset_position(event.market_id, event.side)
+
     def on_order_submitted(self, event: AlphaOrderEvent) -> None: pass
     def on_order_accepted(self, event: AlphaOrderEvent) -> None: pass
     def on_order_rejected(self, event: AlphaOrderEvent) -> None: pass
@@ -68,12 +71,21 @@ class MidPriceSizingAlphaCore:
             return []
         if view.timeframe not in self.config.timeframes:
             return []
-        if not self._regime_gate(view):
-            return []
+        entry_regime = self._regime_gate(view)
         decisions: list[AlphaDecision] = []
         for side in (Side.UP, Side.DOWN):
-            decisions.extend(self._evaluate_side(view, side))
+            if entry_regime or self._exit_triggered(view, side):
+                decisions.extend(self._evaluate_side(view, side))
         return decisions
+
+    def _exit_triggered(self, view: MarketView, side: Side) -> bool:
+        key = self._pos_key(view.market_id, side)
+        if self._layer_count.get(key, 0) <= 0 or self._avg_cost(key) is None:
+            return False
+        bid = view.book_for(side).best_bid
+        return bid is not None and (
+            bid <= self.config.stop_price or bid >= self.config.take_profit_price
+        )
 
     def _regime_gate(self, view: MarketView) -> bool:
         for side in (Side.UP, Side.DOWN):
@@ -152,7 +164,7 @@ class MidPriceSizingAlphaCore:
             view,
             side,
             ask,
-            confidence=0.30,
+            confidence=1.0,
             reason_codes=reason_codes,
             metrics={
                 "action": action,
@@ -161,6 +173,7 @@ class MidPriceSizingAlphaCore:
                 "bid": bid,
                 threshold_key: threshold_value,
             },
+            reduce_only=True,
         )
 
     def _evaluate_entry(self, view: MarketView, side: Side, ask: float) -> list[AlphaDecision]:
@@ -180,6 +193,7 @@ class MidPriceSizingAlphaCore:
                 "entry_center": self.config.entry_center,
                 "entry_band": self.config.entry_band,
             },
+            notional=self.config.base_notional,
         )
 
     def _evaluate_addition(self, view: MarketView, side: Side, ask: float, current_layers: int, avg_cost: float) -> list[AlphaDecision]:
@@ -203,6 +217,7 @@ class MidPriceSizingAlphaCore:
                 "layer": current_layers + 1,
                 "multiplier": multiplier,
             },
+            notional=self.config.base_notional * multiplier,
         )
 
     def _addition_setup(
@@ -277,11 +292,25 @@ class MidPriceSizingAlphaCore:
             return avg_cost - ask
         return 0.0
 
-    def _make_signal(self, view: MarketView, side: Side, max_entry_price: float, *, confidence: float, reason_codes: tuple[str, ...], metrics: dict[str, Any]) -> list[AlphaDecision]:
+    def _make_signal(
+        self,
+        view: MarketView,
+        side: Side,
+        max_entry_price: float,
+        *,
+        confidence: float,
+        reason_codes: tuple[str, ...],
+        metrics: dict[str, Any],
+        reduce_only: bool = False,
+        notional: float | None = None,
+    ) -> list[AlphaDecision]:
         book = view.book_for(side)
         if book.best_ask is None:
             return []
         mode_value = getattr(self.config.mode, "value", self.config.mode)
+        signal_metrics = {**metrics, "mode": mode_value}
+        if not reduce_only and notional is not None:
+            signal_metrics["contracts"] = notional / book.best_ask
         decision = AlphaDecision(
             strategy=self.name,
             asset=view.asset,
@@ -297,8 +326,8 @@ class MidPriceSizingAlphaCore:
             seconds_to_close=view.seconds_to_close,
             data_freshness_ms=view.freshness.max_ms,
             reason_codes=reason_codes,
-            metrics={**metrics, "mode": mode_value},
-            order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK),
+            metrics=signal_metrics,
+            order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, reduce_only=reduce_only),
         )
         return [decision]
 

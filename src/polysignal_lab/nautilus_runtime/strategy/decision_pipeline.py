@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Protocol, cast
 
 from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, MarketView
@@ -41,6 +42,7 @@ def submit_approved_for_view(
     view: MarketView,
     fixed_stake_usdc: float,
     instrument_id_resolver: Callable[[str], object],
+    now: Callable[[], datetime] | None = None,
 ) -> object:
     signal = approved.signal
     book = view.book_for(signal.side)
@@ -49,7 +51,9 @@ def submit_approved_for_view(
         approved,
         fixed_stake_usdc=fixed_stake_usdc,
         best_ask=book.best_ask,
+        best_bid=getattr(book, "best_bid", None),
         instrument_id_resolver=instrument_id_resolver,
+        now=now,
     )
 
 
@@ -65,6 +69,7 @@ def map_approved_to_order_spec(
         approved,
         fixed_stake_usdc=fixed_stake_usdc,
         best_ask=book.best_ask,
+        best_bid=getattr(book, "best_bid", None),
     )
 
 

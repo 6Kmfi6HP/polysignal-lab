@@ -45,6 +45,7 @@ from polysignal_lab.nautilus_runtime.native_order import (
     OrderSubmittingStrategy,
     submit_approved_decision,
 )
+from polysignal_lab.nautilus_runtime.native_strategy_exit import NativeExitPolicy
 from polysignal_lab.nautilus_runtime.strategy.custom_data_handlers import route_strategy_data
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
     DecisionPipeline,
@@ -69,6 +70,7 @@ from polysignal_lab.nautilus_runtime.strategy.order_events import (
     forget_approved_metrics as _forget_approved_metrics_hook,
     handle_order_filled as _handle_order_filled,
     handle_order_lifecycle_event as _handle_order_lifecycle_event,
+    handle_position_closed as _handle_position_closed,
     handle_position_event as _handle_position_event,
     project_strategy_fill_event as _project_strategy_fill_event,
     project_strategy_order_event as _project_strategy_order_event,
@@ -102,6 +104,7 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _identity_instrument_id,
     _market_view_ready,
     _nautilus_instrument_id,
+    _spot_data_client_id,
     _subscribe_custom_data,
     classify_project_owned_data,
 )
@@ -119,6 +122,8 @@ class PolySignalNativeStrategy(Strategy):
         strategy_name: str,
         policy: DecisionPolicyActor | None = None,
         fixed_stake_usdc: float = 10.0,
+        paper_risk_gate: object | None = None,
+        exit_model: object | None = None,
         data_names: Sequence[str] = DEFAULT_NATIVE_DATA_NAMES,
         book_type: str = "L2_MBP",
         instrument_id_resolver: Callable[[str], object] | None = None,
@@ -130,32 +135,66 @@ class PolySignalNativeStrategy(Strategy):
         config: StrategyConfig | None = None,
     ) -> None:
         super().__init__(config=config or StrategyConfig())
-
         if registry is None or assembler is None:
             raise RuntimeError(MISSING_PROJECTIONS_ERROR)
+        self._configure_dependencies(core, assembler, condition_ids, strategy_name, policy, registry)
+        self._configure_runtime_options(
+            fixed_stake_usdc=fixed_stake_usdc,
+            paper_risk_gate=paper_risk_gate,
+            exit_model=exit_model,
+            data_names=data_names,
+            book_type=book_type,
+            instrument_id_resolver=instrument_id_resolver,
+            observability=observability,
+            progress_callback=progress_callback,
+            l1_book_snapshot_interval_ms=l1_book_snapshot_interval_ms,
+        )
+        self._initialize_runtime_state(registry, unsubscribe_exited=unsubscribe_exited)
 
-        self.core: AlphaCore = core
-        self.custom_data: StrategyCustomDataState = StrategyCustomDataState()
+    def _configure_dependencies(
+        self,
+        core: AlphaCore,
+        assembler: _Assembler,
+        condition_ids: Sequence[str],
+        strategy_name: str,
+        policy: DecisionPolicyActor | None,
+        registry: MarketCatalog,
+    ) -> None:
+        if policy is None:
+            raise TypeError("policy must be an injected shared DecisionPolicyActor")
+        self.core = core
+        self.custom_data = StrategyCustomDataState()
         resolved_assembler = _assembler_with_custom_data(assembler, self.custom_data)
         if resolved_assembler is None:
             raise RuntimeError(MISSING_PROJECTIONS_ERROR)
-        self.assembler: _Assembler = resolved_assembler
-        self.condition_ids: tuple[str, ...] = tuple(condition_ids)
-        self.strategy_name: str = strategy_name
-        if policy is None:
-            raise TypeError("policy must be an injected shared DecisionPolicyActor")
-        self.policy: DecisionPolicyActor = policy
-        self.fixed_stake_usdc: float = fixed_stake_usdc
-        self.data_names: tuple[str, ...] = tuple(data_names)
-        self.book_type: str = book_type
-        self.l1_book_snapshot_interval_ms: int = int(l1_book_snapshot_interval_ms)
-        self.instrument_id_resolver: Callable[[str], object] = (
-            instrument_id_resolver or _identity_instrument_id
-        )
-        self.registry: MarketCatalog | None = registry
-        self.observability: _Observability | None = observability
-        self.progress_callback: Callable[[str], None] | None = progress_callback
-        self._initialize_runtime_state(registry, unsubscribe_exited=unsubscribe_exited)
+        self.assembler = resolved_assembler
+        self.condition_ids = tuple(condition_ids)
+        self.strategy_name = strategy_name
+        self.policy = policy
+        self.registry = registry
+
+    def _configure_runtime_options(
+        self,
+        *,
+        fixed_stake_usdc: float,
+        paper_risk_gate: object | None,
+        exit_model: object | None,
+        data_names: Sequence[str],
+        book_type: str,
+        instrument_id_resolver: Callable[[str], object] | None,
+        observability: _Observability | None,
+        progress_callback: Callable[[str], None] | None,
+        l1_book_snapshot_interval_ms: int,
+    ) -> None:
+        self.fixed_stake_usdc = fixed_stake_usdc
+        self.paper_risk_gate = paper_risk_gate
+        self.exit_policy = NativeExitPolicy.from_config(exit_model)
+        self.data_names = tuple(data_names)
+        self.book_type = book_type
+        self.l1_book_snapshot_interval_ms = int(l1_book_snapshot_interval_ms)
+        self.instrument_id_resolver = instrument_id_resolver or _identity_instrument_id
+        self.observability = observability
+        self.progress_callback = progress_callback
 
     def _initialize_runtime_state(
         self,
@@ -215,6 +254,7 @@ class PolySignalNativeStrategy(Strategy):
     def _init_runtime_queues(self) -> None:
         self.submitted_specs: deque[object] = deque(maxlen=1000)
         self.execution_results: deque[object] = deque(maxlen=1000)
+        self._exit_inflight: set[str] = set()
 
     def _require_registry(self) -> MarketCatalog | None:
         if self.registry is None:
@@ -230,6 +270,22 @@ class PolySignalNativeStrategy(Strategy):
         if callback is None:
             return
         callback(phase)
+
+    def _framework_now(self) -> datetime:
+        timestamp_ns = getattr(self.clock, "timestamp_ns", None)
+        if not callable(timestamp_ns):
+            if getattr(self, "trader_id", None) is None:
+                return datetime(1970, 1, 1, tzinfo=UTC)
+            raise RuntimeError("Nautilus framework clock timestamp_ns is unavailable")
+        try:
+            value = int(timestamp_ns())
+        except NotImplementedError:
+            if getattr(self, "trader_id", None) is None:
+                return datetime(1970, 1, 1, tzinfo=UTC)
+            raise RuntimeError("Nautilus framework clock timestamp_ns is unavailable")
+        if value <= 0:
+            raise RuntimeError("Nautilus framework clock returned an invalid timestamp")
+        return datetime.fromtimestamp(value / 1_000_000_000, UTC)
 
     @property
     def cache(self) -> object:
@@ -258,7 +314,11 @@ class PolySignalNativeStrategy(Strategy):
         _ = self._require_registry()
         _ = self._require_assembler()
         self._subscribe_market_conditions(self._startup_condition_ids)
-        _subscribe_custom_data(self, PolySignalSpotData)
+        _subscribe_custom_data(
+            self,
+            PolySignalSpotData,
+            client_id=_spot_data_client_id(),
+        )
         _subscribe_custom_data(self, PolySignalPriceToBeatData)
         _subscribe_custom_data(self, PolySignalMarketMetaData)
         _subscribe_custom_data(self, PolySignalMarketUniverseData)
@@ -287,7 +347,7 @@ class PolySignalNativeStrategy(Strategy):
 
     def _on_evaluation_heartbeat(self, _event: object) -> None:
         self._note_runtime_progress("evaluation_heartbeat")
-        now = datetime.now(UTC)
+        now = self._framework_now()
         for condition_id in tuple(sorted(self._active_condition_ids)):
             last_market_data_eval = self._last_market_data_evaluation_at.get(condition_id)
             if (
@@ -308,7 +368,7 @@ class PolySignalNativeStrategy(Strategy):
         condition_id = self._condition_from_order_book_deltas(deltas)
         if condition_id is None:
             return
-        self._evaluate_market_data_condition(condition_id)
+        self._evaluate_market_data_condition(condition_id, event=deltas)
 
     def _condition_from_market_data(self, data: object) -> str | None:
         if self.registry is None:
@@ -332,7 +392,7 @@ class PolySignalNativeStrategy(Strategy):
         condition_id = self._condition_from_quote_tick(tick)
         if condition_id is None:
             return
-        self._evaluate_market_data_condition(condition_id)
+        self._evaluate_market_data_condition(condition_id, event=tick)
 
     def _condition_from_quote_tick(self, tick: object) -> str | None:
         return self._condition_from_market_data(tick)
@@ -341,7 +401,7 @@ class PolySignalNativeStrategy(Strategy):
         condition_id = self._condition_from_order_book(book)
         if condition_id is None:
             return
-        self._evaluate_market_data_condition(condition_id)
+        self._evaluate_market_data_condition(condition_id, event=book)
 
     def _condition_from_order_book(self, book: object) -> str | None:
         return self._condition_from_market_data(book)
@@ -350,14 +410,21 @@ class PolySignalNativeStrategy(Strategy):
         condition_id = self._condition_from_trade_tick(tick)
         if condition_id is None:
             return
-        self._evaluate_market_data_condition(condition_id)
+        self._evaluate_market_data_condition(condition_id, event=tick)
 
     def _condition_from_trade_tick(self, tick: object) -> str | None:
         return self._condition_from_market_data(tick)
 
-    def _evaluate_market_data_condition(self, condition_id: str) -> None:
+    def _evaluate_market_data_condition(
+        self,
+        condition_id: str,
+        *,
+        event: object | None = None,
+    ) -> None:
+        _ = event
         self._note_runtime_progress("market_data_evaluation")
-        self._last_market_data_evaluation_at[condition_id] = datetime.now(UTC)
+        now = self._framework_now()
+        self._last_market_data_evaluation_at[condition_id] = now
         self.evaluate_condition(condition_id)
 
     def on_order_submitted(self, event: object) -> None:
@@ -367,21 +434,29 @@ class PolySignalNativeStrategy(Strategy):
         _handle_order_lifecycle_event(self, "on_order_accepted", event)
 
     def on_order_rejected(self, event: object) -> None:
+        self._release_risk_reservation(event)
+        self._clear_exit_inflight_from_event(event)
         _handle_order_lifecycle_event(
             self, "on_order_rejected", event, forget_metrics=True
         )
 
     def on_order_canceled(self, event: object) -> None:
+        self._release_risk_reservation(event)
+        self._clear_exit_inflight_from_event(event)
         _handle_order_lifecycle_event(
             self, "on_order_canceled", event, forget_metrics=True
         )
 
     def on_order_expired(self, event: object) -> None:
+        self._release_risk_reservation(event)
+        self._clear_exit_inflight_from_event(event)
         _handle_order_lifecycle_event(
             self, "on_order_expired", event, forget_metrics=True
         )
 
     def on_order_filled(self, event: object) -> None:
+        self._release_risk_reservation(event)
+        self._clear_exit_inflight_from_event(event)
         _handle_order_filled(self, event)
 
     def on_position_opened(self, position: object) -> None:
@@ -391,22 +466,31 @@ class PolySignalNativeStrategy(Strategy):
         _handle_position_event(self, position)
 
     def on_position_closed(self, position: object) -> None:
-        _handle_position_event(self, position)
+        position_id = str(getattr(position, "id", ""))
+        if position_id:
+            self._exit_inflight.discard(position_id)
+        _handle_position_closed(self, position)
 
-    def evaluate_condition(self, condition_id: str) -> None:
+    def evaluate_condition(
+        self,
+        condition_id: str,
+        *,
+        created_at: datetime | None = None,
+    ) -> None:
         if condition_id not in self._active_condition_ids:
             return
-        view = self._require_assembler().build(condition_id)
+        now = created_at or self._framework_now()
+        view = self._require_assembler().build(condition_id, created_at=now)
         if view is None:
             return
         if not _market_view_ready(view):
             self._note_runtime_progress("readiness_miss")
             return
         market_view = cast(MarketView, view)
-        batch = [
-            (decision, market_view)
-            for decision in self.core.evaluate(market_view)
-        ]
+        decisions = self._evaluate_decisions(market_view, now=now)
+        if decisions is None:
+            return
+        batch = [(decision, market_view) for decision in decisions]
         try:
             batch_result = self._decision_pipeline.try_batch_arbitrate(batch)
         except Exception:
@@ -422,6 +506,35 @@ class PolySignalNativeStrategy(Strategy):
         for decision in batch_result:
             self._handle_decision(decision, market_view)
 
+    def _evaluate_decisions(
+        self,
+        market_view: MarketView,
+        *,
+        now: datetime,
+    ) -> tuple[AlphaDecision, ...] | None:
+        if self.exit_policy is None:
+            return tuple(self.core.evaluate(market_view))
+        try:
+            cache = self.cache
+        except (AttributeError, RuntimeError):
+            cache = None
+        try:
+            decisions = self.exit_policy.decisions(
+                cache=cache,
+                strategy_id=getattr(self, "id", None),
+                registry=self._require_registry(),
+                view=market_view,
+                now=now,
+                inflight=self._exit_inflight,
+            )
+        except (TypeError, ValueError, RuntimeError):
+            self._note_runtime_progress("native_exit_failed")
+            return tuple(self.core.evaluate(market_view))
+        if decisions:
+            self._note_runtime_progress("native_exit")
+            return decisions
+        return tuple(self.core.evaluate(market_view))
+
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
         self._decision_pipeline.handle_decision(
             decision,
@@ -436,13 +549,48 @@ class PolySignalNativeStrategy(Strategy):
         signal = approved.signal
         book = view.book_for(signal.side)
         # Subclasses supplied by Nautilus/tests provide the native submit surface.
-        return submit_approved_decision(
+        order = submit_approved_decision(
             cast(OrderSubmittingStrategy[object], cast(object, self)),
             approved,
             fixed_stake_usdc=self.fixed_stake_usdc,
             best_ask=book.best_ask,
+            best_bid=getattr(book, "best_bid", None),
             instrument_id_resolver=self._resolved_instrument,
+            now=self._framework_now,
         )
+        if signal.reduce_only:
+            position_id = str(signal.metrics.get("position_id") or "")
+            if position_id:
+                self._exit_inflight.add(position_id)
+        return order
+
+    def _release_risk_reservation(self, event: object) -> None:
+        release_from_event = getattr(self.paper_risk_gate, "release_from_event", None)
+        if callable(release_from_event):
+            release_from_event(event)
+
+    def _clear_exit_inflight_from_event(self, event: object) -> None:
+        metrics: Mapping[str, object] = {}
+        metrics_for_event = getattr(self._metrics_tracker, "metrics_for_event", None)
+        if callable(metrics_for_event):
+            try:
+                raw_metrics = metrics_for_event(event)
+            except (KeyError, TypeError, ValueError):
+                raw_metrics = {}
+            if isinstance(raw_metrics, Mapping):
+                metrics = raw_metrics
+        position_id = str(metrics.get("position_id") or "")
+        if not position_id:
+            tags = getattr(event, "tags", ())
+            if isinstance(tags, (str, bytes)):
+                tags = (tags,)
+            for tag in tags:
+                text = str(tag)
+                if text.startswith("position_id="):
+                    position_id = text.partition("=")[2]
+                    break
+        if position_id:
+            self._exit_inflight.discard(position_id)
 
     def _resolved_instrument(self, token_id: str) -> object:
         resolved = self.instrument_id_resolver(token_id)

@@ -84,6 +84,9 @@ def project_position(position: object) -> dict[str, object]:
         if quantity is not None and avg_entry_price is not None
         else None
     )
+    opened_at = _timestamp_text(position, "ts_opened", "opened_at")
+    closed_at = _timestamp_text(position, "ts_closed", "closed_at")
+    timestamp = opened_at or closed_at or _timestamp_text(position, "ts_event")
     return {
         "paper_position_id": position_id,
         "position_id": position_id,
@@ -94,7 +97,9 @@ def project_position(position: object) -> dict[str, object]:
         "realized_pnl": _float_attr(position, "realized_pnl"),
         "status": "CLOSED" if is_closed else "OPEN",
         "is_closed": is_closed,
-        "ts": _timestamp_text(position, "ts_event", "opened_at", "closed_at"),
+        "opened_at": opened_at,
+        "closed_at": closed_at,
+        "ts": timestamp,
     }
 
 

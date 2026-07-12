@@ -11,8 +11,8 @@
 | Strategies | PolySignal alpha cores wrapped by static Nautilus strategy subclasses |
 | Signal layer | SignalCandidate schema, gate, dedupe, channel rate limiter, consensus engine, formatter |
 | Telegram | Dry-run default publisher, retry-capable HTTP sender, publish audit record, real Telegram QA command with redacted evidence |
-| Paper trading | Nautilus LiveNode, native order submission, Nautilus sandbox execution, cache/portfolio projections |
-| Node surface | Default runtime uses `LiveNode.builder(...)`; legacy `TradingNode` import/config construction surface is absent |
+| Paper trading | Nautilus TradingNode, native order submission, Nautilus sandbox execution, cache/portfolio projections |
+| Node surface | Default runtime uses `TradingNodeConfig` and `TradingNode.add_*_client_factory(...)`; `LiveNode.builder(...)` is not available in locked NautilusTrader 1.229.0 |
 | Exits/settlement | Prediction-market resolution remains business logic; runtime positions and account state come from Nautilus portfolio/cache projection |
 | Reporting | Daily report, PnL, ROI, win rate, drawdown, profit factor, breakdowns over projected Nautilus state |
 | Storage | SQLite tables, JSONL audit logs, atomic state files |

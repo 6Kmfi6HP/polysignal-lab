@@ -1,0 +1,10 @@
+created: 2026-07-11T22:51:30.724Z
+updated: 2026-07-11T22:51:30.724Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: obs-hooks
+children: []
+parentPath:
+  - nautilus-runtime
+  - strategy-sub

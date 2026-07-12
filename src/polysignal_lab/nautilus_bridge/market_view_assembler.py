@@ -22,14 +22,19 @@ from typing_extensions import final
 
 from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView, TradeView
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
-from polysignal_lab.utils import stable_hash, utc_now
+from polysignal_lab.utils import stable_hash
 
 if TYPE_CHECKING:
     from polysignal_lab.nautilus_runtime.custom_data_state import CustomDataSnapshotProvider
 
 
 class BookDataProvider(Protocol):
-    def book_for_token(self, token_id: str) -> SideBookView | None: ...
+    def book_for_token(
+        self,
+        token_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> SideBookView | None: ...
 
     def trades_for_token(self, token_id: str) -> Sequence[TradeView]: ...
 
@@ -54,18 +59,18 @@ class MarketViewAssembler:
             custom_data=custom_data,
         )
 
-    def build(self, condition_id: str, *, created_at: datetime | None = None) -> MarketView | None:
+    def build(self, condition_id: str, *, created_at: datetime) -> MarketView | None:
         pair = self.catalog.by_condition(condition_id)
         if pair is None:
             return None
-        up_book = self.books.book_for_token(pair.up.token_id)
-        down_book = self.books.book_for_token(pair.down.token_id)
+        up_book = self.books.book_for_token(pair.up.token_id, now=created_at)
+        down_book = self.books.book_for_token(pair.down.token_id, now=created_at)
         spot = self.custom_data.spot_for(pair.asset)
         ptb = self.custom_data.ptb_for(pair.condition_id)
         if up_book is None or down_book is None:
             return None
 
-        now = created_at or utc_now()
+        now = created_at
         return MarketView(
             view_id=f"view_{stable_hash(pair.condition_id, now.isoformat())}",
             market_id=pair.market_id,
@@ -84,7 +89,7 @@ class MarketViewAssembler:
             up_trades=tuple(self.books.trades_for_token(pair.up.token_id)),
             down_trades=tuple(self.books.trades_for_token(pair.down.token_id)),
             metrics=_view_metrics(pair, spot, ptb),
-            freshness=_freshness_view(up_book, down_book, spot),
+            freshness=_freshness_view(up_book, down_book, spot, now=now),
         )
 
 
@@ -98,8 +103,15 @@ def _freshness_view(
     up_book: SideBookView,
     down_book: SideBookView,
     spot: object | None,
+    *,
+    now: datetime,
 ) -> FreshnessView:
-    spot_freshness = getattr(spot, "freshness_ms", None) if spot is not None else None
+    dynamic_freshness = getattr(spot, "freshness_ms_at", None) if spot is not None else None
+    spot_freshness = (
+        dynamic_freshness(now)
+        if callable(dynamic_freshness)
+        else getattr(spot, "freshness_ms", None) if spot is not None else None
+    )
     freshness_values = [
         value
         for value in (up_book.freshness_ms, down_book.freshness_ms, spot_freshness)

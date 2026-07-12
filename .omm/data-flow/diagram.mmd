@@ -1,0 +1,26 @@
+graph TD
+    external-data["External Data Sources\nPolymarket CLOB, Binance WS"]:::external
+    data-layer["Data Layer\nsrc/polysignal_lab/data/"]
+    domain-models["Domain Models\nsnapshot, orderbook, spot, price"]
+    alpha-cores["Alpha Cores\nsignal computation"]
+    signal-layer["Signal Processing\nGate, Arbiter, Consensus, Deduper"]
+    bridge["Nautilus Bridge\nmarket_view_assembler"]
+    nautilus-runtime["Nautilus Runtime\npaper execution"]
+    storage["Storage Layer\nSQLite + JSONL"]
+    publish["Telegram Publish"]
+    dashboard["Dashboard API + Frontend"]
+
+    external-data -->|"public market data"| data-layer
+    data-layer -->|"parsed snapshots"| domain-models
+    domain-models -->|"structured data"| alpha-cores
+    alpha-cores -->|"raw signals"| signal-layer
+    signal-layer -->|"filtered signals"| bridge
+    bridge -->|"adapted signals"| nautilus-runtime
+    nautilus-runtime -->|"paper results"| storage
+    storage -->|"historical data"| dashboard
+    signal-layer -->|"formatted signals"| publish
+    nautilus-runtime -->|"paper reports"| publish
+
+    classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e
+    classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e

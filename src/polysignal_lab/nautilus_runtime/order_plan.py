@@ -45,12 +45,20 @@ def build_order_spec(
     *,
     fixed_stake_usdc: float,
     best_ask: float | None,
+    best_bid: float | None = None,
 ) -> OrderSubmissionPlan:
     intent = resolve_order_intent(source)
     expiry_seconds = expiry_seconds_for(source)
     pair_id = pair_id_for(source)
     metrics = dict(cast(Mapping[str, object], source.metrics))
-    price = resolve_order_price(source, intent=intent, best_ask=best_ask)
+    reduce_only = source_reduce_only(source)
+    price = resolve_order_price(
+        source,
+        intent=intent,
+        best_ask=best_ask,
+        best_bid=best_bid,
+        reduce_only=reduce_only,
+    )
     quantity = resolve_order_quantity(metrics, fixed_stake_usdc=fixed_stake_usdc, price=price)
     return OrderSubmissionPlan(
         instrument_id=str(source.token_id),
@@ -60,9 +68,17 @@ def build_order_spec(
         intent=intent,
         expiry_seconds=expiry_seconds,
         pair_id=pair_id,
-        reduce_only=False,
+        reduce_only=reduce_only,
         hedge_leg=source.hedge_leg,
         tags=build_order_tags(source, intent=intent, expiry_seconds=expiry_seconds),
+    )
+
+
+def source_reduce_only(source: AlphaDecision | SignalCandidate) -> bool:
+    return (
+        source.reduce_only
+        if isinstance(source, SignalCandidate)
+        else bool(source.order_intent and source.order_intent.reduce_only)
     )
 
 
@@ -89,7 +105,13 @@ def resolve_order_price(
     *,
     intent: OrderIntent,
     best_ask: float | None,
+    best_bid: float | None = None,
+    reduce_only: bool = False,
 ) -> float:
+    if reduce_only:
+        if best_bid is None:
+            raise ValueError(f"{intent.value} reduce-only close requires best bid depth")
+        return positive_float(best_bid, "best_bid")
     max_price = positive_float(source.max_entry_price, "max_entry_price")
     explicit_intent = explicit_order_intent(source)
     if explicit_intent is None and best_ask is None:
@@ -140,6 +162,12 @@ def build_order_tags(
         "order_intent": intent.value,
     }
     add_optional_source_tags(tags, source)
+    if source_reduce_only(source):
+        metrics = cast(Mapping[str, object], source.metrics)
+        for key in ("position_id", "exit_reason"):
+            value = metrics.get(key)
+            if value is not None and str(value):
+                tags[key] = str(value)
     pair_id = pair_id_for(source)
     if pair_id is not None:
         tags["pair_id"] = pair_id
@@ -159,6 +187,8 @@ def add_optional_source_tags(tags: dict[str, str], source: AlphaDecision | Signa
         tags["reason_codes"] = "|".join(str(code) for code in source.reason_codes)
     if source.hedge_leg:
         tags["hedge_leg"] = "true"
+    if source_reduce_only(source):
+        tags["reduce_only"] = "true"
 
 
 def add_time_in_force_tags(

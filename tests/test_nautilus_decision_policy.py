@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, importlib, sys, dataclasses, dataclasses.replace, pathlib, pathlib.Path, types, types.ModuleType
-Output: test_decision_policy_preserves_gate_first_failure_reasons, test_manual_disable_uses_pipeline_reason_without_touching_gate, test_dependency_disable_uses_pipeline_reason_without_touching_gate, test_approved_decision_preserves_order_intent_fields, test_approved_decision_includes_consensus_signal_when_engine_merges, test_decision_policy_module_imports_without_nautilus_dependency, test_decision_policy_actor_exposes_domain_state_not_nautilus_lifecycle, test_nautilus_decision_policy_actor_constructs_without_nautilus_installed, test_nautilus_decision_policy_actor_on_save_on_load_delegate_to_policy_state, test_runtime_classes_expose_registerable_nautilus_policy_actor
+Output: test_decision_policy_preserves_gate_first_failure_reasons, test_manual_disable_uses_pipeline_reason_without_touching_gate, test_dependency_disable_uses_pipeline_reason_without_touching_gate, test_approved_decision_preserves_order_intent_fields, test_approved_decision_includes_consensus_signal_when_engine_merges, test_candidate_from_decision_uses_market_view_time_for_identity, test_decision_policy_module_imports_without_nautilus_dependency, test_nautilus_decision_policy_actor_exposes_domain_state_not_nautilus_lifecycle, test_nautilus_decision_policy_actor_constructs_without_nautilus_installed, test_nautilus_decision_policy_actor_on_save_on_load_delegate_to_policy_state, test_runtime_classes_expose_registerable_nautilus_policy_actor
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -37,6 +37,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     DecisionPolicyActor,
     RejectedDecision,
+    candidate_from_decision,
 )
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
@@ -139,19 +140,48 @@ def test_approved_decision_includes_consensus_signal_when_engine_merges() -> Non
         gate=_gate(dedupe_enabled=False),
         consensus=ConsensusEngine(window_sec=45, enabled=True),
     )
-
-    first = actor.evaluate(_decision(strategy="alpha"), _view())
-    second = actor.evaluate(_decision(strategy="beta"), _view())
+    view = _view()
+    first = actor.evaluate(_decision(strategy="alpha"), view)
+    second = actor.evaluate(_decision(strategy="beta"), view)
 
     assert isinstance(first, ApprovedDecision)
+    assert first.signal.created_at == view.created_at
     assert first.consensus is None
     assert isinstance(second, ApprovedDecision)
+    assert second.signal.created_at == view.created_at
     assert second.consensus is not None
     assert second.consensus.strategy == "consensus"
+    assert second.consensus.created_at == view.created_at
     assert second.consensus.source_signal_ids == [
         first.signal.signal_id,
         second.signal.signal_id,
     ]
+
+
+def test_candidate_from_decision_uses_market_view_time_for_identity() -> None:
+    view = _view()
+    decision = _decision()
+
+    first = candidate_from_decision(decision, view)
+    second = candidate_from_decision(decision, view)
+
+    assert first.created_at == view.created_at
+    assert first.signal_id == second.signal_id
+
+
+def test_candidate_from_decision_preserves_reduce_only_intent() -> None:
+    view = _view()
+    decision = _decision(
+        order_intent=OrderIntentSpec(
+            intent=OrderIntent.TAKER_FAK,
+            reduce_only=True,
+        )
+    )
+
+    candidate = candidate_from_decision(decision, view)
+
+    assert candidate.reduce_only is True
+    assert candidate.order_intent == OrderIntent.TAKER_FAK
 
 
 def test_decision_policy_module_imports_without_nautilus_dependency() -> None:

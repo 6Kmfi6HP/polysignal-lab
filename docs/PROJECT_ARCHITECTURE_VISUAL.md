@@ -5,7 +5,7 @@
 
 ## 1. 一句话概览
 
-PolySignal Lab 是一个 **只读 Polymarket 短周期信号 + Nautilus 纸面交易验证系统**：读取公开 Polymarket 行情和 Nautilus `CustomData` 业务数据，在 Nautilus `LiveNode` strategy callbacks 中运行策略，通过 gate/共识层过滤，默认 dry-run 发布 Telegram，并将 Nautilus order/fill/position/account 投影、结算和日报写入 SQLite/JSONL，最后由 FastAPI Dashboard 只读展示。
+PolySignal Lab 是一个 **只读 Polymarket 短周期信号 + Nautilus 纸面交易验证系统**：读取公开 Polymarket 行情和 Nautilus `CustomData` 业务数据，在 Nautilus `TradingNode` strategy callbacks 中运行策略，通过 gate/共识层过滤，默认 dry-run 发布 Telegram，并将 Nautilus order/fill/position/account 投影、结算和日报写入 SQLite/JSONL，最后由 FastAPI Dashboard 只读展示。
 
 ## 2. 总体架构
 
@@ -17,7 +17,7 @@ flowchart TB
   Main --> Dashboard["Dashboard 模式"]
   Main --> Smoke["Smoke 检查模式"]
 
-  Nautilus --> TN["Nautilus LiveNode"]
+  Nautilus --> TN["Nautilus TradingNode"]
   PM["Polymarket public market data"] --> TN
   CustomData["Spot / PTB / Market Metadata<br/>Nautilus CustomData"] --> TN
 
@@ -39,7 +39,7 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-  participant N as Nautilus LiveNode
+  participant N as Nautilus TradingNode
   participant D as DataEngine / Custom Data
   participant Strat as Nautilus Strategy Wrapper
   participant Core as PolySignal AlphaCore
@@ -80,8 +80,8 @@ flowchart LR
   Root --> Docs["docs/<br/>交付/PRD 文档"]
   Root --> Scripts["scripts/<br/>安全扫描等"]
 
-  Src --> App["app/<br/>入口 + scheduler"]
-  Src --> NautilusRuntime["nautilus_runtime/<br/>LiveNode / strategy / order / projections"]
+  Src --> App["app/<br/>入口 + runtime/reporting"]
+  Src --> NautilusRuntime["nautilus_runtime/<br/>TradingNode / strategy / order / projections"]
   Src --> NautilusBridge["nautilus_bridge/<br/>MarketCatalog / view assembly / state codec"]
   Src --> Alpha["alpha/<br/>策略核心逻辑"]
   Src --> Data["data/<br/>外部行情/市场数据"]
@@ -101,7 +101,7 @@ flowchart TD
   External["外部公开数据源"] --> PM["Polymarket public market data"]
   External --> CustomData["Spot / PTB / market metadata<br/>Nautilus CustomData"]
 
-  PM --> TN["Nautilus LiveNode"]
+  PM --> TN["Nautilus TradingNode"]
   CustomData --> TN
 
   TN --> Wrapper["Nautilus Strategy Wrapper"]
@@ -151,14 +151,14 @@ flowchart TB
 | 区域 | 文件/目录 | 职责 |
 |---|---|---|
 | CLI 入口 | `src/polysignal_lab/app/main.py` | 解析 runtime mode；生产配置默认启动 Nautilus |
-| Nautilus 入口 | `src/polysignal_lab/nautilus_runtime/node.py` | 组装 LiveNode、actor、strategy、cache projection |
-| Nautilus 配置 | `src/polysignal_lab/nautilus_runtime/live_node.py` | 通过 LiveNode builder 注册 Polymarket data client 与 sandbox paper execution client |
+| Nautilus 入口 | `src/polysignal_lab/nautilus_runtime/node.py` | 组装 TradingNode、actor、strategy、cache projection |
+| Nautilus 配置 | `src/polysignal_lab/nautilus_runtime/live_node.py` | 通过 `TradingNodeConfig` 配置并通过 `TradingNode.add_data_client_factory(...)` / `add_exec_client_factory(...)` 注册 Polymarket data client 与 sandbox paper execution client |
 | Nautilus 策略 | `src/polysignal_lab/nautilus_runtime/native_strategy.py` | 在 Nautilus callbacks 中运行 alpha core、处理 order/fill/position events |
 | Nautilus 下单 | `src/polysignal_lab/nautilus_runtime/native_order.py` | 将 approved decision 映射为 Nautilus native limit order |
 | Nautilus 投影 | `src/polysignal_lab/nautilus_runtime/cache_reader.py` | 只读读取 Nautilus orders/fills/positions/account/portfolio |
 | Bridge | `src/polysignal_lab/nautilus_bridge/` | `MarketCatalog` business-key lookup、market view assembly、state codec |
 | Alpha core | `src/polysignal_lab/alpha/` | engine-agnostic 策略判断 |
-| 报告/结算 | `src/polysignal_lab/app/scheduler_reporting.py` | settlement、daily report、leaderboard；读取 Nautilus projections |
+| 报告/结算 | `src/polysignal_lab/app/_settlement_check.py` + `scheduler_reporting.py` | SettlementResolver、PaperTradeResult projection、daily report、leaderboard；读取 Nautilus projections |
 | 配置模型 | `src/polysignal_lab/config.py` | Pydantic 配置、安全环境校验、YAML/env override |
 | Gate | `src/polysignal_lab/signal_layer/gate.py` | 市场、时间、book/spot 新鲜度、价差、置信度、去重、频控 |
 | Dashboard | `src/polysignal_lab/dashboard/app.py` | FastAPI 只读 API 与 HTML 首页 |
@@ -199,7 +199,7 @@ flowchart LR
 flowchart TD
   R1["风险 1<br/>refs/ 旧 bot 代码污染代码索引"] --> Fix1["建议<br/>从索引/扫描范围排除 refs/"]
   R2["风险 2<br/>SimulationResult 有 extra_fills/positions"] --> Fix2["建议<br/>确认是否全部持久化"]
-  R3["风险 3<br/>调度循环容错后继续运行"] --> Fix3["建议<br/>失败写入 system_events / health 状态"]
+  R3["风险 3<br/>Nautilus runtime/sidecar failure"] --> Fix3["建议<br/>失败写入 system_events / health 状态"]
 ```
 
 ## 10. 总结
@@ -216,4 +216,4 @@ flowchart TD
 
 1. 复查 `extra_fills/extra_positions` 是否漏存。
 2. 隔离 `refs/`，避免旧 bot 代码污染代码索引和安全扫描。
-3. 将 scheduler 持续失败状态显式写入 `system_events` 或 health surface。（注：Legacy Scheduler 模式已在最终迁移中移除）
+3. 将 Nautilus runtime/sidecar 持续失败状态显式写入 `system_events` 或 health surface。

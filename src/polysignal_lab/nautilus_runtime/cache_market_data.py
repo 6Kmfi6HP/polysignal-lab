@@ -17,7 +17,7 @@ from typing import Callable, cast
 
 from polysignal_lab.alpha.types import SideBookView, TradeView
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
-from polysignal_lab.nautilus_runtime.strategy.helpers import _maybe_float
+from polysignal_lab.nautilus_runtime.strategy.helpers import _maybe_float, _nautilus_instrument_id
 
 
 class NautilusCacheMarketDataProvider:
@@ -27,11 +27,16 @@ class NautilusCacheMarketDataProvider:
         self._cache: object = cache
         self._catalog: MarketCatalog = catalog
 
-    def book_for_token(self, token_id: str) -> SideBookView | None:
+    def book_for_token(
+        self,
+        token_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> SideBookView | None:
         instrument_id = self._catalog.instrument_id_for_token(token_id)
         if instrument_id is None:
             return None
-        book = self._cache_order_book(instrument_id)
+        book = self._cache_order_book(_nautilus_instrument_id(instrument_id))
         if book is None:
             return None
         bids = _levels(getattr(book, "bids", ()))
@@ -47,7 +52,7 @@ class NautilusCacheMarketDataProvider:
             best_bid=best_bid,
             best_ask=best_ask,
             spread=spread,
-            freshness_ms=_freshness_ms(received_at),
+            freshness_ms=_freshness_ms(received_at, now) if now is not None else None,
             min_order_size=_maybe_float(getattr(book, "min_order_size", None)),
             tick_size=_maybe_float(getattr(book, "tick_size", None)),
             last_trade_price=_maybe_float(getattr(book, "last_trade_price", None)),
@@ -65,7 +70,7 @@ class NautilusCacheMarketDataProvider:
         if not callable(getter):
             return ()
         try:
-            rows = cast(Callable[[object], object], getter)(instrument_id)
+            rows = cast(Callable[[object], object], getter)(_nautilus_instrument_id(instrument_id))
         except LookupError:
             return ()
         if not isinstance(rows, Iterable) or isinstance(rows, (str, bytes)):
@@ -125,8 +130,9 @@ def _optional_text(value: object) -> str | None:
     return str(value)
 
 
-def _freshness_ms(received_at: datetime | None) -> int | None:
+def _freshness_ms(received_at: datetime | None, now: datetime) -> int | None:
     if received_at is None:
         return None
+    current = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
     dt = received_at if received_at.tzinfo is not None else received_at.replace(tzinfo=UTC)
-    return max(0, int((datetime.now(UTC) - dt.astimezone(UTC)).total_seconds() * 1000))
+    return max(0, int((current.astimezone(UTC) - dt.astimezone(UTC)).total_seconds() * 1000))

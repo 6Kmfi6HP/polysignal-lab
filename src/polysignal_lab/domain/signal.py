@@ -51,6 +51,7 @@ class SignalCandidate(BaseModel):
     order_intent: OrderIntent | None = None
     expiry_seconds: int | None = None
     pair_id: str | None = None
+    reduce_only: bool = False
     hedge_leg: bool = False
 
     @classmethod
@@ -73,17 +74,22 @@ class SignalCandidate(BaseModel):
         reason_codes: list[str],
         metrics: dict[str, Any],
         freshness_policy: FreshnessPolicy | None = None,
+        created_at: datetime | None = None,
         snapshot_id: str | None = None,
         source_signal_ids: list[str] | None = None,
         order_intent: OrderIntent | None = None,
         expiry_seconds: int | None = None,
         pair_id: str | None = None,
+        reduce_only: bool = False,
         hedge_leg: bool = False,
     ) -> "SignalCandidate":
-        dedupe_key = f"{asset}:{timeframe}:{market_id}:{side.value}:{strategy}"
-        sid = f"sig_{stable_hash(strategy, asset, timeframe, market_id, side.value, utc_now().isoformat(), length=20)}"
+        event_time = created_at if created_at is not None else utc_now()
+        dedupe_scope = "exit" if reduce_only else "entry"
+        dedupe_key = f"{asset}:{timeframe}:{market_id}:{side.value}:{strategy}:{dedupe_scope}"
+        sid = f"sig_{stable_hash(strategy, asset, timeframe, market_id, side.value, event_time.isoformat(), length=20)}"
         return cls(
             signal_id=sid,
+            created_at=event_time,
             strategy=strategy,
             asset=asset,
             timeframe=timeframe,
@@ -106,6 +112,7 @@ class SignalCandidate(BaseModel):
             order_intent=order_intent,
             expiry_seconds=expiry_seconds,
             pair_id=pair_id,
+            reduce_only=reduce_only,
             hedge_leg=hedge_leg,
         )
 

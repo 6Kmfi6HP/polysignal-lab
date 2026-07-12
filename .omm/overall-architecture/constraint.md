@@ -1,0 +1,1 @@
+Must never instantiate authenticated Polymarket trading clients or send live orders. All data fetching is read-only via public CLOB REST/WS endpoints. The Telegram publisher defaults to dry_run: true. Python >=3.11 required; NautilusTrader integration requires Python >=3.12.

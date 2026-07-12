@@ -24,6 +24,7 @@ from polysignal_lab.alpha.helpers import (
     OrderDecisionSpec,
     build_order_decision,
     build_hedge_order_decision,
+    binary_pair_effective_cost,
     enabled_for_view,
     evaluate_from_snapshot_for_test,
     restore_position_state,
@@ -31,9 +32,6 @@ from polysignal_lab.alpha.helpers import (
 )
 from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
-
-_FEE_RATE = 0.01
-_SLIPPAGE_BUFFER = 0.01
 
 
 class PreOrderMarketAlphaCore:
@@ -45,13 +43,6 @@ class PreOrderMarketAlphaCore:
         self._entered_markets: set[str] = set()
         self._positions: dict[str, dict[str, Any]] = {}
         self._reconciled: set[str] = set()
-
-    @staticmethod
-    def _pair_effective_cost(leg1_price: float, leg2_price: float) -> float:
-        return leg1_price + leg2_price + 2.0 * _FEE_RATE + _SLIPPAGE_BUFFER
-
-    def _now_from(self, view: MarketView) -> datetime:
-        return view.created_at
 
     def _now_from(self, view: MarketView) -> datetime:
         """Return the logical clock time from the view."""
@@ -123,7 +114,7 @@ class PreOrderMarketAlphaCore:
                 ask = view.ask_for(side)
                 if ask is not None and price >= ask:
                     continue
-                cost = self._pair_effective_cost(price, price)
+                cost = binary_pair_effective_cost(price, price)
                 decision = self._decision(
                     view,
                     side,
@@ -155,7 +146,7 @@ class PreOrderMarketAlphaCore:
         hedge_ask = view.ask_for(hedge_side)
         if hedge_ask is None:
             return []
-        cost = self._pair_effective_cost(filled_price, hedge_ask)
+        cost = binary_pair_effective_cost(filled_price, hedge_ask)
         if cost > self.config.reconcile_max_pair_cost:
             self._reconciled.add(view.market_id)
             return []

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, sys, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime
-Output: test_order_plan_resolves_taker_price_from_best_ask, test_order_plan_rejects_taker_without_best_ask, test_submit_approved_decision_submits_limit_order_through_strategy, test_submit_approved_decision_uses_instrument_value_converters, test_submit_approved_decision_quantizes_price_before_instrument_converter, test_submit_approved_decision_preserves_price_precision_when_price_type_available, test_submit_approved_decision_maps_passive_gtd_expiry, test_submit_approved_decision_passive_gtd_allows_no_immediate_visible_depth, test_submit_approved_decision_does_not_require_available_shares, test_static_native_strategy_initializes_nautilus_base
+Output: test_order_plan_resolves_taker_price_from_best_ask, test_order_plan_rejects_taker_without_best_ask, test_submit_approved_decision_submits_limit_order_through_strategy, test_submit_approved_decision_uses_instrument_value_converters, test_submit_approved_decision_quantizes_price_before_instrument_converter, test_submit_approved_decision_preserves_price_precision_when_price_type_available, test_submit_approved_decision_maps_passive_gtd_expiry, test_submit_approved_decision_passive_gtd_allows_no_immediate_visible_depth, test_submit_approved_decision_does_not_require_available_shares, test_static_native_strategy_initializes_nautilus_base, test_reduce_only_submission_uses_strategy_scoped_native_position_quantity, test_reduce_only_submission_rejects_non_positive_native_position
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -89,7 +89,11 @@ class FakeStrategy:
         self.submitted.append(order)
 
 
-def _approved(intent: OrderIntent = OrderIntent.TAKER_IOC) -> ApprovedDecision:
+def _approved(
+    intent: OrderIntent = OrderIntent.TAKER_IOC,
+    *,
+    reduce_only: bool = False,
+) -> ApprovedDecision:
     signal = SignalCandidate.build(
         strategy="ptb_diff",
         asset="BTC",
@@ -110,6 +114,7 @@ def _approved(intent: OrderIntent = OrderIntent.TAKER_IOC) -> ApprovedDecision:
         expiry_seconds=45 if intent == OrderIntent.PASSIVE_GTD else None,
         pair_id="pair-1",
         hedge_leg=False,
+        reduce_only=reduce_only,
     )
     return ApprovedDecision(signal=signal)
 
@@ -265,6 +270,22 @@ def test_submit_approved_decision_maps_passive_gtd_expiry() -> None:
     assert _enum_name(order.time_in_force) == "GTD"
     assert order.expire_time == datetime(2026, 6, 27, 0, 0, 45, tzinfo=UTC)
 
+
+def test_submit_approved_decision_requires_runtime_clock_for_gtd_expiry() -> None:
+    import pytest
+
+    strategy = FakeStrategy()
+
+    with pytest.raises(RuntimeError, match="framework clock"):
+        submit_approved_decision(
+            cast(OrderSubmittingStrategy[FakeOrder], strategy),
+            _approved(OrderIntent.PASSIVE_GTD),
+            fixed_stake_usdc=10.0,
+            best_ask=0.50,
+            instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        )
+
+
 def test_submit_approved_decision_passive_gtd_allows_no_immediate_visible_depth() -> None:
     strategy = FakeStrategy()
 
@@ -294,3 +315,59 @@ def test_submit_approved_decision_does_not_require_available_shares() -> None:
     )
 
     assert order is strategy.submitted_orders[-1]
+
+
+def test_reduce_only_submission_uses_strategy_scoped_native_position_quantity() -> None:
+    from types import SimpleNamespace
+
+    strategy = FakeStrategy()
+    strategy.id = "strategy-1"
+    calls: dict[str, object] = {}
+
+    class FakeCache:
+        def positions_open(self, **kwargs: object) -> list[object]:
+            calls.update(kwargs)
+            return [SimpleNamespace(signed_qty=3.5)]
+
+    strategy.cache = FakeCache()
+    order = submit_approved_decision(
+        cast(OrderSubmittingStrategy[FakeOrder], strategy),
+        _approved(OrderIntent.TAKER_FAK, reduce_only=True),
+        fixed_stake_usdc=10.0,
+        best_ask=0.80,
+        best_bid=0.45,
+        instrument_id_resolver=lambda _value: SimpleNamespace(
+            id="up-token.POLYMARKET"
+        ),
+    )
+
+    assert str(calls["instrument_id"]) == "up-token.POLYMARKET"
+    assert str(calls["strategy_id"]) == "strategy-1"
+    assert order.quantity == 3.5
+    assert order.reduce_only is True
+
+
+def test_reduce_only_submission_rejects_non_positive_native_position() -> None:
+    import pytest
+    from types import SimpleNamespace
+
+    strategy = FakeStrategy()
+    strategy.id = "strategy-1"
+
+    class FakeCache:
+        def positions_open(self, **_kwargs: object) -> list[object]:
+            return [SimpleNamespace(signed_qty=-3.5)]
+
+    strategy.cache = FakeCache()
+
+    with pytest.raises(ValueError, match="NO_REDUCIBLE_POSITION"):
+        submit_approved_decision(
+            cast(OrderSubmittingStrategy[FakeOrder], strategy),
+            _approved(OrderIntent.TAKER_FAK, reduce_only=True),
+            fixed_stake_usdc=10.0,
+            best_ask=0.80,
+            best_bid=0.45,
+            instrument_id_resolver=lambda _value: SimpleNamespace(
+                id="up-token.POLYMARKET"
+            ),
+        )

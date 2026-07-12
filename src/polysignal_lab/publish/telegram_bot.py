@@ -34,7 +34,7 @@ from telegram.ext import (
 
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.config import TelegramConfig
-from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry
+from polysignal_lab.data.state import MarketRegistry
 from polysignal_lab.nautilus_runtime.observability import StrategyControl
 from polysignal_lab.paper.strategy_stats import build_strategy_leaderboard_rows
 from polysignal_lab.publish import telegram_render
@@ -52,7 +52,7 @@ class TelegramBotService:
         persistence: PersistenceService,
         strategy_control: StrategyControl,
         strategy_names: list[str],
-        books: OrderBookRegistry,
+        books: object | None,
         markets: MarketRegistry,
         formatter: MessageFormatter,
         scheduler: Any | None = None,
@@ -333,6 +333,17 @@ class TelegramBotService:
         except (TimedOut, NetworkError, TelegramError):
             self._send_failure += 1
 
+    def _book_for_token(self, token_id: str) -> object | None:
+        if self.books is None:
+            return None
+        reader = getattr(self.books, "book_for_token", None)
+        if callable(reader):
+            return reader(token_id)
+        getter = getattr(self.books, "get", None)
+        if callable(getter):
+            return getter(token_id)
+        return None
+
     def _format_positions(self) -> str:
         rows = self.persistence.restore_open_positions()
         if not rows:
@@ -343,8 +354,8 @@ class TelegramBotService:
             if not payload.get("side"):
                 continue
             token_id = str(payload.get("token_id") or "")
-            book = self.books.get(token_id) if token_id else None
-            mark = book.best_bid if book is not None else None
+            book = self._book_for_token(token_id) if token_id else None
+            mark = getattr(book, "best_bid", None) if book is not None else None
             entry_price = float(payload.get("entry_price") or 0.0)
             shares = float(payload.get("shares") or 0.0)
             stake_usdc = float(payload.get("stake_usdc") or 0.0)

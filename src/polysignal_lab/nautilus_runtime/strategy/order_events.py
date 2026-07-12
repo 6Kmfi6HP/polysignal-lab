@@ -135,6 +135,8 @@ def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
         event,
         cast(AlphaOrderEvent, cast(object, alpha_event)),
     )
+    if bool(alpha_event.metrics.get("reduce_only")):
+        return
     handler = getattr(strategy.core, "on_order_filled", None)
     decisions = handler(alpha_event) if callable(handler) else ()
     if isinstance(decisions, Iterable) and not isinstance(decisions, (str, bytes)):
@@ -152,3 +154,33 @@ def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
 
 def handle_position_event(strategy: _OrderEventStrategy, position: object) -> None:
     strategy._record_nautilus_position(position)
+
+
+def handle_position_closed(strategy: _OrderEventStrategy, position: object) -> None:
+    handle_position_event(strategy, position)
+    reset_position = getattr(strategy.core, "reset_position", None)
+    registry = strategy.registry
+    if registry is None or not callable(reset_position):
+        return
+    instrument_id = str(getattr(position, "instrument_id", ""))
+    try:
+        pair, token_meta = _catalog_position_identity(registry, instrument_id)
+    except (RuntimeError, ValueError):
+        return
+    if token_meta is None or pair is None:
+        return
+    reset_position(pair.market_id, token_meta.side)
+
+
+def _catalog_position_identity(
+    registry: MarketCatalog,
+    instrument_id: str,
+) -> tuple[object | None, object | None]:
+    for condition_id in registry.condition_ids():
+        pair = registry.by_condition(condition_id)
+        if pair is None:
+            continue
+        for token_meta in (pair.up, pair.down):
+            if registry.instrument_id_for_token(token_meta.token_id) == instrument_id:
+                return pair, token_meta
+    return None, None

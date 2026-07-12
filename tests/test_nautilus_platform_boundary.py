@@ -321,25 +321,36 @@ def test_nautilus_observability_has_no_paper_model_recording_api() -> None:
     assert [token for token in forbidden if token in source] == []
 
 
-def test_default_runtime_uses_livenode_builder_not_legacy_trading_node() -> None:
-    forbidden = (
-        "nautilus_trader.live.node",
+def test_default_runtime_uses_trading_node_api_not_legacy_builder() -> None:
+    required = (
+        "TradingNode",
         "TradingNodeConfig",
-        "TradingNode(",
-        "TradingNode =",
+        "add_data_client_factory",
+        "add_exec_client_factory",
+    )
+    forbidden = (
+        "LiveNode",
+        "LiveNode.builder",
+        ".builder(",
+        "add_data_client(",
+        "add_exec_client(",
+        "PolymarketLiveExecClientFactory",
     )
     scanned_paths = (
-        Path("src/polysignal_lab/nautilus_runtime/node.py"),
         Path("src/polysignal_lab/nautilus_runtime/live_node.py"),
+        Path("src/polysignal_lab/nautilus_runtime/node_builder.py"),
+        Path("src/polysignal_lab/nautilus_runtime/optional_imports.py"),
     )
-    findings: list[str] = []
-    for path in scanned_paths:
-        if not path.exists():
-            continue
-        text = path.read_text(encoding="utf-8")
-        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in scanned_paths
+        if path.exists()
+    )
 
-    assert findings == []
+    assert [token for token in required if token not in source] == []
+    assert [token for token in forbidden if token in source] == []
+
+
 def test_default_runtime_has_no_dynamic_runtime_class_factories() -> None:
     forbidden = (
         "new_class(",
