@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, argparse, pathlib, pathlib.Path, typing, typing.Final
-Output: blocked_symbols, scan, skip_path, main
+Input: __future__, __future__.annotations, argparse, ast, pathlib, pathlib.Path, typing, typing.Final
+Output: blocked_symbols, scan, skip_path, _legacy_dual_path_imports, main
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -15,6 +15,7 @@ Pos: Application code
 from __future__ import annotations
 
 import argparse
+import ast
 from pathlib import Path
 from typing import Final
 
@@ -122,6 +123,11 @@ def scan(root: str | Path) -> list[tuple[str, str]]:
                 if _is_submit_order_allowed_for_nautilus_strategy(path) and symbol == "submit_order":
                     continue
                 findings.append((report_path, symbol))
+        if _is_legacy_dual_path_guarded(base, path):
+            for symbol in _legacy_dual_path_imports(text):
+                finding = (report_path, symbol)
+                if finding not in findings:
+                    findings.append(finding)
     return findings
 
 
@@ -169,6 +175,37 @@ def _is_legacy_dual_path_guarded(base: Path, path: Path) -> bool:
         part in {"nautilus_runtime", "nautilus_bridge", "signal_layer"}
         for part in path.parts
     )
+
+
+def _legacy_dual_path_imports(text: str) -> list[str]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+
+    state_module = "polysignal_lab.data.state"
+    clob_modules = {
+        "polysignal_lab.data.polymarket_clob_ws",
+        "polysignal_lab.data.polymarket_clob_rest",
+    }
+    findings: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            if node.module == state_module and any(
+                alias.name == "OrderBookRegistry" for alias in node.names
+            ):
+                findings.append(f"from {state_module} import OrderBookRegistry")
+            elif node.module in clob_modules:
+                findings.append(f"from {node.module} import")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name not in clob_modules | {state_module}:
+                    continue
+                symbol = f"import {alias.name}"
+                if alias.asname:
+                    symbol += f" as {alias.asname}"
+                findings.append(symbol)
+    return findings
 
 
 
