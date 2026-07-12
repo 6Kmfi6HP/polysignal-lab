@@ -272,7 +272,7 @@ def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved
         return order
 
     with patch(
-        "polysignal_lab.nautilus_runtime.native_strategy.submit_approved_decision",
+        "polysignal_lab.nautilus_runtime.native_strategy.submit_approved_for_view",
         side_effect=capture_submit,
     ):
         strategy.evaluate_condition("condition-btc-5m")

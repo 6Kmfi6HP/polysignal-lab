@@ -52,20 +52,13 @@ class CacheBoundBookDataProvider:
         provider = self._provider
         if provider is None:
             return None
-        book_for_token = getattr(provider, "book_for_token", None)
-        if not callable(book_for_token):
-            return None
-        return book_for_token(token_id, now=now)
+        return provider.book_for_token(token_id, now=now)  # type: ignore[attr-defined]
 
     def trades_for_token(self, token_id: str) -> tuple[TradeView, ...]:
         provider = self._provider
         if provider is None:
             return ()
-        trades_for_token = getattr(provider, "trades_for_token", None)
-        if not callable(trades_for_token):
-            return ()
-        rows = trades_for_token(token_id)
-        return tuple(rows)
+        return tuple(provider.trades_for_token(token_id))  # type: ignore[attr-defined]
 
 
 class StaticMarketUniverse:
