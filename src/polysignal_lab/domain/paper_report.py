@@ -38,6 +38,7 @@ class DailyReportRow(TypedDict, total=False):
     report_date: str
     starting_equity: float
     ending_equity: float
+    equity_currency: str
     paper_pnl: float
     paper_roi: float
     total_signals: int
@@ -141,6 +142,7 @@ class DailyReport(BaseModel):
     report_date: date
     starting_equity: float
     ending_equity: float
+    equity_currency: str = "USDC"
     paper_pnl: float
     paper_roi: float
     total_signals: int

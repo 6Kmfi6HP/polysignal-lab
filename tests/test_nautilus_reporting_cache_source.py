@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._report_equity_inputs
-Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
+Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -19,9 +19,16 @@ from types import SimpleNamespace
 from polysignal_lab.app.scheduler_reporting import _report_equity_inputs
 
 
-def _settings(starting_balance: float = 1_000.0) -> SimpleNamespace:
+def _settings(
+    starting_balance: float = 1_000.0,
+    *,
+    sandbox_base_currency: str = "USDC",
+) -> SimpleNamespace:
     return SimpleNamespace(
         paper_trading=SimpleNamespace(starting_balance_usdc=starting_balance),
+        runtime=SimpleNamespace(
+            nautilus=SimpleNamespace(sandbox_base_currency=sandbox_base_currency),
+        ),
     )
 
 
@@ -117,6 +124,22 @@ def test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equit
     )
 
     assert _report_equity_inputs(scheduler) == (1_000.0, 987.65, 1)
+
+
+def test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing() -> None:
+    cache = SimpleNamespace(
+        account=lambda: SimpleNamespace(
+            id="A-1",
+            balances=[SimpleNamespace(currency="pUSD", total=987.65)],
+        ),
+        positions=lambda: [],
+    )
+    scheduler = SimpleNamespace(
+        settings=_settings(sandbox_base_currency="pUSD"),
+        nautilus_cache=cache,
+    )
+
+    assert _report_equity_inputs(scheduler) == (1_000.0, 987.65, 0)
 
 
 def test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity() -> None:

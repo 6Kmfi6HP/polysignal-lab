@@ -11,7 +11,10 @@ from __future__ import annotations
 import sqlite3
 
 from polysignal_lab.app import scheduler_health
-from polysignal_lab.app.scheduler_reporting_equity import _report_equity_inputs
+from polysignal_lab.app.scheduler_reporting_equity import (
+    _report_equity_inputs,
+    _sandbox_base_currency,
+)
 from polysignal_lab.app.scheduler_reporting_sources import (
     _fill_payloads_with_order_intents,
     _paper_order_metrics,
@@ -54,6 +57,7 @@ async def _build_daily_report_from_inputs(
             report_date=inputs.today,
             starting_equity=starting_equity,
             ending_equity=ending_equity,
+            equity_currency=_sandbox_base_currency(scheduler.settings),
             total_signals=len(inputs.today_signals_raw),
             paper_orders=len(inputs.today_orders_raw),
             paper_fills=len(inputs.today_fills_raw),

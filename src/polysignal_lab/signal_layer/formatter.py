@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, html, typing, typing.Literal, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.report_date_text, polysignal_lab.domain.paper_result.report_float, polysignal_lab.domain.paper_result.report_nested_mapping, polysignal_lab.domain.paper_result.trade_result_float, polysignal_lab.domain.paper_result.trade_result_status, polysignal_lab.domain.paper_result.trade_result_text
+Input: __future__, __future__.annotations, html, typing, typing.Literal, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.report_date_text, polysignal_lab.domain.paper_result.report_float, polysignal_lab.domain.paper_result.report_nested_mapping, polysignal_lab.domain.paper_result.report_text, polysignal_lab.domain.paper_result.trade_result_float, polysignal_lab.domain.paper_result.trade_result_status, polysignal_lab.domain.paper_result.trade_result_text
 Output: PaperTradeResultRow helpers, DailyReportRow helpers, MessageFormatter
 Pos: Application code
 
@@ -24,6 +24,7 @@ from polysignal_lab.domain.paper_result import (
     report_date_text,
     report_float,
     report_nested_mapping,
+    report_text,
     trade_result_float,
     trade_result_status,
     trade_result_text,
@@ -102,6 +103,7 @@ FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
         return self._truncate(message)
 
     def daily_report_message(self, report: Mapping[str, object]) -> str:
+        equity_currency = report_text(report, "equity_currency", "USDC")
         lines = []
         strategy_breakdown = report_nested_mapping(report, "strategy_breakdown")
         for strategy, row in strategy_breakdown.items():
@@ -128,8 +130,8 @@ FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
         message = f"""<b>📊 Daily Paper Report</b>
 {report_date_text(report)}
 
-Equity  {report_float(report, 'starting_equity'):.2f} → {report_float(report, 'ending_equity'):.2f} USDC
-PnL     {report_float(report, 'paper_pnl'):+.2f} USDC
+Equity  {report_float(report, 'starting_equity'):.2f} → {report_float(report, 'ending_equity'):.2f} {html.escape(equity_currency)}
+PnL     {report_float(report, 'paper_pnl'):+.2f} {html.escape(equity_currency)}
 ROI     {report_float(report, 'paper_roi'):+.2%}
 
 Signals {int(report_float(report, 'total_signals'))}

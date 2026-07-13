@@ -164,6 +164,7 @@ export interface DailyReport {
   report_date: string
   starting_equity: number
   ending_equity: number
+  equity_currency?: string
   paper_pnl: number
   paper_roi: number
   total_signals: number

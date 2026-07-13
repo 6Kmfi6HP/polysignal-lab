@@ -276,10 +276,13 @@ def build_sandbox_exec_client_config(settings: Settings) -> object:
         "SandboxExecutionClientConfig",
     )
     routing_config = _import_callable("nautilus_trader.config", "RoutingConfig")
+    sandbox_base_currency = settings.runtime.nautilus.sandbox_base_currency
     return sandbox_exec_config(
         venue=POLYMARKET_CLIENT_ID,
-        starting_balances=[f"{float(settings.paper_trading.starting_balance_usdc)} pUSD"],
-        base_currency="pUSD",
+        starting_balances=[
+            f"{float(settings.paper_trading.starting_balance_usdc)} {sandbox_base_currency}"
+        ],
+        base_currency=sandbox_base_currency,
         oms_type="NETTING",
         account_type="CASH",
         book_type=settings.runtime.nautilus.sandbox_book_type,

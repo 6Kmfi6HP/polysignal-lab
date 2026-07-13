@@ -310,14 +310,15 @@ def test_build_sandbox_exec_client_config_uses_paper_venue_and_routes_to_polymar
     _patch_live_node_fakes(monkeypatch)
     settings = Settings()
     settings.paper_trading.starting_balance_usdc = 4321.0
+    settings.runtime.nautilus.sandbox_base_currency = "USDC"
 
     sandbox_config = build_sandbox_exec_client_config(settings)
 
     assert getattr(sandbox_config, "venue") == POLYMARKET_CLIENT_ID
     assert getattr(sandbox_config, "account_type") == "CASH"
     assert getattr(sandbox_config, "oms_type") == "NETTING"
-    assert getattr(sandbox_config, "starting_balances") == ["4321.0 pUSD"]
-    assert getattr(sandbox_config, "base_currency") == "pUSD"
+    assert getattr(sandbox_config, "starting_balances") == ["4321.0 USDC"]
+    assert getattr(sandbox_config, "base_currency") == "USDC"
     assert getattr(sandbox_config, "book_type") == settings.runtime.nautilus.sandbox_book_type
     assert getattr(sandbox_config, "use_reduce_only") is True
     routing = getattr(sandbox_config, "routing")

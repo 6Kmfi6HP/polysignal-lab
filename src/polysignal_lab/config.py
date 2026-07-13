@@ -305,6 +305,7 @@ class NautilusRuntimeConfig(BaseModel):
     trader_id: str = "PolySignal-Nautilus-001"
     python: str = "3.12"
     execution_mode: Literal["paper_sandbox"] = "paper_sandbox"
+    sandbox_base_currency: str = "pUSD"
     sandbox_book_type: Literal["L1_MBP", "L2_MBP"] = "L2_MBP"
     l1_book_snapshot_interval_ms: int = 1000
     allow_live_polymarket_execution: bool = False

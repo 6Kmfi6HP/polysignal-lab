@@ -89,6 +89,7 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
         open_positions=1,
         results=results,
         stale_paper_fills=0,
+        equity_currency="pUSD",
     )
 
     # Then: metrics use real closed states and exclude UNKNOWN from closed PnL.
@@ -114,6 +115,9 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
     message = MessageFormatter().daily_report_message(report.model_dump(mode="json"))
     assert "SPLIT" not in message
     assert message.startswith("<b>📊 Daily Paper Report</b>")
+    assert "Equity  1000.00 → 996.00 pUSD" in message
+    assert "PnL     -4.00 pUSD" in message
+    assert "+6.00 USDC" in message
     assert "<b>Strategies</b>" in message
     assert {
         TradeResultStatus.WIN.value,

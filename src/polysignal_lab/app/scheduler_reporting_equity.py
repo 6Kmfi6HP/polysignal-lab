@@ -28,6 +28,13 @@ def _is_nautilus_reporting_cache(value: Any) -> TypeGuard[_NautilusReportingCach
     )
 
 
+def _sandbox_base_currency(settings: Any) -> str:
+    runtime = getattr(settings, "runtime", None)
+    nautilus = getattr(runtime, "nautilus", None)
+    currency = getattr(nautilus, "sandbox_base_currency", "USDC")
+    return str(currency) if currency else "USDC"
+
+
 def _report_equity_inputs(scheduler: Any) -> tuple[float, float, int]:
     settings = getattr(scheduler, "settings", None)
     paper_trading = getattr(settings, "paper_trading", None)
@@ -39,6 +46,7 @@ def _report_equity_inputs(scheduler: Any) -> tuple[float, float, int]:
         nautilus_cache,
         nautilus_portfolio=getattr(scheduler, "nautilus_portfolio", None),
         starting_equity=starting_equity,
+        base_currency=_sandbox_base_currency(settings),
     )
 
 
@@ -47,6 +55,7 @@ def _report_equity_inputs_from_nautilus_cache(
     *,
     nautilus_portfolio: Any | None = None,
     starting_equity: float,
+    base_currency: str = "USDC",
 ) -> tuple[float, float, int]:
     from polysignal_lab.nautilus_runtime.projections import (
         project_account,
@@ -69,9 +78,9 @@ def _report_equity_inputs_from_nautilus_cache(
     if portfolio_equity is not None:
         ending_equity = portfolio_equity
     else:
-        usdc_total = _usdc_balance_total(account_projection)
-        if usdc_total is not None:
-            ending_equity = usdc_total
+        account_balance = _balance_total_for_currency(account_projection, base_currency)
+        if account_balance is not None:
+            ending_equity = account_balance
 
     positions = nautilus_cache.positions()
     open_positions = 0
@@ -85,7 +94,10 @@ def _report_equity_inputs_from_nautilus_cache(
     return starting_equity, ending_equity, open_positions
 
 
-def _usdc_balance_total(account_projection: dict[str, Any] | None) -> float | None:
+def _balance_total_for_currency(
+    account_projection: dict[str, Any] | None,
+    currency: str,
+) -> float | None:
     if not isinstance(account_projection, dict):
         return None
     balances = account_projection.get("balances")
@@ -94,7 +106,7 @@ def _usdc_balance_total(account_projection: dict[str, Any] | None) -> float | No
     for balance in balances:
         if not isinstance(balance, dict):
             continue
-        if str(balance.get("currency", "")).upper() != "USDC":
+        if str(balance.get("currency", "")).casefold() != currency.casefold():
             continue
         return _projection_float(balance, "total")
     return None

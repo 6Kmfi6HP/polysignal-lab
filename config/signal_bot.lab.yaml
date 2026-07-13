@@ -200,6 +200,7 @@ runtime:
     trader_id: PolySignal-Nautilus-001
     python: "3.12"
     execution_mode: paper_sandbox
+    sandbox_base_currency: pUSD
     allow_live_polymarket_execution: false
     intercept_os_signals: false
     sandbox_book_type: L2_MBP
