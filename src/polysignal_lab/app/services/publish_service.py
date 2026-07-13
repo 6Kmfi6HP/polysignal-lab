@@ -68,7 +68,12 @@ class PublishService:
         self._persist_publish(publish)
         return publish
 
-    async def deliver_daily_report(self, report: Mapping[str, object]) -> Any:
+    async def deliver_daily_report(
+        self,
+        report: Mapping[str, object],
+        *,
+        idempotency_key: str | None = None,
+    ) -> Any:
         payload = report if isinstance(report, Mapping) else report.model_dump(mode="json")
         message = self.formatter.daily_report_message(payload)
         revision = payload.get("revision")
@@ -78,7 +83,12 @@ class PublishService:
             else "daily_report"
         )
         return await asyncio.wait_for(
-            self.publisher.send(message, message_type, None),
+            self.publisher.send(
+                message,
+                message_type,
+                None,
+                publish_id=idempotency_key,
+            ),
             timeout=self.timeout_sec,
         )
 

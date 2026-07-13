@@ -302,6 +302,7 @@ def test_generate_daily_report_retries_pending_outbox_without_duplicate_report(
     formatter_report_ids: list[str] = []
     publish_statuses = ["FAILED", "SENT"]
     successful_messages: list[str] = []
+    publish_ids: list[str | None] = []
 
     class Formatter:
         def daily_report_message(self, report) -> str:
@@ -319,7 +320,10 @@ def test_generate_daily_report_retries_pending_outbox_without_duplicate_report(
             message: str,
             message_type: str,
             signal_id: str | None,
+            *,
+            publish_id: str | None = None,
         ) -> PublishResult:
+            publish_ids.append(publish_id)
             outbox = store.restore_report_publish_outbox()
             assert store.counts()["daily_reports"] == 1
             assert outbox[0]["status"] == "DELIVERING"
@@ -383,6 +387,10 @@ def test_generate_daily_report_retries_pending_outbox_without_duplicate_report(
     assert delivered[0]["attempt_count"] == 2
     assert formatter_report_ids == [first.report_id, first.report_id]
     assert successful_messages == [f"daily report {first.report_id}"]
+    assert publish_ids == [
+        f"daily_report:{first.report_date.isoformat()}:r1",
+        f"daily_report:{first.report_date.isoformat()}:r1",
+    ]
 
 
 def test_generate_daily_report_revises_after_late_settlement(tmp_path) -> None:
@@ -396,6 +404,7 @@ def test_generate_daily_report_revises_after_late_settlement(tmp_path) -> None:
     settings = _settings()
     settings.telegram.send_daily_report = True
     deliveries: list[tuple[str, str]] = []
+    publish_ids: list[str | None] = []
 
     class Publisher:
         async def send(
@@ -403,7 +412,10 @@ def test_generate_daily_report_revises_after_late_settlement(tmp_path) -> None:
             message: str,
             message_type: str,
             signal_id: str | None,
+            *,
+            publish_id: str | None = None,
         ) -> PublishResult:
+            publish_ids.append(publish_id)
             deliveries.append((message_type, message))
             status = "FAILED" if len(deliveries) == 1 else "SENT"
             return PublishResult(
@@ -477,6 +489,10 @@ def test_generate_daily_report_revises_after_late_settlement(tmp_path) -> None:
     ]
     assert "Correction" in deliveries[1][1]
     assert "Revision 2" in deliveries[1][1]
+    assert publish_ids == [
+        f"daily_report:{initial.report_date.isoformat()}:r1",
+        f"daily_report:{initial.report_date.isoformat()}:r2",
+    ]
     assert len(logs.read_all("daily_reports")) == 2
 
 
@@ -516,6 +532,8 @@ def test_generate_daily_report_retries_prior_day_pending_publish(tmp_path) -> No
             message: str,
             message_type: str,
             signal_id: str | None,
+            *,
+            publish_id: str | None = None,
         ) -> PublishResult:
             settings.telegram.send_daily_report = False
             return PublishResult(

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, json, types, httpx, pytest, polysignal_lab.config, polysignal_lab.domain, polysignal_lab.nautilus_runtime.runtime_context_factory, polysignal_lab.publish.telegram_publisher
-Output: test_runtime_uses_configured_telegram_publish_timeout, test_runtime_owns_scoped_signal_publisher_lifecycle, test_nautilus_runtime_does_not_construct_legacy_orderbook_for_telegram, test_telegram_qa_default_message_is_compact, test_missing_telegram_credentials_fail_live_publish, test_malformed_telegram_credentials_fail_live_publish, test_mocked_telegram_send_returns_sent_and_redacts_token, test_failed_telegram_response_redacts_token, test_invalid_publisher_credentials_fail_without_http_request, test_telegram_qa_records_actual_dry_run_invocation, test_telegram_qa_records_actual_live_failure_invocation
+Output: test_runtime_uses_configured_telegram_publish_timeout, test_runtime_owns_scoped_signal_publisher_lifecycle, test_nautilus_runtime_does_not_construct_legacy_orderbook_for_telegram, test_telegram_qa_default_message_is_compact, test_missing_telegram_credentials_fail_live_publish, test_malformed_telegram_credentials_fail_live_publish, test_mocked_telegram_send_returns_sent_and_redacts_token, test_daily_report_publish_id_is_stable_across_retries, test_failed_telegram_response_redacts_token, test_invalid_publisher_credentials_fail_without_http_request, test_telegram_qa_records_actual_dry_run_invocation, test_telegram_qa_records_actual_live_failure_invocation
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -190,6 +190,29 @@ async def test_mocked_telegram_send_returns_sent_and_redacts_token() -> None:
     assert len(requests) == 1
     assert json.loads(requests[0].content)["chat_id"] == VALID_CHANNEL
     assert VALID_TOKEN not in json.dumps(payload, sort_keys=True)
+
+
+async def test_daily_report_publish_id_is_stable_across_retries() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 321}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    publisher = TelegramPublisher(
+        _live_telegram_config(),
+        bot_token=VALID_TOKEN,
+        channel_id=VALID_CHANNEL,
+        client=client,
+    )
+    key = "daily_report:2026-07-13:r1"
+
+    first = await publisher.send("Daily report", "daily_report", publish_id=key)
+    second = await publisher.send("Daily report", "daily_report", publish_id=key)
+
+    assert first.publish_id == key
+    assert second.publish_id == key
 
 
 async def test_failed_telegram_response_redacts_token() -> None:

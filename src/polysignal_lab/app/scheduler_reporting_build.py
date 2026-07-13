@@ -177,8 +177,12 @@ async def _publish_report(
 
     intent_id = str(intent["intent_id"])
     attempt_count = int(intent["attempt_count"])
+    idempotency_key = str(intent["idempotency_key"])
     try:
-        publish = await scheduler.publish_service.deliver_daily_report(report)
+        publish = await scheduler.publish_service.deliver_daily_report(
+            report,
+            idempotency_key=idempotency_key,
+        )
         publish_payload = publish.as_dict()
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         try:

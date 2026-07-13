@@ -101,7 +101,12 @@ class _PublishResult(Protocol):
 
 
 class _DailyReportPublisher(Protocol):
-    async def deliver_daily_report(self, report: DailyReport) -> _PublishResult: ...
+    async def deliver_daily_report(
+        self,
+        report: DailyReport,
+        *,
+        idempotency_key: str | None = None,
+    ) -> _PublishResult: ...
 
 
 class _ReportScheduler(Protocol):

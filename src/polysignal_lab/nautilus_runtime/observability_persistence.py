@@ -58,7 +58,14 @@ class PersistenceWriter(Protocol):
 
 
 class Publisher(Protocol):
-    async def send(self, message: str, message_type: str, signal_id: str | None = None) -> object: ...
+    async def send(
+        self,
+        message: str,
+        message_type: str,
+        signal_id: str | None = None,
+        *,
+        publish_id: str | None = None,
+    ) -> object: ...
 
 
 class AcceptedSignalNotifier(Protocol):

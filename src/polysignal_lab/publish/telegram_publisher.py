@@ -78,9 +78,14 @@ class TelegramPublisher:
         self.client = client or httpx.AsyncClient(timeout=10.0)
 
     async def send(
-        self, message: str, message_type: str, signal_id: str | None = None
+        self,
+        message: str,
+        message_type: str,
+        signal_id: str | None = None,
+        *,
+        publish_id: str | None = None,
     ) -> PublishResult:
-        publish_id = new_id("tg")
+        publish_id = publish_id or new_id("tg")
         if not self.config.enabled or self.config.dry_run:
             return PublishResult(publish_id=publish_id, message_type=message_type, status="DRY_RUN", signal_id=signal_id, sent_at=utc_iso())
         if not self.bot_token or not self.channel_id:

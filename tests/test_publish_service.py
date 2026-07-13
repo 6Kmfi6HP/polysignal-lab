@@ -1,6 +1,6 @@
 """
 Input: pytest, factories, factories.sample_paper_trade_result, polysignal_lab.app.services.publish_service, polysignal_lab.app.services.publish_service.PublishService, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.InvalidPaperTradeResultRow
-Output: test_publish_service_health_starts_ok, test_publish_signal_persists_publish_audit, test_publish_paper_result_rejects_invalid_payload, test_publish_nautilus_paper_fill_persists_publish_audit, _Publish, _Formatter, _Publisher, _Persistence, _Signal
+Output: test_publish_service_health_starts_ok, test_deliver_daily_report_uses_durable_idempotency_key, test_publish_signal_persists_publish_audit, test_publish_paper_result_rejects_invalid_payload, test_publish_nautilus_paper_fill_persists_publish_audit, _Publish, _Formatter, _Publisher, _Persistence, _Signal
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -44,13 +44,25 @@ class _Formatter:
     def result_message(self, result) -> str:
         return f"result {result['paper_trade_id']}"
 
+    def daily_report_message(self, report) -> str:
+        return f"report {report['report_id']}"
+
 
 class _Publisher:
     def __init__(self) -> None:
         self.last: tuple[str, str, str | None] | None = None
+        self.last_publish_id: str | None = None
 
-    async def send(self, message: str, message_type: str, signal_id: str | None):
+    async def send(
+        self,
+        message: str,
+        message_type: str,
+        signal_id: str | None,
+        *,
+        publish_id: str | None = None,
+    ):
         self.last = (message, message_type, signal_id)
+        self.last_publish_id = publish_id
         return _Publish()
 
 
@@ -77,6 +89,19 @@ def test_publish_service_health_starts_ok() -> None:
     service = PublishService(_Formatter(), _Publisher(), _Persistence())
 
     assert service.health()["status"] == "ok"
+
+
+async def test_deliver_daily_report_uses_durable_idempotency_key() -> None:
+    publisher = _Publisher()
+    service = PublishService(_Formatter(), publisher, _Persistence())
+
+    await service.deliver_daily_report(
+        {"report_id": "dr-1", "revision": 2},
+        idempotency_key="daily_report:2026-07-13:r2",
+    )
+
+    assert publisher.last == ("report dr-1", "daily_report_correction", None)
+    assert publisher.last_publish_id == "daily_report:2026-07-13:r2"
 
 
 async def test_publish_signal_persists_publish_audit() -> None:
