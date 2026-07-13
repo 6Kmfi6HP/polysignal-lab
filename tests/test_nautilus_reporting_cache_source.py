@@ -231,11 +231,21 @@ def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_lo
                 "ts": event_at,
             }
         )
+    store.insert_system_event(
+        {
+            "event_id": "order-invalid",
+            "event_type": "nautilus_order",
+            "severity": "warning",
+            "created_at": now.isoformat(),
+            "paper_order_id": "order-invalid",
+            "ts": now.isoformat(),
+        }
+    )
     health = HealthRegistry()
     health.mark_degraded(
         "observability_actor",
         "telemetry queue full",
-        telemetry_queue_drops=1,
+        telemetry_queue_drops=101,
         telemetry_last_drop_at=now.isoformat(),
     )
     scheduler = SimpleNamespace(
@@ -276,7 +286,10 @@ def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_lo
     assert report.paper_orders == 1
     assert report.paper_fills == 1
     assert report.telemetry_status == "incomplete"
-    assert report.telemetry_incomplete_reasons == ["telemetry_queue_drops:1"]
+    assert report.telemetry_incomplete_reasons == [
+        "paper_order_projection_invalid:1",
+        "telemetry_queue_drops",
+    ]
 
 
 def test_generate_daily_report_retries_pending_outbox_without_duplicate_report(

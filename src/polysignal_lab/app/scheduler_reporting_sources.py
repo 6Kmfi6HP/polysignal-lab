@@ -178,8 +178,13 @@ def _telemetry_incomplete_reasons(
     day_start: datetime,
     day_end: datetime,
     fill_source_reason: str | None,
+    invalid_order_projections: int,
 ) -> tuple[str, ...]:
     reasons = [fill_source_reason] if fill_source_reason else []
+    if invalid_order_projections > 0:
+        reasons.append(
+            f"paper_order_projection_invalid:{invalid_order_projections}"
+        )
 
     health = getattr(scheduler, "health", None)
     components = getattr(health, "components", None)
@@ -202,7 +207,7 @@ def _telemetry_incomplete_reasons(
         day_start=day_start,
         day_end=day_end,
     ):
-        reasons.append(f"telemetry_queue_drops:{drops}")
+        reasons.append("telemetry_queue_drops")
 
     failures = int(metrics.get("telemetry_write_failures", 0) or 0)
     if failures > 0 and _timestamp_in_report_window(
@@ -210,7 +215,7 @@ def _telemetry_incomplete_reasons(
         day_start=day_start,
         day_end=day_end,
     ):
-        reasons.append(f"telemetry_write_failures:{failures}")
+        reasons.append("telemetry_write_failures")
     return tuple(reasons)
 
 
@@ -256,15 +261,22 @@ def _collect_daily_report_inputs(
         elif not native_fills_available:
             fill_source_reason = "paper_fill_projection_unavailable"
 
-    today_orders_raw = scheduler.persistence.query_json(
+    today_order_states = scheduler.persistence.query_json(
         "paper_order_states",
-        where=(
-            "WHERE source_event_at >= ? AND source_event_at < ? "
-            "AND COALESCE(json_extract(payload_json, '$._projection_invalid'), 0) != 1"
-        ),
+        where="WHERE source_event_at >= ? AND source_event_at < ?",
         params=day_params,
         limit=10_000,
     )
+    invalid_order_projections = sum(
+        1
+        for order in today_order_states
+        if order.get("_projection_invalid") is True
+    )
+    today_orders_raw = [
+        order
+        for order in today_order_states
+        if order.get("_projection_invalid") is not True
+    ]
     today_reject_orders_raw = [
         order
         for order in today_orders_raw
@@ -289,5 +301,6 @@ def _collect_daily_report_inputs(
             day_start=day_start,
             day_end=day_end,
             fill_source_reason=fill_source_reason,
+            invalid_order_projections=invalid_order_projections,
         ),
     )
