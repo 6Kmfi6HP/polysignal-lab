@@ -1,4 +1,4 @@
-# noqa: SIZE_OK  — legacy SQLite gateway; current change only adds fail-closed parsing
+# noqa: SIZE_OK  — SQLite gateway; split is outside reporting boundary prefactor
 """
 Input: __future__, __future__.annotations, json, datetime, datetime.datetime, sqlite3, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, math
 Output: DuplicateRecordError, MalformedSQLitePayloadError, SQLiteStore
@@ -474,6 +474,38 @@ class SQLiteStore:
                 (p["event_id"], p["event_type"], p["severity"], p["created_at"], self._json(p)),
             )
 
+    def delete_paper_result_rows(
+        self,
+        paper_trade_id: str,
+        publish_id: str | None,
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM paper_trade_results WHERE paper_trade_id = ?",
+                (paper_trade_id,),
+            )
+            if publish_id is not None:
+                self._conn.execute(
+                    "DELETE FROM telegram_publishes WHERE publish_id = ?",
+                    (publish_id,),
+                )
+
+    def delete_daily_report_rows(
+        self,
+        report_id: str,
+        publish_id: str | None,
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM daily_reports WHERE report_id = ?",
+                (report_id,),
+            )
+            if publish_id is not None:
+                self._conn.execute(
+                    "DELETE FROM telegram_publishes WHERE publish_id = ?",
+                    (publish_id,),
+                )
+
     def restore_latest_system_event(self, event_type: str) -> dict[str, Any] | None:
         sql, params = self._build_query(
             "system_events",
@@ -522,6 +554,85 @@ class SQLiteStore:
             if isinstance(payload, dict):
                 valid_rows.append(payload)
         return valid_rows
+
+    def recent_system_events(self, limit: int) -> list[dict[str, Any]]:
+        return self.query_json(
+            "system_events",
+            where="ORDER BY created_at DESC, rowid DESC",
+            limit=limit,
+        )
+
+    def latest_health_snapshot(self) -> dict[str, Any] | None:
+        return self.restore_latest_system_event("health_snapshot")
+
+    def strategy_status_rows(self, limit: int) -> list[dict[str, Any]]:
+        return self.query_json(
+            "strategy_status",
+            where="ORDER BY created_at ASC",
+            limit=limit,
+        )
+
+    def signal_rows(self, limit: int) -> list[dict[str, Any]]:
+        return self.query_json(
+            "signals",
+            where="ORDER BY created_at DESC",
+            limit=limit,
+        )
+
+    def rejected_signal_rows(self, limit: int) -> list[dict[str, Any]]:
+        return self.query_json(
+            "rejected_signals",
+            where="ORDER BY rejected_at DESC",
+            limit=limit,
+        )
+
+    def _paper_event_rows(
+        self,
+        event_type: str,
+        status: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        where = "WHERE event_type=? ORDER BY created_at DESC"
+        params: tuple[str, ...] = (event_type,)
+        if status:
+            where = "WHERE event_type=? AND json_extract(payload_json, '$.status')=? ORDER BY created_at DESC"
+            params = (event_type, status.upper())
+        return self.query_json(
+            "system_events",
+            where=where,
+            params=params,
+            limit=limit,
+        )
+
+    def paper_order_rows(
+        self,
+        status: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        return self._paper_event_rows("nautilus_order", status, limit)
+
+    def market_rows(self, limit: int) -> list[dict[str, Any]]:
+        return self.query_json(
+            "markets",
+            where="ORDER BY updated_at DESC",
+            limit=limit,
+        )
+
+    def paper_position_rows(
+        self,
+        status: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        return self._paper_event_rows("nautilus_position", status, limit)
+
+    def paper_trade_result_rows(self, limit: int) -> list[dict[str, Any]]:
+        return self.query_json("paper_trade_results", limit=limit)
+
+    def daily_reports(self, limit: int) -> list[dict[str, Any]]:
+        return self.restore_daily_reports(limit=limit)
+
+    def strategy_leaderboard(self, limit: int) -> list[dict[str, Any]]:
+        return self.restore_strategy_leaderboard(limit=limit)
 
     def counts(self) -> dict[str, int]:
         with self._lock:

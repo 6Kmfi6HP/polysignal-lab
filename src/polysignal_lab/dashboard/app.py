@@ -1,6 +1,6 @@
 # noqa: SIZE_OK  — dashboard route module; split is outside this safety fix
 """
-Input: __future__, __future__.annotations, datetime, datetime.datetime, math, typing, typing.TypeAlias, fastapi, fastapi.FastAPI, polysignal_lab.domain.market, polysignal_lab.paper.event_projection, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.sqlite_store.SQLiteStore
+Input: __future__, datetime, math, typing, fastapi, polysignal_lab.dashboard.reporting_read, polysignal_lab.domain.market, polysignal_lab.paper.event_projection
 Output: create_dashboard_app
 Pos: Application code
 
@@ -21,13 +21,13 @@ from typing import Any, TypeAlias
 
 from fastapi import FastAPI
 
+from polysignal_lab.dashboard.reporting_read import ReportingReadPort
 from polysignal_lab.domain.market import Market
 from polysignal_lab.paper.event_projection import (
     normalize_paper_order,
     normalize_paper_position,
     paper_token_id,
 )
-from polysignal_lab.storage.sqlite_store import SQLiteStore
 
 JsonValue: TypeAlias = Any
 
@@ -70,14 +70,10 @@ def _as_float(value: JsonValue) -> float:
         return 0.0
 
 
-def _health_payload(store: SQLiteStore) -> dict[str, JsonValue]:
-    counts = store.counts()
-    recent_system_events = store.query_json(
-        "system_events",
-        where="ORDER BY created_at DESC, rowid DESC",
-        limit=10,
-    )
-    snapshot = store.restore_latest_system_event("health_snapshot")
+def _health_payload(reporting: ReportingReadPort) -> dict[str, JsonValue]:
+    counts = reporting.counts()
+    recent_system_events = reporting.recent_system_events(10)
+    snapshot = reporting.latest_health_snapshot()
     if isinstance(snapshot, dict):
         return {
             "status": str(snapshot.get("status", "degraded")).lower(),
@@ -151,14 +147,10 @@ def _calibration_from_reports(reports: list[dict[str, JsonValue]]) -> dict[str, 
     return merged
 
 
-def _market_lookup(store: SQLiteStore) -> tuple[dict[str, Market], dict[str, Market]]:
+def _market_lookup(reporting: ReportingReadPort) -> tuple[dict[str, Market], dict[str, Market]]:
     by_id: dict[str, Market] = {}
     by_token: dict[str, Market] = {}
-    for row in store.query_json(
-        "markets",
-        where="ORDER BY updated_at DESC",
-        limit=10_000,
-    ):
+    for row in reporting.market_rows(10_000):
         try:
             market = Market.model_validate(row)
         except (TypeError, ValueError):
@@ -233,25 +225,21 @@ def _valid_position_payload(payload: dict[str, JsonValue]) -> bool:
     return True
 
 
-def create_dashboard_app(store: SQLiteStore) -> FastAPI:
+def create_dashboard_app(reporting: ReportingReadPort) -> FastAPI:
     app = FastAPI(title="PolySignal Lab Dashboard", version="1.0.0")
 
     def strategy_status_rows(limit: int = 100) -> list[dict[str, JsonValue]]:
-        return store.query_json(
-            "strategy_status",
-            where="ORDER BY created_at ASC",
-            limit=_bounded_limit(limit),
-        )
+        return reporting.strategy_status_rows(_bounded_limit(limit))
 
 
     @app.get("/health", response_model=None)
     async def health() -> dict[str, JsonValue]:
-        return _health_payload(store)
+        return _health_payload(reporting)
 
     @app.get("/api/overview", response_model=None)
     async def overview() -> dict[str, JsonValue]:
-        counts = store.counts()
-        latest_report = store.restore_daily_reports(limit=1)
+        counts = reporting.counts()
+        latest_report = reporting.daily_reports(1)
         report = latest_report[0] if latest_report else None
         return {
             "counts": counts,
@@ -264,19 +252,11 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
 
     @app.get("/api/signals", response_model=None)
     async def signals(limit: int = 100) -> list[dict[str, JsonValue]]:
-        return store.query_json(
-            "signals",
-            where="ORDER BY created_at DESC",
-            limit=_bounded_limit(limit),
-        )
+        return reporting.signal_rows(_bounded_limit(limit))
 
     @app.get("/api/rejected-signals", response_model=None)
     async def rejected_signals(limit: int = 100) -> list[dict[str, JsonValue]]:
-        return store.query_json(
-            "rejected_signals",
-            where="ORDER BY rejected_at DESC",
-            limit=_bounded_limit(limit),
-        )
+        return reporting.rejected_signal_rows(_bounded_limit(limit))
 
     @app.get("/api/strategy-status", response_model=None)
     async def strategy_status(limit: int = 100) -> list[dict[str, JsonValue]]:
@@ -284,18 +264,8 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
 
     @app.get("/api/paper-orders", response_model=None)
     async def paper_orders(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
-        where = "WHERE event_type=? ORDER BY created_at DESC"
-        params: tuple[str, ...] = ("nautilus_order",)
-        if status:
-            where = "WHERE event_type=? AND json_extract(payload_json, '$.status')=? ORDER BY created_at DESC"
-            params = ("nautilus_order", status.upper())
-        rows = store.query_json(
-            "system_events",
-            where=where,
-            params=params,
-            limit=_bounded_limit(limit),
-        )
-        by_id, by_token = _market_lookup(store)
+        rows = reporting.paper_order_rows(status, _bounded_limit(limit))
+        by_id, by_token = _market_lookup(reporting)
         payloads = [
             normalize_paper_order(
                 row,
@@ -307,18 +277,8 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
 
     @app.get("/api/positions", response_model=None)
     async def positions(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
-        where = "WHERE event_type=? ORDER BY created_at DESC"
-        params: tuple[str, ...] = ("nautilus_position",)
-        if status:
-            where = "WHERE event_type=? AND json_extract(payload_json, '$.status')=? ORDER BY created_at DESC"
-            params = ("nautilus_position", status.upper())
-        rows = store.query_json(
-            "system_events",
-            where=where,
-            params=params,
-            limit=_bounded_limit(limit),
-        )
-        by_id, by_token = _market_lookup(store)
+        rows = reporting.paper_position_rows(status, _bounded_limit(limit))
+        by_id, by_token = _market_lookup(reporting)
         payloads = [
             normalize_paper_position(
                 row,
@@ -330,14 +290,14 @@ def create_dashboard_app(store: SQLiteStore) -> FastAPI:
 
     @app.get("/api/trades", response_model=None)
     async def trades(limit: int = 100) -> list[dict[str, JsonValue]]:
-        return store.query_json("paper_trade_results", limit=_bounded_limit(limit))
+        return reporting.paper_trade_result_rows(_bounded_limit(limit))
 
     @app.get("/api/leaderboard", response_model=None)
     async def leaderboard(limit: int = 100) -> dict[str, JsonValue]:
         report_limit = _bounded_limit(limit)
-        reports = store.restore_daily_reports(limit=report_limit)
+        reports = reporting.daily_reports(report_limit)
         return {
-            "leaderboard": store.restore_strategy_leaderboard(limit=report_limit),
+            "leaderboard": reporting.strategy_leaderboard(report_limit),
             "calibration_breakdown": _calibration_from_reports(reports),
         }
 

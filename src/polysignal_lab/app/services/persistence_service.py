@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, typing, typing.Any, typing.Iterable, polysignal_lab.storage.jsonl_store, polysignal_lab.storage.jsonl_store.JSONLStore
+Input: __future__, datetime, typing, polysignal_lab.storage.jsonl_store, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.state_store
 Output: PersistenceService
 Pos: Service Layer - Business logic
 
@@ -126,30 +126,12 @@ class PersistenceService:
     def delete_paper_result_rows(
         self, paper_trade_id: str, publish_id: str | None
     ) -> None:
-        with self.sqlite._lock, self.sqlite._conn:
-            self.sqlite._conn.execute(
-                "DELETE FROM paper_trade_results WHERE paper_trade_id = ?",
-                (paper_trade_id,),
-            )
-            if publish_id is not None:
-                self.sqlite._conn.execute(
-                    "DELETE FROM telegram_publishes WHERE publish_id = ?",
-                    (publish_id,),
-                )
+        self.sqlite.delete_paper_result_rows(paper_trade_id, publish_id)
 
     def delete_daily_report_rows(
         self, report_id: str, publish_id: str | None
     ) -> None:
-        with self.sqlite._lock, self.sqlite._conn:
-            self.sqlite._conn.execute(
-                "DELETE FROM daily_reports WHERE report_id = ?",
-                (report_id,),
-            )
-            if publish_id is not None:
-                self.sqlite._conn.execute(
-                    "DELETE FROM telegram_publishes WHERE publish_id = ?",
-                    (publish_id,),
-                )
+        self.sqlite.delete_daily_report_rows(report_id, publish_id)
 
     def close(self) -> None:
         self.sqlite.close()

@@ -1,7 +1,7 @@
 # noqa: SIZE_OK  — dashboard integration coverage file
 """
 Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timezone, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.dashboard.app
-Output: test_dashboard_readonly_endpoints_return_stored_data, test_dashboard_positions_returns_latest_metadata_first, test_dashboard_health_returns_component_snapshot_from_system_events, test_dashboard_exposes_paper_execution_quality, test_leaderboard_uses_sqlite_report_data, test_leaderboard_recomputes_calibration_status_after_aggregation, test_dashboard_exposes_bounded_strategy_status_rows, test_dashboard_rejects_write_methods
+Output: test_dashboard_uses_injected_reporting_read_port, test_dashboard_readonly_endpoints_return_stored_data, test_dashboard_positions_returns_latest_metadata_first, test_dashboard_health_returns_component_snapshot_from_system_events, test_dashboard_exposes_paper_execution_quality, test_leaderboard_uses_sqlite_report_data, test_leaderboard_recomputes_calibration_status_after_aggregation, test_dashboard_exposes_bounded_strategy_status_rows, test_dashboard_rejects_write_methods
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -16,6 +16,7 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -23,6 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from polysignal_lab.dashboard.app import create_dashboard_app
+from polysignal_lab.dashboard.reporting_read import ReportingReadPort
 from polysignal_lab.domain.enums import PositionStatus, Side
 from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.domain.paper_result import DailyReport
@@ -93,6 +95,18 @@ async def _dashboard_get(
         base_url="http://testserver",
     ) as client:
         return await client.get(path, params=params)
+
+
+def test_dashboard_uses_injected_reporting_read_port() -> None:
+    reporting = Mock(spec=ReportingReadPort)
+    reporting.signal_rows.return_value = [{"signal_id": "sig-port", "limit": 7}]
+    client = TestClient(create_dashboard_app(reporting))
+
+    response = client.get("/api/signals", params={"limit": 7})
+
+    assert response.status_code == 200
+    assert response.json() == [{"signal_id": "sig-port", "limit": 7}]
+    reporting.signal_rows.assert_called_once_with(7)
 
 
 async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapshot, settings) -> None:

@@ -37,7 +37,7 @@ Auto-generated project index maintained by the Fractal Multi-level Index System.
     ├── alpha/ (16 files)
     ├── app/ (15 files)
       ├── services/ (10 files)
-    ├── dashboard/ (2 files)
+    ├── dashboard/ (3 files)
     ├── data/ (13 files)
     ├── domain/ (15 files)
     ├── nautilus_bridge/ (5 files)
