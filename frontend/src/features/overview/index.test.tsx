@@ -1,5 +1,5 @@
 /**
- * Input: { makeHealthResponse, makeOverviewResponse } from '@/test-utils/fixtures', { renderWithQueryClient } from '@/test-utils/render-with-query-client', { afterEach, describe, expect, it, vi } from 'vitest', * as client from '@/lib/api/client', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', { SidebarProvider } from '@/components/ui/sidebar', { OverviewPage } from './index', @/test-utils/fixtures, @/test-utils/render-with-query-client
+ * Input: { makeDailyReport, makeHealthResponse, makeOverviewResponse } from '@/test-utils/fixtures', { renderWithQueryClient } from '@/test-utils/render-with-query-client', { afterEach, describe, expect, it, vi } from 'vitest', * as client from '@/lib/api/client', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', { SidebarProvider } from '@/components/ui/sidebar', { OverviewPage } from './index', @/test-utils/fixtures, @/test-utils/render-with-query-client
  * Output: renderOverviewPage
  * Pos: Application code
  *
@@ -12,7 +12,11 @@
 
 
 
-import { makeHealthResponse, makeOverviewResponse } from '@/test-utils/fixtures'
+import {
+  makeDailyReport,
+  makeHealthResponse,
+  makeOverviewResponse,
+} from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as client from '@/lib/api/client'
@@ -65,8 +69,52 @@ describe('OverviewPage', () => {
     expect(view.getByText('2026-06-30')).toBeInTheDocument()
     expect(view.getByText('3')).toBeInTheDocument()
     expect(view.getByText('1')).toBeInTheDocument()
-    expect(view.getByText('4.00 USDC')).toBeInTheDocument()
+    expect(view.getByText('4.00 (currency unavailable)')).toBeInTheDocument()
+    expect(view.getByText('Status unavailable')).toBeInTheDocument()
     expect(view.getByText('ok')).toBeInTheDocument()
+  })
+
+  it('shows report currency and incomplete telemetry reasons', async () => {
+    vi.spyOn(client, 'getOverview').mockResolvedValue(
+      makeOverviewResponse({
+        latest_report: makeDailyReport({
+          paper_pnl: 7,
+          total_pnl_usdc: 4,
+          equity_currency: 'pUSD',
+          telemetry_status: 'incomplete',
+          telemetry_incomplete_reasons: [
+            'paper_order_projection_invalid:1',
+            'telemetry_queue_drops',
+          ],
+        }),
+      })
+    )
+    vi.spyOn(client, 'getHealth').mockResolvedValue(makeHealthResponse())
+
+    const view = renderOverviewPage()
+
+    expect(await view.findByText('7.00 pUSD')).toBeInTheDocument()
+    expect(view.queryByText('4.00 USDC')).not.toBeInTheDocument()
+    expect(view.getByText('Incomplete')).toBeInTheDocument()
+    expect(
+      view.getByText(
+        'Reasons: paper_order_projection_invalid:1; telemetry_queue_drops'
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('marks incomplete telemetry reasons unavailable when omitted', async () => {
+    vi.spyOn(client, 'getOverview').mockResolvedValue(
+      makeOverviewResponse({
+        latest_report: makeDailyReport({ telemetry_status: 'incomplete' }),
+      })
+    )
+    vi.spyOn(client, 'getHealth').mockResolvedValue(makeHealthResponse())
+
+    const view = renderOverviewPage()
+
+    expect(await view.findByText('Incomplete')).toBeInTheDocument()
+    expect(view.getByText('Reasons unavailable')).toBeInTheDocument()
   })
 
   it('shows a loading placeholder before overview data resolves', () => {

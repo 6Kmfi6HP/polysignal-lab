@@ -27,6 +27,20 @@ import { Main } from '@/components/layout/main'
 import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 
+function telemetryStatusLabel(
+  status: 'complete' | 'incomplete' | undefined
+): string {
+  if (status === 'complete') return 'Complete'
+  if (status === 'incomplete') return 'Incomplete'
+  return 'Status unavailable'
+}
+
+function telemetryReasonsLabel(reasons: string[] | undefined): string {
+  if (reasons === undefined) return 'Reasons unavailable'
+  if (reasons.length === 0) return 'No incomplete reasons reported'
+  return `Reasons: ${reasons.join('; ')}`
+}
+
 export function OverviewPage() {
   const overview = useOverviewQuery()
   const health = useHealthQuery()
@@ -81,7 +95,7 @@ export function OverviewPage() {
               </CardHeader>
               <CardContent>
                 {overview.data.latest_report ? (
-                  <dl className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+                  <dl className='grid gap-4 sm:grid-cols-2 lg:grid-cols-5'>
                     <div>
                       <dt className='text-sm text-muted-foreground'>
                         Report date
@@ -111,9 +125,29 @@ export function OverviewPage() {
                         Paper PnL
                       </dt>
                       <dd className='font-semibold'>
-                        {overview.data.latest_report.total_pnl_usdc.toFixed(2)}{' '}
-                        USDC
+                        {overview.data.latest_report.paper_pnl.toFixed(2)}{' '}
+                        {overview.data.latest_report.equity_currency ??
+                          '(currency unavailable)'}
                       </dd>
+                    </div>
+                    <div>
+                      <dt className='text-sm text-muted-foreground'>
+                        Telemetry
+                      </dt>
+                      <dd className='font-semibold'>
+                        {telemetryStatusLabel(
+                          overview.data.latest_report.telemetry_status
+                        )}
+                      </dd>
+                      {overview.data.latest_report.telemetry_status ===
+                        'incomplete' && (
+                        <dd className='text-sm text-muted-foreground'>
+                          {telemetryReasonsLabel(
+                            overview.data.latest_report
+                              .telemetry_incomplete_reasons
+                          )}
+                        </dd>
+                      )}
                     </div>
                   </dl>
                 ) : (
