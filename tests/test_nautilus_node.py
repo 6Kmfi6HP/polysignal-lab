@@ -897,7 +897,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert bundle.websocket_tasks == []
 
 
-def test_publish_accepted_signal_in_background_uses_fresh_publish_service(
+def test_publish_accepted_signal_in_background_uses_runtime_owned_publish_operation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.signal_sidecar as sidecar_mod
@@ -906,48 +906,20 @@ def test_publish_accepted_signal_in_background_uses_fresh_publish_service(
 
     published: list[tuple[str, float]] = []
     noted: list[dict[str, str]] = []
-    closed: list[bool] = []
+    runtime_calls: list[bool] = []
 
-    class FakeTelegramPublisher:
-        def __init__(self, config) -> None:
-            self.config = config
-            self.client = SimpleNamespace(aclose=self._aclose)
+    async def publish_signal_once(signal, stake_usdc):
+        runtime_calls.append(True)
+        published.append((signal.signal_id, stake_usdc))
+        return SimpleNamespace(as_dict=lambda: {"status": "SENT"})
 
-        async def _aclose(self) -> None:
-            closed.append(True)
-
-    class FakePublishService:
-        def __init__(
-            self,
-            formatter,
-            publisher,
-            persistence,
-            *,
-            timeout_sec: float,
-        ) -> None:
-            assert formatter == "formatter"
-            assert persistence == "persistence"
-            assert timeout_sec == 7.0
-            self.publisher = publisher
-
-        async def publish_signal(self, signal, stake_usdc):
-            published.append((signal.signal_id, stake_usdc))
-            return SimpleNamespace(as_dict=lambda: {"status": "SENT"})
-
-    monkeypatch.setattr(sidecar_mod, "TelegramPublisher", FakeTelegramPublisher, raising=False)
-    monkeypatch.setattr(sidecar_mod, "PublishService", FakePublishService, raising=False)
     monkeypatch.setattr(
         sidecar_mod.scheduler_health,
         "note_publish_result",
         lambda _scheduler, publish: noted.append(publish),
     )
     scheduler = SimpleNamespace(
-        settings=_runtime_settings_stub(telegram="telegram-config"),
-        publish_service=SimpleNamespace(
-            formatter="formatter",
-            persistence="persistence",
-            timeout_sec=7.0,
-        ),
+        publish_signal_once=publish_signal_once,
         logger=SimpleNamespace(warning=lambda *_args, **_kwargs: None),
     )
     signal = SignalCandidate.build(
@@ -970,9 +942,9 @@ def test_publish_accepted_signal_in_background_uses_fresh_publish_service(
 
     sidecar_mod._publish_accepted_signal_in_background(scheduler, signal, 10.0)
 
+    assert runtime_calls == [True]
     assert published == [(signal.signal_id, 10.0)]
     assert noted == [{"status": "SENT"}]
-    assert closed == [True]
 
 
 

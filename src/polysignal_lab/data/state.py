@@ -60,6 +60,17 @@ class MarketRegistry:
         with self._lock:
             return self.markets.get(market_id)
 
+    def for_token(self, token_id: str) -> Market | None:
+        with self._lock:
+            return next(
+                (
+                    market
+                    for market in self.markets.values()
+                    if any(token.token_id == token_id for token in market.outcome_tokens)
+                ),
+                None,
+            )
+
 
 @dataclass
 class OrderBookRegistry:

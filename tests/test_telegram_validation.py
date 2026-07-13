@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, json, httpx, pytest, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.nautilus_runtime.runtime_context_factory, polysignal_lab.nautilus_runtime.runtime_context_factory.build_nautilus_runtime_context
-Output: test_runtime_uses_configured_telegram_publish_timeout, test_nautilus_runtime_does_not_construct_legacy_orderbook_for_telegram, test_telegram_qa_default_message_is_compact, test_missing_telegram_credentials_fail_live_publish, test_malformed_telegram_credentials_fail_live_publish, test_mocked_telegram_send_returns_sent_and_redacts_token, test_failed_telegram_response_redacts_token, test_invalid_publisher_credentials_fail_without_http_request, test_telegram_qa_records_actual_dry_run_invocation, test_telegram_qa_records_actual_live_failure_invocation
+Input: __future__, __future__.annotations, json, types, httpx, pytest, polysignal_lab.config, polysignal_lab.domain, polysignal_lab.nautilus_runtime.runtime_context_factory, polysignal_lab.publish.telegram_publisher
+Output: test_runtime_uses_configured_telegram_publish_timeout, test_runtime_owns_scoped_signal_publisher_lifecycle, test_nautilus_runtime_does_not_construct_legacy_orderbook_for_telegram, test_telegram_qa_default_message_is_compact, test_missing_telegram_credentials_fail_live_publish, test_malformed_telegram_credentials_fail_live_publish, test_mocked_telegram_send_returns_sent_and_redacts_token, test_failed_telegram_response_redacts_token, test_invalid_publisher_credentials_fail_without_http_request, test_telegram_qa_records_actual_dry_run_invocation, test_telegram_qa_records_actual_live_failure_invocation
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -9,14 +9,17 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from polysignal_lab.config import Settings, TelegramConfig
+from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.runtime_context_factory import build_nautilus_runtime_context
 from polysignal_lab.publish.telegram_qa import DEFAULT_MESSAGE, parse_args, run
-from polysignal_lab.publish.telegram_publisher import TelegramPublisher
+from polysignal_lab.publish.telegram_publisher import PublishResult, TelegramPublisher
 
 
 VALID_TOKEN = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
@@ -40,6 +43,67 @@ def test_runtime_uses_configured_telegram_publish_timeout(tmp_path) -> None:
     runtime = build_nautilus_runtime_context(settings, base_dir=tmp_path)
 
     assert runtime.publish_service.timeout_sec == 20.0
+
+
+async def test_runtime_owns_scoped_signal_publisher_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    publishers = []
+
+    class FakeTelegramPublisher:
+        def __init__(self, config: TelegramConfig) -> None:
+            self.config = config
+            self.closed = False
+            self.client = SimpleNamespace(aclose=self._close)
+            publishers.append(self)
+
+        async def _close(self) -> None:
+            self.closed = True
+
+        async def send(
+            self,
+            message: str,
+            message_type: str,
+            signal_id: str | None = None,
+        ) -> PublishResult:
+            _ = message
+            return PublishResult(
+                publish_id="tg-verify",
+                message_type=message_type,
+                status="DRY_RUN",
+                signal_id=signal_id,
+            )
+
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.runtime_context_factory.TelegramPublisher",
+        FakeTelegramPublisher,
+    )
+    runtime = build_nautilus_runtime_context(Settings(), base_dir=tmp_path)
+    signal = SignalCandidate.build(
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="market-1",
+        market_slug="btc-updown-5m",
+        condition_id="condition-1",
+        token_id="up-token",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=["EDGE"],
+        metrics={},
+    )
+
+    result = await runtime.publish_signal_once(signal, 10.0)
+
+    assert result.status == "DRY_RUN"
+    assert len(publishers) == 2
+    assert publishers[0].closed is False
+    assert publishers[1].closed is True
 
 
 def test_nautilus_runtime_does_not_construct_legacy_orderbook_for_telegram(

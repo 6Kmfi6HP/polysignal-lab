@@ -4,7 +4,7 @@
 - Application code
 
 **Files**:
-- `telegram_render.py` - Keyboard/text helpers for Telegram bot
+- `telegram_render.py` - Telegram bot rendering over shared paper projections
 - `telegram_qa.py` - Exports parse_args and 6 more
 - `telegram_publisher.py` - Exports invalid_telegram_credential_fields and 2 more
 - `telegram_bot.py` - TelegramBotService interactive bot

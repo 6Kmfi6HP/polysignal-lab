@@ -1,5 +1,5 @@
 """
-Input: __future__, logging, pathlib, polysignal_lab.config, polysignal_lab.app.services
+Input: __future__, collections.abc, logging, pathlib, typing, polysignal_lab.config, polysignal_lab.app.services, polysignal_lab.domain, polysignal_lab.paper
 Output: NautilusRuntimeContext, build_nautilus_runtime_context
 Pos: Nautilus runtime service context factory — replaces legacy PolySignalScheduler DI
 
@@ -9,9 +9,10 @@ Pos: Nautilus runtime service context factory — replaces legacy PolySignalSche
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 if TYPE_CHECKING:
     from polysignal_lab.domain.paper_result import DailyReport
@@ -22,9 +23,12 @@ from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.config import Settings
 from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 from polysignal_lab.data.state import MarketRegistry
+from polysignal_lab.domain.market import Market
+from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.observability.health import HealthRegistry
+from polysignal_lab.paper.event_projection import paper_token_id
 from polysignal_lab.paper.settlement_resolver import SettlementResolver
-from polysignal_lab.publish.telegram_publisher import TelegramPublisher
+from polysignal_lab.publish.telegram_publisher import PublishResult, TelegramPublisher
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
@@ -126,6 +130,38 @@ def _maybe_create_telegram_bot(
     )
 
 
+def _market_for_paper_event(
+    markets: MarketRegistry,
+    row: Mapping[str, object],
+) -> Market | None:
+    metrics = row.get("metrics")
+    metric_values = metrics if isinstance(metrics, Mapping) else {}
+    market_id = str(row.get("market_id") or metric_values.get("market_id") or "")
+    if market_id:
+        market = markets.get(market_id)
+        if market is not None:
+            return market
+    token_id = paper_token_id(row)
+    return markets.for_token(token_id) if token_id else None
+
+
+def _build_publish_service(
+    settings: Settings,
+    formatter: MessageFormatter,
+    persistence: PersistenceService,
+    markets: MarketRegistry,
+) -> tuple[PublishService, TelegramPublisher]:
+    publisher = TelegramPublisher(settings.telegram)
+    publish_service = PublishService(
+        formatter,
+        publisher,
+        persistence,
+        timeout_sec=settings.telegram.publish_timeout_sec,
+        market_lookup=lambda row: _market_for_paper_event(markets, row),
+    )
+    return publish_service, publisher
+
+
 def _build_settlement_resolver(settings: Settings, logger: logging.Logger) -> SettlementResolver:
     from polysignal_lab.data.ctf_resolution_client import CtfResolutionClient
     from polysignal_lab.data.gamma_resolution_client import GammaResolutionClient
@@ -158,6 +194,7 @@ class NautilusRuntimeContext:
     markets: MarketRegistry
     health: HealthRegistry
     persistence: PersistenceService
+    formatter: MessageFormatter
     publisher: TelegramPublisher
     publish_service: PublishService
     sqlite: SQLiteStore
@@ -177,6 +214,25 @@ class NautilusRuntimeContext:
     _running: bool = False
     _nautilus_runtime_owned_by_live_node: bool = False
 
+    async def publish_signal_once(
+        self,
+        signal: SignalCandidate,
+        stake_usdc: float,
+    ) -> PublishResult:
+        publish_service, publisher = _build_publish_service(
+            self.settings,
+            self.formatter,
+            self.persistence,
+            self.markets,
+        )
+        try:
+            return cast(
+                PublishResult,
+                await publish_service.publish_signal(signal, stake_usdc),
+            )
+        finally:
+            await publisher.client.aclose()
+
     async def generate_daily_report(self) -> DailyReport | None:
         from polysignal_lab.app.scheduler_reporting import generate_daily_report
 
@@ -191,7 +247,6 @@ def build_nautilus_runtime_context(
     validate_native_runtime_settings(settings)
     markets = MarketRegistry()
     formatter = MessageFormatter(settings.telegram.max_message_chars)
-    publisher = TelegramPublisher(settings.telegram)
     health = HealthRegistry()
     discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
     base = Path(base_dir)
@@ -207,11 +262,11 @@ def build_nautilus_runtime_context(
         settings=settings,
         logger=runtime_logger,
     )
-    publish_service = PublishService(
+    publish_service, publisher = _build_publish_service(
+        settings,
         formatter,
-        publisher,
         persistence,
-        timeout_sec=settings.telegram.publish_timeout_sec,
+        markets,
     )
     telegram_bot = _maybe_create_telegram_bot(settings, persistence, markets, formatter)
     settlement_resolver = _build_settlement_resolver(settings, runtime_logger)
@@ -221,6 +276,7 @@ def build_nautilus_runtime_context(
         markets=markets,
         health=health,
         persistence=persistence,
+        formatter=formatter,
         publisher=publisher,
         publish_service=publish_service,
         sqlite=sqlite,

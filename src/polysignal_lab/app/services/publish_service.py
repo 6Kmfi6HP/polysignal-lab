@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, asyncio, collections.abc, collections.abc.Mapping, typing, typing.Any, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.parse_paper_trade_result_row
-Output: PublishService, _nautilus_fill_payload
+Input: __future__, __future__.annotations, asyncio, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.Any, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.parse_paper_trade_result_row, polysignal_lab.paper.event_projection.normalize_paper_fill
+Output: PublishService
 Pos: Service Layer - Business logic
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,10 +14,11 @@ Pos: Service Layer - Business logic
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from polysignal_lab.domain.paper_result import parse_paper_trade_result_row
+from polysignal_lab.paper.event_projection import normalize_paper_fill
 
 
 class PublishService:
@@ -30,11 +31,13 @@ class PublishService:
         persistence: Any,
         *,
         timeout_sec: float = 5.0,
+        market_lookup: Callable[[Mapping[str, object]], object | None] | None = None,
     ) -> None:
         self.formatter = formatter
         self.publisher = publisher
         self.persistence = persistence
         self.timeout_sec = timeout_sec
+        self.market_lookup = market_lookup
 
     async def start(self) -> None:
         return None
@@ -76,7 +79,8 @@ class PublishService:
         return publish
 
     async def publish_nautilus_paper_fill(self, fill: Mapping[str, object]) -> Any:
-        payload = _nautilus_fill_payload(fill)
+        market = self.market_lookup(fill) if self.market_lookup is not None else None
+        payload = normalize_paper_fill(fill, market=market)
         message = self.formatter.nautilus_fill_message(payload)
         signal_id = payload.get("signal_id")
         publish = await asyncio.wait_for(
@@ -94,66 +98,3 @@ class PublishService:
         payload = publish.as_dict()
         self.persistence.append_log("telegram_publishes", payload)
         self.persistence.insert_telegram_publish(payload)
-
-
-def _nautilus_fill_payload(fill: Mapping[str, object]) -> dict[str, object]:
-    payload = dict(fill)
-    metrics = payload.get("metrics")
-    if isinstance(metrics, Mapping):
-        for key in (
-            "strategy",
-            "asset",
-            "timeframe",
-            "market_id",
-            "market_slug",
-            "condition_id",
-            "token_id",
-            "signal_id",
-            "side",
-        ):
-            value = metrics.get(key)
-            if payload.get(key) in (None, "") and value not in (None, ""):
-                payload[key] = value
-    fill_price = _row_float(payload, "fill_price", "price", "last_px")
-    shares = _row_float(payload, "shares", "quantity", "last_qty")
-    stake = _row_float(payload, "stake_usdc", "notional")
-    if stake is None and fill_price is not None and shares is not None:
-        stake = fill_price * shares
-    _fill_missing(payload, "paper_fill_id", _row_text(payload, "paper_fill_id", "trade_id", "fill_id"))
-    _fill_missing(payload, "paper_order_id", _row_text(payload, "paper_order_id", "client_order_id"))
-    _fill_missing(payload, "signal_id", _row_text(payload, "signal_id"))
-    _fill_missing(payload, "side", _row_text(payload, "side"))
-    if fill_price is not None:
-        payload["fill_price"] = fill_price
-    if shares is not None:
-        payload["shares"] = shares
-    if stake is not None:
-        payload["stake_usdc"] = stake
-    return payload
-
-
-def _row_text(row: Mapping[str, object], *keys: str) -> str:
-    for key in keys:
-        value = row.get(key)
-        if value not in (None, ""):
-            return str(value)
-    return ""
-
-
-def _row_float(row: Mapping[str, object], *keys: str) -> float | None:
-    for key in keys:
-        value = row.get(key)
-        if value is None or value == "":
-            continue
-        try:
-            return float(str(value))
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
-def _fill_missing(payload: dict[str, object], key: str, value: object) -> None:
-    current = payload.get(key)
-    if current is None or current == "":
-        if value not in (None, ""):
-            payload[key] = value

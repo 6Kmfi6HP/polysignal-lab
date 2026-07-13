@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, asyncio, logging, threading, collections.abc, collections.abc.Awaitable, collections.abc.Callable, contextlib, contextlib.suppress
-Output: _PublishResultLike, _PublishServiceLike, _InteractiveBotLike
+Output: _PublishResultLike, _AcceptedSignalPublisher, _InteractiveBotLike
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -23,9 +23,7 @@ from datetime import date
 from typing import Protocol, cast
 
 from polysignal_lab.app import scheduler_health
-from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 
 logger = logging.getLogger("polysignal_lab.nautilus_runtime.signal_sidecar")
 
@@ -34,12 +32,8 @@ class _PublishResultLike(Protocol):
     def as_dict(self) -> dict[str, str | None]: ...
 
 
-class _PublishServiceLike(Protocol):
-    formatter: object
-    persistence: object
-    timeout_sec: float
-
-    async def publish_signal(
+class _AcceptedSignalPublisher(Protocol):
+    async def publish_signal_once(
         self,
         signal: SignalCandidate,
         stake_usdc: float,
@@ -78,31 +72,16 @@ async def _stop_nautilus_services(services: object) -> None:
         )
 
 
-def _fresh_publish_service(
-    services: object,
-) -> tuple[PublishService, TelegramPublisher]:
-    base_service = cast(_PublishServiceLike, getattr(services, "publish_service", None))
-    publisher = TelegramPublisher(getattr(services, "settings").telegram)
-    publish_service = PublishService(
-        base_service.formatter,
-        publisher,
-        base_service.persistence,
-        timeout_sec=base_service.timeout_sec,
-    )
-    return publish_service, publisher
-
-
 async def _publish_accepted_signal_once(
     services: object,
     signal: SignalCandidate,
     stake_usdc: float,
 ) -> dict[str, str | None]:
-    publish_service, publisher = _fresh_publish_service(services)
-    try:
-        publish = await cast(_PublishServiceLike, publish_service).publish_signal(signal, stake_usdc)
-        return publish.as_dict()
-    finally:
-        await publisher.client.aclose()
+    publish = await cast(_AcceptedSignalPublisher, services).publish_signal_once(
+        signal,
+        stake_usdc,
+    )
+    return publish.as_dict()
 
 
 def _publish_accepted_signal_in_background(

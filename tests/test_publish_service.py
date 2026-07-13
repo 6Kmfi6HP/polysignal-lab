@@ -18,6 +18,8 @@ import pytest
 from factories import sample_paper_trade_result
 
 from polysignal_lab.app.services.publish_service import PublishService
+from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.domain.paper_result import InvalidPaperTradeResultRow
 
 
@@ -127,21 +129,38 @@ async def test_publish_nautilus_paper_fill_normalizes_projected_rows() -> None:
     persistence = _Persistence()
     publisher = _Publisher()
     formatter = _Formatter()
-    service = PublishService(formatter, publisher, persistence)
+    market = Market(
+        market_id="market-1",
+        market_slug="btc-updown-5m",
+        condition_id="condition-1",
+        asset="BTC",
+        timeframe="5m",
+        outcome_tokens=[
+            OutcomeToken(
+                token_id="up-token",
+                side=Side.UP,
+                outcome_name="Up",
+                market_id="market-1",
+            )
+        ],
+    )
+    service = PublishService(
+        formatter,
+        publisher,
+        persistence,
+        market_lookup=lambda _fill: market,
+    )
 
     publish = await service.publish_nautilus_paper_fill(
         {
             "trade_id": "T-001",
-            "client_order_id": "C-001",
-            "price": 0.5,
-            "quantity": 10.0,
-            "notional": 5.0,
+            "order_id": "C-001",
+            "instrument_id": "up-token.POLYMARKET",
+            "price": "0.5",
+            "quantity": "10.0",
             "metrics": {
                 "signal_id": "sig-fill-1",
                 "strategy": "ptb_diff",
-                "asset": "BTC",
-                "timeframe": "5m",
-                "side": "UP",
             },
         }
     )
@@ -151,9 +170,12 @@ async def test_publish_nautilus_paper_fill_normalizes_projected_rows() -> None:
     assert formatter.last_fill is not None
     assert formatter.last_fill["paper_fill_id"] == "T-001"
     assert formatter.last_fill["paper_order_id"] == "C-001"
+    assert formatter.last_fill["token_id"] == "up-token"
     assert formatter.last_fill["fill_price"] == 0.5
     assert formatter.last_fill["shares"] == 10.0
     assert formatter.last_fill["stake_usdc"] == 5.0
     assert formatter.last_fill["asset"] == "BTC"
     assert formatter.last_fill["timeframe"] == "5m"
+    assert formatter.last_fill["market_id"] == "market-1"
+    assert formatter.last_fill["market_slug"] == "btc-updown-5m"
     assert formatter.last_fill["side"] == "UP"

@@ -36,6 +36,7 @@ from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.config import TelegramConfig
 from polysignal_lab.data.state import MarketRegistry
 from polysignal_lab.nautilus_runtime.observability import StrategyControl
+from polysignal_lab.paper.event_projection import paper_token_id
 from polysignal_lab.paper.strategy_stats import build_strategy_leaderboard_rows
 from polysignal_lab.publish import telegram_render
 from polysignal_lab.signal_layer.formatter import MessageFormatter
@@ -344,13 +345,27 @@ class TelegramBotService:
             return getter(token_id)
         return None
 
+    def _market_for_position(self, row: dict[str, Any]) -> object | None:
+        metrics = row.get("metrics")
+        metric_values = metrics if isinstance(metrics, dict) else {}
+        market_id = str(row.get("market_id") or metric_values.get("market_id") or "")
+        if market_id:
+            market = self.markets.get(market_id)
+            if market is not None:
+                return market
+        token_id = paper_token_id(row)
+        return self.markets.for_token(token_id) if token_id else None
+
     def _format_positions(self) -> str:
         rows = self.persistence.restore_open_positions()
         if not rows:
             return "暂无 open paper positions。"
         blocks: list[str] = []
         for row in rows:
-            payload = _position_display_payload(row)
+            payload = _position_display_payload(
+                row,
+                market=self._market_for_position(row),
+            )
             if not payload.get("side"):
                 continue
             token_id = str(payload.get("token_id") or "")
@@ -634,9 +649,13 @@ class TelegramBotService:
         return telegram_render.truncate_text(text, self.config.max_message_chars)
 
 
-def _position_display_payload(row: dict[str, Any]) -> dict[str, Any]:
+def _position_display_payload(
+    row: dict[str, Any],
+    *,
+    market: object | None = None,
+) -> dict[str, Any]:
     """Normalize open-position rows for Telegram display without PaperPosition."""
-    return telegram_render.position_display_payload(row)
+    return telegram_render.position_display_payload(row, market=market)
 
 
 def _row_float(row: dict[str, Any], *keys: str) -> float | None:

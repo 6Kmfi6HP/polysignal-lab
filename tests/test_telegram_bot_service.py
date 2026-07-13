@@ -352,6 +352,7 @@ async def test_telegram_bot_interactive_dry_run_logs_no_send(caplog: pytest.LogC
 from datetime import date, datetime, timezone
 
 from polysignal_lab.domain.enums import PositionStatus, Side
+from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.domain.orderbook import BookLevel, OrderBook
 from polysignal_lab.domain.paper_result import DailyReport
 
@@ -530,18 +531,32 @@ def test_telegram_bot_positions_accepts_projected_nautilus_rows() -> None:
     persistence.positions = [
         {
             "position_id": "P-001",
-            "market_id": "m_1",
-            "market_slug": "btc-15m",
-            "asset": "BTC",
-            "timeframe": "15m",
-            "token_id": "token-up",
-            "side": "UP",
+            "instrument_id": "token-up.POLYMARKET",
             "avg_entry_price": 0.64,
-            "quantity": 500.0,
+            "signed_qty": 500.0,
             "opened_at": "2026-06-24T12:00:00Z",
         }
     ]
     service = _formatting_service(persistence)
+    service.markets.upsert_many(
+        [
+            Market(
+                market_id="m_1",
+                market_slug="btc-15m",
+                condition_id="condition-1",
+                asset="BTC",
+                timeframe="15m",
+                outcome_tokens=[
+                    OutcomeToken(
+                        token_id="token-up",
+                        side=Side.UP,
+                        outcome_name="Up",
+                        market_id="m_1",
+                    )
+                ],
+            )
+        ]
+    )
     service.books.update(
         OrderBook(
             token_id="token-up",

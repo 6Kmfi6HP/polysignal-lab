@@ -223,10 +223,11 @@ async def test_dashboard_positions_normalize_nautilus_rows_with_market_lookup(tm
             "severity": "info",
             "created_at": "2026-06-26T00:00:00+00:00",
             "position_id": "P-001",
+            "order_id": "C-001",
             "instrument_id": "down-token.POLYMARKET",
-            "quantity": 12.0,
-            "avg_entry_price": 0.60,
-            "status": "OPEN",
+            "signed_qty": "12.0",
+            "avg_entry_price": "0.60",
+            "metrics": {"status": "OPEN"},
             "is_closed": False,
             "ts": "2026-06-26T00:00:00+00:00",
         }
@@ -236,6 +237,7 @@ async def test_dashboard_positions_normalize_nautilus_rows_with_market_lookup(tm
     assert response.status_code == 200
     row = response.json()[0]
     assert row["paper_position_id"] == "P-001"
+    assert row["paper_order_id"] == "C-001"
     assert row["market_id"] == "btc-15m"
     assert row["market_slug"] == "btc-updown-15m"
     assert row["asset"] == "BTC"
@@ -363,14 +365,13 @@ async def test_dashboard_paper_orders_normalize_nautilus_rows() -> None:
             "event_type": "nautilus_order",
             "severity": "info",
             "created_at": "2026-06-26T00:00:00+00:00",
-            "paper_order_id": "C-001",
-            "client_order_id": "C-001",
+            "order_id": "C-001",
             "instrument_id": "down-token.POLYMARKET",
             "side": "BUY",
             "order_type": "LIMIT",
             "time_in_force": "IOC",
-            "quantity": 50.0,
-            "price": 0.64,
+            "quantity": "40.0",
+            "price": "0.64",
             "status": "ACCEPTED",
             "metrics": {
                 "signal_id": "sig-1",
@@ -399,7 +400,7 @@ async def test_dashboard_paper_orders_normalize_nautilus_rows() -> None:
     assert row["limit_price"] == 0.64
     assert row["reference_price"] == 0.63
     assert row["stake_usdc"] == 32.0
-    assert row["shares"] == 50.0
+    assert row["shares"] == 40.0
     assert row["status"] == "RESTING"
 
 

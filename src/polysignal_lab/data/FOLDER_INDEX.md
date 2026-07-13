@@ -4,7 +4,7 @@
 - Application code
 
 **Files**:
-- `state.py` - Exports parse_source_timestamp and 3 more
+- `state.py` - Exports MarketRegistry and 3 more
 - `rate_limiter.py` - Exports AsyncRateLimiter
 - `polymarket_clob_ws.py` - Exports PolymarketMarketWebSocket
 - `polymarket_clob_rest.py` - Exports PolymarketCLOBRestClient

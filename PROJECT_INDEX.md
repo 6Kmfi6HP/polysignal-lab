@@ -46,7 +46,7 @@ Auto-generated project index maintained by the Fractal Multi-level Index System.
       ├── strategies/ (3 files)
       ├── strategy/ (3 files)
     ├── observability/ (6 files)
-    ├── paper/ (5 files)
+    ├── paper/ (6 files)
     ├── publish/ (4 files)
     ├── signal_layer/ (7 files)
     ├── storage/ (5 files)

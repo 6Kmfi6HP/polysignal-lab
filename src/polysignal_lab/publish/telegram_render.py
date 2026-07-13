@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, html, collections.abc, collections.abc.Callable, datetime, datetime.datetime, datetime.timezone, telegram, typing, typing.Any, typing.Literal
+Input: __future__, __future__.annotations, html, collections.abc, collections.abc.Callable, datetime, datetime.datetime, datetime.timezone, telegram, typing, typing.Any, typing.Literal, polysignal_lab.paper.event_projection.normalize_paper_position
 Output: main_keyboard, back_keyboard, leaderboard_keyboard, strategies_keyboard, toggle_callback_for, safe_text, parse_time, format_age, truncate_text, position_display_payload, row_float
 Pos: Application code
 
@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+from polysignal_lab.paper.event_projection import normalize_paper_position
 
 
 def toggle_callback_for(name: str) -> str | None:
@@ -108,34 +110,18 @@ def truncate_text(text: str, max_message_chars: int) -> str:
     return text[: max_message_chars - 32] + "\n[truncated for Telegram]"
 
 
-def position_display_payload(row: dict[str, Any]) -> dict[str, Any]:
+def position_display_payload(
+    row: dict[str, Any],
+    *,
+    market: object | None = None,
+) -> dict[str, Any]:
     """Normalize open-position rows for Telegram display without PaperPosition."""
-    payload = dict(row)
-    raw_metrics = payload.get("metrics")
-    metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
-    token_id = str(payload.get("token_id") or payload.get("instrument_id") or "")
-    head, _, _ = token_id.partition(".")
-    token_id = head or token_id
-    entry_price = row_float(payload, "entry_price", "avg_entry_price", "price")
-    shares = row_float(payload, "shares", "quantity")
-    stake = row_float(payload, "stake_usdc")
-    if stake is None and entry_price is not None and shares is not None:
-        stake = entry_price * abs(shares)
-    side = str(payload.get("side") or metrics.get("side") or "").upper()
-    if side not in {"UP", "DOWN"}:
-        side = ""
+    payload = normalize_paper_position(row, market=market)
     return {
         **payload,
-        "paper_position_id": payload.get("paper_position_id") or payload.get("position_id") or "",
-        "token_id": token_id,
-        "side": side,
-        "asset": payload.get("asset") or metrics.get("asset") or "",
-        "timeframe": payload.get("timeframe") or metrics.get("timeframe") or "",
-        "strategy": payload.get("strategy") or metrics.get("strategy") or "",
-        "entry_price": entry_price if entry_price is not None else 0.0,
-        "shares": shares if shares is not None else 0.0,
-        "stake_usdc": stake if stake is not None else 0.0,
-        "opened_at": payload.get("opened_at") or payload.get("ts") or payload.get("created_at"),
+        "entry_price": row_float(payload, "entry_price") or 0.0,
+        "shares": row_float(payload, "shares") or 0.0,
+        "stake_usdc": row_float(payload, "stake_usdc") or 0.0,
     }
 
 
