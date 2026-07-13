@@ -338,19 +338,33 @@ def _collect_daily_report_inputs(
         params=day_params,
         limit=10_001,
     )
-    order_projection_truncated = len(today_order_states) > 10_000
-    if order_projection_truncated:
-        today_order_states = today_order_states[:10_000]
+    invalid_updated_order_states = scheduler.persistence.query_json(
+        "paper_order_states",
+        where=(
+            "WHERE source_event_at >= ? AND source_event_at < ? "
+            "AND status='INVALID' ORDER BY source_event_at,paper_order_id"
+        ),
+        params=day_params,
+        limit=10_001,
+    )
+    order_projection_truncated = (
+        len(today_order_states) > 10_000
+        or len(invalid_updated_order_states) > 10_000
+    )
+    today_order_states = today_order_states[:10_000]
+    invalid_updated_order_states = invalid_updated_order_states[:10_000]
     inferred_order_creation_times = sum(
         1
         for order in today_order_states
         if order.get("_creation_event_at_inferred") is True
     )
-    invalid_order_projections = sum(
-        1
-        for order in today_order_states
+    invalid_order_ids = {
+        str(order.get("paper_order_id"))
+        for order in today_order_states + invalid_updated_order_states
         if order.get("_projection_invalid") is True
-    )
+        and order.get("paper_order_id")
+    }
+    invalid_order_projections = len(invalid_order_ids)
     today_orders_raw = [
         order
         for order in today_order_states

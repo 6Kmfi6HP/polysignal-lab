@@ -357,6 +357,27 @@ def test_daily_report_orders_use_creation_day_after_cross_day_update(tmp_path) -
                 "ts": event_at.isoformat(),
             }
         )
+    store.insert_system_event(
+        {
+            "event_id": "invalid-order-created",
+            "event_type": "nautilus_order",
+            "severity": "info",
+            "created_at": created_at.isoformat(),
+            "paper_order_id": "invalid-order-cross-day",
+            "status": "ACCEPTED",
+            "ts": created_at.isoformat(),
+        }
+    )
+    store.insert_system_event(
+        {
+            "event_id": "invalid-order-updated",
+            "event_type": "nautilus_order",
+            "severity": "warning",
+            "created_at": updated_at.isoformat(),
+            "paper_order_id": "invalid-order-cross-day",
+            "ts": updated_at.isoformat(),
+        }
+    )
     scheduler = SimpleNamespace(
         persistence=persistence,
         nautilus_cache=SimpleNamespace(fills=lambda: []),
@@ -376,7 +397,13 @@ def test_daily_report_orders_use_creation_day_after_cross_day_update(tmp_path) -
 
     assert len(creation_day.today_orders_raw) == 1
     assert creation_day.today_orders_raw[0]["status"] == "FILLED"
+    assert creation_day.telemetry_incomplete_reasons == (
+        "paper_order_projection_invalid:1",
+    )
     assert update_day.today_orders_raw == []
+    assert update_day.telemetry_incomplete_reasons == (
+        "paper_order_projection_invalid:1",
+    )
 
 
 def test_daily_report_marks_inferred_legacy_order_creation_time(tmp_path) -> None:
