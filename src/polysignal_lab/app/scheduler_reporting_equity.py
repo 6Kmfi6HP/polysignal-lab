@@ -103,10 +103,13 @@ def _balance_total_for_currency(
     balances = account_projection.get("balances")
     if not isinstance(balances, list):
         return None
+    usdc_fallback: float | None = None
     for balance in balances:
         if not isinstance(balance, dict):
             continue
-        if str(balance.get("currency", "")).casefold() != currency.casefold():
-            continue
-        return _projection_float(balance, "total")
-    return None
+        balance_currency = str(balance.get("currency", ""))
+        if balance_currency == currency:
+            return _projection_float(balance, "total")
+        if currency == "USDC" and balance_currency.casefold() == "usdc":
+            usdc_fallback = _projection_float(balance, "total")
+    return usdc_fallback

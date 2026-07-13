@@ -324,6 +324,14 @@ class NautilusRuntimeConfig(BaseModel):
         default_factory=NautilusStatePersistenceConfig
     )
 
+    @field_validator("sandbox_base_currency")
+    @classmethod
+    def validate_sandbox_base_currency(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("sandbox_base_currency must not be empty")
+        return normalized
+
     @model_validator(mode="after")
     def validate_paper_safe(self) -> "NautilusRuntimeConfig":
         if self.allow_live_polymarket_execution:

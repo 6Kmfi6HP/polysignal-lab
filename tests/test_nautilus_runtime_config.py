@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, pathlib, pathlib.Path, pytest, pydantic, pydantic.ValidationError, polysignal_lab.config, polysignal_lab.config.Settings
-Output: test_runtime_config_defaults_to_nautilus_and_stays_paper_safe, test_nautilus_book_type_defaults_are_paper_only, test_nautilus_rejects_unknown_sandbox_book_type, test_nautilus_runtime_uses_sandbox_book_type_not_matching_engine, test_removed_nautilus_matching_keys_fail_fast, test_yaml_runtime_book_type_values_are_explicit, test_live_polymarket_execution_is_invalid_in_default_runtime, test_production_yaml_declares_nautilus_runtime_section, test_health_config_defaults_are_conservative, test_health_config_accepts_yaml_overrides
+Output: test_runtime_config_defaults_to_nautilus_and_stays_paper_safe, test_nautilus_book_type_defaults_are_paper_only, test_nautilus_requires_nonempty_sandbox_base_currency, test_nautilus_rejects_unknown_sandbox_book_type, test_nautilus_runtime_uses_sandbox_book_type_not_matching_engine, test_removed_nautilus_matching_keys_fail_fast, test_yaml_runtime_book_type_values_are_explicit, test_live_polymarket_execution_is_invalid_in_default_runtime, test_production_yaml_declares_nautilus_runtime_section, test_health_config_defaults_are_conservative, test_health_config_accepts_yaml_overrides
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -34,6 +34,18 @@ def test_nautilus_book_type_defaults_are_paper_only() -> None:
     assert settings.runtime.nautilus.execution_mode == "paper_sandbox"
     assert settings.runtime.nautilus.sandbox_book_type == "L2_MBP"
     assert settings.runtime.nautilus.allow_live_polymarket_execution is False
+
+
+def test_nautilus_requires_nonempty_sandbox_base_currency() -> None:
+    settings = Settings.model_validate(
+        {"runtime": {"nautilus": {"sandbox_base_currency": " pUSD "}}}
+    )
+
+    assert settings.runtime.nautilus.sandbox_base_currency == "pUSD"
+    with pytest.raises(ValidationError):
+        _ = Settings.model_validate(
+            {"runtime": {"nautilus": {"sandbox_base_currency": "   "}}}
+        )
 
 
 def test_nautilus_rejects_unknown_sandbox_book_type() -> None:
@@ -88,6 +100,8 @@ def test_yaml_runtime_book_type_values_are_explicit() -> None:
 
     assert production.runtime.nautilus.sandbox_book_type == "L2_MBP"
     assert lab.runtime.nautilus.sandbox_book_type == "L2_MBP"
+    assert production.runtime.nautilus.sandbox_base_currency == "pUSD"
+    assert lab.runtime.nautilus.sandbox_base_currency == "pUSD"
     assert production.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
     assert lab.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
 

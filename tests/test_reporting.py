@@ -119,6 +119,12 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
     assert "PnL     -4.00 pUSD" in message
     assert "+6.00 USDC" in message
     assert "<b>Strategies</b>" in message
+
+    legacy_payload = report.model_dump(mode="json")
+    legacy_payload.pop("equity_currency")
+    legacy_message = MessageFormatter().daily_report_message(legacy_payload)
+    assert "Equity  1000.00 → 996.00 USDC" in legacy_message
+    assert "PnL     -4.00 USDC" in legacy_message
     assert {
         TradeResultStatus.WIN.value,
         TradeResultStatus.LOSS.value,

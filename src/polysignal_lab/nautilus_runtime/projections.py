@@ -107,6 +107,8 @@ def project_account(account: object) -> dict[str, object]:
     balances_raw = getattr(account, "balances", ())
     if callable(balances_raw):
         balances_raw = balances_raw()
+    if isinstance(balances_raw, Mapping):
+        balances_raw = balances_raw.values()
     balances: list[dict[str, object]] = []
     if isinstance(balances_raw, Iterable) and not isinstance(balances_raw, (str, bytes)):
         for balance in cast(Iterable[object], balances_raw):
@@ -134,13 +136,13 @@ def project_portfolio_snapshot(
     }
 
 
-def _portfolio_equity(portfolio: object, account: object | None) -> float:
-    equity = getattr(portfolio, "equity", 0.0)
+def _portfolio_equity(portfolio: object, account: object | None) -> float | None:
+    equity = getattr(portfolio, "equity", None)
     if callable(equity):
         account_id = getattr(account, "id", None)
         if account_id is not None:
             try:
-                return _to_float(equity(account_id=account_id))
+                return _to_float_or_none(equity(account_id=account_id))
             except TypeError:
                 try:
                     parameters = signature(equity).parameters.values()
@@ -151,8 +153,8 @@ def _portfolio_equity(portfolio: object, account: object | None) -> float:
                     for parameter in parameters
                 ):
                     raise
-        return _to_float(equity())
-    return _to_float(equity)
+        return _to_float_or_none(equity())
+    return _to_float_or_none(equity)
 
 
 def _to_float(value: object) -> float:

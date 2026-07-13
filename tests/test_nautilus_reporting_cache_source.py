@@ -137,13 +137,18 @@ def test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_mi
     cache = SimpleNamespace(
         account=lambda: SimpleNamespace(
             id="A-1",
-            balances=[SimpleNamespace(currency="pUSD", total=987.65)],
+            balances=lambda: {
+                "PUSD": SimpleNamespace(currency="PUSD", total=111.0),
+                "pUSD": SimpleNamespace(currency="pUSD", total=987.65),
+            },
         ),
         positions=lambda: [],
     )
+    portfolio = SimpleNamespace(id="PF-1", equity=lambda **_kwargs: {})
     scheduler = SimpleNamespace(
         settings=_settings(sandbox_base_currency="pUSD"),
         nautilus_cache=cache,
+        nautilus_portfolio=portfolio,
     )
 
     assert _report_equity_inputs(scheduler) == (1_000.0, 987.65, 0)
@@ -189,14 +194,14 @@ def test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equ
     cache = SimpleNamespace(
         account=lambda: SimpleNamespace(
             id="A-1",
-            balances=[SimpleNamespace(currency="USDC", total=987.65)],
+            balances=[SimpleNamespace(currency="usdc", total=987.65)],
         ),
         positions=lambda: [],
     )
     scheduler = SimpleNamespace(
         settings=_settings(),
         nautilus_cache=cache,
-        # No nautilus_portfolio — falls through to account balance
+        nautilus_portfolio=SimpleNamespace(id="PF-1", equity="unavailable"),
     )
 
     assert _report_equity_inputs(scheduler) == (1_000.0, 987.65, 0)
