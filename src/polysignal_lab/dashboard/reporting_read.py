@@ -1,6 +1,6 @@
 """
-Input: __future__, typing
-Output: JsonRow, ReportingReadPort
+Input: __future__, dataclasses, datetime, pathlib, typing, polysignal_lab.observability.runtime_health
+Output: JsonRow, StorageHealthRead, RuntimeHealthRead, ReportingReadPort, RuntimeHealthPort, FileRuntimeHealthReader
 Pos: Dashboard read boundary
 
 🔄 Self-reference: When this file changes, update this header
@@ -8,17 +8,36 @@ Pos: Dashboard read boundary
 
 from __future__ import annotations
 
-from typing import Any, Protocol, TypeAlias
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Literal, Protocol, TypeAlias, TypedDict
+
+from polysignal_lab.observability.runtime_health import evaluate_liveness
 
 JsonRow: TypeAlias = dict[str, Any]
 
 
+class StorageHealthRead(TypedDict):
+    status: Literal["ok", "degraded"]
+    reason: str | None
+    freshness_age_sec: int | None
+    counts: dict[str, int]
+    recent_system_events: list[JsonRow]
+    latest_health_snapshot: JsonRow | None
+
+
+class RuntimeHealthRead(TypedDict):
+    status: Literal["ok", "degraded", "unknown"]
+    reason: str | None
+    freshness_age_sec: int | None
+    fatal_reason: str | None
+
+
 class ReportingReadPort(Protocol):
+    def storage_health(self) -> StorageHealthRead: ...
+
     def counts(self) -> dict[str, int]: ...
-
-    def recent_system_events(self, limit: int) -> list[JsonRow]: ...
-
-    def latest_health_snapshot(self) -> JsonRow | None: ...
 
     def strategy_status_rows(self, limit: int) -> list[JsonRow]: ...
 
@@ -45,3 +64,33 @@ class ReportingReadPort(Protocol):
     def paper_trade_result_rows(self, limit: int) -> list[JsonRow]: ...
 
     def strategy_leaderboard(self, limit: int) -> list[JsonRow]: ...
+
+
+class RuntimeHealthPort(Protocol):
+    def read(self) -> RuntimeHealthRead: ...
+
+
+@dataclass(frozen=True, slots=True)
+class FileRuntimeHealthReader:
+    path: Path
+    max_age_sec: int
+    now: datetime | None = None
+
+    def read(self) -> RuntimeHealthRead:
+        result = evaluate_liveness(
+            self.path,
+            max_age_sec=self.max_age_sec,
+            now=self.now,
+        )
+        if result.ok:
+            status: Literal["ok", "degraded", "unknown"] = "ok"
+        elif result.reason in {"heartbeat_missing", "heartbeat_unreadable"}:
+            status = "unknown"
+        else:
+            status = "degraded"
+        return {
+            "status": status,
+            "reason": result.reason,
+            "freshness_age_sec": result.heartbeat_age_sec,
+            "fatal_reason": result.fatal_reason,
+        }

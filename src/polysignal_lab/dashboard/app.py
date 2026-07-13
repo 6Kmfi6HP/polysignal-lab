@@ -21,7 +21,11 @@ from typing import Any, TypeAlias
 
 from fastapi import FastAPI
 
-from polysignal_lab.dashboard.reporting_read import ReportingReadPort
+from polysignal_lab.dashboard.reporting_read import (
+    ReportingReadPort,
+    RuntimeHealthPort,
+    RuntimeHealthRead,
+)
 from polysignal_lab.domain.market import Market
 from polysignal_lab.paper.event_projection import (
     normalize_paper_order,
@@ -70,33 +74,106 @@ def _as_float(value: JsonValue) -> float:
         return 0.0
 
 
-def _health_payload(reporting: ReportingReadPort) -> dict[str, JsonValue]:
-    counts = reporting.counts()
-    recent_system_events = reporting.recent_system_events(10)
-    snapshot = reporting.latest_health_snapshot()
-    if isinstance(snapshot, dict):
+def _overall_health_status(components: list[dict[str, JsonValue]]) -> str:
+    statuses = {
+        str(component.get("status") or "unknown").lower()
+        for component in components
+    }
+    if "down" in statuses:
+        return "down"
+    if "degraded" in statuses:
+        return "degraded"
+    if "unknown" in statuses:
+        return "unknown"
+    return "ok"
+
+
+def _runtime_health(runtime_health: RuntimeHealthPort | None) -> RuntimeHealthRead:
+    if runtime_health is None:
         return {
-            "status": str(snapshot.get("status", "degraded")).lower(),
-            "generated_at": snapshot.get("generated_at") or snapshot.get("created_at"),
-            "components": snapshot.get("components", []),
-            "counts": counts,
-            "recent_system_events": recent_system_events,
+            "status": "unknown",
+            "reason": "heartbeat_missing",
+            "freshness_age_sec": None,
+            "fatal_reason": None,
         }
+    return runtime_health.read()
+
+
+def _health_component(
+    *,
+    name: str,
+    status: str,
+    freshness_age_sec: int | None,
+    reason: str | None,
+    last_error: str | None,
+    metrics: dict[str, JsonValue],
+) -> dict[str, JsonValue]:
     return {
-        "status": "ok",
-        "generated_at": None,
-        "components": [
-            {
-                "name": "sqlite_storage",
-                "status": "ok",
-                "last_success_at": None,
-                "last_error_at": None,
-                "last_error": None,
-                "metrics": {"row_counts_available": True},
-            }
-        ],
-        "counts": counts,
-        "recent_system_events": recent_system_events,
+        "name": name,
+        "status": status,
+        "freshness_age_sec": freshness_age_sec,
+        "reason": reason,
+        "last_success_at": None,
+        "last_error_at": None,
+        "last_error": last_error,
+        "metrics": metrics,
+    }
+
+
+def _health_payload(
+    reporting: ReportingReadPort,
+    runtime_health: RuntimeHealthPort | None,
+) -> dict[str, JsonValue]:
+    storage = reporting.storage_health()
+    runtime = _runtime_health(runtime_health)
+    snapshot = storage["latest_health_snapshot"]
+    reported_components = (
+        snapshot.get("components", []) if isinstance(snapshot, dict) else []
+    )
+    components = [
+        component
+        for component in reported_components
+        if isinstance(component, dict)
+        and component.get("name") not in {"runtime", "sqlite", "sqlite_storage"}
+    ]
+    components.extend(
+        [
+            _health_component(
+                name="sqlite_storage",
+                status=storage["status"],
+                freshness_age_sec=storage["freshness_age_sec"],
+                reason=storage["reason"],
+                last_error=storage["reason"],
+                metrics={
+                    "row_counts_available": storage["status"] == "ok",
+                    "freshness_age_sec": storage["freshness_age_sec"],
+                    "reason": storage["reason"],
+                },
+            ),
+            _health_component(
+                name="runtime",
+                status=runtime["status"],
+                freshness_age_sec=runtime["freshness_age_sec"],
+                reason=runtime["reason"],
+                last_error=runtime["fatal_reason"] or runtime["reason"],
+                metrics={
+                    "freshness_age_sec": runtime["freshness_age_sec"],
+                    "reason": runtime["reason"],
+                    "fatal_reason": runtime["fatal_reason"],
+                },
+            ),
+        ]
+    )
+    return {
+        "status": _overall_health_status(components),
+        "generated_at": (
+            snapshot.get("generated_at") or snapshot.get("created_at")
+            if isinstance(snapshot, dict)
+            else None
+        ),
+        "components": components,
+        "counts": storage["counts"],
+        "recent_system_events": storage["recent_system_events"],
     }
 
 
@@ -225,7 +302,10 @@ def _valid_position_payload(payload: dict[str, JsonValue]) -> bool:
     return True
 
 
-def create_dashboard_app(reporting: ReportingReadPort) -> FastAPI:
+def create_dashboard_app(
+    reporting: ReportingReadPort,
+    runtime_health: RuntimeHealthPort | None = None,
+) -> FastAPI:
     app = FastAPI(title="PolySignal Lab Dashboard", version="1.0.0")
 
     def strategy_status_rows(limit: int = 100) -> list[dict[str, JsonValue]]:
@@ -234,7 +314,7 @@ def create_dashboard_app(reporting: ReportingReadPort) -> FastAPI:
 
     @app.get("/health", response_model=None)
     async def health() -> dict[str, JsonValue]:
-        return _health_payload(reporting)
+        return _health_payload(reporting, runtime_health)
 
     @app.get("/api/overview", response_model=None)
     async def overview() -> dict[str, JsonValue]:

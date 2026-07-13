@@ -4,7 +4,7 @@
 - Application code
 
 **Files**:
-- `reporting_read.py` - Exports ReportingReadPort
+- `reporting_read.py` - Exports reporting and runtime health read boundaries
 - `app.py` - Exports create_dashboard_app
 - `__init__.py` - Application code
 

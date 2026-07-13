@@ -27,6 +27,7 @@ import uvicorn
 
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.dashboard.app import create_dashboard_app
+from polysignal_lab.dashboard.reporting_read import FileRuntimeHealthReader
 from polysignal_lab.observability.logger import configure_logging
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 
@@ -143,7 +144,11 @@ def run_dashboard_cli(settings: Settings) -> None:
     configure_logging(settings.app.log_level)
 
     store = SQLiteStore(settings.storage.sqlite_path)
-    app = create_dashboard_app(store)
+    runtime_health = FileRuntimeHealthReader(
+        Path(settings.storage.state_dir) / "runtime_heartbeat.json",
+        settings.health.liveness.heartbeat_max_age_sec,
+    )
+    app = create_dashboard_app(store, runtime_health)
     uvicorn.run(app, host=settings.dashboard.host, port=settings.dashboard.port)
 
 

@@ -1,7 +1,7 @@
 # noqa: SIZE_OK  — dashboard integration coverage file
 """
 Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timezone, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.dashboard.app
-Output: test_dashboard_uses_injected_reporting_read_port, test_dashboard_readonly_endpoints_return_stored_data, test_dashboard_positions_returns_latest_metadata_first, test_dashboard_health_returns_component_snapshot_from_system_events, test_dashboard_exposes_paper_execution_quality, test_leaderboard_uses_sqlite_report_data, test_leaderboard_recomputes_calibration_status_after_aggregation, test_dashboard_exposes_bounded_strategy_status_rows, test_dashboard_rejects_write_methods
+Output: test_dashboard_uses_injected_reporting_read_port, test_dashboard_readonly_endpoints_return_stored_data, test_dashboard_positions_returns_latest_metadata_first, test_dashboard_health_reports_missing_runtime_as_unknown, test_dashboard_health_reports_stale_runtime_as_degraded, test_dashboard_health_keeps_fresh_runtime_ok_when_storage_fails, test_dashboard_health_ignores_superseded_runtime_snapshot_status, test_dashboard_health_returns_component_snapshot_from_system_events, test_dashboard_exposes_paper_execution_quality, test_leaderboard_uses_sqlite_report_data, test_leaderboard_recomputes_calibration_status_after_aggregation, test_dashboard_exposes_bounded_strategy_status_rows, test_dashboard_rejects_write_methods
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -15,7 +15,7 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import Mock
 
 import httpx
@@ -24,10 +24,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from polysignal_lab.dashboard.app import create_dashboard_app
-from polysignal_lab.dashboard.reporting_read import ReportingReadPort
+from polysignal_lab.dashboard.reporting_read import (
+    FileRuntimeHealthReader,
+    ReportingReadPort,
+)
 from polysignal_lab.domain.enums import PositionStatus, Side
 from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.domain.paper_result import DailyReport
+from polysignal_lab.observability.runtime_health import write_runtime_heartbeat
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.domain.strategy_readiness import StrategyMarketStatus
 from signal_helpers import ptb_signal_from_snapshot
@@ -126,7 +130,7 @@ async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapsho
     # Then: payloads contain the persisted rows; the API no longer serves any HTML.
     assert health.status_code == 200
     assert health.json()["counts"]["signals"] == 1
-    assert health.json()["status"] in {"ok", "degraded", "down"}
+    assert health.json()["status"] in {"ok", "unknown", "degraded", "down"}
     assert isinstance(health.json()["components"], list)
     assert isinstance(health.json()["recent_system_events"], list)
     assert overview.status_code == 200
@@ -261,6 +265,110 @@ async def test_dashboard_positions_normalize_nautilus_rows_with_market_lookup(tm
     assert row["entry_price"] == 0.6
     assert row["shares"] == 12.0
     assert row["stake_usdc"] == pytest.approx(7.2)
+
+def test_dashboard_health_reports_missing_runtime_as_unknown(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
+    runtime_health = FileRuntimeHealthReader(
+        tmp_path / "state" / "runtime_heartbeat.json",
+        max_age_sec=120,
+        now=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+    )
+    client = TestClient(create_dashboard_app(store, runtime_health))
+
+    payload = client.get("/health").json()
+    components = {component["name"]: component for component in payload["components"]}
+
+    assert payload["status"] == "unknown"
+    assert components["runtime"]["status"] == "unknown"
+    assert components["runtime"]["reason"] == "heartbeat_missing"
+    assert components["runtime"]["freshness_age_sec"] is None
+    assert components["sqlite_storage"]["status"] == "ok"
+    assert components["sqlite_storage"]["freshness_age_sec"] == 0
+
+
+def test_dashboard_health_reports_stale_runtime_as_degraded(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
+    heartbeat_path = tmp_path / "state" / "runtime_heartbeat.json"
+    heartbeat_at = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    write_runtime_heartbeat(heartbeat_path, phase="running", now=heartbeat_at)
+    runtime_health = FileRuntimeHealthReader(
+        heartbeat_path,
+        max_age_sec=120,
+        now=heartbeat_at + timedelta(seconds=121),
+    )
+    client = TestClient(create_dashboard_app(store, runtime_health))
+
+    payload = client.get("/health").json()
+    components = {component["name"]: component for component in payload["components"]}
+
+    assert payload["status"] == "degraded"
+    assert components["runtime"]["status"] == "degraded"
+    assert components["runtime"]["reason"] == "heartbeat_stale"
+    assert components["runtime"]["freshness_age_sec"] == 121
+    assert components["sqlite_storage"]["status"] == "ok"
+
+
+def test_dashboard_health_keeps_fresh_runtime_ok_when_storage_fails(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
+    heartbeat_path = tmp_path / "state" / "runtime_heartbeat.json"
+    heartbeat_at = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    write_runtime_heartbeat(heartbeat_path, phase="running", now=heartbeat_at)
+    runtime_health = FileRuntimeHealthReader(
+        heartbeat_path,
+        max_age_sec=120,
+        now=heartbeat_at + timedelta(seconds=30),
+    )
+    store.close()
+    client = TestClient(create_dashboard_app(store, runtime_health))
+
+    payload = client.get("/health").json()
+    components = {component["name"]: component for component in payload["components"]}
+
+    assert payload["status"] == "degraded"
+    assert components["runtime"]["status"] == "ok"
+    assert components["runtime"]["freshness_age_sec"] == 30
+    assert components["runtime"]["reason"] is None
+    assert components["sqlite_storage"]["status"] == "degraded"
+    assert components["sqlite_storage"]["reason"] == "storage_unavailable"
+
+
+def test_dashboard_health_ignores_superseded_runtime_snapshot_status(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
+    store.insert_system_event(
+        {
+            "event_id": "health-snap-old-runtime",
+            "event_type": "health_snapshot",
+            "severity": "ERROR",
+            "created_at": "2026-07-13T11:00:00+00:00",
+            "status": "down",
+            "generated_at": "2026-07-13T11:00:00+00:00",
+            "components": [
+                {
+                    "name": "runtime",
+                    "status": "down",
+                    "last_error": "heartbeat_stale",
+                    "metrics": {},
+                }
+            ],
+        }
+    )
+    heartbeat_path = tmp_path / "state" / "runtime_heartbeat.json"
+    heartbeat_at = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    write_runtime_heartbeat(heartbeat_path, phase="running", now=heartbeat_at)
+    runtime_health = FileRuntimeHealthReader(
+        heartbeat_path,
+        max_age_sec=120,
+        now=heartbeat_at + timedelta(seconds=30),
+    )
+    client = TestClient(create_dashboard_app(store, runtime_health))
+
+    payload = client.get("/health").json()
+    components = {component["name"]: component for component in payload["components"]}
+
+    assert payload["status"] == "ok"
+    assert components["runtime"]["status"] == "ok"
+    assert components["sqlite_storage"]["status"] == "ok"
+
 
 def test_dashboard_health_returns_component_snapshot_from_system_events(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")

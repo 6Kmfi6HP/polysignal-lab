@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from collections.abc import Mapping
 from pathlib import Path
 from threading import Lock
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.enums import PositionStatus, Side
@@ -39,6 +39,9 @@ from polysignal_lab.storage.sqlite_schema import (
     validate_sqlite_schema,
 )
 from polysignal_lab.utils import stable_hash, to_jsonable, utc_iso
+
+if TYPE_CHECKING:
+    from polysignal_lab.dashboard.reporting_read import StorageHealthRead
 
 
 @dataclass(frozen=True, slots=True)
@@ -554,6 +557,26 @@ class SQLiteStore:
             if isinstance(payload, dict):
                 valid_rows.append(payload)
         return valid_rows
+
+    def storage_health(self) -> StorageHealthRead:
+        try:
+            return {
+                "status": "ok",
+                "reason": None,
+                "freshness_age_sec": 0,
+                "counts": self.counts(),
+                "recent_system_events": self.recent_system_events(10),
+                "latest_health_snapshot": self.latest_health_snapshot(),
+            }
+        except sqlite3.Error:
+            return {
+                "status": "degraded",
+                "reason": "storage_unavailable",
+                "freshness_age_sec": None,
+                "counts": {},
+                "recent_system_events": [],
+                "latest_health_snapshot": None,
+            }
 
     def recent_system_events(self, limit: int) -> list[dict[str, Any]]:
         return self.query_json(
