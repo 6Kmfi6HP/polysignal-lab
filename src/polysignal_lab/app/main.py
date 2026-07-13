@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, argparse, signal, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, enum, enum.StrEnum
+Input: __future__, argparse, sys, collections.abc, dataclasses, enum, pathlib, typing, anyio, uvicorn, polysignal_lab.config, polysignal_lab.dashboard, polysignal_lab.observability, polysignal_lab.storage
 Output: build_parser, parse_cli, run_dashboard_cli, run_readonly_smoke, main, RuntimeMode, CliOptions
 Pos: Application code
 
@@ -15,6 +15,7 @@ Pos: Application code
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -37,6 +38,11 @@ class RuntimeMode(StrEnum):
 
 
 SCHEDULER_MODE_ALIAS = "scheduler"
+SCHEDULER_MODE_HELP = "Explicit runtime mode; 'scheduler' is a deprecated alias for 'nautilus'."
+SCHEDULER_DEPRECATION_MESSAGE = (
+    "warning: 'scheduler' is deprecated and always maps to 'nautilus'; "
+    "use the explicit 'nautilus' mode. This alias will be removed after migration."
+)
 
 
 MODE_VALUES: Final = tuple(mode.value for mode in RuntimeMode)
@@ -61,12 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
         "command",
         choices=(*MODE_VALUES, SCHEDULER_MODE_ALIAS),
         nargs="?",
-        help="Optional runtime mode command.",
+        help=SCHEDULER_MODE_HELP,
     )
     parser.add_argument(
         "--mode",
         choices=(*MODE_VALUES, SCHEDULER_MODE_ALIAS),
-        help="Runtime mode to execute.",
+        help=SCHEDULER_MODE_HELP,
     )
     parser.add_argument("--config", default="config/signal_bot.yaml")
     parser.add_argument(
@@ -77,12 +83,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--once",
         action="store_true",
-        help="Run one bounded readiness pass instead of the scheduler loop.",
+        help="Run one bounded readiness pass.",
     )
     parser.add_argument(
         "--real-readonly-smoke",
         action="store_true",
-        help="Run bounded public read-only market, scheduler, dashboard, and safety checks.",
+        help="Run bounded public read-only market and retired-surface readiness checks.",
     )
     parser.add_argument(
         "--evidence",
@@ -96,6 +102,8 @@ def parse_cli(argv: Sequence[str] | None = None) -> CliOptions:
     args = parser.parse_args(argv)
     command = args.command
     mode_arg = args.mode
+    if command and mode_arg:
+        parser.error("runtime command cannot be combined with --mode")
 
     runtime_selected = bool(args.dashboard or mode_arg or command)
     if args.dashboard:
@@ -105,17 +113,16 @@ def parse_cli(argv: Sequence[str] | None = None) -> CliOptions:
     else:
         selected = mode_arg or command or RuntimeMode.NAUTILUS.value
         if selected == SCHEDULER_MODE_ALIAS:
-            selected = (
-                RuntimeMode.SMOKE.value
-                if args.once or args.real_readonly_smoke
-                else RuntimeMode.NAUTILUS.value
-            )
+            print(SCHEDULER_DEPRECATION_MESSAGE, file=sys.stderr)
+            if args.once or args.real_readonly_smoke:
+                parser.error(
+                    "'scheduler' always maps to 'nautilus'; use the explicit 'smoke' mode for bounded checks"
+                )
+            selected = RuntimeMode.NAUTILUS.value
         mode = RuntimeMode(selected)
 
-    if mode is RuntimeMode.DASHBOARD and (args.once or args.real_readonly_smoke):
-        parser.error("dashboard mode cannot be combined with --once or smoke flags")
-    if args.real_readonly_smoke and not args.once and mode is not RuntimeMode.SMOKE:
-        parser.error("--real-readonly-smoke requires --once outside smoke mode")
+    if (args.once or args.real_readonly_smoke) and mode is not RuntimeMode.SMOKE:
+        parser.error("smoke flags require the explicit 'smoke' mode")
 
     return CliOptions(
         config=Path(args.config),
@@ -162,8 +169,6 @@ def run_readonly_smoke(settings: Settings, options: CliOptions) -> None:
 
 def _resolve_runtime_mode(settings: Settings, options: CliOptions) -> RuntimeMode:
     _ = settings
-    if options.once or options.real_readonly_smoke:
-        return RuntimeMode.SMOKE
     if options.use_config_default_runtime:
         return RuntimeMode.NAUTILUS
     return options.mode

@@ -145,10 +145,17 @@ def test_ptb_snapshot_without_outcome_tokens_produces_no_view() -> None:
 
 
 def test_legacy_snapshot_adapter_owns_snapshot_conversion() -> None:
-    from polysignal_lab.alpha.legacy_snapshot_adapter import market_view_from_snapshot
+    import polysignal_lab.alpha as alpha
+    from polysignal_lab.alpha.legacy_snapshot_adapter import (
+        decision_to_signal,
+        market_view_from_snapshot,
+    )
     from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
 
     assert callable(market_view_from_snapshot)
+    assert callable(decision_to_signal)
+    assert not hasattr(alpha, "market_view_from_snapshot")
+    assert not hasattr(alpha, "decision_to_signal")
     assert not hasattr(PTBDiffAlphaCore, "market_view_from_snapshot")
     assert "market_view_from_snapshot" not in dir(
         __import__("polysignal_lab.alpha.ptb_diff_core", fromlist=["ptb_diff_core"])

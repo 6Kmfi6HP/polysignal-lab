@@ -1,7 +1,7 @@
 """
 Input: polysignal_lab.alpha.types, polysignal_lab.domain.signal, polysignal_lab.domain.snapshot
 Output: market_view_from_snapshot, decision_to_signal
-Pos: Application code
+Pos: Compatibility/test code — legacy MarketSnapshot boundary
 
 🔄 Self-reference: When this file changes, update this header
 """
@@ -13,6 +13,8 @@ from polysignal_lab.domain.snapshot import MarketSnapshot
 
 
 def market_view_from_snapshot(snapshot: MarketSnapshot) -> MarketView | None:
+    """Adapt historical MarketSnapshot fixtures; production APIs use MarketView."""
+
     def book_view(side: Side) -> SideBookView | None:
         book = snapshot.book_for(side)
         try:
@@ -76,6 +78,8 @@ def market_view_from_snapshot(snapshot: MarketSnapshot) -> MarketView | None:
 
 
 def decision_to_signal(decision: AlphaDecision, snapshot_id: str | None, freshness_policy) -> SignalCandidate:
+    """Preserve historical fixture conversion outside the production alpha API."""
+
     return SignalCandidate.build(
         strategy=decision.strategy,
         asset=decision.asset,

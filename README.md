@@ -49,8 +49,8 @@ Safety scan passed
 
 ## Runtime modes
 
-The supported runtime modes are `nautilus`, `dashboard`, and bounded `smoke`. `scheduler` remains a compatibility alias: it resolves to Nautilus runtime (or to smoke when `--once`/smoke flags are supplied); it is not a second trading runtime.
-With the production config, the Python entry point defaults to the Nautilus runtime. Explicit modes remain available for compatibility and bounded checks:
+The supported runtime modes are `nautilus`, `dashboard`, and bounded `smoke`. `scheduler` is a temporary deprecated alias that always resolves to `nautilus`, emits a warning, and rejects smoke flags; migrate automation to the explicit modes before the alias is removed.
+With the production config, the Python entry point defaults to the Nautilus runtime. Explicit modes remain available for bounded checks:
 
 ```bash
 .venv/bin/python -m polysignal_lab.app.main --config config/signal_bot.yaml
@@ -62,7 +62,7 @@ With the production config, the Python entry point defaults to the Nautilus runt
 The bounded live smoke path performs public read-only Gamma `/events`, CLOB `/book`, expected CLOB 404, and Binance public REST fallback. Retired scheduler/dashboard/safety surfaces are recorded as `not_run`; the smoke records JSON evidence and does not contact authenticated or trading endpoints:
 
 ```bash
-timeout 120 .venv/bin/python -m polysignal_lab.app.main --config config/signal_bot.yaml --once --real-readonly-smoke --evidence .omo/evidence/final-live-market-smoke.json
+timeout 120 .venv/bin/python -m polysignal_lab.app.main --mode smoke --config config/signal_bot.yaml --evidence .omo/evidence/final-live-market-smoke.json
 ```
 
 When the first Gamma page does not contain configured crypto Up/Down markets, the smoke records the public fallback market detail instead of pretending configured discovery happened. Deterministic tests cover the configured BTC Up/Down path.

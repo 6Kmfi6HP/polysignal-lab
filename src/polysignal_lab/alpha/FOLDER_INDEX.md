@@ -4,7 +4,7 @@
 - Application code
 
 **Files**:
-- `legacy_snapshot_adapter.py` - Exports market_view_from_snapshot and decision_to_signal
+- `legacy_snapshot_adapter.py` - Compatibility/test-only MarketSnapshot adaptation
 - `vwap_trade_history.py` - Exports TradeHistory
 - `vwap_state.py` - Exports encode_vwap_state, decode_vwap_state, restore_vwap_state_fields
 - `vwap_momentum_core.py` - Exports VWAPMomentumAlphaCore

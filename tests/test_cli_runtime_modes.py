@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, json, os, subprocess, sys, pathlib, pathlib.Path, types, types.ModuleType
-Output: test_cli_help_lists_supported_runtime_modes_without_removed_alias, test_dashboard_compatibility_alias_resolves_to_dashboard, test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given, test_main_uses_nautilus_when_legacy_config_is_default_without_mode, test_main_import_does_not_load_legacy_scheduler_stack, test_explicit_legacy_scheduler_requires_hidden_opt_in, test_main_scheduler_mode_without_once_aliases_to_nautilus, test_main_scheduler_mode_with_once_runs_readonly_smoke, test_once_readonly_smoke_writes_bounded_evidence, _FakeSettings
+Output: test_cli_help_lists_supported_runtime_modes_without_removed_alias, test_dashboard_compatibility_alias_resolves_to_dashboard, test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given, test_main_uses_nautilus_when_no_mode_is_given, test_main_import_does_not_load_legacy_scheduler_stack, test_main_scheduler_mode_without_once_aliases_to_nautilus, test_scheduler_compatibility_rejects_smoke_flags, test_smoke_flags_require_explicit_smoke_mode, test_explicit_smoke_writes_bounded_evidence, _FakeSettings
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -54,6 +54,7 @@ def test_cli_help_lists_supported_runtime_modes_without_removed_alias() -> None:
     assert "--once" in result.stdout
     assert "--real-readonly-smoke" in result.stdout
     assert "--allow-legacy-scheduler" not in result.stdout
+    assert "deprecated" in result.stdout.lower()
     assert "polysignal-demo" not in result.stdout
     assert "demo" not in result.stdout
 
@@ -131,6 +132,7 @@ def test_main_import_does_not_load_legacy_scheduler_stack() -> None:
 
 def test_main_scheduler_mode_without_once_aliases_to_nautilus(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Given: the caller requests scheduler mode without --once.
     calls: list[str] = []
@@ -147,38 +149,37 @@ def test_main_scheduler_mode_without_once_aliases_to_nautilus(
     # Then: the legacy scheduler selector aliases to Nautilus instead of the scheduler CLI.
     assert exit_code == 0
     assert calls == ["nautilus"]
+    assert "'scheduler' is deprecated" in capsys.readouterr().err
 
 
-def test_main_scheduler_mode_with_once_runs_readonly_smoke(
-    monkeypatch: pytest.MonkeyPatch,
+def test_scheduler_compatibility_rejects_smoke_flags(
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Given: scheduler mode is requested with bounded --once smoke.
-    calls: list[str] = []
-    fake_settings = _FakeSettings()
-    fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
-    setattr(fake_module, "run_nautilus_cli", lambda settings: calls.append("nautilus"))
+    with pytest.raises(SystemExit):
+        app_main.parse_cli(["--mode", "scheduler", "--once"])
 
-    def fake_readonly_smoke(settings: object, options: object) -> None:
-        calls.append("readonly_smoke")
-
-    monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
-    monkeypatch.setattr(app_main, "run_readonly_smoke", fake_readonly_smoke)
-    monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
-
-    # When: scheduler mode is combined with --once.
-    exit_code = app_main.main(["--mode", "scheduler", "--once"])
-
-    # Then: bounded read-only smoke runs instead of Nautilus or the scheduler CLI.
-    assert exit_code == 0
-    assert calls == ["readonly_smoke"]
+    stderr = capsys.readouterr().err
+    assert "'scheduler' always maps to 'nautilus'" in stderr
+    assert "use the explicit 'smoke' mode" in stderr
 
 
-def test_once_readonly_smoke_writes_bounded_evidence(
+@pytest.mark.parametrize("flag", ["--once", "--real-readonly-smoke"])
+def test_smoke_flags_require_explicit_smoke_mode(
+    flag: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        app_main.parse_cli([flag])
+
+    assert "require the explicit 'smoke' mode" in capsys.readouterr().err
+
+
+def test_explicit_smoke_writes_bounded_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Given: the bounded smoke mode is requested with an evidence destination.
     evidence_path = tmp_path / "smoke.json"
-    argv = ["--once", "--real-readonly-smoke", "--evidence", str(evidence_path)]
+    argv = ["--mode", "smoke", "--evidence", str(evidence_path)]
     payload: ReadonlySmokeEvidence = {
         "recorded_at": "2026-06-22T00:00:00+00:00",
         "mode": "smoke",
