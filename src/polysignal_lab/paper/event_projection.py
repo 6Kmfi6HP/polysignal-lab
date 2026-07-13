@@ -1,5 +1,5 @@
 """
-Input: __future__, collections.abc, typing
+Input: __future__, collections.abc, math, typing
 Output: normalize_paper_order, normalize_paper_fill, normalize_paper_position, paper_token_id
 Pos: Reporting boundary - canonical sparse paper-event projection
 
@@ -9,6 +9,7 @@ Pos: Reporting boundary - canonical sparse paper-event projection
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+import math
 from typing import cast
 
 _ORDER_STATUSES = {
@@ -250,11 +251,14 @@ def normalize_paper_position(
         _text(row, metrics, "opened_at", "ts", "created_at"),
     )
     status = _text(row, metrics, "status", metric_keys=("status",)).upper()
+    is_closed = row.get("is_closed")
     payload["status"] = (
         status
         if status in {"OPEN", "CLOSED"}
         else "CLOSED"
-        if bool(row.get("is_closed"))
+        if is_closed is True
+        else "OPEN"
+        if is_closed is False
         else ""
     )
     _fill_missing(
@@ -274,7 +278,10 @@ def _base_payload(
     row: Mapping[str, object],
     market: object | None,
 ) -> tuple[dict[str, object], Mapping[str, object], str]:
-    payload = dict(row)
+    payload = {
+        key: _finite_payload_value(value)
+        for key, value in row.items()
+    }
     metrics = _metrics(row)
     for key in (
         "strategy",
@@ -305,6 +312,19 @@ def _base_payload(
     payload["token_id"] = token_id
     payload["side"] = _side(row, metrics, market, token_id)
     return payload, metrics, token_id
+
+
+def _finite_payload_value(value: object) -> object:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Mapping):
+        return {
+            str(key): _finite_payload_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_finite_payload_value(item) for item in value]
+    return value
 
 
 def _metrics(row: Mapping[str, object]) -> Mapping[str, object]:
@@ -338,9 +358,11 @@ def _number(
             if value in (None, ""):
                 continue
             try:
-                return float(str(value))
+                parsed = float(str(value))
             except (TypeError, ValueError):
                 continue
+            if math.isfinite(parsed):
+                return parsed
     return None
 
 
@@ -384,5 +406,5 @@ def _fill_missing(payload: dict[str, object], key: str, value: object) -> None:
 
 
 def _set_number(payload: dict[str, object], key: str, value: float | None) -> None:
-    if value is not None:
+    if value is not None and math.isfinite(value):
         payload[key] = value

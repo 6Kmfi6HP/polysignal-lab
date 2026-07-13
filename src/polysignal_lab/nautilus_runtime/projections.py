@@ -86,7 +86,12 @@ def project_position(position: object) -> dict[str, object]:
     )
     opened_at = _timestamp_text(position, "ts_opened", "opened_at")
     closed_at = _timestamp_text(position, "ts_closed", "closed_at")
-    timestamp = opened_at or closed_at or _timestamp_text(position, "ts_event")
+    event_at = _timestamp_text(position, "ts_event")
+    timestamp = (
+        closed_at or event_at or opened_at
+        if is_closed
+        else opened_at or event_at or closed_at
+    )
     return {
         "paper_position_id": position_id,
         "position_id": position_id,

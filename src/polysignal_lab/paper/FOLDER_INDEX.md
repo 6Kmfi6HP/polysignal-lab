@@ -5,7 +5,7 @@
 
 **Files**:
 - `strategy_stats.py` - Exports build_strategy_leaderboard_rows
-- `event_projection.py` - Exports normalize_paper_order and 3 more
+- `event_projection.py` - Canonical finite-value normalization for sparse paper lifecycle events
 - `settlement_sources.py` - Exports parse_gamma_resolution_payload and 4 more
 - `settlement_resolver.py` - Exports ChainResolutionSource and 2 more
 - `report.py` - Exports PaperReportService

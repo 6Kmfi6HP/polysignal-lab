@@ -1,6 +1,6 @@
 # noqa: SIZE_OK  — SQLite gateway; split is outside reporting boundary prefactor
 """
-Input: __future__, __future__.annotations, json, datetime, datetime.datetime, datetime.timedelta, sqlite3, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, math, polysignal_lab.domain.paper_result
+Input: __future__, json, datetime, sqlite3, dataclasses, collections.abc, pathlib, threading, typing, polysignal_lab.domain, polysignal_lab.paper, polysignal_lab.storage, polysignal_lab.utils
 Output: DuplicateRecordError, MalformedSQLitePayloadError, SQLiteStore
 Pos: Application code
 
@@ -32,6 +32,11 @@ from polysignal_lab.domain.paper_result import (
     InvalidPaperTradeResultRow,
     parse_paper_trade_result_row,
 )
+from polysignal_lab.paper.event_projection import (
+    normalize_paper_order,
+    normalize_paper_position,
+)
+from polysignal_lab.paper.strategy_stats import build_strategy_leaderboard_rows
 from polysignal_lab.storage.sqlite_schema import (
     ALLOWED_TABLES,
     COUNT_TABLES,
@@ -43,6 +48,9 @@ from polysignal_lab.utils import stable_hash, to_jsonable, utc_iso, utc_now
 
 if TYPE_CHECKING:
     from polysignal_lab.dashboard.reporting_read import StorageHealthRead
+
+
+_PAPER_CURRENT_STATE_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +166,36 @@ def _row_timestamp(row: Mapping[str, Any], *keys: str) -> datetime | None:
     return None
 
 
+def _invalid_position_state_source(row: Mapping[str, Any]) -> bool:
+    metrics = row.get("metrics")
+    metric_values = metrics if isinstance(metrics, Mapping) else {}
+    sources = (row, metric_values)
+    for source in sources:
+        for key in (
+            "shares",
+            "quantity",
+            "signed_qty",
+            "entry_price",
+            "avg_entry_price",
+            "price",
+            "stake_usdc",
+        ):
+            if isinstance(source.get(key), bool):
+                return True
+    status = str(row.get("status") or metric_values.get("status") or "").upper()
+    is_closed = row.get("is_closed")
+    if status and status not in {PositionStatus.OPEN.value, PositionStatus.CLOSED.value}:
+        return True
+    if is_closed not in (None, "") and not isinstance(is_closed, bool):
+        return True
+    if not status and not isinstance(is_closed, bool):
+        return True
+    return isinstance(is_closed, bool) and (
+        (status == PositionStatus.OPEN.value and is_closed)
+        or (status == PositionStatus.CLOSED.value and not is_closed)
+    )
+
+
 def _valid_money_value(value: Any, *, allow_negative: bool) -> bool:
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         return False
@@ -259,6 +297,7 @@ class SQLiteStore:
             if revision_added:
                 self._backfill_daily_report_revisions()
             validate_sqlite_schema(self._conn)
+            self._backfill_paper_current_states()
             for statement in INDEX_DDL_STATEMENTS:
                 self._conn.execute(statement)
 
@@ -297,6 +336,24 @@ class SQLiteStore:
                 "UPDATE daily_reports SET revision=?,payload_json=? WHERE report_id=?",
                 (revision, payload_json, str(row["report_id"])),
             )
+
+    def _backfill_paper_current_states(self) -> None:
+        current_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+        if current_version >= _PAPER_CURRENT_STATE_SCHEMA_VERSION:
+            return
+        rows = self._conn.execute(
+            """SELECT payload_json
+            FROM system_events
+            WHERE event_type IN ('nautilus_order','nautilus_position')
+            ORDER BY created_at,event_id"""
+        ).fetchall()
+        for row in rows:
+            payload = _payload_json(row)
+            if isinstance(payload, dict):
+                self._upsert_paper_current_state(payload)
+        self._conn.execute(
+            f"PRAGMA user_version = {_PAPER_CURRENT_STATE_SCHEMA_VERSION}"
+        )
 
     def validate_schema(self) -> None:
         with self._lock:
@@ -825,6 +882,79 @@ class SQLiteStore:
                 ("event_id", "event_type", "severity", "created_at", "payload_json"),
                 (p["event_id"], p["event_type"], p["severity"], p["created_at"], self._json(p)),
             )
+            self._upsert_paper_current_state(p)
+
+    def _upsert_paper_current_state(self, event: Mapping[str, Any]) -> None:
+        event_type = str(event.get("event_type") or "")
+        if event_type == "nautilus_order":
+            payload = normalize_paper_order(event)
+            if not payload.get("status"):
+                payload["_projection_invalid"] = True
+                payload["status"] = "INVALID"
+            table = "paper_order_states"
+            id_column = "paper_order_id"
+        elif event_type == "nautilus_position":
+            payload = normalize_paper_position(event)
+            invalid = _invalid_position_state_source(event)
+            if invalid:
+                payload["_projection_invalid"] = True
+                if not payload.get("status"):
+                    payload["status"] = "INVALID"
+            table = "paper_position_states"
+            id_column = "paper_position_id"
+        else:
+            return
+
+        record_id = str(payload.get(id_column) or "")
+        status = str(payload.get("status") or "").upper()
+        source_event_id = str(event.get("event_id") or "")
+        source_event_at = self._paper_state_event_at(event, status=status)
+        if not record_id or not status or not source_event_id or not source_event_at:
+            return
+        self._conn.execute(
+            f"""INSERT INTO {table}(
+                {id_column},status,source_event_at,source_event_id,payload_json
+            ) VALUES(?,?,?,?,?)
+            ON CONFLICT({id_column}) DO UPDATE SET
+                status=excluded.status,
+                source_event_at=excluded.source_event_at,
+                source_event_id=excluded.source_event_id,
+                payload_json=excluded.payload_json
+            WHERE excluded.source_event_at > {table}.source_event_at
+               OR (
+                    excluded.source_event_at = {table}.source_event_at
+                    AND excluded.source_event_id > {table}.source_event_id
+               )""",
+            (
+                record_id,
+                status,
+                source_event_at,
+                source_event_id,
+                self._json(payload),
+            ),
+        )
+
+    @staticmethod
+    def _paper_state_event_at(
+        event: Mapping[str, Any],
+        *,
+        status: str,
+    ) -> str:
+        event_type = str(event.get("event_type") or "")
+        if event_type == "nautilus_position":
+            if status == PositionStatus.CLOSED.value:
+                keys = ("closed_at", "ts", "created_at")
+            elif status == PositionStatus.OPEN.value:
+                keys = ("ts", "opened_at", "created_at")
+            else:
+                keys = ("ts", "created_at", "closed_at", "opened_at")
+        else:
+            keys = ("ts", "created_at")
+        for key in keys:
+            timestamp = _row_timestamp(event, key)
+            if timestamp is not None:
+                return utc_iso(timestamp)
+        return ""
 
     def delete_paper_result_rows(
         self,
@@ -958,20 +1088,23 @@ class SQLiteStore:
             limit=limit,
         )
 
-    def _paper_event_rows(
+    def _paper_state_rows(
         self,
-        event_type: str,
+        table: str,
         status: str | None,
         limit: int,
     ) -> list[dict[str, Any]]:
-        where = "WHERE event_type=? ORDER BY created_at DESC"
-        params: tuple[str, ...] = (event_type,)
+        clauses = [
+            "COALESCE(json_extract(payload_json, '$._projection_invalid'), 0) != 1"
+        ]
+        params: tuple[str, ...] = ()
         if status:
-            where = "WHERE event_type=? AND json_extract(payload_json, '$.status')=? ORDER BY created_at DESC"
-            params = (event_type, status.upper())
+            clauses.append("status=?")
+            params = (status.upper(),)
+        prefix = f"WHERE {' AND '.join(clauses)} "
         return self.query_json(
-            "system_events",
-            where=where,
+            table,
+            where=f"{prefix}ORDER BY source_event_at DESC, source_event_id DESC",
             params=params,
             limit=limit,
         )
@@ -981,7 +1114,11 @@ class SQLiteStore:
         status: str | None,
         limit: int,
     ) -> list[dict[str, Any]]:
-        return self._paper_event_rows("nautilus_order", status, limit)
+        return self._paper_state_rows(
+            "paper_order_states",
+            status,
+            limit,
+        )
 
     def market_rows(self, limit: int) -> list[dict[str, Any]]:
         return self.query_json(
@@ -995,7 +1132,11 @@ class SQLiteStore:
         status: str | None,
         limit: int,
     ) -> list[dict[str, Any]]:
-        return self._paper_event_rows("nautilus_position", status, limit)
+        return self._paper_state_rows(
+            "paper_position_states",
+            status,
+            limit,
+        )
 
     def paper_trade_result_rows(self, limit: int) -> list[dict[str, Any]]:
         return self.query_json("paper_trade_results", limit=limit)
@@ -1027,36 +1168,18 @@ class SQLiteStore:
             return None
         return payload
 
-    def _latest_position_events(self) -> dict[str, dict[str, Any]]:
-        rows = self.query_json(
-            "system_events",
-            where="WHERE event_type=? ORDER BY created_at ASC, rowid ASC",
-            params=("nautilus_position",),
-            limit=100_000,
-        )
-        latest: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            position_id = str(row.get("paper_position_id") or row.get("position_id") or "")
-            if position_id:
-                latest[position_id] = row
-        return {position_id: row for position_id, row in latest.items() if _valid_position_event(row)}
-
     def restore_open_positions(self) -> list[dict[str, Any]]:
-        open_status = PositionStatus.OPEN.value
         return [
             row
-            for row in self._latest_position_events().values()
-            if str(row.get("status", "")).upper() == open_status
-            or (row.get("status") in (None, "") and row.get("is_closed") is False)
+            for row in self.paper_position_rows(PositionStatus.OPEN.value, 100_000)
+            if _valid_position_event(row)
         ]
 
     def restore_closed_positions(self) -> list[dict[str, Any]]:
-        closed_status = PositionStatus.CLOSED.value
         return [
             row
-            for row in self._latest_position_events().values()
-            if str(row.get("status", "")).upper() == closed_status
-            or row.get("is_closed") is True
+            for row in self.paper_position_rows(PositionStatus.CLOSED.value, 100_000)
+            if _valid_position_event(row)
         ]
 
     def restore_daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
@@ -1067,28 +1190,12 @@ class SQLiteStore:
         )
 
     def restore_strategy_leaderboard(self, limit: int = 500) -> list[dict[str, Any]]:
-        reports = self.restore_daily_reports(limit=limit)
-        merged: dict[str, dict[str, float | int | str]] = {}
-        roi_sum: dict[str, float] = {}
-        for report in reports:
-            for strategy, row in report.get("strategy_breakdown", {}).items():
-                entry = merged.setdefault(
-                    strategy,
-                    {"strategy": strategy, "closed_positions": 0, "win_count": 0, "loss_count": 0, "void_count": 0, "total_pnl_usdc": 0.0, "average_roi": 0.0},
-                )
-                closed = int(row.get("closed_positions", 0))
-                entry["closed_positions"] = int(entry["closed_positions"]) + closed
-                entry["win_count"] = int(entry["win_count"]) + int(row.get("win_count", 0))
-                entry["loss_count"] = int(entry["loss_count"]) + int(row.get("loss_count", 0))
-                entry["void_count"] = int(entry["void_count"]) + int(row.get("void_count", 0))
-                entry["total_pnl_usdc"] = float(entry["total_pnl_usdc"]) + float(row.get("total_pnl_usdc", 0.0))
-                roi_sum[strategy] = roi_sum.get(strategy, 0.0) + (float(row.get("average_roi", 0.0)) * closed)
-        for strategy, entry in merged.items():
-            closed = int(entry["closed_positions"])
-            wins = int(entry["win_count"])
-            entry["average_roi"] = roi_sum.get(strategy, 0.0) / closed if closed else 0.0
-            entry["win_rate"] = wins / closed if closed else 0.0
-        return sorted(merged.values(), key=lambda row: float(row["total_pnl_usdc"]), reverse=True)
+        results = self.query_json(
+            "paper_trade_results",
+            where="ORDER BY closed_at DESC",
+            limit=50_000,
+        )
+        return build_strategy_leaderboard_rows(results)[:limit]
 
     def _insert_idempotent(
         self,

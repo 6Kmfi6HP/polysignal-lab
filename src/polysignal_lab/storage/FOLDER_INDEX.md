@@ -5,8 +5,8 @@
 
 **Files**:
 - `state_store.py` - Exports StateStore
-- `sqlite_store.py` - Exports DuplicateRecordError and 1 more
-- `sqlite_schema.py` - Exports validate_sqlite_schema and 1 more
+- `sqlite_store.py` - SQLite reporting store with durable current-state projections and report outbox
+- `sqlite_schema.py` - SQLite reporting schema, indexes, and validation contracts
 - `jsonl_store.py` - Exports JSONLStore
 - `__init__.py` - Application code
 

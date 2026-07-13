@@ -9,10 +9,11 @@
 - `signal_sidecar.py` - Exports _PublishResultLike and 2 more
 - `sidecar_data.py` - Exports market_metadata and 3 more
 - `runtime_context_factory.py` - Exports NautilusRuntimeContext and build_nautilus_runtime_context
-- `projections.py` - Exports project_order_event and 4 more
+- `projections.py` - Projects native order, fill, position, account, and portfolio reporting payloads
 - `order_plan.py` - Exports build_order_spec and 11 more
 - `order_mapping.py` - Exports order_spec_from_decision
-- `observability.py` - Exports persistence_class_for_table and 12 more
+- `observability.py` - Records runtime lifecycle and diagnostic events
+- `observability_persistence.py` - Routes durable lifecycle projections separately from best-effort telemetry
 - `node_signals.py` - Application code
 - `node_probes.py` - Application code
 - `node_crash.py` - Application code

@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from enum import Enum
 from queue import Empty, Queue
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.observability.health import HealthRegistry
@@ -22,6 +22,8 @@ from polysignal_lab.utils import utc_iso
 
 
 logger = logging.getLogger(__name__)
+
+_QueueItem = TypeVar("_QueueItem")
 
 
 class PersistenceClass(Enum):
@@ -32,12 +34,15 @@ class PersistenceClass(Enum):
 
 _BEST_EFFORT_TELEMETRY_TABLES = frozenset({
     "nautilus_decision",
-    "nautilus_order",
     "nautilus_fill",
-    "nautilus_position",
     "health_snapshot",
 })
-_DURABLE_OR_DEGRADED_TABLES = frozenset({"signals", "rejected_signals"})
+_DURABLE_OR_DEGRADED_TABLES = frozenset({
+    "signals",
+    "rejected_signals",
+    "nautilus_order",
+    "nautilus_position",
+})
 
 
 def persistence_class_for_table(table: str) -> PersistenceClass:
@@ -270,7 +275,7 @@ def _health_mark_sqlite_lock_retry(health: HealthRegistry, table: str) -> None:
 
 def _drop_queued_events(
     health: HealthRegistry,
-    queue: Queue,
+    queue: Queue[_QueueItem],
     reason: str,
 ) -> None:
     dropped = 0

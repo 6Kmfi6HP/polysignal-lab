@@ -1,7 +1,7 @@
 # noqa: SIZE_OK  — integration coverage file for SQLite restore migrations
 """
 Input: __future__, __future__.annotations, datetime, datetime.date, json, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode, polysignal_lab.domain.enums.PositionStatus, polysignal_lab.domain.enums.Side, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.paper_result
-Output: test_sqlite_store_restores_wallet_reports_and_leaderboard, test_sqlite_store_rejects_invalid_paper_trade_rows, test_sqlite_store_skips_malformed_payload_paper_trade_rows, test_sqlite_store_excludes_invalid_position_events, test_strategy_leaderboard_win_rate_counts_voids_as_closed, test_sqlite_store_uses_wal_and_busy_timeout
+Output: test_sqlite_store_restores_wallet_reports_and_leaderboard, test_sqlite_store_rejects_invalid_paper_trade_rows, test_sqlite_store_skips_malformed_payload_paper_trade_rows, test_sqlite_store_excludes_invalid_position_events, test_sqlite_store_invalid_latest_position_hides_prior_current_state, test_strategy_leaderboard_win_rate_counts_voids_as_closed, test_sqlite_store_uses_wal_and_busy_timeout
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -1038,6 +1038,48 @@ def test_sqlite_store_excludes_contradictory_position_state(tmp_path) -> None:
     assert store.restore_closed_positions() == []
 
 
+def test_sqlite_store_invalid_latest_position_hides_prior_current_state(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "restore.sqlite3")
+    opened_at = "2026-07-13T12:00:00+00:00"
+    store.insert_system_event(
+        {
+            "event_id": "evt-position-valid-open",
+            "event_type": "nautilus_position",
+            "severity": "info",
+            "created_at": opened_at,
+            "paper_position_id": "pos-invalid-latest",
+            "status": PositionStatus.OPEN.value,
+            "is_closed": False,
+            "side": Side.UP.value,
+            "shares": 10.0,
+            "entry_price": 0.5,
+            "stake_usdc": 5.0,
+            "opened_at": opened_at,
+            "ts": opened_at,
+        }
+    )
+    store.insert_system_event(
+        {
+            "event_id": "evt-position-invalid-latest",
+            "event_type": "nautilus_position",
+            "severity": "info",
+            "created_at": "2026-07-13T12:05:00+00:00",
+            "paper_position_id": "pos-invalid-latest",
+            "status": "UNKNOWN",
+            "is_closed": "false",
+            "side": Side.UP.value,
+            "shares": 10.0,
+            "entry_price": 0.5,
+            "stake_usdc": 5.0,
+            "opened_at": opened_at,
+            "ts": "not-a-date",
+        }
+    )
+
+    assert store.restore_open_positions() == []
+    assert store.restore_closed_positions() == []
+
+
 def test_sqlite_store_excludes_open_position_event_with_invalid_opened_at(tmp_path) -> None:
     # Given: an OPEN position whose primary opened_at is malformed but fallbacks are valid.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
@@ -1131,46 +1173,29 @@ def test_sqlite_store_newer_invalid_position_event_blocks_stale_restore(tmp_path
 
 
 def test_strategy_leaderboard_win_rate_counts_voids_as_closed(tmp_path):
-    # Given: a restored daily report with one WIN and one VOID closed position.
+    # Given: one WIN and one VOID in the canonical closed trade-result stream.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
-    report = DailyReport(
-        report_id="dr-win-void",
-        report_date=date(2026, 6, 22),
-        starting_equity=1000.0,
-        ending_equity=1002.4,
-        paper_pnl=2.4,
-        paper_roi=0.0024,
-        total_signals=2,
-        paper_orders=2,
-        paper_fills=2,
-        rejected_paper_orders=0,
-        open_positions=0,
-        closed_positions=2,
-        win_count=1,
-        loss_count=0,
-        void_count=1,
-        win_rate=0.5,
-        total_pnl_usdc=2.4,
-        average_roi=0.12,
-        max_drawdown=0.0,
-        profit_factor=None,
-        strategy_breakdown={
-            "ptb_diff": {
-                "closed_positions": 2,
-                "win_count": 1,
-                "loss_count": 0,
-                "void_count": 1,
-                "total_pnl_usdc": 2.4,
-                "average_roi": 0.12,
-            }
-        },
+    store.insert_paper_trade_result(
+        sample_paper_trade_result(
+            paper_trade_id="pt-leaderboard-win",
+            paper_position_id="pos-leaderboard-win",
+            pnl_usdc=2.4,
+            roi=0.24,
+            result=TradeResultStatus.WIN.value,
+        )
     )
-    store.insert_daily_report(report)
+    store.insert_paper_trade_result(
+        sample_paper_trade_result(
+            paper_trade_id="pt-leaderboard-void",
+            paper_position_id="pos-leaderboard-void",
+            pnl_usdc=0.0,
+            roi=0.0,
+            result=TradeResultStatus.VOID.value,
+        )
+    )
 
-    # When: the strategy leaderboard is reconstructed from persisted reports.
     leaderboard = store.restore_strategy_leaderboard()
 
-    # Then: win_rate uses closed positions, so voids remain in the denominator.
     assert leaderboard[0]["closed_positions"] == 2
     assert leaderboard[0]["win_count"] == 1
     assert leaderboard[0]["void_count"] == 1

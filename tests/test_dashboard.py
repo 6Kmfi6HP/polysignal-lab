@@ -1,7 +1,7 @@
 # noqa: SIZE_OK  — dashboard integration coverage file
 """
 Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timezone, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.dashboard.app
-Output: test_dashboard_uses_injected_reporting_read_port, test_dashboard_readonly_endpoints_return_stored_data, test_dashboard_positions_returns_latest_metadata_first, test_dashboard_health_reports_missing_runtime_as_unknown, test_dashboard_health_reports_stale_runtime_as_degraded, test_dashboard_health_keeps_fresh_runtime_ok_when_storage_fails, test_dashboard_health_ignores_superseded_runtime_snapshot_status, test_dashboard_health_returns_component_snapshot_from_system_events, test_dashboard_exposes_paper_execution_quality, test_leaderboard_uses_sqlite_report_data, test_leaderboard_recomputes_calibration_status_after_aggregation, test_dashboard_exposes_bounded_strategy_status_rows, test_dashboard_rejects_write_methods
+Output: test_dashboard_uses_injected_reporting_read_port, test_dashboard_readonly_endpoints_return_stored_data, test_dashboard_positions_returns_latest_metadata_first, test_dashboard_reduces_order_and_position_lifecycle_to_current_state, test_dashboard_health_reports_missing_runtime_as_unknown, test_dashboard_health_reports_stale_runtime_as_degraded, test_dashboard_health_keeps_fresh_runtime_ok_when_storage_fails, test_dashboard_health_ignores_superseded_runtime_snapshot_status, test_dashboard_health_returns_component_snapshot_from_system_events, test_dashboard_exposes_paper_execution_quality, test_leaderboard_uses_closed_trade_results_not_report_snapshots, test_leaderboard_recomputes_calibration_status_after_aggregation, test_dashboard_exposes_bounded_strategy_status_rows, test_dashboard_rejects_write_methods
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -35,7 +35,7 @@ from polysignal_lab.observability.runtime_health import write_runtime_heartbeat
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.domain.strategy_readiness import StrategyMarketStatus
 from signal_helpers import ptb_signal_from_snapshot
-from factories import sample_storage_lifecycle
+from factories import sample_paper_trade_result, sample_storage_lifecycle
 
 
 def _client_with_store(tmp_path, snapshot, settings) -> tuple[TestClient, SQLiteStore]:
@@ -207,6 +207,108 @@ async def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> No
     assert rows[0]["status"] == "OPEN"
     assert rows[0]["is_closed"] is False
     assert rows[0]["position_id"] == "latest-pos"
+
+
+async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-current-state.sqlite3")
+    order_id = "order-current"
+    position_id = "position-current"
+    opened_at = "2026-07-13T12:00:00+00:00"
+    closed_at = "2026-07-13T12:05:00+00:00"
+    events = (
+        {
+            "event_id": "evt-order-filled",
+            "event_type": "nautilus_order",
+            "severity": "info",
+            "created_at": closed_at,
+            "paper_order_id": order_id,
+            "status": "FILLED",
+            "ts": "not-a-date",
+        },
+        {
+            "event_id": "evt-position-closed",
+            "event_type": "nautilus_position",
+            "severity": "info",
+            "created_at": closed_at,
+            "paper_position_id": position_id,
+            "side": Side.UP.value,
+            "entry_price": 0.5,
+            "shares": 20.0,
+            "stake_usdc": 10.0,
+            "opened_at": opened_at,
+            "closed_at": closed_at,
+            "status": PositionStatus.CLOSED.value,
+            "is_closed": True,
+            "ts": closed_at,
+        },
+        {
+            "event_id": "evt-order-resting",
+            "event_type": "nautilus_order",
+            "severity": "info",
+            "created_at": opened_at,
+            "paper_order_id": order_id,
+            "status": "ACCEPTED",
+            "ts": opened_at,
+        },
+        {
+            "event_id": "evt-position-open",
+            "event_type": "nautilus_position",
+            "severity": "info",
+            "created_at": opened_at,
+            "paper_position_id": position_id,
+            "side": Side.UP.value,
+            "entry_price": 0.5,
+            "shares": 20.0,
+            "stake_usdc": 10.0,
+            "opened_at": opened_at,
+            "status": PositionStatus.OPEN.value,
+            "is_closed": False,
+            "ts": opened_at,
+        },
+    )
+    for event in events:
+        store.insert_system_event(event)
+
+    orders = await _dashboard_get(store, "/api/paper-orders")
+    resting_orders = await _dashboard_get(
+        store,
+        "/api/paper-orders",
+        params={"status": "resting"},
+    )
+    positions = await _dashboard_get(store, "/api/positions")
+    open_positions = await _dashboard_get(
+        store,
+        "/api/positions",
+        params={"status": "open"},
+    )
+
+    assert orders.status_code == 200
+    assert len(orders.json()) == 1
+    assert orders.json()[0]["paper_order_id"] == order_id
+    assert orders.json()[0]["status"] == "FILLED"
+    assert resting_orders.json() == []
+    assert positions.status_code == 200
+    assert len(positions.json()) == 1
+    assert positions.json()[0]["paper_position_id"] == position_id
+    assert positions.json()[0]["status"] == "CLOSED"
+    assert positions.json()[0]["is_closed"] is True
+    assert open_positions.json() == []
+
+    store.insert_system_event(
+        {
+            "event_id": "evt-order-invalid-latest",
+            "event_type": "nautilus_order",
+            "severity": "info",
+            "created_at": "2026-07-13T12:10:00+00:00",
+            "paper_order_id": order_id,
+            "status": "UNKNOWN",
+            "ts": "2026-07-13T12:10:00+00:00",
+        }
+    )
+    invalid_orders = await _dashboard_get(store, "/api/paper-orders")
+
+    assert invalid_orders.json() == []
+    assert store.counts()["system_events"] == 5
 
 
 async def test_dashboard_positions_normalize_nautilus_rows_with_market_lookup(tmp_path) -> None:
@@ -506,6 +608,7 @@ async def test_dashboard_paper_orders_normalize_nautilus_rows() -> None:
                 "side": "DOWN",
                 "stake_usdc": 32.0,
                 "level_price": 0.63,
+                "nonfinite": float("inf"),
             },
             "ts": "2026-06-26T00:00:00+00:00",
         }
@@ -524,6 +627,7 @@ async def test_dashboard_paper_orders_normalize_nautilus_rows() -> None:
     assert row["stake_usdc"] == 32.0
     assert row["shares"] == 40.0
     assert row["status"] == "RESTING"
+    assert row["metrics"]["nonfinite"] is None
 
 
 async def test_dashboard_excludes_invalid_nautilus_projection_rows() -> None:
@@ -652,38 +756,57 @@ async def test_dashboard_excludes_open_position_without_resolvable_side() -> Non
     assert positions.json() == []
 
 
-async def test_leaderboard_uses_sqlite_report_data(tmp_path, snapshot, settings) -> None:
-    # Given: stored report rows where voids must remain in the closed-position denominator.
-    client, store = _client_with_store(tmp_path, snapshot, settings)
+async def test_leaderboard_uses_closed_trade_results_not_report_snapshots(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-leaderboard.sqlite3")
+    store.insert_paper_trade_result(
+        sample_paper_trade_result(
+            paper_trade_id="pt-leaderboard-win",
+            paper_position_id="pos-leaderboard-win",
+            strategy="late_consensus",
+            pnl_usdc=6.0,
+            roi=0.6,
+            result="WIN",
+        )
+    )
+    store.insert_paper_trade_result(
+        sample_paper_trade_result(
+            paper_trade_id="pt-leaderboard-void",
+            paper_position_id="pos-leaderboard-void",
+            strategy="late_consensus",
+            pnl_usdc=-1.0,
+            roi=-0.1,
+            result="VOID",
+        )
+    )
     report = DailyReport(
-        report_id="dr-win-void",
+        report_id="dr-stale-leaderboard",
         report_date=date(2026, 6, 22),
         starting_equity=1000.0,
-        ending_equity=1004.0,
-        paper_pnl=4.0,
-        paper_roi=0.004,
-        total_signals=2,
-        paper_orders=2,
-        paper_fills=2,
+        ending_equity=1099.0,
+        paper_pnl=99.0,
+        paper_roi=0.099,
+        total_signals=99,
+        paper_orders=99,
+        paper_fills=99,
         rejected_paper_orders=0,
         open_positions=0,
-        closed_positions=2,
-        win_count=1,
+        closed_positions=99,
+        win_count=99,
         loss_count=0,
-        void_count=1,
-        win_rate=0.5,
-        total_pnl_usdc=4.0,
-        average_roi=0.12,
+        void_count=0,
+        win_rate=1.0,
+        total_pnl_usdc=99.0,
+        average_roi=1.0,
         max_drawdown=0.0,
         profit_factor=None,
         strategy_breakdown={
             "late_consensus": {
-                "closed_positions": 2,
-                "win_count": 1,
+                "closed_positions": 99,
+                "win_count": 99,
                 "loss_count": 0,
-                "void_count": 1,
-                "total_pnl_usdc": 4.0,
-                "average_roi": 0.12,
+                "void_count": 0,
+                "total_pnl_usdc": 99.0,
+                "average_roi": 1.0,
             }
         },
         calibration_breakdown={
@@ -695,23 +818,28 @@ async def test_leaderboard_uses_sqlite_report_data(tmp_path, snapshot, settings)
                 "sample_size": 2,
                 "wins": 1,
                 "losses": 0,
-                "average_return": 0.12,
+                "average_return": 0.25,
                 "calibration_status": "insufficient_data",
             }
         },
     )
     store.insert_daily_report(report)
 
-    # When: the dashboard leaderboard endpoint is read.
-    response = client.get("/api/leaderboard")
+    response = await _dashboard_get(store, "/api/leaderboard")
 
-    # Then: it is restored from SQLite report payloads using wins / closed positions.
     assert response.status_code == 200
-    rows = {row["strategy"]: row for row in response.json()["leaderboard"]}
-    assert rows["late_consensus"]["closed_positions"] == 2
-    assert rows["late_consensus"]["win_count"] == 1
-    assert rows["late_consensus"]["void_count"] == 1
-    assert rows["late_consensus"]["win_rate"] == 0.5
+    assert response.json()["leaderboard"] == [
+        {
+            "strategy": "late_consensus",
+            "closed_positions": 2,
+            "win_count": 1,
+            "loss_count": 0,
+            "void_count": 1,
+            "total_pnl_usdc": 5.0,
+            "average_roi": 0.25,
+            "win_rate": 0.5,
+        }
+    ]
     assert response.json()["calibration_breakdown"]["late_consensus|BTC|5m|high"][
         "sample_size"
     ] == 2

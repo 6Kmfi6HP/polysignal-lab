@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, sqlite3, dataclasses, dataclasses.dataclass, typing, typing.Final
-Output: validate_sqlite_schema, SchemaValidationError
+Output: TABLE_DDL_STATEMENTS, INDEX_DDL_STATEMENTS, REQUIRED_COLUMNS, ALLOWED_TABLES, COUNT_TABLES, validate_sqlite_schema, SchemaValidationError
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -146,6 +146,25 @@ TABLE_DDL_STATEMENTS: Final = [
         payload_json TEXT NOT NULL
     )
     """,
+    # Reporting-only current state; native execution state remains owned by Nautilus.
+    """
+    CREATE TABLE IF NOT EXISTS paper_order_states (
+        paper_order_id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        source_event_at TEXT NOT NULL,
+        source_event_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS paper_position_states (
+        paper_position_id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        source_event_at TEXT NOT NULL,
+        source_event_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS anchor_prices (
         anchor_id TEXT PRIMARY KEY,
@@ -171,6 +190,8 @@ INDEX_DDL_STATEMENTS: Final = [
     "CREATE INDEX IF NOT EXISTS idx_results_strategy_asset ON paper_trade_results(strategy,asset,timeframe,closed_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_reports_date_revision ON daily_reports(report_date,revision)",
     "CREATE INDEX IF NOT EXISTS idx_report_publish_outbox_status ON report_publish_outbox(status,lease_until)",
+    "CREATE INDEX IF NOT EXISTS idx_paper_order_states_status ON paper_order_states(status,source_event_at)",
+    "CREATE INDEX IF NOT EXISTS idx_paper_position_states_status ON paper_position_states(status,source_event_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_anchor_prices_market ON anchor_prices(asset,timeframe,market_slug)",
 ]
 
@@ -185,6 +206,8 @@ REQUIRED_COLUMNS: Final[dict[str, frozenset[str]]] = {
     "report_publish_outbox": frozenset({"intent_id", "idempotency_key", "report_id", "report_date", "revision", "status", "attempt_count", "lease_until", "publish_id", "last_error", "created_at", "updated_at", "payload_json"}),
     "telegram_publishes": frozenset({"publish_id", "message_type", "status", "payload_json"}),
     "system_events": frozenset({"event_id", "event_type", "severity", "created_at", "payload_json"}),
+    "paper_order_states": frozenset({"paper_order_id", "status", "source_event_at", "source_event_id", "payload_json"}),
+    "paper_position_states": frozenset({"paper_position_id", "status", "source_event_at", "source_event_id", "payload_json"}),
     "anchor_prices": frozenset(
         {
             "anchor_id",
@@ -212,6 +235,8 @@ COUNT_TABLES: Final = (
     "report_publish_outbox",
     "telegram_publishes",
     "system_events",
+    "paper_order_states",
+    "paper_position_states",
     "anchor_prices",
 )
 

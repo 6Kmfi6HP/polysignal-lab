@@ -18,7 +18,7 @@ import asyncio
 import sqlite3
 import threading
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -38,7 +38,6 @@ from polysignal_lab.nautilus_runtime.observability import (
     ObservabilityService,
 )
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
-from polysignal_lab.utils import utc_now
 
 
 class FakeStore:
@@ -191,12 +190,28 @@ def test_best_effort_telemetry_queue_drops_when_full_and_marks_health() -> None:
 
     actor.record_decision(_decision(market_id="m1"), accepted=True)
     actor.record_decision(_decision(market_id="m2"), accepted=True)
+    actor.record_event(
+        "nautilus_order",
+        {
+            "paper_order_id": "order-durable",
+            "status": "ACCEPTED",
+            "ts": "2026-07-13T12:00:00Z",
+        },
+    )
 
     component = actor.health.components["observability_actor"]
     assert component.status == "degraded"
     assert component.metrics["telemetry_queue_drops"] == 1
     assert component.metrics["telemetry_writer_backlog"] == 1
-    assert store.tables == {}
+    assert store.tables == {
+        "nautilus_order": [
+            {
+                "paper_order_id": "order-durable",
+                "status": "ACCEPTED",
+                "ts": "2026-07-13T12:00:00Z",
+            }
+        ]
+    }
 
 
 def test_best_effort_telemetry_writer_drains_queued_events() -> None:
@@ -743,12 +758,12 @@ def test_nautilus_persistence_table_classification_separates_telemetry_from_crit
     )
 
     assert persistence_class_for_table("nautilus_decision") is PersistenceClass.BEST_EFFORT_TELEMETRY
-    assert persistence_class_for_table("nautilus_order") is PersistenceClass.BEST_EFFORT_TELEMETRY
     assert persistence_class_for_table("nautilus_fill") is PersistenceClass.BEST_EFFORT_TELEMETRY
-    assert persistence_class_for_table("nautilus_position") is PersistenceClass.BEST_EFFORT_TELEMETRY
     assert persistence_class_for_table("health_snapshot") is PersistenceClass.BEST_EFFORT_TELEMETRY
     assert persistence_class_for_table("signals") is PersistenceClass.DURABLE_OR_DEGRADED
     assert persistence_class_for_table("rejected_signals") is PersistenceClass.DURABLE_OR_DEGRADED
+    assert persistence_class_for_table("nautilus_order") is PersistenceClass.DURABLE_OR_DEGRADED
+    assert persistence_class_for_table("nautilus_position") is PersistenceClass.DURABLE_OR_DEGRADED
     assert persistence_class_for_table("orders") is PersistenceClass.FATAL_ON_LOSS
     assert persistence_class_for_table("fills") is PersistenceClass.FATAL_ON_LOSS
     assert persistence_class_for_table("positions") is PersistenceClass.FATAL_ON_LOSS
@@ -781,16 +796,18 @@ def test_event_store_raises_on_critical_paper_state_sqlite_lock() -> None:
         adapter.insert_json("settlements", {"paper_trade_id": "trade-1"})
 
 
-def test_nautilus_event_store_keeps_runtime_callbacks_alive_when_observability_sqlite_is_locked() -> None:
+def test_nautilus_event_store_surfaces_lifecycle_sqlite_lock_for_runtime_degradation() -> None:
     persistence = LockingSystemEventPersistence()
     adapter = NautilusEventStoreAdapter(persistence)
 
-    adapter.insert_json("nautilus_order", {"client_order_id": "C-001", "ts": "2026-07-03T12:31:01Z"})
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        adapter.insert_json(
+            "nautilus_order",
+            {"client_order_id": "C-001", "ts": "2026-07-03T12:31:01Z"},
+        )
 
     assert persistence.calls == []
-    assert [(stream, payload["client_order_id"]) for stream, payload in persistence.logs] == [
-        ("nautilus_orders", "C-001")
-    ]
+    assert persistence.logs == []
 
 
 def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
