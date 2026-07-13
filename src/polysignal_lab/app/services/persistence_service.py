@@ -1,5 +1,5 @@
 """
-Input: __future__, datetime, typing, polysignal_lab.storage.jsonl_store, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.state_store
+Input: __future__, datetime, typing, polysignal_lab.domain.paper_result, polysignal_lab.storage.jsonl_store, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.state_store
 Output: PersistenceService
 Pos: Service Layer - Business logic
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Iterable
 
+from polysignal_lab.domain.paper_result import DailyReport
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
@@ -65,6 +66,63 @@ class PersistenceService:
 
     def insert_daily_report(self, report: Any) -> None:
         self.sqlite.insert_daily_report(report)
+
+    def claim_daily_report(
+        self,
+        report: DailyReport,
+        *,
+        enqueue_publish: bool,
+    ) -> tuple[DailyReport, bool]:
+        return self.sqlite.claim_daily_report(
+            report,
+            enqueue_publish=enqueue_publish,
+        )
+
+    def pending_daily_report_publishes(
+        self,
+        *,
+        before_date: str,
+        limit: int = 100,
+    ) -> list[DailyReport]:
+        return self.sqlite.pending_daily_report_publishes(
+            before_date=before_date,
+            limit=limit,
+        )
+
+    def claim_daily_report_publish(
+        self,
+        report_id: str,
+        *,
+        lease_sec: float,
+    ) -> dict[str, Any] | None:
+        return self.sqlite.claim_daily_report_publish(
+            report_id,
+            lease_sec=lease_sec,
+        )
+
+    def complete_daily_report_publish(
+        self,
+        intent_id: str,
+        attempt_count: int,
+        publish: dict[str, Any],
+    ) -> bool:
+        return self.sqlite.complete_daily_report_publish(
+            intent_id,
+            attempt_count,
+            publish,
+        )
+
+    def release_daily_report_publish(
+        self,
+        intent_id: str,
+        attempt_count: int,
+        error: str,
+    ) -> bool:
+        return self.sqlite.release_daily_report_publish(
+            intent_id,
+            attempt_count,
+            error,
+        )
 
     def insert_telegram_publish(self, publish: dict[str, Any]) -> None:
         self.sqlite.insert_telegram_publish(publish)

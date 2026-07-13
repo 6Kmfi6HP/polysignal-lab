@@ -36,6 +36,7 @@ class DailyReportRow(TypedDict, total=False):
     schema_version: int
     report_id: str
     report_date: str
+    revision: int
     starting_equity: float
     ending_equity: float
     equity_currency: str
@@ -140,6 +141,7 @@ class DailyReport(BaseModel):
     schema_version: int = 1
     report_id: str = Field(default_factory=lambda: new_id("dr"))
     report_date: date
+    revision: int = Field(default=1, ge=1)
     starting_equity: float
     ending_equity: float
     equity_currency: str = "USDC"

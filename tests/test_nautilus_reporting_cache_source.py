@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._report_equity_inputs
-Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_generate_daily_report_uses_configured_pusd_equity, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
+Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_generate_daily_report_uses_configured_pusd_equity, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,13 +14,21 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from polysignal_lab.app.scheduler_reporting import (
     _report_equity_inputs,
     generate_daily_report,
 )
+from polysignal_lab.app.services.persistence_service import PersistenceService
+from polysignal_lab.app.services.publish_service import PublishService
+from polysignal_lab.observability.health import HealthRegistry
+from polysignal_lab.paper.report import PaperReportService
+from polysignal_lab.publish.telegram_publisher import PublishResult
+from polysignal_lab.storage.jsonl_store import JSONLStore
+from polysignal_lab.storage.sqlite_store import SQLiteStore
+from polysignal_lab.storage.state_store import StateStore
 
 
 def _settings(
@@ -34,7 +42,10 @@ def _settings(
             nautilus=SimpleNamespace(sandbox_base_currency=sandbox_base_currency),
         ),
         data=SimpleNamespace(polymarket=SimpleNamespace(max_book_staleness_ms=60_000)),
-        telegram=SimpleNamespace(send_daily_report=False),
+        telegram=SimpleNamespace(
+            send_daily_report=False,
+            publish_timeout_sec=5.0,
+        ),
         app=SimpleNamespace(timezone="UTC"),
     )
 
@@ -158,7 +169,9 @@ def test_generate_daily_report_uses_configured_pusd_equity() -> None:
     reports: list[object] = []
     persistence = SimpleNamespace(
         query_json=lambda *_args, **_kwargs: [],
-        insert_daily_report=reports.append,
+        claim_daily_report=lambda report, *, enqueue_publish: (
+            reports.append(report) or (report, True)
+        ),
         append_log=lambda *_args: None,
     )
     cache = SimpleNamespace(
@@ -188,6 +201,173 @@ def test_generate_daily_report_uses_configured_pusd_equity() -> None:
     assert report.ending_equity == 987.65
     assert report.equity_currency == "pUSD"
     assert reports == [report]
+
+
+def test_generate_daily_report_retries_pending_outbox_without_duplicate_report(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "reports.sqlite3"
+    store = SQLiteStore(db_path)
+    logs = JSONLStore(tmp_path / "logs")
+    persistence = PersistenceService(logs, store, StateStore(tmp_path / "state"))
+    formatter_report_ids: list[str] = []
+    publish_statuses = ["FAILED", "SENT"]
+    successful_messages: list[str] = []
+
+    class Formatter:
+        def daily_report_message(self, report) -> str:
+            report_id = (
+                str(report["report_id"])
+                if isinstance(report, dict)
+                else report.report_id
+            )
+            formatter_report_ids.append(report_id)
+            return f"daily report {report_id}"
+
+    class Publisher:
+        async def send(
+            self,
+            message: str,
+            message_type: str,
+            signal_id: str | None,
+        ) -> PublishResult:
+            outbox = store.restore_report_publish_outbox()
+            assert store.counts()["daily_reports"] == 1
+            assert outbox[0]["status"] == "DELIVERING"
+            status = publish_statuses.pop(0)
+            if status == "SENT":
+                successful_messages.append(message)
+            return PublishResult(
+                publish_id=f"pub-{2 - len(publish_statuses)}",
+                message_type=message_type,
+                signal_id=signal_id,
+                status=status,
+                error="temporary" if status == "FAILED" else None,
+                sent_at="2026-07-13T12:00:00Z" if status == "SENT" else None,
+            )
+
+    settings = _settings(sandbox_base_currency="pUSD")
+    settings.telegram.send_daily_report = True
+    cache = SimpleNamespace(
+        account=lambda: SimpleNamespace(
+            id="A-1",
+            balances=[SimpleNamespace(currency="pUSD", total=987.65)],
+        ),
+        positions=lambda: [],
+        orders=lambda: [],
+        fills=lambda: [],
+    )
+    scheduler = SimpleNamespace(
+        settings=settings,
+        persistence=persistence,
+        nautilus_cache=cache,
+        health=HealthRegistry(),
+        logger=SimpleNamespace(
+            error=lambda *_args: None,
+            info=lambda *_args: None,
+        ),
+        publish_service=PublishService(Formatter(), Publisher(), persistence),
+    )
+
+    first = asyncio.run(generate_daily_report(scheduler))
+    pending = store.restore_report_publish_outbox()
+
+    persistence.close()
+    store = SQLiteStore(db_path)
+    persistence = PersistenceService(logs, store, StateStore(tmp_path / "state"))
+    scheduler.persistence = persistence
+    scheduler.publish_service = PublishService(Formatter(), Publisher(), persistence)
+
+    second = asyncio.run(generate_daily_report(scheduler))
+    delivered = store.restore_report_publish_outbox()
+
+    assert first is not None
+    assert second is not None
+    assert second.report_id == first.report_id
+    assert store.counts()["daily_reports"] == 1
+    assert store.counts()["report_publish_outbox"] == 1
+    assert len(logs.read_all("daily_reports")) == 1
+    assert pending[0]["status"] == "PENDING"
+    assert pending[0]["attempt_count"] == 1
+    assert pending[0]["last_error"] == "temporary"
+    assert delivered[0]["status"] == "SENT"
+    assert delivered[0]["attempt_count"] == 2
+    assert formatter_report_ids == [first.report_id, first.report_id]
+    assert successful_messages == [f"daily report {first.report_id}"]
+
+
+def test_generate_daily_report_retries_prior_day_pending_publish(tmp_path) -> None:
+    db_path = tmp_path / "reports.sqlite3"
+    store = SQLiteStore(db_path)
+    prior_report = PaperReportService().build_daily_report(
+        report_date=datetime.now(UTC).date() - timedelta(days=1),
+        starting_equity=1000.0,
+        ending_equity=1000.0,
+        total_signals=0,
+        paper_orders=0,
+        paper_fills=0,
+        rejected_paper_orders=0,
+        open_positions=0,
+        results=[],
+    )
+    store.claim_daily_report(prior_report, enqueue_publish=True)
+    store.close()
+
+    store = SQLiteStore(db_path)
+    logs = JSONLStore(tmp_path / "logs")
+    persistence = PersistenceService(logs, store, StateStore(tmp_path / "state"))
+    settings = _settings()
+    settings.telegram.send_daily_report = True
+    published_report_ids: list[str] = []
+
+    class Formatter:
+        def daily_report_message(self, report) -> str:
+            report_id = str(report["report_id"])
+            published_report_ids.append(report_id)
+            return f"daily report {report_id}"
+
+    class Publisher:
+        async def send(
+            self,
+            message: str,
+            message_type: str,
+            signal_id: str | None,
+        ) -> PublishResult:
+            settings.telegram.send_daily_report = False
+            return PublishResult(
+                publish_id="pub-prior-day",
+                message_type=message_type,
+                signal_id=signal_id,
+                status="SENT",
+                sent_at="2026-07-14T00:00:00Z",
+            )
+
+    scheduler = SimpleNamespace(
+        settings=settings,
+        persistence=persistence,
+        nautilus_cache=SimpleNamespace(
+            account=lambda: None,
+            positions=lambda: [],
+            orders=lambda: [],
+            fills=lambda: [],
+        ),
+        health=HealthRegistry(),
+        logger=SimpleNamespace(
+            error=lambda *_args: None,
+            info=lambda *_args: None,
+        ),
+        publish_service=PublishService(Formatter(), Publisher(), persistence),
+    )
+
+    current_report = asyncio.run(generate_daily_report(scheduler))
+    outbox = store.restore_report_publish_outbox()
+
+    assert current_report is not None
+    assert current_report.report_date != prior_report.report_date
+    assert store.counts()["daily_reports"] == 2
+    assert store.counts()["report_publish_outbox"] == 1
+    assert outbox[0]["status"] == "SENT"
+    assert published_report_ids == [prior_report.report_id]
 
 
 def test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity() -> None:

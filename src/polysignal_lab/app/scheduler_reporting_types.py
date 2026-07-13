@@ -24,7 +24,40 @@ class _ReportPersistence(Protocol):
         params: tuple[Any, ...] = (),
     ) -> list[dict[str, Any]]: ...
 
-    def insert_daily_report(self, report: DailyReport) -> None: ...
+    def claim_daily_report(
+        self,
+        report: DailyReport,
+        *,
+        enqueue_publish: bool,
+    ) -> tuple[DailyReport, bool]: ...
+
+    def pending_daily_report_publishes(
+        self,
+        *,
+        before_date: str,
+        limit: int = 100,
+    ) -> list[DailyReport]: ...
+
+    def claim_daily_report_publish(
+        self,
+        report_id: str,
+        *,
+        lease_sec: float,
+    ) -> dict[str, Any] | None: ...
+
+    def complete_daily_report_publish(
+        self,
+        intent_id: str,
+        attempt_count: int,
+        publish: dict[str, str | None],
+    ) -> bool: ...
+
+    def release_daily_report_publish(
+        self,
+        intent_id: str,
+        attempt_count: int,
+        error: str,
+    ) -> bool: ...
 
     def append_log(self, table: str, payload: Any) -> None: ...
 
@@ -49,6 +82,7 @@ class _DataSettings(Protocol):
 
 class _TelegramSettings(Protocol):
     send_daily_report: bool
+    publish_timeout_sec: float
 
 
 class _AppSettings(Protocol):
@@ -67,7 +101,7 @@ class _PublishResult(Protocol):
 
 
 class _DailyReportPublisher(Protocol):
-    async def publish_daily_report(self, report: DailyReport) -> _PublishResult: ...
+    async def deliver_daily_report(self, report: DailyReport) -> _PublishResult: ...
 
 
 class _ReportScheduler(Protocol):

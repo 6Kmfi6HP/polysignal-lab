@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, sqlite3, polysignal_lab.app.scheduler_reporting_equity, polysignal_lab.app.scheduler_reporting_sources, polysignal_lab.app.scheduler_reporting_storage, polysignal_lab.app.scheduler_reporting_types, polysignal_lab.app.scheduler_health, polysignal_lab.domain.paper_result, polysignal_lab.paper.report
+Input: __future__, __future__.annotations, sqlite3, polysignal_lab.app.scheduler_reporting_equity, polysignal_lab.app.scheduler_reporting_sources, polysignal_lab.app.scheduler_reporting_types, polysignal_lab.app.scheduler_health, polysignal_lab.domain.paper_result, polysignal_lab.paper.report
 Output: _build_daily_report_from_inputs
 Pos: Application code
 
@@ -19,7 +19,6 @@ from polysignal_lab.app.scheduler_reporting_sources import (
     _fill_payloads_with_order_intents,
     _paper_order_metrics,
 )
-from polysignal_lab.app.scheduler_reporting_storage import delete_daily_report_rows
 from polysignal_lab.app.scheduler_reporting_types import DailyReportInputs, _ReportScheduler
 from polysignal_lab.domain.paper_result import DailyReport
 from polysignal_lab.paper.report import PaperReportService
@@ -27,6 +26,37 @@ from polysignal_lab.paper.report_rejections import is_rejected_paper_order_paylo
 
 
 async def _build_daily_report_from_inputs(
+    scheduler: _ReportScheduler,
+    inputs: DailyReportInputs,
+) -> DailyReport | None:
+    report = _build_report(scheduler, inputs)
+    if report is None:
+        return None
+
+    send_daily_report = scheduler.settings.telegram.send_daily_report
+    persisted = _claim_and_log_report(
+        scheduler,
+        report,
+        enqueue_publish=send_daily_report,
+    )
+    if persisted is None:
+        return None
+    report, created = persisted
+
+    if send_daily_report and not await _publish_report(scheduler, report):
+        return report
+
+    scheduler.logger.info(
+        "%s daily report for %s: %d closed trades, pnl=%.2f",
+        "Generated" if created else "Reused",
+        inputs.today_iso,
+        report.closed_positions,
+        report.paper_pnl,
+    )
+    return report
+
+
+def _build_report(
     scheduler: _ReportScheduler,
     inputs: DailyReportInputs,
 ) -> DailyReport | None:
@@ -53,7 +83,7 @@ async def _build_daily_report_from_inputs(
 
     starting_equity, ending_equity, open_positions = _report_equity_inputs(scheduler)
     try:
-        report = PaperReportService().build_daily_report(
+        return PaperReportService().build_daily_report(
             report_date=inputs.today,
             starting_equity=starting_equity,
             ending_equity=ending_equity,
@@ -75,36 +105,115 @@ async def _build_daily_report_from_inputs(
         scheduler.logger.error("Failed to build daily report: %s", exc)
         return None
 
-    publish_payload: dict[str, str | None] | None = None
-    if scheduler.settings.telegram.send_daily_report:
-        try:
-            publish = await scheduler.publish_service.publish_daily_report(report)
-            publish_payload = publish.as_dict()
-        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
-            scheduler.logger.error("Failed to publish daily report: %s", exc)
-            return None
 
+def _claim_and_log_report(
+    scheduler: _ReportScheduler,
+    report: DailyReport,
+    *,
+    enqueue_publish: bool,
+) -> tuple[DailyReport, bool] | None:
     try:
-        scheduler.persistence.insert_daily_report(report)
+        persisted, created = scheduler.persistence.claim_daily_report(
+            report,
+            enqueue_publish=enqueue_publish,
+        )
         scheduler_health.note_storage_success(scheduler, "sqlite")
-    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+    except (OSError, sqlite3.Error, KeyError, TypeError, ValueError) as exc:
         scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
-        delete_daily_report_rows(scheduler, report, publish_payload)
-        scheduler.logger.error("Failed to store daily report: %s", exc)
+        scheduler.logger.error("Failed to claim daily report: %s", exc)
         return None
 
+    if not created:
+        return persisted, False
+
     try:
-        scheduler.persistence.append_log("daily_reports", report)
+        scheduler.persistence.append_log("daily_reports", persisted)
         scheduler_health.note_storage_success(scheduler, "jsonl")
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         scheduler_health.note_storage_failure(scheduler, "jsonl", exc)
         scheduler.logger.error("Failed to store daily report log: %s", exc)
         return None
+    return persisted, True
 
-    scheduler.logger.info(
-        "Generated daily report for %s: %d closed trades, pnl=%.2f",
-        inputs.today_iso,
-        len(inputs.trade_results),
-        report.paper_pnl,
+
+async def _retry_pending_daily_report_publishes(
+    scheduler: _ReportScheduler,
+    *,
+    before_date: str,
+) -> None:
+    try:
+        reports = scheduler.persistence.pending_daily_report_publishes(
+            before_date=before_date,
+        )
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
+        scheduler.logger.error("Failed to restore pending report publishes: %s", exc)
+        return
+    for report in reports:
+        await _publish_report(scheduler, report)
+
+
+async def _publish_report(
+    scheduler: _ReportScheduler,
+    report: DailyReport,
+) -> bool:
+    lease_sec = max(
+        float(scheduler.settings.telegram.publish_timeout_sec) * 2.0,
+        30.0,
     )
-    return report
+    try:
+        intent = scheduler.persistence.claim_daily_report_publish(
+            report.report_id,
+            lease_sec=lease_sec,
+        )
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
+        scheduler.logger.error("Failed to claim daily report publish: %s", exc)
+        return False
+
+    if intent is None:
+        return True
+
+    intent_id = str(intent["intent_id"])
+    attempt_count = int(intent["attempt_count"])
+    try:
+        publish = await scheduler.publish_service.deliver_daily_report(report)
+        publish_payload = publish.as_dict()
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        try:
+            scheduler.persistence.release_daily_report_publish(
+                intent_id,
+                attempt_count,
+                str(exc),
+            )
+        except sqlite3.Error as release_exc:
+            scheduler_health.note_storage_failure(scheduler, "sqlite", release_exc)
+        scheduler.logger.error("Failed to publish daily report: %s", exc)
+        return False
+
+    try:
+        completed = scheduler.persistence.complete_daily_report_publish(
+            intent_id,
+            attempt_count,
+            publish_payload,
+        )
+        if not completed:
+            scheduler.logger.error(
+                "Ignored stale daily report publish completion for %s",
+                intent_id,
+            )
+            return False
+        scheduler_health.note_storage_success(scheduler, "sqlite")
+    except (OSError, sqlite3.Error, KeyError, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
+        scheduler.logger.error("Failed to complete daily report publish: %s", exc)
+        return False
+
+    scheduler_health.note_publish_result(scheduler, publish_payload)
+    try:
+        scheduler.persistence.append_log("telegram_publishes", publish_payload)
+        scheduler_health.note_storage_success(scheduler, "jsonl")
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "jsonl", exc)
+        scheduler.logger.error("Failed to store publish log: %s", exc)
+    return True

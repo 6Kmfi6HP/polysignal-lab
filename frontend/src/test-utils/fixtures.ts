@@ -160,6 +160,7 @@ export function makeDailyReport(overrides: Partial<DailyReport> = {}): DailyRepo
   return {
     report_id: 'dr-1',
     report_date: '2026-06-30',
+    revision: 1,
     starting_equity: 1000,
     ending_equity: 1004,
     paper_pnl: 4,

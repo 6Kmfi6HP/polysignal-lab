@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timezone, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.dashboard.app
-Output: test_formatter_signal_message_within_limit, test_telegram_dry_run_publish, test_formatter_nautilus_fill_message_is_compact, test_jsonl_and_state_store, test_jsonl_and_state_restore_required_streams, test_sqlite_store_and_dashboard, test_schema_rejects_missing_required_columns, test_sqlite_anchor_prices_survive_reopen, test_sqlite_verified_anchor_survives_later_unverified_upsert, test_sqlite_store_persists_strategy_status_rows
+Output: test_formatter_signal_message_within_limit, test_telegram_dry_run_publish, test_formatter_nautilus_fill_message_is_compact, test_jsonl_and_state_store, test_jsonl_and_state_restore_required_streams, test_sqlite_store_and_dashboard, test_schema_rejects_missing_required_columns, test_sqlite_anchor_prices_survive_reopen, test_sqlite_verified_anchor_survives_later_unverified_upsert, test_sqlite_store_persists_strategy_status_rows, test_daily_report_claim_and_delivery_lease_are_atomic_across_connections
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,7 +14,9 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,6 +30,7 @@ from polysignal_lab.domain.strategy_readiness import StrategyMarketStatus
 from polysignal_lab.paper.report import PaperReportService
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 from polysignal_lab.signal_layer.formatter import MessageFormatter
+from polysignal_lab.storage import sqlite_store as sqlite_store_module
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import DuplicateRecordError, SQLiteStore
 from polysignal_lab.storage.sqlite_schema import SchemaValidationError
@@ -175,6 +178,103 @@ def test_schema_rejects_missing_required_columns(tmp_path):
     # When / Then: startup migration validates the schema and refuses the corrupt DB.
     with pytest.raises(SchemaValidationError, match="signals"):
         SQLiteStore(db_path)
+
+
+def test_daily_report_claim_and_delivery_lease_are_atomic_across_connections(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "reports.sqlite3"
+    base_report = PaperReportService().build_daily_report(
+        report_date=date(2026, 7, 13),
+        starting_equity=1000.0,
+        ending_equity=1005.0,
+        total_signals=1,
+        paper_orders=1,
+        paper_fills=1,
+        rejected_paper_orders=0,
+        open_positions=0,
+        results=[],
+    )
+    reports = (
+        base_report.model_copy(update={"report_id": "dr-concurrent-a"}),
+        base_report.model_copy(update={"report_id": "dr-concurrent-b"}),
+    )
+    stores = (SQLiteStore(db_path), SQLiteStore(db_path))
+    barrier = Barrier(2)
+
+    def claim(item: tuple[SQLiteStore, DailyReport]) -> tuple[str, bool]:
+        store, report = item
+        barrier.wait()
+        persisted, created = store.claim_daily_report(
+            report,
+            enqueue_publish=True,
+        )
+        return persisted.report_id, created
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(claim, zip(stores, reports, strict=True)))
+    finally:
+        for connection in stores:
+            connection.close()
+
+    store = SQLiteStore(db_path)
+    outbox = store.restore_report_publish_outbox()
+
+    assert sum(created for _, created in results) == 1
+    assert len({report_id for report_id, _ in results}) == 1
+    assert store.counts()["daily_reports"] == 1
+    assert store.counts()["report_publish_outbox"] == 1
+    assert len(outbox) == 1
+    assert outbox[0]["idempotency_key"] == "daily_report:2026-07-13:r1"
+    assert outbox[0]["status"] == "PENDING"
+
+    observed_at = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_store_module, "utc_now", lambda: observed_at)
+    first_attempt = store.claim_daily_report_publish(
+        outbox[0]["report_id"],
+        lease_sec=1,
+    )
+    monkeypatch.setattr(
+        sqlite_store_module,
+        "utc_now",
+        lambda: observed_at + timedelta(seconds=2),
+    )
+    second_attempt = store.claim_daily_report_publish(
+        outbox[0]["report_id"],
+        lease_sec=1,
+    )
+
+    assert first_attempt is not None
+    assert second_attempt is not None
+    assert first_attempt["attempt_count"] == 1
+    assert second_attempt["attempt_count"] == 2
+    assert not store.complete_daily_report_publish(
+        first_attempt["intent_id"],
+        first_attempt["attempt_count"],
+        {
+            "publish_id": "pub-stale",
+            "message_type": "daily_report",
+            "status": "SENT",
+            "sent_at": "2026-07-13T12:00:01Z",
+        },
+    )
+    delivering = store.restore_report_publish_outbox()[0]
+    assert delivering["status"] == "DELIVERING"
+    assert delivering["attempt_count"] == 2
+    assert store.complete_daily_report_publish(
+        second_attempt["intent_id"],
+        second_attempt["attempt_count"],
+        {
+            "publish_id": "pub-current",
+            "message_type": "daily_report",
+            "status": "SENT",
+            "sent_at": "2026-07-13T12:00:02Z",
+        },
+    )
+    assert store.restore_report_publish_outbox()[0]["status"] == "SENT"
+
 
 def test_sqlite_anchor_prices_survive_reopen(tmp_path) -> None:
     db_path = tmp_path / "anchors.sqlite3"

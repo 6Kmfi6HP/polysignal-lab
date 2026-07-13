@@ -1,6 +1,6 @@
 # noqa: SIZE_OK  — SQLite gateway; split is outside reporting boundary prefactor
 """
-Input: __future__, __future__.annotations, json, datetime, datetime.datetime, sqlite3, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, math
+Input: __future__, __future__.annotations, json, datetime, datetime.datetime, datetime.timedelta, sqlite3, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, math, polysignal_lab.domain.paper_result
 Output: DuplicateRecordError, MalformedSQLitePayloadError, SQLiteStore
 Pos: Application code
 
@@ -16,7 +16,7 @@ Pos: Application code
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import math
 import sqlite3
 from dataclasses import dataclass
@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.enums import PositionStatus, Side
 from polysignal_lab.domain.paper_result import (
+    DailyReport,
     InvalidPaperTradeResultRow,
     parse_paper_trade_result_row,
 )
@@ -38,7 +39,7 @@ from polysignal_lab.storage.sqlite_schema import (
     TABLE_DDL_STATEMENTS,
     validate_sqlite_schema,
 )
-from polysignal_lab.utils import stable_hash, to_jsonable, utc_iso
+from polysignal_lab.utils import stable_hash, to_jsonable, utc_iso, utc_now
 
 if TYPE_CHECKING:
     from polysignal_lab.dashboard.reporting_read import StorageHealthRead
@@ -250,9 +251,52 @@ class SQLiteStore:
         with self._lock, self._conn:
             for statement in TABLE_DDL_STATEMENTS:
                 self._conn.execute(statement)
+            revision_added = self._add_column_if_missing(
+                "daily_reports",
+                "revision",
+                "INTEGER NOT NULL DEFAULT 1",
+            )
+            if revision_added:
+                self._backfill_daily_report_revisions()
             validate_sqlite_schema(self._conn)
             for statement in INDEX_DDL_STATEMENTS:
                 self._conn.execute(statement)
+
+    def _add_column_if_missing(
+        self,
+        table: str,
+        column: str,
+        declaration: str,
+    ) -> bool:
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column in columns:
+            return False
+        self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+        return True
+
+    def _backfill_daily_report_revisions(self) -> None:
+        rows = self._conn.execute(
+            """SELECT report_id,report_date,payload_json
+            FROM daily_reports
+            ORDER BY report_date,created_at,report_id"""
+        ).fetchall()
+        revisions: dict[str, int] = {}
+        for row in rows:
+            report_date = str(row["report_date"])
+            revision = revisions.get(report_date, 0) + 1
+            revisions[report_date] = revision
+            payload = _payload_json(row)
+            payload_json = str(row["payload_json"])
+            if isinstance(payload, dict):
+                payload["revision"] = revision
+                payload_json = self._json(payload)
+            self._conn.execute(
+                "UPDATE daily_reports SET revision=?,payload_json=? WHERE report_id=?",
+                (revision, payload_json, str(row["report_id"])),
+            )
 
     def validate_schema(self) -> None:
         with self._lock:
@@ -451,9 +495,314 @@ class SQLiteStore:
                 "daily_reports",
                 "report_id",
                 p["report_id"],
-                ("report_id", "report_date", "total_signals", "total_pnl_usdc", "win_rate", "created_at", "payload_json"),
-                (p["report_id"], p["report_date"], p["total_signals"], p["total_pnl_usdc"], p["win_rate"], p["created_at"], self._json(p)),
+                ("report_id", "report_date", "revision", "total_signals", "total_pnl_usdc", "win_rate", "created_at", "payload_json"),
+                (p["report_id"], p["report_date"], p.get("revision", 1), p["total_signals"], p["total_pnl_usdc"], p["win_rate"], p["created_at"], self._json(p)),
             )
+
+    def claim_daily_report(
+        self,
+        report: DailyReport,
+        *,
+        enqueue_publish: bool,
+    ) -> tuple[DailyReport, bool]:
+        p = to_jsonable(report)
+        report_date = str(p["report_date"])
+        revision = int(p.get("revision", 1))
+        created = True
+        with self._lock, self._conn:
+            try:
+                self._conn.execute(
+                    """INSERT INTO daily_reports(
+                        report_id,report_date,revision,total_signals,total_pnl_usdc,
+                        win_rate,created_at,payload_json
+                    ) VALUES(?,?,?,?,?,?,?,?)""",
+                    (
+                        p["report_id"],
+                        report_date,
+                        revision,
+                        p["total_signals"],
+                        p["total_pnl_usdc"],
+                        p["win_rate"],
+                        p["created_at"],
+                        self._json(p),
+                    ),
+                )
+                persisted = report
+            except sqlite3.IntegrityError:
+                row = self._conn.execute(
+                    """SELECT payload_json FROM daily_reports
+                    WHERE report_date=? AND revision=?""",
+                    (report_date, revision),
+                ).fetchone()
+                if row is None:
+                    raise
+                payload = _payload_json(row)
+                if not isinstance(payload, dict):
+                    raise MalformedSQLitePayloadError(
+                        table="daily_reports",
+                        key="report_date_revision",
+                        record_id=f"{report_date}:{revision}",
+                    )
+                payload["revision"] = revision
+                persisted = DailyReport.model_validate(payload)
+                created = False
+
+            if enqueue_publish:
+                self._insert_daily_report_publish_intent(persisted)
+        return persisted, created
+
+    def _insert_daily_report_publish_intent(self, report: DailyReport) -> None:
+        report_date = report.report_date.isoformat()
+        idempotency_key = f"daily_report:{report_date}:r{report.revision}"
+        intent_id = f"outbox_{stable_hash(idempotency_key)}"
+        now = utc_iso()
+        payload = {
+            "intent_id": intent_id,
+            "idempotency_key": idempotency_key,
+            "report_id": report.report_id,
+            "report_date": report_date,
+            "revision": report.revision,
+            "status": "PENDING",
+            "attempt_count": 0,
+            "lease_until": None,
+            "publish_id": None,
+            "last_error": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self._conn.execute(
+            """INSERT OR IGNORE INTO report_publish_outbox(
+                intent_id,idempotency_key,report_id,report_date,revision,status,
+                attempt_count,lease_until,publish_id,last_error,created_at,
+                updated_at,payload_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                intent_id,
+                idempotency_key,
+                report.report_id,
+                report_date,
+                report.revision,
+                "PENDING",
+                0,
+                None,
+                None,
+                None,
+                now,
+                now,
+                self._json(payload),
+            ),
+        )
+
+    def restore_report_publish_outbox(
+        self,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return self.query_json(
+            "report_publish_outbox",
+            where="ORDER BY created_at DESC",
+            limit=limit,
+        )
+
+    def pending_daily_report_publishes(
+        self,
+        *,
+        before_date: str,
+        limit: int = 100,
+    ) -> list[DailyReport]:
+        now = utc_iso()
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT reports.revision,reports.payload_json
+                FROM report_publish_outbox AS outbox
+                JOIN daily_reports AS reports ON reports.report_id=outbox.report_id
+                WHERE outbox.report_date<? AND (
+                    outbox.status='PENDING' OR
+                    (outbox.status='DELIVERING' AND outbox.lease_until IS NOT NULL
+                    AND outbox.lease_until<=?)
+                )
+                ORDER BY outbox.created_at,outbox.intent_id
+                LIMIT ?""",
+                (before_date, now, max(1, min(int(limit), 500))),
+            ).fetchall()
+        reports: list[DailyReport] = []
+        for row in rows:
+            payload = _payload_json(row)
+            if not isinstance(payload, dict):
+                continue
+            payload["revision"] = int(row["revision"])
+            reports.append(DailyReport.model_validate(payload))
+        return reports
+
+    def claim_daily_report_publish(
+        self,
+        report_id: str,
+        *,
+        lease_sec: float,
+    ) -> dict[str, Any] | None:
+        now_dt = utc_now()
+        now = utc_iso(now_dt)
+        lease_until = utc_iso(now_dt + timedelta(seconds=max(float(lease_sec), 1.0)))
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                """UPDATE report_publish_outbox
+                SET status='DELIVERING',attempt_count=attempt_count+1,
+                    lease_until=?,publish_id=NULL,last_error=NULL,updated_at=?
+                WHERE report_id=? AND (
+                    status='PENDING' OR
+                    (status='DELIVERING' AND lease_until IS NOT NULL AND lease_until<=?)
+                )""",
+                (lease_until, now, report_id, now),
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = self._conn.execute(
+                "SELECT * FROM report_publish_outbox WHERE report_id=?",
+                (report_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            payload = self._outbox_payload(row)
+            payload.update(
+                {
+                    "status": "DELIVERING",
+                    "attempt_count": int(row["attempt_count"]),
+                    "lease_until": lease_until,
+                    "publish_id": None,
+                    "last_error": None,
+                    "updated_at": now,
+                }
+            )
+            self._conn.execute(
+                "UPDATE report_publish_outbox SET payload_json=? WHERE intent_id=?",
+                (self._json(payload), str(row["intent_id"])),
+            )
+            return payload
+
+    def complete_daily_report_publish(
+        self,
+        intent_id: str,
+        attempt_count: int,
+        publish: Mapping[str, Any],
+    ) -> bool:
+        p = to_jsonable(publish)
+        publish_status = str(p.get("status") or "FAILED").upper()
+        delivered = publish_status in {"SENT", "DRY_RUN"}
+        status = publish_status if delivered else "PENDING"
+        last_error = None if delivered else str(p.get("error") or "publish_failed")
+        now = utc_iso()
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                """SELECT * FROM report_publish_outbox
+                WHERE intent_id=? AND status='DELIVERING' AND attempt_count=?""",
+                (intent_id, attempt_count),
+            ).fetchone()
+            if row is None:
+                return False
+            updated = self._update_report_publish_outbox(
+                row,
+                attempt_count=attempt_count,
+                status=status,
+                publish_id=p.get("publish_id"),
+                last_error=last_error,
+                updated_at=now,
+            )
+            if not updated:
+                return False
+            self._insert_idempotent(
+                "telegram_publishes",
+                "publish_id",
+                str(p["publish_id"]),
+                (
+                    "publish_id",
+                    "message_type",
+                    "signal_id",
+                    "status",
+                    "sent_at",
+                    "payload_json",
+                ),
+                (
+                    p["publish_id"],
+                    p.get("message_type", "daily_report"),
+                    p.get("signal_id"),
+                    publish_status,
+                    p.get("sent_at"),
+                    self._json(p),
+                ),
+            )
+            return True
+
+    def release_daily_report_publish(
+        self,
+        intent_id: str,
+        attempt_count: int,
+        error: str,
+    ) -> bool:
+        now = utc_iso()
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                """SELECT * FROM report_publish_outbox
+                WHERE intent_id=? AND status='DELIVERING' AND attempt_count=?""",
+                (intent_id, attempt_count),
+            ).fetchone()
+            if row is None:
+                return False
+            return self._update_report_publish_outbox(
+                row,
+                attempt_count=attempt_count,
+                status="PENDING",
+                last_error=error,
+                updated_at=now,
+                preserve_publish_id=True,
+            )
+
+    def _update_report_publish_outbox(
+        self,
+        row: sqlite3.Row,
+        *,
+        attempt_count: int,
+        status: str,
+        last_error: str | None,
+        updated_at: str,
+        publish_id: Any = None,
+        preserve_publish_id: bool = False,
+    ) -> bool:
+        payload = self._outbox_payload(row)
+        if not preserve_publish_id:
+            payload["publish_id"] = publish_id
+        payload.update(
+            {
+                "status": status,
+                "lease_until": None,
+                "last_error": last_error,
+                "updated_at": updated_at,
+            }
+        )
+        cursor = self._conn.execute(
+            """UPDATE report_publish_outbox
+            SET status=?,lease_until=NULL,publish_id=?,last_error=?,
+                updated_at=?,payload_json=?
+            WHERE intent_id=? AND status='DELIVERING' AND attempt_count=?""",
+            (
+                status,
+                row["publish_id"] if preserve_publish_id else publish_id,
+                last_error,
+                updated_at,
+                self._json(payload),
+                str(row["intent_id"]),
+                attempt_count,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def _outbox_payload(self, row: sqlite3.Row) -> dict[str, Any]:
+        payload = _payload_json(row)
+        if not isinstance(payload, dict):
+            raise MalformedSQLitePayloadError(
+                table="report_publish_outbox",
+                key="intent_id",
+                record_id=str(row["intent_id"]),
+            )
+        return payload
 
     def insert_telegram_publish(self, publish: dict[str, Any]) -> None:
         p = to_jsonable(publish)

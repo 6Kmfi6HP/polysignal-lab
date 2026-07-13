@@ -162,6 +162,7 @@ export interface CalibrationBucket {
 export interface DailyReport {
   report_id: string
   report_date: string
+  revision: number
   starting_equity: number
   ending_equity: number
   equity_currency?: string

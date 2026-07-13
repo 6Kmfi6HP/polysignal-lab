@@ -100,11 +100,31 @@ TABLE_DDL_STATEMENTS: Final = [
     CREATE TABLE IF NOT EXISTS daily_reports (
         report_id TEXT PRIMARY KEY,
         report_date TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
         total_signals INTEGER NOT NULL,
         total_pnl_usdc REAL NOT NULL,
         win_rate REAL NOT NULL,
         created_at TEXT NOT NULL,
         payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS report_publish_outbox (
+        intent_id TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        report_id TEXT NOT NULL,
+        report_date TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        lease_until TEXT,
+        publish_id TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        UNIQUE(report_id),
+        UNIQUE(report_date, revision)
     )
     """,
     """
@@ -149,6 +169,8 @@ INDEX_DDL_STATEMENTS: Final = [
     "CREATE INDEX IF NOT EXISTS idx_signals_strategy_asset ON signals(strategy,asset,timeframe,created_at)",
     "CREATE INDEX IF NOT EXISTS idx_strategy_status_strategy_asset ON strategy_status(strategy,asset,timeframe,created_at)",
     "CREATE INDEX IF NOT EXISTS idx_results_strategy_asset ON paper_trade_results(strategy,asset,timeframe,closed_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_reports_date_revision ON daily_reports(report_date,revision)",
+    "CREATE INDEX IF NOT EXISTS idx_report_publish_outbox_status ON report_publish_outbox(status,lease_until)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_anchor_prices_market ON anchor_prices(asset,timeframe,market_slug)",
 ]
 
@@ -159,7 +181,8 @@ REQUIRED_COLUMNS: Final[dict[str, frozenset[str]]] = {
     "strategy_status": frozenset({"status_id", "strategy", "asset", "timeframe", "status", "created_at", "payload_json"}),
     "paper_trade_results": frozenset({"paper_trade_id", "signal_id", "strategy", "asset", "timeframe", "market_id", "result", "pnl_usdc", "roi", "closed_at", "payload_json"}),
     "paper_wallet_snapshots": frozenset({"id", "wallet_id", "equity", "cash_balance", "realized_pnl", "open_position_count", "created_at", "payload_json"}),
-    "daily_reports": frozenset({"report_id", "report_date", "total_signals", "total_pnl_usdc", "win_rate", "created_at", "payload_json"}),
+    "daily_reports": frozenset({"report_id", "report_date", "revision", "total_signals", "total_pnl_usdc", "win_rate", "created_at", "payload_json"}),
+    "report_publish_outbox": frozenset({"intent_id", "idempotency_key", "report_id", "report_date", "revision", "status", "attempt_count", "lease_until", "publish_id", "last_error", "created_at", "updated_at", "payload_json"}),
     "telegram_publishes": frozenset({"publish_id", "message_type", "status", "payload_json"}),
     "system_events": frozenset({"event_id", "event_type", "severity", "created_at", "payload_json"}),
     "anchor_prices": frozenset(
@@ -186,6 +209,7 @@ COUNT_TABLES: Final = (
     "paper_trade_results",
     "paper_wallet_snapshots",
     "daily_reports",
+    "report_publish_outbox",
     "telegram_publishes",
     "system_events",
     "anchor_prices",
