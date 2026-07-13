@@ -515,6 +515,7 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
     assert "Orders  " in daily_message
     assert "Rejects " in daily_message
     assert "ExecLag " in daily_message
+    assert "Telemetry COMPLETE" in daily_message
     assert "PAPER_ENTRY_PRICE_MOVED" in daily_message
     assert "Filled  " in daily_message
     assert "Closed  " in daily_message

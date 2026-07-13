@@ -173,6 +173,8 @@ export interface DailyReport {
   paper_fills: number
   rejected_paper_orders: number
   paper_rejects_by_reason: Record<string, number>
+  telemetry_status?: 'complete' | 'incomplete'
+  telemetry_incomplete_reasons?: string[]
   average_execution_staleness_ms: number | null
   open_positions: number
   closed_positions: number

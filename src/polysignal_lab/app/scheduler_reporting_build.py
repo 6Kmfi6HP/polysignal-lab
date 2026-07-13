@@ -100,6 +100,7 @@ def _build_report(
             paper_fill_payloads=today_fill_payloads,
             paper_reject_payloads=inputs.today_reject_orders_raw,
             paper_execution_assumptions=paper_execution_assumptions,
+            telemetry_incomplete_reasons=inputs.telemetry_incomplete_reasons,
         )
     except (KeyError, TypeError, ValueError) as exc:
         scheduler.logger.error("Failed to build daily report: %s", exc)

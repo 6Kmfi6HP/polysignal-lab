@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import date, datetime
 import math
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -55,6 +55,8 @@ class DailyReportRow(TypedDict, total=False):
     average_execution_staleness_ms: float | None
     average_executable_depth_usdc: float | None
     paper_execution_assumptions: dict[str, Any]
+    telemetry_status: str
+    telemetry_incomplete_reasons: list[str]
     open_positions: int
     closed_positions: int
     win_count: int
@@ -160,6 +162,8 @@ class DailyReport(BaseModel):
     average_execution_staleness_ms: float | None = None
     average_executable_depth_usdc: float | None = None
     paper_execution_assumptions: dict[str, Any] = Field(default_factory=dict)
+    telemetry_status: Literal["complete", "incomplete"] = "complete"
+    telemetry_incomplete_reasons: list[str] = Field(default_factory=list)
     open_positions: int
     closed_positions: int
     win_count: int

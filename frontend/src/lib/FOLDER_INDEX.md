@@ -4,6 +4,7 @@
 - Library code
 
 **Files**:
+- `api/types.ts` - Defines dashboard API contracts, including report telemetry completeness
 - `utils.ts` - Exports cn and 1 more
 - `utils.test.ts` - Library - Shared code
 - `handle-server-error.ts` - Exports handleServerError

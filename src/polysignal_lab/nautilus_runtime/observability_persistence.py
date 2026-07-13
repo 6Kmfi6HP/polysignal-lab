@@ -1,5 +1,5 @@
 """
-Input: __future__, sqlite3, time, dataclasses, queue, collections.abc, enum, typing, polysignal_lab.observability.health, polysignal_lab.utils, polysignal_lab.domain.signal
+Input: __future__, sqlite3, time, dataclasses, queue, collections.abc, enum, typing, polysignal_lab.app.services.persistence_service, polysignal_lab.observability.health, polysignal_lab.utils, polysignal_lab.domain.signal
 Output: persistence_class_for_table, PersistenceClass, PersistenceWriter, Publisher, AcceptedSignalNotifier, EventStore, Notifier, NautilusEventStoreAdapter, NautilusNotifierAdapter, _health_set_backlog, _health_mark_drop, _health_mark_side_effect_failure, _health_mark_sqlite_lock_retry, _drop_queued_events
 Pos: Observability persistence routing — enums, protocols, adapters, and shared health metric helpers
 
@@ -16,6 +16,7 @@ from enum import Enum
 from queue import Empty, Queue
 from typing import Protocol, TypeVar
 
+from polysignal_lab.app.services.persistence_service import telemetry_retention_policy
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.utils import utc_iso
@@ -32,11 +33,6 @@ class PersistenceClass(Enum):
     FATAL_ON_LOSS = "fatal_on_loss"
 
 
-_BEST_EFFORT_TELEMETRY_TABLES = frozenset({
-    "nautilus_decision",
-    "nautilus_fill",
-    "health_snapshot",
-})
 _DURABLE_OR_DEGRADED_TABLES = frozenset({
     "signals",
     "rejected_signals",
@@ -46,7 +42,7 @@ _DURABLE_OR_DEGRADED_TABLES = frozenset({
 
 
 def persistence_class_for_table(table: str) -> PersistenceClass:
-    if table in _BEST_EFFORT_TELEMETRY_TABLES:
+    if telemetry_retention_policy(table) is not None:
         return PersistenceClass.BEST_EFFORT_TELEMETRY
     if table in _DURABLE_OR_DEGRADED_TABLES:
         return PersistenceClass.DURABLE_OR_DEGRADED
@@ -135,7 +131,11 @@ class NautilusEventStoreAdapter:
             "nautilus_position": "nautilus_positions",
         }
         self._append_log: Callable[[str, object], None] | None = getattr(persistence, "append_log", None)
-        self._best_effort_tables: set[str] = set(_BEST_EFFORT_TELEMETRY_TABLES)
+        self._best_effort_tables = {
+            table
+            for table in self._routes
+            if telemetry_retention_policy(table) is not None
+        }
 
     def insert_json(
         self,
@@ -169,7 +169,12 @@ class NautilusEventStoreAdapter:
                 or not suppress_best_effort_locks
             ):
                 raise
-        if self._append_log is not None:
+
+        retention = telemetry_retention_policy(table)
+        if (
+            self._append_log is not None
+            and (retention is None or retention.append_jsonl)
+        ):
             try:
                 self._append_log(self._streams[table], payload)
             except (OSError, TypeError):
@@ -232,6 +237,7 @@ def _health_mark_drop(
         reason,
         telemetry_queue_drops=current + count,
         telemetry_writer_backlog=backlog,
+        telemetry_last_drop_at=utc_iso(),
     )
 
 
@@ -245,11 +251,21 @@ def _health_mark_side_effect_failure(
     current = 0 if component is None else int(
         component.metrics.get("non_critical_side_effect_failures", 0) or 0
     )
+    failure_metrics: dict[str, int | str] = {}
+    if telemetry_retention_policy(kind) is not None:
+        telemetry_failures = 0 if component is None else int(
+            component.metrics.get("telemetry_write_failures", 0) or 0
+        )
+        failure_metrics = {
+            "telemetry_write_failures": telemetry_failures + 1,
+            "telemetry_last_failure_at": utc_iso(),
+        }
     health.mark_degraded(
         "observability_actor",
         str(error),
         side_effect_kind=kind,
         non_critical_side_effect_failures=current + 1,
+        **failure_metrics,
     )
     component = health.components["observability_actor"]
     metrics = dict(component.metrics)

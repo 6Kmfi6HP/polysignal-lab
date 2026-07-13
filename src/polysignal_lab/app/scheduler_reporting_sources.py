@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, datetime, datetime.UTC, datetime.date, datetime.datetime, datetime.time, datetime.timedelta, datetime.timezone, typing, typing.Any, typing.cast, zoneinfo, zoneinfo.ZoneInfo, polysignal_lab.app.scheduler_reporting_types
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.date, datetime.datetime, datetime.time, datetime.timedelta, datetime.timezone, typing, typing.Any, typing.cast, zoneinfo, zoneinfo.ZoneInfo, polysignal_lab.app.scheduler_reporting_types
 Output: _collect_daily_report_inputs, _fill_payloads_with_order_intents, _paper_order_metrics
 Pos: Application code
 
@@ -8,7 +8,6 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -77,12 +76,9 @@ def _fill_payloads_with_order_intents(
 
     placeholders = ",".join("?" for _ in missing_order_ids)
     fill_orders = scheduler.persistence.query_json(
-        "system_events",
-        where=(
-            f"WHERE event_type=? AND json_extract(payload_json, '$.paper_order_id') "
-            f"IN ({placeholders})"
-        ),
-        params=("nautilus_order", *missing_order_ids),
+        "paper_order_states",
+        where=f"WHERE paper_order_id IN ({placeholders})",
+        params=missing_order_ids,
         limit=len(missing_order_ids),
     )
     orders_by_id = {
@@ -121,58 +117,101 @@ def _nautilus_system_event_rows(
     return [row for row in rows if isinstance(row, dict)]
 
 
-def _nautilus_projection_rows(
+def _nautilus_fill_rows_for_day(
     scheduler: _ReportScheduler,
-    name: str,
-) -> list[dict[str, Any]]:
-    from polysignal_lab.nautilus_runtime.projections import (
-        project_fill_event,
-        project_order_event,
-        project_position,
-    )
-
-    projectors: dict[str, tuple[str, Callable[[Any], dict[str, Any]]]] = {
-        "read_orders": ("orders", project_order_event),
-        "read_fills": ("fills", project_fill_event),
-        "read_positions": ("positions", project_position),
-    }
-    cache_attr, projector = projectors.get(name, (None, None))
-    if cache_attr is None or projector is None:
-        return []
-
-    nautilus_cache = getattr(scheduler, "nautilus_cache", None)
-    if nautilus_cache is None:
-        return []
-    method = getattr(nautilus_cache, cache_attr, None)
-    if not callable(method):
-        return []
-    rows = method()
-    if not isinstance(rows, (list, tuple)):
-        return []
-    return [projector(row) for row in rows if row is not None]
-
-
-def _nautilus_projection_rows_for_day(
-    scheduler: _ReportScheduler,
-    name: str,
     *,
     day_start: datetime,
     day_end: datetime,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], bool]:
+    from polysignal_lab.nautilus_runtime.projections import project_fill_event
+
+    nautilus_cache = getattr(scheduler, "nautilus_cache", None)
+    method = getattr(nautilus_cache, "fills", None)
+    if not callable(method):
+        return [], False
+    raw_rows = method()
+    if not isinstance(raw_rows, (list, tuple)):
+        return [], False
+
     rows: list[dict[str, Any]] = []
-    for row in _nautilus_projection_rows(scheduler, name):
+    for raw_row in raw_rows:
+        if raw_row is None:
+            continue
+        row = project_fill_event(raw_row)
         try:
-            timestamp = parse_dt(cast(str | datetime | None, row.get("ts") or row.get("created_at")))
+            timestamp = parse_dt(
+                cast(str | datetime | None, row.get("ts") or row.get("created_at"))
+            )
         except ValueError:
             continue
         if timestamp is None:
             continue
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=UTC)
-        timestamp = timestamp.astimezone(UTC)
-        if day_start <= timestamp < day_end:
+        if day_start <= timestamp.astimezone(UTC) < day_end:
             rows.append(row)
-    return rows
+    return rows, True
+
+
+def _timestamp_in_report_window(
+    value: object,
+    *,
+    day_start: datetime,
+    day_end: datetime,
+) -> bool:
+    if not isinstance(value, (str, datetime)):
+        return False
+    try:
+        timestamp = parse_dt(value)
+    except ValueError:
+        return False
+    if timestamp is None:
+        return False
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return day_start <= timestamp.astimezone(UTC) < day_end
+
+
+def _telemetry_incomplete_reasons(
+    scheduler: _ReportScheduler,
+    *,
+    day_start: datetime,
+    day_end: datetime,
+    fill_source_reason: str | None,
+) -> tuple[str, ...]:
+    reasons = [fill_source_reason] if fill_source_reason else []
+
+    health = getattr(scheduler, "health", None)
+    components = getattr(health, "components", None)
+    component = (
+        components.get("observability_actor")
+        if isinstance(components, dict)
+        else None
+    )
+    metrics = getattr(component, "metrics", None)
+    if not isinstance(metrics, dict):
+        return tuple(reasons)
+
+    backlog = int(metrics.get("telemetry_writer_backlog", 0) or 0)
+    if backlog > 0:
+        reasons.append(f"telemetry_writer_backlog:{backlog}")
+
+    drops = int(metrics.get("telemetry_queue_drops", 0) or 0)
+    if drops > 0 and _timestamp_in_report_window(
+        metrics.get("telemetry_last_drop_at"),
+        day_start=day_start,
+        day_end=day_end,
+    ):
+        reasons.append(f"telemetry_queue_drops:{drops}")
+
+    failures = int(metrics.get("telemetry_write_failures", 0) or 0)
+    if failures > 0 and _timestamp_in_report_window(
+        metrics.get("telemetry_last_failure_at"),
+        day_start=day_start,
+        day_end=day_end,
+    ):
+        reasons.append(f"telemetry_write_failures:{failures}")
+    return tuple(reasons)
 
 
 def _collect_daily_report_inputs(
@@ -198,60 +237,39 @@ def _collect_daily_report_inputs(
             params=day_params,
         ),
     )
-    today_fills_raw = _nautilus_system_event_rows(
+    today_fills_raw, native_fills_available = _nautilus_fill_rows_for_day(
         scheduler,
-        "nautilus_fill",
         day_start=day_start,
         day_end=day_end,
     )
+    fill_source_reason: str | None = None
     if not today_fills_raw:
-        today_fills_raw = _nautilus_projection_rows_for_day(
+        fallback_fills = _nautilus_system_event_rows(
             scheduler,
-            "read_fills",
+            "nautilus_fill",
             day_start=day_start,
             day_end=day_end,
         )
-    today_orders_raw = _nautilus_system_event_rows(
-        scheduler,
-        "nautilus_order",
-        day_start=day_start,
-        day_end=day_end,
+        if fallback_fills:
+            today_fills_raw = fallback_fills
+            fill_source_reason = "paper_fills_best_effort_fallback"
+        elif not native_fills_available:
+            fill_source_reason = "paper_fill_projection_unavailable"
+
+    today_orders_raw = scheduler.persistence.query_json(
+        "paper_order_states",
+        where=(
+            "WHERE source_event_at >= ? AND source_event_at < ? "
+            "AND COALESCE(json_extract(payload_json, '$._projection_invalid'), 0) != 1"
+        ),
+        params=day_params,
+        limit=10_000,
     )
-    using_nautilus_order_rows = bool(today_orders_raw)
-    if not today_orders_raw:
-        today_orders_raw = _nautilus_projection_rows_for_day(
-            scheduler,
-            "read_orders",
-            day_start=day_start,
-            day_end=day_end,
-        )
-        using_nautilus_order_rows = bool(today_orders_raw)
-    today_terminal_orders_raw: list[dict[str, Any]] = []
-    if using_nautilus_order_rows:
-        today_order_ids = {
-            str(order.get("paper_order_id") or "")
-            for order in today_orders_raw
-            if order.get("paper_order_id")
-        }
-        terminal_candidates = _nautilus_system_event_rows(
-            scheduler,
-            "nautilus_order",
-            day_start=day_start,
-            day_end=day_end,
-        )
-        for order in terminal_candidates:
-            if str(order.get("status") or "").upper() not in {"REJECTED", "CANCELLED"}:
-                continue
-            order_id = str(order.get("paper_order_id") or "")
-            if order_id in today_order_ids:
-                continue
-            terminal_at = _paper_terminal_at(order)
-            if terminal_at is None or not (day_start <= terminal_at < day_end):
-                continue
-            if not is_rejected_paper_order_payload(order, _paper_order_metrics(order)):
-                continue
-            today_terminal_orders_raw.append(order)
-    today_reject_orders_raw = [*today_orders_raw, *today_terminal_orders_raw]
+    today_reject_orders_raw = [
+        order
+        for order in today_orders_raw
+        if is_rejected_paper_order_payload(order, _paper_order_metrics(order))
+    ]
     today_signals_raw = scheduler.persistence.query_json(
         "signals",
         where=day_created_where,
@@ -266,4 +284,10 @@ def _collect_daily_report_inputs(
         today_fills_raw=today_fills_raw,
         today_reject_orders_raw=today_reject_orders_raw,
         trade_results=trade_results,
+        telemetry_incomplete_reasons=_telemetry_incomplete_reasons(
+            scheduler,
+            day_start=day_start,
+            day_end=day_end,
+            fill_source_reason=fill_source_reason,
+        ),
     )

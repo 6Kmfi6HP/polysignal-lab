@@ -939,6 +939,26 @@ class SQLiteStore:
             )
             self._upsert_paper_current_state(p)
 
+    def prune_system_events(
+        self,
+        event_type: str,
+        *,
+        keep_latest: int,
+    ) -> int:
+        limit = max(1, int(keep_latest))
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                """DELETE FROM system_events
+                WHERE event_type=? AND event_id NOT IN (
+                    SELECT event_id FROM system_events
+                    WHERE event_type=?
+                    ORDER BY created_at DESC,event_id DESC
+                    LIMIT ?
+                )""",
+                (event_type, event_type, limit),
+            )
+        return max(cursor.rowcount, 0)
+
     def _upsert_paper_current_state(self, event: Mapping[str, Any]) -> None:
         event_type = str(event.get("event_type") or "")
         if event_type == "nautilus_order":

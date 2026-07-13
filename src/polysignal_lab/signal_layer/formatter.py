@@ -102,7 +102,7 @@ Order  <code>{html.escape(str(fill.get("client_order_id", "")))}</code>
 FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
         return self._truncate(message)
 
-    def daily_report_message(self, report: Mapping[str, object]) -> str:
+    def daily_report_message(self, report: object) -> str:
         equity_currency = report_text(report, "equity_currency", "USDC")
         revision = int(report_float(report, "revision", 1.0))
         title = (
@@ -110,6 +110,23 @@ FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
             if revision <= 1
             else f"♻️ Daily Paper Report Correction · Revision {revision}"
         )
+        reasons_raw = (
+            report.get("telemetry_incomplete_reasons", ())
+            if isinstance(report, Mapping)
+            else getattr(report, "telemetry_incomplete_reasons", ())
+        )
+        reasons = (
+            [str(reason) for reason in reasons_raw]
+            if isinstance(reasons_raw, (list, tuple))
+            else []
+        )
+        telemetry_text = report_text(
+            report,
+            "telemetry_status",
+            "complete",
+        ).upper()
+        if reasons:
+            telemetry_text += f" ({', '.join(reasons)})"
         lines = []
         strategy_breakdown = report_nested_mapping(report, "strategy_breakdown")
         for strategy, row in strategy_breakdown.items():
@@ -144,6 +161,7 @@ Signals {int(report_float(report, 'total_signals'))}
 Orders  {int(report_float(report, 'paper_orders'))}
 Rejects {int(report_float(report, 'rejected_paper_orders'))} ({reject_text})
 ExecLag {exec_lag}
+Telemetry {html.escape(telemetry_text)}
 Filled  {int(report_float(report, 'paper_fills'))}
 Closed  {int(report_float(report, 'closed_positions'))}
 W/L     {int(report_float(report, 'win_count'))} / {int(report_float(report, 'loss_count'))}

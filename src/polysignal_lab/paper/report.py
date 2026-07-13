@@ -58,8 +58,10 @@ class PaperReportService:
         paper_fill_payloads: Iterable[dict[str, Any]] = (),
         paper_reject_payloads: Iterable[dict[str, Any]] | None = None,
         paper_execution_assumptions: dict[str, Any] | None = None,
+        telemetry_incomplete_reasons: Iterable[str] = (),
     ) -> DailyReport:
         result_list = list(results)
+        incomplete_reasons = sorted(set(telemetry_incomplete_reasons))
         closed = [r for r in result_list if _is_closed_result(r)]
         wins = sum(1 for r in closed if trade_result_status(r) == TradeResultStatus.WIN)
         losses = sum(1 for r in closed if trade_result_status(r) == TradeResultStatus.LOSS)
@@ -109,6 +111,10 @@ class PaperReportService:
             paper_execution_assumptions=execution_aggregates[
                 "paper_execution_assumptions"
             ],
+            telemetry_status=(
+                "incomplete" if incomplete_reasons else "complete"
+            ),
+            telemetry_incomplete_reasons=incomplete_reasons,
             open_positions=open_positions,
             closed_positions=len(closed),
             win_count=wins,

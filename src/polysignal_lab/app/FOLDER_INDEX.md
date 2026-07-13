@@ -6,12 +6,12 @@
 **Files**:
 - `scheduler_shared.py` - Application code
 - `scheduler_reporting_storage.py` - Exports delete_paper_result_rows and 1 more
-- `scheduler_reporting_types.py` - Exports DailyReportInputs and report protocols
-- `scheduler_reporting_sources.py` - Exports daily report input collectors
+- `scheduler_reporting_types.py` - Defines daily report inputs, including telemetry completeness reasons
+- `scheduler_reporting_sources.py` - Collects durable order state, native fills, and telemetry completeness
 - `scheduler_reporting_equity.py` - Exports report equity inputs
-- `scheduler_reporting_build.py` - Exports daily report builder
+- `scheduler_reporting_build.py` - Builds reports with explicit telemetry completeness
 - `scheduler_reporting.py` - Exports generate_daily_report and 1 more
-- `scheduler_health.py` - Exports note_storage_success and 4 more
+- `scheduler_health.py` - Persists runtime health through the retention-aware service boundary
 - `readonly_smoke_types.py` - Exports ReadonlySmokeRequest and 9 more
 - `readonly_smoke.py` - Exports collect_readonly_smoke and write_evidence
 - `readonly_smoke_public.py` - Exports make_public_client and 11 more

@@ -12,8 +12,8 @@
 - `projections.py` - Projects native order, fill, position, account, and portfolio reporting payloads
 - `order_plan.py` - Exports build_order_spec and 11 more
 - `order_mapping.py` - Exports order_spec_from_decision
-- `observability.py` - Records runtime lifecycle and diagnostic events
-- `observability_persistence.py` - Routes durable lifecycle projections separately from best-effort telemetry
+- `observability.py` - Records runtime lifecycle and diagnostic events under persistence policies
+- `observability_persistence.py` - Routes durable events and selects best-effort telemetry sinks
 - `node_signals.py` - Application code
 - `node_probes.py` - Application code
 - `node_crash.py` - Application code

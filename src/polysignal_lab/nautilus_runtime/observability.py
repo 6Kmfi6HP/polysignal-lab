@@ -52,7 +52,7 @@ REPEAT_SUPPRESS_TTL_SEC = 60.0
 
 
 class ObservabilityService:
-    """Receives typed events and writes them to SQLite + JSONL + health registry.
+    """Receives typed events and routes them by durability and retention policy.
 
     Reuses existing PersistenceService patterns without Nautilus runtime dependency.
     """

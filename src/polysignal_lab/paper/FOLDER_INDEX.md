@@ -8,7 +8,7 @@
 - `event_projection.py` - Canonical finite-value normalization for sparse paper lifecycle events
 - `settlement_sources.py` - Exports parse_gamma_resolution_payload and 4 more
 - `settlement_resolver.py` - Exports ChainResolutionSource and 2 more
-- `report.py` - Exports PaperReportService
+- `report.py` - Builds paper reports with explicit telemetry completeness
 - `report_aggregates.py` - Exports calibration and numeric report aggregates
 - `report_rejections.py` - Exports paper reject reason normalization
 - `__init__.py` - Application code

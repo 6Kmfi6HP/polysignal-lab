@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._report_equity_inputs
-Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_generate_daily_report_uses_configured_pusd_equity, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_revises_after_late_settlement, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
+Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_generate_daily_report_uses_configured_pusd_equity, test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_revises_after_late_settlement, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -203,6 +203,80 @@ def test_generate_daily_report_uses_configured_pusd_equity() -> None:
     assert report.ending_equity == 987.65
     assert report.equity_currency == "pUSD"
     assert reports == [report]
+
+
+def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss(
+    tmp_path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    persistence = PersistenceService(
+        JSONLStore(tmp_path / "logs"),
+        store,
+        StateStore(tmp_path / "state"),
+    )
+    now = datetime.now(UTC)
+    for event_id, status, offset in (
+        ("order-resting", "ACCEPTED", -1),
+        ("order-filled", "FILLED", 0),
+    ):
+        event_at = (now + timedelta(seconds=offset)).isoformat()
+        store.insert_system_event(
+            {
+                "event_id": event_id,
+                "event_type": "nautilus_order",
+                "severity": "info",
+                "created_at": event_at,
+                "paper_order_id": "order-current",
+                "status": status,
+                "ts": event_at,
+            }
+        )
+    health = HealthRegistry()
+    health.mark_degraded(
+        "observability_actor",
+        "telemetry queue full",
+        telemetry_queue_drops=1,
+        telemetry_last_drop_at=now.isoformat(),
+    )
+    scheduler = SimpleNamespace(
+        settings=_settings(),
+        persistence=persistence,
+        nautilus_cache=SimpleNamespace(
+            account=lambda: SimpleNamespace(
+                id="A-1",
+                balances=[SimpleNamespace(currency="USDC", total=1_000.0)],
+            ),
+            positions=lambda: [],
+            orders=lambda: [],
+            fills=lambda: [
+                SimpleNamespace(
+                    trade_id="fill-native",
+                    client_order_id="order-current",
+                    instrument_id="token.UP",
+                    last_qty=20.0,
+                    last_px=0.5,
+                    liquidity_side="TAKER",
+                    tags=(),
+                    metrics={},
+                    ts_event=now,
+                )
+            ],
+        ),
+        health=health,
+        logger=SimpleNamespace(
+            error=lambda *_args: None,
+            info=lambda *_args: None,
+        ),
+        publish_service=None,
+    )
+
+    report = asyncio.run(generate_daily_report(scheduler))
+
+    assert report is not None
+    assert report.paper_orders == 1
+    assert report.paper_fills == 1
+    assert report.telemetry_status == "incomplete"
+    assert report.telemetry_incomplete_reasons == ["telemetry_queue_drops:1"]
 
 
 def test_generate_daily_report_retries_pending_outbox_without_duplicate_report(

@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, asyncio, sqlite3, threading, collections.abc, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.UTC
-Output: test_startup_message_includes_sandbox_book_type, test_record_decision_writes_to_nautilus_decision_stream, test_observability_actor_isolates_best_effort_telemetry_write_failure, test_observability_actor_isolates_accepted_signal_notifier_failure, test_best_effort_telemetry_queue_drops_when_full_and_marks_health, test_best_effort_telemetry_writer_drains_queued_events, test_telemetry_writer_retries_transient_sqlite_lock, test_telemetry_writer_stops_after_bounded_sqlite_lock_retries, test_telemetry_writer_does_not_retry_non_lock_sqlite_operational_error, test_stop_returns_without_sync_drain_when_best_effort_store_blocks
+Input: __future__, __future__.annotations, asyncio, sqlite3, threading, collections.abc, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.UTC, datetime.timedelta
+Output: test_startup_message_includes_sandbox_book_type, test_record_decision_writes_to_nautilus_decision_stream, test_observability_actor_isolates_best_effort_telemetry_write_failure, test_observability_actor_isolates_accepted_signal_notifier_failure, test_best_effort_telemetry_queue_drops_when_full_and_marks_health, test_best_effort_telemetry_writer_drains_queued_events, test_best_effort_telemetry_uses_single_sink_and_enforces_retention, test_telemetry_writer_retries_transient_sqlite_lock, test_telemetry_writer_stops_after_bounded_sqlite_lock_retries, test_telemetry_writer_does_not_retry_non_lock_sqlite_operational_error, test_stop_returns_without_sync_drain_when_best_effort_store_blocks
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -18,7 +18,7 @@ import asyncio
 import sqlite3
 import threading
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -158,6 +158,8 @@ def test_observability_actor_isolates_best_effort_telemetry_write_failure() -> N
     component = actor.health.components["observability_actor"]
     assert component.status == "degraded"
     assert component.metrics["non_critical_side_effect_failures"] == 1
+    assert component.metrics["telemetry_write_failures"] == 1
+    assert isinstance(component.metrics["telemetry_last_failure_at"], str)
     assert actor.event_count == 1
 
 
@@ -177,6 +179,7 @@ def test_observability_actor_isolates_accepted_signal_notifier_failure() -> None
     component = actor.health.components["observability_actor"]
     assert component.status == "degraded"
     assert component.metrics["non_critical_side_effect_failures"] == 1
+    assert "telemetry_write_failures" not in component.metrics
 
 
 
@@ -396,7 +399,7 @@ def test_record_rejected_decision_writes_duplicate_signal_candidate_payload() ->
     assert rows[0]["candidate"]["condition_id"] == "c1"
     assert rows[0]["candidate"]["token_id"] == "t1"
 
-def test_record_decision_and_duplicate_rejection_write_jsonl_payloads(tmp_path: Path) -> None:
+def test_record_decision_uses_sqlite_and_rejection_keeps_jsonl_audit(tmp_path: Path) -> None:
     persistence = PersistenceService(
         JSONLStore(tmp_path / "logs"),
         SQLiteStore(tmp_path / "nautilus-observability.sqlite3"),
@@ -448,8 +451,13 @@ def test_record_decision_and_duplicate_rejection_write_jsonl_payloads(tmp_path: 
         )
     )
 
-    decision_rows = persistence.logs.read_all("nautilus_decisions")
+    decision_rows = persistence.query_json(
+        "system_events",
+        where="WHERE event_type=?",
+        params=("nautilus_decision",),
+    )
     rejection_rows = persistence.logs.read_all("rejected_signals")
+    assert persistence.logs.read_all("nautilus_decisions") == []
     assert len(decision_rows) == 1
     assert decision_rows[0]["strategy"] == "test"
     assert decision_rows[0]["market_id"] == "m1"
@@ -829,7 +837,6 @@ def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
         "signals",
         "rejected_signals",
         "paper_trade_results",
-        "system_events",
     ]
     with pytest.raises(ValueError, match="Unknown Nautilus event table"):
         adapter.insert_json("unknown", {})
@@ -841,6 +848,50 @@ def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
         adapter.insert_json("positions", {})
 
 
+def test_best_effort_telemetry_uses_single_sink_and_enforces_retention(
+    tmp_path,
+) -> None:
+    logs = JSONLStore(tmp_path / "logs")
+    persistence = PersistenceService(
+        logs,
+        SQLiteStore(tmp_path / "paper.sqlite"),
+        StateStore(tmp_path / "state"),
+    )
+    adapter = NautilusEventStoreAdapter(persistence)
+
+    for index in range(288):
+        persistence.insert_system_event(
+            {
+                "event_id": f"health-{index}",
+                "event_type": "health_snapshot",
+                "severity": "info",
+                "created_at": (
+                    datetime(2026, 7, 13, tzinfo=UTC)
+                    + timedelta(seconds=index)
+                ).isoformat(),
+            }
+        )
+
+    health_rows = persistence.query_json(
+        "system_events",
+        where="WHERE event_type=?",
+        params=("health_snapshot",),
+        limit=1_000,
+    )
+
+    assert len(health_rows) == 256
+    assert logs.read_all("system_events") == []
+
+    adapter.insert_json(
+        "nautilus_order",
+        {
+            "paper_order_id": "order-durable",
+            "status": "ACCEPTED",
+            "ts": "2026-07-13T12:00:00Z",
+        },
+    )
+
+    assert len(logs.read_all("nautilus_orders")) == 1
 
 
 def test_event_store_writes_nautilus_order_to_system_events(tmp_path) -> None:

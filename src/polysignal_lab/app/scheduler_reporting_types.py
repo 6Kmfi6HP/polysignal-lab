@@ -120,3 +120,4 @@ class DailyReportInputs:
     today_fills_raw: list[dict[str, Any]]
     today_reject_orders_raw: list[dict[str, Any]]
     trade_results: list[dict[str, Any]]
+    telemetry_incomplete_reasons: tuple[str, ...] = ()

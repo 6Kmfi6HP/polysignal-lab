@@ -5,7 +5,7 @@
 
 **Files**:
 - `state_store.py` - Exports StateStore
-- `sqlite_store.py` - SQLite reporting store with current-state projections, report revisions, and publish outbox
+- `sqlite_store.py` - SQLite reporting store with projections, report revisions, outbox, and telemetry pruning
 - `sqlite_schema.py` - SQLite reporting schema, indexes, and validation contracts
 - `jsonl_store.py` - Exports JSONLStore
 - `__init__.py` - Application code

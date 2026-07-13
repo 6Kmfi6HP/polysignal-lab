@@ -190,6 +190,7 @@ INDEX_DDL_STATEMENTS: Final = [
     "CREATE INDEX IF NOT EXISTS idx_results_strategy_asset ON paper_trade_results(strategy,asset,timeframe,closed_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_reports_date_revision ON daily_reports(report_date,revision)",
     "CREATE INDEX IF NOT EXISTS idx_report_publish_outbox_status ON report_publish_outbox(status,lease_until)",
+    "CREATE INDEX IF NOT EXISTS idx_system_events_type_created ON system_events(event_type,created_at DESC,event_id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_paper_order_states_status ON paper_order_states(status,source_event_at)",
     "CREATE INDEX IF NOT EXISTS idx_paper_position_states_status ON paper_position_states(status,source_event_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_anchor_prices_market ON anchor_prices(asset,timeframe,market_slug)",

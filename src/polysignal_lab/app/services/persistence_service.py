@@ -1,6 +1,6 @@
 """
-Input: __future__, datetime, typing, polysignal_lab.domain.paper_result, polysignal_lab.storage.jsonl_store, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.state_store
-Output: PersistenceService
+Input: __future__, dataclasses, datetime, typing, polysignal_lab.domain.paper_result, polysignal_lab.storage.jsonl_store, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.state_store
+Output: TelemetryRetentionPolicy, telemetry_retention_policy, PersistenceService
 Pos: Service Layer - Business logic
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,13 +14,34 @@ Pos: Service Layer - Business logic
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Iterable
+from typing import Any, Final, Iterable
 
 from polysignal_lab.domain.paper_result import DailyReport
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryRetentionPolicy:
+    sqlite_keep_latest: int
+    prune_every: int
+    append_jsonl: bool
+
+
+_BEST_EFFORT_RETENTION_POLICIES: Final = {
+    "nautilus_decision": TelemetryRetentionPolicy(10_000, 100, False),
+    "nautilus_fill": TelemetryRetentionPolicy(10_000, 100, False),
+    "health_snapshot": TelemetryRetentionPolicy(256, 32, False),
+}
+
+
+def telemetry_retention_policy(
+    event_type: str,
+) -> TelemetryRetentionPolicy | None:
+    return _BEST_EFFORT_RETENTION_POLICIES.get(event_type)
 
 
 class PersistenceService:
@@ -30,6 +51,7 @@ class PersistenceService:
         self.logs = logs
         self.sqlite = sqlite
         self.state = state
+        self._telemetry_writes: dict[str, int] = {}
 
     async def start(self) -> None:
         return None
@@ -129,6 +151,28 @@ class PersistenceService:
 
     def insert_system_event(self, event: dict[str, Any]) -> None:
         self.sqlite.insert_system_event(event)
+        event_type = str(event.get("event_type") or "")
+        policy = telemetry_retention_policy(event_type)
+        if policy is None:
+            return
+        writes = self._telemetry_writes.get(event_type, 0) + 1
+        self._telemetry_writes[event_type] = writes
+        if writes % policy.prune_every == 0:
+            self.prune_system_events(
+                event_type,
+                keep_latest=policy.sqlite_keep_latest,
+            )
+
+    def prune_system_events(
+        self,
+        event_type: str,
+        *,
+        keep_latest: int,
+    ) -> int:
+        return self.sqlite.prune_system_events(
+            event_type,
+            keep_latest=keep_latest,
+        )
 
     def query_json(
         self,
