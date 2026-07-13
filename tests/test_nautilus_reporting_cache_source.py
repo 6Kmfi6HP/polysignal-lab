@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._report_equity_inputs
-Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_generate_daily_report_uses_configured_pusd_equity, test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_revises_after_late_settlement, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
+Input: __future__, __future__.annotations, sqlite3, types, types.SimpleNamespace, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._report_equity_inputs, polysignal_lab.app.scheduler_reporting_sources._collect_daily_report_inputs
+Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_generate_daily_report_uses_configured_pusd_equity, test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss, test_daily_report_orders_use_creation_day_after_cross_day_update, test_daily_report_marks_inferred_legacy_order_creation_time, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_revises_after_late_settlement, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+import sqlite3
 from types import SimpleNamespace
 
 from polysignal_lab.app.scheduler_reporting import (
     _report_equity_inputs,
     generate_daily_report,
 )
+from polysignal_lab.app.scheduler_reporting_sources import _collect_daily_report_inputs
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.observability.health import HealthRegistry
@@ -269,7 +271,40 @@ def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_lo
                     tags=(),
                     metrics={},
                     ts_event=now,
-                )
+                ),
+                SimpleNamespace(
+                    trade_id="fill-invalid-timestamp",
+                    client_order_id="order-current",
+                    instrument_id="token.UP",
+                    last_qty=20.0,
+                    last_px=0.5,
+                    liquidity_side="TAKER",
+                    tags=(),
+                    metrics={},
+                    ts_event=float("nan"),
+                ),
+                SimpleNamespace(
+                    trade_id=None,
+                    client_order_id=None,
+                    instrument_id="token.UP",
+                    last_qty=None,
+                    last_px=None,
+                    liquidity_side="TAKER",
+                    tags=(),
+                    metrics={},
+                    ts_event=now,
+                ),
+                SimpleNamespace(
+                    trade_id="fill-boolean",
+                    client_order_id="order-current",
+                    instrument_id="token.UP",
+                    last_qty=True,
+                    last_px=True,
+                    liquidity_side="TAKER",
+                    tags=(),
+                    metrics={},
+                    ts_event=now,
+                ),
             ],
         ),
         health=health,
@@ -287,9 +322,107 @@ def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_lo
     assert report.paper_fills == 1
     assert report.telemetry_status == "incomplete"
     assert report.telemetry_incomplete_reasons == [
+        "paper_fill_projection_invalid:3",
         "paper_order_projection_invalid:1",
         "telemetry_queue_drops",
     ]
+
+
+def test_daily_report_orders_use_creation_day_after_cross_day_update(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    persistence = PersistenceService(
+        JSONLStore(tmp_path / "logs"),
+        store,
+        StateStore(tmp_path / "state"),
+    )
+    updated_at = datetime.now(UTC).replace(
+        hour=0,
+        minute=1,
+        second=0,
+        microsecond=0,
+    )
+    created_at = updated_at - timedelta(minutes=2)
+    for event_id, status, event_at in (
+        ("order-created", "ACCEPTED", created_at),
+        ("order-filled", "FILLED", updated_at),
+    ):
+        store.insert_system_event(
+            {
+                "event_id": event_id,
+                "event_type": "nautilus_order",
+                "severity": "info",
+                "created_at": event_at.isoformat(),
+                "paper_order_id": "order-cross-day",
+                "status": status,
+                "ts": event_at.isoformat(),
+            }
+        )
+    scheduler = SimpleNamespace(
+        persistence=persistence,
+        nautilus_cache=SimpleNamespace(fills=lambda: []),
+        health=HealthRegistry(),
+    )
+
+    creation_day = _collect_daily_report_inputs(
+        scheduler,
+        today=created_at.date(),
+        report_tz=UTC,
+    )
+    update_day = _collect_daily_report_inputs(
+        scheduler,
+        today=updated_at.date(),
+        report_tz=UTC,
+    )
+
+    assert len(creation_day.today_orders_raw) == 1
+    assert creation_day.today_orders_raw[0]["status"] == "FILLED"
+    assert update_day.today_orders_raw == []
+
+
+def test_daily_report_marks_inferred_legacy_order_creation_time(tmp_path) -> None:
+    db_path = tmp_path / "reports.sqlite3"
+    store = SQLiteStore(db_path)
+    event_at = datetime.now(UTC)
+    store.insert_system_event(
+        {
+            "event_id": "legacy-order-event",
+            "event_type": "nautilus_order",
+            "severity": "info",
+            "created_at": event_at.isoformat(),
+            "paper_order_id": "legacy-order",
+            "status": "ACCEPTED",
+            "ts": event_at.isoformat(),
+        }
+    )
+    store.close()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE paper_order_states SET created_event_at=''"
+        )
+        connection.execute("DELETE FROM system_events")
+        connection.execute("PRAGMA user_version = 1")
+
+    persistence = PersistenceService(
+        JSONLStore(tmp_path / "logs"),
+        SQLiteStore(db_path),
+        StateStore(tmp_path / "state"),
+    )
+    scheduler = SimpleNamespace(
+        persistence=persistence,
+        nautilus_cache=SimpleNamespace(fills=lambda: []),
+        health=HealthRegistry(),
+    )
+
+    inputs = _collect_daily_report_inputs(
+        scheduler,
+        today=event_at.date(),
+        report_tz=UTC,
+    )
+
+    assert len(inputs.today_orders_raw) == 1
+    assert inputs.telemetry_incomplete_reasons == (
+        "paper_order_creation_time_inferred:1",
+    )
 
 
 def test_generate_daily_report_retries_pending_outbox_without_duplicate_report(

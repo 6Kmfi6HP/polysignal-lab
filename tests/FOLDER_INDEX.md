@@ -50,7 +50,7 @@
 - `test_nautilus_sidecar_actor.py` - Exports test_custom_data_publisher_publishes_spot_without_local_store and 6 more
 - `test_nautilus_safety_boundary.py` - Exports test_default_nautilus_source_avoids_live_execution_symbols and 3 more
 - `test_nautilus_runtime_config.py` - Exports test_runtime_config_defaults_to_nautilus_and_stays_paper_safe and 11 more
-- `test_nautilus_reporting_cache_source.py` - Exports test_report_equity_inputs_prefers_nautilus_cache_reader_over_shadow_wallet and 6 more
+- `test_nautilus_reporting_cache_source.py` - Covers native equity/fills, telemetry completeness, creation-day orders, revisions, and outbox retries
 - `test_nautilus_projections.py` - Exports test_project_order_event_uses_nautilus_event_fields and 6 more
 - `test_nautilus_platform_boundary.py` - Exports test_default_import_does_not_require_nautilus and 20 more
 - `test_nautilus_order_mapping.py` - Exports test_taker_fak_maps_to_ioc_limit_at_best_ask_and_checks_depth and 8 more

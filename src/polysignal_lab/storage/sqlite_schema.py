@@ -151,6 +151,7 @@ TABLE_DDL_STATEMENTS: Final = [
     CREATE TABLE IF NOT EXISTS paper_order_states (
         paper_order_id TEXT PRIMARY KEY,
         status TEXT NOT NULL,
+        created_event_at TEXT NOT NULL,
         source_event_at TEXT NOT NULL,
         source_event_id TEXT NOT NULL,
         payload_json TEXT NOT NULL
@@ -192,6 +193,7 @@ INDEX_DDL_STATEMENTS: Final = [
     "CREATE INDEX IF NOT EXISTS idx_report_publish_outbox_status ON report_publish_outbox(status,lease_until)",
     "CREATE INDEX IF NOT EXISTS idx_system_events_type_created ON system_events(event_type,created_at DESC,event_id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_paper_order_states_status ON paper_order_states(status,source_event_at)",
+    "CREATE INDEX IF NOT EXISTS idx_paper_order_states_created ON paper_order_states(created_event_at,paper_order_id)",
     "CREATE INDEX IF NOT EXISTS idx_paper_position_states_status ON paper_position_states(status,source_event_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_anchor_prices_market ON anchor_prices(asset,timeframe,market_slug)",
 ]
@@ -207,7 +209,7 @@ REQUIRED_COLUMNS: Final[dict[str, frozenset[str]]] = {
     "report_publish_outbox": frozenset({"intent_id", "idempotency_key", "report_id", "report_date", "revision", "status", "attempt_count", "lease_until", "publish_id", "last_error", "created_at", "updated_at", "payload_json"}),
     "telegram_publishes": frozenset({"publish_id", "message_type", "status", "payload_json"}),
     "system_events": frozenset({"event_id", "event_type", "severity", "created_at", "payload_json"}),
-    "paper_order_states": frozenset({"paper_order_id", "status", "source_event_at", "source_event_id", "payload_json"}),
+    "paper_order_states": frozenset({"paper_order_id", "status", "created_event_at", "source_event_at", "source_event_id", "payload_json"}),
     "paper_position_states": frozenset({"paper_position_id", "status", "source_event_at", "source_event_id", "payload_json"}),
     "anchor_prices": frozenset(
         {

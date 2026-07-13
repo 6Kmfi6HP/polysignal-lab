@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from polysignal_lab.dashboard.reporting_read import StorageHealthRead
 
 
-_PAPER_CURRENT_STATE_SCHEMA_VERSION = 1
+_PAPER_CURRENT_STATE_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +307,11 @@ class SQLiteStore:
             )
             if revision_added:
                 self._backfill_daily_report_revisions()
+            self._add_column_if_missing(
+                "paper_order_states",
+                "created_event_at",
+                "TEXT NOT NULL DEFAULT ''",
+            )
             validate_sqlite_schema(self._conn)
             self._backfill_paper_current_states()
             for statement in INDEX_DDL_STATEMENTS:
@@ -362,9 +367,33 @@ class SQLiteStore:
             payload = _payload_json(row)
             if isinstance(payload, dict):
                 self._upsert_paper_current_state(payload)
+        self._backfill_missing_order_creation_times()
         self._conn.execute(
             f"PRAGMA user_version = {_PAPER_CURRENT_STATE_SCHEMA_VERSION}"
         )
+
+    def _backfill_missing_order_creation_times(self) -> None:
+        rows = self._conn.execute(
+            """SELECT paper_order_id,source_event_at,payload_json
+            FROM paper_order_states
+            WHERE created_event_at=''"""
+        ).fetchall()
+        for row in rows:
+            payload = _payload_json(row)
+            if not isinstance(payload, dict):
+                continue
+            source_event_at = str(row["source_event_at"])
+            payload["_creation_event_at_inferred"] = True
+            self._conn.execute(
+                """UPDATE paper_order_states
+                SET created_event_at=?,payload_json=?
+                WHERE paper_order_id=?""",
+                (
+                    source_event_at,
+                    self._json(payload),
+                    str(row["paper_order_id"]),
+                ),
+            )
 
     def validate_schema(self) -> None:
         with self._lock:
@@ -986,10 +1015,50 @@ class SQLiteStore:
         source_event_at = self._paper_state_event_at(event, status=status)
         if not record_id or not status or not source_event_id or not source_event_at:
             return
+        if event_type == "nautilus_order":
+            existing_row = self._conn.execute(
+                """SELECT payload_json FROM paper_order_states
+                WHERE paper_order_id=?""",
+                (record_id,),
+            ).fetchone()
+            existing_payload = (
+                _payload_json(existing_row)
+                if existing_row is not None
+                else None
+            )
+            if (
+                isinstance(existing_payload, dict)
+                and existing_payload.get("_creation_event_at_inferred") is True
+            ):
+                payload["_creation_event_at_inferred"] = True
+        columns = [
+            id_column,
+            "status",
+            "source_event_at",
+            "source_event_id",
+            "payload_json",
+        ]
+        values: list[Any] = [
+            record_id,
+            status,
+            source_event_at,
+            source_event_id,
+            self._json(payload),
+        ]
+        if event_type == "nautilus_order":
+            self._conn.execute(
+                """UPDATE paper_order_states
+                SET created_event_at=?
+                WHERE paper_order_id=?
+                  AND (created_event_at='' OR created_event_at > ?)""",
+                (source_event_at, record_id, source_event_at),
+            )
+            columns.insert(2, "created_event_at")
+            values.insert(2, source_event_at)
+        placeholders = ",".join("?" for _ in columns)
         self._conn.execute(
-            f"""INSERT INTO {table}(
-                {id_column},status,source_event_at,source_event_id,payload_json
-            ) VALUES(?,?,?,?,?)
+            f"""INSERT INTO {table}({','.join(columns)})
+            VALUES({placeholders})
             ON CONFLICT({id_column}) DO UPDATE SET
                 status=excluded.status,
                 source_event_at=excluded.source_event_at,
@@ -1000,13 +1069,7 @@ class SQLiteStore:
                     excluded.source_event_at = {table}.source_event_at
                     AND excluded.source_event_id > {table}.source_event_id
                )""",
-            (
-                record_id,
-                status,
-                source_event_at,
-                source_event_id,
-                self._json(payload),
-            ),
+            values,
         )
 
     @staticmethod

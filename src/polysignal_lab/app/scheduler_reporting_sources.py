@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.date, datetime.datetime, datetime.time, datetime.timedelta, datetime.timezone, typing, typing.Any, typing.cast, zoneinfo, zoneinfo.ZoneInfo, polysignal_lab.app.scheduler_reporting_types
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.date, datetime.datetime, datetime.time, datetime.timedelta, datetime.timezone, math.isfinite, typing, typing.Any, typing.cast, zoneinfo, zoneinfo.ZoneInfo, polysignal_lab.app.scheduler_reporting_types
 Output: _collect_daily_report_inputs, _fill_payloads_with_order_intents, _paper_order_metrics
 Pos: Application code
 
@@ -9,6 +9,7 @@ Pos: Application code
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta, timezone
+from math import isfinite
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -117,40 +118,68 @@ def _nautilus_system_event_rows(
     return [row for row in rows if isinstance(row, dict)]
 
 
+def _valid_fill_projection(row: dict[str, Any]) -> bool:
+    if not row.get("paper_fill_id") or not row.get("paper_order_id"):
+        return False
+    quantity = row.get("quantity")
+    price = row.get("price")
+    if (
+        isinstance(quantity, bool)
+        or isinstance(price, bool)
+        or not isinstance(quantity, (int, float))
+        or not isinstance(price, (int, float))
+    ):
+        return False
+    return isfinite(quantity) and quantity > 0 and isfinite(price) and price > 0
+
+
 def _nautilus_fill_rows_for_day(
     scheduler: _ReportScheduler,
     *,
     day_start: datetime,
     day_end: datetime,
-) -> tuple[list[dict[str, Any]], bool]:
+) -> tuple[list[dict[str, Any]], bool, int]:
     from polysignal_lab.nautilus_runtime.projections import project_fill_event
 
     nautilus_cache = getattr(scheduler, "nautilus_cache", None)
     method = getattr(nautilus_cache, "fills", None)
     if not callable(method):
-        return [], False
+        return [], False, 0
     raw_rows = method()
     if not isinstance(raw_rows, (list, tuple)):
-        return [], False
+        return [], False, 0
 
     rows: list[dict[str, Any]] = []
+    invalid_rows = 0
     for raw_row in raw_rows:
         if raw_row is None:
+            invalid_rows += 1
             continue
-        row = project_fill_event(raw_row)
         try:
+            if isinstance(getattr(raw_row, "last_qty", None), bool) or isinstance(
+                getattr(raw_row, "last_px", None), bool
+            ):
+                invalid_rows += 1
+                continue
+            row = project_fill_event(raw_row)
             timestamp = parse_dt(
                 cast(str | datetime | None, row.get("ts") or row.get("created_at"))
             )
-        except ValueError:
+        except (OSError, OverflowError, RuntimeError, TypeError, ValueError):
+            invalid_rows += 1
             continue
         if timestamp is None:
+            invalid_rows += 1
             continue
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=UTC)
-        if day_start <= timestamp.astimezone(UTC) < day_end:
-            rows.append(row)
-    return rows, True
+        if not day_start <= timestamp.astimezone(UTC) < day_end:
+            continue
+        if not _valid_fill_projection(row):
+            invalid_rows += 1
+            continue
+        rows.append(row)
+    return rows, True, invalid_rows
 
 
 def _timestamp_in_report_window(
@@ -178,13 +207,26 @@ def _telemetry_incomplete_reasons(
     day_start: datetime,
     day_end: datetime,
     fill_source_reason: str | None,
+    inferred_order_creation_times: int,
+    invalid_fill_projections: int,
     invalid_order_projections: int,
+    order_projection_truncated: bool,
 ) -> tuple[str, ...]:
     reasons = [fill_source_reason] if fill_source_reason else []
+    if invalid_fill_projections > 0:
+        reasons.append(
+            f"paper_fill_projection_invalid:{invalid_fill_projections}"
+        )
     if invalid_order_projections > 0:
         reasons.append(
             f"paper_order_projection_invalid:{invalid_order_projections}"
         )
+    if inferred_order_creation_times > 0:
+        reasons.append(
+            f"paper_order_creation_time_inferred:{inferred_order_creation_times}"
+        )
+    if order_projection_truncated:
+        reasons.append("paper_order_projection_truncated")
 
     health = getattr(scheduler, "health", None)
     components = getattr(health, "components", None)
@@ -242,19 +284,45 @@ def _collect_daily_report_inputs(
             params=day_params,
         ),
     )
-    today_fills_raw, native_fills_available = _nautilus_fill_rows_for_day(
+    (
+        today_fills_raw,
+        native_fills_available,
+        invalid_fill_projections,
+    ) = _nautilus_fill_rows_for_day(
         scheduler,
         day_start=day_start,
         day_end=day_end,
     )
     fill_source_reason: str | None = None
     if not today_fills_raw:
-        fallback_fills = _nautilus_system_event_rows(
+        fallback_rows = _nautilus_system_event_rows(
             scheduler,
             "nautilus_fill",
             day_start=day_start,
             day_end=day_end,
         )
+        fallback_fills: list[dict[str, Any]] = []
+        for fill in fallback_rows:
+            if not _valid_fill_projection(fill):
+                invalid_fill_projections += 1
+                continue
+            try:
+                timestamp = parse_dt(
+                    cast(
+                        str | datetime | None,
+                        fill.get("ts") or fill.get("created_at"),
+                    )
+                )
+            except (TypeError, ValueError):
+                invalid_fill_projections += 1
+                continue
+            if timestamp is None:
+                invalid_fill_projections += 1
+                continue
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=UTC)
+            if day_start <= timestamp.astimezone(UTC) < day_end:
+                fallback_fills.append(fill)
         if fallback_fills:
             today_fills_raw = fallback_fills
             fill_source_reason = "paper_fills_best_effort_fallback"
@@ -263,9 +331,20 @@ def _collect_daily_report_inputs(
 
     today_order_states = scheduler.persistence.query_json(
         "paper_order_states",
-        where="WHERE source_event_at >= ? AND source_event_at < ?",
+        where=(
+            "WHERE created_event_at >= ? AND created_event_at < ? "
+            "ORDER BY created_event_at,paper_order_id"
+        ),
         params=day_params,
-        limit=10_000,
+        limit=10_001,
+    )
+    order_projection_truncated = len(today_order_states) > 10_000
+    if order_projection_truncated:
+        today_order_states = today_order_states[:10_000]
+    inferred_order_creation_times = sum(
+        1
+        for order in today_order_states
+        if order.get("_creation_event_at_inferred") is True
     )
     invalid_order_projections = sum(
         1
@@ -301,6 +380,9 @@ def _collect_daily_report_inputs(
             day_start=day_start,
             day_end=day_end,
             fill_source_reason=fill_source_reason,
+            inferred_order_creation_times=inferred_order_creation_times,
+            invalid_fill_projections=invalid_fill_projections,
             invalid_order_projections=invalid_order_projections,
+            order_projection_truncated=order_projection_truncated,
         ),
     )
