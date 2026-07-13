@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._report_equity_inputs
-Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
+Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_generate_daily_report_uses_configured_pusd_equity, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -13,10 +13,14 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from polysignal_lab.app.scheduler_reporting import _report_equity_inputs
+from polysignal_lab.app.scheduler_reporting import (
+    _report_equity_inputs,
+    generate_daily_report,
+)
 
 
 def _settings(
@@ -29,6 +33,9 @@ def _settings(
         runtime=SimpleNamespace(
             nautilus=SimpleNamespace(sandbox_base_currency=sandbox_base_currency),
         ),
+        data=SimpleNamespace(polymarket=SimpleNamespace(max_book_staleness_ms=60_000)),
+        telegram=SimpleNamespace(send_daily_report=False),
+        app=SimpleNamespace(timezone="UTC"),
     )
 
 
@@ -140,6 +147,42 @@ def test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_mi
     )
 
     assert _report_equity_inputs(scheduler) == (1_000.0, 987.65, 0)
+
+
+def test_generate_daily_report_uses_configured_pusd_equity() -> None:
+    reports: list[object] = []
+    persistence = SimpleNamespace(
+        query_json=lambda *_args, **_kwargs: [],
+        insert_daily_report=reports.append,
+        append_log=lambda *_args: None,
+    )
+    cache = SimpleNamespace(
+        account=lambda: SimpleNamespace(
+            id="A-1",
+            balances=[SimpleNamespace(currency="pUSD", total=987.65)],
+        ),
+        positions=lambda: [],
+        orders=lambda: [],
+        fills=lambda: [],
+    )
+    scheduler = SimpleNamespace(
+        settings=_settings(sandbox_base_currency="pUSD"),
+        persistence=persistence,
+        nautilus_cache=cache,
+        health=SimpleNamespace(mark_ok=lambda *_args, **_kwargs: None),
+        logger=SimpleNamespace(
+            error=lambda *_args: None,
+            info=lambda *_args: None,
+        ),
+        publish_service=None,
+    )
+
+    report = asyncio.run(generate_daily_report(scheduler))
+
+    assert report is not None
+    assert report.ending_equity == 987.65
+    assert report.equity_currency == "pUSD"
+    assert reports == [report]
 
 
 def test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity() -> None:
