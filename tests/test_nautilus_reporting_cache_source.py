@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._report_equity_inputs
-Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_generate_daily_report_uses_configured_pusd_equity, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
+Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_generate_daily_report_uses_configured_pusd_equity, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_revises_after_late_settlement, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -26,9 +26,11 @@ from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.paper.report import PaperReportService
 from polysignal_lab.publish.telegram_publisher import PublishResult
+from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
+from factories import sample_paper_trade_result
 
 
 def _settings(
@@ -294,6 +296,101 @@ def test_generate_daily_report_retries_pending_outbox_without_duplicate_report(
     assert delivered[0]["attempt_count"] == 2
     assert formatter_report_ids == [first.report_id, first.report_id]
     assert successful_messages == [f"daily report {first.report_id}"]
+
+
+def test_generate_daily_report_revises_after_late_settlement(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    logs = JSONLStore(tmp_path / "logs")
+    persistence = PersistenceService(
+        logs,
+        store,
+        StateStore(tmp_path / "state"),
+    )
+    settings = _settings()
+    settings.telegram.send_daily_report = True
+    deliveries: list[tuple[str, str]] = []
+
+    class Publisher:
+        async def send(
+            self,
+            message: str,
+            message_type: str,
+            signal_id: str | None,
+        ) -> PublishResult:
+            deliveries.append((message_type, message))
+            status = "FAILED" if len(deliveries) == 1 else "SENT"
+            return PublishResult(
+                publish_id=f"pub-report-{len(deliveries)}",
+                message_type=message_type,
+                signal_id=signal_id,
+                status=status,
+                error="temporary" if status == "FAILED" else None,
+                sent_at=datetime.now(UTC).isoformat() if status == "SENT" else None,
+            )
+
+    scheduler = SimpleNamespace(
+        settings=settings,
+        persistence=persistence,
+        nautilus_cache=SimpleNamespace(
+            account=lambda: SimpleNamespace(
+                id="A-1",
+                balances=[SimpleNamespace(currency="USDC", total=1_000.0)],
+            ),
+            positions=lambda: [],
+            orders=lambda: [],
+            fills=lambda: [],
+        ),
+        health=HealthRegistry(),
+        logger=SimpleNamespace(
+            error=lambda *_args: None,
+            info=lambda *_args: None,
+        ),
+        publish_service=PublishService(
+            MessageFormatter(),
+            Publisher(),
+            persistence,
+        ),
+    )
+
+    initial = asyncio.run(generate_daily_report(scheduler))
+    persistence.insert_paper_trade_result(
+        sample_paper_trade_result(
+            paper_trade_id="pt-late-settlement",
+            paper_position_id="pos-late-settlement",
+            closed_at=datetime.now(UTC).isoformat(),
+        )
+    )
+    revised = asyncio.run(generate_daily_report(scheduler))
+    duplicate = asyncio.run(generate_daily_report(scheduler))
+
+    reports = store.restore_daily_reports()
+    outbox = sorted(
+        store.restore_report_publish_outbox(),
+        key=lambda row: int(row["revision"]),
+    )
+
+    assert initial is not None
+    assert revised is not None
+    assert duplicate is not None
+    assert initial.revision == 1
+    assert revised.revision == 2
+    assert duplicate.report_id == revised.report_id
+    assert revised.closed_positions == 1
+    assert len(reports) == 2
+    assert int(reports[0]["revision"]) == 2
+    assert {int(row["revision"]) for row in reports} == {1, 2}
+    assert [row["idempotency_key"] for row in outbox] == [
+        f"daily_report:{initial.report_date.isoformat()}:r1",
+        f"daily_report:{initial.report_date.isoformat()}:r2",
+    ]
+    assert [row["status"] for row in outbox] == ["SUPERSEDED", "SENT"]
+    assert [message_type for message_type, _ in deliveries] == [
+        "daily_report",
+        "daily_report_correction",
+    ]
+    assert "Correction" in deliveries[1][1]
+    assert "Revision 2" in deliveries[1][1]
+    assert len(logs.read_all("daily_reports")) == 2
 
 
 def test_generate_daily_report_retries_prior_day_pending_publish(tmp_path) -> None:

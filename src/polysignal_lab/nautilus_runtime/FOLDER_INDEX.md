@@ -6,7 +6,7 @@
 **Files**:
 - `strategy_builder.py` - Exports build_control and 1 more
 - `state.py` - Application code
-- `signal_sidecar.py` - Exports _PublishResultLike and 2 more
+- `signal_sidecar.py` - Runs settlement/report housekeeping and retriggers late-settlement revisions
 - `sidecar_data.py` - Exports market_metadata and 3 more
 - `runtime_context_factory.py` - Exports NautilusRuntimeContext and build_nautilus_runtime_context
 - `projections.py` - Projects native order, fill, position, account, and portfolio reporting payloads

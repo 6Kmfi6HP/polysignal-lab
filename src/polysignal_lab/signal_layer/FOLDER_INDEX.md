@@ -6,7 +6,7 @@
 **Files**:
 - `rate_limit.py` - Exports ChannelRateLimiter
 - `gate.py` - Exports GateDecision and 2 more
-- `formatter.py` - Exports MessageFormatter
+- `formatter.py` - Formats Telegram signals, results, reports, and correction revisions
 - `deduper.py` - Exports SignalDeduper
 - `consensus.py` - Exports ConsensusEngine
 - `arbiter.py` - Exports SignalArbiter

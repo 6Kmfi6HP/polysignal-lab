@@ -166,6 +166,17 @@ def _row_timestamp(row: Mapping[str, Any], *keys: str) -> datetime | None:
     return None
 
 
+def _same_daily_report_content(
+    candidate: Mapping[str, Any],
+    persisted: Mapping[str, Any],
+) -> bool:
+    ignored = {"report_id", "revision", "created_at"}
+    return (
+        {key: value for key, value in candidate.items() if key not in ignored}
+        == {key: value for key, value in persisted.items() if key not in ignored}
+    )
+
+
 def _invalid_position_state_source(row: Mapping[str, Any]) -> bool:
     metrics = row.get("metrics")
     metric_values = metrics if isinstance(metrics, Mapping) else {}
@@ -564,35 +575,22 @@ class SQLiteStore:
     ) -> tuple[DailyReport, bool]:
         p = to_jsonable(report)
         report_date = str(p["report_date"])
-        revision = int(p.get("revision", 1))
         created = True
         with self._lock, self._conn:
             try:
-                self._conn.execute(
-                    """INSERT INTO daily_reports(
-                        report_id,report_date,revision,total_signals,total_pnl_usdc,
-                        win_rate,created_at,payload_json
-                    ) VALUES(?,?,?,?,?,?,?,?)""",
-                    (
-                        p["report_id"],
-                        report_date,
-                        revision,
-                        p["total_signals"],
-                        p["total_pnl_usdc"],
-                        p["win_rate"],
-                        p["created_at"],
-                        self._json(p),
-                    ),
-                )
+                self._insert_claimed_daily_report(p)
                 persisted = report
             except sqlite3.IntegrityError:
                 row = self._conn.execute(
-                    """SELECT payload_json FROM daily_reports
-                    WHERE report_date=? AND revision=?""",
-                    (report_date, revision),
+                    """SELECT revision,payload_json FROM daily_reports
+                    WHERE report_date=?
+                    ORDER BY revision DESC
+                    LIMIT 1""",
+                    (report_date,),
                 ).fetchone()
                 if row is None:
                     raise
+                revision = int(row["revision"])
                 payload = _payload_json(row)
                 if not isinstance(payload, dict):
                     raise MalformedSQLitePayloadError(
@@ -601,12 +599,69 @@ class SQLiteStore:
                         record_id=f"{report_date}:{revision}",
                     )
                 payload["revision"] = revision
-                persisted = DailyReport.model_validate(payload)
-                created = False
+                if _same_daily_report_content(p, payload):
+                    persisted = DailyReport.model_validate(payload)
+                    created = False
+                else:
+                    persisted = report.model_copy(
+                        update={"revision": revision + 1},
+                    )
+                    self._insert_claimed_daily_report(to_jsonable(persisted))
 
             if enqueue_publish:
+                if persisted.revision > 1:
+                    self._supersede_pending_daily_report_publishes(persisted)
                 self._insert_daily_report_publish_intent(persisted)
         return persisted, created
+
+    def _insert_claimed_daily_report(self, payload: Mapping[str, Any]) -> None:
+        self._conn.execute(
+            """INSERT INTO daily_reports(
+                report_id,report_date,revision,total_signals,total_pnl_usdc,
+                win_rate,created_at,payload_json
+            ) VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                payload["report_id"],
+                str(payload["report_date"]),
+                int(payload.get("revision", 1)),
+                payload["total_signals"],
+                payload["total_pnl_usdc"],
+                payload["win_rate"],
+                payload["created_at"],
+                self._json(payload),
+            ),
+        )
+
+    def _supersede_pending_daily_report_publishes(
+        self,
+        report: DailyReport,
+    ) -> None:
+        now = utc_iso()
+        rows = self._conn.execute(
+            """SELECT * FROM report_publish_outbox
+            WHERE report_date=? AND revision<? AND status='PENDING'""",
+            (report.report_date.isoformat(), report.revision),
+        ).fetchall()
+        for row in rows:
+            payload = self._outbox_payload(row)
+            payload.update(
+                {
+                    "status": "SUPERSEDED",
+                    "last_error": f"superseded_by_revision:{report.revision}",
+                    "updated_at": now,
+                }
+            )
+            self._conn.execute(
+                """UPDATE report_publish_outbox
+                SET status='SUPERSEDED',last_error=?,updated_at=?,payload_json=?
+                WHERE intent_id=? AND status='PENDING'""",
+                (
+                    payload["last_error"],
+                    now,
+                    self._json(payload),
+                    str(row["intent_id"]),
+                ),
+            )
 
     def _insert_daily_report_publish_intent(self, report: DailyReport) -> None:
         report_date = report.report_date.isoformat()
@@ -1185,7 +1240,7 @@ class SQLiteStore:
     def restore_daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
         return self.query_json(
             "daily_reports",
-            where="ORDER BY report_date DESC, created_at DESC",
+            where="ORDER BY report_date DESC, revision DESC, created_at DESC",
             limit=limit,
         )
 

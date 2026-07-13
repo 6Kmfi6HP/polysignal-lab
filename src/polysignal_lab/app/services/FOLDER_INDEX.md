@@ -4,7 +4,7 @@
 - Business logic layer
 
 **Files**:
-- `publish_service.py` - Exports PublishService
+- `publish_service.py` - Delivers signals, results, reports, and revision-aware corrections
 - `persistence_service.py` - Exports PersistenceService
 - `market_universe_service.py` - Exports token_ids_for_markets and 1 more
 - `__init__.py` - Service Layer - Business logic

@@ -104,6 +104,12 @@ FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
 
     def daily_report_message(self, report: Mapping[str, object]) -> str:
         equity_currency = report_text(report, "equity_currency", "USDC")
+        revision = int(report_float(report, "revision", 1.0))
+        title = (
+            "📊 Daily Paper Report"
+            if revision <= 1
+            else f"♻️ Daily Paper Report Correction · Revision {revision}"
+        )
         lines = []
         strategy_breakdown = report_nested_mapping(report, "strategy_breakdown")
         for strategy, row in strategy_breakdown.items():
@@ -127,7 +133,7 @@ FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
             )
         exec_lag_value = _row_optional_float(report, "average_execution_staleness_ms")
         exec_lag = "n/a" if exec_lag_value is None else f"{exec_lag_value:.0f} ms"
-        message = f"""<b>📊 Daily Paper Report</b>
+        message = f"""<b>{title}</b>
 {report_date_text(report)}
 
 Equity  {report_float(report, 'starting_equity'):.2f} → {report_float(report, 'ending_equity'):.2f} {html.escape(equity_currency)}
@@ -197,9 +203,9 @@ def _row_optional_float(row: Mapping[str, object] | object, key: str) -> float |
         value = row.get(key)
     else:
         value = getattr(row, key, None)
-    if value is None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except ValueError:
         return None

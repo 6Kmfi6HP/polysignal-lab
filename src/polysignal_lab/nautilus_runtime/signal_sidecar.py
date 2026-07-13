@@ -240,6 +240,7 @@ async def _run_nautilus_housekeeping_once(
                 "Nautilus settlement projections recorded: %d",
                 len(settled),
             )
+            last_report_date = None
     except Exception:
         cast(logging.Logger, getattr(services, "logger", logger)).exception(
             "Nautilus settlement check failed; continuing report loop"

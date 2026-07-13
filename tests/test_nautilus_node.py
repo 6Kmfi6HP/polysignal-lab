@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, asyncio, logging, signal, threading, time, types, types.SimpleNamespace, typing, polysignal_lab.nautilus_runtime.market_discovery_worker
-Output: test_live_engine_config_builders_import_configs_from_config_module, test_build_live_node_uses_trading_node_config, test_native_runtime_rejects_disabled_paper_trading, test_build_live_node_uses_configured_non_default_trader_id, test_build_live_node_returns_nautilus_runtime_components, test_build_live_node_injects_shared_projections_and_no_manual_sync_components, test_build_live_node_gives_each_strategy_own_custom_data_state, test_build_live_node_uses_static_runtime_classes, test_build_live_node_registers_market_rotation_actor, test_all_native_strategies_share_runtime_policy, test_build_live_node_uses_sandbox_execution_not_matching_client
+Output: test_live_engine_config_builders_import_configs_from_config_module, test_build_live_node_uses_trading_node_config, test_native_runtime_rejects_disabled_paper_trading, test_build_live_node_uses_configured_non_default_trader_id, test_build_live_node_returns_nautilus_runtime_components, test_build_live_node_injects_shared_projections_and_no_manual_sync_components, test_build_live_node_gives_each_strategy_own_custom_data_state, test_build_live_node_uses_static_runtime_classes, test_build_live_node_registers_market_rotation_actor, test_all_native_strategies_share_runtime_policy, test_build_live_node_uses_sandbox_execution_not_matching_client, test_run_nautilus_housekeeping_once_recalculates_after_settlement
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -1138,6 +1138,39 @@ async def test_run_nautilus_housekeeping_once_skips_legacy_settlement(
 
     assert result == "2026-07-05"
     assert calls == ["report:2026-07-04"]
+
+
+async def test_run_nautilus_housekeeping_once_recalculates_after_settlement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.nautilus_runtime.signal_sidecar import (
+        _run_nautilus_housekeeping_once,
+    )
+    import polysignal_lab.app._settlement_check as settlement_mod
+    import polysignal_lab.app.scheduler_shared as shared_mod
+
+    report_dates: list[object] = []
+
+    async def check_settlements(_services: object) -> list[dict[str, str]]:
+        return [{"paper_trade_id": "pt-late"}]
+
+    async def generate_iteration_report(
+        _scheduler: object,
+        last_report_date: object,
+    ) -> str:
+        report_dates.append(last_report_date)
+        return "2026-07-05"
+
+    monkeypatch.setattr(settlement_mod, "check_settlements", check_settlements)
+    monkeypatch.setattr(shared_mod, "_generate_iteration_report", generate_iteration_report)
+
+    scheduler = SimpleNamespace(logger=logging.getLogger("test"))
+
+    result = await _run_nautilus_housekeeping_once(scheduler, "2026-07-05")
+
+    assert result == "2026-07-05"
+    assert report_dates == [None]
+
 
 async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
     class FakeTradingNode:
