@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, json, re, datetime, datetime.timedelta, typing, typing.Final, typing.Protocol, httpx, pydantic
+Input: __future__, typing, httpx, pydantic, polysignal_lab.config, polysignal_lab.data.market_discovery_helpers, polysignal_lab.domain.market, polysignal_lab.utils
 Output: MarketDiscovery
 Pos: Application code
 
@@ -22,17 +22,13 @@ from pydantic import JsonValue, TypeAdapter
 from polysignal_lab.config import MarketConfig, PolymarketDataConfig
 from polysignal_lab.data.market_discovery_helpers import (
     build_current_slot_slugs,
-    flatten_gamma_markets,
     gamma_events_from_json,
     gamma_events_query_params,
-    infer_outcome_tokens,
-    is_allowed_active_market,
-    is_allowed_window,
-    match_crypto_updown,
     paginate_gamma_events,
+    parse_gamma_markets,
     paginate_gamma_events_async,
 )
-from polysignal_lab.domain.market import Market, OutcomeToken
+from polysignal_lab.domain.market import Market
 from polysignal_lab.utils import utc_now
 
 JsonObject = dict[str, JsonValue]
@@ -41,9 +37,9 @@ JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
 
 
 class _JsonResponse(Protocol):
-    def raise_for_status(self) -> None: ...
+    def raise_for_status(self) -> object: ...
 
-    def json(self) -> JsonValue: ...
+    def json(self) -> object: ...
 
 
 class _AsyncJsonClient(Protocol):
@@ -89,8 +85,9 @@ class MarketDiscovery:
         *,
         include_next_periods: int = 0,
         stale_grace_sec: int = 0,
+        max_event_pages: int | None = None,
     ) -> list[Market]:
-        payloads = await self._fetch_gamma_events()
+        payloads = await self._fetch_gamma_events(max_pages=max_event_pages)
         payloads.extend(
             await self._fetch_current_slot_payloads(
                 include_next_periods=include_next_periods,
@@ -108,9 +105,13 @@ class MarketDiscovery:
         *,
         include_next_periods: int = 0,
         stale_grace_sec: int = 0,
+        max_event_pages: int | None = None,
     ) -> list[Market]:
         with httpx.Client(timeout=15.0) as client:
-            payloads = self._fetch_gamma_events_sync(client)
+            payloads = self._fetch_gamma_events_sync(
+                client,
+                max_pages=max_event_pages,
+            )
             payloads.extend(
                 self._fetch_current_slot_payloads_sync(
                     client,
@@ -125,7 +126,7 @@ class MarketDiscovery:
         )
 
     def _parse_response(self, response: _JsonResponse) -> JsonValue:
-        response.raise_for_status()
+        _ = response.raise_for_status()
         return JSON_VALUE_ADAPTER.validate_python(response.json())
 
     async def _request_async(
@@ -153,42 +154,33 @@ class MarketDiscovery:
         include_next_periods: int = 0,
         stale_grace_sec: int = 0,
     ) -> list[Market]:
-        candidates = self._flatten_markets(payloads)
-        markets: list[Market] = []
-        seen: set[str] = set()
-        for payload in candidates:
-            match = self._match_crypto_updown(payload)
-            if match is None or not self._is_allowed_active_market(payload):
-                continue
-            asset, timeframe = match
-            try:
-                market = Market.from_gamma(payload, asset=asset, timeframe=timeframe)
-            except (KeyError, TypeError, ValueError):
-                continue
-            if len(market.outcome_tokens) < 2:
-                inferred = self._infer_tokens(payload, market.market_id)
-                if inferred:
-                    market.outcome_tokens = inferred
-            if not self._is_allowed_window(
-                market,
-                include_next_periods=include_next_periods,
-                stale_grace_sec=stale_grace_sec,
-            ):
-                continue
-            if len(market.outcome_tokens) >= 2:
-                key = market.condition_id or market.market_id or market.market_slug
-                if key in seen:
-                    continue
-                seen.add(key)
-                markets.append(market)
-        return markets
+        return parse_gamma_markets(
+            payloads,
+            self.market_config,
+            include_next_periods=include_next_periods,
+            stale_grace_sec=stale_grace_sec,
+            now=utc_now(),
+        )
 
-    async def _fetch_gamma_events(self) -> list[JsonObject]:
-        return await paginate_gamma_events_async(self._fetch_gamma_events_page)
+    async def _fetch_gamma_events(
+        self,
+        *,
+        max_pages: int | None = None,
+    ) -> list[JsonObject]:
+        return await paginate_gamma_events_async(
+            self._fetch_gamma_events_page,
+            max_pages=max_pages,
+        )
 
-    def _fetch_gamma_events_sync(self, client: httpx.Client) -> list[JsonObject]:
+    def _fetch_gamma_events_sync(
+        self,
+        client: httpx.Client,
+        *,
+        max_pages: int | None = None,
+    ) -> list[JsonObject]:
         return paginate_gamma_events(
-            lambda offset: self._fetch_gamma_events_page_sync(client, offset)
+            lambda offset: self._fetch_gamma_events_page_sync(client, offset),
+            max_pages=max_pages,
         )
 
     def _fetch_gamma_events_page_sync(self, client: httpx.Client, offset: int) -> list[JsonObject]:
@@ -306,39 +298,3 @@ class MarketDiscovery:
         except (httpx.HTTPError, TypeError, ValueError):
             return None
         return payload if isinstance(payload, dict) else None
-
-    def _flatten_markets(self, payloads: list[JsonObject]) -> list[JsonObject]:
-        return flatten_gamma_markets(payloads)
-
-    def _match_crypto_updown(self, payload: JsonObject) -> tuple[str, str] | None:
-        return match_crypto_updown(
-            payload,
-            assets=list(self.market_config.assets),
-            timeframes=list(self.market_config.timeframes),
-        )
-
-    def _is_allowed_active_market(self, payload: JsonObject) -> bool:
-        return is_allowed_active_market(
-            payload,
-            active_only=self.market_config.active_only,
-            closed=self.market_config.closed,
-        )
-
-    def _is_allowed_window(
-        self,
-        market: Market,
-        *,
-        include_next_periods: int = 0,
-        stale_grace_sec: int = 0,
-    ) -> bool:
-        return is_allowed_window(
-            market,
-            active_only=self.market_config.active_only,
-            closed=self.market_config.closed,
-            include_next_periods=include_next_periods,
-            stale_grace_sec=stale_grace_sec,
-            now=utc_now(),
-        )
-
-    def _infer_tokens(self, payload: JsonObject, market_id: str) -> list[OutcomeToken]:
-        return infer_outcome_tokens(payload, market_id)

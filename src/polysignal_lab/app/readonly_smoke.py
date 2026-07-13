@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, json, datetime, datetime.UTC, datetime.datetime, pathlib, pathlib.Path, httpx, polysignal_lab.app.readonly_smoke_public
+Input: __future__, json, datetime, pathlib, httpx, polysignal_lab.app.readonly_smoke_public, polysignal_lab.app.readonly_smoke_types, polysignal_lab.data.polymarket_market_discovery
 Output: collect_readonly_smoke, write_evidence
 Pos: Application code
 
@@ -26,12 +26,14 @@ from polysignal_lab.app.readonly_smoke_public import (
     check_clob_book,
     check_gamma_events,
     make_public_client,
-    markets_from_gamma,
 )
 from polysignal_lab.app.readonly_smoke_types import (
     ReadonlySmokeEvidence,
     ReadonlySmokeRequest,
 )
+from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
+
+
 async def _check_dashboard_reads_retired(request: object) -> dict[str, object]:
     _ = request
     return {
@@ -106,7 +108,21 @@ async def collect_readonly_smoke(
     owns_client = client is None
     try:
         gamma = await check_gamma_events(request.settings, active_client)
-        markets = markets_from_gamma(request.settings, gamma.payload)
+        rotation = request.settings.runtime.nautilus.market_rotation
+        markets = []
+        if gamma.evidence["ok"]:
+            try:
+                markets = await MarketDiscovery(
+                    request.settings.data.polymarket,
+                    request.settings.markets,
+                    client=active_client,
+                ).discover(
+                    include_next_periods=rotation.include_next_periods,
+                    stale_grace_sec=rotation.stale_grace_sec,
+                    max_event_pages=1,
+                )
+            except (httpx.HTTPError, TypeError, ValueError):
+                pass
         clob_book = await check_clob_book(request.settings, active_client, markets)
         clob_404 = await check_clob_404(request.settings, active_client)
         binance = await check_binance_spot(request.settings, active_client)

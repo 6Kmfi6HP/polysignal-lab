@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, json, pathlib, pathlib.Path, httpx, pytest, pydantic, pydantic.JsonValue, polysignal_lab.app
-Output: test_fake_public_api_outage_degrades_without_unhandled_exception, test_health_snapshot_syncs_before_client_cleanup, test_failure_count_counts_only_down_health_snapshot
+Input: __future__, json, datetime, pathlib, unittest.mock, httpx, pydantic, polysignal_lab.app, polysignal_lab.config, polysignal_lab.data.polymarket_market_discovery
+Output: test_readonly_smoke_matches_production_gamma_filtering, test_fake_public_api_outage_degrades_without_unhandled_exception, test_health_snapshot_syncs_before_client_cleanup, test_failure_count_counts_only_down_health_snapshot
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import json
 
+from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 from pydantic import JsonValue
@@ -27,31 +29,7 @@ from polysignal_lab.app.readonly_smoke import (
     failure_count,
 )
 from polysignal_lab.config import Settings
-
-
-def _gamma_payload() -> list[dict[str, JsonValue]]:
-    return [
-        {
-            "id": "event-1",
-            "slug": "btc-updown-5m-1710000000",
-            "title": "Bitcoin Up or Down - 5m",
-            "active": True,
-            "closed": False,
-            "markets": [
-                {
-                    "id": "market-1",
-                    "conditionId": "0xcondition",
-                    "slug": "btc-updown-5m-1710000000",
-                    "question": "Bitcoin Up or Down - 5m",
-                    "active": True,
-                    "closed": False,
-                    "priceToBeat": "100.00",
-                    "outcomes": '["Up", "Down"]',
-                    "clobTokenIds": '["token-up", "token-down"]',
-                }
-            ],
-        }
-    ]
+from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 
 
 def _book_payload(token_id: str) -> dict[str, JsonValue]:
@@ -64,26 +42,119 @@ def _book_payload(token_id: str) -> dict[str, JsonValue]:
     }
 
 
+async def test_readonly_smoke_matches_production_gamma_filtering(
+    tmp_path: Path,
+) -> None:
+    fixture_path = Path(__file__).parent / "fixtures" / "public_market_payloads.json"
+    fixtures = json.loads(fixture_path.read_text(encoding="utf-8"))
+    payloads = fixtures["gamma_event_page_1"] + fixtures["gamma_event_page_2"]
+    market_payload = payloads[0]["markets"][0]
+    market_payload["eventStartTime"] = "2026-07-13T12:04:00Z"
+    market_payload["endDate"] = "2026-07-13T12:09:00Z"
+    event_page = payloads + [payloads[-1]] * (200 - len(payloads))
+    now = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
+    production_requests: list[httpx.Request] = []
+    smoke_requests: list[httpx.Request] = []
+
+    def handler_for(requests: list[httpx.Request]) -> httpx.MockTransport:
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            host = request.url.host
+            path = request.url.path
+            token_id = request.url.params.get("token_id")
+            if host == "gamma-api.polymarket.com":
+                payload = (
+                    event_page
+                    if path == "/events" and request.url.params.get("offset") == "0"
+                    else []
+                )
+                return httpx.Response(200, json=payload, request=request)
+            if host == "clob.polymarket.com" and token_id in {"token-up", "token-down"}:
+                return httpx.Response(200, json=_book_payload(token_id), request=request)
+            if host == "clob.polymarket.com":
+                return httpx.Response(404, json={"error": "not found"}, request=request)
+            if host == "api.binance.com":
+                return httpx.Response(
+                    200,
+                    json={"bidPrice": "100", "askPrice": "101"},
+                    request=request,
+                )
+            return httpx.Response(500, json={"error": "unexpected"}, request=request)
+
+        return httpx.MockTransport(handler)
+
+    settings = Settings()
+    rotation = settings.runtime.nautilus.market_rotation
+    with patch(
+        "polysignal_lab.data.polymarket_market_discovery.utc_now",
+        return_value=now,
+    ):
+        async with httpx.AsyncClient(
+            transport=handler_for(production_requests),
+        ) as client:
+            production = await MarketDiscovery(
+                settings.data.polymarket,
+                settings.markets,
+                client=client,
+            ).discover(
+                include_next_periods=rotation.include_next_periods,
+                stale_grace_sec=rotation.stale_grace_sec,
+            )
+        async with httpx.AsyncClient(
+            transport=handler_for(smoke_requests),
+        ) as client:
+            evidence = await collect_readonly_smoke(
+                ReadonlySmokeRequest(
+                    settings=settings,
+                    config_path=Path("config/signal_bot.yaml"),
+                    evidence_path=tmp_path / "smoke.json",
+                    base_dir=tmp_path / "runtime",
+                ),
+                client,
+            )
+
+    production_tokens = {
+        token.token_id
+        for market in production
+        for token in market.outcome_tokens
+    }
+    smoke_tokens = {
+        request.url.params["token_id"]
+        for request in smoke_requests
+        if request.url.host == "clob.polymarket.com"
+        and request.url.params.get("token_id") in production_tokens
+    }
+
+    assert [market.market_id for market in production] == ["market-1"]
+    assert smoke_tokens
+    assert not any(
+        request.url.path == "/events"
+        and request.url.params.get("offset") == "200"
+        for request in smoke_requests
+    )
+    assert evidence["surfaces"]["clob_book"]["ok"] is True
+
+
 async def test_fake_public_api_outage_degrades_without_unhandled_exception(
     tmp_path: Path,
 ) -> None:
-    # Given: Gamma, CLOB, Binance, scheduler, dashboard, and safety are checked
-    # through public read-only HTTP shapes, with Binance degraded.
+    # Given: Gamma discovery is unavailable while the other public surfaces respond.
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         host = request.url.host
         path = request.url.path
-        token_id = request.url.params.get("token_id")
         if host == "gamma-api.polymarket.com" and path == "/events":
-            return httpx.Response(200, json=_gamma_payload(), request=request)
-        if host == "clob.polymarket.com" and path == "/book" and token_id in {"token-up", "token-down"}:
-            return httpx.Response(200, json=_book_payload(token_id), request=request)
+            return httpx.Response(503, json={"error": "maintenance"}, request=request)
         if host == "clob.polymarket.com" and path == "/book":
             return httpx.Response(404, json={"error": "not found"}, request=request)
         if host == "api.binance.com" and path == "/api/v3/ticker/bookTicker":
-            return httpx.Response(503, json={"msg": "maintenance"}, request=request)
+            return httpx.Response(
+                200,
+                json={"bidPrice": "100", "askPrice": "101"},
+                request=request,
+            )
         return httpx.Response(500, json={"error": "unexpected"}, request=request)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -103,11 +174,11 @@ async def test_fake_public_api_outage_degrades_without_unhandled_exception(
     assert evidence["authenticated_endpoints"] is False
     assert evidence["trading_actions"] is False
     assert evidence["passed"] is False
-    assert evidence["failure_count"] == 1
-    assert evidence["surfaces"]["gamma_active_events"]["record_count"] == 1
-    assert evidence["surfaces"]["clob_book"]["status_code"] == 200
+    assert evidence["failure_count"] == 2
+    assert evidence["surfaces"]["gamma_active_events"]["record_count"] == 0
+    assert evidence["surfaces"]["clob_book"]["status_code"] is None
     assert evidence["surfaces"]["clob_404"]["status_code"] == 404
-    assert evidence["surfaces"]["binance_spot_rest"]["ok"] is False
+    assert evidence["surfaces"]["binance_spot_rest"]["ok"] is True
     assert evidence["scheduler_snapshot"]["status"] == "not_run"
     assert evidence["health_snapshot"]["status"] in {"not_run", "unknown", "ok", "degraded"}
     assert evidence["dashboard_reads"]["status"] == "not_run"

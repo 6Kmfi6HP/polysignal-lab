@@ -13,6 +13,7 @@
 - `orderbook_payload.py` - Exports parse_order_book_payload
 - `polymarket_market_discovery.py` - Exports MarketDiscovery
 - `market_snapshot.py` - Exports MarketSnapshotBuilder
+- `market_discovery_helpers.py` - Exports gamma_events_from_json and 11 more
 - `gamma_resolution_client.py` - Exports GammaResolutionClient
 - `ctf_resolution_client.py` - Exports CtfResolutionClient
 - `book_reconciliation.py` - Exports BookEpochState

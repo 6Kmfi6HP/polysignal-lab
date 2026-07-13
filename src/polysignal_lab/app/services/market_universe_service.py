@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, inspect, logging, sqlite3, collections.abc, collections.abc.Awaitable, collections.abc.Callable, typing, typing.Any
+Input: __future__, inspect, logging, sqlite3, collections.abc, typing, httpx, polysignal_lab.config, polysignal_lab.data.market_discovery_helpers, polysignal_lab.data.state, polysignal_lab.domain
 Output: token_ids_for_markets, MarketUniverseService
 Pos: Service Layer - Business logic
 
@@ -23,6 +23,7 @@ from typing import Any, cast
 import httpx
 
 from polysignal_lab.config import Settings
+from polysignal_lab.data.market_discovery_helpers import match_crypto_updown
 from polysignal_lab.data.state import MarketRegistry
 from polysignal_lab.domain.enums import MarketStatus
 from polysignal_lab.domain.market import Market
@@ -163,10 +164,10 @@ class MarketUniverseService:
                 payload = data[0] if isinstance(data, list) and data else data
                 if not isinstance(payload, dict):
                     continue
-                match = (
-                    self.discovery._match_crypto_updown(payload)
-                    if hasattr(self.discovery, "_match_crypto_updown")
-                    else None
+                match = match_crypto_updown(
+                    payload,
+                    assets=list(self.settings.markets.assets),
+                    timeframes=list(self.settings.markets.timeframes),
                 )
                 asset, timeframe = match if match else (
                     (local_market.asset, local_market.timeframe)

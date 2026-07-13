@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, json, re, collections.abc, datetime, datetime.timedelta, typing, pydantic
-Output: gamma_events_from_json, json_list, timeframe_seconds, gamma_events_query_params, paginate_gamma_events, build_current_slot_slugs, flatten_gamma_markets, match_crypto_updown, infer_outcome_tokens, is_allowed_active_market, is_allowed_window
+Output: gamma_events_from_json, json_list, timeframe_seconds, gamma_events_query_params, paginate_gamma_events, build_current_slot_slugs, flatten_gamma_markets, parse_gamma_markets, match_crypto_updown, infer_outcome_tokens, is_allowed_active_market, is_allowed_window
 Pos: Application code — testable helpers for MarketDiscovery
 
 🔄 Self-reference: When this file changes, update this header
@@ -68,26 +68,38 @@ def gamma_events_query_params(market_config: MarketConfig, offset: int) -> dict[
 
 def paginate_gamma_events(
     fetch_page: Callable[[int], list[JsonObject]],
+    *,
+    max_pages: int | None = None,
 ) -> list[JsonObject]:
     events: list[JsonObject] = []
     offset = 0
+    pages = 0
     while True:
         page = fetch_page(offset)
         events.extend(page)
-        if len(page) < GAMMA_PAGE_LIMIT:
+        pages += 1
+        if len(page) < GAMMA_PAGE_LIMIT or (
+            max_pages is not None and pages >= max(max_pages, 1)
+        ):
             return events
         offset += GAMMA_PAGE_LIMIT
 
 
 async def paginate_gamma_events_async(
     fetch_page: Callable[[int], Awaitable[list[JsonObject]]],
+    *,
+    max_pages: int | None = None,
 ) -> list[JsonObject]:
     events: list[JsonObject] = []
     offset = 0
+    pages = 0
     while True:
         page = await fetch_page(offset)
         events.extend(page)
-        if len(page) < GAMMA_PAGE_LIMIT:
+        pages += 1
+        if len(page) < GAMMA_PAGE_LIMIT or (
+            max_pages is not None and pages >= max(max_pages, 1)
+        ):
             return events
         offset += GAMMA_PAGE_LIMIT
 
@@ -138,6 +150,51 @@ def flatten_gamma_markets(payloads: list[JsonObject]) -> list[JsonObject]:
         else:
             out.append(event)
     return out
+
+
+def parse_gamma_markets(
+    payloads: list[JsonObject],
+    market_config: MarketConfig,
+    *,
+    now: datetime,
+    include_next_periods: int = 0,
+    stale_grace_sec: int = 0,
+) -> list[Market]:
+    markets: list[Market] = []
+    seen: set[str] = set()
+    for payload in flatten_gamma_markets(payloads):
+        match = match_crypto_updown(
+            payload,
+            assets=market_config.assets,
+            timeframes=market_config.timeframes,
+        )
+        if match is None or not is_allowed_active_market(
+            payload,
+            active_only=market_config.active_only,
+            closed=market_config.closed,
+        ):
+            continue
+        asset, timeframe = match
+        try:
+            market = Market.from_gamma(payload, asset=asset, timeframe=timeframe)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if len(market.outcome_tokens) < 2:
+            market.outcome_tokens = infer_outcome_tokens(payload, market.market_id)
+        if not is_allowed_window(
+            market,
+            active_only=market_config.active_only,
+            closed=market_config.closed,
+            include_next_periods=include_next_periods,
+            stale_grace_sec=stale_grace_sec,
+            now=now,
+        ):
+            continue
+        key = market.condition_id or market.market_id or market.market_slug
+        if len(market.outcome_tokens) >= 2 and key not in seen:
+            seen.add(key)
+            markets.append(market)
+    return markets
 
 
 def match_crypto_updown(

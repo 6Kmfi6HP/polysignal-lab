@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, polysignal_lab.config, polysignal_lab.config.MarketConfig, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.config.BinanceDataConfig, polysignal_lab.data.binance_spot_ws, polysignal_lab.data.binance_spot_ws.BinanceSpotFeed, polysignal_lab.data.polymarket_clob_ws, polysignal_lab.data.polymarket_clob_ws.PolymarketMarketWebSocket
-Output: test_market_discovery_flattens_and_parses_crypto_updown, test_binance_feed_url_and_parse_message, test_polymarket_ws_book_message_updates_registry
+Input: __future__, datetime, unittest.mock, polysignal_lab.config, polysignal_lab.data.binance_spot_ws, polysignal_lab.data.market_discovery_helpers, polysignal_lab.data.polymarket_clob_ws, polysignal_lab.data.polymarket_market_discovery, polysignal_lab.data.state
+Output: test_market_discovery_current_slot_slugs_uses_shared_helper, test_market_discovery_flattens_and_parses_crypto_updown, test_binance_feed_url_and_parse_message, test_polymarket_ws_book_message_updates_registry
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -19,7 +19,10 @@ from unittest.mock import patch
 
 from polysignal_lab.config import MarketConfig, PolymarketDataConfig, BinanceDataConfig
 from polysignal_lab.data.binance_spot_ws import BinanceSpotFeed
-from polysignal_lab.data.market_discovery_helpers import build_current_slot_slugs
+from polysignal_lab.data.market_discovery_helpers import (
+    build_current_slot_slugs,
+    parse_gamma_markets,
+)
 from polysignal_lab.data.polymarket_clob_ws import PolymarketMarketWebSocket
 from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
@@ -44,18 +47,19 @@ def test_market_discovery_current_slot_slugs_uses_shared_helper() -> None:
 
 
 def test_market_discovery_flattens_and_parses_crypto_updown():
-    discovery = MarketDiscovery(PolymarketDataConfig(), MarketConfig())
     payload = {
         "slug": "btc-updown-5m-1",
         "title": "BTC Up or Down 5m",
         "markets": [{"id": "m1", "conditionId": "c1", "clobTokenIds": ["up", "down"], "outcomes": ["Up", "Down"], "active": True}],
     }
-    markets = []
-    for item in discovery._flatten_markets([payload]):
-        match = discovery._match_crypto_updown(item)
-        if match:
-            markets.append(match)
-    assert markets == [("BTC", "5m")]
+
+    markets = parse_gamma_markets(
+        [payload],
+        MarketConfig(),
+        now=datetime(2026, 7, 13, tzinfo=UTC),
+    )
+
+    assert [(market.asset, market.timeframe) for market in markets] == [("BTC", "5m")]
 
 
 def test_binance_feed_url_and_parse_message():

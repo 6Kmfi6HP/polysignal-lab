@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, re, typing, typing.Final, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.app.readonly_smoke_types, polysignal_lab.data.orderbook_payload
-Output: make_public_client, check_gamma_events, check_clob_book, check_clob_404, check_binance_spot, public_get, raw_public_get, response_json, surface, gamma_events
+Input: __future__, typing, httpx, pydantic, polysignal_lab.app.readonly_smoke_types, polysignal_lab.config, polysignal_lab.data.market_discovery_helpers, polysignal_lab.data.orderbook_payload, polysignal_lab.domain, polysignal_lab.utils
+Output: make_public_client, check_gamma_events, check_clob_book, check_clob_404, check_binance_spot, public_get, raw_public_get, response_json, surface, first_token_id, book_from_payload, spot_from_payload
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,20 +14,22 @@ Pos: Application code
 
 from __future__ import annotations
 
-import re
 from typing import Final
 
 import httpx
 from pydantic import JsonValue, TypeAdapter
 
 from polysignal_lab.app.readonly_smoke_types import (
-    JsonObject,
     PublicEndpoint,
     SurfaceEvidence,
     SurfaceOutcome,
     SurfacePayload,
 )
 from polysignal_lab.config import Settings
+from polysignal_lab.data.market_discovery_helpers import (
+    gamma_events_from_json,
+    gamma_events_query_params,
+)
 from polysignal_lab.data.orderbook_payload import parse_order_book_payload
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.orderbook import OrderBook
@@ -54,10 +56,10 @@ def make_public_client() -> httpx.AsyncClient:
 async def check_gamma_events(settings: Settings, client: httpx.AsyncClient) -> SurfacePayload:
     endpoint = PublicEndpoint(
         url=f"{settings.data.polymarket.gamma_base_url}/events",
-        params={"active": "true", "closed": "false", "limit": "3"},
+        params=gamma_events_query_params(settings.markets, 0),
     )
     result = await public_get(client, endpoint)
-    record_count = len(gamma_events(result.payload)) if result.evidence["ok"] else 0
+    record_count = len(gamma_events_from_json(result.payload)) if result.evidence["ok"] else 0
     evidence = result.evidence
     evidence["record_count"] = record_count
     evidence["ok"] = evidence["ok"] and record_count > 0
@@ -171,91 +173,6 @@ def surface(endpoint: PublicEndpoint, outcome: SurfaceOutcome) -> SurfaceEvidenc
         "record_count": outcome.record_count,
         "detail": outcome.detail,
     }
-
-
-def gamma_events(payload: JsonValue | None) -> list[JsonObject]:
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    if isinstance(payload, dict):
-        events = payload.get("events") or payload.get("data")
-        if isinstance(events, list):
-            return [item for item in events if isinstance(item, dict)]
-        return [payload]
-    return []
-
-
-def markets_from_gamma(settings: Settings, payload: JsonValue | None) -> list[Market]:
-    payloads = flatten_markets(gamma_events(payload))
-    markets: list[Market] = []
-    for event in payloads:
-        match = match_crypto_updown(settings, event)
-        if match is None or not allowed_active_market(settings, event):
-            continue
-        asset, timeframe = match
-        try:
-            market = Market.from_gamma(event, asset=asset, timeframe=timeframe)
-        except (TypeError, ValueError, KeyError):
-            continue
-        if len(market.outcome_tokens) >= 2:
-            markets.append(market)
-    return markets or fallback_public_markets(payloads)
-
-
-def fallback_public_markets(payloads: list[JsonObject]) -> list[Market]:
-    for payload in payloads:
-        if not fallback_active_market(payload):
-            continue
-        try:
-            market = Market.from_gamma(payload, asset="PUBLIC", timeframe="live")
-        except (TypeError, ValueError, KeyError):
-            continue
-        if len(market.outcome_tokens) >= 2:
-            return [market]
-    return []
-
-
-def fallback_active_market(payload: JsonObject) -> bool:
-    token_ids = payload.get("clobTokenIds") or payload.get("clob_token_ids") or payload.get("tokenIds")
-    if not token_ids:
-        return False
-    closed = bool(payload.get("closed") or payload.get("archived") or payload.get("resolved"))
-    return bool(payload.get("active", not closed)) and not closed
-
-
-def flatten_markets(payloads: list[JsonObject]) -> list[JsonObject]:
-    out: list[JsonObject] = []
-    for event in payloads:
-        event_markets = event.get("markets")
-        if isinstance(event_markets, list) and event_markets:
-            for market in event_markets:
-                if isinstance(market, dict):
-                    merged = {**event, **market}
-                    _ = merged.setdefault("eventSlug", event.get("slug"))
-                    out.append(merged)
-        else:
-            out.append(event)
-    return out
-
-
-def match_crypto_updown(settings: Settings, payload: JsonObject) -> tuple[str, str] | None:
-    slug = str(payload.get("slug") or payload.get("eventSlug") or "")
-    match = re.match(r"^([a-z0-9]+)-updown-([0-9]+m)-\d+$", slug.lower())
-    if match is None:
-        return None
-    asset = match.group(1).upper()
-    timeframe = match.group(2)
-    configured_assets = {configured.upper() for configured in settings.markets.assets}
-    if asset in configured_assets and timeframe in settings.markets.timeframes:
-        return asset, timeframe
-    return None
-
-
-def allowed_active_market(settings: Settings, payload: JsonObject) -> bool:
-    closed = bool(payload.get("closed") or payload.get("archived") or payload.get("resolved"))
-    active = bool(payload.get("active", not closed))
-    if settings.markets.active_only and not active:
-        return False
-    return closed == settings.markets.closed
 
 
 def first_token_id(markets: list[Market]) -> str | None:

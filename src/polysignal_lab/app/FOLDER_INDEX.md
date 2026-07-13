@@ -14,7 +14,7 @@
 - `scheduler_health.py` - Exports note_storage_success and 4 more
 - `readonly_smoke_types.py` - Exports ReadonlySmokeRequest and 9 more
 - `readonly_smoke.py` - Exports collect_readonly_smoke and write_evidence
-- `readonly_smoke_public.py` - Exports make_public_client and 18 more
+- `readonly_smoke_public.py` - Exports make_public_client and 11 more
 - `readonly_smoke.py` - Exports collect_readonly_smoke and 1 more
 - `main.py` - Exports build_parser and 7 more
 - `_settlement_check.py` - Exports check_settlements
