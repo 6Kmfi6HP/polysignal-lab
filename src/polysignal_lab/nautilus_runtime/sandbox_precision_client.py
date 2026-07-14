@@ -1,6 +1,6 @@
 """
-Input: __future__, asyncio, logging, typing
-Output: PolySignalSandboxExecutionClient, PolySignalSandboxLiveExecClientFactory
+Input: __future__, asyncio, logging, typing, nautilus_trader.adapters.sandbox, nautilus_trader.cache, nautilus_trader.common, nautilus_trader.core, nautilus_trader.model, nautilus_trader.portfolio
+Output: PolySignalSandboxExecutionClient, SandboxLiveExecClientFactory, PolySignalSandboxLiveExecClientFactory
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -10,7 +10,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import cast
+
+from nautilus_trader.adapters.sandbox.config import SandboxExecutionClientConfig
+from nautilus_trader.adapters.sandbox.execution import (
+    SandboxExecutionClient as _NautilusSandboxExecutionClient,
+)
+from nautilus_trader.adapters.sandbox.factory import (
+    SandboxLiveExecClientFactory as _NautilusSandboxLiveExecClientFactory,
+)
+from nautilus_trader.cache.cache import Cache
+from nautilus_trader.common.component import LiveClock, MessageBus
+from nautilus_trader.core.data import Data
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.instruments import Instrument
+from nautilus_trader.portfolio.base import PortfolioFacade
 
 from polysignal_lab.nautilus_runtime.market_data_precision import (
     normalize_market_data_to_instrument,
@@ -27,23 +41,16 @@ _MARKET_DATA_TYPES = frozenset(
 )
 
 
-class PolySignalSandboxExecutionClient:
+class PolySignalSandboxExecutionClient(_NautilusSandboxExecutionClient):
     """Sandbox execution client that normalizes market-data precision.
 
-    Wraps Nautilus ``SandboxExecutionClient`` so QuoteTick / OrderBookDelta
-    prices match the current instrument before SimulatedExchange validation.
-    Does not patch Nautilus installed sources.
+    QuoteTick / OrderBookDelta prices are normalized to the current instrument
+    before the Nautilus SimulatedExchange validates them.
     """
 
-    def __init__(self, inner: Any) -> None:
-        self._inner = inner
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner, name)
-
-    def on_data(self, data: object) -> None:
+    def on_data(self, data: Data) -> None:
         if type(data).__name__ not in _MARKET_DATA_TYPES:
-            self._inner.on_data(data)
+            super().on_data(data)
             return
 
         instrument_id = getattr(data, "instrument_id", None)
@@ -57,45 +64,38 @@ class PolySignalSandboxExecutionClient:
             )
             return
 
-        self._inner.on_data(normalize_market_data_to_instrument(data, instrument))
+        normalized = cast(Data, normalize_market_data_to_instrument(data, instrument))
+        super().on_data(normalized)
 
-    def _instrument_for(self, instrument_id: object) -> object | None:
-        if instrument_id is None:
+    def _instrument_for(self, instrument_id: object) -> Instrument | None:
+        if not isinstance(instrument_id, InstrumentId):
             return None
-        cache = getattr(self._inner, "_cache", None)
-        if cache is None:
-            cache = getattr(self._inner, "cache", None)
-        if cache is None:
-            return None
-        finder = getattr(cache, "instrument", None)
-        if not callable(finder):
-            return None
-        return finder(instrument_id)
+        return self._cache.instrument(instrument_id)
 
 
-class PolySignalSandboxLiveExecClientFactory:
+class SandboxLiveExecClientFactory(_NautilusSandboxLiveExecClientFactory):
     """Factory that builds precision-safe sandbox execution clients."""
 
     @staticmethod
-    def create(  # type: ignore[no-untyped-def]
+    def create(
         loop: asyncio.AbstractEventLoop,
         name: str,
-        config: object,
-        portfolio: object,
-        msgbus: object,
-        cache: object,
-        clock: object,
+        config: SandboxExecutionClientConfig,
+        portfolio: PortfolioFacade,
+        msgbus: MessageBus,
+        cache: Cache,
+        clock: LiveClock,
     ) -> PolySignalSandboxExecutionClient:
-        from nautilus_trader.adapters.sandbox.factory import SandboxLiveExecClientFactory
-
-        inner = SandboxLiveExecClientFactory.create(
+        client = PolySignalSandboxExecutionClient(
             loop=loop,
-            name=name,
-            config=config,
             portfolio=portfolio,
             msgbus=msgbus,
             cache=cache,
             clock=clock,
+            config=config,
         )
         logger.debug("created precision-safe sandbox execution client for %s", name)
-        return PolySignalSandboxExecutionClient(inner)
+        return client
+
+
+PolySignalSandboxLiveExecClientFactory = SandboxLiveExecClientFactory

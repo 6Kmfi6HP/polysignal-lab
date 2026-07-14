@@ -1,5 +1,5 @@
 """
-Input: __future__, decimal, pytest, nautilus optional
+Input: __future__, asyncio, decimal, pytest, nautilus optional
 Output: regression tests for issue #13 price precision mismatch
 Pos: Test Layer - Unit/Integration tests
 
@@ -8,6 +8,7 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 
 import pytest
@@ -72,6 +73,44 @@ def _engine(instrument):
         cache=cache,
         clock=clock,
     )
+
+
+def _sandbox_client(loop: asyncio.AbstractEventLoop, instrument=None):
+    from nautilus_trader.adapters.sandbox.config import SandboxExecutionClientConfig
+    from nautilus_trader.cache.cache import Cache
+    from nautilus_trader.common.component import LiveClock, MessageBus
+    from nautilus_trader.model.identifiers import TraderId
+    from nautilus_trader.portfolio.portfolio import Portfolio
+    from polysignal_lab.nautilus_runtime.sandbox_precision_client import (
+        PolySignalSandboxLiveExecClientFactory,
+    )
+
+    clock = LiveClock()
+    msgbus = MessageBus(trader_id=TraderId("TESTER-001"), clock=clock)
+    cache = Cache()
+    if instrument is not None:
+        cache.add_instrument(instrument)
+    portfolio = Portfolio(msgbus=msgbus, cache=cache, clock=clock)
+    config = SandboxExecutionClientConfig(
+        venue="POLYMARKET",
+        starting_balances=["1000 pUSD"],
+        base_currency="pUSD",
+        oms_type="NETTING",
+        account_type="CASH",
+        book_type="L2_MBP",
+        bar_execution=False,
+        trade_execution=True,
+    )
+    client = PolySignalSandboxLiveExecClientFactory.create(
+        loop=loop,
+        name="POLYSIGNAL_PM_PAPER",
+        config=config,
+        portfolio=portfolio,
+        msgbus=msgbus,
+        cache=cache,
+        clock=clock,
+    )
+    return client, cache
 
 
 def _mismatched_quote(instrument):
@@ -192,86 +231,30 @@ def test_normalize_is_noop_when_precision_matches() -> None:
     assert normalize_market_data_to_instrument(quote, instrument) is quote
 
 
-def test_precision_safe_sandbox_client_normalizes_before_inner_on_data() -> None:
-    require_nautilus()
-    from polysignal_lab.nautilus_runtime.sandbox_precision_client import (
-        PolySignalSandboxExecutionClient,
-    )
-
-    instrument = _instrument(3)
-    quote = _mismatched_quote(instrument)
-    seen: list[object] = []
-
-    class Inner:
-        def __init__(self) -> None:
-            self._cache = type(
-                "Cache",
-                (),
-                {"instrument": staticmethod(lambda _id: instrument)},
-            )()
-
-        def on_data(self, data: object) -> None:
-            seen.append(data)
-
-    client = PolySignalSandboxExecutionClient(Inner())
-    client.on_data(quote)
-    assert len(seen) == 1
-    fixed = seen[0]
-    assert fixed is not quote
-    assert fixed.bid_price.precision == 3
-    assert fixed.ask_price.precision == 3
-    engine = _engine(instrument)
-    engine.process_quote_tick(fixed)
-
-
 def test_precision_safe_sandbox_client_drops_market_data_on_cache_miss(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     require_nautilus()
-    from polysignal_lab.nautilus_runtime.sandbox_precision_client import (
-        PolySignalSandboxExecutionClient,
-    )
-
     instrument = _instrument(3)
     quote = _mismatched_quote(instrument)
-    seen: list[object] = []
 
-    class Inner:
-        def __init__(self) -> None:
-            self._cache = type(
-                "Cache",
-                (),
-                {"instrument": staticmethod(lambda _id: None)},
-            )()
+    with asyncio.Runner() as runner:
+        client, _ = _sandbox_client(runner.get_loop())
+        with caplog.at_level("ERROR", logger="polysignal_lab.nautilus.sandbox_precision"):
+            client.on_data(quote)
 
-        def on_data(self, data: object) -> None:
-            seen.append(data)
-
-    client = PolySignalSandboxExecutionClient(Inner())
-    with caplog.at_level("ERROR", logger="polysignal_lab.nautilus.sandbox_precision"):
-        client.on_data(quote)
-
-    assert seen == []
     assert any("Dropping QuoteTick" in record.message for record in caplog.records)
     assert any("instrument missing from cache" in record.message for record in caplog.records)
 
 
 def test_precision_safe_sandbox_client_forwards_non_market_data() -> None:
     require_nautilus()
-    from polysignal_lab.nautilus_runtime.sandbox_precision_client import (
-        PolySignalSandboxExecutionClient,
-    )
-
     instrument = _instrument(3)
-    seen: list[object] = []
 
-    class Inner:
-        def on_data(self, data: object) -> None:
-            seen.append(data)
-
-    client = PolySignalSandboxExecutionClient(Inner())
-    client.on_data(instrument)
-    assert seen == [instrument]
+    with asyncio.Runner() as runner:
+        client, _ = _sandbox_client(runner.get_loop())
+        client.on_data(instrument)
+        assert client.exchange.get_matching_engine(instrument.id) is not None
 
 
 def test_live_node_uses_precision_safe_factory_for_real_sandbox() -> None:
@@ -299,3 +282,92 @@ def test_live_node_uses_precision_safe_factory_for_real_sandbox() -> None:
         assert live_node_mod._sandbox_exec_client_factory() is FakeOther
     finally:
         live_node_mod.SandboxLiveExecClientFactory = original
+
+
+def test_precision_safe_factory_registers_and_receives_portfolio_from_real_builder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    require_nautilus()
+    from types import SimpleNamespace
+
+    from nautilus_trader.live.node import TradingNodeBuilder
+    from polysignal_lab.nautilus_runtime.live_node import PAPER_EXEC_CLIENT_ID
+    from polysignal_lab.nautilus_runtime.sandbox_precision_client import (
+        PolySignalSandboxLiveExecClientFactory,
+    )
+
+    class RecordingLog:
+        def __init__(self) -> None:
+            self.errors: list[str] = []
+
+        def error(self, message: str) -> None:
+            self.errors.append(message)
+
+        def info(self, _message: str) -> None:
+            return None
+
+    class RecordingExecEngine:
+        def __init__(self) -> None:
+            self.clients: list[object] = []
+
+        def register_client(self, client: object) -> None:
+            self.clients.append(client)
+
+        def register_default_client(self, _client: object) -> None:
+            return None
+
+        def register_venue_routing(self, _client: object, _venue: object) -> None:
+            return None
+
+    captured: dict[str, object] = {}
+
+    def create(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        PolySignalSandboxLiveExecClientFactory,
+        "create",
+        staticmethod(create),
+    )
+    builder = object.__new__(TradingNodeBuilder)
+    builder._exec_factories = {}
+    builder._log = RecordingLog()
+    builder._exec_engine = RecordingExecEngine()
+    builder._loop = object()
+    builder._msgbus = object()
+    builder._cache = object()
+    builder._clock = object()
+    builder._portfolio = object()
+
+    builder.add_exec_client_factory(
+        PAPER_EXEC_CLIENT_ID,
+        PolySignalSandboxLiveExecClientFactory,
+    )
+    builder.build_exec_clients(
+        {
+            PAPER_EXEC_CLIENT_ID: SimpleNamespace(
+                routing=SimpleNamespace(default=False, venues=frozenset()),
+            )
+        }
+    )
+
+    assert builder._log.errors == []
+    assert PAPER_EXEC_CLIENT_ID in builder._exec_factories
+    assert captured["portfolio"] is builder._portfolio
+    assert builder._exec_engine.clients
+
+
+def test_precision_safe_factory_returns_real_sandbox_execution_client() -> None:
+    require_nautilus()
+    from nautilus_trader.adapters.sandbox.execution import SandboxExecutionClient
+
+    instrument = _instrument(3)
+    with asyncio.Runner() as runner:
+        client, cache = _sandbox_client(runner.get_loop(), instrument)
+
+        assert isinstance(client, SandboxExecutionClient)
+        assert cache.accounts()
+        client.on_data(instrument)
+        client.on_data(_mismatched_quote(instrument))
+        client.on_data(_mismatched_delta(instrument))
