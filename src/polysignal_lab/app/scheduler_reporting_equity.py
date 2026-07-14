@@ -15,7 +15,7 @@ from polysignal_lab.app._settlement_check import _projection_float
 
 @runtime_checkable
 class _NautilusReportingCache(Protocol):
-    def account(self) -> Any | None: ...
+    def accounts(self) -> list[Any]: ...
 
     def positions(self) -> Any: ...
 
@@ -23,7 +23,7 @@ class _NautilusReportingCache(Protocol):
 def _is_nautilus_reporting_cache(value: Any) -> TypeGuard[_NautilusReportingCache]:
     return (
         isinstance(value, _NautilusReportingCache)
-        and callable(value.account)
+        and callable(value.accounts)
         and callable(value.positions)
     )
 
@@ -63,7 +63,8 @@ def _report_equity_inputs_from_nautilus_cache(
         project_position,
     )
 
-    account = nautilus_cache.account()
+    accounts = nautilus_cache.accounts()
+    account = accounts[0] if accounts else None
     account_projection = project_account(account) if account is not None else None
     portfolio_projection = (
         project_portfolio_snapshot(nautilus_portfolio, account=account)

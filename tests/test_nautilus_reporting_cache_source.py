@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, sqlite3, types, types.SimpleNamespace, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._report_equity_inputs, polysignal_lab.app.scheduler_reporting_sources._collect_daily_report_inputs
-Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_generate_daily_report_uses_configured_pusd_equity, test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss, test_daily_report_orders_use_creation_day_after_cross_day_update, test_daily_report_marks_inferred_legacy_order_creation_time, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_revises_after_late_settlement, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
+Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_native_cache_accounts_api, test_generate_daily_report_uses_configured_pusd_equity, test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss, test_daily_report_orders_use_creation_day_after_cross_day_update, test_daily_report_marks_inferred_legacy_order_creation_time, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_revises_after_late_settlement, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -57,10 +57,12 @@ def _settings(
 def test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet() -> None:
     ts = datetime.now(UTC)
     cache = SimpleNamespace(
-        account=lambda: SimpleNamespace(
-            id="A-1",
-            balances=[SimpleNamespace(currency="USDC", total=2_222.0)],
-        ),
+        accounts=lambda: [
+            SimpleNamespace(
+                id="A-1",
+                balances=[SimpleNamespace(currency="USDC", total=2_222.0)],
+            )
+        ],
         positions=lambda: [
             SimpleNamespace(
                 id="P-1", instrument_id="I", signed_qty=10, avg_px_open=0.5,
@@ -88,10 +90,12 @@ def test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet() -> Non
 
 def test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity() -> None:
     cache = SimpleNamespace(
-        account=lambda: SimpleNamespace(
-            id="A-1",
-            balances=[SimpleNamespace(currency="USDC", total=987.65)],
-        ),
+        accounts=lambda: [
+            SimpleNamespace(
+                id="A-1",
+                balances=[SimpleNamespace(currency="USDC", total=987.65)],
+            )
+        ],
         positions=lambda: [],
     )
     portfolio = SimpleNamespace(id="PF-1", equity=1_000.0)
@@ -106,10 +110,12 @@ def test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity() 
 
 def test_report_equity_inputs_keeps_zero_portfolio_equity() -> None:
     cache = SimpleNamespace(
-        account=lambda: SimpleNamespace(
-            id="A-1",
-            balances=[SimpleNamespace(currency="USDC", total=987.65)],
-        ),
+        accounts=lambda: [
+            SimpleNamespace(
+                id="A-1",
+                balances=[SimpleNamespace(currency="USDC", total=987.65)],
+            )
+        ],
         positions=lambda: [],
     )
     portfolio = SimpleNamespace(id="PF-1", equity=0.0)
@@ -125,13 +131,15 @@ def test_report_equity_inputs_keeps_zero_portfolio_equity() -> None:
 def test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing() -> None:
     ts = datetime.now(UTC)
     cache = SimpleNamespace(
-        account=lambda: SimpleNamespace(
-            id="A-1",
-            balances=[
-                SimpleNamespace(currency="BTC", total=99.0),
-                SimpleNamespace(currency="USDC", total=987.65),
-            ],
-        ),
+        accounts=lambda: [
+            SimpleNamespace(
+                id="A-1",
+                balances=[
+                    SimpleNamespace(currency="BTC", total=99.0),
+                    SimpleNamespace(currency="USDC", total=987.65),
+                ],
+            )
+        ],
         positions=lambda: [
             SimpleNamespace(
                 id="P-1", instrument_id="I", signed_qty=10, avg_px_open=0.5,
@@ -150,13 +158,15 @@ def test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equit
 
 def test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing() -> None:
     cache = SimpleNamespace(
-        account=lambda: SimpleNamespace(
-            id="A-1",
-            balances=lambda: {
-                "PUSD": SimpleNamespace(currency="PUSD", total=111.0),
-                "pUSD": SimpleNamespace(currency="pUSD", total=987.65),
-            },
-        ),
+        accounts=lambda: [
+            SimpleNamespace(
+                id="A-1",
+                balances=lambda: {
+                    "PUSD": SimpleNamespace(currency="PUSD", total=111.0),
+                    "pUSD": SimpleNamespace(currency="pUSD", total=987.65),
+                },
+            )
+        ],
         positions=lambda: [],
     )
     portfolio = SimpleNamespace(id="PF-1", equity=lambda **_kwargs: {})
@@ -164,6 +174,32 @@ def test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_mi
         settings=_settings(sandbox_base_currency="pUSD"),
         nautilus_cache=cache,
         nautilus_portfolio=portfolio,
+    )
+
+    assert _report_equity_inputs(scheduler) == (1_000.0, 987.65, 0)
+
+
+def test_report_equity_inputs_uses_native_cache_accounts_api() -> None:
+    class NativeCacheShape:
+        def account(self, account_id: object) -> object:
+            raise AssertionError(f"unexpected account lookup: {account_id}")
+
+        def accounts(self) -> list[object]:
+            return [
+                SimpleNamespace(
+                    id="A-1",
+                    balances=lambda: {
+                        "pUSD": SimpleNamespace(currency="pUSD", total=987.65),
+                    },
+                )
+            ]
+
+        def positions(self) -> list[object]:
+            return []
+
+    scheduler = SimpleNamespace(
+        settings=_settings(sandbox_base_currency="pUSD"),
+        nautilus_cache=NativeCacheShape(),
     )
 
     assert _report_equity_inputs(scheduler) == (1_000.0, 987.65, 0)
@@ -179,10 +215,12 @@ def test_generate_daily_report_uses_configured_pusd_equity() -> None:
         append_log=lambda *_args: None,
     )
     cache = SimpleNamespace(
-        account=lambda: SimpleNamespace(
-            id="A-1",
-            balances=[SimpleNamespace(currency="pUSD", total=987.65)],
-        ),
+        accounts=lambda: [
+            SimpleNamespace(
+                id="A-1",
+                balances=[SimpleNamespace(currency="pUSD", total=987.65)],
+            )
+        ],
         positions=lambda: [],
         orders=lambda: [],
         fills=lambda: [],
@@ -254,10 +292,12 @@ def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_lo
         settings=_settings(),
         persistence=persistence,
         nautilus_cache=SimpleNamespace(
-            account=lambda: SimpleNamespace(
-                id="A-1",
-                balances=[SimpleNamespace(currency="USDC", total=1_000.0)],
-            ),
+            accounts=lambda: [
+                SimpleNamespace(
+                    id="A-1",
+                    balances=[SimpleNamespace(currency="USDC", total=1_000.0)],
+                )
+            ],
             positions=lambda: [],
             orders=lambda: [],
             fills=lambda: [
@@ -502,10 +542,12 @@ def test_generate_daily_report_retries_pending_outbox_without_duplicate_report(
     settings = _settings(sandbox_base_currency="pUSD")
     settings.telegram.send_daily_report = True
     cache = SimpleNamespace(
-        account=lambda: SimpleNamespace(
-            id="A-1",
-            balances=[SimpleNamespace(currency="pUSD", total=987.65)],
-        ),
+        accounts=lambda: [
+            SimpleNamespace(
+                id="A-1",
+                balances=[SimpleNamespace(currency="pUSD", total=987.65)],
+            )
+        ],
         positions=lambda: [],
         orders=lambda: [],
         fills=lambda: [],
@@ -591,10 +633,12 @@ def test_generate_daily_report_revises_after_late_settlement(tmp_path) -> None:
         settings=settings,
         persistence=persistence,
         nautilus_cache=SimpleNamespace(
-            account=lambda: SimpleNamespace(
-                id="A-1",
-                balances=[SimpleNamespace(currency="USDC", total=1_000.0)],
-            ),
+            accounts=lambda: [
+                SimpleNamespace(
+                    id="A-1",
+                    balances=[SimpleNamespace(currency="USDC", total=1_000.0)],
+                )
+            ],
             positions=lambda: [],
             orders=lambda: [],
             fills=lambda: [],
@@ -708,7 +752,7 @@ def test_generate_daily_report_retries_prior_day_pending_publish(tmp_path) -> No
         settings=settings,
         persistence=persistence,
         nautilus_cache=SimpleNamespace(
-            account=lambda: None,
+            accounts=lambda: [],
             positions=lambda: [],
             orders=lambda: [],
             fills=lambda: [],
@@ -734,10 +778,12 @@ def test_generate_daily_report_retries_prior_day_pending_publish(tmp_path) -> No
 
 def test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity() -> None:
     cache = SimpleNamespace(
-        account=lambda: SimpleNamespace(
-            id="A-1",
-            balances=[SimpleNamespace(currency="usdc", total=987.65)],
-        ),
+        accounts=lambda: [
+            SimpleNamespace(
+                id="A-1",
+                balances=[SimpleNamespace(currency="usdc", total=987.65)],
+            )
+        ],
         positions=lambda: [],
     )
     scheduler = SimpleNamespace(
@@ -760,8 +806,8 @@ def test_report_equity_inputs_requires_nautilus_cache() -> None:
 def test_report_equity_inputs_requires_reporting_cache_protocol() -> None:
     invalid_caches = (
         SimpleNamespace(),
-        SimpleNamespace(account=123, positions=lambda: []),
-        SimpleNamespace(account=lambda: None, positions=[]),
+        SimpleNamespace(accounts=123, positions=lambda: []),
+        SimpleNamespace(accounts=lambda: [], positions=[]),
     )
 
     for cache in invalid_caches:
