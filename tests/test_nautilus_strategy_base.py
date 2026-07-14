@@ -465,9 +465,13 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
         **_native_projections(),
     )
 
+    strategy._subscription_state.stale_refresh_attempts_by_condition[
+        "condition-btc-5m"
+    ] = 2
     strategy.evaluate_condition("condition-btc-5m")
 
     assert readiness == [("condition-btc-5m", True)]
+    assert strategy._subscription_state.stale_refresh_attempts_by_condition == {}
     assert len(strategy.submitted_specs) == 1
     assert strategy.submitted_specs[0].intent == OrderIntent.TAKER_FOK
     assert strategy.submitted_specs[0].quantity == 20.0

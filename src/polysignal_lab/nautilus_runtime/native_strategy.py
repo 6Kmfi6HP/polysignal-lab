@@ -83,6 +83,7 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     call_subscription as _call_subscription_fn,
     clear_condition_subscription_state as _clear_condition_subscription_state_fn,
     condition_instruments as _condition_instruments_fn,
+    mark_market_subscription_ready as _mark_market_subscription_ready_fn,
     refresh_asset_conditions as _refresh_asset_conditions_fn,
     refresh_stale_market_subscription as _refresh_stale_market_subscription_fn,
     retry_market_instrument_requests as _retry_market_instrument_requests_fn,
@@ -287,6 +288,7 @@ class PolySignalNativeStrategy(Strategy):
         if ready:
             _ = self._runtime_readiness_miss_condition_ids.discard(condition_id)
             _ = self._stale_orderbook_recovery_by_condition.pop(condition_id, None)
+            _mark_market_subscription_ready_fn(self, condition_id)
         else:
             self._runtime_readiness_miss_condition_ids.add(condition_id)
         callback = self.readiness_callback

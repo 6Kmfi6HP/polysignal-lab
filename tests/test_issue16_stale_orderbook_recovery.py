@@ -210,6 +210,7 @@ def test_refresh_stale_market_subscription_clears_wire_and_resubscribes() -> Non
     )
     from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
         MarketSubscriptionState,
+        mark_market_subscription_ready,
         refresh_stale_market_subscription,
         subscribe_market_conditions,
     )
@@ -295,6 +296,17 @@ def test_refresh_stale_market_subscription_clears_wire_and_resubscribes() -> Non
     assert refreshed_again is False
     assert len(strategy.book_subs) == book_count
 
+    # A successful refresh is attempted only once for the stale episode.
+    refreshed_after_interval = refresh_stale_market_subscription(
+        strategy,
+        "condition-a",
+        now=_dt(40),
+        min_interval_sec=30,
+    )
+    assert refreshed_after_interval is False
+    assert len(strategy.book_subs) == book_count
+
+    mark_market_subscription_ready(strategy, "condition-a")
     strategy.fail_quote_subscribe = True
     failed_refresh = refresh_stale_market_subscription(
         strategy,
@@ -308,6 +320,16 @@ def test_refresh_stale_market_subscription_clears_wire_and_resubscribes() -> Non
         "condition-a"
     }
 
+    failed_book_count = len(strategy.book_subs)
+    throttled_failure = refresh_stale_market_subscription(
+        strategy,
+        "condition-a",
+        now=_dt(50),
+        min_interval_sec=30,
+    )
+    assert throttled_failure is False
+    assert len(strategy.book_subs) == failed_book_count
+
     strategy.fail_quote_subscribe = False
     recovered = refresh_stale_market_subscription(
         strategy,
@@ -317,6 +339,27 @@ def test_refresh_stale_market_subscription_clears_wire_and_resubscribes() -> Non
     )
     assert recovered is True
     assert strategy._subscription_state.wire_condition_ids == {"condition-a"}
+
+    recovered_book_count = len(strategy.book_subs)
+    backed_off = refresh_stale_market_subscription(
+        strategy,
+        "condition-a",
+        now=_dt(100),
+        min_interval_sec=30,
+    )
+    assert backed_off is False
+    assert len(strategy.book_subs) == recovered_book_count
+
+    second_attempt = refresh_stale_market_subscription(
+        strategy,
+        "condition-a",
+        now=_dt(130),
+        min_interval_sec=30,
+    )
+    assert second_attempt is True
+    assert strategy._subscription_state.stale_refresh_attempts_by_condition == {
+        "condition-a": 2
+    }
 
 
 def test_record_rejected_stale_orderbook_triggers_subscription_refresh() -> None:

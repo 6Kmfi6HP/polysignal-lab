@@ -24,6 +24,9 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (
 )
 
 
+_MAX_STALE_REFRESH_INTERVAL_SEC = 300
+
+
 @dataclass(slots=True)
 class MarketSubscriptionState:
     """Track wire subscriptions separately from active-condition membership."""
@@ -32,6 +35,7 @@ class MarketSubscriptionState:
     pending_metadata_condition_ids: set[str] = field(default_factory=set)
     pending_subscribe_condition_ids: set[str] = field(default_factory=set)
     retained_wire_condition_ids: set[str] = field(default_factory=set)
+    stale_refresh_attempts_by_condition: dict[str, int] = field(default_factory=dict)
     last_stale_refresh_at: dict[str, datetime] = field(default_factory=dict)
 
 
@@ -188,6 +192,21 @@ def clear_condition_subscription_state(
     strategy._subscription_state.retained_wire_condition_ids.discard(condition_id)
     strategy._subscription_state.pending_subscribe_condition_ids.discard(condition_id)
     strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)
+    strategy._subscription_state.stale_refresh_attempts_by_condition.pop(
+        condition_id,
+        None,
+    )
+    strategy._subscription_state.last_stale_refresh_at.pop(condition_id, None)
+
+
+def mark_market_subscription_ready(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+) -> None:
+    strategy._subscription_state.stale_refresh_attempts_by_condition.pop(
+        condition_id,
+        None,
+    )
     strategy._subscription_state.last_stale_refresh_at.pop(condition_id, None)
 
 
@@ -208,15 +227,27 @@ def refresh_stale_market_subscription(
     observed = now or datetime.now(UTC)
     if observed.tzinfo is None:
         observed = observed.replace(tzinfo=UTC)
+    attempts = strategy._subscription_state.stale_refresh_attempts_by_condition.get(
+        condition_id,
+        0,
+    )
+    retry_interval_sec = min(
+        int(min_interval_sec) * (2 ** min(attempts, 10)),
+        max(int(min_interval_sec), _MAX_STALE_REFRESH_INTERVAL_SEC),
+    )
     last = strategy._subscription_state.last_stale_refresh_at.get(condition_id)
     if last is not None:
         elapsed = (observed - last.astimezone(UTC)).total_seconds()
-        if elapsed < int(min_interval_sec):
+        if elapsed < retry_interval_sec:
             return False
     unsubscribe_market_conditions(strategy, (condition_id,))
     subscribe_market_conditions(strategy, (condition_id,))
     strategy._subscription_state.last_stale_refresh_at[condition_id] = observed
-    return condition_id in strategy._subscription_state.wire_condition_ids
+    refreshed = condition_id in strategy._subscription_state.wire_condition_ids
+    strategy._subscription_state.stale_refresh_attempts_by_condition[condition_id] = (
+        attempts + 1 if refreshed else 0
+    )
+    return refreshed
 
 
 def unsubscribe_market_instrument(
