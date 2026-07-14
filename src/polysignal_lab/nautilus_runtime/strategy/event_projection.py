@@ -49,6 +49,7 @@ def project_nautilus_order_event(
             metrics.get("up_ask", metrics.get("down_ask", metrics.get("price", price))),
         )
     return SimpleNamespace(
+        event_id=_value(event, "id") or _value(event, "event_id"),
         client_order_id=_value(event, "client_order_id"),
         instrument_id=_value(event, "instrument_id"),
         order_side=_value(event, "order_side"),
@@ -68,6 +69,7 @@ def project_nautilus_fill_event(
     event: object, metrics: Mapping[str, object]
 ) -> SimpleNamespace:
     return SimpleNamespace(
+        event_id=_value(event, "id") or _value(event, "event_id"),
         client_order_id=_value(event, "client_order_id"),
         instrument_id=_value(event, "instrument_id"),
         trade_id=_value(event, "trade_id", _value(event, "fill_id")),

@@ -104,6 +104,10 @@ def _event_identity(payload: Mapping[str, object]) -> str:
 def _system_event_id(table: str, payload: Mapping[str, object]) -> str:
     created_at = str(payload.get("created_at", ""))
     identity = _event_identity(payload)
+    if table == "nautilus_order" and identity:
+        status = str(payload.get("status") or payload.get("order_status") or "").strip()
+        if status:
+            identity = f"{identity}:{status.upper()}"
     if identity:
         return f"{table}:{identity}:{created_at}"
     return f"{table}:{created_at}"
@@ -160,13 +164,19 @@ class NautilusEventStoreAdapter:
             _ = payload.setdefault("severity", "info")
             created_at = payload.get("ts") or utc_iso()
             _ = payload.setdefault("created_at", created_at)
-            _ = payload.setdefault("event_id", _system_event_id("health_snapshot", payload))
+            if payload.get("event_id"):
+                payload["event_id"] = str(payload["event_id"])
+            else:
+                payload["event_id"] = _system_event_id("health_snapshot", payload)
         elif table.startswith("nautilus_"):
             _ = payload.setdefault("event_type", table)
             _ = payload.setdefault("severity", "info")
             created_at = payload.get("ts") or utc_iso()
             _ = payload.setdefault("created_at", created_at)
-            _ = payload.setdefault("event_id", _system_event_id(table, payload))
+            if payload.get("event_id"):
+                payload["event_id"] = str(payload["event_id"])
+            else:
+                payload["event_id"] = _system_event_id(table, payload)
         try:
             route(payload)
         except sqlite3.OperationalError as exc:

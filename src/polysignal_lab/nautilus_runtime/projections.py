@@ -30,6 +30,7 @@ def project_order_event(event: object) -> dict[str, object]:
         metrics["paper_order_intent"] = order_intent
     client_order_id = _text_attr(event, "client_order_id")
     return {
+        "event_id": _text_attr(event, "event_id"),
         "paper_order_id": client_order_id,
         "client_order_id": client_order_id,
         "instrument_id": _text_attr(event, "instrument_id"),
@@ -59,6 +60,7 @@ def project_fill_event(event: object) -> dict[str, object]:
     trade_id = _text_attr(event, "trade_id") or _text_attr(event, "fill_id")
     client_order_id = _text_attr(event, "client_order_id")
     return {
+        "event_id": _text_attr(event, "event_id"),
         "paper_fill_id": trade_id,
         "paper_order_id": client_order_id,
         "client_order_id": client_order_id,

@@ -1135,6 +1135,14 @@ class SQLiteStore:
                 else None
             )
             if isinstance(existing_payload, dict):
+                existing_status = str(existing_payload.get("status") or "").upper()
+                explicit_invalid = bool(raw_status) and status == "INVALID"
+                if (
+                    existing_status == "FILLED"
+                    and status != "FILLED"
+                    and not explicit_invalid
+                ):
+                    return
                 payload = _merge_paper_order_payload(
                     existing_payload,
                     payload,
@@ -1247,7 +1255,10 @@ class SQLiteStore:
             WHERE excluded.source_event_at > paper_order_states.source_event_at
                OR (
                     excluded.source_event_at = paper_order_states.source_event_at
-                    AND excluded.source_event_id > paper_order_states.source_event_id
+                    AND (
+                        paper_order_states.status != 'FILLED'
+                        OR excluded.source_event_id > paper_order_states.source_event_id
+                    )
                )""",
             (
                 order_id,
