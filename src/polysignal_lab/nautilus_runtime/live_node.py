@@ -154,7 +154,7 @@ def _register_live_node_factories(node: object, spot_source: str) -> None:
         )
     add_exec_factory(
         PAPER_EXEC_CLIENT_ID,
-        _required(SandboxLiveExecClientFactory, "SandboxLiveExecClientFactory"),
+        _sandbox_exec_client_factory(),
     )
 
 
@@ -293,6 +293,21 @@ def build_sandbox_exec_client_config(settings: Settings) -> object:
         use_reduce_only=True,
         routing=routing_config(venues=frozenset({POLYMARKET_CLIENT_ID})),
     )
+
+
+def _sandbox_exec_client_factory() -> object:
+    """Use precision-safe sandbox factory for real Nautilus; keep test fakes intact."""
+    factory = _required(SandboxLiveExecClientFactory, "SandboxLiveExecClientFactory")
+    module_name = getattr(factory, "__module__", "")
+    if isinstance(module_name, str) and module_name.startswith(
+        "nautilus_trader.adapters.sandbox"
+    ):
+        from polysignal_lab.nautilus_runtime.sandbox_precision_client import (
+            PolySignalSandboxLiveExecClientFactory,
+        )
+
+        return PolySignalSandboxLiveExecClientFactory
+    return factory
 
 
 def _validate_real_polymarket_data_factory_credentials() -> None:
