@@ -143,7 +143,12 @@ def _sigterm_handler(_signum: int, _frame: object) -> None:
 def run_dashboard_cli(settings: Settings) -> None:
     configure_logging(settings.app.log_level)
 
-    store = SQLiteStore(settings.storage.sqlite_path)
+    # Dashboard mounts ./data read-only and can race host volume readiness.
+    store = SQLiteStore(
+        settings.storage.sqlite_path,
+        connect_retries=10,
+        retry_delay_sec=0.2,
+    )
     runtime_health = FileRuntimeHealthReader(
         Path(settings.storage.state_dir) / "runtime_heartbeat.json",
         settings.health.liveness.heartbeat_max_age_sec,

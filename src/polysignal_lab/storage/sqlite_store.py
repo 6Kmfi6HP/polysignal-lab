@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from collections.abc import Mapping
 from pathlib import Path
 from threading import Lock
+from time import sleep
 from typing import TYPE_CHECKING, Any, Iterable
 
 from polysignal_lab.domain.anchor_price import AnchorPrice
@@ -282,16 +283,47 @@ def _valid_daily_report_payload(payload: Mapping[str, Any]) -> bool:
 
 
 class SQLiteStore:
-    def __init__(self, path: str | Path):
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        connect_retries: int = 0,
+        retry_delay_sec: float = 0.2,
+    ):
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
-        self._conn = sqlite3.connect(self.path, timeout=30, check_same_thread=False)
+        self._conn = self._connect_with_retry(
+            connect_retries=max(0, int(connect_retries)),
+            retry_delay_sec=max(0.0, float(retry_delay_sec)),
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self.migrate()
+
+    def _connect_with_retry(
+        self,
+        *,
+        connect_retries: int,
+        retry_delay_sec: float,
+    ) -> sqlite3.Connection:
+        attempts = connect_retries + 1
+        last_error: sqlite3.OperationalError | None = None
+        for attempt in range(attempts):
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                return sqlite3.connect(self.path, timeout=30, check_same_thread=False)
+            except OSError as exc:
+                # Parent path may not be writable yet on cold host mounts.
+                last_error = sqlite3.OperationalError(str(exc))
+            except sqlite3.OperationalError as exc:
+                last_error = exc
+            if attempt + 1 >= attempts:
+                break
+            sleep(retry_delay_sec)
+        assert last_error is not None
+        raise last_error
 
     def close(self) -> None:
         self._conn.close()
