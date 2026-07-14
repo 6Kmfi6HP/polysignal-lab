@@ -16,7 +16,7 @@ Pos: Application code
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, TypeAlias
 
 from fastapi import FastAPI
@@ -166,11 +166,7 @@ def _health_payload(
     )
     return {
         "status": _overall_health_status(components),
-        "generated_at": (
-            snapshot.get("generated_at") or snapshot.get("created_at")
-            if isinstance(snapshot, dict)
-            else None
-        ),
+        "generated_at": datetime.now(UTC).isoformat(),
         "components": components,
         "counts": storage["counts"],
         "recent_system_events": storage["recent_system_events"],

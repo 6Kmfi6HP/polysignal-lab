@@ -434,7 +434,16 @@ def test_dashboard_health_keeps_fresh_runtime_ok_when_storage_fails(tmp_path) ->
     assert components["sqlite_storage"]["reason"] == "storage_unavailable"
 
 
-def test_dashboard_health_ignores_superseded_runtime_snapshot_status(tmp_path) -> None:
+def test_dashboard_health_ignores_superseded_runtime_snapshot_status(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 13, 12, 0, 30, tzinfo=timezone.utc)
+
+    monkeypatch.setattr("polysignal_lab.dashboard.app.datetime", FixedDatetime)
     store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
     store.insert_system_event(
         {
@@ -468,6 +477,7 @@ def test_dashboard_health_ignores_superseded_runtime_snapshot_status(tmp_path) -
     components = {component["name"]: component for component in payload["components"]}
 
     assert payload["status"] == "ok"
+    assert payload["generated_at"] == "2026-07-13T12:00:30+00:00"
     assert components["runtime"]["status"] == "ok"
     assert components["sqlite_storage"]["status"] == "ok"
 
