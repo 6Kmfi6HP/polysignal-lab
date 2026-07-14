@@ -250,6 +250,7 @@ class DashboardConfig(BaseModel):
 
 class HealthLivenessConfig(BaseModel):
     heartbeat_max_age_sec: int = 120
+    max_readiness_miss_sec: int = 300
 
 
 class HealthRestartGateConfig(BaseModel):

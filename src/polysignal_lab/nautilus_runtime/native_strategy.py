@@ -83,6 +83,7 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     clear_condition_subscription_state as _clear_condition_subscription_state_fn,
     condition_instruments as _condition_instruments_fn,
     refresh_asset_conditions as _refresh_asset_conditions_fn,
+    refresh_stale_market_subscription as _refresh_stale_market_subscription_fn,
     retry_market_instrument_requests as _retry_market_instrument_requests_fn,
     subscribe_market_conditions as _subscribe_market_conditions_fn,
     subscribe_market_instrument as _subscribe_market_instrument_fn,
@@ -486,6 +487,7 @@ class PolySignalNativeStrategy(Strategy):
             return
         if not _market_view_ready(view):
             self._note_runtime_progress("readiness_miss")
+            _ = self.refresh_stale_market_subscription(condition_id)
             return
         market_view = cast(MarketView, view)
         decisions = self._evaluate_decisions(market_view, now=now)
@@ -685,6 +687,9 @@ class PolySignalNativeStrategy(Strategy):
 
     def _unsubscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
         _unsubscribe_market_conditions_fn(self, condition_ids)
+
+    def refresh_stale_market_subscription(self, condition_id: str) -> bool:
+        return _refresh_stale_market_subscription_fn(self, condition_id)
 
     def _condition_instruments(self, condition_id: str) -> tuple[object, ...]:
         return _condition_instruments_fn(self, condition_id)

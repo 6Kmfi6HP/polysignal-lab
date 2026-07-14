@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Sequence, dataclasses, dataclasses.dataclass, dataclasses.field, datetime, datetime.timedelta, typing, typing.Protocol
-Output: MarketSubscriptionState, InstrumentSubscriptionManager, refresh_asset_conditions, retry_market_instrument_requests, subscribe_market_conditions, subscribe_market_instrument, unsubscribe_market_conditions, condition_instruments, clear_condition_subscription_state, unsubscribe_market_instrument, call_subscription
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Sequence, dataclasses, dataclasses.dataclass, dataclasses.field, datetime, datetime.datetime, datetime.timedelta, typing, typing.Protocol
+Output: MarketSubscriptionState, InstrumentSubscriptionManager, refresh_asset_conditions, retry_market_instrument_requests, subscribe_market_conditions, subscribe_market_instrument, unsubscribe_market_conditions, condition_instruments, clear_condition_subscription_state, unsubscribe_market_instrument, call_subscription, refresh_stale_market_subscription
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
@@ -32,6 +32,7 @@ class MarketSubscriptionState:
     pending_metadata_condition_ids: set[str] = field(default_factory=set)
     pending_subscribe_condition_ids: set[str] = field(default_factory=set)
     retained_wire_condition_ids: set[str] = field(default_factory=set)
+    last_stale_refresh_at: dict[str, datetime] = field(default_factory=dict)
 
 
 class _SubscriptionStrategy(Protocol):
@@ -187,6 +188,35 @@ def clear_condition_subscription_state(
     strategy._subscription_state.retained_wire_condition_ids.discard(condition_id)
     strategy._subscription_state.pending_subscribe_condition_ids.discard(condition_id)
     strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)
+    strategy._subscription_state.last_stale_refresh_at.pop(condition_id, None)
+
+
+def refresh_stale_market_subscription(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime | None = None,
+    min_interval_sec: int = 30,
+) -> bool:
+    """Force unsubscribe+resubscribe for a stale active market condition.
+
+    Subscribe is no-op when already wired; clear wire state first so a fresh
+    quote/trade/book subscription can recover after rotation or silent drop.
+    """
+    if condition_id not in strategy._active_condition_ids:
+        return False
+    observed = now or datetime.now(UTC)
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=UTC)
+    last = strategy._subscription_state.last_stale_refresh_at.get(condition_id)
+    if last is not None:
+        elapsed = (observed - last.astimezone(UTC)).total_seconds()
+        if elapsed < int(min_interval_sec):
+            return False
+    unsubscribe_market_conditions(strategy, (condition_id,))
+    subscribe_market_conditions(strategy, (condition_id,))
+    strategy._subscription_state.last_stale_refresh_at[condition_id] = observed
+    return True
 
 
 def unsubscribe_market_instrument(

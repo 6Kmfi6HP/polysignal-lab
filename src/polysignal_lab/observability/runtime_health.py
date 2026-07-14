@@ -34,6 +34,7 @@ class RuntimeHeartbeat:
     phase: str
     fatal: bool = False
     fatal_reason: str | None = None
+    phase_started_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,11 +75,16 @@ def write_runtime_heartbeat(
     now: datetime | None = None,
 ) -> RuntimeHeartbeat:
     timestamp = (now or _utc_now()).astimezone(UTC).isoformat()
+    phase_started_at = timestamp
+    previous = _read_runtime_heartbeat_optional(path)
+    if previous is not None and previous.phase == phase:
+        phase_started_at = previous.phase_started_at or previous.updated_at
     heartbeat = RuntimeHeartbeat(
         updated_at=timestamp,
         phase=phase,
         fatal=bool(fatal),
         fatal_reason=fatal_reason,
+        phase_started_at=phase_started_at,
     )
     _write_json_atomically(path, asdict(heartbeat))
     return heartbeat
@@ -121,12 +127,26 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
     if fatal_reason is not None and not isinstance(fatal_reason, str):
         raise TypeError("heartbeat fatal_reason must be a string or null")
 
+    phase_started_at = payload.get("phase_started_at")
+    if phase_started_at is not None and not isinstance(phase_started_at, str):
+        raise TypeError("heartbeat phase_started_at must be a string or null")
+    if phase_started_at is None:
+        phase_started_at = updated_at
+
     return RuntimeHeartbeat(
         updated_at=updated_at,
         phase=phase,
         fatal=fatal,
         fatal_reason=fatal_reason,
+        phase_started_at=phase_started_at,
     )
+
+
+def _read_runtime_heartbeat_optional(path: Path) -> RuntimeHeartbeat | None:
+    try:
+        return read_runtime_heartbeat(path)
+    except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError, FileNotFoundError):
+        return None
 
 
 def _inside_startup_grace(
@@ -151,6 +171,7 @@ def evaluate_liveness(
     max_age_sec: int,
     startup_started_at: datetime | None = None,
     startup_grace_sec: int = 0,
+    max_readiness_miss_sec: int | None = None,
     now: datetime | None = None,
 ) -> LivenessResult:
     observed_at = (now or _utc_now()).astimezone(UTC)
@@ -185,6 +206,23 @@ def evaluate_liveness(
             reason="heartbeat_stale",
             heartbeat_age_sec=age,
         )
+
+    if (
+        max_readiness_miss_sec is not None
+        and int(max_readiness_miss_sec) > 0
+        and heartbeat.phase == "readiness_miss"
+        and not inside_startup_grace
+    ):
+        started_raw = heartbeat.phase_started_at or heartbeat.updated_at
+        phase_started = datetime.fromisoformat(started_raw).astimezone(UTC)
+        phase_age = max(0, int((observed_at - phase_started).total_seconds()))
+        if phase_age > int(max_readiness_miss_sec):
+            return LivenessResult(
+                ok=False,
+                reason="readiness_miss",
+                heartbeat_age_sec=age,
+            )
+
     return LivenessResult(ok=True, heartbeat_age_sec=age)
 
 

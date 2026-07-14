@@ -82,6 +82,23 @@ def record_rejected(strategy: _ObservabilityStrategy, rejected: object) -> None:
         strategy,
         lambda obs: obs.record_rejected_decision(rejected),
     )
+    reason_code = getattr(rejected, "reason_code", None)
+    if reason_code != "STALE_ORDERBOOK":
+        return
+    candidate = getattr(rejected, "candidate", None)
+    condition_id = getattr(candidate, "condition_id", None)
+    if not condition_id:
+        return
+    refresh = getattr(strategy, "refresh_stale_market_subscription", None)
+    if not callable(refresh):
+        return
+    try:
+        refreshed = bool(refresh(str(condition_id)))
+    except Exception:
+        strategy._note_runtime_progress("subscription_refresh_failed")
+        return
+    if refreshed:
+        strategy._note_runtime_progress("subscription_refresh")
 
 
 def record_nautilus_order(
