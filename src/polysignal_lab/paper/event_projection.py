@@ -66,15 +66,27 @@ def normalize_paper_order(
         metrics,
         "limit_price",
         "price",
-        metric_keys=("price", "level_price"),
+        metric_keys=("price", "level_price", "up_ask", "down_ask"),
     )
     shares = _number(
         row,
         metrics,
         "shares",
         "quantity",
-        metric_keys=("shares", "quantity"),
+        metric_keys=("shares", "quantity", "contracts"),
     )
+    if shares in (None, 0.0):
+        metric_shares = _number({}, metrics, metric_keys=("contracts", "shares", "quantity"))
+        if metric_shares not in (None, 0.0):
+            shares = metric_shares
+    if limit_price in (None, 0.0):
+        metric_price = _number(
+            {},
+            metrics,
+            metric_keys=("up_ask", "down_ask", "level_price", "price"),
+        )
+        if metric_price not in (None, 0.0):
+            limit_price = metric_price
     stake = _number(row, metrics, "stake_usdc", metric_keys=("stake_usdc",))
     if stake is None and limit_price is not None and shares is not None:
         stake = limit_price * abs(shares)

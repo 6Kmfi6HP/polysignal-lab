@@ -248,10 +248,15 @@ def _metrics(source: object) -> dict[str, object]:
 
 def _order_status(event: object) -> str:
     status: object = getattr(event, "status", None)
-    if status is not None:
+    if status is not None and status != "":
         name: object = getattr(status, "name", None)
         value = name if name not in (None, "") else status
-        return str(value)
+        text = str(value)
+        if text:
+            return text
+    event_type_name = getattr(event, "event_type_name", None)
+    if isinstance(event_type_name, str) and event_type_name.startswith("Order"):
+        return event_type_name.removeprefix("Order").upper()
     event_name = type(event).__name__
     if event_name.startswith("Order"):
         return event_name.removeprefix("Order").upper()

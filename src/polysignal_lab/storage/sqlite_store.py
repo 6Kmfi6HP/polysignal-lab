@@ -34,6 +34,7 @@ from polysignal_lab.domain.paper_result import (
     parse_paper_trade_result_row,
 )
 from polysignal_lab.paper.event_projection import (
+    normalize_paper_fill,
     normalize_paper_order,
     normalize_paper_position,
 )
@@ -176,6 +177,77 @@ def _same_daily_report_content(
         {key: value for key, value in candidate.items() if key not in ignored}
         == {key: value for key, value in persisted.items() if key not in ignored}
     )
+
+
+def _merge_paper_order_payload(
+    existing: Mapping[str, Any],
+    incoming: Mapping[str, Any],
+    *,
+    raw_status: str = "",
+) -> dict[str, Any]:
+    """Merge order projection rows without letting empty later events wipe truth.
+
+    Sparse lifecycle rows (empty status / zero quantity) keep known fields.
+    Explicit unmapped statuses such as ``UNKNOWN`` still mark INVALID.
+    """
+    merged = dict(existing)
+    explicit_invalid = bool(raw_status) and str(incoming.get("status") or "").upper() == "INVALID"
+    for key, value in incoming.items():
+        if key == "metrics":
+            existing_metrics = existing.get("metrics")
+            incoming_metrics = value if isinstance(value, Mapping) else {}
+            base_metrics = (
+                dict(existing_metrics) if isinstance(existing_metrics, Mapping) else {}
+            )
+            for metric_key, metric_value in incoming_metrics.items():
+                if metric_value not in (None, "", {}, []):
+                    base_metrics[metric_key] = metric_value
+            merged["metrics"] = base_metrics
+            continue
+        if value in (None, "", 0, 0.0) and existing.get(key) not in (None, "", 0, 0.0):
+            # Keep known non-empty numbers/text when later lifecycle rows are sparse.
+            if key in {
+                "signal_id",
+                "strategy",
+                "asset",
+                "timeframe",
+                "market_id",
+                "market_slug",
+                "condition_id",
+                "token_id",
+                "side",
+                "order_type",
+                "time_in_force",
+                "order_intent",
+                "limit_price",
+                "price",
+                "shares",
+                "quantity",
+                "stake_usdc",
+                "reference_price",
+            }:
+                continue
+            if key == "status" and str(existing.get("status") or "").upper() not in {
+                "",
+                "INVALID",
+            }:
+                continue
+        if key == "status" and str(value).upper() == "INVALID" and not explicit_invalid:
+            prior = str(existing.get("status") or "").upper()
+            if prior and prior != "INVALID":
+                continue
+        if (
+            key == "_projection_invalid"
+            and value is True
+            and not explicit_invalid
+        ):
+            prior = str(existing.get("status") or "").upper()
+            if prior and prior != "INVALID" and existing.get("_projection_invalid") is not True:
+                continue
+        merged[key] = value
+    if merged.get("status") not in (None, "", "INVALID"):
+        merged.pop("_projection_invalid", None)
+    return merged
 
 
 def _invalid_position_state_source(row: Mapping[str, Any]) -> bool:
@@ -1023,12 +1095,16 @@ class SQLiteStore:
     def _upsert_paper_current_state(self, event: Mapping[str, Any]) -> None:
         event_type = str(event.get("event_type") or "")
         if event_type == "nautilus_order":
+            raw_status = str(event.get("status") or event.get("order_status") or "").strip()
             payload = normalize_paper_order(event)
             if not payload.get("status"):
                 payload["_projection_invalid"] = True
                 payload["status"] = "INVALID"
             table = "paper_order_states"
             id_column = "paper_order_id"
+        elif event_type == "nautilus_fill":
+            self._apply_fill_to_paper_order_state(event)
+            return
         elif event_type == "nautilus_position":
             payload = normalize_paper_position(event)
             invalid = _invalid_position_state_source(event)
@@ -1058,11 +1134,17 @@ class SQLiteStore:
                 if existing_row is not None
                 else None
             )
-            if (
-                isinstance(existing_payload, dict)
-                and existing_payload.get("_creation_event_at_inferred") is True
-            ):
-                payload["_creation_event_at_inferred"] = True
+            if isinstance(existing_payload, dict):
+                payload = _merge_paper_order_payload(
+                    existing_payload,
+                    payload,
+                    raw_status=raw_status if event_type == "nautilus_order" else "",
+                )
+                if (
+                    existing_payload.get("_creation_event_at_inferred") is True
+                ):
+                    payload["_creation_event_at_inferred"] = True
+                status = str(payload.get("status") or status).upper()
         columns = [
             id_column,
             "status",
@@ -1102,6 +1184,79 @@ class SQLiteStore:
                     AND excluded.source_event_id > {table}.source_event_id
                )""",
             values,
+        )
+
+    def _apply_fill_to_paper_order_state(self, event: Mapping[str, Any]) -> None:
+        fill = normalize_paper_fill(event)
+        order_id = str(
+            fill.get("paper_order_id")
+            or event.get("client_order_id")
+            or event.get("paper_order_id")
+            or ""
+        )
+        if not order_id:
+            return
+        source_event_id = str(event.get("event_id") or "")
+        source_event_at = self._paper_state_event_at(event, status="FILLED")
+        if not source_event_id or not source_event_at:
+            return
+        existing_row = self._conn.execute(
+            """SELECT payload_json FROM paper_order_states
+            WHERE paper_order_id=?""",
+            (order_id,),
+        ).fetchone()
+        existing_payload = (
+            _payload_json(existing_row) if existing_row is not None else {}
+        )
+        if not isinstance(existing_payload, dict):
+            existing_payload = {}
+        payload = dict(existing_payload)
+        for key in (
+            "signal_id",
+            "strategy",
+            "asset",
+            "timeframe",
+            "market_id",
+            "market_slug",
+            "condition_id",
+            "token_id",
+            "side",
+        ):
+            if payload.get(key) in (None, "") and fill.get(key) not in (None, ""):
+                payload[key] = fill.get(key)
+        if fill.get("fill_price") is not None:
+            payload["limit_price"] = fill.get("fill_price")
+            payload["price"] = fill.get("fill_price")
+        if fill.get("shares") is not None:
+            payload["shares"] = fill.get("shares")
+            payload["quantity"] = fill.get("shares")
+        if fill.get("stake_usdc") is not None:
+            payload["stake_usdc"] = fill.get("stake_usdc")
+        payload["status"] = "FILLED"
+        payload.pop("_projection_invalid", None)
+        payload["paper_order_id"] = order_id
+        self._conn.execute(
+            """INSERT INTO paper_order_states(
+                paper_order_id,status,created_event_at,source_event_at,source_event_id,payload_json
+            ) VALUES(?,?,?,?,?,?)
+            ON CONFLICT(paper_order_id) DO UPDATE SET
+                status=excluded.status,
+                source_event_at=excluded.source_event_at,
+                source_event_id=excluded.source_event_id,
+                payload_json=excluded.payload_json
+            WHERE excluded.source_event_at > paper_order_states.source_event_at
+               OR (
+                    excluded.source_event_at = paper_order_states.source_event_at
+                    AND excluded.source_event_id > paper_order_states.source_event_id
+               )""",
+            (
+                order_id,
+                "FILLED",
+                source_event_at,
+                source_event_at,
+                source_event_id,
+                self._json(payload),
+            ),
         )
 
     @staticmethod

@@ -34,18 +34,33 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (
 def project_nautilus_order_event(
     event: object, metrics: Mapping[str, object]
 ) -> SimpleNamespace:
+    status = _value(event, "status")
+    if status in (None, ""):
+        event_name = type(event).__name__
+        if event_name.startswith("Order"):
+            status = event_name.removeprefix("Order").upper()
+    quantity = _value(event, "quantity")
+    price = _value(event, "price")
+    if _maybe_float(quantity) in (None, 0.0):
+        quantity = metrics.get("contracts", metrics.get("quantity", quantity))
+    if _maybe_float(price) in (None, 0.0):
+        price = metrics.get(
+            "level_price",
+            metrics.get("up_ask", metrics.get("down_ask", metrics.get("price", price))),
+        )
     return SimpleNamespace(
         client_order_id=_value(event, "client_order_id"),
         instrument_id=_value(event, "instrument_id"),
         order_side=_value(event, "order_side"),
         order_type=_value(event, "order_type"),
         time_in_force=_value(event, "time_in_force"),
-        quantity=_value(event, "quantity"),
-        price=_value(event, "price"),
-        status=_value(event, "status"),
+        quantity=quantity,
+        price=price,
+        status=status,
         tags=_value(event, "tags", ()),
         metrics=dict(metrics),
         ts_event=_value(event, "ts_event", _value(event, "timestamp")),
+        event_type_name=type(event).__name__,
     )
 
 
