@@ -216,7 +216,7 @@ def refresh_stale_market_subscription(
     unsubscribe_market_conditions(strategy, (condition_id,))
     subscribe_market_conditions(strategy, (condition_id,))
     strategy._subscription_state.last_stale_refresh_at[condition_id] = observed
-    return True
+    return condition_id in strategy._subscription_state.wire_condition_ids
 
 
 def unsubscribe_market_instrument(

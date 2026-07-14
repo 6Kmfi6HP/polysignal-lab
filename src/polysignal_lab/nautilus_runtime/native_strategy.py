@@ -25,6 +25,7 @@ from polysignal_lab.alpha.types import (
     AlphaOrderEvent,
     MarketView,
 )
+from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_bridge.market_catalog import (
     MarketCatalog,
@@ -132,6 +133,7 @@ class PolySignalNativeStrategy(Strategy):
         registry: MarketCatalog | None = None,
         observability: _Observability | None = None,
         progress_callback: Callable[[str], None] | None = None,
+        readiness_callback: Callable[[str, bool], None] | None = None,
         unsubscribe_exited: bool = True,
         l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
         config: StrategyConfig | None = None,
@@ -149,6 +151,7 @@ class PolySignalNativeStrategy(Strategy):
             instrument_id_resolver=instrument_id_resolver,
             observability=observability,
             progress_callback=progress_callback,
+            readiness_callback=readiness_callback,
             l1_book_snapshot_interval_ms=l1_book_snapshot_interval_ms,
         )
         self._initialize_runtime_state(registry, unsubscribe_exited=unsubscribe_exited)
@@ -186,6 +189,7 @@ class PolySignalNativeStrategy(Strategy):
         instrument_id_resolver: Callable[[str], object] | None,
         observability: _Observability | None,
         progress_callback: Callable[[str], None] | None,
+        readiness_callback: Callable[[str, bool], None] | None,
         l1_book_snapshot_interval_ms: int,
     ) -> None:
         self.fixed_stake_usdc = fixed_stake_usdc
@@ -197,6 +201,7 @@ class PolySignalNativeStrategy(Strategy):
         self.instrument_id_resolver = instrument_id_resolver or _identity_instrument_id
         self.observability = observability
         self.progress_callback = progress_callback
+        self.readiness_callback = readiness_callback
 
     def _initialize_runtime_state(
         self,
@@ -225,6 +230,11 @@ class PolySignalNativeStrategy(Strategy):
             self._startup_condition_ids,
         )
         self._last_market_data_evaluation_at: dict[str, datetime] = {}
+        self._runtime_readiness_miss_condition_ids: set[str] = set()
+        self._stale_orderbook_recovery_by_condition: dict[
+            str,
+            dict[Side, float],
+        ] = {}
 
     def _init_decision_pipeline(self) -> None:
         self._pipeline_state = DecisionPipelineState()
@@ -272,6 +282,52 @@ class PolySignalNativeStrategy(Strategy):
         if callback is None:
             return
         callback(phase)
+
+    def _note_runtime_readiness(self, condition_id: str, *, ready: bool) -> None:
+        if ready:
+            _ = self._runtime_readiness_miss_condition_ids.discard(condition_id)
+            _ = self._stale_orderbook_recovery_by_condition.pop(condition_id, None)
+        else:
+            self._runtime_readiness_miss_condition_ids.add(condition_id)
+        callback = self.readiness_callback
+        if callback is None:
+            return
+        callback(condition_id, ready)
+
+    def _note_stale_orderbook_rejection(
+        self,
+        condition_id: str,
+        *,
+        side: object,
+        threshold_ms: object,
+    ) -> None:
+        if (
+            isinstance(side, Side)
+            and isinstance(threshold_ms, (int, float))
+            and not isinstance(threshold_ms, bool)
+            and float(threshold_ms) > 0
+        ):
+            recovery = self._stale_orderbook_recovery_by_condition.setdefault(
+                condition_id,
+                {},
+            )
+            threshold = float(threshold_ms)
+            recovery[side] = min(recovery.get(side, threshold), threshold)
+        self._note_runtime_readiness(condition_id, ready=False)
+
+    def _stale_orderbook_recovered(
+        self,
+        condition_id: str,
+        view: MarketView,
+    ) -> bool:
+        recovery = self._stale_orderbook_recovery_by_condition.get(condition_id)
+        if recovery is None:
+            return True
+        return all(
+            (freshness_ms := view.book_for(side).freshness_ms) is not None
+            and freshness_ms <= threshold_ms
+            for side, threshold_ms in recovery.items()
+        )
 
     def _framework_now(self) -> datetime:
         timestamp_ns = getattr(self.clock, "timestamp_ns", None)
@@ -484,12 +540,40 @@ class PolySignalNativeStrategy(Strategy):
         now = created_at or self._framework_now()
         view = self._require_assembler().build(condition_id, created_at=now)
         if view is None:
+            self._note_runtime_progress("readiness_miss")
+            self._note_runtime_readiness(condition_id, ready=False)
+            _ = self.refresh_stale_market_subscription(condition_id)
             return
         if not _market_view_ready(view):
             self._note_runtime_progress("readiness_miss")
+            self._note_runtime_readiness(condition_id, ready=False)
             _ = self.refresh_stale_market_subscription(condition_id)
             return
-        market_view = cast(MarketView, view)
+        self._evaluate_ready_condition(
+            condition_id,
+            cast(MarketView, view),
+            now=now,
+        )
+
+    def _evaluate_ready_condition(
+        self,
+        condition_id: str,
+        market_view: MarketView,
+        *,
+        now: datetime,
+    ) -> None:
+        readiness_confirmed = False
+        if condition_id in self._stale_orderbook_recovery_by_condition:
+            if not self._stale_orderbook_recovered(condition_id, market_view):
+                self._note_runtime_progress("readiness_miss")
+                self._note_runtime_readiness(condition_id, ready=False)
+                _ = self.refresh_stale_market_subscription(condition_id)
+                return
+            self._note_runtime_readiness(condition_id, ready=True)
+            readiness_confirmed = True
+        elif condition_id in self._runtime_readiness_miss_condition_ids:
+            self._note_runtime_readiness(condition_id, ready=True)
+            readiness_confirmed = True
         decisions = self._evaluate_decisions(market_view, now=now)
         if decisions is None:
             return
@@ -508,6 +592,11 @@ class PolySignalNativeStrategy(Strategy):
             )
         for decision in batch_result:
             self._handle_decision(decision, market_view)
+        if (
+            not readiness_confirmed
+            and condition_id not in self._runtime_readiness_miss_condition_ids
+        ):
+            self._note_runtime_readiness(condition_id, ready=True)
 
     def _evaluate_decisions(
         self,

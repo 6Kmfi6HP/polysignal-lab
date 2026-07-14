@@ -281,6 +281,18 @@ class MarketRotationActor(Actor):
         self._active_by_condition = current
         if epoch is not None:
             self._epoch = epoch
+        markets = tuple(current.values())
+        self._publish_market_universe(
+            epoch=self._epoch,
+            markets=markets,
+            entered_condition_ids=(),
+            exited_condition_ids=(),
+        )
+        now = self._framework_now()
+        for market in markets:
+            self.publisher.publish_market_metadata(
+                market_metadata(market, timestamp=now)
+            )
         self._mark_ok(
             active_count=len(current),
             entered_count=0,

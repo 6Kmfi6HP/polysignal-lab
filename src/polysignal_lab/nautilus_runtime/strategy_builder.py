@@ -26,7 +26,10 @@ from polysignal_lab.nautilus_runtime.node_builder import (
     _NativeStrategyLike,
     _runtime_class_triple,
 )
-from polysignal_lab.nautilus_runtime.node_probes import _runtime_progress_callback
+from polysignal_lab.nautilus_runtime.node_probes import (
+    _runtime_progress_callback,
+    _runtime_readiness_callback,
+)
 from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
     ObservabilityService,
@@ -301,6 +304,7 @@ def _create_native_strategy(
         registry=registry,
         observability=observability,
         progress_callback=_runtime_progress_callback(settings),
+        readiness_callback=_runtime_readiness_callback(settings),
         unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
         l1_book_snapshot_interval_ms=settings.runtime.nautilus.l1_book_snapshot_interval_ms,
         config=StrategyConfig(strategy_id="PolySignal", order_id_tag=strategy_name),

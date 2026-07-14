@@ -746,10 +746,16 @@ def test_build_live_node_injects_runtime_progress_callback(monkeypatch, tmp_path
     runtime = build_live_node(settings=settings, condition_ids=("condition-btc-5m",))
 
     progress = captured["progress_callback"]
+    readiness = captured["readiness_callback"]
     assert callable(progress)
+    assert callable(readiness)
     progress("evaluation_heartbeat")
+    readiness("condition-btc-5m", False)
     heartbeat = read_runtime_heartbeat(tmp_path / "state" / "runtime_heartbeat.json")
-    assert heartbeat.phase == "evaluation_heartbeat"
+    assert heartbeat.phase == "readiness_miss"
+    assert heartbeat.readiness_miss_started_at_by_key == {
+        "condition-btc-5m": heartbeat.updated_at,
+    }
     assert runtime["strategies"][0].strategy_name == "vwap_momentum"
 
 def test_runtime_progress_callback_suppresses_heartbeat_write_failures(monkeypatch, tmp_path) -> None:

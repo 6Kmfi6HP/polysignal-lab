@@ -15,13 +15,16 @@ Pos: Application code
 from __future__ import annotations
 
 from contextlib import suppress
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 import json
 from pathlib import Path
 from uuid import uuid4
 
 from polysignal_lab.observability.health import HealthSnapshot
+
+
+_GLOBAL_READINESS_KEY = "__global__"
 
 
 def _utc_now() -> datetime:
@@ -35,6 +38,7 @@ class RuntimeHeartbeat:
     fatal: bool = False
     fatal_reason: str | None = None
     phase_started_at: str | None = None
+    readiness_miss_started_at_by_key: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +76,8 @@ def write_runtime_heartbeat(
     phase: str,
     fatal: bool = False,
     fatal_reason: str | None = None,
+    readiness_key: str | None = None,
+    readiness_ok: bool | None = None,
     now: datetime | None = None,
 ) -> RuntimeHeartbeat:
     timestamp = (now or _utc_now()).astimezone(UTC).isoformat()
@@ -79,12 +85,30 @@ def write_runtime_heartbeat(
     previous = _read_runtime_heartbeat_optional(path)
     if previous is not None and previous.phase == phase:
         phase_started_at = previous.phase_started_at or previous.updated_at
+    readiness_misses = (
+        dict(previous.readiness_miss_started_at_by_key)
+        if previous is not None
+        else {}
+    )
+    if phase in {"start", "starting"}:
+        readiness_misses.clear()
+    elif readiness_key is not None:
+        _ = readiness_misses.pop(_GLOBAL_READINESS_KEY, None)
+        if readiness_ok is True:
+            _ = readiness_misses.pop(readiness_key, None)
+        elif readiness_ok is False:
+            _ = readiness_misses.setdefault(readiness_key, timestamp)
+    elif phase == "readiness_miss":
+        _ = readiness_misses.setdefault(_GLOBAL_READINESS_KEY, timestamp)
+    elif phase not in {"market_data_evaluation", "evaluation_heartbeat"}:
+        _ = readiness_misses.pop(_GLOBAL_READINESS_KEY, None)
     heartbeat = RuntimeHeartbeat(
         updated_at=timestamp,
         phase=phase,
         fatal=bool(fatal),
         fatal_reason=fatal_reason,
         phase_started_at=phase_started_at,
+        readiness_miss_started_at_by_key=readiness_misses,
     )
     _write_json_atomically(path, asdict(heartbeat))
     return heartbeat
@@ -133,12 +157,24 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
     if phase_started_at is None:
         phase_started_at = updated_at
 
+    readiness_raw = payload.get("readiness_miss_started_at_by_key", {})
+    if not isinstance(readiness_raw, dict):
+        raise TypeError("heartbeat readiness misses must be a JSON object")
+    readiness_misses: dict[str, str] = {}
+    for key, value in readiness_raw.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise TypeError("heartbeat readiness miss entries must be strings")
+        readiness_misses[key] = value
+    if not readiness_misses and phase == "readiness_miss":
+        readiness_misses[_GLOBAL_READINESS_KEY] = phase_started_at
+
     return RuntimeHeartbeat(
         updated_at=updated_at,
         phase=phase,
         fatal=fatal,
         fatal_reason=fatal_reason,
         phase_started_at=phase_started_at,
+        readiness_miss_started_at_by_key=readiness_misses,
     )
 
 
@@ -183,6 +219,10 @@ def evaluate_liveness(
     try:
         heartbeat = read_runtime_heartbeat(path)
         updated_at = datetime.fromisoformat(heartbeat.updated_at).astimezone(UTC)
+        readiness_started_at = tuple(
+            datetime.fromisoformat(value).astimezone(UTC)
+            for value in heartbeat.readiness_miss_started_at_by_key.values()
+        )
     except FileNotFoundError:
         if inside_startup_grace:
             return LivenessResult(ok=True)
@@ -210,13 +250,17 @@ def evaluate_liveness(
     if (
         max_readiness_miss_sec is not None
         and int(max_readiness_miss_sec) > 0
-        and heartbeat.phase == "readiness_miss"
+        and readiness_started_at
         and not inside_startup_grace
     ):
-        started_raw = heartbeat.phase_started_at or heartbeat.updated_at
-        phase_started = datetime.fromisoformat(started_raw).astimezone(UTC)
-        phase_age = max(0, int((observed_at - phase_started).total_seconds()))
-        if phase_age > int(max_readiness_miss_sec):
+        readiness_age = max(
+            max(
+                0,
+                int((observed_at - started_at).total_seconds()),
+            )
+            for started_at in readiness_started_at
+        )
+        if readiness_age > int(max_readiness_miss_sec):
             return LivenessResult(
                 ok=False,
                 reason="readiness_miss",

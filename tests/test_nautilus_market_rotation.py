@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, asyncio, sys, collections.abc, collections.abc.Coroutine, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, threading, time
-Output: test_market_universe_data_round_trips, test_market_universe_data_is_immutable, test_market_metadata_is_immutable, test_market_rotation_actor_initial_publish_and_diff_executes_intercepted_ptb_coroutines, test_market_rotation_actor_refresh_publishes_changed_ptb_for_still_active_market, test_market_rotation_actor_refresh_skips_unchanged_ptb_for_still_active_market, test_market_rotation_actor_refresh_continues_after_single_market_ptb_failure, test_market_rotation_actor_refresh_checks_still_active_ptb_sequentially, test_market_rotation_actor_keeps_last_good_state_on_publish_failure, test_market_rotation_actor_refresh_timer_marks_down_refresh_failures, test_market_rotation_timer_does_not_call_discovery_inline, test_market_discovery_worker_returns_immutable_tuple_result, test_market_discovery_worker_coalesces_requests_until_result_is_taken, test_market_discovery_worker_close_detaches_in_flight_result, test_market_discovery_worker_returns_transport_errors, test_market_rotation_applies_completed_worker_result_on_actor_thread, test_market_rotation_ignores_stale_worker_result, test_market_rotation_error_result_preserves_markets_and_degrades_health, test_market_rotation_timer_keeps_epoch_when_worker_coalesces_request
+Output: test_market_universe_data_round_trips, test_market_universe_data_is_immutable, test_market_metadata_is_immutable, test_market_rotation_actor_initial_publish_and_diff_executes_intercepted_ptb_coroutines, test_market_rotation_actor_refresh_publishes_changed_ptb_for_still_active_market, test_market_rotation_actor_refresh_skips_unchanged_ptb_for_still_active_market, test_market_rotation_unchanged_refresh_replays_runtime_bootstrap_data, test_market_rotation_actor_refresh_continues_after_single_market_ptb_failure, test_market_rotation_actor_refresh_checks_still_active_ptb_sequentially, test_market_rotation_actor_keeps_last_good_state_on_publish_failure, test_market_rotation_actor_refresh_timer_marks_down_refresh_failures, test_market_rotation_timer_does_not_call_discovery_inline, test_market_discovery_worker_returns_immutable_tuple_result, test_market_discovery_worker_coalesces_requests_until_result_is_taken, test_market_discovery_worker_close_detaches_in_flight_result, test_market_discovery_worker_returns_transport_errors, test_market_rotation_applies_completed_worker_result_on_actor_thread, test_market_rotation_ignores_stale_worker_result, test_market_rotation_error_result_preserves_markets_and_degrades_health, test_market_rotation_timer_keeps_epoch_when_worker_coalesces_request
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -544,6 +544,45 @@ def test_market_rotation_actor_refresh_skips_unchanged_ptb_for_still_active_mark
         _close_recorded_tasks(created)
 
 
+def test_market_rotation_unchanged_refresh_replays_runtime_bootstrap_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published: list[object] = []
+    settings = Settings()
+    settings.runtime.nautilus.sidecar.spot_source = "disabled"
+    settings.runtime.nautilus.market_rotation.enabled = False
+    market = _market("condition-a")
+    actor = MarketRotationActor(
+        settings=settings,
+        startup_markets=(market,),
+        market_universe=_Universe([[market]]),
+        catalog=MarketCatalog(),
+        anchor_store=None,
+        health=None,
+    )
+    actor.publish_data = lambda _data_type, data: published.append(data)
+    monkeypatch.setattr(
+        actor.ptb_provider,
+        "get_sync",
+        lambda _market: PriceToBeatResult(
+            value=None,
+            source="unavailable",
+            verified=False,
+        ),
+    )
+
+    actor.on_start()
+    published.clear()
+    asyncio.run(actor.refresh_once())
+
+    universes = [
+        item for item in published if isinstance(item, PolySignalMarketUniverseData)
+    ]
+    metadata = [item for item in published if isinstance(item, PolySignalMarketMetaData)]
+    assert [item.epoch for item in universes] == [1]
+    assert [item.condition_id for item in metadata] == ["condition-a"]
+
+
 def test_market_rotation_actor_refresh_continues_after_single_market_ptb_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -901,7 +940,9 @@ async def test_market_rotation_actor_refresh_applies_stale_grace_via_market_univ
             "condition-market-previous"
         ]
         assert len(startup_epochs) == 1
-        assert len(epochs) == 1
+        assert len(epochs) == 2
+        assert epochs[-1].entered_condition_ids == ()
+        assert epochs[-1].exited_condition_ids == ()
         assert actor._epoch == 1
         assert any(url.endswith("/events/slug/btc-updown-5m-1782254400") for url in client.calls)
     finally:

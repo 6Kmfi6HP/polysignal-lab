@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, sys, collections.abc, collections.abc.Callable, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, datetime.timedelta
-Output: test_native_strategy_on_save_load_delegates_to_core_via_encode_decode, test_native_strategy_on_save_persists_only_core_state, test_native_strategy_on_load_restores_core_without_runtime_order_truth, test_runtime_strategy_fok_depth_counts_asks_through_max_entry, test_native_strategy_records_rejection_when_order_mapping_fails, test_native_strategy_blocks_duplicate_in_flight_signal_submission, test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data, test_static_native_strategy_does_not_bypass_custom_data_lifecycle, test_native_strategy_generates_signal_from_on_data_callback, test_native_strategy_requires_shared_policy, test_native_strategy_constructor_requires_injected_projections
+Output: test_native_strategy_on_save_load_delegates_to_core_via_encode_decode, test_native_strategy_on_save_persists_only_core_state, test_native_strategy_on_load_restores_core_without_runtime_order_truth, test_runtime_strategy_fok_depth_counts_asks_through_max_entry, test_native_strategy_records_rejection_when_order_mapping_fails, test_native_strategy_blocks_duplicate_in_flight_signal_submission, test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data, test_static_native_strategy_does_not_bypass_custom_data_lifecycle, test_native_strategy_generates_signal_from_on_data_callback, test_native_strategy_requires_shared_policy, test_native_strategy_constructor_requires_injected_projections, test_native_strategy_missing_view_triggers_readiness_recovery
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -450,6 +450,7 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
             self.submitted_specs.append(spec)
             return SimpleNamespace(client_order_id="captured")
 
+    readiness: list[tuple[str, bool]] = []
     strategy = SpecCapturingStrategy(
         core=FakeCore([decision]),
         assembler=_assembler(View()),
@@ -458,15 +459,103 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
         policy=RuntimeFakePolicy(),
         fixed_stake_usdc=10.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        readiness_callback=lambda condition_id, ready: readiness.append(
+            (condition_id, ready)
+        ),
         **_native_projections(),
     )
 
     strategy.evaluate_condition("condition-btc-5m")
 
+    assert readiness == [("condition-btc-5m", True)]
     assert len(strategy.submitted_specs) == 1
     assert strategy.submitted_specs[0].intent == OrderIntent.TAKER_FOK
     assert strategy.submitted_specs[0].quantity == 20.0
     assert len(strategy.rejected_decisions) == 0
+
+
+def test_native_strategy_stale_orderbook_rejection_keeps_readiness_miss() -> None:
+    from dataclasses import replace
+
+    from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class StaleOrderBookPolicy(RuntimeFakePolicy):
+        def evaluate(
+            self,
+            decision: AlphaDecision,
+            view: MarketView,
+        ) -> RejectedDecision:
+            approved = super().evaluate(decision, view)
+            return RejectedDecision(
+                reason_code="STALE_ORDERBOOK",
+                detail={
+                    "lag_ms": 400_000,
+                    "source": "orderbook",
+                    "threshold_ms": 300_000,
+                },
+                candidate=approved.signal,
+            )
+
+    class Book(_MockBook):
+        freshness_ms: int | None = 400_000
+
+    class View(_MockView):
+        books = {
+            Side.UP: Book(),
+            Side.DOWN: Book(),
+        }
+
+        def book_for(self, side: Side) -> _BookViewLike:
+            return self.books[side]
+
+    refreshes: list[str] = []
+    readiness: list[tuple[str, bool]] = []
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        def refresh_stale_market_subscription(self, condition_id: str) -> bool:
+            refreshes.append(condition_id)
+            return False
+
+    up_decision = _decision()
+    down_decision = replace(
+        up_decision,
+        token_id="down-token",
+        side=Side.DOWN,
+    )
+    core = FakeCore([up_decision, down_decision])
+    view = View()
+    policy = StaleOrderBookPolicy()
+    strategy = FakeNativeStrategy(
+        core=core,
+        assembler=_assembler(view),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        policy=policy,
+        readiness_callback=lambda condition_id, ready: readiness.append(
+            (condition_id, ready)
+        ),
+        **_native_projections(),
+    )
+
+    strategy.evaluate_condition("condition-btc-5m")
+    core.decisions = []
+    view.books[Side.DOWN].freshness_ms = 10
+    strategy.evaluate_condition("condition-btc-5m")
+    view.books[Side.UP].freshness_ms = 10
+    strategy.evaluate_condition("condition-btc-5m")
+
+    assert readiness == [
+        ("condition-btc-5m", False),
+        ("condition-btc-5m", False),
+        ("condition-btc-5m", False),
+        ("condition-btc-5m", True),
+    ]
+    assert refreshes == [
+        "condition-btc-5m",
+        "condition-btc-5m",
+        "condition-btc-5m",
+    ]
 
 
 def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
@@ -615,6 +704,21 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
         ) -> None:
             _ = instrument_id, args, kwargs
 
+        def unsubscribe_order_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = instrument_id, args, kwargs
+
+        def unsubscribe_quote_ticks(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = instrument_id, args, kwargs
+
+        def unsubscribe_trade_ticks(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = instrument_id, args, kwargs
+
         def subscribe_data(
             self, data_type: object, *args: object, **kwargs: object
         ) -> None:
@@ -691,6 +795,21 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
             _ = instrument_id, args, kwargs
 
         def subscribe_trade_ticks(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = instrument_id, args, kwargs
+
+        def unsubscribe_order_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = instrument_id, args, kwargs
+
+        def unsubscribe_quote_ticks(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = instrument_id, args, kwargs
+
+        def unsubscribe_trade_ticks(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
@@ -1286,12 +1405,46 @@ def test_native_strategy_readiness_gate_skips_missing_required_market_view_input
         price_to_beat=None,
     )
     phases: list[str] = []
+    readiness: list[tuple[str, bool]] = []
     strategy.progress_callback = phases.append
+    strategy.readiness_callback = lambda condition_id, ready: readiness.append(
+        (condition_id, ready)
+    )
 
     strategy.evaluate_condition("condition-btc-5m")
 
     assert calls == []
     assert "readiness_miss" in phases
+    assert readiness == [("condition-btc-5m", False)]
+
+
+def test_native_strategy_missing_view_triggers_readiness_recovery() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    phases: list[str] = []
+    readiness: list[tuple[str, bool]] = []
+    refreshes: list[str] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        policy=RuntimeFakePolicy(),
+        progress_callback=phases.append,
+        readiness_callback=lambda condition_id, ready: readiness.append(
+            (condition_id, ready)
+        ),
+        **_native_projections(),
+    )
+    strategy.refresh_stale_market_subscription = (  # type: ignore[method-assign]
+        lambda condition_id: refreshes.append(condition_id) or True
+    )
+
+    strategy.evaluate_condition("condition-btc-5m")
+
+    assert "readiness_miss" in phases
+    assert readiness == [("condition-btc-5m", False)]
+    assert refreshes == ["condition-btc-5m"]
 
 
 def test_native_strategy_routes_decisions_through_policy_actor_decide() -> None:
@@ -2408,6 +2561,7 @@ def test_native_strategy_exited_market_is_gated_even_if_late_tick_arrives() -> N
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     seen: list[str] = []
+    readiness: list[tuple[str, bool]] = []
 
     class FakeNativeStrategy(PolySignalNativeStrategy):
         def _handle_decision(self, decision, view):
@@ -2422,6 +2576,9 @@ def test_native_strategy_exited_market_is_gated_even_if_late_tick_arrives() -> N
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         policy=RuntimeFakePolicy(),
+        readiness_callback=lambda condition_id, ready: readiness.append(
+            (condition_id, ready)
+        ),
         **_native_projections(),
     )
     strategy.on_data(
@@ -2442,6 +2599,7 @@ def test_native_strategy_exited_market_is_gated_even_if_late_tick_arrives() -> N
     strategy.evaluate_condition("condition-a")
 
     assert seen == []
+    assert readiness == [("condition-a", True)]
 
 
 def test_native_strategy_exited_market_fill_follow_up_is_gated() -> None:

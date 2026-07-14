@@ -213,6 +213,56 @@ def test_read_runtime_heartbeat_round_trips(tmp_path) -> None:
     assert read.phase == "running"
     assert read.fatal is False
 
+
+def test_read_runtime_heartbeat_supports_legacy_readiness_miss_payload(tmp_path) -> None:
+    path = tmp_path / "runtime_heartbeat.json"
+    started_at = _dt(0).isoformat()
+    path.write_text(
+        json.dumps(
+            {
+                "updated_at": started_at,
+                "phase": "readiness_miss",
+                "fatal": False,
+                "fatal_reason": None,
+                "phase_started_at": started_at,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    heartbeat = read_runtime_heartbeat(path)
+
+    assert tuple(heartbeat.readiness_miss_started_at_by_key.values()) == (
+        started_at,
+    )
+
+
+def test_liveness_rejects_invalid_readiness_miss_timestamp(tmp_path) -> None:
+    path = tmp_path / "runtime_heartbeat.json"
+    path.write_text(
+        json.dumps(
+            {
+                "updated_at": _dt(0).isoformat(),
+                "phase": "readiness_miss",
+                "readiness_miss_started_at_by_key": {
+                    "condition-a": "not-a-timestamp"
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = evaluate_liveness(
+        path,
+        max_age_sec=120,
+        max_readiness_miss_sec=300,
+        now=_dt(1),
+    )
+
+    assert result.ok is False
+    assert result.reason == "heartbeat_unreadable"
+
+
 def test_write_runtime_heartbeat_uses_independent_temp_files_for_concurrent_writes(
     monkeypatch,
     tmp_path,
