@@ -151,7 +151,8 @@ def run_dashboard_cli(settings: Settings) -> None:
     )
     runtime_health = FileRuntimeHealthReader(
         Path(settings.storage.state_dir) / "runtime_heartbeat.json",
-        settings.health.liveness.heartbeat_max_age_sec,
+        max_age_sec=settings.health.liveness.heartbeat_max_age_sec,
+        max_readiness_miss_sec=settings.health.liveness.max_readiness_miss_sec,
     )
     app = create_dashboard_app(store, runtime_health)
     uvicorn.run(app, host=settings.dashboard.host, port=settings.dashboard.port)

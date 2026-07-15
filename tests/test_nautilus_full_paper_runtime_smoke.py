@@ -381,6 +381,10 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
 
             return BatchArbitrationResult(decision for decision, _ in decisions)
 
+        def orderbook_freshness_threshold_ms(self, strategy: str) -> float:
+            _ = strategy
+            return 60_000.0
+
     class FakeStrategy(PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
@@ -653,6 +657,10 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
             from polysignal_lab.nautilus_runtime.decision_policy import BatchArbitrationResult
 
             return BatchArbitrationResult(decision for decision, _ in decisions)
+
+        def orderbook_freshness_threshold_ms(self, strategy: str) -> float:
+            _ = strategy
+            return 60_000.0
 
     class FakeStrategy(PolySignalNativeStrategy):
         def __init__(self, **kwargs):

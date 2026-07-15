@@ -110,6 +110,10 @@ class FakePolicy:
     ) -> BatchArbitrationResult:
         return BatchArbitrationResult(decision for decision, _ in decisions)
 
+    def orderbook_freshness_threshold_ms(self, strategy: str) -> float:
+        _ = strategy
+        return 60_000.0
+
 
 def _view() -> MarketView:
     now = datetime(2026, 1, 1, tzinfo=UTC)

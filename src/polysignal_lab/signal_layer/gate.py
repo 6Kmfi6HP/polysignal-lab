@@ -226,6 +226,20 @@ class SignalGate:
             return global_value, "global"
         return min(global_value, policy_value), "strategy_and_global"
 
+    def orderbook_freshness_threshold_ms(
+        self,
+        policy: FreshnessPolicy | None,
+    ) -> float:
+        policy_value = (
+            None if policy is None else policy.max_orderbook_staleness_ms
+        )
+        threshold_ms, _ = self._policy_threshold(
+            policy,
+            policy_value,
+            self.poly_config.max_book_staleness_ms,
+        )
+        return float(threshold_ms)
+
     @staticmethod
     def _freshness_details(
         *,

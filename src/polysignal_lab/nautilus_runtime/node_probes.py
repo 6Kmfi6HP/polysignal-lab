@@ -54,6 +54,7 @@ def _write_runtime_heartbeat_best_effort(
     fatal_reason: str | None = None,
     readiness_key: str | None = None,
     readiness_ok: bool | None = None,
+    readiness_detail: dict[str, object] | None = None,
 ) -> None:
     try:
         _ = write_runtime_heartbeat(
@@ -63,6 +64,7 @@ def _write_runtime_heartbeat_best_effort(
             fatal_reason=fatal_reason,
             readiness_key=readiness_key,
             readiness_ok=readiness_ok,
+            readiness_detail=readiness_detail,
         )
     except OSError:
         _log_probe_write_failure(path)
@@ -77,15 +79,22 @@ def _runtime_progress_callback(settings: Settings) -> Callable[[str], None]:
     return note_progress
 
 
-def _runtime_readiness_callback(settings: Settings) -> Callable[[str, bool], None]:
+def _runtime_readiness_callback(
+    settings: Settings,
+) -> Callable[[str, bool, dict[str, object]], None]:
     path = _runtime_heartbeat_path(settings)
 
-    def note_readiness(condition_id: str, ready: bool) -> None:
+    def note_readiness(
+        condition_id: str,
+        ready: bool,
+        detail: dict[str, object],
+    ) -> None:
         _write_runtime_heartbeat_best_effort(
             path,
             phase="readiness_ok" if ready else "readiness_miss",
             readiness_key=condition_id,
             readiness_ok=ready,
+            readiness_detail=detail,
         )
 
     return note_readiness

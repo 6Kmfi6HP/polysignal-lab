@@ -204,6 +204,11 @@ class DecisionPolicy:
             int, tuple[AlphaDecision, MarketView, SignalCandidate]
         ] = {}
 
+    def orderbook_freshness_threshold_ms(self, strategy: str) -> float:
+        return self.gate.orderbook_freshness_threshold_ms(
+            self.strategy_freshness_policies.get(strategy)
+        )
+
     def set_strategy_enabled(self, name: str, enabled: bool) -> None:
         if enabled:
             self.disabled_strategies.discard(name)

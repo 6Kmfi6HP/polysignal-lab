@@ -19,7 +19,10 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalSpotData,
 )
 from polysignal_lab.nautilus_runtime.strategy.data_boundary import DataBoundaryClassification
-from polysignal_lab.nautilus_runtime.strategy.subscriptions import MarketSubscriptionState
+from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    MarketSubscriptionState,
+    retire_market_book_generation,
+)
 
 
 class _CustomDataStrategy(Protocol):
@@ -113,6 +116,7 @@ def handle_market_universe(
     for condition_id in data.exited_condition_ids:
         strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)
         strategy._subscription_state.pending_subscribe_condition_ids.discard(condition_id)
+        retire_market_book_generation(strategy, condition_id)
         strategy._note_runtime_readiness(condition_id, ready=True)
     if strategy.unsubscribe_exited:
         strategy._unsubscribe_market_conditions(data.exited_condition_ids)

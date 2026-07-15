@@ -32,6 +32,7 @@ class RuntimeHealthRead(TypedDict):
     reason: str | None
     freshness_age_sec: int | None
     fatal_reason: str | None
+    readiness_detail_by_key: dict[str, dict[str, object]]
 
 
 class ReportingReadPort(Protocol):
@@ -74,12 +75,14 @@ class RuntimeHealthPort(Protocol):
 class FileRuntimeHealthReader:
     path: Path
     max_age_sec: int
+    max_readiness_miss_sec: int | None = None
     now: datetime | None = None
 
     def read(self) -> RuntimeHealthRead:
         result = evaluate_liveness(
             self.path,
             max_age_sec=self.max_age_sec,
+            max_readiness_miss_sec=self.max_readiness_miss_sec,
             now=self.now,
         )
         if result.ok:
@@ -93,4 +96,5 @@ class FileRuntimeHealthReader:
             "reason": result.reason,
             "freshness_age_sec": result.heartbeat_age_sec,
             "fatal_reason": result.fatal_reason,
+            "readiness_detail_by_key": result.readiness_detail_by_key,
         }

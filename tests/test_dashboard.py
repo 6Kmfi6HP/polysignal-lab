@@ -410,6 +410,50 @@ def test_dashboard_health_reports_stale_runtime_as_degraded(tmp_path) -> None:
     assert components["sqlite_storage"]["status"] == "ok"
 
 
+def test_dashboard_health_reports_persistent_readiness_detail(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
+    heartbeat_path = tmp_path / "state" / "runtime_heartbeat.json"
+    started_at = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    detail: dict[str, object] = {
+        "condition_id": "condition-a",
+        "market_id": "m-a",
+        "subscription_state": "awaiting_first_book",
+        "last_book_at_by_side": {"UP": started_at.isoformat(), "DOWN": None},
+        "freshness_ms_by_side": {"UP": 302_000, "DOWN": None},
+        "max_freshness_ms": 302_000,
+        "awaiting_book_sides": ["DOWN"],
+    }
+    write_runtime_heartbeat(
+        heartbeat_path,
+        phase="readiness_miss",
+        readiness_key="condition-a",
+        readiness_ok=False,
+        readiness_detail=detail,
+        now=started_at,
+    )
+    write_runtime_heartbeat(
+        heartbeat_path,
+        phase="market_data_evaluation",
+        now=started_at + timedelta(seconds=301),
+    )
+    runtime_health = FileRuntimeHealthReader(
+        heartbeat_path,
+        max_age_sec=120,
+        max_readiness_miss_sec=300,
+        now=started_at + timedelta(seconds=302),
+    )
+    client = TestClient(create_dashboard_app(store, runtime_health))
+
+    payload = client.get("/health").json()
+    components = {component["name"]: component for component in payload["components"]}
+
+    assert payload["status"] == "degraded"
+    assert components["runtime"]["reason"] == "readiness_miss"
+    assert components["runtime"]["metrics"]["readiness_detail_by_key"] == {
+        "condition-a": detail
+    }
+
+
 def test_dashboard_health_keeps_fresh_runtime_ok_when_storage_fails(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
     heartbeat_path = tmp_path / "state" / "runtime_heartbeat.json"

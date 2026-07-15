@@ -39,6 +39,7 @@ class RuntimeHeartbeat:
     fatal_reason: str | None = None
     phase_started_at: str | None = None
     readiness_miss_started_at_by_key: dict[str, str] = field(default_factory=dict)
+    readiness_detail_by_key: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,7 @@ class LivenessResult:
     reason: str | None = None
     heartbeat_age_sec: int | None = None
     fatal_reason: str | None = None
+    readiness_detail_by_key: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +80,7 @@ def write_runtime_heartbeat(
     fatal_reason: str | None = None,
     readiness_key: str | None = None,
     readiness_ok: bool | None = None,
+    readiness_detail: dict[str, object] | None = None,
     now: datetime | None = None,
 ) -> RuntimeHeartbeat:
     timestamp = (now or _utc_now()).astimezone(UTC).isoformat()
@@ -90,18 +93,32 @@ def write_runtime_heartbeat(
         if previous is not None
         else {}
     )
+    readiness_details = (
+        {
+            key: dict(value)
+            for key, value in previous.readiness_detail_by_key.items()
+        }
+        if previous is not None
+        else {}
+    )
     if phase in {"start", "starting"}:
         readiness_misses.clear()
+        readiness_details.clear()
     elif readiness_key is not None:
         _ = readiness_misses.pop(_GLOBAL_READINESS_KEY, None)
+        _ = readiness_details.pop(_GLOBAL_READINESS_KEY, None)
         if readiness_ok is True:
             _ = readiness_misses.pop(readiness_key, None)
+            _ = readiness_details.pop(readiness_key, None)
         elif readiness_ok is False:
             _ = readiness_misses.setdefault(readiness_key, timestamp)
+            if readiness_detail is not None:
+                readiness_details[readiness_key] = dict(readiness_detail)
     elif phase == "readiness_miss":
         _ = readiness_misses.setdefault(_GLOBAL_READINESS_KEY, timestamp)
     elif phase not in {"market_data_evaluation", "evaluation_heartbeat"}:
         _ = readiness_misses.pop(_GLOBAL_READINESS_KEY, None)
+        _ = readiness_details.pop(_GLOBAL_READINESS_KEY, None)
     heartbeat = RuntimeHeartbeat(
         updated_at=timestamp,
         phase=phase,
@@ -109,6 +126,7 @@ def write_runtime_heartbeat(
         fatal_reason=fatal_reason,
         phase_started_at=phase_started_at,
         readiness_miss_started_at_by_key=readiness_misses,
+        readiness_detail_by_key=readiness_details,
     )
     _write_json_atomically(path, asdict(heartbeat))
     return heartbeat
@@ -167,6 +185,14 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
         readiness_misses[key] = value
     if not readiness_misses and phase == "readiness_miss":
         readiness_misses[_GLOBAL_READINESS_KEY] = phase_started_at
+    readiness_detail_raw = payload.get("readiness_detail_by_key", {})
+    if not isinstance(readiness_detail_raw, dict):
+        raise TypeError("heartbeat readiness details must be a JSON object")
+    readiness_details: dict[str, dict[str, object]] = {}
+    for key, value in readiness_detail_raw.items():
+        if not isinstance(key, str) or not isinstance(value, dict):
+            raise TypeError("heartbeat readiness detail entries must be objects")
+        readiness_details[key] = dict(value)
 
     return RuntimeHeartbeat(
         updated_at=updated_at,
@@ -175,6 +201,7 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
         fatal_reason=fatal_reason,
         phase_started_at=phase_started_at,
         readiness_miss_started_at_by_key=readiness_misses,
+        readiness_detail_by_key=readiness_details,
     )
 
 
@@ -223,6 +250,7 @@ def evaluate_liveness(
             datetime.fromisoformat(value).astimezone(UTC)
             for value in heartbeat.readiness_miss_started_at_by_key.values()
         )
+        readiness_details = dict(heartbeat.readiness_detail_by_key)
     except FileNotFoundError:
         if inside_startup_grace:
             return LivenessResult(ok=True)
@@ -235,16 +263,22 @@ def evaluate_liveness(
             ok=False,
             reason="fatal",
             fatal_reason=heartbeat.fatal_reason,
+            readiness_detail_by_key=readiness_details,
         )
 
     age = max(0, int((observed_at - updated_at).total_seconds()))
     if age > int(max_age_sec):
         if inside_startup_grace:
-            return LivenessResult(ok=True, heartbeat_age_sec=age)
+            return LivenessResult(
+                ok=True,
+                heartbeat_age_sec=age,
+                readiness_detail_by_key=readiness_details,
+            )
         return LivenessResult(
             ok=False,
             reason="heartbeat_stale",
             heartbeat_age_sec=age,
+            readiness_detail_by_key=readiness_details,
         )
 
     if (
@@ -265,9 +299,14 @@ def evaluate_liveness(
                 ok=False,
                 reason="readiness_miss",
                 heartbeat_age_sec=age,
+                readiness_detail_by_key=readiness_details,
             )
 
-    return LivenessResult(ok=True, heartbeat_age_sec=age)
+    return LivenessResult(
+        ok=True,
+        heartbeat_age_sec=age,
+        readiness_detail_by_key=readiness_details,
+    )
 
 
 def _parse_iso(value: str) -> datetime:

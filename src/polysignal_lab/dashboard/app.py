@@ -95,6 +95,7 @@ def _runtime_health(runtime_health: RuntimeHealthPort | None) -> RuntimeHealthRe
             "reason": "heartbeat_missing",
             "freshness_age_sec": None,
             "fatal_reason": None,
+            "readiness_detail_by_key": {},
         }
     return runtime_health.read()
 
@@ -160,6 +161,10 @@ def _health_payload(
                     "freshness_age_sec": runtime["freshness_age_sec"],
                     "reason": runtime["reason"],
                     "fatal_reason": runtime["fatal_reason"],
+                    "readiness_detail_by_key": runtime.get(
+                        "readiness_detail_by_key",
+                        {},
+                    ),
                 },
             ),
         ]

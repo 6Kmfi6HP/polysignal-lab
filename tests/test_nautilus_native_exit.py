@@ -146,6 +146,7 @@ def test_native_strategy_uses_exit_model_against_native_open_position() -> None:
                 return None
             return SimpleNamespace(
                 asset="BTC",
+                start_ts=None,
                 up=SimpleNamespace(token_id="token-up", side=Side.UP),
                 down=SimpleNamespace(token_id="token-down", side=Side.DOWN),
             )

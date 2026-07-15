@@ -501,8 +501,9 @@ def test_all_native_strategies_share_runtime_policy(monkeypatch) -> None:
     assert node.trader.actors[0] is runtime["market_rotation_actor"]
     assert node.trader.actors[1] is runtime["policy"]
     assert isinstance(runtime["policy"], FakePolicyActor)
-    assert len(runtime["strategies"]) == 2
-    assert all(strategy.policy is runtime["policy"] for strategy in runtime["strategies"])
+    strategies = cast(list[FakeStrategy], runtime["strategies"])
+    assert len(strategies) == 2
+    assert all(strategy.policy is runtime["policy"] for strategy in strategies)
 
 def test_build_live_node_uses_sandbox_execution_not_matching_client(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
@@ -750,11 +751,14 @@ def test_build_live_node_injects_runtime_progress_callback(monkeypatch, tmp_path
     assert callable(progress)
     assert callable(readiness)
     progress("evaluation_heartbeat")
-    readiness("condition-btc-5m", False)
+    readiness("condition-btc-5m", False, {"subscription_state": "awaiting_first_book"})
     heartbeat = read_runtime_heartbeat(tmp_path / "state" / "runtime_heartbeat.json")
     assert heartbeat.phase == "readiness_miss"
     assert heartbeat.readiness_miss_started_at_by_key == {
         "condition-btc-5m": heartbeat.updated_at,
+    }
+    assert heartbeat.readiness_detail_by_key == {
+        "condition-btc-5m": {"subscription_state": "awaiting_first_book"}
     }
     assert runtime["strategies"][0].strategy_name == "vwap_momentum"
 

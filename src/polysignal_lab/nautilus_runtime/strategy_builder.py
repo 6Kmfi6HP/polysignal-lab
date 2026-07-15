@@ -35,6 +35,9 @@ from polysignal_lab.nautilus_runtime.observability import (
     ObservabilityService,
 )
 from polysignal_lab.nautilus_runtime.paper_risk import PaperRiskGate
+from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    MarketSubscriptionCoordinator,
+)
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
@@ -211,6 +214,7 @@ def _build_native_strategies(
     strategy_type = cast(Callable[..., _NativeStrategyLike], strategy_cls)
     paper_risk_gate = _build_paper_risk_gate(settings, registry)
     strategies: list[_NativeStrategyLike] = []
+    subscription_coordinator = MarketSubscriptionCoordinator()
     strategy_names: set[str] = set()
     for entry in _build_nautilus_config_strategy_schedule(settings):
         name = entry.name
@@ -226,6 +230,7 @@ def _build_native_strategies(
             observability,
             strategy_type,
             paper_risk_gate,
+            subscription_coordinator,
             name,
         )
         if strategy is not None:
@@ -242,6 +247,7 @@ def _build_native_strategy(
     observability: ObservabilityService | None,
     strategy_type: Callable[..., _NativeStrategyLike],
     paper_risk_gate: PaperRiskGate,
+    subscription_coordinator: MarketSubscriptionCoordinator,
     name: str,
 ) -> _NativeStrategyLike | None:
     cfg = cast(object | None, getattr(settings.strategies, name, None))
@@ -266,6 +272,7 @@ def _build_native_strategy(
         instrument_id_resolver=_instrument_id_resolver(registry),
         registry=registry,
         observability=observability,
+        subscription_coordinator=subscription_coordinator,
     )
     _attach_strategy_custom_data(strategy, assembler)
     return strategy
@@ -287,6 +294,7 @@ def _create_native_strategy(
     instrument_id_resolver: Callable[[str], object],
     registry: MarketCatalog,
     observability: ObservabilityService | None,
+    subscription_coordinator: MarketSubscriptionCoordinator,
 ) -> _NativeStrategyLike:
     from nautilus_trader.config import StrategyConfig
 
@@ -305,6 +313,7 @@ def _create_native_strategy(
         observability=observability,
         progress_callback=_runtime_progress_callback(settings),
         readiness_callback=_runtime_readiness_callback(settings),
+        subscription_coordinator=subscription_coordinator,
         unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
         l1_book_snapshot_interval_ms=settings.runtime.nautilus.l1_book_snapshot_interval_ms,
         config=StrategyConfig(strategy_id="PolySignal", order_id_tag=strategy_name),
