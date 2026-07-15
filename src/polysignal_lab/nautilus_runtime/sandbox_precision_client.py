@@ -44,8 +44,8 @@ _MARKET_DATA_TYPES = frozenset(
 class PolySignalSandboxExecutionClient(_NautilusSandboxExecutionClient):
     """Sandbox execution client that normalizes market-data precision.
 
-    QuoteTick / OrderBookDelta prices are normalized to the current instrument
-    before the Nautilus SimulatedExchange validates them.
+    QuoteTick / OrderBookDelta prices are normalized to the matching engine's
+    instrument before the Nautilus SimulatedExchange validates them.
     """
 
     def on_data(self, data: Data) -> None:
@@ -70,6 +70,9 @@ class PolySignalSandboxExecutionClient(_NautilusSandboxExecutionClient):
     def _instrument_for(self, instrument_id: object) -> Instrument | None:
         if not isinstance(instrument_id, InstrumentId):
             return None
+        matching_engine = self.exchange.get_matching_engine(instrument_id)
+        if matching_engine is not None:
+            return cast(Instrument, matching_engine.instrument)
         return self._cache.instrument(instrument_id)
 
 

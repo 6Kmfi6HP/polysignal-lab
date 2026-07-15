@@ -257,6 +257,55 @@ def test_precision_safe_sandbox_client_forwards_non_market_data() -> None:
         assert client.exchange.get_matching_engine(instrument.id) is not None
 
 
+@pytest.mark.parametrize("data_factory", (_mismatched_quote, _mismatched_delta))
+def test_precision_safe_sandbox_client_uses_matching_instrument_after_cache_drift(
+    data_factory,
+) -> None:
+    require_nautilus()
+    matching_instrument = _instrument(2)
+    refreshed_instrument = _instrument(3)
+
+    with asyncio.Runner() as runner:
+        client, cache = _sandbox_client(runner.get_loop(), matching_instrument)
+        client.on_data(matching_instrument)
+        matching_engine = client.exchange.get_matching_engine(matching_instrument.id)
+        assert matching_engine is not None
+        assert matching_engine.instrument.price_precision == 2
+
+        cache.add_instrument(refreshed_instrument)
+        assert cache.instrument(matching_instrument.id).price_precision == 3
+
+        market_data = data_factory(matching_instrument)
+        client.on_data(market_data)
+
+
+def test_precision_safe_sandbox_client_processes_batch_after_cache_drift() -> None:
+    require_nautilus()
+    from nautilus_trader.model.data import OrderBookDeltas
+
+    matching_instrument = _instrument(2)
+    refreshed_instrument = _instrument(3)
+
+    with asyncio.Runner() as runner:
+        client, cache = _sandbox_client(runner.get_loop(), matching_instrument)
+        client.on_data(matching_instrument)
+        cache.add_instrument(refreshed_instrument)
+
+        batch = OrderBookDeltas(
+            matching_instrument.id,
+            [_mismatched_delta(matching_instrument)],
+        )
+        client.on_data(batch)
+
+        matching_engine = client.exchange.get_matching_engine(matching_instrument.id)
+        assert matching_engine is not None
+        book = matching_engine.get_book()
+        assert book.update_count == 1
+        assert book.sequence == 1
+        assert book.best_bid_price() == matching_instrument.make_price(0.45)
+        assert book.best_bid_size() == matching_instrument.make_qty(5.0)
+
+
 def test_live_node_uses_precision_safe_factory_for_real_sandbox() -> None:
     require_nautilus()
     from polysignal_lab.nautilus_runtime import live_node as live_node_mod
