@@ -1,0 +1,9 @@
+disabledExtensions:
+  - skill:webnovel-dashboard
+  - skill:webnovel-doctor
+  - skill:webnovel-init
+  - skill:webnovel-learn
+  - skill:webnovel-plan
+  - skill:webnovel-query
+  - skill:webnovel-review
+  - skill:webnovel-write
