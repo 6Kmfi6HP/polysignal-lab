@@ -128,6 +128,23 @@ def _mismatched_quote(instrument):
     )
 
 
+def _mismatched_trade(instrument):
+    from nautilus_trader.model.data import TradeTick
+    from nautilus_trader.model.enums import AggressorSide
+    from nautilus_trader.model.identifiers import TradeId
+    from nautilus_trader.model.objects import Price, Quantity
+
+    return TradeTick(
+        instrument_id=instrument.id,
+        price=Price.from_str("0.45"),
+        size=Quantity.from_str("5.000000"),
+        aggressor_side=AggressorSide.BUYER,
+        trade_id=TradeId("issue13-cache-drift"),
+        ts_event=1,
+        ts_init=1,
+    )
+
+
 def _mismatched_delta(instrument):
     from nautilus_trader.model.data import BookOrder, OrderBookDelta
     from nautilus_trader.model.enums import BookAction, OrderSide, RecordFlag
@@ -257,7 +274,10 @@ def test_precision_safe_sandbox_client_forwards_non_market_data() -> None:
         assert client.exchange.get_matching_engine(instrument.id) is not None
 
 
-@pytest.mark.parametrize("data_factory", (_mismatched_quote, _mismatched_delta))
+@pytest.mark.parametrize(
+    "data_factory",
+    (_mismatched_quote, _mismatched_trade, _mismatched_delta),
+)
 def test_precision_safe_sandbox_client_uses_matching_instrument_after_cache_drift(
     data_factory,
 ) -> None:
@@ -277,6 +297,7 @@ def test_precision_safe_sandbox_client_uses_matching_instrument_after_cache_drif
 
         market_data = data_factory(matching_instrument)
         client.on_data(market_data)
+        assert client.test_clock.timestamp_ns() == market_data.ts_init
 
 
 def test_precision_safe_sandbox_client_processes_batch_after_cache_drift() -> None:

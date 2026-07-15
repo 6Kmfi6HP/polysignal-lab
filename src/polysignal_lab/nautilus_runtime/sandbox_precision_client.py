@@ -35,6 +35,7 @@ logger = logging.getLogger("polysignal_lab.nautilus.sandbox_precision")
 _MARKET_DATA_TYPES = frozenset(
     {
         "QuoteTick",
+        "TradeTick",
         "OrderBookDelta",
         "OrderBookDeltas",
     }
@@ -44,8 +45,8 @@ _MARKET_DATA_TYPES = frozenset(
 class PolySignalSandboxExecutionClient(_NautilusSandboxExecutionClient):
     """Sandbox execution client that normalizes market-data precision.
 
-    QuoteTick / OrderBookDelta prices are normalized to the matching engine's
-    instrument before the Nautilus SimulatedExchange validates them.
+    QuoteTick / TradeTick / OrderBookDelta prices are normalized to the matching
+    engine's instrument before the Nautilus SimulatedExchange validates them.
     """
 
     def on_data(self, data: Data) -> None:

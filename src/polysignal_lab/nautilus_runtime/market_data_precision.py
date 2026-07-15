@@ -18,10 +18,11 @@ logger = logging.getLogger("polysignal_lab.nautilus.market_data_precision")
 def normalize_market_data_to_instrument(data: object, instrument: object) -> object:
     """Return market data whose price/size precision matches ``instrument``.
 
-    Nautilus OrderMatchingEngine rejects QuoteTick / OrderBookDelta when the
-    embedded Price.precision differs from instrument.price_precision. Polymarket
-    residual local-book levels can carry shorter decimals after tick size moves.
-    This rebuilds only mismatched fields via instrument.make_price / make_qty.
+    Nautilus OrderMatchingEngine rejects QuoteTick / TradeTick / OrderBookDelta
+    when the embedded Price.precision differs from instrument.price_precision.
+    Polymarket residual market data can carry shorter decimals after tick size
+    moves. This rebuilds only mismatched fields via instrument.make_price /
+    make_qty.
     """
     if data is None or instrument is None:
         return data
@@ -29,6 +30,8 @@ def normalize_market_data_to_instrument(data: object, instrument: object) -> obj
     type_name = type(data).__name__
     if type_name == "QuoteTick":
         return _normalize_quote_tick(data, instrument)
+    if type_name == "TradeTick":
+        return _normalize_trade_tick(data, instrument)
     if type_name == "OrderBookDelta":
         return _normalize_order_book_delta(data, instrument)
     if type_name == "OrderBookDeltas":
@@ -72,6 +75,36 @@ def _normalize_quote_tick(tick: object, instrument: object) -> object:
         ask_price=ask_price,
         bid_size=bid_size,
         ask_size=ask_size,
+        ts_event=int(getattr(tick, "ts_event")),
+        ts_init=int(getattr(tick, "ts_init")),
+    )
+
+
+def _normalize_trade_tick(tick: object, instrument: object) -> object:
+    original_price = getattr(tick, "price")
+    original_size = getattr(tick, "size")
+    price = _normalize_price(original_price, instrument)
+    size = _normalize_qty(original_size, instrument)
+    if price is original_price and size is original_size:
+        return tick
+
+    from nautilus_trader.model.data import TradeTick
+
+    _log_normalized(
+        instrument,
+        data_kind="TradeTick",
+        instrument_id=getattr(tick, "instrument_id", None),
+        details=(
+            f"price precision {getattr(original_price, 'precision', None)} -> "
+            f"{getattr(price, 'precision', None)}"
+        ),
+    )
+    return TradeTick(
+        instrument_id=getattr(tick, "instrument_id"),
+        price=price,
+        size=size,
+        aggressor_side=getattr(tick, "aggressor_side"),
+        trade_id=getattr(tick, "trade_id"),
         ts_event=int(getattr(tick, "ts_event")),
         ts_init=int(getattr(tick, "ts_init")),
     )
