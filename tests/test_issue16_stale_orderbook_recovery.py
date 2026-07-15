@@ -24,6 +24,7 @@ from polysignal_lab.nautilus_bridge.market_catalog import (
 )
 from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketUniverseData
 from polysignal_lab.nautilus_runtime.node_builder_components import (
     CacheBoundBookDataProvider,
 )
@@ -1461,6 +1462,31 @@ def test_shared_readiness_uses_runtime_threshold_for_strict_consumers(
             scenario.heartbeat_path
         ).readiness_miss_started_at_by_key
         == {}
+    )
+
+
+def test_later_universe_snapshot_clears_missed_exit_readiness(
+    tmp_path: Path,
+) -> None:
+    scenario = _SharedReadinessScenario(tmp_path)
+    scenario.preload()
+    scenario.first._note_runtime_readiness(scenario.condition_id, ready=False)
+    scenario.second._note_runtime_readiness(scenario.condition_id, ready=False)
+
+    scenario.first.on_data(
+        PolySignalMarketUniverseData(
+            epoch=1,
+            exited_condition_ids=(scenario.condition_id,),
+        )
+    )
+    scenario.second.on_data(PolySignalMarketUniverseData(epoch=2))
+
+    heartbeat = read_runtime_heartbeat(scenario.heartbeat_path)
+    assert heartbeat.readiness_miss_started_at_by_key == {}
+    assert scenario.readiness[-1] == (scenario.condition_id, True)
+    assert (
+        scenario.condition_id
+        not in scenario.second._subscription_state.wire_condition_ids
     )
 
 

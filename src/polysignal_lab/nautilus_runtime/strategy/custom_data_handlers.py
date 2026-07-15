@@ -111,15 +111,22 @@ def handle_market_universe(
     if strategy._market_epoch is not None and data.epoch <= strategy._market_epoch:
         return True
     strategy._market_epoch = data.epoch
-    strategy._active_condition_ids = set(data.active_condition_ids)
+    active_condition_ids = set(data.active_condition_ids)
+    exited_condition_ids = tuple(
+        sorted(
+            set(data.exited_condition_ids)
+            | (strategy._active_condition_ids - active_condition_ids)
+        )
+    )
+    strategy._active_condition_ids = active_condition_ids
     strategy._refresh_asset_conditions()
-    for condition_id in data.exited_condition_ids:
+    for condition_id in exited_condition_ids:
         strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)
         strategy._subscription_state.pending_subscribe_condition_ids.discard(condition_id)
         retire_market_book_generation(strategy, condition_id)
         strategy._note_runtime_readiness(condition_id, ready=True)
     if strategy.unsubscribe_exited:
-        strategy._unsubscribe_market_conditions(data.exited_condition_ids)
+        strategy._unsubscribe_market_conditions(exited_condition_ids)
     strategy._subscribe_market_conditions(tuple(strategy._active_condition_ids))
     return True
 
