@@ -1030,6 +1030,9 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         EVALUATION_HEARTBEAT_TIMER_NAME,
         PolySignalNativeStrategy,
     )
+    from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+        MarketSubscriptionCoordinator,
+    )
 
     class FakeClock:
         def __init__(self) -> None:
@@ -1063,6 +1066,7 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         def evaluate_condition(self, condition_id: str) -> None:
             self.evaluated.append(condition_id)
 
+    coordinator = MarketSubscriptionCoordinator()
     strategy = FakeNativeStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
@@ -1070,6 +1074,7 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         strategy_name="ptb_diff",
         policy=RuntimeFakePolicy(),
         registry=_test_market_catalog(),
+        subscription_coordinator=coordinator,
     )
     strategy._active_condition_ids = {"condition-btc-5m"}
 
@@ -1087,8 +1092,10 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         strategy.clock.timestamp_ns() / 1_000_000_000,
         UTC,
     )
-    strategy._condition_from_market_data = lambda _tick: "condition-btc-5m"
-    strategy.on_quote_tick(SimpleNamespace(ts_event=1))
+    strategy._evaluate_market_data_condition(
+        "condition-btc-5m",
+        event=SimpleNamespace(ts_event=1),
+    )
     assert strategy._last_market_data_evaluation_at["condition-btc-5m"] == datetime.fromtimestamp(
         strategy.clock.timestamp_ns() / 1_000_000_000,
         UTC,
@@ -1105,9 +1112,22 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         "condition-btc-5m",
     ]
 
+    assert coordinator.unready_consumer("condition-btc-5m") is strategy
     strategy.on_stop()
 
     assert strategy.clock.canceled == [EVALUATION_HEARTBEAT_TIMER_NAME]
+    assert coordinator.unready_consumer("condition-btc-5m") is None
+    assert strategy._subscription_coordinator is coordinator
+
+    strategy.on_start()
+
+    assert coordinator.unready_consumer("condition-btc-5m") is strategy
+    strategy.on_stop()
+    assert strategy.clock.canceled == [
+        EVALUATION_HEARTBEAT_TIMER_NAME,
+        EVALUATION_HEARTBEAT_TIMER_NAME,
+    ]
+    assert coordinator.unready_consumer("condition-btc-5m") is None
 
 def test_native_strategy_reports_progress_on_internal_evaluation_heartbeat() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -1474,7 +1494,7 @@ def test_native_strategy_routes_decisions_through_policy_actor_decide() -> None:
     assert submitted == [(approved_decision, view)]
 
 
-def test_cache_market_data_provider_uses_nautilus_order_book_methods_and_ts_last() -> None:
+def test_cache_market_data_provider_uses_observed_receipt_time_for_freshness() -> None:
     from nautilus_trader.model.identifiers import InstrumentId
 
     from polysignal_lab.nautilus_runtime.cache_market_data import (
@@ -1526,15 +1546,17 @@ def test_cache_market_data_provider_uses_nautilus_order_book_methods_and_ts_last
     )
     provider = NautilusCacheMarketDataProvider(cast(Any, Cache()), catalog=registry)
 
-    now = datetime.fromtimestamp(1_800_000_000, UTC)
+    received_at = datetime.fromtimestamp(1_800_000_119, UTC)
+    provider.observe_book_received("up-token", received_at=received_at)
+    now = datetime.fromtimestamp(1_800_000_120, UTC)
     book = provider.book_for_token("up-token", now=now)
 
     assert book is not None
     assert book.best_bid == 0.49
     assert book.best_ask == 0.51
     assert book.ask_levels == ((0.51, 20.0), (0.52, 10.0))
-    assert book.received_at == datetime.fromtimestamp(1_800_000_000, UTC)
-    assert book.freshness_ms is not None
+    assert book.received_at == received_at
+    assert book.freshness_ms == 1_000
 
 
 def test_cache_market_data_provider_treats_missing_trade_ticks_as_empty() -> None:

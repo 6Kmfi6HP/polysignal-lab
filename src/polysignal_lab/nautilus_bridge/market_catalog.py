@@ -79,8 +79,14 @@ class MarketPairMeta:
     def from_metadata(cls, meta: object) -> "MarketPairMeta":
         start_ts_ns = cast(int | float | None, getattr(meta, "start_ts_ns", None))
         end_ts_ns = cast(int | float | None, getattr(meta, "end_ts_ns", None))
-        start_ts = datetime.fromtimestamp(start_ts_ns / 1e9, tz=UTC) if start_ts_ns is not None else None
-        end_ts = datetime.fromtimestamp(end_ts_ns / 1e9, tz=UTC) if end_ts_ns is not None else None
+        start_ts = (
+            datetime.fromtimestamp(start_ts_ns / 1e9, tz=UTC)
+            if start_ts_ns
+            else None
+        )
+        end_ts = (
+            datetime.fromtimestamp(end_ts_ns / 1e9, tz=UTC) if end_ts_ns else None
+        )
         asset = cast(str, getattr(meta, "asset"))
         return cls(
             market_id=cast(str, getattr(meta, "market_id")),

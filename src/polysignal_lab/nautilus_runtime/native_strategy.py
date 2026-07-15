@@ -30,6 +30,7 @@ from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_bridge.market_catalog import (
     MarketCatalog,
 )
+from polysignal_lab.nautilus_bridge.market_view_assembler import BookReceiptObserver
 from polysignal_lab.nautilus_bridge.state import save_strategy_state, load_strategy_state
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
@@ -90,6 +91,7 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     observe_market_book_side as _observe_market_book_side_fn,
     refresh_asset_conditions as _refresh_asset_conditions_fn,
     refresh_stale_market_subscription as _refresh_stale_market_subscription_fn,
+    retire_market_book_generation as _retire_market_book_generation_fn,
     retry_market_instrument_requests as _retry_market_instrument_requests_fn,
     subscribe_market_conditions as _subscribe_market_conditions_fn,
     subscribe_market_instrument as _subscribe_market_instrument_fn,
@@ -327,28 +329,38 @@ class PolySignalNativeStrategy(Strategy):
         condition_id: str,
         *,
         now: datetime,
-    ) -> tuple[dict[str, str | None], dict[str, int | None], int | None]:
-        last_books = self._subscription_state.last_book_at_by_condition.get(
-            condition_id,
-            {},
-        )
+    ) -> tuple[
+        dict[str, str | None],
+        dict[str, str | None],
+        dict[str, int | None],
+        int | None,
+    ]:
+        state = self._subscription_state
+        last_books = state.last_book_at_by_condition.get(condition_id, {})
+        last_receipts = state.last_book_received_at_by_condition.get(condition_id, {})
         last_book_at_by_side: dict[str, str | None] = {}
+        last_received_at_by_side: dict[str, str | None] = {}
         freshness_ms_by_side: dict[str, int | None] = {}
         for side in (Side.UP, Side.DOWN):
-            observed_at = last_books.get(side)
+            book_at = last_books.get(side)
+            received_at = last_receipts.get(side)
             last_book_at_by_side[side.value] = (
-                None if observed_at is None else observed_at.isoformat()
+                None if book_at is None else book_at.isoformat()
+            )
+            last_received_at_by_side[side.value] = (
+                None if received_at is None else received_at.isoformat()
             )
             freshness_ms_by_side[side.value] = (
                 None
-                if observed_at is None
-                else max(0, int((now - observed_at).total_seconds() * 1000))
+                if received_at is None
+                else max(0, int((now - received_at).total_seconds() * 1000))
             )
         freshness_values = [
             value for value in freshness_ms_by_side.values() if value is not None
         ]
         return (
             last_book_at_by_side,
+            last_received_at_by_side,
             freshness_ms_by_side,
             max(freshness_values) if freshness_values else None,
         )
@@ -363,6 +375,8 @@ class PolySignalNativeStrategy(Strategy):
         state = self._subscription_state
         if preloaded:
             return "preloaded"
+        if condition_id in state.deferred_resubscribe_condition_ids:
+            return "resubscribe_pending"
         if condition_id in state.pending_metadata_condition_ids:
             return "pending_metadata"
         if condition_id in state.pending_subscribe_condition_ids:
@@ -385,9 +399,12 @@ class PolySignalNativeStrategy(Strategy):
         registry = self._require_registry()
         pair = None if registry is None else registry.by_condition(condition_id)
         pending_sides = state.awaiting_book_sides_by_condition.get(condition_id, set())
-        last_books, freshness_by_side, max_freshness_ms = (
-            self._book_readiness_detail(condition_id, now=now)
-        )
+        (
+            last_books,
+            last_receipts,
+            freshness_by_side,
+            max_freshness_ms,
+        ) = self._book_readiness_detail(condition_id, now=now)
         subscription_state = self._subscription_readiness_state(
             condition_id,
             preloaded=bool(
@@ -414,6 +431,7 @@ class PolySignalNativeStrategy(Strategy):
             ),
             "awaiting_book_sides": sorted(side.value for side in pending_sides),
             "last_book_at_by_side": last_books,
+            "last_book_received_at_by_side": last_receipts,
             "freshness_ms_by_side": freshness_by_side,
             "max_freshness_ms": max_freshness_ms,
         }
@@ -512,6 +530,9 @@ class PolySignalNativeStrategy(Strategy):
 
     def on_start(self) -> None:
         self._note_runtime_progress("start")
+        coordinator = self._subscription_coordinator
+        if coordinator is not None:
+            coordinator.register(self)
         _ = self._require_registry()
         _ = self._require_assembler()
         self._subscribe_market_conditions(self._startup_condition_ids)
@@ -549,7 +570,12 @@ class PolySignalNativeStrategy(Strategy):
                 raise
 
     def on_stop(self) -> None:
-        _ = self.clock.cancel_timer(EVALUATION_HEARTBEAT_TIMER_NAME)
+        try:
+            _ = self.clock.cancel_timer(EVALUATION_HEARTBEAT_TIMER_NAME)
+        finally:
+            coordinator = self._subscription_coordinator
+            if coordinator is not None:
+                coordinator.unregister(self)
 
     def on_save(self) -> dict[str, bytes]:
         return save_strategy_state(self.strategy_name, self.core)
@@ -562,6 +588,11 @@ class PolySignalNativeStrategy(Strategy):
         self._note_runtime_progress("evaluation_heartbeat")
         now = self._framework_now()
         for condition_id in tuple(sorted(self._active_condition_ids)):
+            if self._retire_expired_condition(condition_id, now=now):
+                continue
+            coordinator = self._subscription_coordinator
+            if coordinator is not None:
+                _ = coordinator.resume_pending(self, condition_id, now=now)
             last_market_data_eval = self._last_market_data_evaluation_at.get(condition_id)
             if (
                 last_market_data_eval is not None
@@ -596,10 +627,9 @@ class PolySignalNativeStrategy(Strategy):
         return condition_id
 
     def on_quote_tick(self, tick: object) -> None:
-        condition_id = self._condition_from_market_data(tick)
-        if condition_id is None:
-            return
-        self._evaluate_market_data_condition(condition_id, event=tick)
+        # Polymarket quote ticks are emitted from the same snapshots/deltas
+        # that maintain the adapter's order book, including unchanged snapshots.
+        self._evaluate_order_book_event(tick)
 
     def on_order_book(self, book: object) -> None:
         self._evaluate_order_book_event(book)
@@ -610,24 +640,25 @@ class PolySignalNativeStrategy(Strategy):
             return
         self._evaluate_market_data_condition(condition_id, event=tick)
 
-    def _evaluate_order_book_event(self, event: object) -> None:
-        condition_id = self._condition_from_market_data(event)
-        if condition_id is None:
-            return
-        registry = self._require_registry()
+    def _order_book_observation(
+        self,
+        event: object,
+        condition_id: str,
+        registry: MarketCatalog,
+    ) -> tuple[datetime, Side, datetime, datetime] | None:
         instrument_id = _identifier_text(getattr(event, "instrument_id", None))
-        if registry is None or instrument_id is None:
-            self._note_runtime_progress("dropped_frame")
-            return
+        if instrument_id is None:
+            return None
         token_id = _token_id_from_catalog_instrument(
             registry,
             condition_id,
             instrument_id,
         )
-        token = None if token_id is None else registry.token_meta(token_id)
+        if token_id is None:
+            return None
+        token = registry.token_meta(token_id)
         if token is None:
-            self._note_runtime_progress("dropped_frame")
-            return
+            return None
         now = self._framework_now()
         try:
             received_at, book_at = self._order_book_event_times(
@@ -635,12 +666,30 @@ class PolySignalNativeStrategy(Strategy):
                 received_at=now,
             )
         except ValueError:
+            return None
+        assembler = self._require_assembler()
+        if isinstance(assembler, BookReceiptObserver):
+            assembler.observe_book_received(token_id, received_at=received_at)
+        return now, token.side, received_at, book_at
+
+    def _evaluate_order_book_event(self, event: object) -> None:
+        condition_id = self._condition_from_market_data(event)
+        if condition_id is None:
+            return
+        registry = self._require_registry()
+        observation = (
+            None
+            if registry is None
+            else self._order_book_observation(event, condition_id, registry)
+        )
+        if observation is None or registry is None:
             self._note_runtime_progress("dropped_frame")
             return
+        now, side, received_at, book_at = observation
         generation_ready = _observe_market_book_side_fn(
             self,
             condition_id,
-            token.side,
+            side,
             received_at=received_at,
             book_at=book_at,
         )
@@ -735,6 +784,52 @@ class PolySignalNativeStrategy(Strategy):
             self._exit_inflight.discard(position_id)
         _handle_position_closed(self, position)
 
+    def _skip_preloaded_condition(
+        self,
+        condition_id: str,
+        *,
+        now: datetime,
+    ) -> bool:
+        registry = self._require_registry()
+        pair = None if registry is None else registry.by_condition(condition_id)
+        if pair is None or pair.start_ts is None or now >= pair.start_ts:
+            return False
+        if condition_id in self._runtime_readiness_miss_condition_ids:
+            self._note_runtime_readiness(condition_id, ready=True)
+        return True
+
+    def _retire_expired_condition(
+        self,
+        condition_id: str,
+        *,
+        now: datetime,
+    ) -> bool:
+        registry = self._require_registry()
+        pair = None if registry is None else registry.by_condition(condition_id)
+        end_ts = None if pair is None else getattr(pair, "end_ts", None)
+        if end_ts is None or now < end_ts:
+            return False
+        self._active_condition_ids.discard(condition_id)
+        self._subscription_state.pending_metadata_condition_ids.discard(condition_id)
+        self._subscription_state.pending_subscribe_condition_ids.discard(condition_id)
+        _retire_market_book_generation_fn(self, condition_id)
+        if self.unsubscribe_exited:
+            self._unsubscribe_market_conditions((condition_id,))
+        self._refresh_asset_conditions()
+        self._note_runtime_readiness(condition_id, ready=True)
+        return True
+
+    def _mark_condition_unready(
+        self,
+        condition_id: str,
+        *,
+        refresh: bool,
+    ) -> None:
+        self._note_runtime_progress("readiness_miss")
+        self._note_runtime_readiness(condition_id, ready=False)
+        if refresh:
+            _ = self.refresh_stale_market_subscription(condition_id)
+
     def evaluate_condition(
         self,
         condition_id: str,
@@ -744,40 +839,30 @@ class PolySignalNativeStrategy(Strategy):
         if condition_id not in self._active_condition_ids:
             return
         now = created_at or self._framework_now()
-        registry = self._require_registry()
-        pair = None if registry is None else registry.by_condition(condition_id)
-        if pair is not None and pair.start_ts is not None and now < pair.start_ts:
-            if condition_id in self._runtime_readiness_miss_condition_ids:
-                self._note_runtime_readiness(condition_id, ready=True)
+        if self._retire_expired_condition(condition_id, now=now):
+            return
+        if self._skip_preloaded_condition(condition_id, now=now):
+            return
+        if condition_id in self._subscription_state.deferred_resubscribe_condition_ids:
+            self._mark_condition_unready(condition_id, refresh=True)
             return
         if not _market_book_generation_ready_fn(self, condition_id):
-            self._note_runtime_progress("readiness_miss")
-            self._note_runtime_readiness(condition_id, ready=False)
-            if _market_book_generation_stalled_fn(
+            stalled = _market_book_generation_stalled_fn(
                 self,
                 condition_id,
                 now=now,
-            ):
-                _ = self.refresh_stale_market_subscription(condition_id)
+            )
+            self._mark_condition_unready(condition_id, refresh=stalled)
             return
         view = self._require_assembler().build(condition_id, created_at=now)
-        if view is None:
-            self._note_runtime_progress("readiness_miss")
-            self._note_runtime_readiness(condition_id, ready=False)
-            _ = self.refresh_stale_market_subscription(condition_id)
-            return
-        if not _market_view_ready(view):
-            self._note_runtime_progress("readiness_miss")
-            self._note_runtime_readiness(condition_id, ready=False)
-            _ = self.refresh_stale_market_subscription(condition_id)
+        if view is None or not _market_view_ready(view):
+            self._mark_condition_unready(condition_id, refresh=True)
             return
         market_view = cast(MarketView, view)
         stale_sides = self._stale_orderbook_sides(market_view)
         if stale_sides is not None:
             self._stale_orderbook_recovery_by_condition[condition_id] = stale_sides
-            self._note_runtime_progress("readiness_miss")
-            self._note_runtime_readiness(condition_id, ready=False)
-            _ = self.refresh_stale_market_subscription(condition_id)
+            self._mark_condition_unready(condition_id, refresh=True)
             return
         self._evaluate_ready_condition(
             condition_id,

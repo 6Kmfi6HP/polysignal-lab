@@ -26,6 +26,22 @@ class NautilusCacheMarketDataProvider:
     def __init__(self, cache: object, *, catalog: MarketCatalog) -> None:
         self._cache: object = cache
         self._catalog: MarketCatalog = catalog
+        self._book_received_at_by_token: dict[str, datetime] = {}
+
+    def observe_book_received(
+        self,
+        token_id: str,
+        *,
+        received_at: datetime,
+    ) -> None:
+        observed = (
+            received_at
+            if received_at.tzinfo is not None
+            else received_at.replace(tzinfo=UTC)
+        ).astimezone(UTC)
+        previous = self._book_received_at_by_token.get(token_id)
+        if previous is None or observed >= previous:
+            self._book_received_at_by_token[token_id] = observed
 
     def book_for_token(
         self,
@@ -44,9 +60,9 @@ class NautilusCacheMarketDataProvider:
         best_bid = bids[0][0] if bids else None
         best_ask = asks[0][0] if asks else None
         spread = round(best_ask - best_bid, 10) if best_bid is not None and best_ask is not None else None
-        received_at = _datetime_or_none(
-            getattr(book, "received_at", getattr(book, "ts_last", None))
-        )
+        received_at = self._book_received_at_by_token.get(token_id)
+        if received_at is None:
+            received_at = _datetime_or_none(getattr(book, "received_at", None))
         return SideBookView(
             token_id=token_id,
             best_bid=best_bid,

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from typing_extensions import final
 
@@ -26,6 +26,16 @@ from polysignal_lab.utils import stable_hash
 
 if TYPE_CHECKING:
     from polysignal_lab.nautilus_runtime.custom_data_state import CustomDataSnapshotProvider
+
+
+@runtime_checkable
+class BookReceiptObserver(Protocol):
+    def observe_book_received(
+        self,
+        token_id: str,
+        *,
+        received_at: datetime,
+    ) -> None: ...
 
 
 class BookDataProvider(Protocol):
@@ -51,6 +61,16 @@ class MarketViewAssembler:
         self.catalog: MarketCatalog = catalog
         self.books: BookDataProvider = books
         self.custom_data: CustomDataSnapshotProvider = custom_data
+
+    def observe_book_received(
+        self,
+        token_id: str,
+        *,
+        received_at: datetime,
+    ) -> None:
+        if isinstance(self.books, BookReceiptObserver):
+            self.books.observe_book_received(token_id, received_at=received_at)
+
 
     def with_custom_data(self, custom_data: CustomDataSnapshotProvider) -> MarketViewAssembler:
         return MarketViewAssembler(

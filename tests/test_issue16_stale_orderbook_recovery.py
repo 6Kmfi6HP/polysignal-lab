@@ -22,6 +22,11 @@ from polysignal_lab.nautilus_bridge.market_catalog import (
     MarketCatalog,
     MarketPairMeta,
 )
+from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+from polysignal_lab.nautilus_runtime.node_builder_components import (
+    CacheBoundBookDataProvider,
+)
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
@@ -63,6 +68,7 @@ class _SubscriptionTestStrategy:
         self.trade_unsubs: list[str] = []
         self.requests: list[str] = []
         self.fail_quote_subscribe = False
+        self.quote_subscribe_attempts = 0
         self.name = name
         self.operations = operations
 
@@ -79,6 +85,7 @@ class _SubscriptionTestStrategy:
         self.requests.append(str(instrument_id))
 
     def subscribe_quote_ticks(self, instrument_id: object) -> None:
+        self.quote_subscribe_attempts += 1
         if self.fail_quote_subscribe:
             raise ValueError("The instrument has not been registered")
         self.quote_subs.append(str(instrument_id))
@@ -134,6 +141,7 @@ def _subscription_test_strategy(
 def _runtime_market_registry(
     *,
     start_ts: datetime,
+    end_ts: datetime | None = None,
 ) -> tuple[MarketCatalog, dict[Side, str]]:
     condition_id = "condition-a"
     instrument_ids = {
@@ -155,7 +163,7 @@ def _runtime_market_registry(
             asset="BTC",
             timeframe="5m",
             start_ts=start_ts,
-            end_ts=None,
+            end_ts=end_ts,
             up=InstrumentTokenMeta("up-a", Side.UP),
             down=InstrumentTokenMeta("down-a", Side.DOWN),
         )
@@ -186,10 +194,34 @@ class _RuntimeAssembler:
 
     def __init__(self, view: _RuntimeView | None = None) -> None:
         self.view = view or _RuntimeView()
+        self.book_receipts: list[tuple[str, datetime]] = []
+
+    def observe_book_received(
+        self,
+        token_id: str,
+        *,
+        received_at: datetime,
+    ) -> None:
+        self.book_receipts.append((token_id, received_at))
 
     def build(self, condition_id: str, *, created_at: datetime) -> _RuntimeView:
         _ = condition_id, created_at
         return self.view
+
+
+class _ReceiptRuntimeAssembler(_RuntimeAssembler):
+    def build(self, condition_id: str, *, created_at: datetime) -> _RuntimeView:
+        _ = condition_id
+        latest_receipts = dict(self.book_receipts)
+        view = _RuntimeView()
+        for token_id, side in (("up-a", Side.UP), ("down-a", Side.DOWN)):
+            received_at = latest_receipts.get(token_id)
+            view.books[side].freshness_ms = (
+                1_000_000
+                if received_at is None
+                else max(0, int((created_at - received_at).total_seconds() * 1000))
+            )
+        return view
 
 
 class _RuntimeCore:
@@ -219,14 +251,25 @@ class _RuntimeBookEvent:
 class _Issue16Strategy(PolySignalNativeStrategy):
     now = _dt(0)
 
+    @property
+    def subscription_operations(self) -> list[tuple[str, str]]:
+        operations = getattr(self, "_subscription_operations", None)
+        if operations is None:
+            operations = []
+            self._subscription_operations = operations
+        return operations
+
+    def _record_subscription(self, operation: str, instrument_id: object) -> None:
+        self.subscription_operations.append((operation, str(instrument_id)))
+
     def _framework_now(self) -> datetime:
         return self.now
 
     def subscribe_quote_ticks(self, instrument_id: object) -> None:
-        _ = instrument_id
+        self._record_subscription("quote", instrument_id)
 
     def subscribe_trade_ticks(self, instrument_id: object) -> None:
-        _ = instrument_id
+        self._record_subscription("trade", instrument_id)
 
     def subscribe_order_book_deltas(
         self,
@@ -234,16 +277,17 @@ class _Issue16Strategy(PolySignalNativeStrategy):
         *,
         book_type: object,
     ) -> None:
-        _ = instrument_id, book_type
+        _ = book_type
+        self._record_subscription("book", instrument_id)
 
     def unsubscribe_quote_ticks(self, instrument_id: object) -> None:
-        _ = instrument_id
+        self._record_subscription("unsubscribe_quote", instrument_id)
 
     def unsubscribe_trade_ticks(self, instrument_id: object) -> None:
-        _ = instrument_id
+        self._record_subscription("unsubscribe_trade", instrument_id)
 
     def unsubscribe_order_book_deltas(self, instrument_id: object) -> None:
-        _ = instrument_id
+        self._record_subscription("unsubscribe_book", instrument_id)
 
 
 class _SharedReadinessScenario:
@@ -623,12 +667,258 @@ def test_coordinated_refresh_resubscribes_all_consumers() -> None:
     coordinator.register(second)
 
     assert coordinator.refresh(first, "condition-a", now=_dt(30))
+    assert operations == []
+    for consumer in (first, second):
+        assert consumer._subscription_state.deferred_resubscribe_condition_ids == {
+            "condition-a"
+        }
+
+    assert coordinator.refresh(first, "condition-a", now=_dt(31))
     for name in ("first", "second"):
         assert operations.count((name, "unsubscribe")) == 2
+        assert operations.count((name, "subscribe")) == 0
+    for consumer in (first, second):
+        assert consumer._subscription_state.awaiting_book_sides_by_condition == {}
+
+    assert coordinator.refresh(first, "condition-a", now=_dt(61))
+    for name in ("first", "second"):
         assert operations.count((name, "subscribe")) == 2
     for consumer in (first, second):
+        assert consumer._subscription_state.deferred_resubscribe_condition_ids == set()
         assert consumer._subscription_state.awaiting_book_sides_by_condition == {
             "condition-a": {Side.UP, Side.DOWN}
+        }
+
+
+def test_coordinated_refresh_batches_conditions_for_websocket_reconnect() -> None:
+    strategy = _subscription_test_strategy()
+    strategy.registry.register(
+        MarketPairMeta(
+            market_id="m-b",
+            market_slug="eth-updown-5m-b",
+            condition_id="condition-b",
+            asset="ETH",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-b", Side.UP),
+            down=InstrumentTokenMeta("down-b", Side.DOWN),
+        )
+    )
+    strategy._active_condition_ids.add("condition-b")
+    subscribe_market_conditions(
+        strategy,
+        ("condition-a", "condition-b"),
+        now=_dt(0),
+    )
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(30))
+    assert coordinator.refresh(strategy, "condition-b", now=_dt(30))
+    assert strategy.book_unsubs == []
+
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(31))
+    assert coordinator.refresh(strategy, "condition-b", now=_dt(31))
+    assert strategy._subscription_state.wire_condition_ids == set()
+    assert strategy._subscription_state.deferred_resubscribe_condition_ids == {
+        "condition-a",
+        "condition-b",
+    }
+
+    operation_count = len(strategy.book_subs)
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(61))
+    assert len(strategy.book_subs) == operation_count + 4
+    assert strategy._subscription_state.wire_condition_ids == {
+        "condition-a",
+        "condition-b",
+    }
+
+def test_coordinated_refresh_resets_all_wire_conditions_on_one_stale_trigger() -> None:
+    strategy = _subscription_test_strategy()
+    for suffix, asset in (("b", "ETH"), ("c", "SOL")):
+        strategy.registry.register(
+            MarketPairMeta(
+                market_id=f"m-{suffix}",
+                market_slug=f"{asset.lower()}-updown-5m-{suffix}",
+                condition_id=f"condition-{suffix}",
+                asset=asset,
+                timeframe="5m",
+                start_ts=None,
+                end_ts=None,
+                up=InstrumentTokenMeta(f"up-{suffix}", Side.UP),
+                down=InstrumentTokenMeta(f"down-{suffix}", Side.DOWN),
+            )
+        )
+    strategy._active_condition_ids.update({"condition-b", "condition-c"})
+    subscribe_market_conditions(
+        strategy,
+        ("condition-a", "condition-b", "condition-c"),
+        now=_dt(0),
+    )
+    strategy._active_condition_ids.remove("condition-c")
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(30))
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(31))
+    assert strategy._subscription_state.wire_condition_ids == set()
+
+    operation_count = len(strategy.book_subs)
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(61))
+    assert len(strategy.book_subs) == operation_count + 6
+    assert strategy._subscription_state.wire_condition_ids == {
+        "condition-a",
+        "condition-b",
+        "condition-c",
+    }
+    assert strategy._subscription_state.retained_wire_condition_ids == set()
+    assert "condition-c" not in (
+        strategy._subscription_state.awaiting_book_sides_by_condition
+    )
+
+
+def test_coordinated_refresh_does_not_restore_owner_exited_during_settle() -> None:
+    strategy = _subscription_test_strategy()
+    strategy.registry.register(
+        MarketPairMeta(
+            market_id="m-b",
+            market_slug="eth-updown-5m-b",
+            condition_id="condition-b",
+            asset="ETH",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-b", Side.UP),
+            down=InstrumentTokenMeta("down-b", Side.DOWN),
+        )
+    )
+    strategy._active_condition_ids.add("condition-b")
+    subscribe_market_conditions(
+        strategy,
+        ("condition-a", "condition-b"),
+        now=_dt(0),
+    )
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(30))
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(31))
+    strategy._active_condition_ids.remove("condition-b")
+
+    operation_count = len(strategy.book_subs)
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(61))
+    assert len(strategy.book_subs) == operation_count + 2
+    assert strategy._subscription_state.wire_condition_ids == {"condition-a"}
+    assert "condition-b" not in (
+        strategy._subscription_state.deferred_resubscribe_condition_ids
+    )
+
+
+def test_coordinated_refresh_drains_batch_after_full_rotation() -> None:
+    strategy = _subscription_test_strategy()
+    strategy.registry.register(
+        MarketPairMeta(
+            market_id="m-b",
+            market_slug="eth-updown-5m-b",
+            condition_id="condition-b",
+            asset="ETH",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-b", Side.UP),
+            down=InstrumentTokenMeta("down-b", Side.DOWN),
+        )
+    )
+    subscribe_market_conditions(strategy, ("condition-a",), now=_dt(0))
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(30))
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(31))
+
+    strategy._active_condition_ids = {"condition-b"}
+    subscribe_market_conditions(strategy, ("condition-b",), now=_dt(40))
+    assert strategy._subscription_state.wire_condition_ids == set()
+    assert strategy._subscription_state.deferred_resubscribe_condition_ids == {
+        "condition-a",
+        "condition-b",
+    }
+
+    assert coordinator.resume_pending(strategy, "condition-b", now=_dt(61))
+    assert strategy._subscription_state.wire_condition_ids == {"condition-b"}
+    assert strategy._subscription_state.deferred_resubscribe_condition_ids == set()
+
+
+def test_new_subscription_joins_earliest_pending_refresh_deadline() -> None:
+    strategy = _subscription_test_strategy()
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+    coordinator._resubscribe_not_before_by_condition.update(
+        {
+            "fast-condition": _dt(60),
+            "slow-condition": _dt(300),
+        }
+    )
+    assert coordinator.defer_subscription(strategy, "slow-condition")
+    assert (
+        coordinator._resubscribe_not_before_by_condition["slow-condition"]
+        == _dt(300)
+    )
+
+    subscribe_market_conditions(strategy, ("condition-a",), now=_dt(40))
+    assert strategy._subscription_state.wire_condition_ids == set()
+    assert coordinator.resume_pending(strategy, "condition-a", now=_dt(60))
+    assert strategy._subscription_state.wire_condition_ids == {"condition-a"}
+    assert "condition-a" not in (
+        strategy._subscription_state.deferred_resubscribe_condition_ids
+    )
+
+
+def test_coordinated_refresh_backs_off_after_subscribe_failure() -> None:
+    strategy = _subscription_test_strategy()
+    subscribe_market_conditions(strategy, ("condition-a",), now=_dt(0))
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(30))
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(31))
+    strategy.fail_quote_subscribe = True
+    attempts_before_failure = strategy.quote_subscribe_attempts
+
+    assert not coordinator.refresh(strategy, "condition-a", now=_dt(61))
+    assert strategy.quote_subscribe_attempts == attempts_before_failure + 2
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(62))
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(90))
+    assert strategy.quote_subscribe_attempts == attempts_before_failure + 2
+
+    assert not coordinator.refresh(strategy, "condition-a", now=_dt(91))
+    assert strategy.quote_subscribe_attempts == attempts_before_failure + 4
+
+
+def test_heartbeat_resumes_deferred_refresh_before_recent_data_skip(
+    tmp_path: Path,
+) -> None:
+    scenario = _SharedReadinessScenario(tmp_path)
+    scenario.preload()
+    scenario.enter_market()
+    assert scenario.first.refresh_stale_market_subscription(scenario.condition_id)
+    for strategy in (scenario.first, scenario.second):
+        strategy.now = _dt(11)
+        strategy._last_market_data_evaluation_at[scenario.condition_id] = _dt(11)
+
+    scenario.first._on_evaluation_heartbeat(None)
+    for strategy in (scenario.first, scenario.second):
+        assert strategy._subscription_state.deferred_resubscribe_condition_ids == {
+            scenario.condition_id
+        }
+        strategy.now = _dt(41)
+        strategy._last_market_data_evaluation_at[scenario.condition_id] = _dt(41)
+
+    scenario.first._on_evaluation_heartbeat(None)
+    for strategy in (scenario.first, scenario.second):
+        assert strategy._subscription_state.deferred_resubscribe_condition_ids == set()
+        assert strategy._subscription_state.awaiting_book_sides_by_condition == {
+            scenario.condition_id: {Side.UP, Side.DOWN}
         }
 
 
@@ -697,6 +987,160 @@ def test_record_rejected_stale_orderbook_triggers_subscription_refresh() -> None
     assert calls == ["condition-a"]
 
 
+def test_order_book_event_records_receipt_time_for_market_view_freshness() -> None:
+    condition_id = "condition-a"
+    registry, instrument_ids = _runtime_market_registry(start_ts=_dt(0))
+    assembler = _RuntimeAssembler()
+    strategy = _Issue16Strategy(
+        core=_RuntimeCore(),
+        assembler=assembler,
+        condition_ids=(condition_id,),
+        strategy_name="test",
+        policy=DecisionPolicy(),
+        registry=registry,
+    )
+    strategy.now = _dt(10)
+    strategy._subscribe_market_conditions((condition_id,))
+
+    strategy.on_order_book_deltas(
+        _RuntimeBookEvent(
+            instrument_ids[Side.UP],
+            ts_init=int(_dt(10).timestamp() * 1_000_000_000),
+            ts_event=int(_dt(0).timestamp() * 1_000_000_000),
+        )
+    )
+
+    assert assembler.book_receipts == [("up-a", _dt(10))]
+
+
+def test_market_view_receipt_reaches_cache_provider() -> None:
+    registry, _ = _runtime_market_registry(start_ts=_dt(0))
+
+    class Level:
+        def __init__(self, price: float, size: float) -> None:
+            self.price = price
+            self.size = size
+
+    class Book:
+        bids = (Level(0.49, 10.0),)
+        asks = (Level(0.51, 20.0),)
+        received_at = None
+
+    class Cache:
+        def order_book(self, instrument_id: object) -> Book:
+            _ = instrument_id
+            return Book()
+
+        def trade_ticks(self, instrument_id: object) -> tuple[()]:
+            _ = instrument_id
+            return ()
+
+    books = CacheBoundBookDataProvider(registry)
+    books.bind_cache(Cache())
+    assembler = MarketViewAssembler(
+        catalog=registry,
+        books=books,
+        custom_data=StrategyCustomDataState(),
+    )
+
+    assembler.observe_book_received("up-a", received_at=_dt(10))
+
+    book = books.book_for_token("up-a", now=_dt(11))
+    assert book is not None
+    assert book.received_at == _dt(10)
+    assert book.freshness_ms == 1_000
+
+
+def test_quote_tick_records_unchanged_resubscribe_snapshot_receipt() -> None:
+    condition_id = "condition-a"
+    registry, instrument_ids = _runtime_market_registry(start_ts=_dt(0))
+    assembler = _RuntimeAssembler()
+    strategy = _Issue16Strategy(
+        core=_RuntimeCore(),
+        assembler=assembler,
+        condition_ids=(condition_id,),
+        strategy_name="test",
+        policy=DecisionPolicy(),
+        registry=registry,
+    )
+    strategy.now = _dt(10)
+    strategy._subscribe_market_conditions((condition_id,))
+
+    strategy.on_quote_tick(
+        _RuntimeBookEvent(
+            instrument_ids[Side.UP],
+            ts_init=int(_dt(10).timestamp() * 1_000_000_000),
+            ts_event=int(_dt(0).timestamp() * 1_000_000_000),
+        )
+    )
+
+    assert assembler.book_receipts == [("up-a", _dt(10))]
+    assert strategy._subscription_state.awaiting_book_sides_by_condition == {
+        condition_id: {Side.DOWN}
+    }
+
+
+def test_resubscribe_snapshot_reopens_strict_strategy_trigger_window() -> None:
+    condition_id = "condition-a"
+    registry, instrument_ids = _runtime_market_registry(start_ts=_dt(0))
+    assembler = _ReceiptRuntimeAssembler()
+    core = _RuntimeCore()
+    strategy = _Issue16Strategy(
+        core=core,
+        assembler=assembler,
+        condition_ids=(condition_id,),
+        strategy_name="test",
+        policy=DecisionPolicy(
+            strategy_freshness_policies={
+                "test": FreshnessPolicy(max_orderbook_staleness_ms=1_200)
+            }
+        ),
+        registry=registry,
+    )
+    stale_book_at = int(_dt(0).timestamp() * 1_000_000_000)
+    strategy.now = _dt(10)
+    strategy.on_order_book_deltas(
+        _RuntimeBookEvent(
+            instrument_ids[Side.UP],
+            ts_init=int(strategy.now.timestamp() * 1_000_000_000),
+            ts_last=stale_book_at,
+        )
+    )
+    for side in (Side.UP, Side.DOWN):
+        strategy.on_order_book_deltas(
+            _RuntimeBookEvent(
+                instrument_ids[side],
+                ts_init=int(strategy.now.timestamp() * 1_000_000_000),
+                ts_last=stale_book_at,
+            )
+        )
+
+    assert len(core.calls) == 1
+    assert all(core.calls[-1].book_for(side).freshness_ms == 0 for side in Side)
+
+    strategy.now = _dt(12)
+    strategy.evaluate_condition(condition_id, created_at=strategy.now)
+
+    assert len(core.calls) == 1
+    assert strategy._subscription_state.awaiting_book_sides_by_condition == {
+        condition_id: {Side.UP, Side.DOWN}
+    }
+
+    # The adapter always emits a quote from a resubscribe snapshot, even when
+    # effective order-book deltas are empty because the levels are unchanged.
+    for side in (Side.UP, Side.DOWN):
+        strategy.on_quote_tick(
+            _RuntimeBookEvent(
+                instrument_ids[side],
+                ts_init=int(strategy.now.timestamp() * 1_000_000_000),
+                ts_last=stale_book_at,
+            )
+        )
+
+    assert len(core.calls) == 2
+    assert all(core.calls[-1].book_for(side).freshness_ms == 0 for side in Side)
+
+
 def test_stale_nonempty_books_stay_unready_without_candidate() -> None:
     condition_id = "condition-a"
     registry, _ = _runtime_market_registry(start_ts=_dt(0))
@@ -745,6 +1189,56 @@ def test_preloaded_books_do_not_start_readiness_miss(tmp_path: Path) -> None:
     assert not scenario.heartbeat_path.exists()
 
 
+def test_restart_on_start_rehydrates_books_before_readiness() -> None:
+    condition_id = "condition-a"
+    registry, instrument_ids = _runtime_market_registry(start_ts=_dt(0))
+    readiness: list[tuple[str, bool]] = []
+    strategy = _Issue16Strategy(
+        core=_RuntimeCore(),
+        assembler=_ReceiptRuntimeAssembler(),
+        condition_ids=(condition_id,),
+        strategy_name="test",
+        policy=DecisionPolicy(),
+        registry=registry,
+        readiness_callback=lambda key, ready, _detail: readiness.append((key, ready)),
+    )
+    strategy.now = _dt(10)
+
+    strategy.on_start()
+
+    assert strategy.subscription_operations == [
+        ("quote", instrument_ids[Side.UP]),
+        ("trade", instrument_ids[Side.UP]),
+        ("book", instrument_ids[Side.UP]),
+        ("quote", instrument_ids[Side.DOWN]),
+        ("trade", instrument_ids[Side.DOWN]),
+        ("book", instrument_ids[Side.DOWN]),
+    ]
+    assert strategy._subscription_state.wire_condition_ids == {condition_id}
+    assert strategy._subscription_state.awaiting_book_sides_by_condition == {
+        condition_id: {Side.UP, Side.DOWN}
+    }
+
+    strategy.on_order_book_deltas(
+        _RuntimeBookEvent(
+            instrument_ids[Side.UP],
+            ts_init=int(_dt(10).timestamp() * 1_000_000_000),
+        )
+    )
+    assert readiness[-1] == (condition_id, False)
+    strategy.on_order_book_deltas(
+        _RuntimeBookEvent(
+            instrument_ids[Side.DOWN],
+            ts_init=int(_dt(10).timestamp() * 1_000_000_000),
+        )
+    )
+
+    assert readiness[-1] == (condition_id, True)
+    assert strategy._subscription_state.awaiting_book_sides_by_condition == {
+        condition_id: set()
+    }
+
+
 def test_resubscribe_requires_current_generation_book_sides(
     tmp_path: Path,
 ) -> None:
@@ -754,11 +1248,21 @@ def test_resubscribe_requires_current_generation_book_sides(
     assert scenario.first.refresh_stale_market_subscription(
         scenario.condition_id
     )
+    for strategy in (scenario.first, scenario.second):
+        strategy.now = _dt(11)
+    assert scenario.first.refresh_stale_market_subscription(
+        scenario.condition_id
+    )
+    for strategy in (scenario.first, scenario.second):
+        strategy.now = _dt(41)
+    assert scenario.first.refresh_stale_market_subscription(
+        scenario.condition_id
+    )
 
     scenario.first.on_order_book_deltas(
         _RuntimeBookEvent(
             scenario.instrument_ids[Side.UP],
-            ts_init=int(_dt(10).timestamp() * 1_000_000_000),
+            ts_init=int(_dt(41).timestamp() * 1_000_000_000),
             ts_last=int(_dt(2).timestamp() * 1_000_000_000),
         )
     )
@@ -773,9 +1277,13 @@ def test_resubscribe_requires_current_generation_book_sides(
         "UP": _dt(2).isoformat(),
         "DOWN": _dt(0).isoformat(),
     }
+    assert scenario.diagnostics[-1]["last_book_received_at_by_side"] == {
+        "UP": _dt(41).isoformat(),
+        "DOWN": _dt(0).isoformat(),
+    }
     assert scenario.diagnostics[-1]["freshness_ms_by_side"] == {
-        "UP": 8_000,
-        "DOWN": 10_000,
+        "UP": 0,
+        "DOWN": 41_000,
     }
 
     scenario.first.on_order_book_deltas(
@@ -799,9 +1307,22 @@ def test_shared_readiness_waits_for_every_consumer_and_recovers(
     assert scenario.first.refresh_stale_market_subscription(
         scenario.condition_id
     )
+    for strategy in (scenario.first, scenario.second):
+        strategy.now = _dt(11)
+    assert scenario.first.refresh_stale_market_subscription(
+        scenario.condition_id
+    )
+    for strategy in (scenario.first, scenario.second):
+        strategy.now = _dt(41)
+    assert scenario.first.refresh_stale_market_subscription(
+        scenario.condition_id
+    )
 
     scenario.first.on_order_book_deltas(
-        _RuntimeBookEvent(scenario.instrument_ids[Side.UP])
+        _RuntimeBookEvent(
+            scenario.instrument_ids[Side.UP],
+            ts_init=int(_dt(41).timestamp() * 1_000_000_000),
+        )
     )
     first_detail = read_runtime_heartbeat(
         scenario.heartbeat_path
@@ -809,7 +1330,10 @@ def test_shared_readiness_waits_for_every_consumer_and_recovers(
     callback_count = len(scenario.readiness)
 
     scenario.first.on_order_book_deltas(
-        _RuntimeBookEvent(scenario.instrument_ids[Side.DOWN])
+        _RuntimeBookEvent(
+            scenario.instrument_ids[Side.DOWN],
+            ts_init=int(_dt(41).timestamp() * 1_000_000_000),
+        )
     )
 
     heartbeat = read_runtime_heartbeat(scenario.heartbeat_path)
@@ -826,10 +1350,16 @@ def test_shared_readiness_waits_for_every_consumer_and_recovers(
     }
 
     scenario.second.on_order_book_deltas(
-        _RuntimeBookEvent(scenario.instrument_ids[Side.UP])
+        _RuntimeBookEvent(
+            scenario.instrument_ids[Side.UP],
+            ts_init=int(_dt(41).timestamp() * 1_000_000_000),
+        )
     )
     scenario.second.on_order_book_deltas(
-        _RuntimeBookEvent(scenario.instrument_ids[Side.DOWN])
+        _RuntimeBookEvent(
+            scenario.instrument_ids[Side.DOWN],
+            ts_init=int(_dt(41).timestamp() * 1_000_000_000),
+        )
     )
 
     assert scenario.readiness[-1] == (scenario.condition_id, True)
@@ -845,3 +1375,80 @@ def test_shared_readiness_waits_for_every_consumer_and_recovers(
 
     assert len(scenario.readiness) == callback_count + 1
     assert scenario.readiness[-1] == (scenario.condition_id, True)
+
+
+def test_evaluation_heartbeat_retires_expired_condition_without_rotation() -> None:
+    condition_id = "condition-a"
+    registry, _ = _runtime_market_registry(
+        start_ts=_dt(0),
+        end_ts=_dt(300),
+    )
+    for unsubscribe_exited in (True, False):
+        readiness: list[tuple[str, bool]] = []
+        core = _RuntimeCore()
+        strategy = _Issue16Strategy(
+            core=core,
+            assembler=_RuntimeAssembler(),
+            condition_ids=(condition_id,),
+            strategy_name=f"test-{unsubscribe_exited}",
+            policy=DecisionPolicy(),
+            registry=registry,
+            readiness_callback=lambda key, ready, _detail: readiness.append(
+                (key, ready)
+            ),
+            unsubscribe_exited=unsubscribe_exited,
+        )
+        strategy._subscribe_market_conditions((condition_id,))
+        strategy._subscription_state.pending_metadata_condition_ids.add(condition_id)
+        strategy._subscription_state.pending_subscribe_condition_ids.add(condition_id)
+        strategy._note_runtime_readiness(condition_id, ready=False)
+
+        strategy.now = _dt(301)
+        strategy._on_evaluation_heartbeat(None)
+
+        assert condition_id not in strategy._active_condition_ids
+        assert (condition_id in strategy._subscription_state.wire_condition_ids) is (
+            not unsubscribe_exited
+        )
+        assert (
+            condition_id
+            not in strategy._subscription_state.pending_metadata_condition_ids
+        )
+        assert (
+            condition_id
+            not in strategy._subscription_state.pending_subscribe_condition_ids
+        )
+        assert condition_id not in strategy._runtime_readiness_miss_condition_ids
+        assert readiness[-1] == (condition_id, True)
+        assert core.calls == []
+
+
+def test_evaluation_heartbeat_retires_expired_before_resuming_pending() -> None:
+    condition_id = "condition-a"
+    registry, _ = _runtime_market_registry(
+        start_ts=_dt(0),
+        end_ts=_dt(300),
+    )
+    coordinator = MarketSubscriptionCoordinator()
+    strategy = _Issue16Strategy(
+        core=_RuntimeCore(),
+        assembler=_RuntimeAssembler(),
+        condition_ids=(condition_id,),
+        strategy_name="test",
+        policy=DecisionPolicy(),
+        registry=registry,
+        subscription_coordinator=coordinator,
+    )
+    coordinator.register(strategy)
+    strategy._subscription_state.deferred_resubscribe_condition_ids.add(condition_id)
+    coordinator._resubscribe_not_before_by_condition[condition_id] = _dt(301)
+
+    strategy.now = _dt(301)
+    strategy._on_evaluation_heartbeat(None)
+
+    assert not any(
+        operation in {"quote", "trade", "book"}
+        for operation, _instrument_id in strategy.subscription_operations
+    )
+    assert condition_id not in strategy._active_condition_ids
+    assert coordinator._resubscribe_not_before_by_condition == {}

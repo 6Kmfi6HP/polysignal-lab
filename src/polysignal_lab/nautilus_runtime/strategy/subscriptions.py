@@ -26,6 +26,8 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (
 
 
 _MAX_STALE_REFRESH_INTERVAL_SEC = 300
+_REFRESH_BATCH_WINDOW = timedelta(seconds=1)
+_RESUBSCRIBE_SETTLE_DELAY = timedelta(seconds=30)
 
 
 @dataclass(slots=True)
@@ -36,11 +38,15 @@ class MarketSubscriptionState:
     pending_metadata_condition_ids: set[str] = field(default_factory=set)
     pending_subscribe_condition_ids: set[str] = field(default_factory=set)
     retained_wire_condition_ids: set[str] = field(default_factory=set)
+    deferred_resubscribe_condition_ids: set[str] = field(default_factory=set)
     stale_refresh_attempts_by_condition: dict[str, int] = field(default_factory=dict)
     last_stale_refresh_at: dict[str, datetime] = field(default_factory=dict)
     awaiting_book_sides_by_condition: dict[str, set[Side]] = field(default_factory=dict)
     book_generation_started_at_by_condition: dict[str, datetime] = field(default_factory=dict)
     last_book_at_by_condition: dict[str, dict[Side, datetime]] = field(default_factory=dict)
+    last_book_received_at_by_condition: dict[str, dict[Side, datetime]] = field(
+        default_factory=dict
+    )
 
 
 class _SubscriptionStateOwner(Protocol):
@@ -82,10 +88,63 @@ class MarketSubscriptionCoordinator:
         self._attempts_by_condition: dict[str, int] = {}
         self._last_refresh_at: dict[str, datetime] = {}
         self._ready_strategy_ids_by_condition: dict[str, set[int]] = {}
+        self._resubscribe_not_before_by_condition: dict[str, datetime] = {}
+        self._unsubscribe_not_before_by_condition: dict[str, datetime] = {}
+        self._wire_restore_by_condition: dict[
+            str,
+            dict[int, tuple[bool, bool]],
+        ] = {}
 
     def register(self, strategy: _SubscriptionStrategy) -> None:
         if all(candidate is not strategy for candidate in self._strategies):
             self._strategies.append(strategy)
+        setattr(strategy, "_subscription_coordinator", self)
+
+    def unregister(self, strategy: _SubscriptionStrategy) -> None:
+        strategy_id = id(strategy)
+        self._strategies = [
+            candidate for candidate in self._strategies if candidate is not strategy
+        ]
+        affected_condition_ids = set(strategy._active_condition_ids)
+        affected_condition_ids.update(
+            strategy._subscription_state.deferred_resubscribe_condition_ids
+        )
+        for condition_id, ready_ids in self._ready_strategy_ids_by_condition.items():
+            if strategy_id in ready_ids:
+                affected_condition_ids.add(condition_id)
+                ready_ids.discard(strategy_id)
+        for condition_id, owners in tuple(self._wire_restore_by_condition.items()):
+            if owners.pop(strategy_id, None) is not None:
+                affected_condition_ids.add(condition_id)
+            if not owners:
+                self._wire_restore_by_condition.pop(condition_id, None)
+        for condition_id in affected_condition_ids:
+            self.note_readiness(strategy, condition_id, ready=False)
+        strategy._subscription_state.deferred_resubscribe_condition_ids.clear()
+
+    def defer_subscription(
+        self,
+        strategy: _SubscriptionStrategy,
+        condition_id: str,
+    ) -> bool:
+        if self._resubscribe_not_before_by_condition:
+            not_before = min(self._resubscribe_not_before_by_condition.values())
+            self._resubscribe_not_before_by_condition.setdefault(
+                condition_id,
+                not_before,
+            )
+        elif self._unsubscribe_not_before_by_condition:
+            not_before = min(self._unsubscribe_not_before_by_condition.values())
+            self._unsubscribe_not_before_by_condition.setdefault(
+                condition_id,
+                not_before,
+            )
+        else:
+            return False
+        strategy._subscription_state.deferred_resubscribe_condition_ids.add(
+            condition_id
+        )
+        return True
 
     def note_readiness(
         self,
@@ -112,8 +171,21 @@ class MarketSubscriptionCoordinator:
         if condition_ready:
             self._attempts_by_condition.pop(condition_id, None)
             self._last_refresh_at.pop(condition_id, None)
+            if condition_id in self._unsubscribe_not_before_by_condition:
+                self._unsubscribe_not_before_by_condition.pop(condition_id, None)
+                for candidate in self._strategies:
+                    candidate._subscription_state.deferred_resubscribe_condition_ids.discard(
+                        condition_id
+                    )
             if not active_ids:
                 self._ready_strategy_ids_by_condition.pop(condition_id, None)
+                if condition_id not in self._wire_restore_by_condition:
+                    self._resubscribe_not_before_by_condition.pop(condition_id, None)
+                self._unsubscribe_not_before_by_condition.pop(condition_id, None)
+                for candidate in self._strategies:
+                    candidate._subscription_state.deferred_resubscribe_condition_ids.discard(
+                        condition_id
+                    )
         return condition_ready
 
     def unready_consumer(
@@ -131,6 +203,256 @@ class MarketSubscriptionCoordinator:
             None,
         )
 
+    def resume_pending(
+        self,
+        requester: _SubscriptionStrategy,
+        condition_id: str,
+        *,
+        now: datetime,
+    ) -> bool:
+        if not (
+            self._unsubscribe_not_before_by_condition
+            or self._resubscribe_not_before_by_condition
+        ):
+            return False
+        observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+        observed = observed.astimezone(UTC)
+        completed = self._drain_due_resubscriptions(
+            observed=observed,
+            min_interval_sec=30,
+        )
+        if self._resubscribe_not_before_by_condition:
+            return True
+        if self._unsubscribe_not_before_by_condition:
+            if any(
+                observed >= not_before
+                for not_before in self._unsubscribe_not_before_by_condition.values()
+            ):
+                return self._begin_refresh_batch(observed=observed)
+            return True
+        return bool(completed)
+
+    def _complete_refresh(
+        self,
+        consumers: Sequence[_SubscriptionStrategy],
+        condition_id: str,
+        *,
+        observed: datetime,
+        min_interval_sec: int,
+    ) -> bool:
+        attempts = self._attempts_by_condition.get(condition_id, 0)
+        restore_owners = self._wire_restore_by_condition.get(condition_id, {})
+        self._subscribe_refresh_consumers(
+            consumers,
+            condition_id,
+            observed=observed,
+            restore_owners=restore_owners,
+        )
+        refreshed = all(
+            condition_id in strategy._subscription_state.wire_condition_ids
+            for strategy in consumers
+        )
+        next_attempts = attempts + 1
+        retry_interval_sec = min(
+            int(min_interval_sec) * (2 ** min(attempts, 10)),
+            max(int(min_interval_sec), _MAX_STALE_REFRESH_INTERVAL_SEC),
+        )
+        self._last_refresh_at[condition_id] = observed
+        self._finish_refresh(
+            consumers,
+            condition_id,
+            observed=observed,
+            restore_owners=restore_owners,
+            refreshed=refreshed,
+            retry_interval_sec=retry_interval_sec,
+        )
+        self._attempts_by_condition[condition_id] = next_attempts
+        for strategy in consumers:
+            strategy._subscription_state.last_stale_refresh_at[condition_id] = observed
+            strategy._subscription_state.stale_refresh_attempts_by_condition[
+                condition_id
+            ] = next_attempts
+        return refreshed
+
+    @staticmethod
+    def _subscribe_refresh_consumers(
+        consumers: Sequence[_SubscriptionStrategy],
+        condition_id: str,
+        *,
+        observed: datetime,
+        restore_owners: dict[int, tuple[bool, bool]],
+    ) -> None:
+        for strategy in consumers:
+            registry = strategy.registry
+            if registry is None:
+                continue
+            restore_owner = restore_owners.get(id(strategy))
+            if condition_id in strategy._active_condition_ids:
+                _subscribe_market_condition(
+                    strategy,
+                    registry,
+                    condition_id,
+                    now=observed,
+                    allow_deferred=True,
+                )
+            elif restore_owner is not None and not restore_owner[0]:
+                _subscribe_market_condition(
+                    strategy,
+                    registry,
+                    condition_id,
+                    now=observed,
+                    allow_inactive=True,
+                    allow_deferred=True,
+                )
+
+    def _finish_refresh(
+        self,
+        consumers: Sequence[_SubscriptionStrategy],
+        condition_id: str,
+        *,
+        observed: datetime,
+        restore_owners: dict[int, tuple[bool, bool]],
+        refreshed: bool,
+        retry_interval_sec: int,
+    ) -> None:
+        if not refreshed:
+            self._resubscribe_not_before_by_condition[condition_id] = (
+                observed + timedelta(seconds=retry_interval_sec)
+            )
+            for strategy in consumers:
+                if condition_id in strategy._active_condition_ids:
+                    strategy._subscription_state.deferred_resubscribe_condition_ids.add(
+                        condition_id
+                    )
+            return
+        self._resubscribe_not_before_by_condition.pop(condition_id, None)
+        self._wire_restore_by_condition.pop(condition_id, None)
+        for strategy in self._strategies:
+            strategy._subscription_state.deferred_resubscribe_condition_ids.discard(
+                condition_id
+            )
+        for strategy in consumers:
+            restore_owner = restore_owners.get(id(strategy))
+            if restore_owner is not None and restore_owner[1]:
+                strategy._subscription_state.retained_wire_condition_ids.add(
+                    condition_id
+                )
+
+    def _begin_refresh_batch(self, *, observed: datetime) -> bool:
+        reset_condition_ids = set(self._wire_restore_by_condition)
+        reset_condition_ids.update(self._unsubscribe_not_before_by_condition)
+        reset_condition_ids.update(self._resubscribe_not_before_by_condition)
+        for strategy in self._strategies:
+            wire_condition_ids = tuple(
+                strategy._subscription_state.wire_condition_ids
+            )
+            for condition_id in wire_condition_ids:
+                reset_condition_ids.add(condition_id)
+                owners = self._wire_restore_by_condition.setdefault(
+                    condition_id,
+                    {},
+                )
+                owners.setdefault(
+                    id(strategy),
+                    (
+                        condition_id in strategy._active_condition_ids,
+                        condition_id
+                        in strategy._subscription_state.retained_wire_condition_ids,
+                    ),
+                )
+            if wire_condition_ids:
+                unsubscribe_market_conditions(strategy, wire_condition_ids)
+        self._unsubscribe_not_before_by_condition.clear()
+        if not reset_condition_ids:
+            return False
+        resubscribe_not_before = observed + _RESUBSCRIBE_SETTLE_DELAY
+        for condition_id in reset_condition_ids:
+            self._resubscribe_not_before_by_condition[condition_id] = (
+                resubscribe_not_before
+            )
+            self._ready_strategy_ids_by_condition.pop(condition_id, None)
+            for strategy in self._strategies:
+                if condition_id in strategy._active_condition_ids:
+                    strategy._subscription_state.deferred_resubscribe_condition_ids.add(
+                        condition_id
+                    )
+        return True
+
+    def _drain_due_resubscriptions(
+        self,
+        *,
+        observed: datetime,
+        min_interval_sec: int,
+    ) -> dict[str, bool]:
+        due_condition_ids = {
+            condition_id
+            for condition_id, not_before in (
+                self._resubscribe_not_before_by_condition.items()
+            )
+            if observed >= not_before
+        }
+        if not due_condition_ids:
+            return {}
+        if any(
+            strategy._subscription_state.wire_condition_ids
+            for strategy in self._strategies
+        ):
+            self._begin_refresh_batch(observed=observed)
+            return {}
+        completed: dict[str, bool] = {}
+        for condition_id in due_condition_ids:
+            restore_owners = self._wire_restore_by_condition.get(condition_id, {})
+            consumers = [
+                strategy
+                for strategy in self._strategies
+                if condition_id in strategy._active_condition_ids
+                or (
+                    (restore_owner := restore_owners.get(id(strategy))) is not None
+                    and not restore_owner[0]
+                )
+            ]
+            if not consumers:
+                self._resubscribe_not_before_by_condition.pop(condition_id, None)
+                self._wire_restore_by_condition.pop(condition_id, None)
+                for strategy in self._strategies:
+                    strategy._subscription_state.deferred_resubscribe_condition_ids.discard(
+                        condition_id
+                    )
+                completed[condition_id] = True
+                continue
+            completed[condition_id] = self._complete_refresh(
+                consumers,
+                condition_id,
+                observed=observed,
+                min_interval_sec=min_interval_sec,
+            )
+        return completed
+
+    def _schedule_condition_refresh(
+        self,
+        consumers: Sequence[_SubscriptionStrategy],
+        condition_id: str,
+        *,
+        observed: datetime,
+        min_interval_sec: int,
+    ) -> bool:
+        attempts = self._attempts_by_condition.get(condition_id, 0)
+        retry_interval_sec = min(
+            int(min_interval_sec) * (2 ** min(attempts, 10)),
+            max(int(min_interval_sec), _MAX_STALE_REFRESH_INTERVAL_SEC),
+        )
+        last = self._last_refresh_at.get(condition_id)
+        if last is not None and (observed - last).total_seconds() < retry_interval_sec:
+            return False
+        self._unsubscribe_not_before_by_condition[condition_id] = (
+            observed + _REFRESH_BATCH_WINDOW
+        )
+        for strategy in consumers:
+            strategy._subscription_state.deferred_resubscribe_condition_ids.add(
+                condition_id
+            )
+        return True
+
     def refresh(
         self,
         requester: _SubscriptionStrategy,
@@ -139,6 +461,23 @@ class MarketSubscriptionCoordinator:
         now: datetime,
         min_interval_sec: int = 30,
     ) -> bool:
+        observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+        observed = observed.astimezone(UTC)
+        completed = self._drain_due_resubscriptions(
+            observed=observed,
+            min_interval_sec=min_interval_sec,
+        )
+        if condition_id in completed:
+            return completed[condition_id]
+        if self._resubscribe_not_before_by_condition:
+            return True
+        if self._unsubscribe_not_before_by_condition:
+            if any(
+                observed >= not_before
+                for not_before in self._unsubscribe_not_before_by_condition.values()
+            ):
+                return self._begin_refresh_batch(observed=observed)
+            return True
         if condition_id not in requester._active_condition_ids:
             return False
         consumers = [
@@ -148,34 +487,12 @@ class MarketSubscriptionCoordinator:
         ]
         if not consumers:
             return False
-        observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
-        observed = observed.astimezone(UTC)
-        attempts = self._attempts_by_condition.get(condition_id, 0)
-        retry_interval_sec = min(
-            int(min_interval_sec) * (2 ** min(attempts, 10)),
-            max(int(min_interval_sec), _MAX_STALE_REFRESH_INTERVAL_SEC),
+        return self._schedule_condition_refresh(
+            consumers,
+            condition_id,
+            observed=observed,
+            min_interval_sec=min_interval_sec,
         )
-        last = self._last_refresh_at.get(condition_id)
-        if last is not None and (observed - last).total_seconds() < retry_interval_sec:
-            return False
-        for strategy in consumers:
-            unsubscribe_market_conditions(strategy, (condition_id,))
-        for strategy in consumers:
-            subscribe_market_conditions(strategy, (condition_id,), now=observed)
-        refreshed = all(
-            condition_id in strategy._subscription_state.wire_condition_ids
-            for strategy in consumers
-        )
-        next_attempts = attempts + 1 if refreshed else 0
-        self._last_refresh_at[condition_id] = observed
-        self._attempts_by_condition[condition_id] = next_attempts
-        self._ready_strategy_ids_by_condition.pop(condition_id, None)
-        for strategy in consumers:
-            strategy._subscription_state.last_stale_refresh_at[condition_id] = observed
-            strategy._subscription_state.stale_refresh_attempts_by_condition[
-                condition_id
-            ] = next_attempts
-        return refreshed
 
 
 class InstrumentSubscriptionManager:
@@ -220,10 +537,19 @@ def _subscribe_market_condition(
     condition_id: str,
     *,
     now: datetime | None,
+    allow_inactive: bool = False,
+    allow_deferred: bool = False,
 ) -> None:
-    if condition_id not in strategy._active_condition_ids:
+    if not allow_inactive and condition_id not in strategy._active_condition_ids:
         return
     state = strategy._subscription_state
+    coordinator = getattr(strategy, "_subscription_coordinator", None)
+    if (
+        not allow_deferred
+        and coordinator is not None
+        and coordinator.defer_subscription(strategy, condition_id)
+    ):
+        return
     if condition_id in state.wire_condition_ids:
         state.pending_metadata_condition_ids.discard(condition_id)
         state.pending_subscribe_condition_ids.discard(condition_id)
@@ -234,7 +560,8 @@ def _subscribe_market_condition(
         state.pending_metadata_condition_ids.add(condition_id)
         state.pending_subscribe_condition_ids.discard(condition_id)
         return
-    begin_market_book_generation(strategy, condition_id, now=now)
+    if condition_id in strategy._active_condition_ids:
+        begin_market_book_generation(strategy, condition_id, now=now)
     state.pending_metadata_condition_ids.discard(condition_id)
     subscribed = True
     for instrument_id in condition_instruments(strategy, condition_id):
@@ -314,6 +641,9 @@ def clear_condition_subscription_state(
     strategy._subscription_state.retained_wire_condition_ids.discard(condition_id)
     strategy._subscription_state.pending_subscribe_condition_ids.discard(condition_id)
     strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)
+    strategy._subscription_state.deferred_resubscribe_condition_ids.discard(
+        condition_id
+    )
     strategy._subscription_state.stale_refresh_attempts_by_condition.pop(
         condition_id,
         None,
@@ -326,6 +656,9 @@ def mark_market_subscription_ready(
     strategy: _SubscriptionStrategy,
     condition_id: str,
 ) -> None:
+    strategy._subscription_state.deferred_resubscribe_condition_ids.discard(
+        condition_id
+    )
     strategy._subscription_state.stale_refresh_attempts_by_condition.pop(
         condition_id,
         None,
@@ -362,6 +695,15 @@ def observe_market_book_side(
 ) -> bool:
     received = received_at.astimezone(UTC)
     observed_book = book_at.astimezone(UTC)
+    last_receipts = (
+        strategy._subscription_state.last_book_received_at_by_condition.setdefault(
+            condition_id,
+            {},
+        )
+    )
+    previous_received = last_receipts.get(side)
+    if previous_received is None or received >= previous_received:
+        last_receipts[side] = received
     last_books = strategy._subscription_state.last_book_at_by_condition.setdefault(
         condition_id,
         {},
@@ -428,6 +770,10 @@ def retire_market_book_generation(
     )
     if clear_history:
         strategy._subscription_state.last_book_at_by_condition.pop(condition_id, None)
+        strategy._subscription_state.last_book_received_at_by_condition.pop(
+            condition_id,
+            None,
+        )
 
 
 def refresh_stale_market_subscription(

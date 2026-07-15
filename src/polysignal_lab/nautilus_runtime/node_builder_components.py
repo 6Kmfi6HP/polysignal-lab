@@ -8,7 +8,10 @@ from typing import Protocol
 from polysignal_lab.alpha.types import SideBookView, TradeView
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
-from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+from polysignal_lab.nautilus_bridge.market_view_assembler import (
+    BookReceiptObserver,
+    MarketViewAssembler,
+)
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.market_discovery_worker import MarketDiscoveryWorker
 
@@ -42,6 +45,17 @@ class CacheBoundBookDataProvider:
         )
 
         self._provider = NautilusCacheMarketDataProvider(cache, catalog=self._catalog)
+
+    def observe_book_received(
+        self,
+        token_id: str,
+        *,
+        received_at: datetime,
+    ) -> None:
+        provider = self._provider
+        if isinstance(provider, BookReceiptObserver):
+            provider.observe_book_received(token_id, received_at=received_at)
+
 
     def book_for_token(
         self,
