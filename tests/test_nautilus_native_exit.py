@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.FreshnessView, polysignal_lab.alpha.types.MarketView, polysignal_lab.nautilus_runtime.decision_policy
-Output: test_evaluate_condition_does_not_run_custom_exit_scan, test_native_strategy_has_no_custom_exit_evaluation_api
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.FreshnessView, polysignal_lab.alpha.types.MarketView, polysignal_lab.domain.freshness, polysignal_lab.nautilus_runtime.decision_policy
+Output: test_evaluate_condition_does_not_run_custom_exit_scan, test_native_exit_runs_when_opposite_book_exceeds_trade_freshness, test_native_strategy_has_no_custom_exit_evaluation_api
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView
+from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
@@ -90,7 +91,7 @@ def test_evaluate_condition_does_not_run_custom_exit_scan() -> None:
     assert list(strategy.submitted_orders) == []
 
 
-def test_native_strategy_uses_exit_model_against_native_open_position() -> None:
+def test_native_exit_runs_when_opposite_book_exceeds_trade_freshness() -> None:
     from datetime import timedelta
 
     from polysignal_lab.domain.enums import Side
@@ -117,7 +118,7 @@ def test_native_strategy_uses_exit_model_against_native_open_position() -> None:
                 best_bid=0.10,
                 best_ask=0.11,
                 spread=0.01,
-                freshness_ms=100,
+                freshness_ms=50_000,
             )
             return MarketView(
                 view_id="view-1",
@@ -182,7 +183,11 @@ def test_native_strategy_uses_exit_model_against_native_open_position() -> None:
         assembler=Assembler(),
         condition_ids=("condition-1",),
         strategy_name="ptb_diff",
-        policy=DecisionPolicy(),
+        policy=DecisionPolicy(
+            strategy_freshness_policies={
+                "ptb_diff": FreshnessPolicy(max_orderbook_staleness_ms=30_000)
+            }
+        ),
         registry=Registry(),
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         exit_model=SimpleNamespace(

@@ -28,13 +28,6 @@ class _ObservabilityStrategy(Protocol):
     fixed_stake_usdc: float
 
     def _note_runtime_progress(self, phase: str) -> None: ...
-    def _note_stale_orderbook_rejection(
-        self,
-        condition_id: str,
-        *,
-        side: object,
-        threshold_ms: object,
-    ) -> None: ...
 
 
 def record_observability(
@@ -89,31 +82,6 @@ def record_rejected(strategy: _ObservabilityStrategy, rejected: object) -> None:
         strategy,
         lambda obs: obs.record_rejected_decision(rejected),
     )
-    reason_code = getattr(rejected, "reason_code", None)
-    if reason_code != "STALE_ORDERBOOK":
-        return
-    candidate = getattr(rejected, "candidate", None)
-    condition_id = getattr(candidate, "condition_id", None)
-    if not condition_id:
-        return
-    condition_id = str(condition_id)
-    detail = getattr(rejected, "detail", None)
-    threshold_ms = detail.get("threshold_ms") if isinstance(detail, Mapping) else None
-    strategy._note_stale_orderbook_rejection(
-        condition_id,
-        side=getattr(candidate, "side", None),
-        threshold_ms=threshold_ms,
-    )
-    refresh = getattr(strategy, "refresh_stale_market_subscription", None)
-    if not callable(refresh):
-        return
-    try:
-        refreshed = bool(refresh(condition_id))
-    except Exception:
-        strategy._note_runtime_progress("subscription_refresh_failed")
-        return
-    if refreshed:
-        strategy._note_runtime_progress("subscription_refresh")
 
 
 def record_nautilus_order(

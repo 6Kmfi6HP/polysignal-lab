@@ -922,7 +922,7 @@ def test_heartbeat_resumes_deferred_refresh_before_recent_data_skip(
         }
 
 
-def test_record_rejected_stale_orderbook_triggers_subscription_refresh() -> None:
+def test_trade_freshness_rejection_does_not_drive_subscription_refresh() -> None:
     from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
     from polysignal_lab.nautilus_runtime.strategy.observability_hooks import record_rejected
     from polysignal_lab.domain.signal import SignalCandidate
@@ -982,9 +982,9 @@ def test_record_rejected_stale_orderbook_triggers_subscription_refresh() -> None
     )
     record_rejected(Strategy(), rejected)
 
-    assert readiness == [("condition-a", False)]
-    assert recoveries == [("condition-a", Side.UP, 100_000)]
-    assert calls == ["condition-a"]
+    assert readiness == []
+    assert recoveries == []
+    assert calls == []
 
 
 def test_order_book_event_records_receipt_time_for_market_view_freshness() -> None:
@@ -1080,7 +1080,7 @@ def test_quote_tick_records_unchanged_resubscribe_snapshot_receipt() -> None:
     }
 
 
-def test_resubscribe_snapshot_reopens_strict_strategy_trigger_window() -> None:
+def test_later_snapshot_reopens_strict_trigger_window_without_resubscribe() -> None:
     condition_id = "condition-a"
     registry, instrument_ids = _runtime_market_registry(start_ts=_dt(0))
     assembler = _ReceiptRuntimeAssembler()
@@ -1123,7 +1123,7 @@ def test_resubscribe_snapshot_reopens_strict_strategy_trigger_window() -> None:
 
     assert len(core.calls) == 1
     assert strategy._subscription_state.awaiting_book_sides_by_condition == {
-        condition_id: {Side.UP, Side.DOWN}
+        condition_id: set()
     }
 
     # The adapter always emits a quote from a resubscribe snapshot, even when
@@ -1141,7 +1141,7 @@ def test_resubscribe_snapshot_reopens_strict_strategy_trigger_window() -> None:
     assert all(core.calls[-1].book_for(side).freshness_ms == 0 for side in Side)
 
 
-def test_stale_nonempty_books_stay_unready_without_candidate() -> None:
+def test_strategy_stale_books_skip_candidate_without_data_plane_refresh() -> None:
     condition_id = "condition-a"
     registry, _ = _runtime_market_registry(start_ts=_dt(0))
     core = _RuntimeCore()
@@ -1170,9 +1170,39 @@ def test_stale_nonempty_books_stay_unready_without_candidate() -> None:
     strategy.evaluate_condition(condition_id)
 
     assert core.calls == []
-    assert [(key, ready) for key, ready, _ in readiness] == [(condition_id, False)]
-    assert readiness[-1][2]["subscription_state"] == "stale_orderbook"
-    assert refreshes == [condition_id]
+    assert [(key, ready) for key, ready, _ in readiness] == [(condition_id, True)]
+    assert refreshes == []
+
+
+def test_one_strategy_stale_side_skips_stateful_core_without_data_plane_refresh() -> None:
+    condition_id = "condition-a"
+    registry, _ = _runtime_market_registry(start_ts=_dt(0))
+    view = _RuntimeView()
+    view.books[Side.UP].freshness_ms = 10_000
+    view.books[Side.DOWN].freshness_ms = 50_000
+    core = _RuntimeCore()
+    readiness: list[tuple[str, bool]] = []
+    strategy = _Issue16Strategy(
+        core=core,
+        assembler=_RuntimeAssembler(view),
+        condition_ids=(condition_id,),
+        strategy_name="test",
+        policy=DecisionPolicy(
+            strategy_freshness_policies={
+                "test": FreshnessPolicy(max_orderbook_staleness_ms=30_000)
+            }
+        ),
+        registry=registry,
+        readiness_callback=lambda key, ready, _detail: readiness.append(
+            (key, ready)
+        ),
+    )
+    strategy.now = _dt(70)
+
+    strategy.evaluate_condition(condition_id)
+
+    assert core.calls == []
+    assert readiness[-1] == (condition_id, True)
 
 
 def test_preloaded_books_do_not_start_readiness_miss(tmp_path: Path) -> None:
@@ -1375,6 +1405,63 @@ def test_shared_readiness_waits_for_every_consumer_and_recovers(
 
     assert len(scenario.readiness) == callback_count + 1
     assert scenario.readiness[-1] == (scenario.condition_id, True)
+
+
+def test_shared_readiness_uses_runtime_threshold_for_strict_consumers(
+    tmp_path: Path,
+) -> None:
+    scenario = _SharedReadinessScenario(tmp_path)
+    scenario.second.assembler = _ReceiptRuntimeAssembler()
+    scenario.second.policy = DecisionPolicy(
+        strategy_freshness_policies={
+            "second": FreshnessPolicy(max_orderbook_staleness_ms=1_500)
+        }
+    )
+    scenario.preload()
+    scenario.enter_market()
+    assert scenario.first.refresh_stale_market_subscription(
+        scenario.condition_id
+    )
+    for strategy in (scenario.first, scenario.second):
+        strategy.now = _dt(11)
+    assert scenario.first.refresh_stale_market_subscription(
+        scenario.condition_id
+    )
+    for strategy in (scenario.first, scenario.second):
+        strategy.now = _dt(41)
+    assert scenario.first.refresh_stale_market_subscription(
+        scenario.condition_id
+    )
+
+    for strategy in (scenario.first, scenario.second):
+        strategy.on_order_book_deltas(
+            _RuntimeBookEvent(
+                scenario.instrument_ids[Side.UP],
+                ts_init=int(_dt(41).timestamp() * 1_000_000_000),
+            )
+        )
+    scenario.first.now = _dt(43)
+    scenario.first.on_order_book_deltas(
+        _RuntimeBookEvent(
+            scenario.instrument_ids[Side.DOWN],
+            ts_init=int(_dt(43).timestamp() * 1_000_000_000),
+        )
+    )
+    scenario.second.now = _dt(43)
+    scenario.second.on_order_book_deltas(
+        _RuntimeBookEvent(
+            scenario.instrument_ids[Side.DOWN],
+            ts_init=int(_dt(43).timestamp() * 1_000_000_000),
+        )
+    )
+
+    assert scenario.readiness[-1] == (scenario.condition_id, True)
+    assert (
+        read_runtime_heartbeat(
+            scenario.heartbeat_path
+        ).readiness_miss_started_at_by_key
+        == {}
+    )
 
 
 def test_evaluation_heartbeat_retires_expired_condition_without_rotation() -> None:

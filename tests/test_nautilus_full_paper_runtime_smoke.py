@@ -381,7 +381,10 @@ def test_runtime_sidecar_actor_and_native_strategy_bridge_to_order_submit(monkey
 
             return BatchArbitrationResult(decision for decision, _ in decisions)
 
-        def orderbook_freshness_threshold_ms(self, strategy: str) -> float:
+        def orderbook_readiness_threshold_ms(self) -> float:
+            return 60_000.0
+
+        def orderbook_trade_threshold_ms(self, strategy: str) -> float:
             _ = strategy
             return 60_000.0
 
@@ -658,7 +661,10 @@ def test_market_rotation_actor_rotates_single_native_strategy_without_rebuild(
 
             return BatchArbitrationResult(decision for decision, _ in decisions)
 
-        def orderbook_freshness_threshold_ms(self, strategy: str) -> float:
+        def orderbook_readiness_threshold_ms(self) -> float:
+            return 60_000.0
+
+        def orderbook_trade_threshold_ms(self, strategy: str) -> float:
             _ = strategy
             return 60_000.0
 

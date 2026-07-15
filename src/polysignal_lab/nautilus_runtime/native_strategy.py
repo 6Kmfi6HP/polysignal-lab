@@ -436,26 +436,6 @@ class PolySignalNativeStrategy(Strategy):
             "max_freshness_ms": max_freshness_ms,
         }
 
-    def _note_stale_orderbook_rejection(
-        self,
-        condition_id: str,
-        *,
-        side: object,
-        threshold_ms: object,
-    ) -> None:
-        if (
-            isinstance(side, Side)
-            and isinstance(threshold_ms, (int, float))
-            and not isinstance(threshold_ms, bool)
-            and float(threshold_ms) > 0
-        ):
-            recovery = self._stale_orderbook_recovery_by_condition.setdefault(
-                condition_id,
-                {},
-            )
-            threshold = float(threshold_ms)
-            recovery[side] = min(recovery.get(side, threshold), threshold)
-        self._note_runtime_readiness(condition_id, ready=False)
 
     def _stale_orderbook_recovered(
         self,
@@ -471,14 +451,18 @@ class PolySignalNativeStrategy(Strategy):
             for side, threshold_ms in recovery.items()
         )
 
-    def _orderbook_freshness_threshold_ms(self) -> float:
-        return self.policy.orderbook_freshness_threshold_ms(self.strategy_name)
+    def _orderbook_readiness_threshold_ms(self) -> float:
+        return self.policy.orderbook_readiness_threshold_ms()
+
+    def _orderbook_trade_threshold_ms(self) -> float:
+        return self.policy.orderbook_trade_threshold_ms(self.strategy_name)
 
     def _stale_orderbook_sides(
         self,
         view: MarketView,
+        *,
+        threshold_ms: float,
     ) -> dict[Side, float] | None:
-        threshold_ms = self._orderbook_freshness_threshold_ms()
         stale_sides: dict[Side, float] | None = None
         for side in (Side.UP, Side.DOWN):
             freshness_ms = view.book_for(side).freshness_ms
@@ -859,7 +843,10 @@ class PolySignalNativeStrategy(Strategy):
             self._mark_condition_unready(condition_id, refresh=True)
             return
         market_view = cast(MarketView, view)
-        stale_sides = self._stale_orderbook_sides(market_view)
+        stale_sides = self._stale_orderbook_sides(
+            market_view,
+            threshold_ms=self._orderbook_readiness_threshold_ms(),
+        )
         if stale_sides is not None:
             self._stale_orderbook_recovery_by_condition[condition_id] = stale_sides
             self._mark_condition_unready(condition_id, refresh=True)
@@ -889,9 +876,15 @@ class PolySignalNativeStrategy(Strategy):
         elif condition_id in self._runtime_readiness_miss_condition_ids:
             self._note_runtime_readiness(condition_id, ready=True)
             readiness_confirmed = True
-        decisions = self._evaluate_decisions(market_view, now=now)
-        if decisions is None:
-            return
+        evaluate_core = self._stale_orderbook_sides(
+            market_view,
+            threshold_ms=self._orderbook_trade_threshold_ms(),
+        ) is None
+        decisions = self._evaluate_decisions(
+            market_view,
+            now=now,
+            evaluate_core=evaluate_core,
+        )
         batch = [(decision, market_view) for decision in decisions]
         try:
             batch_result = self._decision_pipeline.try_batch_arbitrate(batch)
@@ -918,9 +911,10 @@ class PolySignalNativeStrategy(Strategy):
         market_view: MarketView,
         *,
         now: datetime,
-    ) -> tuple[AlphaDecision, ...] | None:
+        evaluate_core: bool = True,
+    ) -> tuple[AlphaDecision, ...]:
         if self.exit_policy is None:
-            return tuple(self.core.evaluate(market_view))
+            return tuple(self.core.evaluate(market_view)) if evaluate_core else ()
         try:
             cache = self.cache
         except (AttributeError, RuntimeError):
@@ -936,11 +930,11 @@ class PolySignalNativeStrategy(Strategy):
             )
         except (TypeError, ValueError, RuntimeError):
             self._note_runtime_progress("native_exit_failed")
-            return tuple(self.core.evaluate(market_view))
+            return tuple(self.core.evaluate(market_view)) if evaluate_core else ()
         if decisions:
             self._note_runtime_progress("native_exit")
             return decisions
-        return tuple(self.core.evaluate(market_view))
+        return tuple(self.core.evaluate(market_view)) if evaluate_core else ()
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
         self._decision_pipeline.handle_decision(

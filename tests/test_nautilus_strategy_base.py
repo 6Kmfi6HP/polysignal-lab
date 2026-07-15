@@ -479,7 +479,7 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
     assert len(strategy.rejected_decisions) == 0
 
 
-def test_native_strategy_stale_orderbook_rejection_keeps_readiness_miss() -> None:
+def test_native_strategy_gate_rejection_does_not_drive_data_plane_readiness() -> None:
     from dataclasses import replace
 
     from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
@@ -548,14 +548,10 @@ def test_native_strategy_stale_orderbook_rejection_keeps_readiness_miss() -> Non
     strategy.evaluate_condition("condition-btc-5m")
 
     assert readiness == [
-        ("condition-btc-5m", False),
-        ("condition-btc-5m", False),
+        ("condition-btc-5m", True),
         ("condition-btc-5m", True),
     ]
-    assert refreshes == [
-        "condition-btc-5m",
-        "condition-btc-5m",
-    ]
+    assert refreshes == []
 
 
 def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:

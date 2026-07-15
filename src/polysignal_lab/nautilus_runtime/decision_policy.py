@@ -204,7 +204,11 @@ class DecisionPolicy:
             int, tuple[AlphaDecision, MarketView, SignalCandidate]
         ] = {}
 
-    def orderbook_freshness_threshold_ms(self, strategy: str) -> float:
+    def orderbook_readiness_threshold_ms(self) -> float:
+        """Return shared data-plane freshness, not a strategy trade threshold."""
+        return float(self.gate.poly_config.max_book_staleness_ms)
+
+    def orderbook_trade_threshold_ms(self, strategy: str) -> float:
         return self.gate.orderbook_freshness_threshold_ms(
             self.strategy_freshness_policies.get(strategy)
         )

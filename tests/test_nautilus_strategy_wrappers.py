@@ -110,7 +110,10 @@ class FakePolicy:
     ) -> BatchArbitrationResult:
         return BatchArbitrationResult(decision for decision, _ in decisions)
 
-    def orderbook_freshness_threshold_ms(self, strategy: str) -> float:
+    def orderbook_readiness_threshold_ms(self) -> float:
+        return 60_000.0
+
+    def orderbook_trade_threshold_ms(self, strategy: str) -> float:
         _ = strategy
         return 60_000.0
 
