@@ -162,12 +162,24 @@ def build_order_tags(
         "order_intent": intent.value,
     }
     add_optional_source_tags(tags, source)
+    metrics = cast(Mapping[str, object], source.metrics)
     if source_reduce_only(source):
-        metrics = cast(Mapping[str, object], source.metrics)
         for key in ("position_id", "exit_reason"):
             value = metrics.get(key)
             if value is not None and str(value):
                 tags[key] = str(value)
+    else:
+        # Entry-time exit threshold stamps for NativeExitPolicy (per-position).
+        from polysignal_lab.nautilus_runtime.native_strategy_exit import (
+            thresholds_from_metrics,
+        )
+
+        stamped = thresholds_from_metrics(metrics)
+        if stamped is not None:
+            if stamped.take_profit_price is not None:
+                tags["exit_tp_price"] = str(stamped.take_profit_price)
+            if stamped.stop_loss_price is not None:
+                tags["exit_stop_price"] = str(stamped.stop_loss_price)
     pair_id = pair_id_for(source)
     if pair_id is not None:
         tags["pair_id"] = pair_id

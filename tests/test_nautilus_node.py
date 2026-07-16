@@ -897,6 +897,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert captured["health"] is bundle.context.health
     assert captured["observability"] is not None
     assert callable(getattr(captured["observability"], "accepted_signal_notifier", None))
+    assert callable(getattr(captured["observability"], "paper_result_notifier", None))
 
     assert bundle.context is not None
     assert getattr(bundle.context, "nautilus_cache") is cache_holder

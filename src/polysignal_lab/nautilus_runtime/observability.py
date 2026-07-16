@@ -19,6 +19,7 @@ from polysignal_lab.nautilus_runtime.observability_persistence import (
     AcceptedSignalNotifier,
     NautilusEventStoreAdapter,
     NautilusNotifierAdapter,
+    PaperResultNotifier,
     PersistenceClass,
     _health_mark_side_effect_failure,
     persistence_class_for_table,
@@ -63,6 +64,7 @@ class ObservabilityService:
         health: HealthRegistry | None = None,
         notifier: NautilusNotifierAdapter | None = None,
         accepted_signal_notifier: AcceptedSignalNotifier | None = None,
+        paper_result_notifier: PaperResultNotifier | None = None,
         telemetry_queue_size: int = 1024,
         telemetry_autostart: bool = False,
         telemetry_sqlite_lock_retries: int = 3,
@@ -74,6 +76,7 @@ class ObservabilityService:
         self.accepted_signal_notifier: AcceptedSignalNotifier | None = (
             accepted_signal_notifier
         )
+        self.paper_result_notifier: PaperResultNotifier | None = paper_result_notifier
         self._event_count: int = 0
         self._recent_rejections: dict[tuple[object, ...], float] = {}
 
@@ -239,6 +242,22 @@ class ObservabilityService:
         except Exception as exc:
             _health_mark_side_effect_failure(
                 self.health, kind="accepted_signal_notifier", error=exc,
+            )
+
+    def notify_paper_result(self, result: Mapping[str, object]) -> None:
+        """Best-effort publish hook after a durable paper_trade_result write."""
+        if self.paper_result_notifier is None:
+            return
+        trade_id = result.get("paper_trade_id")
+        if trade_id not in (None, "") and self._suppress_repeat(
+            ("paper_result_notify", str(trade_id))
+        ):
+            return
+        try:
+            self.paper_result_notifier(result)
+        except Exception as exc:
+            _health_mark_side_effect_failure(
+                self.health, kind="paper_result_notifier", error=exc,
             )
 
     # -- Notifications --

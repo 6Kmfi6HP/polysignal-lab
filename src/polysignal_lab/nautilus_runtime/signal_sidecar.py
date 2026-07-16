@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from datetime import date
 from typing import Protocol, cast
@@ -112,6 +112,87 @@ def _notify_accepted_signal(
     thread = threading.Thread(
         target=_publish_accepted_signal_in_background,
         args=(services, signal, stake_usdc),
+        daemon=True,
+    )
+    thread.start()
+
+
+async def _publish_paper_result_once(
+    services: object,
+    result: Mapping[str, object],
+) -> dict[str, str | None]:
+    publish_service = getattr(services, "publish_service", None)
+    publish_fn = (
+        None
+        if publish_service is None
+        else getattr(publish_service, "publish_paper_result", None)
+    )
+    if not callable(publish_fn):
+        raise RuntimeError("publish_service.publish_paper_result is not available")
+    publish = await cast(Callable[..., Awaitable[object]], publish_fn)(result)
+    as_dict = getattr(publish, "as_dict", None)
+    if not callable(as_dict):
+        return {}
+    return cast(dict[str, str | None], as_dict())
+
+
+def _publish_paper_result_in_background(
+    services: object,
+    result: Mapping[str, object],
+) -> None:
+    try:
+        publish = asyncio.run(_publish_paper_result_once(services, result))
+        scheduler_health.note_publish_result(services, publish)
+    except Exception as exc:
+        cast(logging.Logger, getattr(services, "logger", logger)).warning(
+            "Nautilus early-exit paper result publish failed for %s: %s",
+            result.get("paper_trade_id"),
+            exc,
+        )
+        persistence = getattr(services, "persistence", None)
+        insert = None if persistence is None else getattr(persistence, "insert_system_event", None)
+        if not callable(insert):
+            return
+        try:
+            from polysignal_lab.utils import new_id, redact_text, utc_iso
+
+            event = {
+                "event_id": new_id(
+                    "evt",
+                    "paper_result_publish_failed",
+                    str(result.get("paper_trade_id") or ""),
+                ),
+                "event_type": "paper_result_publish_failed",
+                "severity": "WARNING",
+                "created_at": utc_iso(),
+                "paper_trade_id": result.get("paper_trade_id"),
+                "paper_position_id": result.get("paper_position_id"),
+                "signal_id": result.get("signal_id"),
+                "error_type": type(exc).__name__,
+                "error": redact_text(str(exc)),
+            }
+            insert(event)
+            append_log = getattr(persistence, "append_log", None)
+            if callable(append_log):
+                append_log("system_events", event)
+        except Exception:
+            cast(logging.Logger, getattr(services, "logger", logger)).debug(
+                "Failed to audit paper_result_publish_failed",
+                exc_info=True,
+            )
+
+
+def _notify_paper_result(
+    services: object,
+    result: Mapping[str, object],
+) -> None:
+    if not getattr(getattr(services, "settings", None), "telegram", None):
+        return
+    if not getattr(getattr(services, "settings").telegram, "send_paper_results", False):
+        return
+    thread = threading.Thread(
+        target=_publish_paper_result_in_background,
+        args=(services, dict(result)),
         daemon=True,
     )
     thread.start()

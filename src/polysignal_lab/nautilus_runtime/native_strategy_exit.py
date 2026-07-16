@@ -8,6 +8,7 @@ Pos: Native strategy risk-exit policy — sole paper exit authority (not conting
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import math
@@ -17,6 +18,14 @@ from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.projections import project_position
 from polysignal_lab.utils import parse_dt
+
+
+@dataclass(frozen=True, slots=True)
+class PositionExitThresholds:
+    """Entry-time TP/SL stamps for a single open position (overrides global prices)."""
+
+    take_profit_price: float | None = None
+    stop_loss_price: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,12 +80,14 @@ class NativeExitPolicy:
         view: MarketView,
         now: datetime,
         inflight: set[str],
+        position_thresholds: Mapping[str, PositionExitThresholds] | None = None,
     ) -> tuple[AlphaDecision, ...]:
         if cache is None or strategy_id is None:
             return ()
         pair = registry.by_condition(view.condition_id)
         if pair is None:
             return ()
+        thresholds_by_instrument = position_thresholds or {}
         decisions: list[AlphaDecision] = []
         for position in _open_positions(cache, strategy_id):
             decision = self._decision_for_position(
@@ -86,6 +97,7 @@ class NativeExitPolicy:
                 view=view,
                 now=now,
                 inflight=inflight,
+                position_thresholds=thresholds_by_instrument,
             )
             if decision is not None:
                 decisions.append(decision)
@@ -100,6 +112,7 @@ class NativeExitPolicy:
         view: MarketView,
         now: datetime,
         inflight: set[str],
+        position_thresholds: Mapping[str, PositionExitThresholds],
     ) -> AlphaDecision | None:
         projection = project_position(position)
         if bool(projection.get("is_closed")):
@@ -118,11 +131,13 @@ class NativeExitPolicy:
         if bid is None or not math.isfinite(float(bid)) or float(bid) <= 0:
             return None
         opened_at = _opened_at(projection)
+        stamped = position_thresholds.get(instrument_id) or position_thresholds.get(token_id)
         reason = self._reason(
             bid=float(bid),
             entry_price=entry_price,
             opened_at=opened_at,
             now=now,
+            thresholds=stamped,
         )
         if reason is None or position_id in inflight:
             return None
@@ -137,6 +152,7 @@ class NativeExitPolicy:
             entry_price=entry_price,
             opened_at=opened_at,
             stake_usdc=_finite_float(projection.get("stake_usdc")),
+            thresholds=stamped,
         )
 
     def _reason(
@@ -146,23 +162,54 @@ class NativeExitPolicy:
         entry_price: float | None,
         opened_at: datetime | None,
         now: datetime,
+        thresholds: PositionExitThresholds | None = None,
     ) -> str | None:
+        stop_price = self.stop_loss_price
+        take_profit_price = self.take_profit_price
+        if thresholds is not None:
+            if thresholds.stop_loss_price is not None:
+                stop_price = thresholds.stop_loss_price
+            if thresholds.take_profit_price is not None:
+                take_profit_price = thresholds.take_profit_price
         if (
             self.mode == "hold_to_resolution_with_optional_tp_sl"
             and self.stop_loss_enabled
-            and bid <= self.stop_loss_price
+            and bid <= stop_price
         ):
             return "STOP_LOSS"
         if (
             self.mode == "hold_to_resolution_with_optional_tp_sl"
             and self.take_profit_enabled
-            and bid >= self.take_profit_price
+            and bid >= take_profit_price
         ):
             return "TAKE_PROFIT"
         if opened_at is not None and (now - opened_at).total_seconds() >= self.max_hold_time_sec:
             return "MAX_HOLD_TIME"
         _ = entry_price
         return None
+
+
+def thresholds_from_metrics(metrics: Mapping[str, object]) -> PositionExitThresholds | None:
+    """Extract entry-time exit thresholds from strategy signal metrics / order tags."""
+    take_profit = _positive_optional(
+        metrics.get("tp_sl_tp_prob"),
+        metrics.get("exit_tp_price"),
+    )
+    stop_loss = _positive_optional(
+        metrics.get("tp_sl_stop_prob"),
+        metrics.get("exit_stop_price"),
+    )
+    if _truthy(metrics.get("flip_stop_enabled")):
+        flip_stop = _positive_optional(metrics.get("flip_stop_price"))
+        if flip_stop is not None:
+            # flip_stop is a stop-style exit; prefer explicit flip stamp when enabled.
+            stop_loss = flip_stop
+    if take_profit is None and stop_loss is None:
+        return None
+    return PositionExitThresholds(
+        take_profit_price=take_profit,
+        stop_loss_price=stop_loss,
+    )
 
 
 def _build_exit_decision(
@@ -177,6 +224,7 @@ def _build_exit_decision(
     entry_price: float | None,
     opened_at: datetime | None = None,
     stake_usdc: float | None = None,
+    thresholds: PositionExitThresholds | None = None,
 ) -> AlphaDecision:
     metrics: dict[str, object] = {
         "reduce_only": True,
@@ -199,6 +247,11 @@ def _build_exit_decision(
         metrics["stake_usdc"] = stake_usdc
     elif entry_price is not None and quantity > 0:
         metrics["stake_usdc"] = entry_price * quantity
+    if thresholds is not None:
+        if thresholds.take_profit_price is not None:
+            metrics["exit_tp_price"] = thresholds.take_profit_price
+        if thresholds.stop_loss_price is not None:
+            metrics["exit_stop_price"] = thresholds.stop_loss_price
     return AlphaDecision(
         strategy="native_exit",
         asset=view.asset,
@@ -283,3 +336,21 @@ def _positive_float(value: object, name: str) -> float:
     if number is None or number <= 0:
         raise ValueError(f"{name} must be positive")
     return number
+
+
+def _positive_optional(*values: object) -> float | None:
+    for value in values:
+        number = _finite_float(value)
+        if number is not None and number > 0:
+            return number
+    return None
+
+
+def _truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False

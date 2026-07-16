@@ -58,9 +58,14 @@ Legacy OrderBook/CLOB modules may remain only as non-live residue for tests or q
 - **Sole paper exit authority:** `NativeExitPolicy` over Nautilus Cache open positions.
 - Exits submit **reduce-only** orders via `order_factory` + `submit_order` only.
 - Sandbox keeps `support_contingent_orders=False` and `use_reduce_only=True`. PolySignal does **not** attach Nautilus bracket / contingent TP-SL child orders under locked 1.229.0.
-- Global thresholds come from `paper_trading.exit_model` (`take_profit_price`, `stop_loss_price`, `max_hold_time_sec`).
-- Strategy-level exit knobs in alpha configs (e.g. `flip_stop_*`, `exit_config` TP/SL metrics) are **advisory entry metadata** for signals/diagnostics unless explicitly consumed by `NativeExitPolicy`. They must not create a second exit engine.
+- **Threshold precedence (per open position):**
+  1. Entry-time stamps on the position (`tp_sl_tp_prob` / `tp_sl_stop_prob` from ptb_diff, or `flip_stop_price` when `flip_stop_enabled` from late_consensus), bound into a strategy-local map on entry fill and also tagged on entry orders as `exit_tp_price` / `exit_stop_price`. Stamps clear only when the Cache position is **fully closed** (not on partial reduce-only fills).
+  2. Else global `paper_trading.exit_model` prices (`take_profit_price`, `stop_loss_price`).
+  3. `max_hold_time_sec` remains **global** only (not stamped per entry).
+- Global enable flags (`take_profit_enabled` / `stop_loss_enabled`) still gate whether TP/SL fire; only the **price levels** are per-position when stamped.
+- Strategy YAML exit knobs must not create a second exit engine — they only supply threshold stamps consumed by `NativeExitPolicy`.
 - Early TP/SL/max-hold closes write Reporting Truth `paper_trade_results` with `exit_mode` ∈ {`TAKE_PROFIT`,`STOP_LOSS`,`MAX_HOLD_TIME`}. Market-resolution settlement remains report-only and does not fabricate Nautilus `PositionClosed`.
+- Early-exit durable results also take the same best-effort Telegram path as resolution settlement (`ObservabilityService.notify_paper_result` → `PublishService.publish_paper_result`) when `telegram.send_paper_results` is true. Publish failure must not roll back the durable write.
 
 ## Settlement
 

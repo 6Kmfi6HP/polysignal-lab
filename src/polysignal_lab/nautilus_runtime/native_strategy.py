@@ -46,7 +46,11 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
 from polysignal_lab.nautilus_runtime.native_order import (
     OrderSubmittingStrategy,
 )
-from polysignal_lab.nautilus_runtime.native_strategy_exit import NativeExitPolicy
+from polysignal_lab.nautilus_runtime.native_strategy_exit import (
+    NativeExitPolicy,
+    PositionExitThresholds,
+    thresholds_from_metrics,
+)
 from polysignal_lab.nautilus_runtime.strategy.custom_data_handlers import route_strategy_data
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
     DecisionPipeline,
@@ -282,6 +286,8 @@ class PolySignalNativeStrategy(Strategy):
         self.submitted_specs: deque[object] = deque(maxlen=1000)
         self.execution_results: deque[object] = deque(maxlen=1000)
         self._exit_inflight: set[str] = set()
+        # Entry-time TP/SL stamps keyed by instrument_id (and token_id alias).
+        self._exit_thresholds_by_instrument: dict[str, PositionExitThresholds] = {}
 
     def _require_registry(self) -> MarketCatalog | None:
         if self.registry is None:
@@ -933,6 +939,7 @@ class PolySignalNativeStrategy(Strategy):
                 view=market_view,
                 now=now,
                 inflight=self._exit_inflight,
+                position_thresholds=self._exit_thresholds_by_instrument,
             )
         except (TypeError, ValueError, RuntimeError):
             self._note_runtime_progress("native_exit_failed")
@@ -996,6 +1003,76 @@ class PolySignalNativeStrategy(Strategy):
                     break
         if position_id:
             self._exit_inflight.discard(position_id)
+
+    def bind_position_exit_thresholds(
+        self,
+        event: object,
+        fill: AlphaFillEvent,
+    ) -> None:
+        """Stamp per-position TP/SL from entry fill metrics (Decision Truth collaborator)."""
+        metrics = dict(fill.metrics)
+        # Merge entry-order tags so exit_tp/stop stamps survive even if metrics omit them.
+        tags = getattr(event, "tags", ())
+        if isinstance(tags, (str, bytes)):
+            tags = (tags,)
+        for tag in tags or ():
+            text = str(tag)
+            if "=" not in text:
+                continue
+            key, _, value = text.partition("=")
+            if key in {"exit_tp_price", "exit_stop_price", "flip_stop_price", "flip_stop_enabled"}:
+                metrics.setdefault(key, value)
+        thresholds = thresholds_from_metrics(metrics)
+        if thresholds is None:
+            return
+        for key in self._threshold_keys_for_fill(event, fill):
+            self._exit_thresholds_by_instrument[key] = thresholds
+
+    def clear_position_exit_thresholds_for_position(self, position: object) -> None:
+        """Drop entry-time TP/SL stamps when the Cache position is fully closed."""
+        instrument_id = str(getattr(position, "instrument_id", "") or "")
+        if not instrument_id:
+            return
+        keys = [instrument_id]
+        # Also drop any token_id aliases that resolve to this instrument.
+        for key in list(self._exit_thresholds_by_instrument):
+            if key == instrument_id:
+                continue
+            try:
+                resolved = self.instrument_id_resolver(key)
+            except (TypeError, ValueError):
+                continue
+            if str(getattr(resolved, "id", resolved)) == instrument_id:
+                keys.append(key)
+        for key in keys:
+            self._exit_thresholds_by_instrument.pop(key, None)
+
+    def _threshold_keys_for_fill(
+        self,
+        event: object,
+        fill: AlphaFillEvent,
+    ) -> tuple[str, ...]:
+        keys: list[str] = []
+        instrument_id = getattr(event, "instrument_id", None)
+        if instrument_id not in (None, ""):
+            keys.append(str(instrument_id))
+        if fill.token_id:
+            keys.append(str(fill.token_id))
+            try:
+                resolved = self.instrument_id_resolver(fill.token_id)
+            except (TypeError, ValueError):
+                resolved = None
+            if resolved not in (None, ""):
+                keys.append(str(getattr(resolved, "id", resolved)))
+        # Preserve order, drop empties/dupes.
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for key in keys:
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            ordered.append(key)
+        return tuple(ordered)
 
     def _resolved_instrument(self, token_id: str) -> object:
         resolved = self.instrument_id_resolver(token_id)

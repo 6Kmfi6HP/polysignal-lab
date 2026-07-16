@@ -72,6 +72,12 @@ class AcceptedSignalNotifier(Protocol):
     def __call__(self, signal: SignalCandidate, stake_usdc: float) -> None: ...
 
 
+class PaperResultNotifier(Protocol):
+    """Sync best-effort hook for publishing durable paper_trade_results (e.g. Telegram)."""
+
+    def __call__(self, result: Mapping[str, object]) -> None: ...
+
+
 class EventStore(Protocol):
     """Protocol for storing observability events."""
 

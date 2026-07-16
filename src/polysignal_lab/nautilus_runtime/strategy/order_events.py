@@ -135,6 +135,10 @@ def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
     strategy._record_nautilus_fill(event, alpha_event.metrics)
     if bool(alpha_event.metrics.get("reduce_only")):
         _record_early_exit_result(strategy, alpha_event)
+    else:
+        binder = getattr(strategy, "bind_position_exit_thresholds", None)
+        if callable(binder):
+            binder(event, alpha_event)
     forget_approved_metrics(
         strategy,
         event,
@@ -200,6 +204,14 @@ def _record_early_exit_result(
         strategy._note_runtime_progress("early_exit_result")
     except Exception:
         strategy._note_runtime_progress("early_exit_result_failed")
+        return
+    notify = getattr(observability, "notify_paper_result", None)
+    if callable(notify):
+        # Best-effort: durable write already succeeded; never block or re-raise.
+        try:
+            notify(result)
+        except Exception:
+            strategy._note_runtime_progress("early_exit_result_publish_failed")
 
 
 def handle_position_event(strategy: _OrderEventStrategy, position: object) -> None:
@@ -208,6 +220,9 @@ def handle_position_event(strategy: _OrderEventStrategy, position: object) -> No
 
 def handle_position_closed(strategy: _OrderEventStrategy, position: object) -> None:
     handle_position_event(strategy, position)
+    clearer = getattr(strategy, "clear_position_exit_thresholds_for_position", None)
+    if callable(clearer):
+        clearer(position)
     reset_position = getattr(strategy.core, "reset_position", None)
     registry = strategy.registry
     if registry is None or not callable(reset_position):

@@ -182,6 +182,33 @@ def test_observability_actor_isolates_accepted_signal_notifier_failure() -> None
     assert "telemetry_write_failures" not in component.metrics
 
 
+def test_observability_actor_isolates_paper_result_notifier_failure() -> None:
+    actor = ObservabilityService(
+        paper_result_notifier=lambda _result: (_ for _ in ()).throw(
+            RuntimeError("telegram paper result failed")
+        )
+    )
+
+    actor.notify_paper_result({"paper_trade_id": "pt-1", "result": "WIN"})
+
+    component = actor.health.components["observability_actor"]
+    assert component.status == "degraded"
+    assert component.metrics["non_critical_side_effect_failures"] == 1
+    assert component.metrics["side_effect_kind"] == "paper_result_notifier"
+
+
+def test_notify_paper_result_suppresses_duplicate_trade_ids() -> None:
+    calls: list[object] = []
+    actor = ObservabilityService(
+        paper_result_notifier=lambda result: calls.append(result),
+    )
+
+    actor.notify_paper_result({"paper_trade_id": "pt-dup", "result": "WIN"})
+    actor.notify_paper_result({"paper_trade_id": "pt-dup", "result": "WIN"})
+
+    assert len(calls) == 1
+
+
 
 
 

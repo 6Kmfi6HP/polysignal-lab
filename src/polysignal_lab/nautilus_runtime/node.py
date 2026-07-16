@@ -40,6 +40,7 @@ from polysignal_lab.nautilus_runtime.signal_sidecar import (
     _InteractiveTelegramBotThread,
     _NautilusReportLoopThread,
     _notify_accepted_signal,
+    _notify_paper_result,
     _start_interactive_telegram_bot_thread,  # noqa: F401  # re-exported for tests and lazy imports
     _start_nautilus_report_loop_thread,  # noqa: F401
     _stop_interactive_telegram_bot_thread,  # noqa: F401
@@ -208,6 +209,7 @@ async def _prepare_nautilus_runtime_context(
             signal,
             stake_usdc,
         ),
+        paper_result_notifier=lambda result: _notify_paper_result(context, result),
     )
     return context, discovered_markets, observability
 
