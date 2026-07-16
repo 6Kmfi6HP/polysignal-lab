@@ -1131,6 +1131,11 @@ def call_subscription(
         _ = callback(*args, **kwargs)
     except ValueError as e:
         message = str(e)
+        # MessageBus.unsubscribe can raise when local wire state is ahead of the
+        # bus (_subscriptions/_patterns drift). Treat absent targets as success so
+        # stale refresh can clear ownership and continue the batch.
+        if message == "list.remove(x): x not in list":
+            return True
         if "not been registered" not in message:
             raise
         if message == "The actor has not been registered":

@@ -36,6 +36,7 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     mark_market_subscription_ready,
     refresh_stale_market_subscription,
     subscribe_market_conditions,
+    unsubscribe_market_conditions,
 )
 from polysignal_lab.observability.runtime_health import (
     evaluate_liveness,
@@ -71,10 +72,15 @@ class _SubscriptionTestStrategy:
         self.requests: list[str] = []
         self.fail_quote_subscribe = False
         self.fail_quote_subscribe_condition_ids: set[str] = set()
+        self.raise_absent_unsubscribe = False
         self.unsubscribe_exited = True
         self.quote_subscribe_attempts = 0
         self.name = name
         self.operations = operations
+
+    def _raise_if_absent_unsubscribe(self) -> None:
+        if self.raise_absent_unsubscribe:
+            raise ValueError("list.remove(x): x not in list")
 
     def _readiness_detail(
         self,
@@ -114,14 +120,17 @@ class _SubscriptionTestStrategy:
 
     def unsubscribe_quote_ticks(self, instrument_id: object) -> None:
         self.quote_unsubs.append(str(instrument_id))
+        self._raise_if_absent_unsubscribe()
 
     def unsubscribe_trade_ticks(self, instrument_id: object) -> None:
         self.trade_unsubs.append(str(instrument_id))
+        self._raise_if_absent_unsubscribe()
 
     def unsubscribe_order_book_deltas(self, instrument_id: object) -> None:
         self.book_unsubs.append(str(instrument_id))
         if self.operations is not None:
             self.operations.append((self.name, "unsubscribe"))
+        self._raise_if_absent_unsubscribe()
 
 
 def _subscription_test_strategy(
@@ -880,6 +889,54 @@ def test_new_subscription_joins_earliest_pending_refresh_deadline() -> None:
     assert "condition-a" not in (
         strategy._subscription_state.deferred_resubscribe_condition_ids
     )
+
+
+def test_absent_messagebus_unsubscribe_is_idempotent_for_stale_refresh() -> None:
+    strategy = _subscription_test_strategy()
+    subscribe_market_conditions(strategy, ("condition-a",), now=_dt(0))
+    strategy.raise_absent_unsubscribe = True
+
+    assert refresh_stale_market_subscription(strategy, "condition-a", now=_dt(30))
+    assert strategy._subscription_state.wire_condition_ids == {"condition-a"}
+    assert strategy.quote_unsubs  # attempted despite MessageBus already gone
+    assert strategy.quote_subs  # resubscribe still proceeded
+
+
+def test_coordinated_refresh_survives_absent_messagebus_unsubscribe() -> None:
+    first = _subscription_test_strategy(name="first")
+    second = _subscription_test_strategy(name="second")
+    for consumer in (first, second):
+        subscribe_market_conditions(consumer, ("condition-a",), now=_dt(0))
+        consumer.raise_absent_unsubscribe = True
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(first)
+    coordinator.register(second)
+
+    assert coordinator.refresh(first, "condition-a", now=_dt(30))
+    assert coordinator.refresh(first, "condition-a", now=_dt(31))
+    for consumer in (first, second):
+        assert consumer._subscription_state.wire_condition_ids == set()
+        assert consumer.quote_unsubs
+    assert "condition-a" in coordinator._resubscribe_not_before_by_condition
+
+    assert coordinator.resume_pending(first, "condition-a", now=_dt(61))
+    for consumer in (first, second):
+        assert consumer._subscription_state.wire_condition_ids == {"condition-a"}
+        assert consumer._subscription_state.deferred_resubscribe_condition_ids == set()
+
+
+def test_repeat_refresh_when_target_already_unsubscribed_does_not_raise() -> None:
+    strategy = _subscription_test_strategy()
+    subscribe_market_conditions(strategy, ("condition-a",), now=_dt(0))
+    unsubscribe_market_conditions(strategy, ("condition-a",))
+    strategy._subscription_state.wire_condition_ids.add("condition-a")
+    strategy.raise_absent_unsubscribe = True
+
+    unsubscribe_market_conditions(strategy, ("condition-a",))
+    assert strategy._subscription_state.wire_condition_ids == set()
+
+    subscribe_market_conditions(strategy, ("condition-a",), now=_dt(1))
+    assert strategy._subscription_state.wire_condition_ids == {"condition-a"}
 
 
 def test_staggered_retry_does_not_reset_restored_shared_subscriptions() -> None:
