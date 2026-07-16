@@ -166,6 +166,13 @@ def _portfolio_equity(
                     for parameter in parameters
                 ):
                     raise
+        else:
+            try:
+                parameter_names = signature(equity).parameters
+            except (TypeError, ValueError):
+                parameter_names = {}
+            if "venue" in parameter_names or "account_id" in parameter_names:
+                return None
         return _equity_float(equity(), currency)
     return _equity_float(equity, currency)
 

@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.date, typing, typing.assert_never, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode
-Output: test_daily_report_includes_strategy_win_rate_and_pnl, test_daily_report_includes_strategy_asset_timeframe_calibration, test_daily_report_aggregates_paper_execution_quality, test_daily_report_normalizes_legacy_raw_paper_reject_reason, test_daily_report_counts_cancelled_rejects_with_reasons, ResultSpec
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.date, typing, typing.Any, typing.assert_never, factories, factories.sample_paper_trade_result, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.paper.report, polysignal_lab.paper.report.PaperReportService, polysignal_lab.signal_layer.formatter, polysignal_lab.signal_layer.formatter.MessageFormatter
+Output: ResultSpec, test_daily_report_includes_strategy_win_rate_and_pnl, test_daily_report_counts_split_as_closed_without_win_loss_void, test_daily_report_includes_strategy_asset_timeframe_calibration, test_daily_report_aggregates_paper_execution_quality
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -20,7 +20,7 @@ from typing import Any, assert_never
 
 from factories import sample_paper_trade_result
 
-from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
+from polysignal_lab.domain.enums import TradeResultStatus
 from polysignal_lab.paper.report import PaperReportService
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 
@@ -117,7 +117,7 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
     assert "SPLIT" not in message
     assert message.startswith("<b>📊 Daily Paper Report</b>")
     assert "Equity  1000.00 → 996.00 pUSD" in message
-    assert "Source  portfolio" in message
+    assert "Source  Portfolio" in message
     assert "PnL     -4.00 pUSD" in message
     assert "+6.00 USDC" in message
     assert "<b>Strategies</b>" in message

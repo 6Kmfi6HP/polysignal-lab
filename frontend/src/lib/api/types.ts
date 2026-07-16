@@ -1,6 +1,6 @@
 /**
  * Input: None
- * Output: None
+ * Output: Side, OrderStatus, PositionStatus, TradeResultStatus, ExitMode, CalibrationStatus, StrategyStatus, SignalCandidate, RejectedSignal, PaperOrder, PaperPosition, PaperTradeResult, CalibrationBucket, DailyReport, StrategyStatusRow, LeaderboardRow, OverviewResponse, LeaderboardResponse, HealthComponent, HealthResponse
  * Pos: Library - Shared code
  *
  * 🔄 Self-reference: When this file changes, update this header

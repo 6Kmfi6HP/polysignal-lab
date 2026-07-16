@@ -75,7 +75,7 @@ def _report_equity_inputs_from_nautilus_cache(
             account=account,
             currency=base_currency,
         )
-        if nautilus_portfolio is not None and account is not None
+        if nautilus_portfolio is not None
         else None
     )
 

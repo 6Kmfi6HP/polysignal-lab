@@ -1,5 +1,5 @@
 /**
- * Input: { makeDailyReport, makeHealthResponse, makeOverviewResponse } from '@/test-utils/fixtures', { renderWithQueryClient } from '@/test-utils/render-with-query-client', { screen } from '@testing-library/react', { afterEach, describe, expect, it, vi } from 'vitest', * as client from '@/lib/api/client', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', { SidebarProvider } from '@/components/ui/sidebar', { OverviewPage } from './index', @/test-utils/fixtures, @/test-utils/render-with-query-client
+ * Input: { makeDailyReport, makeHealthResponse, makeOverviewResponse } from '@/test-utils/fixtures', { renderWithQueryClient } from '@/test-utils/render-with-query-client', { screen } from '@testing-library/react', { afterEach, describe, expect, it, vi } from 'vitest', * as client from '@/lib/api/client', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', { SidebarProvider } from '@/components/ui/sidebar', { OverviewPage } from './index'
  * Output: renderOverviewPage
  * Pos: Application code
  *
@@ -61,19 +61,19 @@ describe('OverviewPage', () => {
       makeHealthResponse({ status: 'ok' })
     )
 
-    const view = renderOverviewPage()
+    renderOverviewPage()
 
-    expect(await view.findByText('42')).toBeInTheDocument()
-    expect(view.getByText('signals')).toBeInTheDocument()
-    expect(view.getByText('7')).toBeInTheDocument()
-    expect(view.getByText('rejected signals')).toBeInTheDocument()
-    expect(view.getByText('2026-06-30')).toBeInTheDocument()
-    expect(view.getByText('3')).toBeInTheDocument()
-    expect(view.getByText('1')).toBeInTheDocument()
-    expect(view.getByText('4.00 (currency unavailable)')).toBeInTheDocument()
+    expect(await screen.findByText('42')).toBeInTheDocument()
+    expect(screen.getByText('signals')).toBeInTheDocument()
+    expect(screen.getByText('7')).toBeInTheDocument()
+    expect(screen.getByText('rejected signals')).toBeInTheDocument()
+    expect(screen.getByText('2026-06-30')).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.getByText('1')).toBeInTheDocument()
+    expect(screen.getByText('4.00 (currency unavailable)')).toBeInTheDocument()
     expect(screen.queryByText('Equity source')).not.toBeInTheDocument()
-    expect(view.getByText('Status unavailable')).toBeInTheDocument()
-    expect(view.getByText('ok')).toBeInTheDocument()
+    expect(screen.getByText('Status unavailable')).toBeInTheDocument()
+    expect(screen.getByText('ok')).toBeInTheDocument()
   })
 
   it('shows report currency and incomplete telemetry reasons', async () => {
@@ -94,14 +94,14 @@ describe('OverviewPage', () => {
     )
     vi.spyOn(client, 'getHealth').mockResolvedValue(makeHealthResponse())
 
-    const view = renderOverviewPage()
+    renderOverviewPage()
 
-    expect(await view.findByText('7.00 pUSD')).toBeInTheDocument()
+    expect(await screen.findByText('7.00 pUSD')).toBeInTheDocument()
     expect(screen.getByText('Account balance')).toBeInTheDocument()
-    expect(view.queryByText('4.00 USDC')).not.toBeInTheDocument()
-    expect(view.getByText('Incomplete')).toBeInTheDocument()
+    expect(screen.queryByText('4.00 USDC')).not.toBeInTheDocument()
+    expect(screen.getByText('Incomplete')).toBeInTheDocument()
     expect(
-      view.getByText(
+      screen.getByText(
         'Reasons: paper_order_projection_invalid:1; telemetry_queue_drops'
       )
     ).toBeInTheDocument()
