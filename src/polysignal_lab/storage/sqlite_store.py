@@ -774,15 +774,19 @@ class SQLiteStore:
         self,
         report: DailyReport,
     ) -> None:
-        now = utc_iso()
+        now = utc_iso(utc_now())
         rows = self._conn.execute(
             """SELECT * FROM report_publish_outbox
-            WHERE report_date=? AND revision<?
-              AND status IN ('PENDING','DELIVERING')""",
-            (report.report_date.isoformat(), report.revision),
+            WHERE report_date=? AND revision<? AND (
+                status IN ('PENDING','DELIVERING') OR
+                (status='SENDING' AND lease_until IS NOT NULL AND lease_until<=?)
+            )""",
+            (report.report_date.isoformat(), report.revision, now),
         ).fetchall()
         for row in rows:
             payload = self._outbox_payload(row)
+            if str(row["status"]) == "SENDING":
+                payload.setdefault("send_authorized", True)
             payload.update(
                 {
                     "status": "SUPERSEDED",
@@ -794,12 +798,16 @@ class SQLiteStore:
             self._conn.execute(
                 """UPDATE report_publish_outbox
                 SET status='SUPERSEDED',lease_until=NULL,last_error=?,updated_at=?,payload_json=?
-                WHERE intent_id=? AND status IN ('PENDING','DELIVERING')""",
+                WHERE intent_id=? AND (
+                    status IN ('PENDING','DELIVERING') OR
+                    (status='SENDING' AND lease_until IS NOT NULL AND lease_until<=?)
+                )""",
                 (
                     payload["last_error"],
                     now,
                     self._json(payload),
                     str(row["intent_id"]),
+                    now,
                 ),
             )
 
@@ -817,6 +825,7 @@ class SQLiteStore:
             "status": "PENDING",
             "attempt_count": 0,
             "lease_until": None,
+            "send_authorized": False,
             "publish_id": None,
             "last_error": None,
             "created_at": now,
@@ -862,7 +871,8 @@ class SQLiteStore:
         limit: int = 100,
     ) -> list[DailyReport]:
         now = utc_iso()
-        with self._lock:
+        with self._lock, self._conn:
+            self._supersede_stale_daily_report_publishes(now=now)
             rows = self._conn.execute(
                 """SELECT reports.revision,reports.payload_json
                 FROM report_publish_outbox AS outbox
@@ -891,6 +901,56 @@ class SQLiteStore:
             payload["revision"] = int(row["revision"])
             reports.append(DailyReport.model_validate(payload))
         return reports
+
+    def _supersede_stale_daily_report_publishes(self, *, now: str) -> None:
+        rows = self._conn.execute(
+            """SELECT outbox.*,latest.revision AS latest_revision
+            FROM report_publish_outbox AS outbox
+            JOIN (
+                SELECT report_date,MAX(revision) AS revision
+                FROM daily_reports GROUP BY report_date
+            ) AS latest ON latest.report_date=outbox.report_date
+            WHERE outbox.revision<latest.revision AND (
+                outbox.status IN ('PENDING','DELIVERING') OR
+                (outbox.status='SENDING' AND outbox.lease_until IS NOT NULL
+                AND outbox.lease_until<=?)
+            )""",
+            (now,),
+        ).fetchall()
+        for row in rows:
+            latest_revision = int(row["latest_revision"])
+            payload = self._outbox_payload(row)
+            payload.update(
+                {
+                    "status": "SUPERSEDED",
+                    "lease_until": None,
+                    "last_error": f"superseded_by_revision:{latest_revision}",
+                    "updated_at": now,
+                }
+            )
+            self._conn.execute(
+                """UPDATE report_publish_outbox
+                SET status='SUPERSEDED',lease_until=NULL,last_error=?,
+                    updated_at=?,payload_json=?
+                WHERE intent_id=? AND revision=? AND attempt_count=?
+                  AND status=? AND lease_until IS ? AND revision<? AND (
+                    status IN ('PENDING','DELIVERING') OR
+                    (status='SENDING' AND lease_until IS NOT NULL
+                    AND lease_until<=?)
+                )""",
+                (
+                    payload["last_error"],
+                    now,
+                    self._json(payload),
+                    str(row["intent_id"]),
+                    int(row["revision"]),
+                    int(row["attempt_count"]),
+                    str(row["status"]),
+                    row["lease_until"],
+                    latest_revision,
+                    now,
+                ),
+            )
 
     def claim_daily_report_publish(
         self,
@@ -927,6 +987,7 @@ class SQLiteStore:
                     "status": "DELIVERING",
                     "attempt_count": int(row["attempt_count"]),
                     "lease_until": lease_until,
+                    "send_authorized": False,
                     "publish_id": None,
                     "last_error": None,
                     "updated_at": now,
@@ -942,7 +1003,7 @@ class SQLiteStore:
         self,
         intent_id: str,
         attempt_count: int,
-    ) -> bool:
+    ) -> str:
         now = utc_iso(utc_now())
         with self._lock, self._conn:
             cursor = self._conn.execute(
@@ -954,21 +1015,66 @@ class SQLiteStore:
                     SELECT MAX(latest.revision)
                     FROM daily_reports AS latest
                     WHERE latest.report_date=report_publish_outbox.report_date
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM report_publish_outbox AS sending
+                    WHERE sending.report_date=report_publish_outbox.report_date
+                      AND sending.intent_id<>report_publish_outbox.intent_id
+                      AND sending.status='SENDING'
+                      AND sending.lease_until IS NOT NULL
+                      AND sending.lease_until>?
                   )""",
-                (now, intent_id, attempt_count, now),
+                (now, intent_id, attempt_count, now, now),
             )
             if cursor.rowcount != 1:
-                return False
+                row = self._conn.execute(
+                    """SELECT status,attempt_count,lease_until,revision,report_date
+                    FROM report_publish_outbox WHERE intent_id=?""",
+                    (intent_id,),
+                ).fetchone()
+                if (
+                    row is None
+                    or str(row["status"]) != "DELIVERING"
+                    or int(row["attempt_count"]) != attempt_count
+                ):
+                    return "STALE"
+                latest_revision = int(
+                    self._conn.execute(
+                        """SELECT MAX(revision) FROM daily_reports
+                        WHERE report_date=?""",
+                        (str(row["report_date"]),),
+                    ).fetchone()[0]
+                )
+                if int(row["revision"]) != latest_revision:
+                    return "STALE"
+                if row["lease_until"] is None or str(row["lease_until"]) <= now:
+                    return "EXPIRED"
+                if self._conn.execute(
+                    """SELECT 1 FROM report_publish_outbox
+                    WHERE report_date=? AND intent_id<>?
+                      AND status='SENDING' AND lease_until IS NOT NULL
+                      AND lease_until>?""",
+                    (str(row["report_date"]), intent_id, now),
+                ).fetchone() is not None:
+                    return "BUSY"
+                return "STALE"
             row = self._conn.execute(
                 "SELECT * FROM report_publish_outbox WHERE intent_id=?",
                 (intent_id,),
             ).fetchone()
             if row is None:
-                return False
+                return "STALE"
+            self._fence_expired_daily_report_sends(
+                report_date=str(row["report_date"]),
+                revision=int(row["revision"]),
+                intent_id=intent_id,
+                now=now,
+            )
             payload = self._outbox_payload(row)
             payload.update(
                 {
                     "status": "SENDING",
+                    "send_authorized": True,
                     "updated_at": now,
                 }
             )
@@ -976,7 +1082,49 @@ class SQLiteStore:
                 "UPDATE report_publish_outbox SET payload_json=? WHERE intent_id=?",
                 (self._json(payload), intent_id),
             )
-            return True
+            return "AUTHORIZED"
+
+    def _fence_expired_daily_report_sends(
+        self,
+        *,
+        report_date: str,
+        revision: int,
+        intent_id: str,
+        now: str,
+    ) -> None:
+        rows = self._conn.execute(
+            """SELECT * FROM report_publish_outbox
+            WHERE report_date=? AND revision<? AND intent_id<>?
+              AND status='SENDING' AND lease_until IS NOT NULL
+              AND lease_until<=?""",
+            (report_date, revision, intent_id, now),
+        ).fetchall()
+        for row in rows:
+            payload = self._outbox_payload(row)
+            if str(row["status"]) == "SENDING":
+                payload.setdefault("send_authorized", True)
+            payload.update(
+                {
+                    "status": "SUPERSEDED",
+                    "lease_until": None,
+                    "last_error": f"superseded_by_revision:{revision}",
+                    "updated_at": now,
+                }
+            )
+            self._conn.execute(
+                """UPDATE report_publish_outbox
+                SET status='SUPERSEDED',lease_until=NULL,last_error=?,
+                    updated_at=?,payload_json=?
+                WHERE intent_id=? AND status='SENDING'
+                  AND lease_until IS NOT NULL AND lease_until<=?""",
+                (
+                    payload["last_error"],
+                    now,
+                    self._json(payload),
+                    str(row["intent_id"]),
+                    now,
+                ),
+            )
 
     def complete_daily_report_publish(
         self,
@@ -990,18 +1138,48 @@ class SQLiteStore:
         with self._lock, self._conn:
             row = self._conn.execute(
                 """SELECT * FROM report_publish_outbox
-                WHERE intent_id=? AND status='SENDING' AND attempt_count=?""",
+                WHERE intent_id=? AND attempt_count=?""",
                 (intent_id, attempt_count),
             ).fetchone()
             if row is None:
+                return None
+            outbox_payload = self._outbox_payload(row)
+            authorized = outbox_payload.get("send_authorized")
+            if not bool(
+                authorized
+                if authorized is not None
+                else str(row["status"]) in {"SENDING", "SUPERSEDED"}
+            ):
                 return None
             publish_status, effective_publish = self._record_daily_report_publish(
                 p,
                 publish_status=requested_status,
             )
+            if str(row["status"]) != "SENDING":
+                return effective_publish
             delivered = publish_status in {"SENT", "DRY_RUN"}
-            status = publish_status if delivered else "PENDING"
-            last_error = None if delivered else str(p.get("error") or "publish_failed")
+            latest_revision = int(
+                self._conn.execute(
+                    """SELECT MAX(revision) FROM daily_reports
+                    WHERE report_date=?""",
+                    (str(row["report_date"]),),
+                ).fetchone()[0]
+            )
+            superseded = not delivered and int(row["revision"]) < latest_revision
+            status = (
+                "SUPERSEDED"
+                if superseded
+                else publish_status
+                if delivered
+                else "PENDING"
+            )
+            last_error = (
+                f"superseded_by_revision:{latest_revision}"
+                if superseded
+                else None
+                if delivered
+                else str(p.get("error") or "publish_failed")
+            )
             updated = self._update_report_publish_outbox(
                 row,
                 attempt_count=attempt_count,
@@ -1011,6 +1189,25 @@ class SQLiteStore:
                 updated_at=now,
             )
             if not updated:
+                current = self._conn.execute(
+                    """SELECT status,attempt_count,payload_json
+                    FROM report_publish_outbox WHERE intent_id=?""",
+                    (intent_id,),
+                ).fetchone()
+                if current is None or int(current["attempt_count"]) != attempt_count:
+                    return None
+                current_payload = _payload_json(current)
+                current_authorized = (
+                    current_payload.get("send_authorized")
+                    if isinstance(current_payload, dict)
+                    else None
+                )
+                if bool(
+                    current_authorized
+                    if current_authorized is not None
+                    else str(current["status"]) in {"SENDING", "SUPERSEDED"}
+                ):
+                    return effective_publish
                 return None
             return effective_publish
 

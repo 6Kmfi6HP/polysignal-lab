@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, concurrent.futures, concurrent.futures.ThreadPoolExecutor, datetime, datetime.date, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path, threading, threading.Barrier, types, types.SimpleNamespace, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.app.scheduler_reporting_build, polysignal_lab.dashboard.app
-Output: test_formatter_signal_message_within_limit, test_telegram_dry_run_publish, test_formatter_nautilus_fill_message_is_compact, test_jsonl_and_state_store, test_jsonl_and_state_restore_required_streams, test_sqlite_store_and_dashboard, test_schema_rejects_missing_required_columns, test_sqlite_anchor_prices_survive_reopen, test_sqlite_verified_anchor_survives_later_unverified_upsert, test_sqlite_store_persists_strategy_status_rows, test_daily_report_claim_and_delivery_lease_are_atomic_across_connections, test_daily_report_publish_authorization_rejects_expired_lease, test_daily_report_publish_retry_updates_failed_publish_record, test_daily_report_publish_failure_does_not_downgrade_success, test_new_daily_report_revision_supersedes_delivering_publish, test_new_daily_report_revision_does_not_revoke_authorized_publish, test_new_daily_report_revision_without_publish_supersedes_delivering_publish, test_pending_daily_report_publishes_excludes_stale_revision, test_publish_report_skips_intent_superseded_before_delivery, test_publish_report_logs_effective_success_result
+Output: test_formatter_signal_message_within_limit, test_telegram_dry_run_publish, test_formatter_nautilus_fill_message_is_compact, test_jsonl_and_state_store, test_jsonl_and_state_restore_required_streams, test_sqlite_store_and_dashboard, test_schema_rejects_missing_required_columns, test_sqlite_anchor_prices_survive_reopen, test_sqlite_verified_anchor_survives_later_unverified_upsert, test_sqlite_store_persists_strategy_status_rows, test_daily_report_claim_and_delivery_lease_are_atomic_across_connections, test_daily_report_publish_authorization_rejects_expired_lease, test_daily_report_publish_retry_updates_failed_publish_record, test_daily_report_publish_failure_does_not_downgrade_success, test_new_daily_report_revision_supersedes_delivering_publish, test_new_daily_report_revision_does_not_revoke_authorized_publish, test_new_daily_report_revision_failed_publish_becomes_superseded, test_new_daily_report_revision_waits_for_authorized_publish, test_new_daily_report_revision_reclaims_expired_waiting_lease, test_new_daily_report_revision_fences_expired_sending_completion, test_new_daily_report_revision_without_publish_supersedes_delivering_publish, test_pending_daily_report_publishes_supersedes_stale_nonterminal_rows, test_pending_daily_report_publishes_excludes_stale_revision, test_publish_report_skips_intent_superseded_before_delivery, test_publish_report_exception_preserves_sending_lease, test_publish_report_logs_effective_success_result
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -207,7 +207,7 @@ def _authorize_attempt(
     assert store.authorize_daily_report_publish(
         str(attempt["intent_id"]),
         int(attempt["attempt_count"]),
-    )
+    ) == "AUTHORIZED"
 
 
 def test_daily_report_claim_and_delivery_lease_are_atomic_across_connections(
@@ -327,10 +327,10 @@ def test_daily_report_publish_authorization_rejects_expired_lease(
         "utc_now",
         lambda: observed_at + timedelta(seconds=2),
     )
-    assert not store.authorize_daily_report_publish(
+    assert store.authorize_daily_report_publish(
         str(attempt["intent_id"]),
         int(attempt["attempt_count"]),
-    )
+    ) == "EXPIRED"
     assert store.restore_report_publish_outbox()[0]["status"] == "DELIVERING"
 
 
@@ -512,6 +512,224 @@ def test_new_daily_report_revision_does_not_revoke_authorized_publish(
     ) is not None
 
 
+def test_new_daily_report_revision_failed_publish_becomes_superseded(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    first, _ = store.claim_daily_report(report, enqueue_publish=True)
+    attempt = store.claim_daily_report_publish(
+        first.report_id,
+        lease_sec=60,
+    )
+
+    assert attempt is not None
+    _authorize_attempt(store, attempt)
+    revised, _ = store.claim_daily_report(
+        report.model_copy(
+            update={
+                "report_id": "dr-revised-before-failure",
+                "ending_equity": 1001.0,
+            }
+        ),
+        enqueue_publish=True,
+    )
+    effective = store.complete_daily_report_publish(
+        str(attempt["intent_id"]),
+        int(attempt["attempt_count"]),
+        {
+            "publish_id": str(attempt["idempotency_key"]),
+            "message_type": "daily_report",
+            "status": "FAILED",
+            "error": "429 Too Many Requests",
+            "sent_at": None,
+        },
+    )
+
+    assert revised.revision == 2
+    assert effective is not None
+    outbox = {
+        int(row["revision"]): row
+        for row in store.restore_report_publish_outbox()
+    }
+    assert outbox[1]["status"] == "SUPERSEDED"
+    assert outbox[1]["last_error"] == "superseded_by_revision:2"
+    assert outbox[2]["status"] == "PENDING"
+
+
+def test_new_daily_report_revision_waits_for_authorized_publish(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    first, _ = store.claim_daily_report(report, enqueue_publish=True)
+    first_attempt = store.claim_daily_report_publish(
+        first.report_id,
+        lease_sec=60,
+    )
+
+    assert first_attempt is not None
+    _authorize_attempt(store, first_attempt)
+    revised, _ = store.claim_daily_report(
+        report.model_copy(
+            update={
+                "report_id": "dr-revised-waits",
+                "ending_equity": 1001.0,
+            }
+        ),
+        enqueue_publish=True,
+    )
+    second_attempt = store.claim_daily_report_publish(
+        revised.report_id,
+        lease_sec=60,
+    )
+
+    assert second_attempt is not None
+    assert store.authorize_daily_report_publish(
+        str(second_attempt["intent_id"]),
+        int(second_attempt["attempt_count"]),
+    ) == "BUSY"
+    assert store.complete_daily_report_publish(
+        str(first_attempt["intent_id"]),
+        int(first_attempt["attempt_count"]),
+        {
+            "publish_id": str(first_attempt["idempotency_key"]),
+            "message_type": "daily_report",
+            "status": "SENT",
+            "sent_at": "2026-07-15T12:00:02Z",
+        },
+    ) is not None
+    assert store.authorize_daily_report_publish(
+        str(second_attempt["intent_id"]),
+        int(second_attempt["attempt_count"]),
+    ) == "AUTHORIZED"
+
+
+def test_new_daily_report_revision_reclaims_expired_waiting_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_at = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_store_module, "utc_now", lambda: observed_at)
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    first, _ = store.claim_daily_report(report, enqueue_publish=True)
+    first_attempt = store.claim_daily_report_publish(
+        first.report_id,
+        lease_sec=1,
+    )
+
+    assert first_attempt is not None
+    _authorize_attempt(store, first_attempt)
+    revised, _ = store.claim_daily_report(
+        report.model_copy(
+            update={
+                "report_id": "dr-revised-reclaims",
+                "ending_equity": 1001.0,
+            }
+        ),
+        enqueue_publish=True,
+    )
+    second_attempt = store.claim_daily_report_publish(
+        revised.report_id,
+        lease_sec=1,
+    )
+
+    assert second_attempt is not None
+    assert store.authorize_daily_report_publish(
+        str(second_attempt["intent_id"]),
+        int(second_attempt["attempt_count"]),
+    ) == "BUSY"
+    monkeypatch.setattr(
+        sqlite_store_module,
+        "utc_now",
+        lambda: observed_at + timedelta(seconds=2),
+    )
+    assert store.authorize_daily_report_publish(
+        str(second_attempt["intent_id"]),
+        int(second_attempt["attempt_count"]),
+    ) == "EXPIRED"
+    reclaimed = store.claim_daily_report_publish(
+        revised.report_id,
+        lease_sec=1,
+    )
+
+    assert reclaimed is not None
+    assert reclaimed["attempt_count"] == 2
+    assert store.authorize_daily_report_publish(
+        str(reclaimed["intent_id"]),
+        int(reclaimed["attempt_count"]),
+    ) == "AUTHORIZED"
+
+
+def test_new_daily_report_revision_fences_expired_sending_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_at = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_store_module, "utc_now", lambda: observed_at)
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    first, _ = store.claim_daily_report(report, enqueue_publish=True)
+    first_attempt = store.claim_daily_report_publish(
+        first.report_id,
+        lease_sec=1,
+    )
+
+    assert first_attempt is not None
+    _authorize_attempt(store, first_attempt)
+    revised, _ = store.claim_daily_report(
+        report.model_copy(
+            update={
+                "report_id": "dr-revised-fences",
+                "ending_equity": 1001.0,
+            }
+        ),
+        enqueue_publish=True,
+    )
+    second_attempt = store.claim_daily_report_publish(
+        revised.report_id,
+        lease_sec=1,
+    )
+
+    assert second_attempt is not None
+    monkeypatch.setattr(
+        sqlite_store_module,
+        "utc_now",
+        lambda: observed_at + timedelta(seconds=2),
+    )
+    reclaimed = store.claim_daily_report_publish(
+        revised.report_id,
+        lease_sec=1,
+    )
+
+    assert reclaimed is not None
+    assert store.authorize_daily_report_publish(
+        str(reclaimed["intent_id"]),
+        int(reclaimed["attempt_count"]),
+    ) == "AUTHORIZED"
+    effective = store.complete_daily_report_publish(
+        str(first_attempt["intent_id"]),
+        int(first_attempt["attempt_count"]),
+        {
+            "publish_id": str(first_attempt["idempotency_key"]),
+            "message_type": "daily_report",
+            "status": "SENT",
+            "sent_at": "2026-07-15T12:00:03Z",
+        },
+    )
+    assert effective is not None
+    assert effective["status"] == "SENT"
+    outbox = {
+        int(row["revision"]): row
+        for row in store.restore_report_publish_outbox()
+    }
+    assert outbox[1]["status"] == "SUPERSEDED"
+    assert outbox[1]["last_error"] == "superseded_by_revision:2"
+    publishes = store.query_json("telegram_publishes")
+    assert publishes[0]["status"] == "SENT"
+
+
 def test_new_daily_report_revision_without_publish_supersedes_delivering_publish(
     tmp_path: Path,
 ) -> None:
@@ -548,6 +766,46 @@ def test_new_daily_report_revision_without_publish_supersedes_delivering_publish
     )
     outbox = store.restore_report_publish_outbox()
     assert len(outbox) == 1
+    assert outbox[0]["status"] == "SUPERSEDED"
+    assert outbox[0]["last_error"] == "superseded_by_revision:2"
+
+
+def test_pending_daily_report_publishes_supersedes_stale_nonterminal_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_at = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_store_module, "utc_now", lambda: observed_at)
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    first, _ = store.claim_daily_report(report, enqueue_publish=True)
+    attempt = store.claim_daily_report_publish(
+        first.report_id,
+        lease_sec=1,
+    )
+
+    assert attempt is not None
+    _authorize_attempt(store, attempt)
+    revised, _ = store.claim_daily_report(
+        report.model_copy(
+            update={
+                "report_id": "dr-revised-no-outbox-cleans-stale",
+                "ending_equity": 1001.0,
+            }
+        ),
+        enqueue_publish=False,
+    )
+    monkeypatch.setattr(
+        sqlite_store_module,
+        "utc_iso",
+        lambda _dt=None: "2026-07-15T12:00:02Z",
+    )
+
+    assert revised.revision == 2
+    assert store.pending_daily_report_publishes(
+        before_date="2026-07-16",
+    ) == []
+    outbox = store.restore_report_publish_outbox()
     assert outbox[0]["status"] == "SUPERSEDED"
     assert outbox[0]["last_error"] == "superseded_by_revision:2"
 
@@ -623,7 +881,7 @@ async def test_publish_report_skips_intent_superseded_before_delivery(
             self,
             intent_id: str,
             attempt_count: int,
-        ) -> bool:
+        ) -> str:
             return store.authorize_daily_report_publish(
                 intent_id,
                 attempt_count,
@@ -652,6 +910,62 @@ async def test_publish_report_skips_intent_superseded_before_delivery(
 
     assert await _publish_report(scheduler, persisted)
     assert delivered == []
+
+
+async def test_publish_report_exception_preserves_sending_lease(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+
+    class Persistence:
+        def claim_daily_report_publish(
+            self,
+            report_id: str,
+            *,
+            lease_sec: float,
+        ) -> dict[str, object] | None:
+            return store.claim_daily_report_publish(
+                report_id,
+                lease_sec=lease_sec,
+            )
+
+        def authorize_daily_report_publish(
+            self,
+            intent_id: str,
+            attempt_count: int,
+        ) -> str:
+            return store.authorize_daily_report_publish(
+                intent_id,
+                attempt_count,
+            )
+
+    class Publisher:
+        async def deliver_daily_report(
+            self,
+            _report: DailyReport,
+            *,
+            idempotency_key: str | None = None,
+        ) -> None:
+            raise TimeoutError(str(idempotency_key))
+
+    scheduler = SimpleNamespace(
+        settings=SimpleNamespace(
+            telegram=SimpleNamespace(publish_timeout_sec=20.0)
+        ),
+        persistence=Persistence(),
+        publish_service=Publisher(),
+        logger=SimpleNamespace(
+            error=lambda *_args: None,
+            info=lambda *_args: None,
+        ),
+    )
+
+    assert not await _publish_report(scheduler, persisted)
+    outbox = store.restore_report_publish_outbox()
+    assert outbox[0]["status"] == "SENDING"
+    assert outbox[0]["lease_until"] is not None
 
 
 async def test_publish_report_logs_effective_success_result(
@@ -689,7 +1003,7 @@ async def test_publish_report_logs_effective_success_result(
             self,
             intent_id: str,
             attempt_count: int,
-        ) -> bool:
+        ) -> str:
             return store.authorize_daily_report_publish(
                 intent_id,
                 attempt_count,

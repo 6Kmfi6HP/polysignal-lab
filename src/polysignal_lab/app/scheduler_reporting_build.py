@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, sqlite3, polysignal_lab.app.scheduler_reporting_equity, polysignal_lab.app.scheduler_reporting_sources, polysignal_lab.app.scheduler_reporting_types, polysignal_lab.app.scheduler_health, polysignal_lab.domain.paper_result, polysignal_lab.paper.report
+Input: __future__, __future__.annotations, asyncio, sqlite3, polysignal_lab.app.scheduler_reporting_equity, polysignal_lab.app.scheduler_reporting_sources, polysignal_lab.app.scheduler_reporting_types, polysignal_lab.app.scheduler_health, polysignal_lab.domain.paper_result, polysignal_lab.paper.report
 Output: _build_daily_report_from_inputs
 Pos: Application code
 
@@ -8,6 +8,7 @@ Pos: Application code
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 
 from polysignal_lab.app import scheduler_health
@@ -182,15 +183,31 @@ async def _publish_report(
     attempt_count = int(intent["attempt_count"])
     idempotency_key = str(intent["idempotency_key"])
     try:
-        if not scheduler.persistence.authorize_daily_report_publish(
-            intent_id,
-            attempt_count,
-        ):
-            scheduler.logger.info(
-                "Skipped superseded daily report publish for %s",
+        while True:
+            authorization = scheduler.persistence.authorize_daily_report_publish(
                 intent_id,
+                attempt_count,
             )
-            return True
+            if authorization == "AUTHORIZED":
+                break
+            if authorization == "STALE":
+                scheduler.logger.info(
+                    "Skipped superseded daily report publish for %s",
+                    intent_id,
+                )
+                return True
+            if authorization == "EXPIRED":
+                intent = scheduler.persistence.claim_daily_report_publish(
+                    report.report_id,
+                    lease_sec=lease_sec,
+                )
+                if intent is None:
+                    return True
+                intent_id = str(intent["intent_id"])
+                attempt_count = int(intent["attempt_count"])
+                idempotency_key = str(intent["idempotency_key"])
+                continue
+            await asyncio.sleep(0.1)
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
         scheduler.logger.error("Failed to authorize daily report publish: %s", exc)
@@ -203,14 +220,6 @@ async def _publish_report(
         )
         publish_payload = publish.as_dict()
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
-        try:
-            scheduler.persistence.release_daily_report_publish(
-                intent_id,
-                attempt_count,
-                str(exc),
-            )
-        except sqlite3.Error as release_exc:
-            scheduler_health.note_storage_failure(scheduler, "sqlite", release_exc)
         scheduler.logger.error("Failed to publish daily report: %s", exc)
         return False
 

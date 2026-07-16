@@ -126,7 +126,7 @@ class PersistenceService:
         self,
         intent_id: str,
         attempt_count: int,
-    ) -> bool:
+    ) -> str:
         return self.sqlite.authorize_daily_report_publish(
             intent_id,
             attempt_count,

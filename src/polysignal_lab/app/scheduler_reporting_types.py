@@ -49,7 +49,7 @@ class _ReportPersistence(Protocol):
         self,
         intent_id: str,
         attempt_count: int,
-    ) -> bool: ...
+    ) -> str: ...
 
     def complete_daily_report_publish(
         self,
