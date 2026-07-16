@@ -135,21 +135,27 @@ def project_portfolio_snapshot(
     portfolio: object,
     *,
     account: object | None = None,
+    currency: str | None = None,
 ) -> dict[str, object]:
-    equity_value = _portfolio_equity(portfolio, account)
+    equity_value = _portfolio_equity(portfolio, account, currency=currency)
     return {
         "portfolio_id": _text_attr(portfolio, "id"),
         "equity": equity_value,
     }
 
 
-def _portfolio_equity(portfolio: object, account: object | None) -> float | None:
+def _portfolio_equity(
+    portfolio: object,
+    account: object | None,
+    *,
+    currency: str | None = None,
+) -> float | None:
     equity = getattr(portfolio, "equity", None)
     if callable(equity):
         account_id = getattr(account, "id", None)
         if account_id is not None:
             try:
-                return _to_float_or_none(equity(account_id=account_id))
+                return _equity_float(equity(account_id=account_id), currency)
             except TypeError:
                 try:
                     parameters = signature(equity).parameters.values()
@@ -160,8 +166,21 @@ def _portfolio_equity(portfolio: object, account: object | None) -> float | None
                     for parameter in parameters
                 ):
                     raise
-        return _to_float_or_none(equity())
-    return _to_float_or_none(equity)
+        return _equity_float(equity(), currency)
+    return _equity_float(equity, currency)
+
+
+def _equity_float(value: object, currency: str | None) -> float | None:
+    if currency is None or not isinstance(value, Mapping):
+        return _to_float_or_none(value)
+    usdc_fallback: float | None = None
+    for key, amount in value.items():
+        key_currency = str(key)
+        if key_currency == currency:
+            return _to_float_or_none(amount)
+        if currency == "USDC" and key_currency.casefold() == "usdc":
+            usdc_fallback = _to_float_or_none(amount)
+    return usdc_fallback
 
 
 def _to_float(value: object) -> float:

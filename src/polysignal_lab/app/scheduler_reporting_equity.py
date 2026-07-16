@@ -70,7 +70,11 @@ def _report_equity_inputs_from_nautilus_cache(
     account = accounts[0] if accounts else None
     account_projection = project_account(account) if account is not None else None
     portfolio_projection = (
-        project_portfolio_snapshot(nautilus_portfolio, account=account)
+        project_portfolio_snapshot(
+            nautilus_portfolio,
+            account=account,
+            currency=base_currency,
+        )
         if nautilus_portfolio is not None and account is not None
         else None
     )

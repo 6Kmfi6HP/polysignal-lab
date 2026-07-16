@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, json, sqlite3, types, types.SimpleNamespace, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._report_equity_inputs, polysignal_lab.app.scheduler_reporting_sources._collect_daily_report_inputs
-Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_native_cache_accounts_api, test_generate_daily_report_uses_configured_pusd_equity, test_daily_report_accepts_legacy_payload_without_equity_source, test_daily_report_revises_legacy_payload_for_new_equity_source, test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss, test_daily_report_orders_use_creation_day_after_cross_day_update, test_daily_report_marks_inferred_legacy_order_creation_time, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_revises_after_late_settlement, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_uses_starting_balance_without_account, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
+Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_selects_pusd_portfolio_equity, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_native_cache_accounts_api, test_generate_daily_report_uses_configured_pusd_equity, test_daily_report_accepts_legacy_payload_without_equity_source, test_daily_report_revises_legacy_payload_for_new_equity_source, test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss, test_daily_report_orders_use_creation_day_after_cross_day_update, test_daily_report_marks_inferred_legacy_order_creation_time, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_revises_after_late_settlement, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_uses_starting_balance_without_account, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -87,6 +87,38 @@ def test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet() -> Non
     )
 
     assert _report_equity_inputs(scheduler) == (1_000.0, 1_234.5, 2, "portfolio")
+
+
+def test_report_equity_inputs_selects_pusd_portfolio_equity() -> None:
+    class Money:
+        def __init__(self, value: float) -> None:
+            self.value = value
+
+        def as_double(self) -> float:
+            return self.value
+
+    account = SimpleNamespace(
+        id="A-1",
+        balances=[SimpleNamespace(currency="pUSD", total=987.65)],
+    )
+    cache = SimpleNamespace(
+        accounts=lambda: [account],
+        positions=lambda: [],
+    )
+    portfolio = SimpleNamespace(
+        id="PF-1",
+        equity=lambda **_kwargs: {
+            "pUSD": Money(200.0),
+            "USDC": Money(100.0),
+        },
+    )
+    scheduler = SimpleNamespace(
+        settings=_settings(sandbox_base_currency="pUSD"),
+        nautilus_cache=cache,
+        nautilus_portfolio=portfolio,
+    )
+
+    assert _report_equity_inputs(scheduler) == (1_000.0, 200.0, 0, "portfolio")
 
 
 def test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity() -> None:

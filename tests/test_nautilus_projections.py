@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.nautilus_runtime.projections, polysignal_lab.nautilus_runtime.projections.(
-Output: test_project_order_event_uses_nautilus_event_fields, test_project_fill_event_uses_nautilus_fill_fields, test_project_fill_event_accepts_nautilus_price_quantity_objects, test_project_position_uses_nautilus_position_fields, test_project_closed_position_uses_close_time_for_lifecycle_ordering, test_project_position_leaves_missing_money_unknown, test_project_portfolio_snapshot_sums_currency_equity_mapping, _FloatLike, _MoneyLike
+Output: test_project_order_event_uses_nautilus_event_fields, test_project_fill_event_uses_nautilus_fill_fields, test_project_fill_event_accepts_nautilus_price_quantity_objects, test_project_position_uses_nautilus_position_fields, test_project_closed_position_uses_close_time_for_lifecycle_ordering, test_project_position_leaves_missing_money_unknown, test_project_portfolio_snapshot_selects_currency_equity_mapping, test_project_portfolio_snapshot_sums_currency_equity_mapping, _FloatLike, _MoneyLike
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -354,6 +354,25 @@ def test_project_position_leaves_missing_money_unknown() -> None:
     assert row["quantity"] is None
     assert row["avg_entry_price"] is None
     assert row["stake_usdc"] is None
+
+
+def test_project_portfolio_snapshot_selects_currency_equity_mapping() -> None:
+    account = SimpleNamespace(id="ACCOUNT-001")
+
+    class Portfolio:
+        id = "portfolio-001"
+
+        def equity(self, *, account_id: str) -> dict[str, _MoneyLike]:
+            assert account_id == "ACCOUNT-001"
+            return {"pUSD": _MoneyLike(200.0), "USDC": _MoneyLike(100.0)}
+
+    row = project_portfolio_snapshot(
+        Portfolio(),
+        account=account,
+        currency="pUSD",
+    )
+
+    assert row["equity"] == 200.0
 
 
 def test_project_portfolio_snapshot_sums_currency_equity_mapping() -> None:
