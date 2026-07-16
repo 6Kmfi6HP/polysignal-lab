@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from threading import Lock
 from time import sleep
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, Literal
 
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.enums import PositionStatus, Side
@@ -53,6 +53,13 @@ if TYPE_CHECKING:
 
 
 _PAPER_CURRENT_STATE_SCHEMA_VERSION = 2
+
+DailyReportPublishAuthorization = Literal[
+    "AUTHORIZED",
+    "BUSY",
+    "EXPIRED",
+    "STALE",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -798,15 +805,21 @@ class SQLiteStore:
             self._conn.execute(
                 """UPDATE report_publish_outbox
                 SET status='SUPERSEDED',lease_until=NULL,last_error=?,updated_at=?,payload_json=?
-                WHERE intent_id=? AND (
+                WHERE intent_id=? AND revision=? AND attempt_count=?
+                  AND status=? AND lease_until IS ? AND revision<? AND (
                     status IN ('PENDING','DELIVERING') OR
                     (status='SENDING' AND lease_until IS NOT NULL AND lease_until<=?)
-                )""",
+                  )""",
                 (
                     payload["last_error"],
                     now,
                     self._json(payload),
                     str(row["intent_id"]),
+                    int(row["revision"]),
+                    int(row["attempt_count"]),
+                    str(row["status"]),
+                    row["lease_until"],
+                    report.revision,
                     now,
                 ),
             )
@@ -982,12 +995,25 @@ class SQLiteStore:
             if row is None:
                 return None
             payload = self._outbox_payload(row)
+            authorized_attempts = {
+                int(value)
+                for value in payload.get("authorized_attempts", [])
+                if isinstance(value, int)
+            }
+            previous_authorized = payload.get("send_authorized")
+            if previous_authorized is None:
+                previous_authorized = str(payload.get("status")) == "SENDING"
+            if bool(previous_authorized):
+                previous_attempt = payload.get("attempt_count")
+                if isinstance(previous_attempt, int):
+                    authorized_attempts.add(previous_attempt)
             payload.update(
                 {
                     "status": "DELIVERING",
                     "attempt_count": int(row["attempt_count"]),
                     "lease_until": lease_until,
                     "send_authorized": False,
+                    "authorized_attempts": sorted(authorized_attempts),
                     "publish_id": None,
                     "last_error": None,
                     "updated_at": now,
@@ -1003,18 +1029,27 @@ class SQLiteStore:
         self,
         intent_id: str,
         attempt_count: int,
-    ) -> str:
-        now = utc_iso(utc_now())
+        *,
+        lease_sec: float,
+    ) -> DailyReportPublishAuthorization:
+        now_dt = utc_now()
+        now = utc_iso(now_dt)
+        lease_until = utc_iso(now_dt + timedelta(seconds=max(float(lease_sec), 1.0)))
         with self._lock, self._conn:
             cursor = self._conn.execute(
                 """UPDATE report_publish_outbox
-                SET status='SENDING',updated_at=?
+                SET status='SENDING',lease_until=?,updated_at=?
                 WHERE intent_id=? AND status='DELIVERING' AND attempt_count=?
                   AND lease_until IS NOT NULL AND lease_until>?
                   AND revision=(
                     SELECT MAX(latest.revision)
                     FROM daily_reports AS latest
                     WHERE latest.report_date=report_publish_outbox.report_date
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM telegram_publishes AS published
+                    WHERE published.publish_id=report_publish_outbox.idempotency_key
+                      AND published.status IN ('SENT','DRY_RUN')
                   )
                   AND NOT EXISTS (
                     SELECT 1 FROM report_publish_outbox AS sending
@@ -1024,11 +1059,12 @@ class SQLiteStore:
                       AND sending.lease_until IS NOT NULL
                       AND sending.lease_until>?
                   )""",
-                (now, intent_id, attempt_count, now, now),
+                (lease_until, now, intent_id, attempt_count, now, now),
             )
             if cursor.rowcount != 1:
                 row = self._conn.execute(
-                    """SELECT status,attempt_count,lease_until,revision,report_date
+                    """SELECT status,attempt_count,lease_until,revision,report_date,
+                        idempotency_key,payload_json
                     FROM report_publish_outbox WHERE intent_id=?""",
                     (intent_id,),
                 ).fetchone()
@@ -1037,6 +1073,47 @@ class SQLiteStore:
                     or str(row["status"]) != "DELIVERING"
                     or int(row["attempt_count"]) != attempt_count
                 ):
+                    return "STALE"
+                terminal_publish = self._conn.execute(
+                    """SELECT status,payload_json FROM telegram_publishes
+                    WHERE publish_id=? AND status IN ('SENT','DRY_RUN')""",
+                    (str(row["idempotency_key"]),),
+                ).fetchone()
+                if terminal_publish is not None:
+                    terminal_payload = _payload_json(terminal_publish)
+                    if not isinstance(terminal_payload, dict):
+                        raise MalformedSQLitePayloadError(
+                            table="telegram_publishes",
+                            key="publish_id",
+                            record_id=str(row["idempotency_key"]),
+                        )
+                    payload = self._outbox_payload(row)
+                    payload.update(
+                        {
+                            "status": str(terminal_publish["status"]),
+                            "lease_until": None,
+                            "send_authorized": False,
+                            "publish_id": str(row["idempotency_key"]),
+                            "last_error": None,
+                            "updated_at": now,
+                        }
+                    )
+                    self._conn.execute(
+                        """UPDATE report_publish_outbox
+                        SET status=?,lease_until=NULL,publish_id=?,last_error=NULL,
+                            updated_at=?,payload_json=?
+                        WHERE intent_id=? AND status='DELIVERING'
+                          AND attempt_count=? AND lease_until IS ?""",
+                        (
+                            str(terminal_publish["status"]),
+                            str(row["idempotency_key"]),
+                            now,
+                            self._json(payload),
+                            intent_id,
+                            attempt_count,
+                            row["lease_until"],
+                        ),
+                    )
                     return "STALE"
                 latest_revision = int(
                     self._conn.execute(
@@ -1074,7 +1151,18 @@ class SQLiteStore:
             payload.update(
                 {
                     "status": "SENDING",
+                    "lease_until": lease_until,
                     "send_authorized": True,
+                    "authorized_attempts": sorted(
+                        {
+                            *(
+                                int(value)
+                                for value in payload.get("authorized_attempts", [])
+                                if isinstance(value, int)
+                            ),
+                            attempt_count,
+                        }
+                    ),
                     "updated_at": now,
                 }
             )
@@ -1115,13 +1203,20 @@ class SQLiteStore:
                 """UPDATE report_publish_outbox
                 SET status='SUPERSEDED',lease_until=NULL,last_error=?,
                     updated_at=?,payload_json=?
-                WHERE intent_id=? AND status='SENDING'
-                  AND lease_until IS NOT NULL AND lease_until<=?""",
+                WHERE intent_id=? AND revision=? AND attempt_count=?
+                  AND status=? AND lease_until IS ? AND revision<?
+                  AND status='SENDING' AND lease_until IS NOT NULL
+                  AND lease_until<=?""",
                 (
                     payload["last_error"],
                     now,
                     self._json(payload),
                     str(row["intent_id"]),
+                    int(row["revision"]),
+                    int(row["attempt_count"]),
+                    str(row["status"]),
+                    row["lease_until"],
+                    revision,
                     now,
                 ),
             )
@@ -1137,25 +1232,36 @@ class SQLiteStore:
         now = utc_iso()
         with self._lock, self._conn:
             row = self._conn.execute(
-                """SELECT * FROM report_publish_outbox
-                WHERE intent_id=? AND attempt_count=?""",
-                (intent_id, attempt_count),
+                "SELECT * FROM report_publish_outbox WHERE intent_id=?",
+                (intent_id,),
             ).fetchone()
             if row is None:
                 return None
             outbox_payload = self._outbox_payload(row)
-            authorized = outbox_payload.get("send_authorized")
-            if not bool(
-                authorized
-                if authorized is not None
-                else str(row["status"]) in {"SENDING", "SUPERSEDED"}
-            ):
+            authorized_attempts = {
+                int(value)
+                for value in outbox_payload.get("authorized_attempts", [])
+                if isinstance(value, int)
+            }
+            legacy_authorized = (
+                not authorized_attempts
+                and int(row["attempt_count"]) == attempt_count
+                and bool(
+                    outbox_payload.get("send_authorized")
+                    if outbox_payload.get("send_authorized") is not None
+                    else str(row["status"]) in {"SENDING", "SUPERSEDED"}
+                )
+            )
+            if attempt_count not in authorized_attempts and not legacy_authorized:
                 return None
             publish_status, effective_publish = self._record_daily_report_publish(
                 p,
                 publish_status=requested_status,
             )
-            if str(row["status"]) != "SENDING":
+            if (
+                str(row["status"]) != "SENDING"
+                or int(row["attempt_count"]) != attempt_count
+            ):
                 return effective_publish
             delivered = publish_status in {"SENT", "DRY_RUN"}
             latest_revision = int(
@@ -1190,23 +1296,20 @@ class SQLiteStore:
             )
             if not updated:
                 current = self._conn.execute(
-                    """SELECT status,attempt_count,payload_json
-                    FROM report_publish_outbox WHERE intent_id=?""",
+                    "SELECT payload_json FROM report_publish_outbox WHERE intent_id=?",
                     (intent_id,),
                 ).fetchone()
-                if current is None or int(current["attempt_count"]) != attempt_count:
+                if current is None:
                     return None
                 current_payload = _payload_json(current)
-                current_authorized = (
-                    current_payload.get("send_authorized")
-                    if isinstance(current_payload, dict)
-                    else None
-                )
-                if bool(
-                    current_authorized
-                    if current_authorized is not None
-                    else str(current["status"]) in {"SENDING", "SUPERSEDED"}
-                ):
+                if not isinstance(current_payload, dict):
+                    return None
+                current_authorized_attempts = {
+                    int(value)
+                    for value in current_payload.get("authorized_attempts", [])
+                    if isinstance(value, int)
+                }
+                if attempt_count in current_authorized_attempts:
                     return effective_publish
                 return None
             return effective_publish
@@ -1271,30 +1374,6 @@ class SQLiteStore:
         )
         return publish_status, dict(publish)
 
-    def release_daily_report_publish(
-        self,
-        intent_id: str,
-        attempt_count: int,
-        error: str,
-    ) -> bool:
-        now = utc_iso()
-        with self._lock, self._conn:
-            row = self._conn.execute(
-                """SELECT * FROM report_publish_outbox
-                WHERE intent_id=? AND status='SENDING' AND attempt_count=?""",
-                (intent_id, attempt_count),
-            ).fetchone()
-            if row is None:
-                return False
-            return self._update_report_publish_outbox(
-                row,
-                attempt_count=attempt_count,
-                status="PENDING",
-                last_error=error,
-                updated_at=now,
-                preserve_publish_id=True,
-            )
-
     def _update_report_publish_outbox(
         self,
         row: sqlite3.Row,
@@ -1304,11 +1383,9 @@ class SQLiteStore:
         last_error: str | None,
         updated_at: str,
         publish_id: Any = None,
-        preserve_publish_id: bool = False,
     ) -> bool:
         payload = self._outbox_payload(row)
-        if not preserve_publish_id:
-            payload["publish_id"] = publish_id
+        payload["publish_id"] = publish_id
         payload.update(
             {
                 "status": status,
@@ -1324,7 +1401,7 @@ class SQLiteStore:
             WHERE intent_id=? AND status='SENDING' AND attempt_count=?""",
             (
                 status,
-                row["publish_id"] if preserve_publish_id else publish_id,
+                publish_id,
                 last_error,
                 updated_at,
                 self._json(payload),

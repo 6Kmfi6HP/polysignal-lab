@@ -13,6 +13,7 @@ from datetime import date
 from typing import Any, Protocol
 
 from polysignal_lab.domain.paper_result import DailyReport
+from polysignal_lab.storage.sqlite_store import DailyReportPublishAuthorization
 
 
 class _ReportPersistence(Protocol):
@@ -49,7 +50,9 @@ class _ReportPersistence(Protocol):
         self,
         intent_id: str,
         attempt_count: int,
-    ) -> str: ...
+        *,
+        lease_sec: float,
+    ) -> DailyReportPublishAuthorization: ...
 
     def complete_daily_report_publish(
         self,
@@ -57,13 +60,6 @@ class _ReportPersistence(Protocol):
         attempt_count: int,
         publish: dict[str, str | None],
     ) -> dict[str, str | None] | None: ...
-
-    def release_daily_report_publish(
-        self,
-        intent_id: str,
-        attempt_count: int,
-        error: str,
-    ) -> bool: ...
 
     def append_log(self, table: str, payload: Any) -> None: ...
 

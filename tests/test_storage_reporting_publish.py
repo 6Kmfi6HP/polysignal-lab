@@ -203,10 +203,13 @@ def _daily_report_for_publish(
 def _authorize_attempt(
     store: SQLiteStore,
     attempt: dict[str, object],
+    *,
+    lease_sec: float = 1,
 ) -> None:
     assert store.authorize_daily_report_publish(
         str(attempt["intent_id"]),
         int(attempt["attempt_count"]),
+        lease_sec=lease_sec,
     ) == "AUTHORIZED"
 
 
@@ -330,8 +333,170 @@ def test_daily_report_publish_authorization_rejects_expired_lease(
     assert store.authorize_daily_report_publish(
         str(attempt["intent_id"]),
         int(attempt["attempt_count"]),
+        lease_sec=1,
     ) == "EXPIRED"
     assert store.restore_report_publish_outbox()[0]["status"] == "DELIVERING"
+
+
+def test_daily_report_publish_authorization_renews_sending_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_at = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_store_module, "utc_now", lambda: observed_at)
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=1,
+    )
+
+    assert attempt is not None
+    monkeypatch.setattr(
+        sqlite_store_module,
+        "utc_now",
+        lambda: observed_at + timedelta(milliseconds=500),
+    )
+    assert store.authorize_daily_report_publish(
+        str(attempt["intent_id"]),
+        int(attempt["attempt_count"]),
+        lease_sec=30,
+    ) == "AUTHORIZED"
+    outbox = store.restore_report_publish_outbox()[0]
+    assert outbox["lease_until"] == "2026-07-15T12:00:30.500000Z"
+
+
+def test_daily_report_publish_late_authorized_attempt_is_audited_after_reclaim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_at = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_store_module, "utc_now", lambda: observed_at)
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    first_attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=1,
+    )
+
+    assert first_attempt is not None
+    assert store.authorize_daily_report_publish(
+        str(first_attempt["intent_id"]),
+        int(first_attempt["attempt_count"]),
+        lease_sec=1,
+    ) == "AUTHORIZED"
+    monkeypatch.setattr(
+        sqlite_store_module,
+        "utc_now",
+        lambda: observed_at + timedelta(seconds=2),
+    )
+    second_attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=30,
+    )
+
+    assert second_attempt is not None
+    assert second_attempt["attempt_count"] == 2
+    late_publish = store.complete_daily_report_publish(
+        str(first_attempt["intent_id"]),
+        int(first_attempt["attempt_count"]),
+        {
+            "publish_id": str(first_attempt["idempotency_key"]),
+            "message_type": "daily_report",
+            "status": "SENT",
+            "sent_at": "2026-07-15T12:00:02Z",
+        },
+    )
+
+    assert late_publish is not None
+    assert late_publish["status"] == "SENT"
+    outbox = store.restore_report_publish_outbox()[0]
+    assert outbox["status"] == "DELIVERING"
+    assert outbox["attempt_count"] == 2
+    assert store.query_json("telegram_publishes")[0]["status"] == "SENT"
+    assert store.authorize_daily_report_publish(
+        str(second_attempt["intent_id"]),
+        int(second_attempt["attempt_count"]),
+        lease_sec=30,
+    ) == "STALE"
+    settled_outbox = store.restore_report_publish_outbox()[0]
+    assert settled_outbox["status"] == "SENT"
+    assert settled_outbox["publish_id"] == str(second_attempt["idempotency_key"])
+    assert store.complete_daily_report_publish(
+        str(second_attempt["intent_id"]),
+        int(second_attempt["attempt_count"]),
+        {
+            "publish_id": str(second_attempt["idempotency_key"]),
+            "message_type": "daily_report",
+            "status": "FAILED",
+            "error": "not authorized",
+            "sent_at": None,
+        },
+    ) is None
+
+
+def test_daily_report_publish_reclaim_preserves_legacy_authorized_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_at = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_store_module, "utc_now", lambda: observed_at)
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    first_attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=1,
+    )
+
+    assert first_attempt is not None
+    intent_id = str(first_attempt["intent_id"])
+    assert store.authorize_daily_report_publish(
+        intent_id,
+        int(first_attempt["attempt_count"]),
+        lease_sec=1,
+    ) == "AUTHORIZED"
+    row = store._conn.execute(
+        "SELECT payload_json FROM report_publish_outbox WHERE intent_id=?",
+        (intent_id,),
+    ).fetchone()
+    assert row is not None
+    payload = sqlite_store_module._payload_json(row)
+    assert isinstance(payload, dict)
+    payload.pop("authorized_attempts")
+    payload.pop("send_authorized")
+    with store._conn:
+        store._conn.execute(
+            "UPDATE report_publish_outbox SET payload_json=? WHERE intent_id=?",
+            (store._json(payload), intent_id),
+        )
+    monkeypatch.setattr(
+        sqlite_store_module,
+        "utc_now",
+        lambda: observed_at + timedelta(seconds=2),
+    )
+
+    reclaimed = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=30,
+    )
+
+    assert reclaimed is not None
+    assert reclaimed["authorized_attempts"] == [1]
+    late_publish = store.complete_daily_report_publish(
+        intent_id,
+        1,
+        {
+            "publish_id": str(first_attempt["idempotency_key"]),
+            "message_type": "daily_report",
+            "status": "SENT",
+            "sent_at": "2026-07-15T12:00:02Z",
+        },
+    )
+    assert late_publish is not None
+    assert store.restore_report_publish_outbox()[0]["attempt_count"] == 2
 
 
 def test_daily_report_publish_retry_updates_failed_publish_record(
@@ -588,6 +753,7 @@ def test_new_daily_report_revision_waits_for_authorized_publish(
     assert store.authorize_daily_report_publish(
         str(second_attempt["intent_id"]),
         int(second_attempt["attempt_count"]),
+        lease_sec=60,
     ) == "BUSY"
     assert store.complete_daily_report_publish(
         str(first_attempt["intent_id"]),
@@ -602,6 +768,7 @@ def test_new_daily_report_revision_waits_for_authorized_publish(
     assert store.authorize_daily_report_publish(
         str(second_attempt["intent_id"]),
         int(second_attempt["attempt_count"]),
+        lease_sec=60,
     ) == "AUTHORIZED"
 
 
@@ -639,6 +806,7 @@ def test_new_daily_report_revision_reclaims_expired_waiting_lease(
     assert store.authorize_daily_report_publish(
         str(second_attempt["intent_id"]),
         int(second_attempt["attempt_count"]),
+        lease_sec=60,
     ) == "BUSY"
     monkeypatch.setattr(
         sqlite_store_module,
@@ -648,6 +816,7 @@ def test_new_daily_report_revision_reclaims_expired_waiting_lease(
     assert store.authorize_daily_report_publish(
         str(second_attempt["intent_id"]),
         int(second_attempt["attempt_count"]),
+        lease_sec=1,
     ) == "EXPIRED"
     reclaimed = store.claim_daily_report_publish(
         revised.report_id,
@@ -659,6 +828,7 @@ def test_new_daily_report_revision_reclaims_expired_waiting_lease(
     assert store.authorize_daily_report_publish(
         str(reclaimed["intent_id"]),
         int(reclaimed["attempt_count"]),
+        lease_sec=1,
     ) == "AUTHORIZED"
 
 
@@ -707,6 +877,7 @@ def test_new_daily_report_revision_fences_expired_sending_completion(
     assert store.authorize_daily_report_publish(
         str(reclaimed["intent_id"]),
         int(reclaimed["attempt_count"]),
+        lease_sec=1,
     ) == "AUTHORIZED"
     effective = store.complete_daily_report_publish(
         str(first_attempt["intent_id"]),
@@ -881,10 +1052,13 @@ async def test_publish_report_skips_intent_superseded_before_delivery(
             self,
             intent_id: str,
             attempt_count: int,
+            *,
+            lease_sec: float,
         ) -> str:
             return store.authorize_daily_report_publish(
                 intent_id,
                 attempt_count,
+                lease_sec=lease_sec,
             )
 
     class Publisher:
@@ -912,6 +1086,71 @@ async def test_publish_report_skips_intent_superseded_before_delivery(
     assert delivered == []
 
 
+async def test_publish_report_rejects_unknown_authorization() -> None:
+    errors: list[str] = []
+    delivered: list[str] = []
+
+    class Persistence:
+        def claim_daily_report_publish(
+            self,
+            _report_id: str,
+            *,
+            lease_sec: float,
+        ) -> dict[str, object]:
+            assert lease_sec == 40.0
+            return {
+                "intent_id": "outbox-unknown",
+                "attempt_count": 1,
+                "idempotency_key": "daily_report:2026-07-15:r1",
+            }
+
+        def authorize_daily_report_publish(
+            self,
+            _intent_id: str,
+            _attempt_count: int,
+            *,
+            lease_sec: float,
+        ) -> str:
+            assert lease_sec == 40.0
+            return "UNKNOWN"
+
+    class Publisher:
+        async def deliver_daily_report(
+            self,
+            _report: DailyReport,
+            *,
+            idempotency_key: str | None = None,
+        ) -> None:
+            delivered.append(str(idempotency_key))
+
+    class Health:
+        def inc_metric(self, *_args: str) -> None:
+            return None
+
+        def mark_down(self, *_args: str, **_kwargs: object) -> None:
+            return None
+
+    scheduler = SimpleNamespace(
+        settings=SimpleNamespace(
+            telegram=SimpleNamespace(publish_timeout_sec=20.0)
+        ),
+        persistence=Persistence(),
+        publish_service=Publisher(),
+        health=Health(),
+        logger=SimpleNamespace(
+            error=lambda message, *args: errors.append(message % args),
+            info=lambda *_args: None,
+        ),
+    )
+
+    assert not await _publish_report(scheduler, _daily_report_for_publish())
+    assert delivered == []
+    assert errors == [
+        "Failed to authorize daily report publish: "
+        "Unknown daily report publish authorization: UNKNOWN"
+    ]
+
+
 async def test_publish_report_exception_preserves_sending_lease(
     tmp_path: Path,
 ) -> None:
@@ -935,10 +1174,13 @@ async def test_publish_report_exception_preserves_sending_lease(
             self,
             intent_id: str,
             attempt_count: int,
+            *,
+            lease_sec: float,
         ) -> str:
             return store.authorize_daily_report_publish(
                 intent_id,
                 attempt_count,
+                lease_sec=lease_sec,
             )
 
     class Publisher:
@@ -968,7 +1210,7 @@ async def test_publish_report_exception_preserves_sending_lease(
     assert outbox[0]["lease_until"] is not None
 
 
-async def test_publish_report_logs_effective_success_result(
+async def test_publish_report_skips_existing_success_result(
     tmp_path: Path,
 ) -> None:
     store = SQLiteStore(tmp_path / "reports.sqlite3")
@@ -984,6 +1226,7 @@ async def test_publish_report_logs_effective_success_result(
             "sent_at": "2026-07-15T12:00:01Z",
         }
     )
+    delivered: list[str] = []
     logged: list[dict[str, object]] = []
     health_metrics: list[tuple[str, str]] = []
 
@@ -1003,10 +1246,13 @@ async def test_publish_report_logs_effective_success_result(
             self,
             intent_id: str,
             attempt_count: int,
+            *,
+            lease_sec: float,
         ) -> str:
             return store.authorize_daily_report_publish(
                 intent_id,
                 attempt_count,
+                lease_sec=lease_sec,
             )
 
         def complete_daily_report_publish(
@@ -1046,7 +1292,7 @@ async def test_publish_report_logs_effective_success_result(
             *,
             idempotency_key: str | None = None,
         ) -> PublishResult:
-            assert idempotency_key == publish_id
+            delivered.append(str(idempotency_key))
             return PublishResult()
 
     class Health:
@@ -1070,17 +1316,12 @@ async def test_publish_report_logs_effective_success_result(
     )
 
     assert await _publish_report(scheduler, persisted)
-    assert logged == [
-        {
-            "publish_id": publish_id,
-            "message_type": "daily_report",
-            "signal_id": None,
-            "status": "SENT",
-            "sent_at": "2026-07-15T12:00:01Z",
-        }
-    ]
-    assert ("telegram", "sent") in health_metrics
-    assert ("telegram", "failed") not in health_metrics
+    assert delivered == []
+    assert logged == []
+    assert health_metrics == []
+    outbox = store.restore_report_publish_outbox()[0]
+    assert outbox["status"] == "SENT"
+    assert outbox["publish_id"] == publish_id
 
 
 def test_sqlite_anchor_prices_survive_reopen(tmp_path) -> None:

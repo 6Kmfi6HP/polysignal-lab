@@ -20,7 +20,10 @@ from typing import Any, Final, Iterable
 
 from polysignal_lab.domain.paper_result import DailyReport
 from polysignal_lab.storage.jsonl_store import JSONLStore
-from polysignal_lab.storage.sqlite_store import SQLiteStore
+from polysignal_lab.storage.sqlite_store import (
+    DailyReportPublishAuthorization,
+    SQLiteStore,
+)
 from polysignal_lab.storage.state_store import StateStore
 
 
@@ -126,10 +129,13 @@ class PersistenceService:
         self,
         intent_id: str,
         attempt_count: int,
-    ) -> str:
+        *,
+        lease_sec: float,
+    ) -> DailyReportPublishAuthorization:
         return self.sqlite.authorize_daily_report_publish(
             intent_id,
             attempt_count,
+            lease_sec=lease_sec,
         )
 
     def complete_daily_report_publish(
@@ -142,18 +148,6 @@ class PersistenceService:
             intent_id,
             attempt_count,
             publish,
-        )
-
-    def release_daily_report_publish(
-        self,
-        intent_id: str,
-        attempt_count: int,
-        error: str,
-    ) -> bool:
-        return self.sqlite.release_daily_report_publish(
-            intent_id,
-            attempt_count,
-            error,
         )
 
     def insert_telegram_publish(self, publish: dict[str, Any]) -> None:

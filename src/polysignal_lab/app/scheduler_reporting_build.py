@@ -187,6 +187,7 @@ async def _publish_report(
             authorization = scheduler.persistence.authorize_daily_report_publish(
                 intent_id,
                 attempt_count,
+                lease_sec=lease_sec,
             )
             if authorization == "AUTHORIZED":
                 break
@@ -207,7 +208,12 @@ async def _publish_report(
                 attempt_count = int(intent["attempt_count"])
                 idempotency_key = str(intent["idempotency_key"])
                 continue
-            await asyncio.sleep(0.1)
+            if authorization == "BUSY":
+                await asyncio.sleep(0.1)
+                continue
+            raise ValueError(
+                f"Unknown daily report publish authorization: {authorization}"
+            )
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
         scheduler.logger.error("Failed to authorize daily report publish: %s", exc)
