@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, math, typing, typing.Any, polysignal_lab.domain.paper_report
-Output: InvalidPaperTradeResultRow, PaperTradeResultRow, parse_paper_trade_result_row, trade_result_status, PaperWalletSnapshot, DailyReport
+Output: InvalidPaperTradeResultRow, PaperTradeResultRow, parse_paper_trade_result_row, trade_result_status, PaperWalletSnapshot, DailyReport, EquitySource
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -17,6 +17,7 @@ from typing import Any, TypedDict, assert_never
 from polysignal_lab.domain.paper_report import (
     DailyReport,
     DailyReportRow,
+    EquitySource,
     PaperWalletSnapshot,
     PaperWalletSnapshotRow,
     daily_report_row,
@@ -33,6 +34,7 @@ from polysignal_lab.utils import parse_dt
 __all__ = [
     "DailyReport",
     "DailyReportRow",
+    "EquitySource",
     "InvalidPaperTradeResultRow",
     "PaperTradeResultRow",
     "PaperWalletSnapshot",

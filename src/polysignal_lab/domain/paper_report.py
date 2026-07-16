@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, datetime, datetime.date, datetime.datetime, typing, typing.Any, pydantic, pydantic.BaseModel, pydantic.Field, polysignal_lab.utils
-Output: PaperWalletSnapshotRow, DailyReportRow, daily_report_row, wallet_float, report_float, report_text, report_date_text, report_nested_mapping, PaperWalletSnapshot, DailyReport
+Output: PaperWalletSnapshotRow, DailyReportRow, EquitySource, daily_report_row, wallet_float, report_float, report_text, report_date_text, report_nested_mapping, PaperWalletSnapshot, DailyReport
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -16,6 +16,9 @@ from typing import Any, Literal, TypedDict
 from pydantic import BaseModel, Field
 
 from polysignal_lab.utils import new_id, utc_now
+
+
+EquitySource = Literal["portfolio", "account_balance", "starting_balance"]
 
 
 class PaperWalletSnapshotRow(TypedDict, total=False):
@@ -40,6 +43,7 @@ class DailyReportRow(TypedDict, total=False):
     starting_equity: float
     ending_equity: float
     equity_currency: str
+    equity_source: EquitySource | None
     paper_pnl: float
     paper_roi: float
     total_signals: int
@@ -147,6 +151,7 @@ class DailyReport(BaseModel):
     starting_equity: float
     ending_equity: float
     equity_currency: str = "USDC"
+    equity_source: EquitySource | None = None
     paper_pnl: float
     paper_roi: float
     total_signals: int

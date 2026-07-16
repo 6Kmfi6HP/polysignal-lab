@@ -81,13 +81,16 @@ def _build_report(
     if isinstance(execution_metadata, dict):
         paper_execution_assumptions.update(execution_metadata)
 
-    starting_equity, ending_equity, open_positions = _report_equity_inputs(scheduler)
+    starting_equity, ending_equity, open_positions, equity_source = (
+        _report_equity_inputs(scheduler)
+    )
     try:
         return PaperReportService().build_daily_report(
             report_date=inputs.today,
             starting_equity=starting_equity,
             ending_equity=ending_equity,
             equity_currency=_sandbox_base_currency(scheduler.settings),
+            equity_source=equity_source,
             total_signals=len(inputs.today_signals_raw),
             paper_orders=len(inputs.today_orders_raw),
             paper_fills=len(inputs.today_fills_raw),

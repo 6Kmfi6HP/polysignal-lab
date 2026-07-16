@@ -166,6 +166,7 @@ export interface DailyReport {
   starting_equity: number
   ending_equity: number
   equity_currency?: string
+  equity_source?: 'portfolio' | 'account_balance' | 'starting_balance' | null
   paper_pnl: number
   paper_roi: number
   total_signals: number

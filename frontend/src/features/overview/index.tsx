@@ -27,6 +27,14 @@ import { Main } from '@/components/layout/main'
 import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 
+function equitySourceLabel(
+  source: 'portfolio' | 'account_balance' | 'starting_balance'
+): string {
+  if (source === 'portfolio') return 'Portfolio'
+  if (source === 'account_balance') return 'Account balance'
+  return 'Starting balance'
+}
+
 function telemetryStatusLabel(
   status: 'complete' | 'incomplete' | undefined
 ): string {
@@ -130,6 +138,18 @@ export function OverviewPage() {
                           '(currency unavailable)'}
                       </dd>
                     </div>
+                    {overview.data.latest_report.equity_source && (
+                      <div>
+                        <dt className='text-sm text-muted-foreground'>
+                          Equity source
+                        </dt>
+                        <dd className='font-semibold'>
+                          {equitySourceLabel(
+                            overview.data.latest_report.equity_source
+                          )}
+                        </dd>
+                      </div>
+                    )}
                     <div>
                       <dt className='text-sm text-muted-foreground'>
                         Telemetry

@@ -173,10 +173,15 @@ def _same_daily_report_content(
     persisted: Mapping[str, Any],
 ) -> bool:
     ignored = {"report_id", "revision", "created_at"}
-    return (
-        {key: value for key, value in candidate.items() if key not in ignored}
-        == {key: value for key, value in persisted.items() if key not in ignored}
-    )
+    candidate_content = {
+        key: value for key, value in candidate.items() if key not in ignored
+    }
+    persisted_content = {
+        key: value for key, value in persisted.items() if key not in ignored
+    }
+    candidate_content.setdefault("equity_source", None)
+    persisted_content.setdefault("equity_source", None)
+    return candidate_content == persisted_content
 
 
 def _merge_paper_order_payload(

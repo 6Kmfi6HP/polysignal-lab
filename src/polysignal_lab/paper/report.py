@@ -22,6 +22,7 @@ from typing import Any
 from polysignal_lab.domain.enums import TradeResultStatus
 from polysignal_lab.domain.paper_result import (
     DailyReport,
+    EquitySource,
     trade_result_float,
     trade_result_status,
     trade_result_text,
@@ -46,6 +47,7 @@ class PaperReportService:
         starting_equity: float,
         ending_equity: float,
         equity_currency: str = "USDC",
+        equity_source: EquitySource | None = None,
         total_signals: int,
         paper_orders: int,
         paper_fills: int,
@@ -86,6 +88,7 @@ class PaperReportService:
             starting_equity=starting_equity,
             ending_equity=ending_equity,
             equity_currency=equity_currency,
+            equity_source=equity_source,
             paper_pnl=ending_equity - starting_equity,
             paper_roi=(ending_equity - starting_equity) / starting_equity if starting_equity else 0.0,
             total_signals=total_signals,

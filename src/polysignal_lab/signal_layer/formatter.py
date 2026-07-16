@@ -104,6 +104,10 @@ FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
 
     def daily_report_message(self, report: object) -> str:
         equity_currency = report_text(report, "equity_currency", "USDC")
+        equity_source = report_text(report, "equity_source")
+        source_line = (
+            f"\nSource  {html.escape(equity_source)}" if equity_source else ""
+        )
         revision = int(report_float(report, "revision", 1.0))
         title = (
             "📊 Daily Paper Report"
@@ -153,7 +157,7 @@ FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
         message = f"""<b>{title}</b>
 {report_date_text(report)}
 
-Equity  {report_float(report, 'starting_equity'):.2f} → {report_float(report, 'ending_equity'):.2f} {html.escape(equity_currency)}
+Equity  {report_float(report, 'starting_equity'):.2f} → {report_float(report, 'ending_equity'):.2f} {html.escape(equity_currency)}{source_line}
 PnL     {report_float(report, 'paper_pnl'):+.2f} {html.escape(equity_currency)}
 ROI     {report_float(report, 'paper_roi'):+.2%}
 
