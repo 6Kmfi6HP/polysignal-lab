@@ -1015,11 +1015,8 @@ def test_report_equity_inputs_uses_no_arg_portfolio_equity_without_account() -> 
 
 
 def test_report_equity_inputs_uses_starting_balance_without_account() -> None:
-    def unavailable_equity(
-        venue: object | None = None,
-        account_id: object | None = None,
-    ) -> float:
-        raise ValueError("venue or account_id must be provided")
+    def unavailable_equity(**_kwargs: object) -> float:
+        raise TypeError("venue or account_id must be provided")
 
     cache = SimpleNamespace(
         accounts=lambda: [],
