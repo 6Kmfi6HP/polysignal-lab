@@ -567,21 +567,25 @@ roi = pnl / stake_usdc
 | 市场取消 / unresolved | VOID |
 | 无法获取结算结果 | UNKNOWN |
 
-### 13.8 可选 Paper TP/SL
+### 13.8 Paper TP/SL（已交付）
 
-第一版可配置关闭，第二版建议开启。
+默认由 `NativeExitPolicy` 在 Nautilus Cache 持仓上评估；触发后提交 **reduce-only** paper sell，并写入 `paper_trade_results`。
 
 ```yaml
 paper_trading:
   exit_model:
-    mode: hold_to_resolution
-    take_profit_enabled: false
-    stop_loss_enabled: false
+    mode: hold_to_resolution_with_optional_tp_sl
+    take_profit_enabled: true
+    stop_loss_enabled: true
     take_profit_price: 0.90
     stop_loss_price: 0.35
+    max_hold_time_sec: 900
 ```
 
-TP/SL 只影响 paper result，不发送真实卖单。
+架构约束：
+- 不使用 Nautilus contingent / bracket 子单（sandbox `support_contingent_orders=false`）。
+- 只影响 paper result，不发送真实卖单。
+- V1 fee：`fee_model=ignored_v1`，`entry_fee=0.0`。
 
 ### 13.9 Paper Trade Result
 
@@ -661,7 +665,7 @@ Paper results only. No real trades were placed.
 
 ## 15. 数据存储
 
-### 15.1 第一版文件
+### 15.1 JSONL 审计流（当前）
 
 ```
 logs/
@@ -670,28 +674,32 @@ logs/
   nautilus_orders.jsonl
   nautilus_fills.jsonl
   nautilus_positions.jsonl
-  paper_results.jsonl
-  telegram_publish.jsonl
+  paper_trade_results.jsonl   # 历史 PRD 名 paper_results.jsonl 已废弃
+  telegram_publishes.jsonl    # 历史 PRD 名 telegram_publish.jsonl 已废弃
   daily_reports.jsonl
-
-state/
-  open_positions.json
-  market_cache.json
-  signal_dedupe.json
+  system_events.jsonl         # 可选 / best-effort telemetry
 ```
 
-### 15.2 第二版 SQLite 表
+Runtime state 以 Nautilus Cache/Portfolio 为准；`state/` 下保留 heartbeat / monitor 等进程级快照，不再把 `open_positions.json` 当作持仓真相。
+
+### 15.2 SQLite 表（当前）
 
 | 表 | 用途 |
 |----|------|
 | signals | 所有通过 gate 的信号 |
 | rejected_signals | 被拒绝信号 |
-| paper_orders | Nautilus order 投影 |
-| paper_fills | Nautilus fill 投影 |
-| paper_positions | Nautilus position 投影 |
-| paper_trade_results | 纸面验证结果 |
+| paper_trade_results | 纸面验证结果（含 resolution 与 early TP/SL exit） |
 | paper_wallet_snapshots | Nautilus account/portfolio projection 快照 |
-| daily_reports | 每日报告 |
+| paper_order_states | order 最新生命周期状态（current-state projection） |
+| paper_position_states | position 最新生命周期状态（current-state projection） |
+| daily_reports | 每日报告（可 revision） |
+| report_publish_outbox | 日报 Telegram 投递 outbox |
+| system_events | Nautilus order/fill/position 等审计事件 |
+| telegram_publishes | Telegram 发布审计 |
+| markets | 市场元数据缓存 |
+| anchor_prices | price-to-beat anchor 缓存 |
+
+历史 PRD 中的独立 `paper_orders` / `paper_fills` / `paper_positions` 表已收敛为 `system_events` 事件流 + `paper_*_states` 当前状态投影。
 
 ## 16. 架构设计
 
@@ -1117,11 +1125,11 @@ roi = pnl / stake_usdc
 | SIM-003 | WIN 结算正确 | settlement = shares |
 | SIM-004 | LOSS 结算正确 | settlement = 0 |
 | SIM-005 | PnL 正确 | pnl = settlement - stake - entry_fee |
-| SIM-006 | fee model 明确 | V1 写入 `fee_model=ignored_v1`，启用 fee parity 时 PnL 扣除 taker fee |
+| SIM-006 | fee model 明确 | V1 写入 `fee_model=ignored_v1` 与 `entry_fee=0.0`；fee parity 仍为后续可选增强 |
 | SIM-007 | stale book 不成交 | stale 时 paper order rejected |
 | SIM-008 | ask 超价不成交 | ask > max_entry_price 时 rejected |
 | SIM-009 | 余额不足不成交 | account cash 不足时 rejected |
-| SIM-010 | 结果写入日志 | paper_results.jsonl 有完整记录 |
+| SIM-010 | 结果写入日志 | `paper_trade_results`（SQLite + JSONL）有完整记录 |
 
 ## 24. 实施阶段（已完成）
 
@@ -1206,7 +1214,7 @@ roi = pnl / stake_usdc
 - ✅ SQLite — 已实现 canonical storage。
 - ✅ Web dashboard — 已实现。
 - ✅ Daily report — 已实现。
-- ⏳ TP/SL paper exit — 配置可选（默认 hold_to_resolution）。
+- ✅ TP/SL paper exit — `NativeExitPolicy` + `paper_trading.exit_model`（reduce-only submit_order；非 Nautilus bracket）。
 - ⏳ 历史 replay — 不在当前范围。
 - ⏳ 付费频道 — 不适用。
 
@@ -1219,7 +1227,7 @@ roi = pnl / stake_usdc
 - ✅ Consensus signal — 已交付。
 - ✅ SQLite — 已交付。
 - ✅ Daily report — 已交付。
-- ⏳ Paper TP/SL — 配置框架就绪, 默认 hold_to_resolution。
+- ✅ Paper TP/SL — `NativeExitPolicy` 已交付；early exit 写入 `paper_trade_results`（`exit_mode` = TAKE_PROFIT / STOP_LOSS / MAX_HOLD_TIME）。策略 YAML 中的 per-strategy exit 字段为 advisory metadata，全局阈值以 `paper_trading.exit_model` 为准。
 - ✅ Dashboard — 已交付。
 - ✅ Strategy leaderboard — 已交付。
 

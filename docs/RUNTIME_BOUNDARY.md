@@ -53,6 +53,15 @@ Legacy OrderBook/CLOB modules may remain only as non-live residue for tests or q
 - Pre-trade project constraints may read Cache open state; they do not invent a portfolio ledger.
 - Reduce-only exits derive from Cache positions.
 
+## Exit ownership (accepted)
+
+- **Sole paper exit authority:** `NativeExitPolicy` over Nautilus Cache open positions.
+- Exits submit **reduce-only** orders via `order_factory` + `submit_order` only.
+- Sandbox keeps `support_contingent_orders=False` and `use_reduce_only=True`. PolySignal does **not** attach Nautilus bracket / contingent TP-SL child orders under locked 1.229.0.
+- Global thresholds come from `paper_trading.exit_model` (`take_profit_price`, `stop_loss_price`, `max_hold_time_sec`).
+- Strategy-level exit knobs in alpha configs (e.g. `flip_stop_*`, `exit_config` TP/SL metrics) are **advisory entry metadata** for signals/diagnostics unless explicitly consumed by `NativeExitPolicy`. They must not create a second exit engine.
+- Early TP/SL/max-hold closes write Reporting Truth `paper_trade_results` with `exit_mode` ∈ {`TAKE_PROFIT`,`STOP_LOSS`,`MAX_HOLD_TIME`}. Market-resolution settlement remains report-only and does not fabricate Nautilus `PositionClosed`.
+
 ## Settlement
 
 `native_settlement_mode=report_only`. No public payout/redeem authority in locked 1.229.0. Do not synthesize fills or closed positions from Gamma/WS/chain resolution into Nautilus state.

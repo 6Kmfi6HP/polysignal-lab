@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.FreshnessView, polysignal_lab.alpha.types.MarketView, polysignal_lab.domain.freshness, polysignal_lab.nautilus_runtime.decision_policy
-Output: test_evaluate_condition_does_not_run_custom_exit_scan, test_native_exit_runs_when_opposite_book_exceeds_trade_freshness, test_native_strategy_has_no_custom_exit_evaluation_api
+Output: test_evaluate_condition_does_not_run_custom_exit_scan, test_native_exit_runs_when_opposite_book_exceeds_trade_freshness, test_native_strategy_has_no_custom_exit_evaluation_api, test_reduce_only_fill_records_early_exit_paper_result
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -251,7 +251,78 @@ def test_native_fill_clears_exit_inflight_for_remaining_position(monkeypatch) ->
     assert "position-1" not in strategy._exit_inflight
 
 
+def test_native_strategy_has_no_custom_exit_evaluation_api() -> None:
     strategy = _native_strategy()
 
     assert not hasattr(strategy, "evaluate_exit_positions")
     assert not hasattr(strategy, "_submit_exit_position")
+
+
+def test_reduce_only_fill_records_early_exit_paper_result() -> None:
+    from polysignal_lab.domain.enums import Side
+    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.paper.exit_result import FEE_MODEL_IGNORED_V1
+
+    recorded: list[tuple[str, object]] = []
+
+    class Tracker:
+        def metrics_for_event(self, event):
+            _ = event
+            return {
+                "reduce_only": True,
+                "exit_reason": "TAKE_PROFIT",
+                "position_id": "position-1",
+                "entry_price": 0.40,
+                "position_quantity": 10.0,
+                "stake_usdc": 4.0,
+                "side": Side.UP.value,
+                "asset": "BTC",
+                "timeframe": "5m",
+                "market_id": "mkt-1",
+                "market_slug": "btc-updown-5m",
+                "opened_at": "2026-07-06T12:00:00+00:00",
+            }
+
+        def forget(self, event, order):
+            _ = event, order
+
+    strategy = _native_strategy()
+    strategy.strategy_name = "ptb_diff"
+    strategy._metrics_tracker = Tracker()
+    strategy.observability = SimpleNamespace(
+        record_event=lambda table, data: recorded.append((table, data)),
+        record_nautilus_fill_event=lambda event: None,
+    )
+    strategy._record_nautilus_fill = lambda event, metrics: None
+    strategy._note_runtime_progress = lambda phase: None
+
+    handle_order_filled(
+        strategy,
+        SimpleNamespace(
+            id="fill-1",
+            client_order_id="order-1",
+            instrument_id="token-up.POLYMARKET",
+            last_qty=10.0,
+            last_px=0.91,
+            price=0.91,
+            quantity=10.0,
+            tags=(
+                "reduce_only=true",
+                "exit_reason=TAKE_PROFIT",
+                "position_id=position-1",
+                "market_id=mkt-1",
+                "condition_id=condition-1",
+            ),
+            ts_event=datetime(2026, 7, 6, 12, 1, tzinfo=UTC),
+            side=Side.UP,
+        ),
+    )
+
+    assert len(recorded) == 1
+    table, payload = recorded[0]
+    assert table == "settlements"
+    assert isinstance(payload, dict)
+    assert payload["exit_mode"] == "TAKE_PROFIT"
+    assert payload["fee_model"] == FEE_MODEL_IGNORED_V1
+    assert payload["strategy"] == "ptb_diff"
+    assert payload["paper_position_id"] == "position-1"

@@ -46,7 +46,9 @@ Rules:
 - `SignalGate` / consensus / arbitration as business policy (not RiskEngine)
 - Settlement is **report-only** under NautilusTrader 1.229.0
 - RTDS spot via LiveDataClient only; SIDECAR vs RTDS client-id separation
-- `NativeExitPolicy` over Cache positions (reduce-only)
+- `NativeExitPolicy` over Cache positions (reduce-only); **not** Nautilus contingent/bracket orders (`support_contingent_orders=False` by design)
+- V1 paper fee accounting is explicit: `fee_model=ignored_v1`, `entry_fee=0.0` on every `paper_trade_result`
+- Storage names for paper results: SQLite/JSONL stream `paper_trade_results` (PRD historical name `paper_results` is obsolete)
 
 ## False-positive traps
 

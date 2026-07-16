@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, sqlite3, datetime, datetime.datetime, typing, typing.cast, polysignal_lab.app, polysignal_lab.app.scheduler_health, polysignal_lab.domain.enums, polysignal_lab.domain.market, polysignal_lab.domain.paper_result, polysignal_lab.utils
-Output: check_settlements
+Input: __future__, sqlite3, datetime, typing, polysignal_lab.app.scheduler_health, polysignal_lab.domain.enums, polysignal_lab.domain.market, polysignal_lab.paper.exit_result, polysignal_lab.utils
+Output: check_settlements, _paper_trade_result_from_projection
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -20,6 +20,7 @@ from typing import Any, cast
 from polysignal_lab.app import scheduler_health
 from polysignal_lab.domain.enums import ExitMode, PositionStatus, Side, TradeResultStatus
 from polysignal_lab.domain.market import Market
+from polysignal_lab.paper.exit_result import fee_fields_v1
 from polysignal_lab.utils import new_id, parse_dt, redact_text, utc_iso, utc_now
 
 
@@ -256,8 +257,10 @@ def _paper_trade_result_from_projection(
         or not math.isfinite(outcome)
     ):
         return None
+    fee = fee_fields_v1()
+    entry_fee = float(fee["entry_fee"])
     settlement_value = quantity * outcome
-    pnl = settlement_value - stake
+    pnl = settlement_value - stake - entry_fee
     token_id = str(projection.get("token_id") or projection.get("instrument_id") or "")
     side = _projection_side(projection, market, token_id)
     if side is None:
@@ -284,6 +287,9 @@ def _paper_trade_result_from_projection(
     if opened_at is None:
         return None
     closed_at = utc_now()
+    result_details = dict(details)
+    result_details.setdefault("fee_model", fee["fee_model"])
+    result_details.setdefault("entry_fee", entry_fee)
     return {
         "schema_version": 1,
         "paper_trade_id": new_id("ptr"),
@@ -308,7 +314,9 @@ def _paper_trade_result_from_projection(
         "result": result_status.value,
         "opened_at": opened_at.isoformat(),
         "closed_at": closed_at.isoformat(),
-        "details": dict(details),
+        "fee_model": fee["fee_model"],
+        "entry_fee": entry_fee,
+        "details": result_details,
     }
 
 

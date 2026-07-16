@@ -6,6 +6,7 @@
 **Files**:
 - `strategy_stats.py` - Exports build_strategy_leaderboard_rows
 - `event_projection.py` - Canonical finite-value normalization for sparse paper lifecycle events
+- `exit_result.py` - Early reduce-only exit paper results + V1 fee_model fields
 - `settlement_sources.py` - Exports parse_gamma_resolution_payload and 4 more
 - `settlement_resolver.py` - Exports ChainResolutionSource and 2 more
 - `report.py` - Builds paper reports with explicit telemetry completeness

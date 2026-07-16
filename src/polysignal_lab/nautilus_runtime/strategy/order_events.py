@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Iterable, collections.abc.Mapping, typing, typing.Protocol, typing.cast, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_runtime.strategy.event_projection
-Output: handle_order_lifecycle_event, handle_order_filled, handle_position_event, project_strategy_order_event, project_strategy_fill_event, should_notify_fill, forget_approved_metrics, call_core
+Input: __future__, collections.abc, typing, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_runtime.strategy.event_projection, polysignal_lab.paper.exit_result, polysignal_lab.utils
+Output: handle_order_lifecycle_event, handle_order_filled, handle_position_event, project_strategy_order_event, project_strategy_fill_event, should_notify_fill, forget_approved_metrics, call_core, _record_early_exit_result
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -25,12 +25,15 @@ from polysignal_lab.nautilus_runtime.strategy.event_projection import (
     project_fill_event,
     project_order_event,
 )
+from polysignal_lab.paper.exit_result import paper_trade_result_from_early_exit
+from polysignal_lab.utils import utc_iso
 
 
 class _OrderEventStrategy(Protocol):
     core: object
     registry: MarketCatalog | None
     strategy_name: str
+    observability: object | None
     _active_condition_ids: set[str]
     _metrics_tracker: object
 
@@ -130,6 +133,8 @@ def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
         if callable(notify):
             _ = notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
     strategy._record_nautilus_fill(event, alpha_event.metrics)
+    if bool(alpha_event.metrics.get("reduce_only")):
+        _record_early_exit_result(strategy, alpha_event)
     forget_approved_metrics(
         strategy,
         event,
@@ -150,6 +155,51 @@ def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
             if view is None:
                 continue
             strategy._handle_decision(decision, cast(MarketView, view))
+
+
+def _record_early_exit_result(
+    strategy: _OrderEventStrategy,
+    fill: AlphaFillEvent,
+) -> None:
+    """Persist Reporting Truth for NativeExitPolicy reduce-only closes."""
+    metrics = dict(fill.metrics)
+    if "side" not in metrics and fill.side is not None:
+        metrics["side"] = getattr(fill.side, "value", fill.side)
+    for key, value in (
+        ("market_id", fill.market_id),
+        ("condition_id", fill.condition_id),
+        ("token_id", fill.token_id),
+        ("strategy", fill.strategy),
+    ):
+        if value not in (None, "") and key not in metrics:
+            metrics[key] = value
+    metrics.setdefault("owning_strategy", strategy.strategy_name)
+    closed_at = None
+    if fill.ts_event is not None:
+        try:
+            closed_at = fill.ts_event.isoformat()
+        except AttributeError:
+            closed_at = None
+    result = paper_trade_result_from_early_exit(
+        metrics,
+        fill_price=float(fill.fill_price),
+        fill_shares=float(fill.shares),
+        strategy_name=strategy.strategy_name,
+        closed_at=closed_at or utc_iso(),
+    )
+    if result is None:
+        return
+    observability = strategy.observability
+    if observability is None:
+        return
+    recorder = getattr(observability, "record_event", None)
+    if not callable(recorder):
+        return
+    try:
+        recorder("settlements", result)
+        strategy._note_runtime_progress("early_exit_result")
+    except Exception:
+        strategy._note_runtime_progress("early_exit_result_failed")
 
 
 def handle_position_event(strategy: _OrderEventStrategy, position: object) -> None:

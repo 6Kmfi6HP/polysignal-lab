@@ -1,7 +1,7 @@
 """
-Input: __future__, dataclasses, datetime, math, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_runtime.projections
+Input: __future__, dataclasses, datetime, math, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_runtime.projections, polysignal_lab.utils
 Output: NativeExitPolicy
-Pos: Native strategy risk-exit policy
+Pos: Native strategy risk-exit policy — sole paper exit authority (not contingent brackets)
 
 🔄 Self-reference: When this file changes, update this header
 """
@@ -117,10 +117,11 @@ class NativeExitPolicy:
         bid = view.book_for(side).best_bid
         if bid is None or not math.isfinite(float(bid)) or float(bid) <= 0:
             return None
+        opened_at = _opened_at(projection)
         reason = self._reason(
             bid=float(bid),
             entry_price=entry_price,
-            opened_at=_opened_at(projection),
+            opened_at=opened_at,
             now=now,
         )
         if reason is None or position_id in inflight:
@@ -134,6 +135,8 @@ class NativeExitPolicy:
             position_id=position_id,
             quantity=quantity,
             entry_price=entry_price,
+            opened_at=opened_at,
+            stake_usdc=_finite_float(projection.get("stake_usdc")),
         )
 
     def _reason(
@@ -172,7 +175,30 @@ def _build_exit_decision(
     position_id: str,
     quantity: float,
     entry_price: float | None,
+    opened_at: datetime | None = None,
+    stake_usdc: float | None = None,
 ) -> AlphaDecision:
+    metrics: dict[str, object] = {
+        "reduce_only": True,
+        "exit_reason": reason,
+        "position_id": position_id,
+        "position_quantity": quantity,
+        "entry_price": entry_price,
+        "exit_price": bid,
+        "side": side.value,
+        "asset": view.asset,
+        "timeframe": view.timeframe,
+        "market_id": view.market_id,
+        "market_slug": view.market_slug,
+        "condition_id": view.condition_id,
+        "token_id": token_id,
+    }
+    if opened_at is not None:
+        metrics["opened_at"] = opened_at.isoformat()
+    if stake_usdc is not None and stake_usdc > 0:
+        metrics["stake_usdc"] = stake_usdc
+    elif entry_price is not None and quantity > 0:
+        metrics["stake_usdc"] = entry_price * quantity
     return AlphaDecision(
         strategy="native_exit",
         asset=view.asset,
@@ -188,14 +214,7 @@ def _build_exit_decision(
         seconds_to_close=view.seconds_to_close,
         data_freshness_ms=view.freshness.max_ms,
         reason_codes=("NATIVE_EXIT", reason),
-        metrics={
-            "reduce_only": True,
-            "exit_reason": reason,
-            "position_id": position_id,
-            "position_quantity": quantity,
-            "entry_price": entry_price,
-            "exit_price": bid,
-        },
+        metrics=metrics,
         order_intent=OrderIntentSpec(
             intent=OrderIntent.TAKER_FAK,
             reduce_only=True,
