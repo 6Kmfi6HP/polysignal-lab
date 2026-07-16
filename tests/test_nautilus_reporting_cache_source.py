@@ -700,7 +700,7 @@ def test_generate_daily_report_retries_pending_outbox_without_duplicate_report(
             publish_ids.append(publish_id)
             outbox = store.restore_report_publish_outbox()
             assert store.counts()["daily_reports"] == 1
-            assert outbox[0]["status"] == "DELIVERING"
+            assert outbox[0]["status"] == "SENDING"
             status = publish_statuses.pop(0)
             if status == "SENT":
                 successful_messages.append(message)

@@ -122,12 +122,22 @@ class PersistenceService:
             lease_sec=lease_sec,
         )
 
+    def authorize_daily_report_publish(
+        self,
+        intent_id: str,
+        attempt_count: int,
+    ) -> bool:
+        return self.sqlite.authorize_daily_report_publish(
+            intent_id,
+            attempt_count,
+        )
+
     def complete_daily_report_publish(
         self,
         intent_id: str,
         attempt_count: int,
         publish: dict[str, Any],
-    ) -> bool:
+    ) -> dict[str, Any] | None:
         return self.sqlite.complete_daily_report_publish(
             intent_id,
             attempt_count,

@@ -45,12 +45,18 @@ class _ReportPersistence(Protocol):
         lease_sec: float,
     ) -> dict[str, Any] | None: ...
 
+    def authorize_daily_report_publish(
+        self,
+        intent_id: str,
+        attempt_count: int,
+    ) -> bool: ...
+
     def complete_daily_report_publish(
         self,
         intent_id: str,
         attempt_count: int,
         publish: dict[str, str | None],
-    ) -> bool: ...
+    ) -> dict[str, str | None] | None: ...
 
     def release_daily_report_publish(
         self,

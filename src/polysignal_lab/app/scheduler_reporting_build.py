@@ -182,6 +182,21 @@ async def _publish_report(
     attempt_count = int(intent["attempt_count"])
     idempotency_key = str(intent["idempotency_key"])
     try:
+        if not scheduler.persistence.authorize_daily_report_publish(
+            intent_id,
+            attempt_count,
+        ):
+            scheduler.logger.info(
+                "Skipped superseded daily report publish for %s",
+                intent_id,
+            )
+            return True
+    except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+        scheduler_health.note_storage_failure(scheduler, "sqlite", exc)
+        scheduler.logger.error("Failed to authorize daily report publish: %s", exc)
+        return False
+
+    try:
         publish = await scheduler.publish_service.deliver_daily_report(
             report,
             idempotency_key=idempotency_key,
@@ -200,12 +215,12 @@ async def _publish_report(
         return False
 
     try:
-        completed = scheduler.persistence.complete_daily_report_publish(
+        effective_publish = scheduler.persistence.complete_daily_report_publish(
             intent_id,
             attempt_count,
             publish_payload,
         )
-        if not completed:
+        if effective_publish is None:
             scheduler.logger.error(
                 "Ignored stale daily report publish completion for %s",
                 intent_id,
@@ -217,9 +232,9 @@ async def _publish_report(
         scheduler.logger.error("Failed to complete daily report publish: %s", exc)
         return False
 
-    scheduler_health.note_publish_result(scheduler, publish_payload)
+    scheduler_health.note_publish_result(scheduler, effective_publish)
     try:
-        scheduler.persistence.append_log("telegram_publishes", publish_payload)
+        scheduler.persistence.append_log("telegram_publishes", effective_publish)
         scheduler_health.note_storage_success(scheduler, "jsonl")
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         scheduler_health.note_storage_failure(scheduler, "jsonl", exc)

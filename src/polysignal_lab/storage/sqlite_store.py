@@ -746,9 +746,9 @@ class SQLiteStore:
                     )
                     self._insert_claimed_daily_report(to_jsonable(persisted))
 
+            if persisted.revision > 1:
+                self._supersede_pending_daily_report_publishes(persisted)
             if enqueue_publish:
-                if persisted.revision > 1:
-                    self._supersede_pending_daily_report_publishes(persisted)
                 self._insert_daily_report_publish_intent(persisted)
         return persisted, created
 
@@ -777,7 +777,8 @@ class SQLiteStore:
         now = utc_iso()
         rows = self._conn.execute(
             """SELECT * FROM report_publish_outbox
-            WHERE report_date=? AND revision<? AND status='PENDING'""",
+            WHERE report_date=? AND revision<?
+              AND status IN ('PENDING','DELIVERING')""",
             (report.report_date.isoformat(), report.revision),
         ).fetchall()
         for row in rows:
@@ -785,14 +786,15 @@ class SQLiteStore:
             payload.update(
                 {
                     "status": "SUPERSEDED",
+                    "lease_until": None,
                     "last_error": f"superseded_by_revision:{report.revision}",
                     "updated_at": now,
                 }
             )
             self._conn.execute(
                 """UPDATE report_publish_outbox
-                SET status='SUPERSEDED',last_error=?,updated_at=?,payload_json=?
-                WHERE intent_id=? AND status='PENDING'""",
+                SET status='SUPERSEDED',lease_until=NULL,last_error=?,updated_at=?,payload_json=?
+                WHERE intent_id=? AND status IN ('PENDING','DELIVERING')""",
                 (
                     payload["last_error"],
                     now,
@@ -865,9 +867,16 @@ class SQLiteStore:
                 """SELECT reports.revision,reports.payload_json
                 FROM report_publish_outbox AS outbox
                 JOIN daily_reports AS reports ON reports.report_id=outbox.report_id
-                WHERE outbox.report_date<? AND (
+                WHERE outbox.report_date<?
+                  AND outbox.revision=(
+                    SELECT MAX(latest.revision)
+                    FROM daily_reports AS latest
+                    WHERE latest.report_date=outbox.report_date
+                  )
+                  AND (
                     outbox.status='PENDING' OR
-                    (outbox.status='DELIVERING' AND outbox.lease_until IS NOT NULL
+                    (outbox.status IN ('DELIVERING','SENDING')
+                    AND outbox.lease_until IS NOT NULL
                     AND outbox.lease_until<=?)
                 )
                 ORDER BY outbox.created_at,outbox.intent_id
@@ -899,7 +908,8 @@ class SQLiteStore:
                     lease_until=?,publish_id=NULL,last_error=NULL,updated_at=?
                 WHERE report_id=? AND (
                     status='PENDING' OR
-                    (status='DELIVERING' AND lease_until IS NOT NULL AND lease_until<=?)
+                    (status IN ('DELIVERING','SENDING')
+                    AND lease_until IS NOT NULL AND lease_until<=?)
                 )""",
                 (lease_until, now, report_id, now),
             )
@@ -928,26 +938,70 @@ class SQLiteStore:
             )
             return payload
 
+    def authorize_daily_report_publish(
+        self,
+        intent_id: str,
+        attempt_count: int,
+    ) -> bool:
+        now = utc_iso(utc_now())
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                """UPDATE report_publish_outbox
+                SET status='SENDING',updated_at=?
+                WHERE intent_id=? AND status='DELIVERING' AND attempt_count=?
+                  AND lease_until IS NOT NULL AND lease_until>?
+                  AND revision=(
+                    SELECT MAX(latest.revision)
+                    FROM daily_reports AS latest
+                    WHERE latest.report_date=report_publish_outbox.report_date
+                  )""",
+                (now, intent_id, attempt_count, now),
+            )
+            if cursor.rowcount != 1:
+                return False
+            row = self._conn.execute(
+                "SELECT * FROM report_publish_outbox WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            payload = self._outbox_payload(row)
+            payload.update(
+                {
+                    "status": "SENDING",
+                    "updated_at": now,
+                }
+            )
+            self._conn.execute(
+                "UPDATE report_publish_outbox SET payload_json=? WHERE intent_id=?",
+                (self._json(payload), intent_id),
+            )
+            return True
+
     def complete_daily_report_publish(
         self,
         intent_id: str,
         attempt_count: int,
         publish: Mapping[str, Any],
-    ) -> bool:
+    ) -> dict[str, Any] | None:
         p = to_jsonable(publish)
-        publish_status = str(p.get("status") or "FAILED").upper()
-        delivered = publish_status in {"SENT", "DRY_RUN"}
-        status = publish_status if delivered else "PENDING"
-        last_error = None if delivered else str(p.get("error") or "publish_failed")
+        requested_status = str(p.get("status") or "FAILED").upper()
         now = utc_iso()
         with self._lock, self._conn:
             row = self._conn.execute(
                 """SELECT * FROM report_publish_outbox
-                WHERE intent_id=? AND status='DELIVERING' AND attempt_count=?""",
+                WHERE intent_id=? AND status='SENDING' AND attempt_count=?""",
                 (intent_id, attempt_count),
             ).fetchone()
             if row is None:
-                return False
+                return None
+            publish_status, effective_publish = self._record_daily_report_publish(
+                p,
+                publish_status=requested_status,
+            )
+            delivered = publish_status in {"SENT", "DRY_RUN"}
+            status = publish_status if delivered else "PENDING"
+            last_error = None if delivered else str(p.get("error") or "publish_failed")
             updated = self._update_report_publish_outbox(
                 row,
                 attempt_count=attempt_count,
@@ -957,29 +1011,68 @@ class SQLiteStore:
                 updated_at=now,
             )
             if not updated:
-                return False
-            self._insert_idempotent(
-                "telegram_publishes",
-                "publish_id",
-                str(p["publish_id"]),
+                return None
+            return effective_publish
+
+    def _record_daily_report_publish(
+        self,
+        publish: Mapping[str, Any],
+        *,
+        publish_status: str,
+    ) -> tuple[str, dict[str, Any]]:
+        publish_id = str(publish["publish_id"])
+        message_type = str(publish.get("message_type") or "daily_report")
+        signal_id = publish.get("signal_id")
+        payload_json = self._json(publish)
+        row = self._conn.execute(
+            """SELECT message_type,signal_id,status,payload_json
+            FROM telegram_publishes WHERE publish_id=?""",
+            (publish_id,),
+        ).fetchone()
+        if row is None:
+            self._conn.execute(
+                """INSERT INTO telegram_publishes(
+                    publish_id,message_type,signal_id,status,sent_at,payload_json
+                ) VALUES(?,?,?,?,?,?)""",
                 (
-                    "publish_id",
-                    "message_type",
-                    "signal_id",
-                    "status",
-                    "sent_at",
-                    "payload_json",
-                ),
-                (
-                    p["publish_id"],
-                    p.get("message_type", "daily_report"),
-                    p.get("signal_id"),
+                    publish_id,
+                    message_type,
+                    signal_id,
                     publish_status,
-                    p.get("sent_at"),
-                    self._json(p),
+                    publish.get("sent_at"),
+                    payload_json,
                 ),
             )
-            return True
+            return publish_status, dict(publish)
+
+        existing_payload = _payload_json(row)
+        if not isinstance(existing_payload, dict):
+            raise MalformedSQLitePayloadError(
+                table="telegram_publishes",
+                key="publish_id",
+                record_id=publish_id,
+            )
+        if row["message_type"] != message_type or row["signal_id"] != signal_id:
+            raise DuplicateRecordError(
+                table="telegram_publishes",
+                key="publish_id",
+                record_id=publish_id,
+            )
+        existing_status = str(row["status"]).upper()
+        if existing_status in {"SENT", "DRY_RUN"}:
+            return existing_status, existing_payload
+        self._conn.execute(
+            """UPDATE telegram_publishes
+            SET status=?,sent_at=?,payload_json=?
+            WHERE publish_id=?""",
+            (
+                publish_status,
+                publish.get("sent_at"),
+                payload_json,
+                publish_id,
+            ),
+        )
+        return publish_status, dict(publish)
 
     def release_daily_report_publish(
         self,
@@ -991,7 +1084,7 @@ class SQLiteStore:
         with self._lock, self._conn:
             row = self._conn.execute(
                 """SELECT * FROM report_publish_outbox
-                WHERE intent_id=? AND status='DELIVERING' AND attempt_count=?""",
+                WHERE intent_id=? AND status='SENDING' AND attempt_count=?""",
                 (intent_id, attempt_count),
             ).fetchone()
             if row is None:
@@ -1031,7 +1124,7 @@ class SQLiteStore:
             """UPDATE report_publish_outbox
             SET status=?,lease_until=NULL,publish_id=?,last_error=?,
                 updated_at=?,payload_json=?
-            WHERE intent_id=? AND status='DELIVERING' AND attempt_count=?""",
+            WHERE intent_id=? AND status='SENDING' AND attempt_count=?""",
             (
                 status,
                 row["publish_id"] if preserve_publish_id else publish_id,

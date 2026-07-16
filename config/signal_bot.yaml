@@ -24,7 +24,7 @@ telegram:
   max_message_chars: 4096
   retry_attempts: 3
   publish_timeout_sec: 20
-  dry_run: true
+  dry_run: false
   interactive_enabled: true
   interactive_dry_run: false
   interactive_allowed_chat_ids: [461927973]

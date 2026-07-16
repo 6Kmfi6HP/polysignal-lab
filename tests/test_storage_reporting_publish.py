@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timezone, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.dashboard.app
-Output: test_formatter_signal_message_within_limit, test_telegram_dry_run_publish, test_formatter_nautilus_fill_message_is_compact, test_jsonl_and_state_store, test_jsonl_and_state_restore_required_streams, test_sqlite_store_and_dashboard, test_schema_rejects_missing_required_columns, test_sqlite_anchor_prices_survive_reopen, test_sqlite_verified_anchor_survives_later_unverified_upsert, test_sqlite_store_persists_strategy_status_rows, test_daily_report_claim_and_delivery_lease_are_atomic_across_connections
+Input: __future__, __future__.annotations, concurrent.futures, concurrent.futures.ThreadPoolExecutor, datetime, datetime.date, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path, threading, threading.Barrier, types, types.SimpleNamespace, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.app.scheduler_reporting_build, polysignal_lab.dashboard.app
+Output: test_formatter_signal_message_within_limit, test_telegram_dry_run_publish, test_formatter_nautilus_fill_message_is_compact, test_jsonl_and_state_store, test_jsonl_and_state_restore_required_streams, test_sqlite_store_and_dashboard, test_schema_rejects_missing_required_columns, test_sqlite_anchor_prices_survive_reopen, test_sqlite_verified_anchor_survives_later_unverified_upsert, test_sqlite_store_persists_strategy_status_rows, test_daily_report_claim_and_delivery_lease_are_atomic_across_connections, test_daily_report_publish_authorization_rejects_expired_lease, test_daily_report_publish_retry_updates_failed_publish_record, test_daily_report_publish_failure_does_not_downgrade_success, test_new_daily_report_revision_supersedes_delivering_publish, test_new_daily_report_revision_does_not_revoke_authorized_publish, test_new_daily_report_revision_without_publish_supersedes_delivering_publish, test_pending_daily_report_publishes_excludes_stale_revision, test_publish_report_skips_intent_superseded_before_delivery, test_publish_report_logs_effective_success_result
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -16,13 +16,16 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from threading import Barrier
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from factories import sample_paper_trade_result
 from polysignal_lab.dashboard.app import create_dashboard_app
+from polysignal_lab.app.scheduler_reporting_build import _publish_report
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
 from polysignal_lab.domain.paper_result import DailyReport
@@ -180,6 +183,33 @@ def test_schema_rejects_missing_required_columns(tmp_path):
         SQLiteStore(db_path)
 
 
+def _daily_report_for_publish(
+    *,
+    ending_equity: float = 1000.0,
+) -> DailyReport:
+    return PaperReportService().build_daily_report(
+        report_date=date(2026, 7, 15),
+        starting_equity=1000.0,
+        ending_equity=ending_equity,
+        total_signals=1,
+        paper_orders=0,
+        paper_fills=0,
+        rejected_paper_orders=0,
+        open_positions=0,
+        results=[],
+    )
+
+
+def _authorize_attempt(
+    store: SQLiteStore,
+    attempt: dict[str, object],
+) -> None:
+    assert store.authorize_daily_report_publish(
+        str(attempt["intent_id"]),
+        int(attempt["attempt_count"]),
+    )
+
+
 def test_daily_report_claim_and_delivery_lease_are_atomic_across_connections(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -263,6 +293,7 @@ def test_daily_report_claim_and_delivery_lease_are_atomic_across_connections(
     delivering = store.restore_report_publish_outbox()[0]
     assert delivering["status"] == "DELIVERING"
     assert delivering["attempt_count"] == 2
+    _authorize_attempt(store, second_attempt)
     assert store.complete_daily_report_publish(
         second_attempt["intent_id"],
         second_attempt["attempt_count"],
@@ -274,6 +305,468 @@ def test_daily_report_claim_and_delivery_lease_are_atomic_across_connections(
         },
     )
     assert store.restore_report_publish_outbox()[0]["status"] == "SENT"
+
+
+def test_daily_report_publish_authorization_rejects_expired_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_at = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_store_module, "utc_now", lambda: observed_at)
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=1,
+    )
+
+    assert attempt is not None
+    monkeypatch.setattr(
+        sqlite_store_module,
+        "utc_now",
+        lambda: observed_at + timedelta(seconds=2),
+    )
+    assert not store.authorize_daily_report_publish(
+        str(attempt["intent_id"]),
+        int(attempt["attempt_count"]),
+    )
+    assert store.restore_report_publish_outbox()[0]["status"] == "DELIVERING"
+
+
+def test_daily_report_publish_retry_updates_failed_publish_record(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    first_attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=1,
+    )
+
+    assert first_attempt is not None
+    publish_id = str(first_attempt["idempotency_key"])
+    _authorize_attempt(store, first_attempt)
+    assert store.complete_daily_report_publish(
+        str(first_attempt["intent_id"]),
+        int(first_attempt["attempt_count"]),
+        {
+            "publish_id": publish_id,
+            "message_type": "daily_report",
+            "status": "FAILED",
+            "error": "429 Too Many Requests",
+            "sent_at": None,
+        },
+    )
+
+    second_attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=1,
+    )
+
+    assert second_attempt is not None
+    _authorize_attempt(store, second_attempt)
+    assert store.complete_daily_report_publish(
+        str(second_attempt["intent_id"]),
+        int(second_attempt["attempt_count"]),
+        {
+            "publish_id": publish_id,
+            "message_type": "daily_report",
+            "status": "SENT",
+            "error": None,
+            "sent_at": "2026-07-15T12:00:02Z",
+            "telegram_message_id": "123",
+        },
+    )
+    assert store.restore_report_publish_outbox()[0]["status"] == "SENT"
+    publishes = store.query_json("telegram_publishes")
+    assert len(publishes) == 1
+    assert publishes[0]["status"] == "SENT"
+    assert publishes[0]["telegram_message_id"] == "123"
+
+
+def test_daily_report_publish_failure_does_not_downgrade_success(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=1,
+    )
+
+    assert attempt is not None
+    publish_id = str(attempt["idempotency_key"])
+    _authorize_attempt(store, attempt)
+    store.insert_telegram_publish(
+        {
+            "publish_id": publish_id,
+            "message_type": "daily_report",
+            "signal_id": None,
+            "status": "SENT",
+            "sent_at": "2026-07-15T12:00:01Z",
+        }
+    )
+
+    effective_publish = store.complete_daily_report_publish(
+        str(attempt["intent_id"]),
+        int(attempt["attempt_count"]),
+        {
+            "publish_id": publish_id,
+            "message_type": "daily_report",
+            "signal_id": None,
+            "status": "FAILED",
+            "error": "timeout after Telegram accepted the request",
+            "sent_at": None,
+        },
+    )
+    assert effective_publish is not None
+    assert effective_publish["status"] == "SENT"
+    assert effective_publish["sent_at"] == "2026-07-15T12:00:01Z"
+    assert store.restore_report_publish_outbox()[0]["status"] == "SENT"
+    assert store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=1,
+    ) is None
+    publishes = store.query_json("telegram_publishes")
+    assert len(publishes) == 1
+    assert publishes[0]["status"] == "SENT"
+
+
+def test_new_daily_report_revision_supersedes_delivering_publish(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=60,
+    )
+
+    assert attempt is not None
+    revised, created = store.claim_daily_report(
+        report.model_copy(
+            update={
+                "report_id": "dr-revised",
+                "ending_equity": 1001.0,
+            }
+        ),
+        enqueue_publish=True,
+    )
+
+    assert created
+    assert revised.revision == 2
+    outbox = {
+        int(row["revision"]): row
+        for row in store.restore_report_publish_outbox()
+    }
+    assert outbox[1]["status"] == "SUPERSEDED"
+    assert outbox[1]["lease_until"] is None
+    assert outbox[1]["last_error"] == "superseded_by_revision:2"
+    assert outbox[2]["status"] == "PENDING"
+
+
+def test_new_daily_report_revision_does_not_revoke_authorized_publish(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=60,
+    )
+
+    assert attempt is not None
+    _authorize_attempt(store, attempt)
+    revised, created = store.claim_daily_report(
+        report.model_copy(
+            update={
+                "report_id": "dr-revised-after-authorization",
+                "ending_equity": 1001.0,
+            }
+        ),
+        enqueue_publish=True,
+    )
+
+    assert created
+    assert revised.revision == 2
+    outbox = {
+        int(row["revision"]): row
+        for row in store.restore_report_publish_outbox()
+    }
+    assert outbox[1]["status"] == "SENDING"
+    assert outbox[2]["status"] == "PENDING"
+    assert store.complete_daily_report_publish(
+        str(attempt["intent_id"]),
+        int(attempt["attempt_count"]),
+        {
+            "publish_id": str(attempt["idempotency_key"]),
+            "message_type": "daily_report",
+            "status": "SENT",
+            "sent_at": "2026-07-15T12:00:02Z",
+        },
+    ) is not None
+
+
+def test_new_daily_report_revision_without_publish_supersedes_delivering_publish(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=60,
+    )
+
+    assert attempt is not None
+    revised, created = store.claim_daily_report(
+        report.model_copy(
+            update={
+                "report_id": "dr-revised-without-publish",
+                "ending_equity": 1001.0,
+            }
+        ),
+        enqueue_publish=False,
+    )
+
+    assert created
+    assert revised.revision == 2
+    assert not store.complete_daily_report_publish(
+        str(attempt["intent_id"]),
+        int(attempt["attempt_count"]),
+        {
+            "publish_id": str(attempt["idempotency_key"]),
+            "message_type": "daily_report",
+            "status": "SENT",
+            "sent_at": "2026-07-15T12:00:02Z",
+        },
+    )
+    outbox = store.restore_report_publish_outbox()
+    assert len(outbox) == 1
+    assert outbox[0]["status"] == "SUPERSEDED"
+    assert outbox[0]["last_error"] == "superseded_by_revision:2"
+
+
+def test_pending_daily_report_publishes_excludes_stale_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_at = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_store_module, "utc_now", lambda: observed_at)
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    attempt = store.claim_daily_report_publish(
+        persisted.report_id,
+        lease_sec=1,
+    )
+
+    assert attempt is not None
+    revised, created = store.claim_daily_report(
+        report.model_copy(
+            update={
+                "report_id": "dr-revised-without-outbox",
+                "ending_equity": 1001.0,
+            }
+        ),
+        enqueue_publish=False,
+    )
+    monkeypatch.setattr(
+        sqlite_store_module,
+        "utc_iso",
+        lambda _dt=None: "2026-07-15T12:00:02Z",
+    )
+
+    assert created
+    assert revised.revision == 2
+    assert store.pending_daily_report_publishes(
+        before_date="2026-07-16",
+    ) == []
+
+
+async def test_publish_report_skips_intent_superseded_before_delivery(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    delivered: list[str] = []
+
+    class Persistence:
+        def claim_daily_report_publish(
+            self,
+            report_id: str,
+            *,
+            lease_sec: float,
+        ) -> dict[str, object] | None:
+            intent = store.claim_daily_report_publish(
+                report_id,
+                lease_sec=lease_sec,
+            )
+            store.claim_daily_report(
+                report.model_copy(
+                    update={
+                        "report_id": "dr-superseding",
+                        "ending_equity": 1001.0,
+                    }
+                ),
+                enqueue_publish=False,
+            )
+            return intent
+
+        def authorize_daily_report_publish(
+            self,
+            intent_id: str,
+            attempt_count: int,
+        ) -> bool:
+            return store.authorize_daily_report_publish(
+                intent_id,
+                attempt_count,
+            )
+
+    class Publisher:
+        async def deliver_daily_report(
+            self,
+            _report: DailyReport,
+            *,
+            idempotency_key: str | None = None,
+        ) -> None:
+            delivered.append(str(idempotency_key))
+
+    scheduler = SimpleNamespace(
+        settings=SimpleNamespace(
+            telegram=SimpleNamespace(publish_timeout_sec=20.0)
+        ),
+        persistence=Persistence(),
+        publish_service=Publisher(),
+        logger=SimpleNamespace(
+            error=lambda *_args: None,
+            info=lambda *_args: None,
+        ),
+    )
+
+    assert await _publish_report(scheduler, persisted)
+    assert delivered == []
+
+
+async def test_publish_report_logs_effective_success_result(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    report = _daily_report_for_publish()
+    persisted, _ = store.claim_daily_report(report, enqueue_publish=True)
+    publish_id = "daily_report:2026-07-15:r1"
+    store.insert_telegram_publish(
+        {
+            "publish_id": publish_id,
+            "message_type": "daily_report",
+            "signal_id": None,
+            "status": "SENT",
+            "sent_at": "2026-07-15T12:00:01Z",
+        }
+    )
+    logged: list[dict[str, object]] = []
+    health_metrics: list[tuple[str, str]] = []
+
+    class Persistence:
+        def claim_daily_report_publish(
+            self,
+            report_id: str,
+            *,
+            lease_sec: float,
+        ) -> dict[str, object] | None:
+            return store.claim_daily_report_publish(
+                report_id,
+                lease_sec=lease_sec,
+            )
+
+        def authorize_daily_report_publish(
+            self,
+            intent_id: str,
+            attempt_count: int,
+        ) -> bool:
+            return store.authorize_daily_report_publish(
+                intent_id,
+                attempt_count,
+            )
+
+        def complete_daily_report_publish(
+            self,
+            intent_id: str,
+            attempt_count: int,
+            publish: dict[str, object],
+        ) -> dict[str, object] | None:
+            return store.complete_daily_report_publish(
+                intent_id,
+                attempt_count,
+                publish,
+            )
+
+        def append_log(
+            self,
+            _stream: str,
+            payload: dict[str, object],
+        ) -> None:
+            logged.append(payload)
+
+    class PublishResult:
+        def as_dict(self) -> dict[str, object]:
+            return {
+                "publish_id": publish_id,
+                "message_type": "daily_report",
+                "signal_id": None,
+                "status": "FAILED",
+                "error": "timeout after Telegram accepted the request",
+                "sent_at": None,
+            }
+
+    class Publisher:
+        async def deliver_daily_report(
+            self,
+            _report: DailyReport,
+            *,
+            idempotency_key: str | None = None,
+        ) -> PublishResult:
+            assert idempotency_key == publish_id
+            return PublishResult()
+
+    class Health:
+        def mark_ok(self, name: str, **_metrics: object) -> None:
+            health_metrics.append((name, "ok"))
+
+        def inc_metric(self, name: str, metric: str) -> None:
+            health_metrics.append((name, metric))
+
+    scheduler = SimpleNamespace(
+        settings=SimpleNamespace(
+            telegram=SimpleNamespace(publish_timeout_sec=20.0)
+        ),
+        persistence=Persistence(),
+        publish_service=Publisher(),
+        health=Health(),
+        logger=SimpleNamespace(
+            error=lambda *_args: None,
+            info=lambda *_args: None,
+        ),
+    )
+
+    assert await _publish_report(scheduler, persisted)
+    assert logged == [
+        {
+            "publish_id": publish_id,
+            "message_type": "daily_report",
+            "signal_id": None,
+            "status": "SENT",
+            "sent_at": "2026-07-15T12:00:01Z",
+        }
+    ]
+    assert ("telegram", "sent") in health_metrics
+    assert ("telegram", "failed") not in health_metrics
 
 
 def test_sqlite_anchor_prices_survive_reopen(tmp_path) -> None:
