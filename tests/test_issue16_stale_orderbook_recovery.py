@@ -63,12 +63,15 @@ class _SubscriptionTestStrategy:
         self._asset_condition_ids: dict[str, tuple[str, ...]] = {}
         self.book_subs: list[str] = []
         self.quote_subs: list[str] = []
+        self.quote_subscribe_attempt_ids: list[str] = []
         self.trade_subs: list[str] = []
         self.book_unsubs: list[str] = []
         self.quote_unsubs: list[str] = []
         self.trade_unsubs: list[str] = []
         self.requests: list[str] = []
         self.fail_quote_subscribe = False
+        self.fail_quote_subscribe_condition_ids: set[str] = set()
+        self.unsubscribe_exited = True
         self.quote_subscribe_attempts = 0
         self.name = name
         self.operations = operations
@@ -87,7 +90,11 @@ class _SubscriptionTestStrategy:
 
     def subscribe_quote_ticks(self, instrument_id: object) -> None:
         self.quote_subscribe_attempts += 1
-        if self.fail_quote_subscribe:
+        self.quote_subscribe_attempt_ids.append(str(instrument_id))
+        if self.fail_quote_subscribe or any(
+            condition_id in str(instrument_id)
+            for condition_id in self.fail_quote_subscribe_condition_ids
+        ):
             raise ValueError("The instrument has not been registered")
         self.quote_subs.append(str(instrument_id))
 
@@ -875,6 +882,580 @@ def test_new_subscription_joins_earliest_pending_refresh_deadline() -> None:
     )
 
 
+def test_staggered_retry_does_not_reset_restored_shared_subscriptions() -> None:
+    operations: list[tuple[str, str]] = []
+    first = _subscription_test_strategy(name="first", operations=operations)
+    second = _subscription_test_strategy(name="second", operations=operations)
+    for consumer in (first, second):
+        subscribe_market_conditions(consumer, ("condition-a",), now=_dt(0))
+    operations.clear()
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(first)
+    coordinator.register(second)
+
+    assert coordinator.refresh(first, "condition-a", now=_dt(30))
+    assert coordinator.refresh(first, "condition-a", now=_dt(31))
+    for consumer in (first, second):
+        consumer._active_condition_ids.add("condition-b")
+        subscribe_market_conditions(consumer, ("condition-b",), now=_dt(40))
+
+    assert coordinator.resume_pending(first, "condition-a", now=_dt(61))
+    assert "condition-a" not in coordinator._resubscribe_not_before_by_condition
+    assert coordinator._resubscribe_not_before_by_condition == {
+        "condition-b": _dt(91)
+    }
+    for consumer in (first, second):
+        assert consumer._subscription_state.wire_condition_ids == {"condition-a"}
+        consumer.registry.register(
+            MarketPairMeta(
+                market_id="m-b",
+                market_slug="eth-updown-5m-b",
+                condition_id="condition-b",
+                asset="ETH",
+                timeframe="5m",
+                start_ts=None,
+                end_ts=None,
+                up=InstrumentTokenMeta("up-b", Side.UP),
+                down=InstrumentTokenMeta("down-b", Side.DOWN),
+            )
+        )
+    unsubscribe_count = sum(
+        operation == "unsubscribe" for _, operation in operations
+    )
+
+    assert coordinator.resume_pending(second, "condition-b", now=_dt(91))
+    assert sum(operation == "unsubscribe" for _, operation in operations) == (
+        unsubscribe_count
+    )
+    for consumer in (first, second):
+        assert consumer._subscription_state.wire_condition_ids == {
+            "condition-a",
+            "condition-b",
+        }
+        assert consumer._subscription_state.deferred_resubscribe_condition_ids == set()
+
+
+def test_failed_deferred_retry_does_not_block_restored_condition_reconnect() -> None:
+    operations: list[tuple[str, str]] = []
+    first = _subscription_test_strategy(name="first", operations=operations)
+    second = _subscription_test_strategy(name="second", operations=operations)
+    for consumer in (first, second):
+        subscribe_market_conditions(consumer, ("condition-a",), now=_dt(0))
+    operations.clear()
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(first)
+    coordinator.register(second)
+
+    assert coordinator.refresh(first, "condition-a", now=_dt(30))
+    assert coordinator.refresh(first, "condition-a", now=_dt(31))
+    for consumer in (first, second):
+        consumer._active_condition_ids.add("condition-b")
+        subscribe_market_conditions(consumer, ("condition-b",), now=_dt(40))
+
+    assert coordinator.resume_pending(first, "condition-a", now=_dt(61))
+    for consumer in (first, second):
+        assert consumer._subscription_state.wire_condition_ids == {"condition-a"}
+        assert consumer._subscription_state.awaiting_book_sides_by_condition == {
+            "condition-a": {Side.UP, Side.DOWN}
+        }
+    subscribe_count = sum(operation == "subscribe" for _, operation in operations)
+
+    assert coordinator.refresh(first, "condition-a", now=_dt(121))
+    assert coordinator._unsubscribe_not_before_by_condition == {
+        "condition-a": _dt(122)
+    }
+    assert coordinator.resume_pending(second, "condition-b", now=_dt(122))
+    assert coordinator._resubscribe_not_before_by_condition == {
+        "condition-a": _dt(152),
+        "condition-b": _dt(181),
+    }
+    for consumer in (first, second):
+        assert consumer._subscription_state.wire_condition_ids == set()
+
+    assert coordinator.resume_pending(first, "condition-a", now=_dt(152))
+    assert coordinator._resubscribe_not_before_by_condition == {
+        "condition-b": _dt(181)
+    }
+    assert sum(operation == "subscribe" for _, operation in operations) == (
+        subscribe_count + 4
+    )
+    for consumer in (first, second):
+        assert consumer._subscription_state.wire_condition_ids == {"condition-a"}
+        assert consumer._subscription_state.awaiting_book_sides_by_condition == {
+            "condition-a": {Side.UP, Side.DOWN}
+        }
+        assert consumer._subscription_state.deferred_resubscribe_condition_ids == {
+            "condition-b"
+        }
+
+
+def test_partial_shared_retry_reconnects_wired_unready_consumer() -> None:
+    first = _subscription_test_strategy()
+    second = _subscription_test_strategy()
+    first.registry.register(
+        MarketPairMeta(
+            market_id="m-b",
+            market_slug="eth-updown-5m-b",
+            condition_id="condition-b",
+            asset="ETH",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-b", Side.UP),
+            down=InstrumentTokenMeta("down-b", Side.DOWN),
+        )
+    )
+    for consumer in (first, second):
+        consumer._active_condition_ids.add("condition-b")
+        subscribe_market_conditions(
+            consumer,
+            ("condition-a", "condition-b"),
+            now=_dt(0),
+        )
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(first)
+    coordinator.register(second)
+
+    assert coordinator.refresh(first, "condition-b", now=_dt(30))
+    assert coordinator.refresh(first, "condition-b", now=_dt(31))
+    assert coordinator.resume_pending(first, "condition-b", now=_dt(61))
+    assert first._subscription_state.wire_condition_ids == {
+        "condition-a",
+        "condition-b",
+    }
+    assert second._subscription_state.wire_condition_ids == {"condition-a"}
+    unsubscribe_count = len(first.book_unsubs)
+
+    assert coordinator.resume_pending(first, "condition-b", now=_dt(91))
+    assert len(first.book_unsubs) == unsubscribe_count + 4
+    assert first._subscription_state.wire_condition_ids == set()
+    assert second._subscription_state.wire_condition_ids == set()
+
+
+def test_failed_batch_retry_preserves_inactive_retained_owner() -> None:
+    strategy = _subscription_test_strategy()
+    strategy.registry.register(
+        MarketPairMeta(
+            market_id="m-b",
+            market_slug="eth-updown-5m-b",
+            condition_id="condition-b",
+            asset="ETH",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-b", Side.UP),
+            down=InstrumentTokenMeta("down-b", Side.DOWN),
+        )
+    )
+    strategy._active_condition_ids.add("condition-b")
+    subscribe_market_conditions(
+        strategy,
+        ("condition-a", "condition-b"),
+        now=_dt(0),
+    )
+    strategy._active_condition_ids.remove("condition-b")
+    strategy._subscription_state.retained_wire_condition_ids.add("condition-b")
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(30))
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(31))
+    strategy.fail_quote_subscribe = True
+    coordinator.resume_pending(strategy, "condition-a", now=_dt(61))
+
+    assert "condition-b" in coordinator._wire_restore_by_condition
+    assert coordinator._resubscribe_not_before_by_condition == {
+        "condition-a": _dt(91),
+        "condition-b": _dt(91),
+    }
+
+    coordinator.resume_pending(strategy, "condition-b", now=_dt(91))
+    assert "condition-b" in coordinator._wire_restore_by_condition
+    assert coordinator._resubscribe_not_before_by_condition["condition-b"] == _dt(
+        121
+    )
+
+    strategy.fail_quote_subscribe = False
+    assert coordinator.resume_pending(strategy, "condition-b", now=_dt(121))
+    assert strategy._subscription_state.wire_condition_ids == {"condition-b"}
+    assert strategy._subscription_state.retained_wire_condition_ids == {
+        "condition-b"
+    }
+    assert "condition-b" not in coordinator._wire_restore_by_condition
+
+
+def test_unrelated_batch_does_not_retry_condition_before_latest_settle() -> None:
+    first = _subscription_test_strategy()
+    second = _subscription_test_strategy()
+    first.registry.register(
+        MarketPairMeta(
+            market_id="m-b",
+            market_slug="eth-updown-5m-b",
+            condition_id="condition-b",
+            asset="ETH",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-b", Side.UP),
+            down=InstrumentTokenMeta("down-b", Side.DOWN),
+        )
+    )
+    for consumer in (first, second):
+        consumer._active_condition_ids.add("condition-b")
+        subscribe_market_conditions(
+            consumer,
+            ("condition-a", "condition-b"),
+            now=_dt(0),
+        )
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(first)
+    coordinator.register(second)
+    coordinator._resubscribe_not_before_by_condition["condition-b"] = _dt(151)
+    coordinator._unsubscribe_not_before_by_condition["condition-a"] = _dt(130)
+
+    assert coordinator.resume_pending(first, "condition-a", now=_dt(130))
+    assert coordinator._resubscribe_not_before_by_condition == {
+        "condition-a": _dt(160),
+        "condition-b": _dt(160),
+    }
+    subscribe_count = len(first.book_subs)
+
+    assert coordinator.resume_pending(first, "condition-b", now=_dt(151))
+    assert len(first.book_subs) == subscribe_count
+    assert first._subscription_state.wire_condition_ids == set()
+
+
+def test_simultaneous_due_retries_honor_new_batch_settle_delay() -> None:
+    strategy = _subscription_test_strategy()
+    strategy.registry.register(
+        MarketPairMeta(
+            market_id="m-b",
+            market_slug="eth-updown-5m-b",
+            condition_id="condition-b",
+            asset="ETH",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-b", Side.UP),
+            down=InstrumentTokenMeta("down-b", Side.DOWN),
+        )
+    )
+    strategy._active_condition_ids.add("condition-b")
+    subscribe_market_conditions(
+        strategy,
+        ("condition-a", "condition-b"),
+        now=_dt(0),
+    )
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+    coordinator._resubscribe_not_before_by_condition.update(
+        {
+            "condition-a": _dt(30),
+            "condition-b": _dt(30),
+        }
+    )
+    subscribe_count = len(strategy.book_subs)
+
+    assert coordinator.resume_pending(strategy, "condition-a", now=_dt(30))
+    assert coordinator._batch_refresh_condition_ids == {
+        "condition-a",
+        "condition-b",
+    }
+    assert len(strategy.book_subs) == subscribe_count
+    assert strategy._subscription_state.wire_condition_ids == set()
+    assert coordinator._resubscribe_not_before_by_condition == {
+        "condition-a": _dt(60),
+        "condition-b": _dt(60),
+    }
+
+    assert coordinator.resume_pending(strategy, "condition-a", now=_dt(60))
+    assert strategy._subscription_state.wire_condition_ids == {
+        "condition-a",
+        "condition-b",
+    }
+    assert strategy._subscription_state.awaiting_book_sides_by_condition == {
+        "condition-a": {Side.UP, Side.DOWN},
+        "condition-b": {Side.UP, Side.DOWN},
+    }
+    assert coordinator._batch_refresh_condition_ids == set()
+    assert coordinator._resubscribe_not_before_by_condition == {}
+    assert strategy._subscription_state.deferred_resubscribe_condition_ids == set()
+
+
+def test_unregister_clears_pending_batch_membership() -> None:
+    strategy = _subscription_test_strategy()
+    subscribe_market_conditions(strategy, ("condition-a",), now=_dt(0))
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(30))
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(31))
+    assert coordinator._batch_refresh_condition_ids == {"condition-a"}
+
+    coordinator.unregister(strategy)
+
+    assert coordinator._batch_refresh_condition_ids == set()
+    assert coordinator._wire_restore_by_condition == {}
+    assert coordinator._wire_restore_not_before_by_condition == {}
+    assert coordinator._resubscribe_not_before_by_condition == {}
+    assert coordinator._unsubscribe_not_before_by_condition == {}
+
+
+def test_unrelated_batch_preserves_pending_refresh_membership() -> None:
+    strategy = _subscription_test_strategy()
+    strategy.registry.register(
+        MarketPairMeta(
+            market_id="m-b",
+            market_slug="eth-updown-5m-b",
+            condition_id="condition-b",
+            asset="ETH",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-b", Side.UP),
+            down=InstrumentTokenMeta("down-b", Side.DOWN),
+        )
+    )
+    strategy._active_condition_ids.add("condition-b")
+    subscribe_market_conditions(
+        strategy,
+        ("condition-a", "condition-b"),
+        now=_dt(0),
+    )
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(30))
+    coordinator._unsubscribe_not_before_by_condition["condition-b"] = _dt(31)
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(31))
+    assert coordinator._batch_refresh_condition_ids == {
+        "condition-a",
+        "condition-b",
+    }
+
+    assert coordinator.resume_pending(strategy, "condition-a", now=_dt(61))
+    assert strategy._subscription_state.wire_condition_ids == {
+        "condition-a",
+        "condition-b",
+    }
+    assert coordinator._batch_refresh_condition_ids == set()
+
+
+def test_failed_batch_owner_restore_enters_retry_backoff() -> None:
+    strategy = _subscription_test_strategy()
+    strategy.registry.register(
+        MarketPairMeta(
+            market_id="m-b",
+            market_slug="eth-updown-5m-b",
+            condition_id="condition-b",
+            asset="ETH",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-b", Side.UP),
+            down=InstrumentTokenMeta("down-b", Side.DOWN),
+        )
+    )
+    strategy._active_condition_ids.add("condition-b")
+    subscribe_market_conditions(
+        strategy,
+        ("condition-a", "condition-b"),
+        now=_dt(0),
+    )
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(30))
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(31))
+    strategy.fail_quote_subscribe = True
+
+    coordinator.resume_pending(strategy, "condition-a", now=_dt(61))
+    assert coordinator._resubscribe_not_before_by_condition == {
+        "condition-a": _dt(91),
+        "condition-b": _dt(91),
+    }
+    assert "condition-b" in coordinator._wire_restore_by_condition
+    attempts_after_settle = strategy.quote_subscribe_attempts
+
+    assert coordinator.resume_pending(strategy, "condition-a", now=_dt(62))
+    assert strategy.quote_subscribe_attempts == attempts_after_settle
+    assert coordinator._wire_restore_not_before_by_condition["condition-a"] == _dt(
+        91
+    )
+    assert strategy._subscription_state.deferred_resubscribe_condition_ids == {
+        "condition-a",
+        "condition-b",
+    }
+
+
+def test_unrelated_batch_restores_healthy_shared_owner_before_peer_backoff() -> None:
+    first = _subscription_test_strategy()
+    second = _subscription_test_strategy()
+    first.registry.register(
+        MarketPairMeta(
+            market_id="m-b",
+            market_slug="eth-updown-5m-b",
+            condition_id="condition-b",
+            asset="ETH",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-b", Side.UP),
+            down=InstrumentTokenMeta("down-b", Side.DOWN),
+        )
+    )
+    for consumer in (first, second):
+        consumer._active_condition_ids.add("condition-b")
+        subscribe_market_conditions(
+            consumer,
+            ("condition-a", "condition-b"),
+            now=_dt(0),
+        )
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(first)
+    coordinator.register(second)
+
+    assert coordinator.refresh(first, "condition-b", now=_dt(30))
+    assert coordinator.refresh(first, "condition-b", now=_dt(31))
+    assert coordinator.resume_pending(first, "condition-b", now=_dt(61))
+    assert not coordinator.note_readiness(first, "condition-b", ready=True)
+    coordinator.resume_pending(second, "condition-b", now=_dt(91))
+    coordinator.resume_pending(second, "condition-b", now=_dt(151))
+    assert coordinator._resubscribe_not_before_by_condition == {
+        "condition-b": _dt(271)
+    }
+    second_b_attempts = sum(
+        "condition-b" in instrument_id
+        for instrument_id in second.quote_subscribe_attempt_ids
+    )
+
+    assert coordinator.refresh(first, "condition-a", now=_dt(181))
+    assert coordinator.resume_pending(first, "condition-a", now=_dt(182))
+    assert first._subscription_state.wire_condition_ids == set()
+    assert second._subscription_state.wire_condition_ids == set()
+    assert coordinator._resubscribe_not_before_by_condition["condition-b"] == _dt(
+        271
+    )
+
+    assert coordinator.resume_pending(first, "condition-a", now=_dt(212))
+    assert sum(
+        "condition-b" in instrument_id
+        for instrument_id in second.quote_subscribe_attempt_ids
+    ) == second_b_attempts
+    assert "condition-b" in first._subscription_state.wire_condition_ids
+    assert "condition-b" not in second._subscription_state.wire_condition_ids
+    assert coordinator._resubscribe_not_before_by_condition["condition-b"] == _dt(
+        271
+    )
+
+
+def test_failed_displaced_owner_retries_before_condition_backoff() -> None:
+    first = _subscription_test_strategy()
+    second = _subscription_test_strategy()
+    for consumer in (first, second):
+        consumer.registry.register(
+            MarketPairMeta(
+                market_id="m-b",
+                market_slug="eth-updown-5m-b",
+                condition_id="condition-b",
+                asset="ETH",
+                timeframe="5m",
+                start_ts=None,
+                end_ts=None,
+                up=InstrumentTokenMeta("up-b", Side.UP),
+                down=InstrumentTokenMeta("down-b", Side.DOWN),
+            )
+        )
+        consumer._active_condition_ids.add("condition-b")
+        subscribe_market_conditions(
+            consumer,
+            ("condition-a", "condition-b"),
+            now=_dt(0),
+        )
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(first)
+    coordinator.register(second)
+    coordinator._resubscribe_not_before_by_condition["condition-b"] = _dt(271)
+
+    assert coordinator.refresh(first, "condition-a", now=_dt(181))
+    assert coordinator.resume_pending(first, "condition-a", now=_dt(182))
+    second.fail_quote_subscribe_condition_ids.add("condition-b")
+    assert coordinator.resume_pending(first, "condition-a", now=_dt(212))
+    assert "condition-b" in first._subscription_state.wire_condition_ids
+    assert "condition-b" not in second._subscription_state.wire_condition_ids
+    assert coordinator._wire_restore_not_before_by_condition["condition-b"] == _dt(
+        242
+    )
+    second_b_attempts = sum(
+        "condition-b" in instrument_id
+        for instrument_id in second.quote_subscribe_attempt_ids
+    )
+
+    second.fail_quote_subscribe_condition_ids.clear()
+    assert coordinator.resume_pending(second, "condition-b", now=_dt(242))
+    assert sum(
+        "condition-b" in instrument_id
+        for instrument_id in second.quote_subscribe_attempt_ids
+    ) == second_b_attempts + 2
+    assert (
+        second._subscription_state.pending_subscribe_condition_ids,
+        coordinator._wire_restore_by_condition.get("condition-b"),
+        coordinator._wire_restore_strategy_ids_by_condition.get("condition-b"),
+    ) == (set(), None, None)
+    assert "condition-b" in second._subscription_state.wire_condition_ids
+    assert coordinator._resubscribe_not_before_by_condition["condition-b"] == _dt(
+        271
+    )
+
+
+def test_owner_exiting_during_settle_is_retained_when_configured() -> None:
+    strategy = _subscription_test_strategy()
+    strategy.unsubscribe_exited = False
+    subscribe_market_conditions(strategy, ("condition-a",), now=_dt(0))
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(strategy)
+
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(30))
+    assert coordinator.refresh(strategy, "condition-a", now=_dt(31))
+    strategy._active_condition_ids.remove("condition-a")
+
+    assert coordinator.resume_pending(strategy, "condition-a", now=_dt(61))
+    assert strategy._subscription_state.wire_condition_ids == {"condition-a"}
+    assert strategy._subscription_state.retained_wire_condition_ids == {
+        "condition-a"
+    }
+    assert coordinator._wire_restore_by_condition == {}
+
+
+def test_retained_owner_failure_preserves_exponential_backoff() -> None:
+    first = _subscription_test_strategy()
+    second = _subscription_test_strategy()
+    subscribe_market_conditions(first, ("condition-a",), now=_dt(0))
+    subscribe_market_conditions(second, ("condition-a",), now=_dt(0))
+    second._active_condition_ids.remove("condition-a")
+    second._subscription_state.retained_wire_condition_ids.add("condition-a")
+    coordinator = MarketSubscriptionCoordinator()
+    coordinator.register(first)
+    coordinator.register(second)
+
+    assert coordinator.refresh(first, "condition-a", now=_dt(30))
+    assert coordinator.refresh(first, "condition-a", now=_dt(31))
+    second.fail_quote_subscribe_condition_ids.add("condition-a")
+    assert coordinator.resume_pending(first, "condition-a", now=_dt(61))
+    assert coordinator._attempts_by_condition["condition-a"] == 1
+    assert coordinator._resubscribe_not_before_by_condition["condition-a"] == _dt(
+        91
+    )
+
+    assert coordinator.note_readiness(first, "condition-a", ready=True)
+    assert coordinator._attempts_by_condition["condition-a"] == 1
+    assert coordinator.resume_pending(first, "condition-a", now=_dt(91))
+    assert coordinator._attempts_by_condition["condition-a"] == 2
+    assert coordinator._resubscribe_not_before_by_condition["condition-a"] == _dt(
+        151
+    )
+
+
 def test_coordinated_refresh_backs_off_after_subscribe_failure() -> None:
     strategy = _subscription_test_strategy()
     subscribe_market_conditions(strategy, ("condition-a",), now=_dt(0))
@@ -1534,6 +2115,37 @@ def test_evaluation_heartbeat_retires_expired_condition_without_rotation() -> No
         assert condition_id not in strategy._runtime_readiness_miss_condition_ids
         assert readiness[-1] == (condition_id, True)
         assert core.calls == []
+
+
+def test_heartbeat_restores_retained_owner_after_last_active_exit() -> None:
+    condition_id = "condition-a"
+    registry, _ = _runtime_market_registry(start_ts=_dt(0))
+    coordinator = MarketSubscriptionCoordinator()
+    strategy = _Issue16Strategy(
+        core=_RuntimeCore(),
+        assembler=_RuntimeAssembler(),
+        condition_ids=(condition_id,),
+        strategy_name="test",
+        policy=DecisionPolicy(),
+        registry=registry,
+        subscription_coordinator=coordinator,
+        unsubscribe_exited=False,
+    )
+    coordinator.register(strategy)
+    strategy._subscribe_market_conditions((condition_id,))
+
+    assert coordinator.refresh(strategy, condition_id, now=_dt(30))
+    assert coordinator.refresh(strategy, condition_id, now=_dt(31))
+    strategy._active_condition_ids.clear()
+    strategy.now = _dt(61)
+
+    strategy._on_evaluation_heartbeat(None)
+
+    assert strategy._subscription_state.wire_condition_ids == {condition_id}
+    assert strategy._subscription_state.retained_wire_condition_ids == {
+        condition_id
+    }
+    assert coordinator._wire_restore_by_condition == {}
 
 
 def test_evaluation_heartbeat_retires_expired_before_resuming_pending() -> None:

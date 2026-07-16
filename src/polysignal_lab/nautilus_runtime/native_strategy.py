@@ -571,7 +571,13 @@ class PolySignalNativeStrategy(Strategy):
     def _on_evaluation_heartbeat(self, _event: object) -> None:
         self._note_runtime_progress("evaluation_heartbeat")
         now = self._framework_now()
-        for condition_id in tuple(sorted(self._active_condition_ids)):
+        active_condition_ids = tuple(sorted(self._active_condition_ids))
+        coordinator = self._subscription_coordinator
+        if coordinator is not None:
+            pending_condition_ids = coordinator.pending_condition_ids(self)
+            for condition_id in sorted(pending_condition_ids - self._active_condition_ids):
+                _ = coordinator.resume_pending(self, condition_id, now=now)
+        for condition_id in active_condition_ids:
             if self._retire_expired_condition(condition_id, now=now):
                 continue
             coordinator = self._subscription_coordinator
