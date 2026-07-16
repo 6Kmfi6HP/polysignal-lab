@@ -173,14 +173,10 @@ def _portfolio_equity(
 def _equity_float(value: object, currency: str | None) -> float | None:
     if currency is None or not isinstance(value, Mapping):
         return _to_float_or_none(value)
-    usdc_fallback: float | None = None
     for key, amount in value.items():
-        key_currency = str(key)
-        if key_currency == currency:
+        if str(key) == currency:
             return _to_float_or_none(amount)
-        if currency == "USDC" and key_currency.casefold() == "usdc":
-            usdc_fallback = _to_float_or_none(amount)
-    return usdc_fallback
+    return None
 
 
 def _to_float(value: object) -> float:
