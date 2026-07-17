@@ -1,6 +1,6 @@
 /**
  * Input: type {, ./types
- * Output: ApiError, getHealth, getOverview, getSignals, getRejectedSignals, getPaperOrders, getPositions, getTrades, getLeaderboard, getStrategyStatus
+ * Output: ApiError, getHealth, getOverview, getSignals, getRejectedSignals, getReportOrders, getPositions, getTrades, getLeaderboard, getStrategyStatus
  * Pos: Library - Shared code
  *
  * 🔄 Self-reference: When this file changes, update this header
@@ -16,9 +16,9 @@ import type {
   HealthResponse,
   LeaderboardResponse,
   OverviewResponse,
-  PaperOrder,
-  PaperPosition,
-  PaperTradeResult,
+  ReportOrder,
+  ReportPosition,
+  ReportTradeResult,
   RejectedSignal,
   SignalCandidate,
   StrategyStatusRow,
@@ -69,16 +69,16 @@ export function getRejectedSignals(limit = 100) {
   return request<RejectedSignal[]>(`${API_BASE}/rejected-signals`, { limit })
 }
 
-export function getPaperOrders(status?: string, limit = 100) {
-  return request<PaperOrder[]>(`${API_BASE}/paper-orders`, { status, limit })
+export function getReportOrders(status?: string, limit = 100) {
+  return request<ReportOrder[]>(`${API_BASE}/report-orders`, { status, limit })
 }
 
 export function getPositions(status?: string, limit = 100) {
-  return request<PaperPosition[]>(`${API_BASE}/positions`, { status, limit })
+  return request<ReportPosition[]>(`${API_BASE}/positions`, { status, limit })
 }
 
 export function getTrades(limit = 100) {
-  return request<PaperTradeResult[]>(`${API_BASE}/trades`, { limit })
+  return request<ReportTradeResult[]>(`${API_BASE}/trades`, { limit })
 }
 
 export function getLeaderboard(limit = 100) {

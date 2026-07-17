@@ -1,6 +1,6 @@
 /**
- * Input: type { ReactNode } from 'react', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', * as client from '@/lib/api/client', {, { renderWithQueryClient } from '@/test-utils/render-with-query-client', { SidebarProvider } from '@/components/ui/sidebar', userEvent from '@testing-library/user-event', { afterEach, describe, expect, it, vi } from 'vitest', { PaperTradingPage } from './index'
- * Output: renderPaperTradingPage
+ * Input: type { ReactNode } from 'react', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', * as client from '@/lib/api/client', {, { renderWithQueryClient } from '@/test-utils/render-with-query-client', { SidebarProvider } from '@/components/ui/sidebar', userEvent from '@testing-library/user-event', { afterEach, describe, expect, it, vi } from 'vitest', { ReportingPage } from './index'
+ * Output: renderReportingPage
  * Pos: Application code
  *
  * 🔄 Self-reference: When this file changes, update this header
@@ -17,15 +17,15 @@ import { SearchProvider } from '@/context/search-provider'
 import { ThemeProvider } from '@/context/theme-provider'
 import * as client from '@/lib/api/client'
 import {
-  makePaperOrder,
-  makePaperPosition,
-  makePaperTradeResult,
+  makeReportOrder,
+  makeReportPosition,
+  makeReportTradeResult,
 } from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PaperTradingPage } from './index'
+import { ReportingPage } from './index'
 
 vi.mock('recharts', () => ({
   CartesianGrid: () => null,
@@ -49,43 +49,43 @@ vi.mock('recharts', () => ({
   ),
 }))
 
-function renderPaperTradingPage() {
+function renderReportingPage() {
   return renderWithQueryClient(
     <ThemeProvider>
       <SearchProvider>
         <SidebarProvider defaultOpen={false}>
-          <PaperTradingPage />
+          <ReportingPage />
         </SidebarProvider>
       </SearchProvider>
     </ThemeProvider>
   )
 }
 
-describe('PaperTradingPage', () => {
+describe('ReportingPage', () => {
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-  it('renders the trades table with stored paper trades and a cumulative PnL chart', async () => {
+  it('renders the trades table with stored report results and a cumulative PnL chart', async () => {
     vi.spyOn(client, 'getTrades').mockResolvedValue([
-      makePaperTradeResult({
-        paper_trade_id: 'pt-late',
+      makeReportTradeResult({
+        report_result_id: 'rr-late',
         closed_at: '2026-06-30T00:10:00+00:00',
         pnl_usdc: 4,
       }),
-      makePaperTradeResult({
-        paper_trade_id: 'pt-early',
+      makeReportTradeResult({
+        report_result_id: 'rr-early',
         closed_at: '2026-06-30T00:05:00+00:00',
         pnl_usdc: -1,
       }),
     ])
-    vi.spyOn(client, 'getPositions').mockResolvedValue([makePaperPosition()])
-    vi.spyOn(client, 'getPaperOrders').mockResolvedValue([makePaperOrder()])
+    vi.spyOn(client, 'getPositions').mockResolvedValue([makeReportPosition()])
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue([makeReportOrder()])
 
-    const view = renderPaperTradingPage()
+    const view = renderReportingPage()
 
-    expect(await view.findByText('pt-late')).toBeInTheDocument()
-    expect(view.getByText('pt-early')).toBeInTheDocument()
+    expect(await view.findByText('rr-late')).toBeInTheDocument()
+    expect(view.getByText('rr-early')).toBeInTheDocument()
     expect(view.getByText('4.00 USDC')).toBeInTheDocument()
     expect(JSON.parse(view.getByTestId('line-chart-data').textContent ?? '[]')).toEqual([
       { closed_at: '2026-06-30T00:05:00+00:00', cumulative_pnl: -1 },
@@ -103,33 +103,33 @@ describe('PaperTradingPage', () => {
   })
 
   it('renders positions and orders tables on their tabs', async () => {
-    vi.spyOn(client, 'getTrades').mockResolvedValue([makePaperTradeResult()])
+    vi.spyOn(client, 'getTrades').mockResolvedValue([makeReportTradeResult()])
     vi.spyOn(client, 'getPositions').mockResolvedValue([
-      makePaperPosition({ paper_position_id: 'pp-1' }),
+      makeReportPosition({ report_position_id: 'rp-1' }),
     ])
-    vi.spyOn(client, 'getPaperOrders').mockResolvedValue([
-      makePaperOrder({ paper_order_id: 'po-1' }),
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue([
+      makeReportOrder({ report_order_id: 'ro-1' }),
     ])
 
     const user = userEvent.setup()
-    const view = renderPaperTradingPage()
+    const view = renderReportingPage()
 
     await user.click(view.getByRole('tab', { name: 'Positions' }))
-    expect(await view.findByText('pp-1')).toBeInTheDocument()
+    expect(await view.findByText('rp-1')).toBeInTheDocument()
 
     await user.click(view.getByRole('tab', { name: 'Orders' }))
-    expect(await view.findByText('po-1')).toBeInTheDocument()
+    expect(await view.findByText('ro-1')).toBeInTheDocument()
   })
 
   it('renders empty states for trades, positions, and orders', async () => {
     vi.spyOn(client, 'getTrades').mockResolvedValue([])
     vi.spyOn(client, 'getPositions').mockResolvedValue([])
-    vi.spyOn(client, 'getPaperOrders').mockResolvedValue([])
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue([])
 
     const user = userEvent.setup()
-    const view = renderPaperTradingPage()
+    const view = renderReportingPage()
 
-    expect(await view.findAllByText('No closed paper trades yet.')).toHaveLength(2)
+    expect(await view.findAllByText('No closed trades yet.')).toHaveLength(2)
 
     await user.click(view.getByRole('tab', { name: 'Positions' }))
     expect(await view.findByText('No stored positions yet.')).toBeInTheDocument()
@@ -141,10 +141,10 @@ describe('PaperTradingPage', () => {
   it('renders load errors for trades, positions, and orders', async () => {
     vi.spyOn(client, 'getTrades').mockRejectedValue(new Error('trades boom'))
     vi.spyOn(client, 'getPositions').mockRejectedValue(new Error('positions boom'))
-    vi.spyOn(client, 'getPaperOrders').mockRejectedValue(new Error('orders boom'))
+    vi.spyOn(client, 'getReportOrders').mockRejectedValue(new Error('orders boom'))
 
     const user = userEvent.setup()
-    const view = renderPaperTradingPage()
+    const view = renderReportingPage()
 
     expect(
       await view.findByText('Failed to load trades: trades boom')
@@ -161,13 +161,13 @@ describe('PaperTradingPage', () => {
     ).toBeInTheDocument()
   })
 
-  it('renders loading placeholders before paper trading data resolves', async () => {
+  it('renders loading placeholders before reporting data resolves', async () => {
     vi.spyOn(client, 'getTrades').mockReturnValue(Promise.race([]))
     vi.spyOn(client, 'getPositions').mockReturnValue(Promise.race([]))
-    vi.spyOn(client, 'getPaperOrders').mockReturnValue(Promise.race([]))
+    vi.spyOn(client, 'getReportOrders').mockReturnValue(Promise.race([]))
 
     const user = userEvent.setup()
-    const view = renderPaperTradingPage()
+    const view = renderReportingPage()
 
     expect(
       view.getByRole('tabpanel').querySelector('[data-slot="skeleton"]')

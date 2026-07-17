@@ -8,7 +8,7 @@
 - `strategy-status.tsx` - Exports Route
 - `signals.tsx` - Exports Route
 - `route.tsx` - Exports Route
-- `paper-trading.tsx` - Exports Route
+- `reporting.tsx` - Exports Route
 - `leaderboard.tsx` - Exports Route
 - `index.tsx` - Exports Route
 

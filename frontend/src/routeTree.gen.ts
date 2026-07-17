@@ -1,17 +1,3 @@
-/**
- * Input: { Route as rootRouteImport } from './routes/__root', { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route', { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index', { Route as AuthenticatedSystemHealthRouteImport } from './routes/_authenticated/system-health', { Route as AuthenticatedStrategyStatusRouteImport } from './routes/_authenticated/strategy-status', { Route as AuthenticatedSignalsRouteImport } from './routes/_authenticated/signals', { Route as AuthenticatedPaperTradingRouteImport } from './routes/_authenticated/paper-trading', { Route as AuthenticatedLeaderboardRouteImport } from './routes/_authenticated/leaderboard', { Route as errors503RouteImport } from './routes/(errors)/503', { Route as errors500RouteImport } from './routes/(errors)/500'
- * Output: routeTree
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
 /* eslint-disable */
 
 // @ts-nocheck
@@ -28,7 +14,7 @@ import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedSystemHealthRouteImport } from './routes/_authenticated/system-health'
 import { Route as AuthenticatedStrategyStatusRouteImport } from './routes/_authenticated/strategy-status'
 import { Route as AuthenticatedSignalsRouteImport } from './routes/_authenticated/signals'
-import { Route as AuthenticatedPaperTradingRouteImport } from './routes/_authenticated/paper-trading'
+import { Route as AuthenticatedReportingRouteImport } from './routes/_authenticated/reporting'
 import { Route as AuthenticatedLeaderboardRouteImport } from './routes/_authenticated/leaderboard'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
 import { Route as errors500RouteImport } from './routes/(errors)/500'
@@ -63,12 +49,11 @@ const AuthenticatedSignalsRoute = AuthenticatedSignalsRouteImport.update({
   path: '/signals',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const AuthenticatedPaperTradingRoute =
-  AuthenticatedPaperTradingRouteImport.update({
-    id: '/paper-trading',
-    path: '/paper-trading',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
+const AuthenticatedReportingRoute = AuthenticatedReportingRouteImport.update({
+  id: '/reporting',
+  path: '/reporting',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedLeaderboardRoute =
   AuthenticatedLeaderboardRouteImport.update({
     id: '/leaderboard',
@@ -115,7 +100,7 @@ export interface FileRoutesByFullPath {
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/leaderboard': typeof AuthenticatedLeaderboardRoute
-  '/paper-trading': typeof AuthenticatedPaperTradingRoute
+  '/reporting': typeof AuthenticatedReportingRoute
   '/signals': typeof AuthenticatedSignalsRoute
   '/strategy-status': typeof AuthenticatedStrategyStatusRoute
   '/system-health': typeof AuthenticatedSystemHealthRoute
@@ -128,7 +113,7 @@ export interface FileRoutesByTo {
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/leaderboard': typeof AuthenticatedLeaderboardRoute
-  '/paper-trading': typeof AuthenticatedPaperTradingRoute
+  '/reporting': typeof AuthenticatedReportingRoute
   '/signals': typeof AuthenticatedSignalsRoute
   '/strategy-status': typeof AuthenticatedStrategyStatusRoute
   '/system-health': typeof AuthenticatedSystemHealthRoute
@@ -144,7 +129,7 @@ export interface FileRoutesById {
   '/(errors)/500': typeof errors500Route
   '/(errors)/503': typeof errors503Route
   '/_authenticated/leaderboard': typeof AuthenticatedLeaderboardRoute
-  '/_authenticated/paper-trading': typeof AuthenticatedPaperTradingRoute
+  '/_authenticated/reporting': typeof AuthenticatedReportingRoute
   '/_authenticated/signals': typeof AuthenticatedSignalsRoute
   '/_authenticated/strategy-status': typeof AuthenticatedStrategyStatusRoute
   '/_authenticated/system-health': typeof AuthenticatedSystemHealthRoute
@@ -161,7 +146,7 @@ export interface FileRouteTypes {
     | '/500'
     | '/503'
     | '/leaderboard'
-    | '/paper-trading'
+    | '/reporting'
     | '/signals'
     | '/strategy-status'
     | '/system-health'
@@ -174,7 +159,7 @@ export interface FileRouteTypes {
     | '/500'
     | '/503'
     | '/leaderboard'
-    | '/paper-trading'
+    | '/reporting'
     | '/signals'
     | '/strategy-status'
     | '/system-health'
@@ -189,7 +174,7 @@ export interface FileRouteTypes {
     | '/(errors)/500'
     | '/(errors)/503'
     | '/_authenticated/leaderboard'
-    | '/_authenticated/paper-trading'
+    | '/_authenticated/reporting'
     | '/_authenticated/signals'
     | '/_authenticated/strategy-status'
     | '/_authenticated/system-health'
@@ -243,11 +228,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSignalsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/paper-trading': {
-      id: '/_authenticated/paper-trading'
-      path: '/paper-trading'
-      fullPath: '/paper-trading'
-      preLoaderRoute: typeof AuthenticatedPaperTradingRouteImport
+    '/_authenticated/reporting': {
+      id: '/_authenticated/reporting'
+      path: '/reporting'
+      fullPath: '/reporting'
+      preLoaderRoute: typeof AuthenticatedReportingRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/leaderboard': {
@@ -304,7 +289,7 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedLeaderboardRoute: typeof AuthenticatedLeaderboardRoute
-  AuthenticatedPaperTradingRoute: typeof AuthenticatedPaperTradingRoute
+  AuthenticatedReportingRoute: typeof AuthenticatedReportingRoute
   AuthenticatedSignalsRoute: typeof AuthenticatedSignalsRoute
   AuthenticatedStrategyStatusRoute: typeof AuthenticatedStrategyStatusRoute
   AuthenticatedSystemHealthRoute: typeof AuthenticatedSystemHealthRoute
@@ -314,7 +299,7 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedLeaderboardRoute: AuthenticatedLeaderboardRoute,
-  AuthenticatedPaperTradingRoute: AuthenticatedPaperTradingRoute,
+  AuthenticatedReportingRoute: AuthenticatedReportingRoute,
   AuthenticatedSignalsRoute: AuthenticatedSignalsRoute,
   AuthenticatedStrategyStatusRoute: AuthenticatedStrategyStatusRoute,
   AuthenticatedSystemHealthRoute: AuthenticatedSystemHealthRoute,

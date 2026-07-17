@@ -1,6 +1,6 @@
 /**
  * Input: None
- * Output: Side, OrderStatus, PositionStatus, TradeResultStatus, ExitMode, CalibrationStatus, StrategyStatus, SignalCandidate, RejectedSignal, PaperOrder, PaperPosition, PaperTradeResult, CalibrationBucket, DailyReport, StrategyStatusRow, LeaderboardRow, OverviewResponse, LeaderboardResponse, HealthComponent, HealthResponse
+ * Output: Side, OrderStatus, PositionStatus, TradeResultStatus, ExitMode, CalibrationStatus, StrategyStatus, SignalCandidate, RejectedSignal, ReportOrder, ReportPosition, ReportTradeResult, CalibrationBucket, DailyReport, StrategyStatusRow, LeaderboardRow, OverviewResponse, LeaderboardResponse, HealthComponent, HealthResponse
  * Pos: Library - Shared code
  *
  * 🔄 Self-reference: When this file changes, update this header
@@ -76,9 +76,9 @@ export interface RejectedSignal {
   details: Record<string, unknown>
 }
 
-export interface PaperOrder {
+export interface ReportOrder {
   schema_version: number
-  paper_order_id: string
+  report_order_id: string
   signal_id: string
   created_at: string
   asset: string
@@ -100,12 +100,12 @@ export interface PaperOrder {
   metrics: Record<string, unknown>
 }
 
-export interface PaperPosition {
+export interface ReportPosition {
   schema_version: number
-  paper_position_id: string
+  report_position_id: string
   signal_id: string
-  paper_order_id: string
-  paper_fill_id: string
+  report_order_id: string
+  report_fill_id: string
   strategy: string
   asset: string
   timeframe: string
@@ -122,11 +122,11 @@ export interface PaperPosition {
   closed_at: string | null
 }
 
-export interface PaperTradeResult {
+export interface ReportTradeResult {
   schema_version: number
-  paper_trade_id: string
+  report_result_id: string
   signal_id: string
-  paper_position_id: string
+  report_position_id: string
   strategy: string
   asset: string
   timeframe: string
@@ -167,13 +167,13 @@ export interface DailyReport {
   ending_equity: number
   equity_currency?: string
   equity_source?: 'portfolio' | 'account_balance' | 'starting_balance' | null
-  paper_pnl: number
-  paper_roi: number
+  net_pnl: number
+  return_rate: number
   total_signals: number
-  paper_orders: number
-  paper_fills: number
-  rejected_paper_orders: number
-  paper_rejects_by_reason: Record<string, number>
+  order_count: number
+  fill_count: number
+  rejected_order_count: number
+  rejects_by_reason: Record<string, number>
   telemetry_status?: 'complete' | 'incomplete'
   telemetry_incomplete_reasons?: string[]
   average_execution_staleness_ms: number | null

@@ -1,6 +1,6 @@
 /**
  * Input: type {, @/lib/api/types
- * Output: makeSignal, makeRejectedSignal, makePaperOrder, makePaperPosition, makePaperTradeResult, makeDailyReport, makeOverviewResponse, makeHealthResponse, makeStrategyStatusRow, makeLeaderboardResponse
+ * Output: makeSignal, makeRejectedSignal, makeReportOrder, makeReportPosition, makeReportTradeResult, makeDailyReport, makeOverviewResponse, makeHealthResponse, makeStrategyStatusRow, makeLeaderboardResponse
  * Pos: Application code
  *
  * 🔄 Self-reference: When this file changes, update this header
@@ -17,9 +17,9 @@ import type {
   HealthResponse,
   LeaderboardResponse,
   OverviewResponse,
-  PaperOrder,
-  PaperPosition,
-  PaperTradeResult,
+  ReportOrder,
+  ReportPosition,
+  ReportTradeResult,
   RejectedSignal,
   SignalCandidate,
   StrategyStatusRow,
@@ -72,10 +72,10 @@ export function makeRejectedSignal(
   }
 }
 
-export function makePaperOrder(overrides: Partial<PaperOrder> = {}): PaperOrder {
+export function makeReportOrder(overrides: Partial<ReportOrder> = {}): ReportOrder {
   return {
     schema_version: 1,
-    paper_order_id: 'po-1',
+    report_order_id: 'ro-1',
     signal_id: 'sig-1',
     created_at: '2026-06-30T00:00:00+00:00',
     asset: 'BTC',
@@ -99,15 +99,15 @@ export function makePaperOrder(overrides: Partial<PaperOrder> = {}): PaperOrder 
   }
 }
 
-export function makePaperPosition(
-  overrides: Partial<PaperPosition> = {}
-): PaperPosition {
+export function makeReportPosition(
+  overrides: Partial<ReportPosition> = {}
+): ReportPosition {
   return {
     schema_version: 1,
-    paper_position_id: 'pp-1',
+    report_position_id: 'rp-1',
     signal_id: 'sig-1',
-    paper_order_id: 'po-1',
-    paper_fill_id: 'pf-1',
+    report_order_id: 'ro-1',
+    report_fill_id: 'rf-1',
     strategy: 'ptb_diff',
     asset: 'BTC',
     timeframe: '5m',
@@ -126,14 +126,14 @@ export function makePaperPosition(
   }
 }
 
-export function makePaperTradeResult(
-  overrides: Partial<PaperTradeResult> = {}
-): PaperTradeResult {
+export function makeReportTradeResult(
+  overrides: Partial<ReportTradeResult> = {}
+): ReportTradeResult {
   return {
     schema_version: 1,
-    paper_trade_id: 'pt-1',
+    report_result_id: 'rr-1',
     signal_id: 'sig-1',
-    paper_position_id: 'pp-1',
+    report_position_id: 'rp-1',
     strategy: 'ptb_diff',
     asset: 'BTC',
     timeframe: '5m',
@@ -163,13 +163,13 @@ export function makeDailyReport(overrides: Partial<DailyReport> = {}): DailyRepo
     revision: 1,
     starting_equity: 1000,
     ending_equity: 1004,
-    paper_pnl: 4,
-    paper_roi: 0.004,
+    net_pnl: 4,
+    return_rate: 0.004,
     total_signals: 3,
-    paper_orders: 3,
-    paper_fills: 3,
-    rejected_paper_orders: 0,
-    paper_rejects_by_reason: {},
+    order_count: 3,
+    fill_count: 3,
+    rejected_order_count: 0,
+    rejects_by_reason: {},
     average_execution_staleness_ms: 25,
     open_positions: 0,
     closed_positions: 1,
@@ -195,8 +195,8 @@ export function makeOverviewResponse(
     counts: {
       signals: 3,
       rejected_signals: 1,
-      paper_positions: 1,
-      paper_trade_results: 1,
+      report_positions: 1,
+      report_results: 1,
       daily_reports: 1,
     },
     latest_report: makeDailyReport(),

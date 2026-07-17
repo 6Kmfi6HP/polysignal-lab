@@ -33,7 +33,7 @@ export const sidebarData: SidebarData = {
       items: [
         { title: 'Overview', url: '/', icon: LayoutDashboard },
         { title: 'Signals', url: '/signals', icon: Radio },
-        { title: 'Paper Trading', url: '/paper-trading', icon: Activity },
+        { title: 'Trading Reports', url: '/reporting', icon: Activity },
         { title: 'Leaderboard', url: '/leaderboard', icon: Trophy },
         { title: 'Strategy Status', url: '/strategy-status', icon: ListChecks },
         { title: 'System Health', url: '/system-health', icon: Gauge },

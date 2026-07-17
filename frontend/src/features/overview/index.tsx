@@ -130,10 +130,10 @@ export function OverviewPage() {
                     </div>
                     <div>
                       <dt className='text-sm text-muted-foreground'>
-                        Paper PnL
+                        Net PnL
                       </dt>
                       <dd className='font-semibold'>
-                        {overview.data.latest_report.paper_pnl.toFixed(2)}{' '}
+                        {overview.data.latest_report.net_pnl.toFixed(2)}{' '}
                         {overview.data.latest_report.equity_currency ??
                           '(currency unavailable)'}
                       </dd>

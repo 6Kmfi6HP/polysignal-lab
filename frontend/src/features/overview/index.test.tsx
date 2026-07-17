@@ -80,13 +80,13 @@ describe('OverviewPage', () => {
     vi.spyOn(client, 'getOverview').mockResolvedValue(
       makeOverviewResponse({
         latest_report: makeDailyReport({
-          paper_pnl: 7,
+          net_pnl: 7,
           total_pnl_usdc: 4,
           equity_currency: 'pUSD',
           equity_source: 'account_balance',
           telemetry_status: 'incomplete',
           telemetry_incomplete_reasons: [
-            'paper_order_projection_invalid:1',
+            'report_order_projection_invalid:1',
             'telemetry_queue_drops',
           ],
         }),
@@ -102,7 +102,7 @@ describe('OverviewPage', () => {
     expect(screen.getByText('Incomplete')).toBeInTheDocument()
     expect(
       screen.getByText(
-        'Reasons: paper_order_projection_invalid:1; telemetry_queue_drops'
+        'Reasons: report_order_projection_invalid:1; telemetry_queue_drops'
       )
     ).toBeInTheDocument()
   })

@@ -24,7 +24,7 @@ describe('sidebarData', () => {
     expect(urls).toEqual([
       '/',
       '/signals',
-      '/paper-trading',
+      '/reporting',
       '/leaderboard',
       '/strategy-status',
       '/system-health',

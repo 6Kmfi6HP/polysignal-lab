@@ -1,6 +1,6 @@
 /**
  * Input: { useQuery } from '@tanstack/react-query', * as api from './client', @tanstack/react-query, ./client
- * Output: LIVE_REFRESH_MS, HEALTH_REFRESH_MS, useHealthQuery, useOverviewQuery, useSignalsQuery, useRejectedSignalsQuery, usePaperOrdersQuery, usePositionsQuery, useTradesQuery, useLeaderboardQuery
+ * Output: LIVE_REFRESH_MS, HEALTH_REFRESH_MS, useHealthQuery, useOverviewQuery, useSignalsQuery, useRejectedSignalsQuery, useReportOrdersQuery, usePositionsQuery, useTradesQuery, useLeaderboardQuery
  * Pos: Library - Shared code
  *
  * 🔄 Self-reference: When this file changes, update this header
@@ -50,10 +50,10 @@ export function useRejectedSignalsQuery(limit = 100) {
   })
 }
 
-export function usePaperOrdersQuery(status?: string, limit = 100) {
+export function useReportOrdersQuery(status?: string, limit = 100) {
   return useQuery({
-    queryKey: ['paper-orders', status, limit],
-    queryFn: () => api.getPaperOrders(status, limit),
+    queryKey: ['report-orders', status, limit],
+    queryFn: () => api.getReportOrders(status, limit),
     refetchInterval: LIVE_REFRESH_MS,
   })
 }
