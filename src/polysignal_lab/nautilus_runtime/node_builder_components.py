@@ -3,35 +3,39 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, cast
 
 from polysignal_lab.alpha.types import SideBookView, TradeView
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
-from polysignal_lab.nautilus_bridge.market_view_assembler import (
-    BookReceiptObserver,
-    MarketViewAssembler,
-)
+from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
-from polysignal_lab.nautilus_runtime.market_discovery_worker import MarketDiscoveryWorker
 
 logger = logging.getLogger(__name__)
 
 
-class NativeStrategyLike(Protocol):
-    strategy_name: str
+class _BookDataProvider(Protocol):
+    def book_for_token(
+        self,
+        token_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> SideBookView | None: ...
+
+    def trades_for_token(self, token_id: str) -> Sequence[TradeView]: ...
+
+    def observe_book_received(
+        self,
+        token_id: str,
+        *,
+        received_at: datetime,
+    ) -> None: ...
 
 
 class CacheBoundBookDataProvider:
-    """Cache-backed books provider bound once after LiveNode cache exists.
-
-    Unbound reads fail closed (None / empty). Live composition must call
-    ``bind_cache`` after node build; empty-book bootstrap is not a live path.
-    """
-
     def __init__(self, catalog: MarketCatalog) -> None:
-        self._catalog: MarketCatalog = catalog
-        self._provider: object | None = None
+        self._catalog = catalog
+        self._provider: _BookDataProvider | None = None
 
     @property
     def is_bound(self) -> bool:
@@ -44,7 +48,10 @@ class CacheBoundBookDataProvider:
             NautilusCacheMarketDataProvider,
         )
 
-        self._provider = NautilusCacheMarketDataProvider(cache, catalog=self._catalog)
+        self._provider = cast(
+            _BookDataProvider,
+            NautilusCacheMarketDataProvider(cache, catalog=self._catalog),
+        )
 
     def observe_book_received(
         self,
@@ -53,9 +60,8 @@ class CacheBoundBookDataProvider:
         received_at: datetime,
     ) -> None:
         provider = self._provider
-        if isinstance(provider, BookReceiptObserver):
+        if provider is not None:
             provider.observe_book_received(token_id, received_at=received_at)
-
 
     def book_for_token(
         self,
@@ -66,24 +72,13 @@ class CacheBoundBookDataProvider:
         provider = self._provider
         if provider is None:
             return None
-        return provider.book_for_token(token_id, now=now)  # type: ignore[attr-defined]
+        return provider.book_for_token(token_id, now=now)
 
     def trades_for_token(self, token_id: str) -> tuple[TradeView, ...]:
         provider = self._provider
         if provider is None:
             return ()
-        return tuple(provider.trades_for_token(token_id))  # type: ignore[attr-defined]
-
-
-class StaticMarketUniverse:
-    def __init__(self, markets: tuple[Market, ...]) -> None:
-        self._markets: tuple[Market, ...] = markets
-
-    async def refresh_once(self) -> list[Market]:
-        return list(self._markets)
-
-    def refresh_once_sync(self) -> list[Market]:
-        return list(self._markets)
+        return tuple(provider.trades_for_token(token_id))
 
 
 def create_market_projection_components(
@@ -91,11 +86,10 @@ def create_market_projection_components(
 ) -> tuple[MarketCatalog, MarketViewAssembler]:
     catalog = MarketCatalog()
     register_markets(catalog, configured_markets)
-    custom_data = StrategyCustomDataState()
     assembler = MarketViewAssembler(
         catalog=catalog,
         books=CacheBoundBookDataProvider(catalog),
-        custom_data=custom_data,
+        custom_data=StrategyCustomDataState(),
     )
     return catalog, assembler
 
@@ -108,170 +102,36 @@ def register_markets(
         try:
             registry.register(MarketPairMeta.from_market(market))
         except (KeyError, ValueError) as exc:
-            logger.debug("skipping runtime market registration for %s: %s", market.market_id, exc)
+            logger.debug(
+                "skipping runtime market registration for %s: %s",
+                market.market_id,
+                exc,
+            )
 
 
-def instrument_load_ids(markets: Sequence[Market]) -> frozenset[str]:
+def instrument_load_ids(markets: Sequence[Market]) -> tuple[str, ...]:
     catalog = MarketCatalog()
     register_markets(catalog, markets)
     load_ids: set[str] = set()
     for market in markets:
         for token in market.outcome_tokens:
-            if token.token_id and market.condition_id:
-                instrument_id = catalog.instrument_id_for_token(token.token_id)
-                if instrument_id is not None:
-                    load_ids.add(instrument_id)
-    return frozenset(load_ids)
+            if not token.token_id or not market.condition_id:
+                continue
+            instrument_id = catalog.instrument_id_for_token(token.token_id)
+            if instrument_id is not None:
+                load_ids.add(instrument_id)
+    return tuple(sorted(load_ids))
 
 
 def configured_condition_ids(
     condition_ids: Sequence[str],
     markets: Sequence[Market],
 ) -> tuple[str, ...]:
-    explicit_ids = tuple(str(condition_id) for condition_id in condition_ids if str(condition_id))
+    explicit_ids = tuple(
+        str(condition_id)
+        for condition_id in condition_ids
+        if str(condition_id)
+    )
     if explicit_ids:
         return explicit_ids
     return tuple(market.condition_id for market in markets if market.condition_id)
-
-
-def runtime_components(
-    *,
-    node: object,
-    config: object,
-    registry: MarketCatalog,
-    market_rotation_actor: object,
-    assembler: MarketViewAssembler,
-    policy: object,
-    strategies: Sequence[NativeStrategyLike],
-    cache: object,
-    portfolio: object,
-    strategy_names: Sequence[str] = (),
-) -> dict[str, object]:
-    return {
-        "node": node,
-        "config": config,
-        "registry": registry,
-        "market_rotation_actor": market_rotation_actor,
-        "assembler": assembler,
-        "policy": policy,
-        "strategies": list(strategies),
-        "strategy_names": list(strategy_names) or [strategy.strategy_name for strategy in strategies],
-        "cache": cache,
-        "portfolio": portfolio,
-    }
-
-
-def _live_node_strategies_and_cache(
-    *,
-    node: object,
-    settings: object,
-    assembler: MarketViewAssembler,
-    policy: object | None,
-    configured_condition_ids: Sequence[str],
-    registry: MarketCatalog,
-    market_rotation_actor: object,
-    observability: object | None,
-    reporting_actor: object | None = None,
-    configured_markets: Sequence[Market] = (),
-) -> tuple[object, object, Sequence[NativeStrategyLike]]:
-    from polysignal_lab.nautilus_runtime.node import (
-        _attach_cache_projections,
-        _build_native_strategies,
-        _register_runtime_trader_components,
-    )
-
-    kernel = getattr(node, "node", node)
-    supports_importable = callable(getattr(kernel, "add_strategy_from_config", None)) and callable(
-        getattr(kernel, "add_actor_from_config", None)
-    )
-    if supports_importable:
-        strategies = []
-    else:
-        if policy is None:
-            raise RuntimeError("direct runtime wiring requires DecisionPolicy")
-        strategies = _build_native_strategies(
-            settings, assembler, policy, configured_condition_ids, registry, observability
-        )
-    strategies = _register_runtime_trader_components(
-        node,
-        market_rotation_actor,
-        policy,
-        strategies,
-        settings=settings,
-        configured_markets=configured_markets,
-        configured_condition_ids=configured_condition_ids,
-        reporting_actor=reporting_actor,
-    )
-    return _attach_cache_projections(node, registry, assembler, strategies) + (strategies,)
-
-
-def wire_live_node_runtime(
-    *,
-    settings: object,
-    configured_markets: Sequence[Market],
-    configured_condition_ids: Sequence[str],
-    runtime_market_universe: object,
-    node: object,
-    config: object,
-    registry: MarketCatalog,
-    assembler: MarketViewAssembler,
-    policy: object | None,
-    store: object | None = None,
-    health: object | None = None,
-    observability: object | None = None,
-    reporting_services: object | None = None,
-) -> dict[str, object]:
-    kernel = getattr(node, "node", node)
-    supports_importable = callable(getattr(kernel, "add_strategy_from_config", None)) and callable(
-        getattr(kernel, "add_actor_from_config", None)
-    )
-    market_rotation_actor = None
-    reporting_actor = None
-    if not supports_importable:
-        from polysignal_lab.nautilus_runtime.node import _build_market_rotation_actor
-        from polysignal_lab.nautilus_runtime.reporting_actor import ReportingHousekeepingActor
-
-        refresh_once_sync = getattr(runtime_market_universe, "refresh_once_sync")
-        discovery_worker = MarketDiscoveryWorker(refresh_once_sync)
-        markets_projection = getattr(runtime_market_universe, "markets", None)
-        market_rotation_actor = _build_market_rotation_actor(
-            settings=settings,
-            startup_markets=configured_markets,
-            market_universe=runtime_market_universe,
-            discovery_worker=discovery_worker,
-            registry=registry,
-            store=store,
-            health=health,
-            markets_projection=markets_projection,
-        )
-        if reporting_services is not None:
-            reporting_actor = ReportingHousekeepingActor(services=reporting_services)
-    nautilus_cache, nautilus_portfolio, strategies = _live_node_strategies_and_cache(
-        node=node,
-        settings=settings,
-        assembler=assembler,
-        policy=policy,
-        configured_condition_ids=configured_condition_ids,
-        registry=registry,
-        market_rotation_actor=market_rotation_actor,
-        observability=observability,
-        reporting_actor=reporting_actor,
-        configured_markets=configured_markets,
-    )
-    enabled_strategy_names = tuple(
-        str(name)
-        for name in getattr(settings, "strategies").explicit_strategy_names()
-        if bool(getattr(getattr(settings, "strategies"), name).enabled)
-    )
-    return runtime_components(
-        node=node,
-        config=config,
-        registry=registry,
-        market_rotation_actor=market_rotation_actor,
-        assembler=assembler,
-        policy=policy,
-        strategies=strategies,
-        cache=nautilus_cache,
-        portfolio=nautilus_portfolio,
-        strategy_names=("polysignal",) if enabled_strategy_names else (),
-    )

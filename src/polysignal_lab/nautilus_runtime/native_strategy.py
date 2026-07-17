@@ -33,12 +33,9 @@ from polysignal_lab.nautilus_bridge.market_view_assembler import BookReceiptObse
 from polysignal_lab.nautilus_bridge.state import load_strategy_state, save_strategy_state
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
-    DecisionPolicy,
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.decision_messages import (
-    DECISION_CANDIDATE_SIGNAL,
-    DECISION_RESULT_SIGNAL,
     DecisionCandidateData,
     DecisionResultData,
 )
@@ -53,6 +50,9 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
     PolySignalSpotData,
+    custom_data_type,
+    unwrap_custom_data,
+    wrap_custom_data,
 )
 from polysignal_lab.nautilus_runtime.native_order import (
     OrderSubmittingStrategy,
@@ -60,10 +60,11 @@ from polysignal_lab.nautilus_runtime.native_order import (
 from polysignal_lab.nautilus_runtime.native_strategy_exit import (
     NativeExitPolicy,
 )
+from polysignal_lab.nautilus_runtime.sidecar_data import timestamp_ns
 from polysignal_lab.nautilus_runtime.strategy.custom_data_handlers import route_strategy_data
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
-    DecisionPipeline,
     DecisionPipelineState,
+    DecisionResultHandler,
     NativeDecisionSinkImpl,
     submit_approved_for_view,
 )
@@ -123,7 +124,6 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _identity_instrument_id,
     _market_view_ready,
     _nautilus_instrument_id,
-    _sidecar_data_client_id,
     _spot_data_client_id,
     _subscribe_custom_data,
     classify_project_owned_data,
@@ -175,8 +175,8 @@ class PolySignalNativeStrategy(Strategy):
         assembler: _Assembler | None = None,
         condition_ids: Sequence[str] = (),
         strategy_name: str = "",
-        policy: DecisionPolicy | None = None,
         fixed_stake_usdc: float = 10.0,
+        orderbook_staleness_ms: float = 60_000.0,
         exit_model: object | None = None,
         data_names: Sequence[str] = DEFAULT_NATIVE_DATA_NAMES,
         book_type: str = "L2_MBP",
@@ -187,9 +187,11 @@ class PolySignalNativeStrategy(Strategy):
         readiness_callback: Callable[[str, bool, dict[str, object]], None] | None = None,
         unsubscribe_exited: bool = True,
         l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
+        spot_data_client_id: object | None = None,
     ) -> None:
         from nautilus_trader.core.nautilus_pyo3 import StrategyConfig, StrategyId
 
+        execution_mode = "sandbox"
         if isinstance(config, PolySignalStrategyConfig) and core is None:
             (
                 core,
@@ -198,6 +200,7 @@ class PolySignalNativeStrategy(Strategy):
                 instrument_id_resolver,
             ) = _dependencies_from_config(config)
             settings = config.settings()
+            execution_mode = settings.runtime.nautilus.execution_mode
             condition_ids = tuple(config.condition_ids)
             strategy_name = config.strategy_name
             fixed_stake_usdc = float(settings.trading.fixed_stake_usdc)
@@ -205,6 +208,14 @@ class PolySignalNativeStrategy(Strategy):
             book_type = settings.runtime.nautilus.sandbox_book_type
             unsubscribe_exited = settings.runtime.nautilus.market_rotation.unsubscribe_exited
             l1_book_snapshot_interval_ms = settings.runtime.nautilus.l1_book_snapshot_interval_ms
+            orderbook_staleness_ms = float(
+                settings.data.polymarket.max_book_staleness_ms
+            )
+            if (
+                settings.runtime.nautilus.execution_mode != "backtest"
+                and settings.runtime.nautilus.sidecar.spot_source != "disabled"
+            ):
+                spot_data_client_id = _spot_data_client_id()
             config = StrategyConfig(
                 strategy_id=StrategyId(str(config.strategy_id)),
                 order_id_tag=str(config.order_id_tag),
@@ -219,9 +230,10 @@ class PolySignalNativeStrategy(Strategy):
         if core is None:
             raise RuntimeError("PolySignalNativeStrategy requires core")
         super().__init__(config=config)
+        self._execution_mode = execution_mode
         if registry is None or assembler is None:
             raise RuntimeError(MISSING_PROJECTIONS_ERROR)
-        self._configure_dependencies(core, assembler, condition_ids, strategy_name, policy, registry)
+        self._configure_dependencies(core, assembler, condition_ids, strategy_name, registry)
         self._configure_runtime_options(
             fixed_stake_usdc=fixed_stake_usdc,
             exit_model=exit_model,
@@ -232,6 +244,8 @@ class PolySignalNativeStrategy(Strategy):
             progress_callback=progress_callback,
             readiness_callback=readiness_callback,
             l1_book_snapshot_interval_ms=l1_book_snapshot_interval_ms,
+            orderbook_staleness_ms=orderbook_staleness_ms,
+            spot_data_client_id=spot_data_client_id,
         )
         self._initialize_runtime_state(registry, unsubscribe_exited=unsubscribe_exited)
 
@@ -241,7 +255,6 @@ class PolySignalNativeStrategy(Strategy):
         assembler: _Assembler,
         condition_ids: Sequence[str],
         strategy_name: str,
-        policy: DecisionPolicy | None,
         registry: MarketCatalog,
     ) -> None:
         self.core = core
@@ -252,7 +265,6 @@ class PolySignalNativeStrategy(Strategy):
         self.assembler = resolved_assembler
         self.condition_ids = tuple(condition_ids)
         self.strategy_name = strategy_name
-        self.policy: DecisionPolicy | None = policy
         self.registry = registry
         self._pending_policy_requests: dict[str, tuple[AlphaDecision, MarketView]] = {}
         self._decision_batch_sequence = 0
@@ -269,6 +281,8 @@ class PolySignalNativeStrategy(Strategy):
         progress_callback: Callable[[str], None] | None,
         readiness_callback: Callable[[str, bool, dict[str, object]], None] | None,
         l1_book_snapshot_interval_ms: int,
+        orderbook_staleness_ms: float,
+        spot_data_client_id: object | None,
     ) -> None:
         self.fixed_stake_usdc = fixed_stake_usdc
         self.exit_policy = NativeExitPolicy.from_config(exit_model)
@@ -279,6 +293,8 @@ class PolySignalNativeStrategy(Strategy):
         self.observability = observability
         self.progress_callback = progress_callback
         self.readiness_callback = readiness_callback
+        self.orderbook_staleness_ms = float(orderbook_staleness_ms)
+        self.spot_data_client_id = spot_data_client_id
 
     def _initialize_runtime_state(
         self,
@@ -315,9 +331,7 @@ class PolySignalNativeStrategy(Strategy):
 
     def _init_decision_pipeline(self) -> None:
         self._pipeline_state = DecisionPipelineState()
-        self._decision_pipeline = DecisionPipeline(
-            cast(Callable[[], DecisionPolicy], lambda: self.policy),
-            is_active_condition=lambda condition_id: condition_id in self._active_condition_ids,
+        self._decision_result_handler = DecisionResultHandler(
             is_signal_submitted=self._is_signal_submitted,
         )
         self._metrics_tracker = ApprovedSignalMetricsTracker()
@@ -506,10 +520,10 @@ class PolySignalNativeStrategy(Strategy):
         )
 
     def _orderbook_readiness_threshold_ms(self) -> float:
-        return self.policy.orderbook_readiness_threshold_ms()
+        return self.orderbook_staleness_ms
 
     def _orderbook_trade_threshold_ms(self) -> float:
-        return self.policy.orderbook_trade_threshold_ms(self.strategy_name)
+        return self.orderbook_staleness_ms
 
     def _stale_orderbook_sides(
         self,
@@ -533,7 +547,7 @@ class PolySignalNativeStrategy(Strategy):
             timestamp_ns = getattr(self.clock, "timestamp_ns", None)
             if callable(timestamp_ns):
                 value = int(timestamp_ns())
-                if value > 0:
+                if value >= 0:
                     return datetime.fromtimestamp(value / 1_000_000_000, UTC)
         except (NotImplementedError, RuntimeError, AttributeError):
             pass
@@ -542,6 +556,8 @@ class PolySignalNativeStrategy(Strategy):
         raise RuntimeError("Nautilus framework clock timestamp_ns is unavailable")
 
     def _start_evaluation_heartbeat(self) -> None:
+        if self._execution_mode == "backtest":
+            return
         try:
             clock = self.clock
             _ = clock.set_timer(
@@ -554,6 +570,8 @@ class PolySignalNativeStrategy(Strategy):
                 raise
 
     def on_stop(self) -> None:
+        if self._execution_mode == "backtest":
+            return
         try:
             _ = self.clock.cancel_timer(EVALUATION_HEARTBEAT_TIMER_NAME)
         except (NotImplementedError, RuntimeError):
@@ -594,28 +612,24 @@ class PolySignalNativeStrategy(Strategy):
         bind_cache = getattr(books, "bind_cache", None)
         if callable(bind_cache) and not bool(getattr(books, "is_bound", False)):
             bind_cache(self.cache)
-        if self.policy is None:
-            self.subscribe_signal(DECISION_RESULT_SIGNAL)
+        _subscribe_custom_data(self, DecisionResultData)
         self._subscribe_market_conditions(self._startup_condition_ids)
         _subscribe_custom_data(
             self,
             PolySignalSpotData,
-            client_id=_spot_data_client_id(),
+            client_id=self.spot_data_client_id,
         )
         _subscribe_custom_data(
             self,
             PolySignalPriceToBeatData,
-            client_id=_sidecar_data_client_id(),
         )
         _subscribe_custom_data(
             self,
             PolySignalMarketMetaData,
-            client_id=_sidecar_data_client_id(),
         )
         _subscribe_custom_data(
             self,
             PolySignalMarketUniverseData,
-            client_id=_sidecar_data_client_id(),
         )
         self._start_evaluation_heartbeat()
 
@@ -643,19 +657,17 @@ class PolySignalNativeStrategy(Strategy):
             self.evaluate_condition(condition_id)
 
     def on_data(self, data: object) -> None:
+        payload = unwrap_custom_data(data)
+        if isinstance(payload, DecisionResultData):
+            self._handle_policy_result(payload)
+            return
         route_strategy_data(
             self,
-            data,
+            payload,
             classify=classify_project_owned_data,
         )
 
-    def on_signal(self, signal: object) -> None:
-        if getattr(signal, "name", None) != DECISION_RESULT_SIGNAL:
-            return
-        value = getattr(signal, "value", None)
-        if not isinstance(value, str):
-            return
-        result = DecisionResultData.from_json(value)
+    def _handle_policy_result(self, result: DecisionResultData) -> None:
         pending = self._pending_policy_requests.pop(result.request_id, None)
         if pending is None:
             return
@@ -669,7 +681,7 @@ class PolySignalNativeStrategy(Strategy):
                 reason_code=result.reason_code,
                 detail=result.detail(),
             )
-        self._decision_pipeline.handle_policy_result(
+        self._decision_result_handler.handle_result(
             policy_result,
             decision,
             view,
@@ -968,41 +980,12 @@ class PolySignalNativeStrategy(Strategy):
             now=now,
             evaluate_core=evaluate_core,
         )
-        if self.policy is None:
-            self._publish_decision_batch(decisions, market_view)
-            if (
-                not readiness_confirmed
-                and condition_id not in self._runtime_readiness_miss_condition_ids
-            ):
-                self._note_runtime_readiness(condition_id, ready=True)
-            return
-        self._handle_local_policy_batch(decisions, market_view)
+        self._publish_decision_batch(decisions, market_view)
         if (
             not readiness_confirmed
             and condition_id not in self._runtime_readiness_miss_condition_ids
         ):
             self._note_runtime_readiness(condition_id, ready=True)
-
-    def _handle_local_policy_batch(
-        self,
-        decisions: Sequence[AlphaDecision],
-        market_view: MarketView,
-    ) -> None:
-        batch = [(decision, market_view) for decision in decisions]
-        try:
-            batch_result = self._decision_pipeline.try_batch_arbitrate(batch)
-        except Exception:
-            self._note_runtime_progress("arbitration_failed")
-            return
-        for decision, rejected in batch_result.rejections:
-            self._decision_pipeline.record_batch_rejection(
-                rejected,
-                decision,
-                state=self._pipeline_state,
-                sink=self._decision_sink,
-            )
-        for decision in batch_result:
-            self._handle_decision(decision, market_view)
 
     def _publish_decision_batch(
         self,
@@ -1014,8 +997,7 @@ class PolySignalNativeStrategy(Strategy):
         self._decision_batch_sequence += 1
         batch_id = f"{self.strategy_name}:{self._decision_batch_sequence}"
         batch_size = len(decisions)
-        clock = self.clock
-        ts_event = int(clock.timestamp_ns())
+        ts_event = timestamp_ns(self._framework_now())
         for index, decision in enumerate(decisions):
             request_id = f"{batch_id}:{index}"
             self._pending_policy_requests[request_id] = (decision, view)
@@ -1029,10 +1011,9 @@ class PolySignalNativeStrategy(Strategy):
                 ts_event=ts_event,
                 ts_init=ts_event,
             )
-            self.publish_signal(
-                DECISION_CANDIDATE_SIGNAL,
-                message.to_json(),
-                ts_event,
+            self.publish_data(
+                custom_data_type(DecisionCandidateData),
+                wrap_custom_data(message),
             )
 
     def _evaluate_decisions(
@@ -1066,12 +1047,7 @@ class PolySignalNativeStrategy(Strategy):
         return tuple(self.core.evaluate(market_view)) if evaluate_core else ()
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
-        self._decision_pipeline.handle_decision(
-            decision,
-            view,
-            state=self._pipeline_state,
-            sink=self._decision_sink,
-        )
+        self._publish_decision_batch((decision,), view)
 
     def _submit_approved(
         self, approved: ApprovedDecision, *, view: MarketView

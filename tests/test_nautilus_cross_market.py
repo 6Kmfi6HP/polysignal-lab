@@ -31,15 +31,18 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
+    BatchArbitrationResult,
     DecisionPolicy,
     RejectedDecision,
     candidate_from_decision,
 )
 from polysignal_lab.nautilus_runtime.group_views import MarketGroupViewAssembler
 from polysignal_lab.nautilus_runtime.native_order import submit_approved_decision
+from polysignal_lab.nautilus_runtime.decision_messages import DecisionCandidateData
+from polysignal_lab.nautilus_runtime.decision_policy_actor import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
-    DecisionPipeline,
     DecisionPipelineState,
+    DecisionResultHandler,
 )
 
 
@@ -138,6 +141,12 @@ def _group(
 
 class AllowAllPolicy(DecisionPolicy):
     """Policy that approves every decision without gate/arbiter checks."""
+
+    def batch_arbitrate(
+        self,
+        decisions: list[tuple[AlphaDecision, MarketView]],
+    ) -> BatchArbitrationResult:
+        return BatchArbitrationResult(decision for decision, _view in decisions)
 
     def decide(
         self, decision: AlphaDecision, view: MarketView
@@ -307,23 +316,43 @@ def test_cross_market_pair_id_reaches_native_order_tags() -> None:
     assert "pair_id=btc-eth-rel" in order.tags
 
 
-def test_cross_market_decisions_use_native_decision_pipeline() -> None:
+def test_cross_market_decisions_use_policy_actor_result_handler() -> None:
     # Given
     group = _group()
     decisions = tuple(_core().evaluate_group(group))
     submitted: list[ApprovedDecision] = []
     state = DecisionPipelineState()
-    pipeline = DecisionPipeline(
-        AllowAllPolicy(),
-        is_active_condition=lambda _condition_id: True,
+    handler = DecisionResultHandler(
         is_signal_submitted=lambda _dedupe_key: False,
     )
     sink = _RecordingSink(submitted)
+    actor = DecisionPolicyActor(policy=AllowAllPolicy())
+    requests = tuple(
+        DecisionCandidateData.from_domain(
+            request_id=f"request-{index}",
+            batch_id="cross-market",
+            batch_index=index,
+            batch_size=len(decisions),
+            decision=decision,
+            view=group.views_by_condition_id[decision.condition_id],
+            ts_event=1,
+            ts_init=1,
+        )
+        for index, decision in enumerate(decisions)
+    )
 
     # When
-    for decision in decisions:
+    for decision, result in zip(decisions, actor.evaluate_batch(requests), strict=True):
         view = group.views_by_condition_id[decision.condition_id]
-        pipeline.handle_decision(decision, view, state=state, sink=sink)
+        signal = result.signal()
+        assert signal is not None
+        handler.handle_result(
+            ApprovedDecision(signal=signal),
+            decision,
+            view,
+            state=state,
+            sink=sink,
+        )
 
     # Then
     assert len(submitted) == len(decisions)

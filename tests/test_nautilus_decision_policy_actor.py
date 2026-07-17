@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import replace
 
 import pytest
 from nautilus_trader.core import nautilus_pyo3
@@ -14,8 +14,6 @@ from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.config import Settings
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.decision_messages import (
-    DECISION_CANDIDATE_SIGNAL,
-    DECISION_RESULT_SIGNAL,
     DecisionCandidateData,
     DecisionResultData,
 )
@@ -29,6 +27,11 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
 from polysignal_lab.nautilus_runtime.decision_policy_actor import (
     DecisionPolicyActor,
     DecisionPolicyActorConfig,
+)
+from polysignal_lab.nautilus_runtime.custom_data_types import (
+    custom_data_type,
+    unwrap_custom_data,
+    wrap_custom_data,
 )
 
 
@@ -67,7 +70,10 @@ def test_candidate_message_is_immutable_and_round_trips_domain_values() -> None:
     assert restored_decision == decision
     assert restored_view.condition_id == view.condition_id
     assert restored_view.up == view.up
-    with pytest.raises(FrozenInstanceError):
+    wrapped = wrap_custom_data(message)
+    assert wrapped.data_type == custom_data_type(DecisionCandidateData)
+    assert unwrap_custom_data(wrapped) is message
+    with pytest.raises(AttributeError, match="immutable"):
         message.request_id = "mutated"
 
 
@@ -240,7 +246,7 @@ def test_native_message_bus_routes_strategy_batch_through_policy_actor() -> None
             self.results: list[DecisionResultData] = []
 
         def on_start(self) -> None:
-            self.subscribe_signal(DECISION_RESULT_SIGNAL)
+            self.subscribe_data(custom_data_type(DecisionResultData))
             self.subscribe_quotes(self.instrument_id)
 
         def on_quote(self, quote: object) -> None:
@@ -254,15 +260,15 @@ def test_native_message_bus_routes_strategy_batch_through_policy_actor() -> None
                 ts_event=int(getattr(quote, "ts_event")),
                 ts_init=int(getattr(quote, "ts_init")),
             )
-            self.publish_signal(
-                DECISION_CANDIDATE_SIGNAL,
-                candidate.to_json(),
-                candidate.ts_event,
+            self.publish_data(
+                custom_data_type(DecisionCandidateData),
+                wrap_custom_data(candidate),
             )
 
-        def on_signal(self, signal: object) -> None:
-            if getattr(signal, "name", None) == DECISION_RESULT_SIGNAL:
-                self.results.append(DecisionResultData.from_json(str(getattr(signal, "value"))))
+        def on_data(self, data: object) -> None:
+            payload = unwrap_custom_data(data)
+            if isinstance(payload, DecisionResultData):
+                self.results.append(payload)
 
     engine, instrument = build_backtest_engine(trader_id="POLICY-001")
     engine.add_data(

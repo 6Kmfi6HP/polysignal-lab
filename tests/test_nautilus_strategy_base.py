@@ -17,11 +17,13 @@ from __future__ import annotations
 import sys
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from types import SimpleNamespace
 from typing import Any, Protocol, cast
 
+from factories import sample_market_view
 from polysignal_lab.alpha.types import (
     AlphaDecision,
     MarketView,
@@ -161,7 +163,6 @@ def _minimal_native_strategy(
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name=strategy_name,
-        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
 
@@ -341,6 +342,10 @@ from polysignal_lab.nautilus_runtime.decision_policy import (  # noqa: E402
     ApprovedDecision,
     BatchArbitrationResult,
     DecisionPolicy,
+    RejectedDecision,
+)
+from polysignal_lab.nautilus_runtime.decision_policy_actor import (  # noqa: E402
+    DecisionPolicyActor,
 )
 from polysignal_lab.nautilus_runtime.native_strategy import (  # noqa: E402
     PolySignalNativeStrategy,
@@ -363,6 +368,40 @@ class _MockView:
     @property
     def created_at(self) -> datetime:
         return datetime.now(UTC)
+
+
+def _real_market_view(
+    *,
+    up_ask: float = 0.82,
+    down_ask: float = 0.18,
+    up_ask_levels: tuple[tuple[float, float], ...] | None = None,
+    down_ask_levels: tuple[tuple[float, float], ...] | None = None,
+    created_at: datetime | None = None,
+    start_ts: datetime | None = None,
+    end_ts: datetime | None = None,
+    seconds_to_close: int = 60,
+) -> MarketView:
+    view = sample_market_view(
+        up_ask=up_ask,
+        down_ask=down_ask,
+        book_freshness_ms=10,
+        spot_freshness_ms=10,
+        up_ask_levels=up_ask_levels,
+        down_ask_levels=down_ask_levels,
+        created_at=created_at,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        seconds_to_close=seconds_to_close,
+    )
+    return replace(
+        view,
+        view_id="view-1",
+        market_id="btc-5m",
+        market_slug="btc-updown-5m",
+        condition_id="condition-btc-5m",
+        up=replace(view.up, token_id="up-token"),
+        down=replace(view.down, token_id="down-token"),
+    )
 
 
 class RuntimeFakePolicy(DecisionPolicy):
@@ -402,6 +441,18 @@ class RuntimeFakePolicy(DecisionPolicy):
         return BatchArbitrationResult(decision for decision, _ in decisions)
 
 
+def _wire_decision_policy_actor(
+    strategy: PolySignalNativeStrategy,
+    policy: DecisionPolicy | None = None,
+) -> DecisionPolicyActor:
+    actor = DecisionPolicyActor(policy=policy or RuntimeFakePolicy())
+    actor_endpoint: Any = actor
+    strategy_endpoint: Any = strategy
+    actor_endpoint.publish_data = lambda _data_type, data: strategy.on_data(data)
+    strategy_endpoint.publish_data = lambda _data_type, data: actor.on_data(data)
+    return actor
+
+
 
 
 def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
@@ -424,20 +475,6 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
         order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK, pair_id="pair-1"),
         hedge_leg=False,
     )
-
-    class Book:
-        best_ask: float | None = 0.50
-        freshness_ms: int | None = 10
-        ask_levels: tuple[tuple[float, float], ...] = (
-            (0.50, 10.0),
-            (0.52, 10.0),
-            (0.53, 100.0),
-        )
-
-    class View(_MockView):
-        def book_for(self, side: Side) -> _BookViewLike:
-            _ = side
-            return Book()
 
     from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 
@@ -467,10 +504,14 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
     readiness: list[tuple[str, bool]] = []
     strategy = SpecCapturingStrategy(
         core=FakeCore([decision]),
-        assembler=_assembler(View()),
+        assembler=_assembler(
+            _real_market_view(
+                up_ask=0.50,
+                up_ask_levels=((0.50, 10.0), (0.52, 10.0), (0.53, 100.0)),
+            )
+        ),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         fixed_stake_usdc=10.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         readiness_callback=lambda condition_id, ready, _detail: readiness.append(
@@ -478,6 +519,7 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
         ),
         **_native_projections(),
     )
+    _policy_actor = _wire_decision_policy_actor(strategy)
 
     strategy.evaluate_condition("condition-btc-5m")
 
@@ -489,9 +531,6 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
 
 
 def test_native_strategy_gate_rejection_does_not_drive_data_plane_readiness() -> None:
-    from dataclasses import replace
-
-    from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     class StaleOrderBookPolicy(RuntimeFakePolicy):
@@ -511,18 +550,6 @@ def test_native_strategy_gate_rejection_does_not_drive_data_plane_readiness() ->
                 candidate=approved.signal,
             )
 
-    class Book(_MockBook):
-        freshness_ms: int | None = 10
-
-    class View(_MockView):
-        books = {
-            Side.UP: Book(),
-            Side.DOWN: Book(),
-        }
-
-        def book_for(self, side: Side) -> _BookViewLike:
-            return self.books[side]
-
     readiness: list[tuple[str, bool]] = []
 
     up_decision = _decision()
@@ -532,19 +559,19 @@ def test_native_strategy_gate_rejection_does_not_drive_data_plane_readiness() ->
         side=Side.DOWN,
     )
     core = FakeCore([up_decision, down_decision])
-    view = View()
+    view = _real_market_view()
     policy = StaleOrderBookPolicy()
     strategy = PolySignalNativeStrategy(
         core=core,
         assembler=_assembler(view),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=policy,
         readiness_callback=lambda condition_id, ready, _detail: readiness.append(
             (condition_id, ready)
         ),
         **_native_projections(),
     )
+    _policy_actor = _wire_decision_policy_actor(strategy, policy)
 
     strategy.evaluate_condition("condition-btc-5m")
     core.decisions = []
@@ -558,16 +585,6 @@ def test_native_strategy_gate_rejection_does_not_drive_data_plane_readiness() ->
 
 def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-
-    class Book:
-        best_ask: float | None = 0.55
-        freshness_ms: int | None = 10
-        ask_levels: tuple[tuple[float, float], ...] = ((0.55, 100.0),)
-
-    class View(_MockView):
-        def book_for(self, side: Side) -> _BookViewLike:
-            _ = side
-            return Book()
 
     class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
@@ -599,14 +616,19 @@ def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
 
     strategy = FakeNativeStrategy(
         core=FakeCore([decision]),
-        assembler=_assembler(View()),
+        assembler=_assembler(
+            _real_market_view(
+                up_ask=0.55,
+                up_ask_levels=((0.55, 100.0),),
+            )
+        ),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         fixed_stake_usdc=10.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         **_native_projections(),
     )
+    _policy_actor = _wire_decision_policy_actor(strategy)
 
     strategy.evaluate_condition("condition-btc-5m")
 
@@ -618,9 +640,6 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
     from types import SimpleNamespace
 
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-
-    class View(_MockView):
-        pass
 
     class ReenteringCore(FakeCore):
         def on_order_filled(self, event):
@@ -652,13 +671,13 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
 
     strategy = FakeNativeStrategy(
         core=ReenteringCore([_decision()]),
-        assembler=_assembler(View()),
+        assembler=_assembler(_real_market_view()),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         fixed_stake_usdc=10.0,
         **_native_projections(),
     )
+    _policy_actor = _wire_decision_policy_actor(strategy)
 
     strategy.evaluate_condition("condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
@@ -755,7 +774,6 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -775,6 +793,7 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
         PolySignalPriceToBeatData,
         PolySignalSpotData,
     )
+    from polysignal_lab.nautilus_runtime.decision_messages import DecisionResultData
 
     class FakeMsgBus:
         def __init__(self) -> None:
@@ -850,7 +869,6 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -862,10 +880,11 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
         getattr(data_type, "type_name", data_type): str(client_id)
         for data_type, client_id in custom_subscriptions
     } == {
-        PolySignalSpotData.__name__: "POLYSIGNAL_SPOT",
-        PolySignalPriceToBeatData.__name__: "POLYSIGNAL_SIDECAR",
-        PolySignalMarketMetaData.__name__: "POLYSIGNAL_SIDECAR",
-        PolySignalMarketUniverseData.__name__: "POLYSIGNAL_SIDECAR",
+        DecisionResultData.__name__: "None",
+        PolySignalSpotData.__name__: "None",
+        PolySignalPriceToBeatData.__name__: "None",
+        PolySignalMarketMetaData.__name__: "None",
+        PolySignalMarketUniverseData.__name__: "None",
     }
 
     strategy.on_data(
@@ -920,15 +939,15 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
     progress: list[str] = []
     strategy = FakeNativeStrategy(
         core=FakeCore([_decision()]),
-        assembler=_assembler(_MockView()),
+        assembler=_assembler(_real_market_view()),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         fixed_stake_usdc=10.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         progress_callback=lambda phase: progress.append(phase),
         **_native_projections(),
     )
+    _policy_actor = _wire_decision_policy_actor(strategy)
 
     # Generic assembler fallback is removed; unknown CustomData is dropped.
     _ = cast(_DataHandler, cast(object, strategy)).on_data(UnknownDataEvent())
@@ -949,7 +968,7 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
     )
 
 
-def test_native_strategy_without_local_policy_uses_actor_signal_path() -> None:
+def test_native_strategy_has_no_local_policy_owner() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     strategy = PolySignalNativeStrategy(
@@ -960,7 +979,7 @@ def test_native_strategy_without_local_policy_uses_actor_signal_path() -> None:
         registry=_test_market_catalog(),
     )
 
-    assert strategy.policy is None
+    assert not hasattr(strategy, "policy")
 
 
 def test_native_strategy_constructor_requires_injected_projections() -> None:
@@ -977,7 +996,6 @@ def test_native_strategy_constructor_requires_injected_projections() -> None:
             assembler=_assembler(None),
             condition_ids=(),
             strategy_name="ptb_diff",
-            policy=RuntimeFakePolicy(),
         )
 
 
@@ -995,7 +1013,6 @@ def test_native_strategy_constructor_requires_injected_assembler() -> None:
             assembler=cast(Any, None),
             condition_ids=(),
             strategy_name="ptb_diff",
-            policy=RuntimeFakePolicy(),
             registry=_test_market_catalog(),
         )
 
@@ -1032,7 +1049,6 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
         assembler=_assembler(None),
         condition_ids=(),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=_test_market_catalog(),
     )
 
@@ -1093,7 +1109,6 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m", "condition-btc-retired"),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=_test_market_catalog(),
     )
     strategy._active_condition_ids = {"condition-btc-5m"}
@@ -1144,6 +1159,43 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         EVALUATION_HEARTBEAT_TIMER_NAME,
     ]
 
+
+def test_native_strategy_backtest_does_not_schedule_unbounded_evaluation_heartbeat() -> None:
+    from polysignal_lab.config import Settings
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
+
+    class FakeClock:
+        def __init__(self) -> None:
+            self.timer: tuple[object, object, object] | None = None
+            self.canceled: list[str] = []
+
+        def set_timer(self, name: object, interval: object, *, callback: object) -> None:
+            self.timer = (name, interval, callback)
+
+        def cancel_timer(self, name: object) -> None:
+            self.canceled.append(str(name))
+
+    class FakeBacktestStrategy(PolySignalNativeStrategy):
+        fake_clock: FakeClock
+
+        @property
+        def clock(self) -> FakeClock:
+            return self.fake_clock
+
+    settings = Settings()
+    settings.runtime.nautilus.execution_mode = "backtest"
+    settings.strategies.set_explicit_strategy_names(("one_cent_buy",))
+    strategy = FakeBacktestStrategy(PolySignalStrategyConfig.build(settings, (), ()))
+    strategy.fake_clock = FakeClock()
+
+    strategy._start_evaluation_heartbeat()
+
+    assert strategy.clock.timer is None
+    strategy.on_stop()
+    assert strategy.clock.canceled == []
+
+
 def test_native_strategy_reports_progress_on_internal_evaluation_heartbeat() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
@@ -1153,7 +1205,6 @@ def test_native_strategy_reports_progress_on_internal_evaluation_heartbeat() -> 
         assembler=_assembler(_MockView()),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         **_native_projections(),
         progress_callback=progress_events.append,
     )
@@ -1175,7 +1226,6 @@ def test_native_strategy_reports_progress_on_start_without_market_data() -> None
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         **_native_projections(),
         progress_callback=progress_events.append,
     )
@@ -1194,7 +1244,6 @@ def test_native_strategy_drops_unknown_project_owned_data_with_metric() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
     strategy.progress_callback = lambda phase: observed.append((phase, None))
@@ -1213,7 +1262,6 @@ def test_malformed_project_owned_data_does_not_poison_later_valid_market_metadat
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
 
@@ -1248,7 +1296,6 @@ def test_native_strategy_unknown_quote_tick_instrument_is_dropped_with_metric() 
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
     strategy.progress_callback = phases.append
@@ -1331,7 +1378,6 @@ def test_native_strategy_partial_market_data_mappings_are_dropped_without_evalua
                 assembler=_assembler(None),
                 condition_ids=("condition-btc-5m",),
                 strategy_name="ptb_diff",
-                policy=RuntimeFakePolicy(),
                 **_native_projections(registry),
                 progress_callback=phases.append,
             )
@@ -1382,7 +1428,6 @@ def test_native_strategy_unknown_market_data_instruments_are_dropped_with_metric
             assembler=_assembler(None),
             condition_ids=("condition-btc-5m",),
             strategy_name="ptb_diff",
-            policy=RuntimeFakePolicy(),
             **_native_projections(),
             progress_callback=phases.append,
         )
@@ -1405,7 +1450,6 @@ def test_native_strategy_drops_unknown_project_owned_data_with_condition_id() ->
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
     strategy.progress_callback = lambda phase: observed.append((phase, None))
@@ -1428,7 +1472,6 @@ def test_native_strategy_readiness_gate_skips_missing_required_market_view_input
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
     strategy.core.evaluate = lambda view: calls.append(view) or []  # type: ignore[method-assign]
@@ -1463,7 +1506,6 @@ def test_native_strategy_missing_view_fails_closed_without_resubscription() -> N
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         progress_callback=phases.append,
         readiness_callback=lambda condition_id, ready, _detail: readiness.append(
             (condition_id, ready)
@@ -1480,30 +1522,37 @@ def test_native_strategy_routes_decisions_through_policy_actor_decide() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     decision = _decision()
-    approved_decision = RuntimeFakePolicy().evaluate(decision, _MockView())
     submitted: list[object] = []
     decided: list[tuple[AlphaDecision, object]] = []
 
-    class ActorPolicy:
-        def decide(self, decision: AlphaDecision, view: object) -> object:
+    class ActorPolicy(RuntimeFakePolicy):
+        def decide(
+            self,
+            decision: AlphaDecision,
+            view: MarketView,
+        ) -> ApprovedDecision:
             decided.append((decision, view))
-            return approved_decision
+            return super().evaluate(decision, view)
 
     strategy = PolySignalNativeStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=ActorPolicy(),
         **_native_projections(),
     )
     strategy._submit_approved = lambda approved, *, view: submitted.append((approved, view))  # type: ignore[method-assign]
-    view = _MockView()
+    policy = ActorPolicy()
+    _policy_actor = _wire_decision_policy_actor(strategy, policy)
+    view = _real_market_view()
 
     strategy._handle_decision(decision, view)
 
-    assert decided == [(decision, view)]
-    assert submitted == [(approved_decision, view)]
+    assert len(decided) == 1
+    assert decided[0][0] == decision
+    assert cast(MarketView, decided[0][1]).condition_id == view.condition_id
+    assert len(submitted) == 1
+    assert cast(tuple[ApprovedDecision, MarketView], submitted[0])[1] == view
 
 
 def test_cache_market_data_provider_uses_observed_receipt_time_for_freshness() -> None:
@@ -1651,7 +1700,6 @@ def test_native_strategy_resolved_instrument_allows_cache_without_instrument_api
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         **_native_projections(),
     )
@@ -1661,35 +1709,35 @@ def test_native_strategy_resolved_instrument_allows_cache_without_instrument_api
 
 
 def test_native_strategy_does_not_submit_when_approved_decision_view_lacks_book() -> None:
-    from types import SimpleNamespace
-
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
+    class MissingBookView(MarketView):
+        def book_for(self, side: Side):
+            _ = side
+            raise ValueError("Quote maps must not be empty")
+
     decision = _decision()
-    approved_decision = RuntimeFakePolicy().evaluate(decision, _MockView())
-    submitted: list[object] = []
-    phases: list[str] = []
     strategy = PolySignalNativeStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         **_native_projections(),
-        progress_callback=phases.append,
     )
-    strategy.policy.decide = lambda decision, view: approved_decision  # type: ignore[method-assign]
-    strategy._submit_approved = lambda approved, *, view: submitted.append((approved, view))  # type: ignore[method-assign]
-    view = SimpleNamespace(
-        book_for=lambda _side: (_ for _ in ()).throw(
-            ValueError("Quote maps must not be empty")
-        )
+    _policy_actor = _wire_decision_policy_actor(strategy)
+    base_view = _real_market_view()
+    view = cast(Any, MissingBookView)(
+        **{
+            name: getattr(base_view, name)
+            for name in base_view.__dataclass_fields__
+        }
     )
 
     strategy._handle_decision(decision, view)
 
-    assert submitted == []
-    assert "readiness_miss" in phases
+    assert [item.reason_code for item in strategy.rejected_decisions] == [
+        "ORDER_MAPPING_FAILED"
+    ]
 
 
 def _real_market_view_with_empty_quote_depth() -> MarketView:
@@ -1748,7 +1796,6 @@ def test_native_strategy_readiness_gate_skips_real_market_view_with_empty_quote_
         assembler=_assembler(_real_market_view_with_empty_quote_depth()),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         progress_callback=phases.append,
         **_native_projections(),
     )
@@ -1774,7 +1821,6 @@ def test_native_strategy_constructor_without_registry_fails_clearly() -> None:
             assembler=_assembler(None),
             condition_ids=(),
             strategy_name="ptb_diff",
-            policy=RuntimeFakePolicy(),
             instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         )
 
@@ -1787,7 +1833,6 @@ def test_native_strategy_bounds_rejected_decisions_to_prevent_memory_leak() -> N
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
 
@@ -1847,7 +1892,6 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -1954,7 +1998,6 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
         assembler=assembler,
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
     second = FakeNativeStrategy(
@@ -1963,7 +2006,6 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
         assembler=assembler,
         condition_ids=("condition-btc-5m",),
         strategy_name="late_consensus",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2074,7 +2116,6 @@ def test_native_strategy_universe_update_subscribes_entered_market_once() -> Non
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2167,7 +2208,6 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2238,7 +2278,6 @@ def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> (
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2310,7 +2349,6 @@ def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> No
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2360,7 +2398,6 @@ def test_native_strategy_active_market_without_metadata_stays_pending_until_meta
         assembler=_assembler(None),
         condition_ids=(),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=_test_market_catalog(),
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
     )
@@ -2478,7 +2515,6 @@ def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
         assembler=_assembler(None),
         condition_ids=(),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2523,7 +2559,6 @@ def test_native_strategy_exited_market_is_gated_even_if_late_tick_arrives() -> N
         assembler=_assembler(view),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         readiness_callback=lambda condition_id, ready, _detail: readiness.append(
             (condition_id, ready)
         ),
@@ -2620,7 +2655,6 @@ def test_native_strategy_exited_market_fill_follow_up_is_gated() -> None:
         assembler=_assembler(View()),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         fixed_stake_usdc=10.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         **_native_projections(),
@@ -2713,7 +2747,6 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2808,7 +2841,6 @@ def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         book_type="L1_MBP",
         registry=registry,
     )
@@ -2880,7 +2912,6 @@ def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() ->
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -2949,7 +2980,6 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
         unsubscribe_exited=False,
     )
@@ -3019,7 +3049,6 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_sta
         assembler=_assembler(None),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -3116,7 +3145,6 @@ def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
         assembler=_assembler(view),
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -3200,7 +3228,6 @@ def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_on
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m", "condition-eth-5m"),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -3247,7 +3274,6 @@ def test_native_strategy_routes_ptb_custom_data_to_matching_active_condition_onl
         assembler=cast(MarketViewAssembler, cast(object, assembler)),
         condition_ids=("condition-active",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=_test_market_catalog(),
     )
 
@@ -3403,7 +3429,6 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
         assembler=assembler,
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
 
@@ -3429,7 +3454,6 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
     from types import SimpleNamespace
 
     from polysignal_lab.alpha.one_cent_buy_core import OneCentBuyAlphaCore
-    from polysignal_lab.alpha.types import TradingStateView
     from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
@@ -3464,39 +3488,6 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
         def limit(self, **kwargs):
             return kwargs
 
-    class OneCentView:
-        condition_id = "condition-btc-5m"
-        market_id = "btc-5m"
-
-        def __init__(self) -> None:
-            now = datetime.now(UTC)
-            self.created_at = now
-            self.start_ts = now - timedelta(seconds=60)
-            self.end_ts = now + timedelta(seconds=60)
-            self.seconds_to_close = 60
-            self.asset = "BTC"
-            self.timeframe = "5m"
-            self.market_slug = "btc-updown-5m"
-            self.freshness = SimpleNamespace(max_ms=10)
-            self.trading = TradingStateView()
-
-        def book_for(self, side):
-            if side == Side.DOWN:
-                return SimpleNamespace(
-                    token_id="down-token",
-                    best_ask=0.01,
-                    best_bid=0.01,
-                    ask_levels=((0.01, 100.0),),
-                    freshness_ms=10,
-                )
-            return SimpleNamespace(
-                token_id="up-token",
-                best_ask=0.05,
-                best_bid=0.04,
-                ask_levels=((0.05, 100.0),),
-                freshness_ms=10,
-            )
-
     class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(**kwargs)
@@ -3524,17 +3515,28 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
     core = OneCentBuyAlphaCore(
         OneCentBuyConfig(entry_prices=(0.01,), shares_per_level=10)
     )
+    now = datetime.now(UTC)
+    view = _real_market_view(
+        up_ask=0.05,
+        down_ask=0.01,
+        up_ask_levels=((0.05, 100.0),),
+        down_ask_levels=((0.01, 100.0),),
+        created_at=now,
+        start_ts=now - timedelta(seconds=60),
+        end_ts=now + timedelta(seconds=60),
+        seconds_to_close=60,
+    )
     strategy = FakeNativeStrategy(
         core=core,
-        assembler=_assembler(OneCentView()),
+        assembler=_assembler(view),
         condition_ids=("condition-btc-5m",),
         strategy_name="one_cent_buy",
-        policy=RuntimeFakePolicy(),
         fixed_stake_usdc=10.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         registry=registry,
         observability=observability,
     )
+    _policy_actor = _wire_decision_policy_actor(strategy)
 
     strategy.evaluate_condition("condition-btc-5m")
 
@@ -3605,7 +3607,6 @@ def test_native_strategy_attributes_inactive_registered_down_order_and_fill_from
         assembler=_assembler(None),
         condition_ids=(),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         registry=registry,
     )
     down_instrument_id = _test_instrument_id("condition-btc-exited-5m", "down-exited-token")
@@ -3663,7 +3664,6 @@ def test_order_submitted_observability_failure_does_not_block_core_event() -> No
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         observability=FailingObservability(),
         progress_callback=phases.append,
         **_native_projections(),
@@ -3686,16 +3686,6 @@ def test_order_submitted_observability_failure_does_not_block_core_event() -> No
 
 def test_native_strategy_surfaces_approved_signal_to_observability() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-
-    class Book:
-        best_ask: float | None = 0.82
-        freshness_ms: int | None = 10
-        ask_levels: tuple[tuple[float, float], ...] = ((0.82, 50.0),)
-
-    class View(_MockView):
-        def book_for(self, side: Side) -> _BookViewLike:
-            _ = side
-            return Book()
 
     class RecordingObservability:
         def __init__(self) -> None:
@@ -3742,15 +3732,15 @@ def test_native_strategy_surfaces_approved_signal_to_observability() -> None:
     observability = RecordingObservability()
     strategy = FakeNativeStrategy(
         core=FakeCore([_decision()]),
-        assembler=_assembler(View()),
+        assembler=_assembler(_real_market_view()),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         fixed_stake_usdc=10.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         observability=observability,
         **_native_projections(),
     )
+    _policy_actor = _wire_decision_policy_actor(strategy)
 
     strategy.evaluate_condition("condition-btc-5m")
 
@@ -3774,16 +3764,6 @@ def test_native_strategy_does_not_swallow_durable_signal_persistence_failure() -
 
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class Book:
-        best_ask: float | None = 0.82
-        freshness_ms: int | None = 10
-        ask_levels: tuple[tuple[float, float], ...] = ((0.82, 50.0),)
-
-    class View(_MockView):
-        def book_for(self, side: Side) -> _BookViewLike:
-            _ = side
-            return Book()
-
     class FailingSignalObservability:
         def record_decision(self, decision, accepted: bool) -> None:
             _ = decision, accepted
@@ -3806,15 +3786,15 @@ def test_native_strategy_does_not_swallow_durable_signal_persistence_failure() -
 
     strategy = FakeNativeStrategy(
         core=FakeCore([_decision()]),
-        assembler=_assembler(View()),
+        assembler=_assembler(_real_market_view()),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         fixed_stake_usdc=10.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         observability=FailingSignalObservability(),
         **_native_projections(),
     )
+    _policy_actor = _wire_decision_policy_actor(strategy)
 
     with pytest.raises(sqlite3.OperationalError, match="database is locked"):
         strategy.evaluate_condition("condition-btc-5m")
@@ -3834,13 +3814,13 @@ def test_native_strategy_rejection_persistence_failure_does_not_block_evaluate()
             raise sqlite3.OperationalError("database is locked")
 
     class RejectingPolicy(DecisionPolicy):
-        def evaluate(self, decision: AlphaDecision, view: MarketView):
-            _ = view
-            return type("Rejected", (), {
-                "reason_code": "TEST_REJECTED",
-                "detail": {},
-                "candidate": None,
-            })()
+        def evaluate(
+            self,
+            decision: AlphaDecision,
+            view: MarketView,
+        ) -> RejectedDecision:
+            _ = decision, view
+            return RejectedDecision(reason_code="TEST_REJECTED", detail={})
 
         def batch_arbitrate(
             self, decisions: list[tuple[AlphaDecision, MarketView]]
@@ -3850,14 +3830,14 @@ def test_native_strategy_rejection_persistence_failure_does_not_block_evaluate()
     phases: list[str] = []
     strategy = PolySignalNativeStrategy(
         core=FakeCore([_decision()]),
-        assembler=_assembler(_MockView()),
+        assembler=_assembler(_real_market_view()),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RejectingPolicy(),
         observability=FailingRejectedObservability(),
         progress_callback=phases.append,
         **_native_projections(),
     )
+    _policy_actor = _wire_decision_policy_actor(strategy, RejectingPolicy())
 
     strategy.evaluate_condition("condition-btc-5m")
 
@@ -3903,7 +3883,6 @@ def test_native_strategy_fill_and_position_callbacks_bridge_to_observability() -
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         observability=observability,
         **_native_projections(),
     )
@@ -3980,7 +3959,6 @@ def test_native_strategy_notifies_core_before_fill_handler() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="vwap_momentum",
-        policy=RuntimeFakePolicy(),
         **_native_projections(),
     )
 
@@ -4042,7 +4020,6 @@ def test_native_strategy_l1_subscribes_data_names_without_snapshot_request() -> 
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         book_type="L1_MBP",
         **_native_projections(),
     )
@@ -4081,7 +4058,6 @@ def test_native_strategy_l1_subscribes_all_data_names() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         book_type="L1_MBP",
         progress_callback=phases.append,
         **_native_projections(),
@@ -4122,7 +4098,6 @@ def test_native_strategy_l2_subscribes_all_data_names() -> None:
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
         book_type="L2_MBP",
         **_native_projections(),
     )

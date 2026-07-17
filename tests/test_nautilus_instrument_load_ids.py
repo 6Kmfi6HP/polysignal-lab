@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
-from polysignal_lab.nautilus_runtime.node_builder import _instrument_load_ids
+from polysignal_lab.nautilus_runtime.node_builder_components import instrument_load_ids
 from factories import MarketFactoryConfig, sample_market
 
 
@@ -20,11 +20,13 @@ def test_instrument_load_ids_use_market_catalog(monkeypatch) -> None:
         instrument_id_for_token,
     )
 
-    assert _instrument_load_ids((market,)) == frozenset(
-        {
-            f"catalog:{market.token_for(Side.UP).token_id}.POLYMARKET",
-            f"catalog:{market.token_for(Side.DOWN).token_id}.POLYMARKET",
-        }
+    assert instrument_load_ids((market,)) == tuple(
+        sorted(
+            (
+                f"catalog:{market.token_for(Side.UP).token_id}.POLYMARKET",
+                f"catalog:{market.token_for(Side.DOWN).token_id}.POLYMARKET",
+            )
+        )
     )
     assert seen == [
         market.token_for(Side.UP).token_id,

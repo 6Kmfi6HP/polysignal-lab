@@ -649,10 +649,6 @@ def test_large_nautilus_runtime_functions_stay_under_limit() -> None:
         "native_strategy_exit.py:_decision_for_position",
         "native_strategy.py:__init__",
         "market_rotation.py:__init__",
-        "live_node.py:_build_live_node_handle",
-        "node_builder_components.py:wire_live_node_runtime",
-        "node.py:_attach_cache_projections",
-        "node.py:_register_runtime_trader_components",
         "order_events.py:_record_early_exit_result",
     }
     for root in roots:

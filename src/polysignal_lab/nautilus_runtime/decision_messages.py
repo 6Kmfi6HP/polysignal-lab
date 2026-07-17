@@ -1,57 +1,41 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import Final, TypedDict
+from typing import Final
 
+from nautilus_trader.core.data import Data
+from nautilus_trader.model.custom import customdataclass_pyo3
 from pydantic import TypeAdapter
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
+from polysignal_lab.nautilus_runtime.custom_data_types import (
+    _ARROW_REGISTRATION_SCHEMA,
+    _FrozenData,
+    _unsupported_arrow,
+    register_custom_data_type,
+)
 
 
 _ALPHA_DECISION_ADAPTER: Final = TypeAdapter(AlphaDecision)
 _MARKET_VIEW_ADAPTER: Final = TypeAdapter(MarketView)
-DECISION_CANDIDATE_SIGNAL: Final = "polysignal.decision.candidate"
-DECISION_RESULT_SIGNAL: Final = "polysignal.decision.result"
 
 
-class _CandidateWire(TypedDict):
-    request_id: str
-    batch_id: str
-    batch_index: int
-    batch_size: int
-    decision_json: str
-    view_json: str
-    ts_event: int
-    ts_init: int
+@customdataclass_pyo3()
+class DecisionCandidateData(Data, _FrozenData):
+    request_id: str = ""
+    batch_id: str = ""
+    batch_index: int = 0
+    batch_size: int = 0
+    decision_json: str = ""
+    view_json: str = ""
+    _schema = _ARROW_REGISTRATION_SCHEMA
+    to_arrow = _unsupported_arrow
+    from_arrow = classmethod(_unsupported_arrow)
 
-
-class _ResultWire(TypedDict):
-    request_id: str
-    approved: bool
-    signal_json: str
-    reason_code: str
-    detail_json: str
-    ts_event: int
-    ts_init: int
-
-
-_CANDIDATE_WIRE_ADAPTER: Final = TypeAdapter(_CandidateWire)
-_RESULT_WIRE_ADAPTER: Final = TypeAdapter(_ResultWire)
-
-
-@dataclass(frozen=True, slots=True)
-class DecisionCandidateData:
-    request_id: str
-    batch_id: str
-    batch_index: int
-    batch_size: int
-    decision_json: str
-    view_json: str
-    ts_event: int = 0
-    ts_init: int = 0
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_frozen", True)
 
     @classmethod
     def from_domain(
@@ -83,35 +67,19 @@ class DecisionCandidateData:
             _MARKET_VIEW_ADAPTER.validate_json(self.view_json),
         )
 
-    def to_json(self) -> str:
-        return _CANDIDATE_WIRE_ADAPTER.dump_json(
-            {
-                "request_id": self.request_id,
-                "batch_id": self.batch_id,
-                "batch_index": self.batch_index,
-                "batch_size": self.batch_size,
-                "decision_json": self.decision_json,
-                "view_json": self.view_json,
-                "ts_event": self.ts_event,
-                "ts_init": self.ts_init,
-            }
-        ).decode()
+@customdataclass_pyo3()
+class DecisionResultData(Data, _FrozenData):
+    request_id: str = ""
+    approved: bool = False
+    signal_json: str = ""
+    reason_code: str = ""
+    detail_json: str = "{}"
+    _schema = _ARROW_REGISTRATION_SCHEMA
+    to_arrow = _unsupported_arrow
+    from_arrow = classmethod(_unsupported_arrow)
 
-    @classmethod
-    def from_json(cls, value: str) -> DecisionCandidateData:
-        payload = _CANDIDATE_WIRE_ADAPTER.validate_json(value)
-        return cls(**payload)
-
-
-@dataclass(frozen=True, slots=True)
-class DecisionResultData:
-    request_id: str
-    approved: bool
-    signal_json: str
-    reason_code: str
-    detail_json: str
-    ts_event: int = 0
-    ts_init: int = 0
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_frozen", True)
 
     @classmethod
     def from_approved(
@@ -166,20 +134,7 @@ class DecisionResultData:
             raise ValueError("decision result detail must be an object")
         return value
 
-    def to_json(self) -> str:
-        return _RESULT_WIRE_ADAPTER.dump_json(
-            {
-                "request_id": self.request_id,
-                "approved": self.approved,
-                "signal_json": self.signal_json,
-                "reason_code": self.reason_code,
-                "detail_json": self.detail_json,
-                "ts_event": self.ts_event,
-                "ts_init": self.ts_init,
-            }
-        ).decode()
 
-    @classmethod
-    def from_json(cls, value: str) -> DecisionResultData:
-        payload = _RESULT_WIRE_ADAPTER.validate_json(value)
-        return cls(**payload)
+
+register_custom_data_type(DecisionCandidateData)
+register_custom_data_type(DecisionResultData)

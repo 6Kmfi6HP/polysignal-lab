@@ -9,6 +9,7 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -26,8 +27,10 @@ from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     BatchArbitrationResult,
+    DecisionPolicy,
     RejectedDecision,
 )
+from polysignal_lab.nautilus_runtime.decision_policy_actor import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 from polysignal_lab.nautilus_runtime.strategies import DEFAULT_DATA_NAMES as COMPAT_DATA_NAMES
 
@@ -89,8 +92,9 @@ class FakeCore:
         self.state = dict(payload)
 
 
-class FakePolicy:
+class FakePolicy(DecisionPolicy):
     def __init__(self, approvals: list[bool] | None = None):
+        super().__init__()
         self.approvals = approvals or [True]
         self.calls: list[tuple[AlphaDecision, MarketView]] = []
 
@@ -116,6 +120,18 @@ class FakePolicy:
     def orderbook_trade_threshold_ms(self, strategy: str) -> float:
         _ = strategy
         return 60_000.0
+
+
+def _wire_decision_policy_actor(
+    strategy: PolySignalNativeStrategy,
+    policy: FakePolicy,
+) -> DecisionPolicyActor:
+    actor = DecisionPolicyActor(policy=policy)
+    actor_endpoint: Any = actor
+    strategy_endpoint: Any = strategy
+    actor_endpoint.publish_data = lambda _data_type, data: strategy.on_data(data)
+    strategy_endpoint.publish_data = lambda _data_type, data: actor.on_data(data)
+    return actor
 
 
 def _view() -> MarketView:
@@ -224,11 +240,9 @@ def test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data(
         assembler=FakeAssembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name=strategy_name,
-        policy=FakePolicy(),
         data_names=COMPAT_DATA_NAMES,
         registry=MarketCatalog(),
     )
-
     assert REQUIRED_DATA_NAMES.issubset(set(strategy.data_names))
 
 
@@ -239,7 +253,6 @@ def test_each_wrapper_preserves_custom_data_names(strategy_name: str) -> None:
         assembler=FakeAssembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name=strategy_name,
-        policy=FakePolicy(),
         data_names=("custom_feed",),
         registry=MarketCatalog(),
     )
@@ -266,12 +279,12 @@ def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved
     strategy = PolySignalNativeStrategy(
         core=core,
         assembler=FakeAssembler(view),
-        policy=policy,
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         fixed_stake_usdc=10.0,
         registry=MarketCatalog(),
     )
+    _policy_actor = _wire_decision_policy_actor(strategy, policy)
 
     def capture_submit(_strategy, _approved, **kwargs):
         order = FakeOrderFactory().limit(instrument_id="up-token", **kwargs)
@@ -293,13 +306,11 @@ def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved
 
 def test_stateful_core_round_trips_through_shared_state_codec() -> None:
     core = FakeCore([])
-    policy = FakePolicy()
     strategy = PolySignalNativeStrategy(
         core=core,
         assembler=FakeAssembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=policy,
         registry=MarketCatalog(),
     )
 
@@ -310,7 +321,6 @@ def test_stateful_core_round_trips_through_shared_state_codec() -> None:
         assembler=FakeAssembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
-        policy=policy,
         registry=MarketCatalog(),
     )
 

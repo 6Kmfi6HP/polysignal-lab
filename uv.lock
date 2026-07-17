@@ -872,10 +872,12 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "basedpyright" },
     { name = "httpx2" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "ruff" },
 ]
 nautilus = [
     { name = "nautilus-trader", extra = ["polymarket"] },
@@ -892,6 +894,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anyio", specifier = ">=4.0" },
+    { name = "basedpyright", marker = "extra == 'dev'", specifier = ">=1.39.8" },
     { name = "fastapi", specifier = ">=0.111" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.4" },
@@ -905,6 +908,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "python-telegram-bot", extras = ["rate-limiter"], specifier = ">=22.5" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.18" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "websockets", specifier = ">=12.0" },
 ]

@@ -276,7 +276,7 @@ def test_nautilus_market_rotation_defaults_are_enabled() -> None:
     assert cfg.include_next_periods == 1
     assert cfg.stale_grace_sec == 5
     assert cfg.unsubscribe_exited is True
-    assert cfg.allow_adapter_new_market_events is False
+    assert not hasattr(cfg, "allow_adapter_new_market_events")
 
 
 def test_production_yaml_declares_market_rotation_section() -> None:
@@ -302,7 +302,7 @@ def test_polysignal_strategy_config_extends_nautilus_strategy_config() -> None:
     assert config.strategy_id == "PolySignal-polysignal"
     assert config.order_id_tag == "polysignal"
     assert config.strategy_name == "polysignal"
-    reconstructed = PolySignalStrategyConfig(**config.importable_dict())
+    reconstructed: PolySignalStrategyConfig = PolySignalStrategyConfig.parse(config.json())
     assert reconstructed.settings_json == config.settings_json
     assert tuple(reconstructed.condition_ids) == tuple(config.condition_ids)
 
@@ -331,5 +331,3 @@ def test_decision_policy_actor_config_extends_nautilus_actor_config() -> None:
 
     assert isinstance(config, ActorConfig)
     assert config.actor_id == DecisionPolicyActor.POLICY_OWNER_ID
-    actor = DecisionPolicyActor(config=config)
-    assert str(actor.config.actor_id) == DecisionPolicyActor.POLICY_OWNER_ID

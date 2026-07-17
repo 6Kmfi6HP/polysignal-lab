@@ -17,6 +17,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
     PolySignalSpotData,
+    unwrap_custom_data,
 )
 from polysignal_lab.nautilus_runtime.strategy.data_boundary import DataBoundaryClassification
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
@@ -55,22 +56,23 @@ def route_strategy_data(
     *,
     classify: Callable[[object], DataBoundaryClassification],
 ) -> None:
-    if classify(data) is DataBoundaryClassification.DROPPED_FRAME:
+    payload = unwrap_custom_data(data)
+    if classify(payload) is DataBoundaryClassification.DROPPED_FRAME:
         strategy._note_runtime_progress("dropped_frame")
         return
     if handle_custom_data(
         strategy,
-        data,
+        payload,
         subscription_manager=strategy._subscription_manager,
     ):
         return
-    if isinstance(data, PolySignalMarketMetaData):
-        if handle_market_metadata(strategy, data):
+    if isinstance(payload, PolySignalMarketMetaData):
+        if handle_market_metadata(strategy, payload):
             return
-    if isinstance(data, PolySignalMarketUniverseData):
-        if handle_market_universe(strategy, data):
+    if isinstance(payload, PolySignalMarketUniverseData):
+        if handle_market_universe(strategy, payload):
             return
-    handle_generic_data(strategy, data)
+    handle_generic_data(strategy, payload)
 
 
 def handle_custom_data(

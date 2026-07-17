@@ -15,7 +15,7 @@ Pos: Application code
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, cast
 
@@ -23,18 +23,19 @@ from nautilus_trader.core.nautilus_pyo3 import ClientId, DataActor
 
 from polysignal_lab.config import Settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
+from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
-from polysignal_lab.data.state import MarketRegistry
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.spot import SpotPrice
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_bridge.spot_anchor_state import SpotAnchorState
 from polysignal_lab.nautilus_bridge.state import JsonValue, decode_state, encode_state
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
     PolySignalSpotData,
     SPOT_DATA_CLIENT_ID,
+    custom_data_type,
+    unwrap_custom_data,
 )
 from polysignal_lab.nautilus_runtime.market_discovery_worker import (
     MarketDiscoveryResult,
@@ -42,7 +43,6 @@ from polysignal_lab.nautilus_runtime.market_discovery_worker import (
 )
 from polysignal_lab.nautilus_runtime.sidecar_data import (
     CustomDataPublisher,
-    _data_type,
     market_metadata,
     timestamp_ns,
 )
@@ -50,6 +50,7 @@ from polysignal_lab.nautilus_runtime.sidecar_data import (
 logger = logging.getLogger("polysignal_lab.nautilus.market_rotation")
 
 REFRESH_TIMER_NAME = "market_rotation_refresh"
+REFRESH_POLL_INTERVAL = timedelta(seconds=1)
 
 
 _PriceToBeatSignature = tuple[float, str, bool, bool, str | None]
@@ -65,10 +66,20 @@ def _data_datetime(value: object, *, fallback: datetime) -> datetime:
     return datetime.fromtimestamp(timestamp_ns_value / 1_000_000_000, UTC)
 
 
-class _MarketUniverse(Protocol):
-    async def refresh_once(self) -> list[Market]: ...
-
-    def refresh_once_sync(self) -> list[Market]: ...
+def _build_discovery_worker(
+    settings: Settings,
+    startup_markets: tuple[Market, ...],
+) -> MarketDiscoveryWorker:
+    if settings.runtime.nautilus.execution_mode == "backtest":
+        return MarketDiscoveryWorker(lambda: startup_markets)
+    discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
+    rotation = settings.runtime.nautilus.market_rotation
+    return MarketDiscoveryWorker(
+        lambda: discovery.discover_sync(
+            include_next_periods=rotation.include_next_periods,
+            stale_grace_sec=rotation.stale_grace_sec,
+        )
+    )
 
 
 class _Health(Protocol):
@@ -87,14 +98,6 @@ _ROTATION_ACTOR_ID = "PolySignal-MarketRotation"
 
 
 class MarketRotationActor(DataActor):
-    """Single event source for market universe/metadata/PTB CustomData.
-
-    Local read-only projections:
-    - ``catalog`` (MarketCatalog business keys)
-    - ``markets_projection`` (MarketRegistry for reporting/Telegram)
-    - Strategy ``_active_condition_ids`` via published universe events
-    """
-
     state_name = "market_rotation"
 
     def __new__(cls, *args: object, **kwargs: object):
@@ -106,18 +109,11 @@ class MarketRotationActor(DataActor):
         *,
         settings: Settings | None = None,
         startup_markets: tuple[Market, ...] = (),
-        market_universe: _MarketUniverse | None = None,
-        catalog: MarketCatalog | None = None,
         discovery_worker: MarketDiscoveryWorker | None = None,
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
-        markets_projection: MarketRegistry | None = None,
     ) -> None:
         from nautilus_trader.core.nautilus_pyo3 import ActorId, DataActorConfig
-        from polysignal_lab.nautilus_runtime.node_builder_components import (
-            StaticMarketUniverse,
-            register_markets,
-        )
         from polysignal_lab.nautilus_runtime.runtime_configs import (
             MarketRotationActorConfig,
         )
@@ -125,14 +121,11 @@ class MarketRotationActor(DataActor):
         if isinstance(config, MarketRotationActorConfig) and settings is None:
             settings = config.settings()
             startup_markets = config.markets()
-            market_universe = StaticMarketUniverse(startup_markets)
-            catalog = MarketCatalog()
-            register_markets(catalog, startup_markets)
             config = DataActorConfig(actor_id=ActorId(str(config.actor_id)))
         elif config is None:
             config = DataActorConfig(actor_id=ActorId(_ROTATION_ACTOR_ID))
-        if settings is None or market_universe is None or catalog is None:
-            raise RuntimeError("MarketRotationActor requires settings, universe, catalog")
+        if settings is None:
+            raise RuntimeError("MarketRotationActor requires settings")
         DataActor.__init__(self, config)
         spot_source = settings.runtime.nautilus.sidecar.spot_source
         if spot_source not in {"disabled", "polymarket_rtds"}:
@@ -140,23 +133,14 @@ class MarketRotationActor(DataActor):
                 f"unsupported Nautilus sidecar spot source: {spot_source!r}"
             )
         self.settings: Settings = settings
-        self.market_universe: _MarketUniverse = market_universe
-        self.catalog: MarketCatalog = catalog
         self.health: _Health | None = health
-        self._markets_projection: MarketRegistry | None = markets_projection
-        if self._markets_projection is None:
-            self._markets_projection = cast(
-                MarketRegistry | None, getattr(market_universe, "markets", None)
-            )
-        self._discovery_worker = (
-            discovery_worker
-            if discovery_worker is not None
-            else MarketDiscoveryWorker(market_universe.refresh_once_sync)
+        self._discovery_worker = discovery_worker or _build_discovery_worker(
+            settings,
+            startup_markets,
         )
         self.publisher: CustomDataPublisher = CustomDataPublisher(publisher=self)
         # Spot history lives only inside SpotAnchorState (Actor-local).
         self._spot_state = SpotAnchorState(anchor_store)
-        self._anchor_store = anchor_store
         if settings.data.polymarket.use_crypto_price_api:
             raise ValueError(
                 "crypto-price API fallback is unsupported in MarketRotationActor; "
@@ -167,12 +151,10 @@ class MarketRotationActor(DataActor):
             anchor_store=anchor_store,
         )
         self._active_by_condition: dict[str, Market] = _markets_by_condition(startup_markets)
-        self._register_catalog_markets(self._active_by_condition.values())
-        self._project_markets(self._active_by_condition.values())
         self._epoch: int = 0
         self._requested_epoch: int = self._epoch
+        self._next_discovery_request_ns: int = 0
         self._last_published_ptb: dict[str, _PriceToBeatSignature] = {}
-        self._refresh_in_flight: bool = False
         self._loaded_from_state: bool = False
 
     def publish_data(self, data_type: object, data: object) -> None:
@@ -185,7 +167,7 @@ class MarketRotationActor(DataActor):
             timestamp = getattr(clock, "timestamp_ns", None)
             if callable(timestamp):
                 value = int(timestamp())
-                if value > 0:
+                if value >= 0:
                     return datetime.fromtimestamp(value / 1_000_000_000, UTC)
         except (NotImplementedError, RuntimeError, AttributeError):
             pass
@@ -197,24 +179,31 @@ class MarketRotationActor(DataActor):
     def on_start(self) -> None:
         if self.settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds":
             self.subscribe_data(
-                _data_type(PolySignalSpotData),
+                custom_data_type(PolySignalSpotData),
                 client_id=ClientId(SPOT_DATA_CLIENT_ID),
             )
-        # Always replay universe/metadata/PTB so late-starting strategies and
-        # post-reload subscribers converge on the Actor's active set.
         if self._epoch == 0:
             self._epoch = 1
             self._requested_epoch = max(self._requested_epoch, self._epoch)
         self._replay_active_runtime(phase="startup" if not self._loaded_from_state else "reload")
-        if self.settings.runtime.nautilus.market_rotation.enabled:
+        if (
+            self.settings.runtime.nautilus.market_rotation.enabled
+            and self.settings.runtime.nautilus.execution_mode != "backtest"
+        ):
             interval = max(int(self.settings.runtime.nautilus.market_rotation.interval_sec), 1)
+            next_epoch = max(self._epoch, self._requested_epoch) + 1
+            if self._discovery_worker.request(next_epoch):
+                self._requested_epoch = next_epoch
+            self._next_discovery_request_ns = (
+                timestamp_ns(self._framework_now()) + interval * 1_000_000_000
+            )
             clock = getattr(self, "clock", None)
             set_timer = getattr(clock, "set_timer", None)
             if not callable(set_timer):
                 raise RuntimeError("Nautilus actor clock is required for market rotation")
             _ = set_timer(
                 REFRESH_TIMER_NAME,
-                timedelta(seconds=interval),
+                REFRESH_POLL_INTERVAL,
                 callback=self._on_refresh_timer,
             )
 
@@ -237,8 +226,6 @@ class MarketRotationActor(DataActor):
                 if isinstance(item, Mapping):
                     markets.append(Market.model_validate(item))
             self._active_by_condition = _markets_by_condition(tuple(markets))
-            self._register_catalog_markets(self._active_by_condition.values())
-            self._project_markets(self._active_by_condition.values())
         epoch = payload.get("epoch")
         if isinstance(epoch, int) and epoch >= 0:
             self._epoch = epoch
@@ -248,8 +235,6 @@ class MarketRotationActor(DataActor):
 
     def _replay_active_runtime(self, *, phase: str) -> None:
         markets = self.active_markets()
-        self._register_catalog_markets(markets)
-        self._project_markets(markets)
         self._publish_market_universe(
             epoch=self._epoch,
             markets=markets,
@@ -259,7 +244,6 @@ class MarketRotationActor(DataActor):
         now = self._framework_now()
         for market in markets:
             self.publisher.publish_market_metadata(market_metadata(market, timestamp=now))
-        # Force PTB republish after late start / reload.
         self._last_published_ptb.clear()
         self._publish_price_to_beat_batch_sync(markets)
         self._mark_ok(
@@ -276,16 +260,6 @@ class MarketRotationActor(DataActor):
             len(self._active_by_condition),
         )
 
-    def _project_markets(self, markets: Iterable[Market]) -> None:
-        projection = self._markets_projection
-        if projection is None:
-            return
-        project_active = getattr(projection, "project_active", None)
-        if callable(project_active):
-            project_active(list(markets))
-            return
-        projection.upsert_many(list(markets))
-
     def on_stop(self) -> None:
         try:
             clock = getattr(self, "clock", None)
@@ -295,27 +269,6 @@ class MarketRotationActor(DataActor):
         finally:
             self._discovery_worker.close()
 
-    async def refresh_once(self) -> tuple[Market, ...]:
-        try:
-            refreshed_markets = tuple(await self.market_universe.refresh_once())
-            markets = self._apply_refreshed_markets(refreshed_markets)
-            self._publish_price_to_beat_batch_sync(markets)
-            return markets
-        except Exception as exc:
-            logger.exception("market_rotation phase=refresh failed epoch=%s", self._epoch)
-            self._mark_down(exc, phase="refresh")
-            return ()
-
-    def _register_catalog_markets(self, markets: Iterable[Market]) -> None:
-        for market in markets:
-            try:
-                self.catalog.register(MarketPairMeta.from_market(market))
-            except (TypeError, ValueError):
-                logger.warning(
-                    "market_rotation skipped non-binary catalog registration market=%s",
-                    getattr(market, "market_id", ""),
-                )
-
     def _apply_refreshed_markets(
         self,
         refreshed_markets: tuple[Market, ...],
@@ -323,7 +276,6 @@ class MarketRotationActor(DataActor):
         epoch: int | None = None,
     ) -> tuple[Market, ...]:
         current = _markets_by_condition(refreshed_markets)
-        self._register_catalog_markets(current.values())
         previous = self._active_by_condition
         if _universe_signature(current) == _universe_signature(previous):
             return self._finish_unchanged_refresh(current, epoch=epoch)
@@ -344,7 +296,6 @@ class MarketRotationActor(DataActor):
         self._publish_entered_market_metadata(current, entered_condition_ids)
         self._clear_exited_price_to_beat(exited_condition_ids)
         self._active_by_condition = current
-        self._project_markets(current.values())
         self._epoch = next_epoch
         self._mark_ok(
             active_count=len(current),
@@ -369,7 +320,6 @@ class MarketRotationActor(DataActor):
         epoch: int | None = None,
     ) -> tuple[Market, ...]:
         self._active_by_condition = current
-        self._project_markets(current.values())
         if epoch is not None:
             self._epoch = epoch
         markets = tuple(current.values())
@@ -416,15 +366,22 @@ class MarketRotationActor(DataActor):
             _ = self._last_published_ptb.pop(condition_id, None)
 
     def _on_refresh_timer(self, _event: object = None) -> None:
-        """Poll and apply discovery on the Actor thread, then request the next refresh."""
         result = self._discovery_worker.take_result()
         if result is not None:
             self._requested_epoch = max(self._requested_epoch, result.epoch)
             self._apply_discovery_result(result)
 
+        now_ns = timestamp_ns(self._framework_now())
+        if now_ns < self._next_discovery_request_ns:
+            return
         next_epoch = max(self._epoch, self._requested_epoch) + 1
         if self._discovery_worker.request(next_epoch):
             self._requested_epoch = next_epoch
+            interval = max(
+                int(self.settings.runtime.nautilus.market_rotation.interval_sec),
+                1,
+            )
+            self._next_discovery_request_ns = now_ns + interval * 1_000_000_000
 
     def _apply_discovery_result(self, result: MarketDiscoveryResult) -> None:
         if result.epoch <= self._epoch:
@@ -449,29 +406,24 @@ class MarketRotationActor(DataActor):
             )
             self._mark_down(exc, phase="refresh_apply", result_epoch=result.epoch)
 
-    async def _refresh_async(self) -> None:
-        """Async entry point retained for tests and direct callers."""
-        if self._refresh_in_flight:
-            return
-        self._refresh_in_flight = True
-        try:
-            _ = await self.refresh_once()
-        except Exception:
-            return
-        finally:
-            self._refresh_in_flight = False
-
     def on_data(self, data: object) -> None:
-        if not isinstance(data, PolySignalSpotData):
+        payload = unwrap_custom_data(data)
+        if not isinstance(payload, PolySignalSpotData):
             return
-        received_at = _data_datetime(getattr(data, "ts_init", 0), fallback=self._framework_now())
-        event_time = _data_datetime(getattr(data, "ts_event", 0), fallback=received_at)
+        received_at = _data_datetime(
+            getattr(payload, "ts_init", 0),
+            fallback=self._framework_now(),
+        )
+        event_time = _data_datetime(
+            getattr(payload, "ts_event", 0),
+            fallback=received_at,
+        )
         self._on_spot(
             SpotPrice(
-                asset=data.asset,
-                symbol=data.symbol,
-                price=float(data.price),
-                source=data.source,
+                asset=payload.asset,
+                symbol=payload.symbol,
+                price=float(payload.price),
+                source=payload.source,
                 event_time=event_time,
                 received_at=received_at,
             )

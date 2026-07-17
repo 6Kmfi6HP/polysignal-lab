@@ -1,6 +1,6 @@
 """
 Input: __future__, asyncio, inspect, logging, contextlib, collections.abc, typing
-Output: CLI sidecar helpers — Telegram is isolated read-only external; reporting is Nautilus Actor
+Output: CLI lifecycle helpers for the native node and external notifications
 Pos: Application code
 
 Self-reference: When this file changes, update this header
@@ -18,7 +18,6 @@ from typing import cast
 from polysignal_lab.config import Settings
 from polysignal_lab.nautilus_runtime.node_builder import (
     NautilusRuntimeBundle,
-    NautilusRuntimeContext,
     _Disposable,
 )
 from polysignal_lab.nautilus_runtime.node_crash import (
@@ -26,10 +25,6 @@ from polysignal_lab.nautilus_runtime.node_crash import (
     _install_crash_logger,
 )
 from polysignal_lab.nautilus_runtime.signal_sidecar import (
-    _InteractiveTelegramBotThread,
-    _run_interactive_telegram_bot_until_stop,
-    _start_interactive_telegram_bot_thread,
-    _stop_interactive_telegram_bot_thread,
     _stop_nautilus_services,
 )
 
@@ -37,32 +32,15 @@ logger = logging.getLogger("polysignal_lab.nautilus_runtime.node_sidecar")
 
 
 def _strategy_names_from_bundle(bundle: NautilusRuntimeBundle) -> list[str]:
-    configured = bundle.components.get("strategy_names", ())
-    if isinstance(configured, Sequence):
-        names = [str(name) for name in configured if str(name)]
-        if names:
-            return names
-    strategies = bundle.components.get("strategies", ())
-    strategy_sequence: Sequence[object] = (
-        strategies
-        if isinstance(strategies, Sequence)
-        else ()
-    )
-    return [str(getattr(strategy, "strategy_name", "")) for strategy in strategy_sequence]
+    return [str(name) for name in bundle.strategy_names if str(name)]
 
 
-async def _start_async_cli_sidecars(
+async def _start_runtime_observability(
     bundle: NautilusRuntimeBundle,
-    telegram_stop: asyncio.Event,
-) -> asyncio.Task[None] | None:
-    """Start isolated read-only Telegram bot only (reporting runs in Nautilus Actor)."""
+) -> None:
     starter = getattr(bundle.observability, "start", None)
     if callable(starter):
         _ = starter()
-    bot = bundle.context.telegram_bot
-    if bot is None:
-        return None
-    return asyncio.create_task(_run_interactive_telegram_bot_until_stop(bot, telegram_stop))
 
 
 async def _notify_async_cli_startup(
@@ -70,9 +48,6 @@ async def _notify_async_cli_startup(
     strategy_names: Sequence[str],
     runtime_logger: logging.Logger,
 ) -> None:
-    from polysignal_lab.nautilus_runtime.node_shared import _rebind_market_discovery_client
-
-    await asyncio.to_thread(_rebind_market_discovery_client, bundle.context)
     try:
         await bundle.observability.notify_startup(
             strategy_names,
@@ -106,13 +81,10 @@ async def _stop_node_async(node: object) -> None:
         await result
 
 
-async def _run_async_node_with_report_loop(
+async def _run_async_node_until_stop(
     node: object,
-    context: NautilusRuntimeContext,
     event: asyncio.Event,
 ) -> None:
-    """Run LiveNode until stop; reporting/settlement is owned by ReportingHousekeepingActor."""
-    _ = context
     try:
         run_task = asyncio.create_task(_run_node_async(node))
         stop_waiter = asyncio.create_task(event.wait())
@@ -145,17 +117,11 @@ async def _run_async_node_with_report_loop(
 async def _finalize_async_cli_runtime(
     bundle: NautilusRuntimeBundle,
     event: asyncio.Event,
-    telegram_stop: asyncio.Event,
-    telegram_task: asyncio.Task[None] | None,
     runtime_logger: logging.Logger,
     cleanup_signals: Callable[[], None],
 ) -> None:
     try:
         event.set()
-        telegram_stop.set()
-        if telegram_task is not None:
-            with suppress(asyncio.CancelledError):
-                await telegram_task
         try:
             await bundle.observability.notify_shutdown()
         except Exception:
@@ -174,12 +140,10 @@ def _run_sync_cli_main(
     settings: Settings,
     strategy_names: list[str],
     runtime_logger: logging.Logger,
-) -> _InteractiveTelegramBotThread | None:
+) -> None:
     starter = getattr(bundle.observability, "start", None)
     if callable(starter):
         _ = starter()
-    # Isolated read-only external process: Telegram never owns trading state.
-    telegram_bot_thread = _start_interactive_telegram_bot_thread(bundle.context)
     try:
         asyncio.run(
             bundle.observability.notify_startup(
@@ -202,17 +166,14 @@ def _run_sync_cli_main(
             "LiveNode.run returned unexpectedly with %d strategies active",
             len(strategy_names),
         )
-    return telegram_bot_thread
 
 
 def _finalize_sync_cli_runtime(
     bundle: NautilusRuntimeBundle,
     node: object,
-    telegram_bot_thread: _InteractiveTelegramBotThread | None,
     runtime_logger: logging.Logger,
     cleanup_signals: Callable[[], None],
 ) -> None:
-    _stop_interactive_telegram_bot_thread(telegram_bot_thread)
     try:
         try:
             asyncio.run(bundle.observability.notify_shutdown())

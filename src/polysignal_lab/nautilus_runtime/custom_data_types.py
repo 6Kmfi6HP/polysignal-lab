@@ -1,6 +1,6 @@
 """
-Input: __future__, collections.abc, dataclasses, types, typing, pyarrow, nautilus_trader.core.data, nautilus_trader.model.custom
-Output: PolySignalSpotData, PolySignalPriceToBeatData, PolySignalMarketMetaData, PolySignalMarketUniverseData
+Input: __future__, collections.abc, dataclasses, types, typing, pyarrow, nautilus_trader.core, nautilus_trader.core.data, nautilus_trader.model.custom, nautilus_trader.model.data
+Output: PolySignalSpotData, PolySignalPriceToBeatData, PolySignalMarketMetaData, PolySignalMarketUniverseData, custom_data_type, wrap_custom_data, unwrap_custom_data
 Pos: Application code
 
 Self-reference: When this file changes, update this header
@@ -8,17 +8,23 @@ Self-reference: When this file changes, update this header
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import field
 from types import MappingProxyType
+from typing import cast
 
 import pyarrow as pa
+from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.core.data import Data
-from nautilus_trader.model.custom import customdataclass
+from nautilus_trader.model.custom import customdataclass_pyo3
+from nautilus_trader.model.data import CustomData as CythonCustomData
 
-_polysignal_data_types_registered = False
 SPOT_DATA_CLIENT_ID = "POLYSIGNAL_SPOT"
 SIDECAR_DATA_CLIENT_ID = "POLYSIGNAL_SIDECAR"
+_register_custom_data_class = cast(
+    Callable[[type[object]], None],
+    getattr(nautilus_pyo3, "register_custom_data_class"),
+)
 
 # Registration-only schema so @customdataclass skips auto-schema generation
 # (project field types include unions/tuples/mappings that auto-schema rejects).
@@ -70,7 +76,7 @@ class _FrozenData:
 # Data types
 
 
-@customdataclass
+@customdataclass_pyo3()
 class PolySignalSpotData(Data, _FrozenData):
     """A single spot price observation from a data source."""
 
@@ -87,7 +93,7 @@ class PolySignalSpotData(Data, _FrozenData):
         object.__setattr__(self, "_frozen", True)
 
 
-@customdataclass
+@customdataclass_pyo3()
 class PolySignalPriceToBeatData(Data, _FrozenData):
     """A price-to-beat observation used for consensus / anchor comparison."""
 
@@ -106,7 +112,7 @@ class PolySignalPriceToBeatData(Data, _FrozenData):
         object.__setattr__(self, "_frozen", True)
 
 
-@customdataclass
+@customdataclass_pyo3()
 class PolySignalMarketMetaData(Data, _FrozenData):
     """Metadata for a prediction market (Polymarket condition)."""
 
@@ -130,7 +136,7 @@ class PolySignalMarketMetaData(Data, _FrozenData):
         object.__setattr__(self, "_frozen", True)
 
 
-@customdataclass
+@customdataclass_pyo3()
 class PolySignalMarketUniverseData(Data, _FrozenData):
     """Snapshot of active, entered, and exited conditions at an epoch."""
 
@@ -146,29 +152,14 @@ class PolySignalMarketUniverseData(Data, _FrozenData):
     to_arrow = _unsupported_arrow
     from_arrow = classmethod(_unsupported_arrow)
 
-    def __init__(  # pyright: ignore[reportMissingSuperCall]
-        self,
-        epoch: int = 0,
-        active_condition_ids: tuple[str, ...] = (),
-        entered_condition_ids: tuple[str, ...] = (),
-        exited_condition_ids: tuple[str, ...] = (),
-        condition_to_up_token: dict[str, str] | None = None,
-        condition_to_down_token: dict[str, str] | None = None,
-        condition_to_asset: dict[str, str] | None = None,
-        condition_to_timeframe: dict[str, str] | None = None,
-        ts_event: int = 0,
-        ts_init: int = 0,
-    ) -> None:
-        self.epoch = int(epoch)
-        self.active_condition_ids = tuple(active_condition_ids)
-        self.entered_condition_ids = tuple(entered_condition_ids)
-        self.exited_condition_ids = tuple(exited_condition_ids)
-        self.condition_to_up_token = MappingProxyType(dict(condition_to_up_token or {}))
-        self.condition_to_down_token = MappingProxyType(dict(condition_to_down_token or {}))
-        self.condition_to_asset = MappingProxyType(dict(condition_to_asset or {}))
-        self.condition_to_timeframe = MappingProxyType(dict(condition_to_timeframe or {}))
-        self._ts_event = int(ts_event)
-        self._ts_init = int(ts_init)
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "active_condition_ids", tuple(self.active_condition_ids))
+        object.__setattr__(self, "entered_condition_ids", tuple(self.entered_condition_ids))
+        object.__setattr__(self, "exited_condition_ids", tuple(self.exited_condition_ids))
+        object.__setattr__(self, "condition_to_up_token", MappingProxyType(dict(self.condition_to_up_token)))
+        object.__setattr__(self, "condition_to_down_token", MappingProxyType(dict(self.condition_to_down_token)))
+        object.__setattr__(self, "condition_to_asset", MappingProxyType(dict(self.condition_to_asset)))
+        object.__setattr__(self, "condition_to_timeframe", MappingProxyType(dict(self.condition_to_timeframe)))
         object.__setattr__(self, "_frozen", True)
 
     def to_dict(self) -> dict[str, object]:
@@ -252,3 +243,30 @@ def _require_str_mapping(value: object, field_name: str) -> dict[str, str]:
             raise TypeError(f"{field_name} must contain only string keys and values")
         items[key] = item
     return items
+
+
+def custom_data_type(payload_cls: type[object]) -> nautilus_pyo3.DataType:
+    return nautilus_pyo3.DataType(payload_cls.__name__)
+
+
+def wrap_custom_data(payload: object) -> nautilus_pyo3.CustomData:
+    return nautilus_pyo3.CustomData(custom_data_type(type(payload)), payload)
+
+
+def unwrap_custom_data(data: object) -> object:
+    if isinstance(data, nautilus_pyo3.CustomData | CythonCustomData):
+        return getattr(data, "data")
+    return data
+
+
+def register_custom_data_type(payload_cls: type[object]) -> None:
+    _register_custom_data_class(payload_cls)
+
+
+for _payload_cls in (
+    PolySignalSpotData,
+    PolySignalPriceToBeatData,
+    PolySignalMarketMetaData,
+    PolySignalMarketUniverseData,
+):
+    register_custom_data_type(_payload_cls)

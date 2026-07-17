@@ -106,23 +106,21 @@ async def test_runtime_owns_scoped_signal_publisher_lifecycle(
     assert publishers[1].closed is True
 
 
-def test_nautilus_runtime_does_not_construct_legacy_orderbook_for_telegram(
-    monkeypatch: pytest.MonkeyPatch,
+def test_nautilus_runtime_context_has_no_parallel_market_registry(tmp_path) -> None:
+    runtime = build_nautilus_runtime_context(Settings(), base_dir=tmp_path)
+
+    assert not hasattr(runtime, "markets")
+    assert runtime.publish_service.market_lookup is None
+
+
+def test_nautilus_runtime_rejects_unreachable_interactive_telegram_control(
     tmp_path,
 ) -> None:
-    captured: dict[str, object] = {}
-
-    class FakeBot:
-        def __init__(self, **kwargs: object) -> None:
-            captured.update(kwargs)
-
-    monkeypatch.setattr("polysignal_lab.publish.telegram_bot.TelegramBotService", FakeBot)
     settings = Settings()
     settings.telegram.interactive_enabled = True
 
-    build_nautilus_runtime_context(settings, base_dir=tmp_path)
-
-    assert captured["books"] is None
+    with pytest.raises(RuntimeError, match="interactive Telegram control"):
+        build_nautilus_runtime_context(settings, base_dir=tmp_path)
 
 
 def test_telegram_qa_default_message_is_compact() -> None:

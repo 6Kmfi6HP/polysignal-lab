@@ -1,14 +1,9 @@
-"""Nautilus-native backtest engine composition.
-
-Strategy registration is intentionally left to the caller so sandbox, live,
-and backtest paths can register the same Strategy class.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 from polysignal_lab.config import Settings, load_settings
+from polysignal_lab.domain.market import Market
 
 
 def build_backtest_engine(
@@ -17,8 +12,9 @@ def build_backtest_engine(
     instruments: Sequence[object] = (),
     quotes: Sequence[object] = (),
     data: Sequence[object] | None = None,
+    markets: Sequence[Market] = (),
+    condition_ids: Sequence[str] = (),
 ) -> object:
-    """Build a pyo3 BacktestEngine without importing live transport modules."""
     if settings is None:
         settings = load_settings()
     from nautilus_trader.core import nautilus_pyo3 as pyo3
@@ -46,4 +42,14 @@ def build_backtest_engine(
     source = list(data if data is not None else quotes)
     if source:
         engine.add_data(source)
+    from polysignal_lab.nautilus_runtime.runtime_registration import (
+        register_runtime_components,
+    )
+
+    register_runtime_components(
+        engine,
+        settings,
+        markets=markets,
+        condition_ids=condition_ids,
+    )
     return engine

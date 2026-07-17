@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Final
+from collections.abc import Callable, Sequence
+from typing import Final, cast
 
 from nautilus_trader.common.config import ActorConfig
 from nautilus_trader.core import nautilus_pyo3
-from nautilus_trader.core.nautilus_pyo3 import ActorId, DataActor, Signal
+from nautilus_trader.core.nautilus_pyo3 import ActorId, DataActor
 
 from polysignal_lab.config import Settings
+from polysignal_lab.nautilus_runtime.custom_data_types import (
+    custom_data_type,
+    unwrap_custom_data,
+    wrap_custom_data,
+)
 from polysignal_lab.nautilus_runtime.decision_messages import (
-    DECISION_CANDIDATE_SIGNAL,
-    DECISION_RESULT_SIGNAL,
     DecisionCandidateData,
     DecisionResultData,
 )
@@ -79,12 +82,12 @@ class DecisionPolicyActor(DataActor):
         self._pending_batches: dict[str, dict[int, DecisionCandidateData]] = {}
 
     def on_start(self) -> None:
-        self.subscribe_signal(DECISION_CANDIDATE_SIGNAL)
+        self.subscribe_data(custom_data_type(DecisionCandidateData))
 
-    def on_signal(self, signal: Signal) -> None:
-        if signal.name != DECISION_CANDIDATE_SIGNAL or not isinstance(signal.value, str):
+    def on_data(self, data: object) -> None:
+        payload = unwrap_custom_data(data)
+        if not isinstance(payload, DecisionCandidateData):
             return
-        payload = DecisionCandidateData.from_json(signal.value)
         if payload.batch_size < 1 or not 0 <= payload.batch_index < payload.batch_size:
             self._publish_rejection(payload, "INVALID_BATCH_METADATA")
             return
@@ -170,10 +173,13 @@ class DecisionPolicyActor(DataActor):
         self._publish(result)
 
     def _publish(self, result: DecisionResultData) -> None:
-        self.publish_signal(
-            DECISION_RESULT_SIGNAL,
-            result.to_json(),
-            result.ts_event,
+        publish_data = cast(
+            Callable[[object, object], None],
+            object.__getattribute__(self, "publish_data"),
+        )
+        publish_data(
+            custom_data_type(DecisionResultData),
+            wrap_custom_data(result),
         )
 
 

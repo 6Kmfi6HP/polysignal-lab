@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -20,7 +21,6 @@ from polysignal_lab.nautilus_runtime.live_node import (
     LIVE_EXEC_CLIENT_ID,
     SANDBOX_EXEC_CLIENT_ID,
     POLYMARKET_CLIENT_ID,
-    NautilusNodeHandle,
     assert_no_live_polymarket_execution,
     build_cache_config,
     build_exec_engine_config,
@@ -56,7 +56,8 @@ class FakePolymarketExecutionClientFactory:
 
 
 class FakeLiveNode:
-    def __init__(self) -> None:
+    def __init__(self, builder: FakeLiveNodeBuilder) -> None:
+        self.builder = builder
         self.started = False
         self.stopped = False
 
@@ -118,9 +119,7 @@ class FakeLiveNodeBuilder:
         return self
 
     def build(self) -> FakeLiveNode:
-        node = FakeLiveNode()
-        node.builder = self  # type: ignore[attr-defined]
-        return node
+        return FakeLiveNode(self)
 
 
 class FakeLiveNodeType:
@@ -251,21 +250,20 @@ def test_build_sandbox_live_node_uses_polymarket_data_and_sandbox_exec(
     settings.trading.starting_balance_usdc = 1234.0
     instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 
-    handle = build_sandbox_live_node(settings, instrument_config=instrument_config)
+    node = build_sandbox_live_node(settings, instrument_config=instrument_config)
 
-    assert isinstance(handle, NautilusNodeHandle)
-    config = handle.config
-    assert getattr(config, "trader_id") == "TraderId:PolySignal-Nautilus-001"
-    assert getattr(config, "environment") == "SANDBOX"
-    assert getattr(config, "data_clients")[POLYMARKET_CLIENT_ID] is not None
-    assert getattr(config, "exec_clients")[SANDBOX_EXEC_CLIENT_ID] is not None
-    assert handle.data_client_factories[0][0] == POLYMARKET_CLIENT_ID
-    assert handle.exec_client_factories[0][0] == SANDBOX_EXEC_CLIENT_ID
+    assert isinstance(node, FakeLiveNode)
+    builder = node.builder
+    assert builder.name == "PolySignal-Nautilus-001"
+    assert builder.trader_id == "TraderId:PolySignal-Nautilus-001"
+    assert builder.environment == "SANDBOX"
+    assert builder.data_clients[0][0] == POLYMARKET_CLIENT_ID
+    assert builder.exec_clients[0][0] == SANDBOX_EXEC_CLIENT_ID
     assert SANDBOX_EXEC_CLIENT_ID != POLYMARKET_CLIENT_ID
-    assert getattr(config.exec_engine, "reconciliation") is False
+    assert getattr(builder.kwargs["exec_engine"], "reconciliation") is False
 
-    data_config = config.data_clients[POLYMARKET_CLIENT_ID]
-    exec_config = config.exec_clients[SANDBOX_EXEC_CLIENT_ID]
+    data_config = builder.data_clients[0][2]
+    exec_config = builder.exec_clients[0][2]
     assert getattr(data_config, "instrument_config") is instrument_config
     assert str(getattr(exec_config, "venue")).endswith(POLYMARKET_CLIENT_ID)
 
@@ -279,12 +277,13 @@ def test_build_sandbox_live_node_uses_official_rtds_via_polymarket_config(
     settings.data.polymarket.rtds_assets = ("BTC", "ETH")
     instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 
-    handle = build_sandbox_live_node(settings, instrument_config=instrument_config)
+    node = build_sandbox_live_node(settings, instrument_config=instrument_config)
 
-    assert set(handle.config.data_clients) == {"POLYMARKET", "POLYSIGNAL_SPOT"}
-    market_config = handle.config.data_clients[POLYMARKET_CLIENT_ID]
+    builder = cast(FakeLiveNode, node).builder
+    assert [item[0] for item in builder.data_clients] == ["POLYMARKET", "POLYSIGNAL_SPOT"]
+    market_config = builder.data_clients[0][2]
     assert getattr(market_config, "base_url_rtds") == settings.data.polymarket.rtds_ws_url
-    assert handle.data_client_factories[1][0] == "POLYSIGNAL_SPOT"
+    assert builder.data_clients[1][0] == "POLYSIGNAL_SPOT"
 
 
 def test_build_polymarket_data_client_config_uses_dynamic_loading_without_bulk_refresh(
@@ -292,7 +291,6 @@ def test_build_polymarket_data_client_config_uses_dynamic_loading_without_bulk_r
 ) -> None:
     _patch_live_node_fakes(monkeypatch)
     settings = Settings()
-    settings.runtime.nautilus.market_rotation.allow_adapter_new_market_events = True
     instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 
     polymarket = build_polymarket_data_client_config(settings, instrument_config=instrument_config)
@@ -301,7 +299,7 @@ def test_build_polymarket_data_client_config_uses_dynamic_loading_without_bulk_r
     assert getattr(polymarket, "auto_load_missing_instruments") is True
     assert getattr(polymarket, "auto_load_debounce_ms") == 100
     assert getattr(polymarket, "auto_load_max_retries") == 12
-    assert getattr(polymarket, "subscribe_new_markets") is True
+    assert getattr(polymarket, "subscribe_new_markets") is False
     assert getattr(polymarket, "update_instruments_interval_mins") == 0
 
 
@@ -310,12 +308,13 @@ def test_build_sandbox_live_node_bounds_cache_config(
 ) -> None:
     _patch_live_node_fakes(monkeypatch)
 
-    handle = build_sandbox_live_node(
+    node = build_sandbox_live_node(
         Settings(),
         instrument_config=SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"})),
     )
 
-    cache = handle.config.cache
+    builder = cast(FakeLiveNode, node).builder
+    cache = builder.kwargs["cache"]
     assert getattr(cache, "attr_name") == "CacheConfig"
 
 
@@ -425,16 +424,15 @@ def test_live_execution_node_registers_official_factory_only_after_all_gates(
     for name, value in credentials.items():
         monkeypatch.setenv(name, value)
 
-    handle = build_live_execution_node(
+    node = build_live_execution_node(
         settings,
         instrument_config=SimpleNamespace(load_ids=frozenset()),
     )
 
-    assert set(handle.config.exec_clients) == {LIVE_EXEC_CLIENT_ID}
-    assert getattr(handle.config.exec_engine, "reconciliation") is True
-    assert handle.exec_client_factories == [
-        (LIVE_EXEC_CLIENT_ID, FakePolymarketExecutionClientFactory)
-    ]
+    builder = cast(FakeLiveNode, node).builder
+    assert [item[0] for item in builder.exec_clients] == [LIVE_EXEC_CLIENT_ID]
+    assert getattr(builder.kwargs["exec_engine"], "reconciliation") is True
+    assert isinstance(builder.exec_clients[0][1], FakePolymarketExecutionClientFactory)
 
 
 def test_locked_pyo3_composition_has_no_signature_fallbacks() -> None:
@@ -470,23 +468,14 @@ async def test_run_nautilus_cli_async_starts_and_stops_observability_writer(
         def run(self):
             return None
 
-    async def _stop_scheduler(*args, **kwargs):
-        _ = args, kwargs
-        calls.append("scheduler_stop")
-
     async def fake_build(settings=None):
         _ = settings
         return SimpleNamespace(
             node=FakeNode(),
             websocket_tasks=[],
-            context=SimpleNamespace(settings=settings, telegram_bot=None),
-            scheduler=SimpleNamespace(
-                stop=_stop_scheduler,
-                settings=settings,
-                wallet=object(),
-            ),
+            context=SimpleNamespace(settings=settings),
             observability=FakeObservability(),
-            components={"strategies": []},
+            strategy_names=(),
         )
 
     async def fake_to_thread(fn, *args):

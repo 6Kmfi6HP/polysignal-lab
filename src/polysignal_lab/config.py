@@ -252,7 +252,6 @@ class NautilusMarketRotationConfig(BaseModel):
     include_next_periods: int = 1
     stale_grace_sec: int = 5
     unsubscribe_exited: bool = True
-    allow_adapter_new_market_events: bool = False
 
 
 class NautilusStatePersistenceConfig(BaseModel):

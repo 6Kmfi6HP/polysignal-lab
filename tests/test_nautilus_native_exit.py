@@ -16,11 +16,48 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 
-from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView
-from polysignal_lab.domain.freshness import FreshnessPolicy
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
+from polysignal_lab.alpha.types import (
+    AlphaDecision,
+    FreshnessView,
+    MarketView,
+    SideBookView,
+)
+from polysignal_lab.nautilus_runtime.decision_policy import (
+    ApprovedDecision,
+    BatchArbitrationResult,
+    DecisionPolicy,
+    candidate_from_decision,
+)
+from polysignal_lab.nautilus_runtime.decision_policy_actor import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+
+class _AllowAllDecisionPolicy(DecisionPolicy):
+    def batch_arbitrate(
+        self,
+        decisions: list[tuple[AlphaDecision, MarketView]],
+    ) -> BatchArbitrationResult:
+        return BatchArbitrationResult(decision for decision, _ in decisions)
+
+    def decide(
+        self,
+        decision: AlphaDecision,
+        view: MarketView,
+    ) -> ApprovedDecision:
+        return ApprovedDecision(signal=candidate_from_decision(decision, view))
+
+
+def _wire_decision_policy_actor(
+    strategy: PolySignalNativeStrategy,
+) -> DecisionPolicyActor:
+    actor = DecisionPolicyActor(policy=_AllowAllDecisionPolicy())
+    actor_endpoint: Any = actor
+    strategy_endpoint: Any = strategy
+    actor_endpoint.publish_data = lambda _data_type, data: strategy.on_data(data)
+    strategy_endpoint.publish_data = lambda _data_type, data: actor.on_data(data)
+    return actor
 
 
 def _native_strategy() -> PolySignalNativeStrategy:
@@ -76,7 +113,6 @@ def _native_strategy() -> PolySignalNativeStrategy:
         assembler=Assembler(),
         condition_ids=("condition-1",),
         strategy_name="test",
-        policy=DecisionPolicy(),
         registry=Registry(),
         instrument_id_resolver=lambda value: value,
     )
@@ -182,11 +218,6 @@ def test_native_exit_runs_when_opposite_book_exceeds_trade_freshness() -> None:
         assembler=Assembler(),
         condition_ids=("condition-1",),
         strategy_name="ptb_diff",
-        policy=DecisionPolicy(
-            strategy_freshness_policies={
-                "ptb_diff": FreshnessPolicy(max_orderbook_staleness_ms=30_000)
-            }
-        ),
         registry=Registry(),
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         exit_model=SimpleNamespace(
@@ -201,6 +232,7 @@ def test_native_exit_runs_when_opposite_book_exceeds_trade_freshness() -> None:
     strategy.cache = Cache()
     strategy.order_factory = OrderFactory()
     strategy.submitted = []
+    _policy_actor = _wire_decision_policy_actor(strategy)
 
     strategy.evaluate_condition("condition-1", created_at=now)
 
@@ -562,7 +594,6 @@ def test_native_exit_uses_per_position_take_profit_threshold() -> None:
         assembler=Assembler(),
         condition_ids=("condition-1",),
         strategy_name="ptb_diff",
-        policy=DecisionPolicy(),
         registry=Registry(),
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         exit_model=SimpleNamespace(
@@ -577,6 +608,7 @@ def test_native_exit_uses_per_position_take_profit_threshold() -> None:
     strategy.cache = Cache()
     strategy.order_factory = OrderFactory()
     strategy.submitted = []
+    _policy_actor = _wire_decision_policy_actor(strategy)
     strategy.evaluate_condition("condition-1", created_at=now)
 
     assert len(strategy.submitted) == 1
@@ -712,7 +744,6 @@ def test_native_exit_flip_stop_uses_stamped_stop_price() -> None:
         assembler=Assembler(),
         condition_ids=("condition-1",),
         strategy_name="late_consensus",
-        policy=DecisionPolicy(),
         registry=Registry(),
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
         exit_model=SimpleNamespace(
@@ -727,6 +758,7 @@ def test_native_exit_flip_stop_uses_stamped_stop_price() -> None:
     strategy.cache = Cache()
     strategy.order_factory = OrderFactory()
     strategy.submitted = []
+    _policy_actor = _wire_decision_policy_actor(strategy)
     strategy.evaluate_condition("condition-1", created_at=now)
 
     assert len(strategy.submitted) == 1

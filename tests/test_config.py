@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.domain.enums import TradeResultStatus
-from polysignal_lab.nautilus_runtime.strategy_builder import _build_nautilus_config_strategy_schedule
+from polysignal_lab.nautilus_runtime.runtime_registration import enabled_strategy_names
 
 
 def test_load_settings_records_explicit_strategy_names(tmp_path: Path) -> None:
@@ -72,10 +72,10 @@ def test_default_rtds_assets_cover_default_market_assets() -> None:
 
 
 def _enabled_strategy_names(settings: Settings) -> list[str]:
-    return [entry.name for entry in _build_nautilus_config_strategy_schedule(settings)]
+    return list(enabled_strategy_names(settings))
 
 
-def test_strategy_schedule_builds_default_configured_strategies() -> None:
+def test_enabled_strategy_names_builds_default_configured_strategies() -> None:
     settings = load_settings("config/signal_bot.yaml")
 
     assert _enabled_strategy_names(settings) == [

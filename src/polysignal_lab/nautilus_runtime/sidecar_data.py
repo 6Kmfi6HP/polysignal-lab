@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, importlib, importlib.import_module, typing, typing.Callable, typing.Protocol
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, typing, typing.Protocol
 Output: market_metadata, timestamp_ns, _Publisher, CustomDataPublisher
 Pos: Application code
 
@@ -16,8 +16,7 @@ Pos: Application code
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from importlib import import_module
-from typing import Callable, Protocol, cast
+from typing import Protocol
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
@@ -25,21 +24,13 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
+    custom_data_type,
+    wrap_custom_data,
 )
 
 
 class _Publisher(Protocol):
     def publish_data(self, data_type: object, data: object) -> None: ...
-
-
-def _data_type(payload_cls: type[object]) -> object:
-    """Return ``DataType(payload_cls)`` when Nautilus is installed, else the class itself."""
-    try:
-        module = import_module("nautilus_trader.model.data")
-    except ModuleNotFoundError:
-        return payload_cls
-    data_type_cls = cast(Callable[[type[object]], object], getattr(module, "DataType"))
-    return data_type_cls(payload_cls)
 
 
 class CustomDataPublisher:
@@ -70,13 +61,22 @@ class CustomDataPublisher:
             ts_event=ts_event,
             ts_init=ts_init,
         )
-        self.publisher.publish_data(_data_type(PolySignalPriceToBeatData), data)
+        self.publisher.publish_data(
+            custom_data_type(PolySignalPriceToBeatData),
+            wrap_custom_data(data),
+        )
 
     def publish_market_metadata(self, meta: PolySignalMarketMetaData) -> None:
-        self.publisher.publish_data(_data_type(PolySignalMarketMetaData), meta)
+        self.publisher.publish_data(
+            custom_data_type(PolySignalMarketMetaData),
+            wrap_custom_data(meta),
+        )
 
     def publish_market_universe(self, data: PolySignalMarketUniverseData) -> None:
-        self.publisher.publish_data(_data_type(PolySignalMarketUniverseData), data)
+        self.publisher.publish_data(
+            custom_data_type(PolySignalMarketUniverseData),
+            wrap_custom_data(data),
+        )
 
 
 def market_metadata(

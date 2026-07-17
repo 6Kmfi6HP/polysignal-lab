@@ -11,7 +11,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from polysignal_lab.alpha.types import AlphaCore
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
 
@@ -43,11 +42,10 @@ def test_static_native_strategy_initializes_nautilus_base() -> None:
         condition_ids=(),
         strategy_name="polysignal",
         registry=_FakeRegistry(),  # type: ignore[arg-type]
-        policy=DecisionPolicy(),
     )
 
     assert strategy.strategy_name == "polysignal"
     assert hasattr(strategy, "strategy_id")
     assert isinstance(strategy.core, _FakeCore)
-    assert isinstance(strategy.policy, DecisionPolicy)
+    assert not hasattr(strategy, "policy")
     _ = AlphaCore, SimpleNamespace  # keep alpha protocol import used for typing intent

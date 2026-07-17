@@ -12,10 +12,17 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Protocol, cast
+
+from nautilus_trader.core.nautilus_pyo3 import (
+    BookType as _Pyo3BookType,
+    ClientId as _Pyo3ClientId,
+    DataType as _Pyo3DataType,
+    InstrumentId as _Pyo3InstrumentId,
+)
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
@@ -26,55 +33,32 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
     PolySignalSpotData,
-    SIDECAR_DATA_CLIENT_ID,
     SPOT_DATA_CLIENT_ID,
 )
 from polysignal_lab.nautilus_runtime.projections import _tags  # noqa: F401
 
-try:
-    from nautilus_trader.core.nautilus_pyo3 import BookType as _Pyo3BookType
-    from nautilus_trader.core.nautilus_pyo3 import ClientId as _Pyo3ClientId
-    from nautilus_trader.core.nautilus_pyo3 import InstrumentId as _Pyo3InstrumentId
-except ModuleNotFoundError:
-    _Pyo3BookType = None
-    _Pyo3ClientId = None
-    _Pyo3InstrumentId = None
-
-try:
-    from nautilus_trader.model.data import DataType as _NautilusDataType
-    from nautilus_trader.model.enums import book_type_from_str as _book_type_from_str
-    from nautilus_trader.model.identifiers import InstrumentId as _InstrumentId
-except ModuleNotFoundError:
-    _NautilusDataType = None
-    _book_type_from_str = None
-    _InstrumentId = None
+_book_type_from_str = cast(
+    Callable[[str], object],
+    getattr(_Pyo3BookType, "from_str"),
+)
+_instrument_id_from_str = cast(
+    Callable[[str], object],
+    getattr(_Pyo3InstrumentId, "from_str"),
+)
 
 
 def _nautilus_instrument_id(value: object) -> object:
     if isinstance(value, str):
-        if _Pyo3InstrumentId is not None:
-            return _Pyo3InstrumentId.from_str(value)
-        if _InstrumentId is not None:
-            return _InstrumentId.from_str(value)
+        return _instrument_id_from_str(value)
     return value
 
 
 def _nautilus_book_type(value: str) -> object:
-    if _Pyo3BookType is not None:
-        return _Pyo3BookType.from_str(value)
-    if _book_type_from_str is not None:
-        return _book_type_from_str(value)
-    return value
+    return _book_type_from_str(value)
 
 
-def _data_client_id(value: str) -> object | None:
-    if _Pyo3ClientId is not None:
-        return _Pyo3ClientId(value)
-    try:
-        from nautilus_trader.model.identifiers import ClientId
-    except ModuleNotFoundError:
-        return None
-    return ClientId(value)
+def _data_client_id(value: str) -> object:
+    return _Pyo3ClientId(value)
 
 DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
 MISSING_PROJECTIONS_ERROR = "PolySignalNativeStrategy requires injected registry and assembler projections"
@@ -156,14 +140,7 @@ def _identity_instrument_id(token_id: str) -> str:
 
 def _nautilus_data_type(value: object) -> object:
     if isinstance(value, type):
-        try:
-            from nautilus_trader.core.nautilus_pyo3 import DataType as _Pyo3DataType
-
-            return _Pyo3DataType(value.__name__)
-        except (ImportError, TypeError, ValueError):
-            pass
-        if _NautilusDataType is not None:
-            return _NautilusDataType(value)
+        return _Pyo3DataType(value.__name__)
     return value
 
 
@@ -362,10 +339,6 @@ def event_datetime(value: object) -> datetime:
 
 def _spot_data_client_id() -> object | None:
     return _data_client_id(SPOT_DATA_CLIENT_ID)
-
-
-def _sidecar_data_client_id() -> object | None:
-    return _data_client_id(SIDECAR_DATA_CLIENT_ID)
 
 
 def _subscribe_custom_data(

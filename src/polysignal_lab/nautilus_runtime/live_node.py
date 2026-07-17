@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
-from types import SimpleNamespace
 from typing import cast
 
 from nautilus_trader.core import nautilus_pyo3 as _pyo3
@@ -30,83 +28,15 @@ POLYMARKET_MARKET_DATA_CREDENTIALS = (
     "POLYMARKET_" + "FUNDER",
 )
 
-# Module-level bindings (monkeypatchable in tests). pyo3 LiveNode has no .trader /
-# arbitrary attrs, so NautilusNodeHandle remains the application adapter.
-LiveNode = _pyo3.LiveNode
+LiveNode = getattr(_pyo3, "LiveNode")
 TraderId = _pyo3.TraderId
 Environment = _pyo3.Environment
-PolymarketDataClientFactory = _pyo3.PolymarketDataClientFactory
-SandboxExecutionClientFactory = _pyo3.SandboxExecutionClientFactory
-PolymarketExecutionClientFactory = _pyo3.PolymarketExecutionClientFactory
+PolymarketDataClientFactory = getattr(_pyo3, "PolymarketDataClientFactory")
+SandboxExecutionClientFactory = getattr(_pyo3, "SandboxExecutionClientFactory")
+PolymarketExecutionClientFactory = getattr(_pyo3, "PolymarketExecutionClientFactory")
 Venue = _pyo3.Venue
 Money = _pyo3.Money
 CurrencyFromStr = _pyo3.Currency.from_str
-
-
-@dataclass(slots=True)
-class _TraderFacade:
-    strategies: list[object] = field(default_factory=list)
-    actors: list[object] = field(default_factory=list)
-
-    def add_strategy(self, strategy: object) -> None:
-        self.strategies.append(strategy)
-
-    def add_actor(self, actor: object) -> None:
-        self.actors.append(actor)
-
-    def load(self) -> None:
-        return None
-
-
-@dataclass(slots=True)
-class NautilusNodeHandle:
-    """LiveNode handle with a recorded builder config and trader facade."""
-
-    node: object
-    config: SimpleNamespace
-    data_client_factories: list[tuple[str, object]]
-    exec_client_factories: list[tuple[str, object]]
-    trader: _TraderFacade = field(default_factory=_TraderFacade)
-    built: bool = True
-    _cache: object | None = None
-    _portfolio: object | None = None
-
-    def build(self) -> None:
-        self.built = True
-
-    def run(self, raise_exception: bool = False) -> None:
-        _ = raise_exception
-        run = getattr(self.node, "run", None)
-        if callable(run):
-            run()
-            return
-        start = getattr(self.node, "start", None)
-        if callable(start):
-            start()
-
-    async def run_async(self) -> None:
-        self.run()
-
-    def stop(self) -> None:
-        stop = getattr(self.node, "stop", None)
-        if callable(stop):
-            stop()
-
-    async def stop_async(self) -> None:
-        self.stop()
-
-    @property
-    def cache(self) -> object | None:
-        if self._cache is not None:
-            return self._cache
-        return getattr(self.node, "cache", None)
-
-    @property
-    def portfolio(self) -> object | None:
-        if self._portfolio is not None:
-            return self._portfolio
-        return getattr(self.node, "portfolio", None)
-
 
 def validate_polymarket_market_data_credentials(
     environ: Mapping[str, str] | None = None,
@@ -158,7 +88,7 @@ def build_sandbox_live_node(
     settings: Settings | None = None,
     *,
     instrument_config: object,
-) -> NautilusNodeHandle:
+) -> object:
     if settings is None:
         settings = load_settings()
     _validate_real_polymarket_data_factory_credentials()
@@ -169,14 +99,14 @@ def build_sandbox_live_node(
     assert_no_live_polymarket_execution(
         {"exec_clients": {SANDBOX_EXEC_CLIENT_ID: exec_config}}
     )
-    return _build_live_node_handle(settings, data_config, exec_config)
+    return _build_live_node(settings, data_config, exec_config)
 
 
 def build_live_execution_node(
     settings: Settings | None = None,
     *,
     instrument_config: object,
-) -> NautilusNodeHandle:
+) -> object:
     if settings is None:
         settings = load_settings()
     runtime = settings.runtime.nautilus
@@ -191,7 +121,7 @@ def build_live_execution_node(
         settings, instrument_config=instrument_config
     )
     exec_config = build_polymarket_exec_client_config(settings)
-    return _build_live_node_handle(
+    return _build_live_node(
         settings,
         data_config,
         exec_config,
@@ -211,19 +141,16 @@ def build_runtime_node(
         return build_sandbox_live_node(settings, instrument_config=instrument_config)
     if mode == "live":
         return build_live_execution_node(settings, instrument_config=instrument_config)
-    from polysignal_lab.nautilus_runtime.backtest_node import build_backtest_engine
-
-    instruments = () if instrument_config is None else (instrument_config,)
-    return build_backtest_engine(settings, instruments=instruments)
+    raise RuntimeError("live_node.build_runtime_node requires sandbox or live mode")
 
 
-def _build_live_node_handle(
+def _build_live_node(
     settings: Settings,
     data_config: object,
     exec_config: object,
     *,
     live: bool = False,
-) -> NautilusNodeHandle:
+) -> object:
     live_node_cls = cast(type, _required(LiveNode, "LiveNode"))
     trader_id_cls = cast(Callable[[str], object], _required(TraderId, "TraderId"))
     environment = _required(Environment, "Environment")
@@ -253,12 +180,10 @@ def _build_live_node_handle(
     if callable(with_risk):
         builder = with_risk(build_risk_engine_config(settings))
     spot_config = _build_spot_data_client_config(settings)
-    spot_factory = None
     if spot_config is not None:
-        spot_factory = _spot_data_client_factory()
         builder = builder.add_data_client(
             SPOT_DATA_CLIENT_ID,
-            spot_factory,
+            _spot_data_client_factory(),
             spot_config,
         )
     if live:
@@ -267,30 +192,7 @@ def _build_live_node_handle(
         builder = builder.add_simulated_exec_client(
             SANDBOX_EXEC_CLIENT_ID, exec_factory(), exec_config
         )
-    node = builder.build()
-    config = SimpleNamespace(
-        environment=execution_environment,
-        trader_id=trader_id,
-        cache=build_cache_config(settings),
-        data_engine=build_data_engine_config(),
-        exec_engine=exec_engine_config,
-        data_clients={
-            POLYMARKET_CLIENT_ID: data_config,
-            **({SPOT_DATA_CLIENT_ID: spot_config} if spot_config is not None else {}),
-        },
-        exec_clients={(LIVE_EXEC_CLIENT_ID if live else SANDBOX_EXEC_CLIENT_ID): exec_config},
-        load_state=load_state,
-        save_state=save_state,
-    )
-    return NautilusNodeHandle(
-        node=node,
-        config=config,
-        data_client_factories=[
-            (POLYMARKET_CLIENT_ID, data_factory),
-            *([(SPOT_DATA_CLIENT_ID, spot_factory)] if spot_factory is not None else []),
-        ],
-        exec_client_factories=[(LIVE_EXEC_CLIENT_ID if live else SANDBOX_EXEC_CLIENT_ID, exec_factory)],
-    )
+    return builder.build()
 
 
 def build_cache_config(settings: Settings | None = None) -> object:
@@ -350,9 +252,7 @@ def build_polymarket_data_client_config(
     kwargs: dict[str, object] = {
         "instrument_config": instrument_config,
         "update_instruments_interval_mins": 0,
-        "subscribe_new_markets": (
-            nautilus_runtime.market_rotation.allow_adapter_new_market_events
-        ),
+        "subscribe_new_markets": False,
         "auto_load_missing_instruments": True,
         "auto_load_debounce_ms": 100,
         "auto_load_max_retries": 12,

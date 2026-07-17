@@ -15,33 +15,10 @@ from __future__ import annotations
 import signal
 from collections.abc import Callable
 
-from polysignal_lab.nautilus_runtime.node_builder import NautilusRuntimeContext
 from polysignal_lab.nautilus_runtime.node_signals import (
     _restore_os_signal_handlers,
     _SignalHandlerSnapshot,
 )
-
-
-def _rebind_market_discovery_client(context: NautilusRuntimeContext) -> None:
-    """Replace the startup-phase HTTP client with a fresh connection for live runtime."""
-    if getattr(context, "market_universe", None) is None:
-        return
-    discovery = getattr(context.market_universe, "discovery", None)
-    if discovery is None:
-        return
-    replace_client = getattr(discovery, "replace_client", None)
-    if callable(replace_client):
-        _ = replace_client()
-        return
-    try:
-        import httpx
-
-        discovery.client = httpx.AsyncClient(timeout=15.0)
-    except Exception:
-        context.logger.warning(
-            "Failed to replace startup market discovery client before live runtime handoff",
-            exc_info=True,
-        )
 
 
 def _install_sync_os_signal_handlers(

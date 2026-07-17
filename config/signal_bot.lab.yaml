@@ -211,4 +211,3 @@ runtime:
       include_next_periods: 1
       stale_grace_sec: 5
       unsubscribe_exited: true
-      allow_adapter_new_market_events: false
