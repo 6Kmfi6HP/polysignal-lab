@@ -3,12 +3,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping
-from typing import Protocol
+from typing import Any, Mapping, Protocol
 
 from polysignal_lab.alpha.types import (
     AlphaDecision,
-    AlphaFillEvent,
+    CachedPositionView,
     MarketView,
     OrderIntentSpec,
     SideBookView,
@@ -173,81 +172,14 @@ def entry_ask_at_or_below(
     return entry_price
 
 
-def active_unhedged_position(
-    positions: Mapping[str, Mapping[str, Any]], market_id: str
-) -> Mapping[str, Any] | None:
-    position = positions.get(market_id)
-    if position and not position.get("hedged", False):
-        return position
-    return None
-
-
-def record_two_leg_fill(
-    positions: dict[str, dict[str, Any]],
-    entered_markets: set[str],
-    event: AlphaFillEvent,
-    *,
-    enter_on_first_fill: bool,
-) -> None:
-    if event.market_id in positions:
-        positions[event.market_id]["hedged"] = True
-        entered_markets.add(event.market_id)
-        return
-    positions[event.market_id] = {
-        "side": event.side,
-        "entry_price": event.fill_price,
-        "filled_at": event.ts_event,
-        "hedged": False,
-    }
-    if enter_on_first_fill:
-        entered_markets.add(event.market_id)
-
-
-def position_hedge_context(
-    position: Mapping[str, Any], now: datetime
+def hedge_context_from_position(
+    position: CachedPositionView, now: datetime
 ) -> PositionHedgeContext:
-    filled_side: Side = position["side"]
-    filled_price = float(position["entry_price"])
-    elapsed_seconds = (now - position["filled_at"]).total_seconds()
     return PositionHedgeContext(
-        filled_side=filled_side,
-        hedge_side=filled_side.opposite,
-        filled_price=filled_price,
-        elapsed_seconds=elapsed_seconds,
+        filled_side=position.side,
+        hedge_side=position.side.opposite,
+        filled_price=position.avg_entry_price,
+        elapsed_seconds=(now - position.opened_at).total_seconds()
+        if position.opened_at is not None
+        else 0.0,
     )
-
-
-def restore_position_state(raw: object) -> dict[str, dict[str, Any]]:
-    from polysignal_lab.alpha.state import restore_utc_datetime
-
-    if not isinstance(raw, Mapping):
-        return {}
-    positions: dict[str, dict[str, Any]] = {}
-    for mid, pos in raw.items():
-        if not isinstance(pos, Mapping):
-            continue
-        positions[str(mid)] = {
-            "side": Side(str(pos["side"])),
-            "entry_price": float(str(pos["entry_price"])),
-            "filled_at": restore_utc_datetime(str(pos["filled_at"])),
-            "hedged": bool(pos["hedged"]),
-        }
-    return positions
-
-
-def restore_string_set(raw: object) -> set[str]:
-    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
-        return set()
-    return {str(item) for item in raw}
-
-
-def evaluate_from_snapshot_for_test(
-    core: object,
-    snapshot: object,
-) -> list[AlphaDecision]:
-    """Evaluate an alpha core using a MarketSnapshot for testing."""
-    from polysignal_lab.alpha.legacy_snapshot_adapter import market_view_from_snapshot
-
-    view = market_view_from_snapshot(snapshot)
-    evaluate = getattr(core, "evaluate")
-    return [] if view is None else evaluate(view)

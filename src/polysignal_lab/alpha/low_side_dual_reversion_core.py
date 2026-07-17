@@ -11,7 +11,6 @@ Pos: Application code
 
 
 
-
 from __future__ import annotations
 
 from typing import Any
@@ -21,17 +20,19 @@ from polysignal_lab.alpha.helpers import (
     HedgeDecisionSpec,
     SIDES,
     OrderDecisionSpec,
-    active_unhedged_position,
     build_order_decision,
     build_hedge_order_decision,
     binary_pair_effective_cost,
     depth_weighted_ask,
     enabled_for_view,
-    evaluate_from_snapshot_for_test,
-    position_hedge_context,
-    record_two_leg_fill,
+    hedge_context_from_position,
 )
-from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, MarketView, OrderIntentSpec
+from polysignal_lab.alpha.types import (
+    AlphaDecision,
+    CachedPositionView,
+    MarketView,
+    OrderIntentSpec,
+)
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 
@@ -40,39 +41,21 @@ class LowSideDualReversionAlphaCore:
 
     def __init__(self, config) -> None:
         self.config = config
-        self._entered_markets: set[str] = set()
-        self._positions: dict[str, dict[str, Any]] = {}
-
-    def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
-        record_two_leg_fill(
-            self._positions,
-            self._entered_markets,
-            event,
-            enter_on_first_fill=True,
-        )
-        return []
-
-    def on_order_submitted(self, event: AlphaOrderEvent) -> None: pass
-    def on_order_accepted(self, event: AlphaOrderEvent) -> None: pass
-    def on_order_rejected(self, event: AlphaOrderEvent) -> None: pass
-    def on_order_canceled(self, event: AlphaOrderEvent) -> None: pass
-    def on_order_expired(self, event: AlphaOrderEvent) -> None: pass
 
     # -- guard helpers -------------------------------------------------------
 
     def _validate_inputs(self, view: MarketView) -> bool:
         return enabled_for_view(self.config, view)
 
-    def _active_position(self, view: MarketView) -> dict[str, Any] | None:
-        position = active_unhedged_position(self._positions, view.market_id)
-        return dict(position) if position is not None else None
+    def _active_position(self, view: MarketView) -> CachedPositionView | None:
+        return view.trading.unhedged_leg(self.name, view.market_id)
 
     def _should_skip(self, view: MarketView) -> bool:
         if view.seconds_to_close is None:
             return True
         if view.seconds_to_close <= max(self.config.cancel_before_close_seconds, 60):
             return True
-        if view.market_id in self._entered_markets:
+        if view.trading.has_market_activity(self.name, view.market_id):
             return True
         return False
 
@@ -140,16 +123,18 @@ class LowSideDualReversionAlphaCore:
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         if not self._validate_inputs(view):
             return []
-        pos = self._active_position(view)
-        if pos is not None:
-            return self._try_hedge(view, pos)
+        position = self._active_position(view)
+        if position is not None:
+            return self._try_hedge(view, position)
         if self._should_skip(view):
             return []
         best_price = self._find_best_price(view)
         return [] if best_price is None else self._build_decisions(view, best_price)
 
-    def _try_hedge(self, view: MarketView, position: dict[str, Any]) -> list[AlphaDecision]:
-        hedge = position_hedge_context(position, view.created_at)
+    def _try_hedge(self, view: MarketView, position: CachedPositionView) -> list[AlphaDecision]:
+        if view.trading.has_hedge_order(self.name, view.market_id):
+            return []
+        hedge = hedge_context_from_position(position, view.created_at)
         decisions: list[AlphaDecision] = []
 
         hedge_book = view.book_for(hedge.hedge_side)
@@ -230,6 +215,3 @@ class LowSideDualReversionAlphaCore:
                 hedge_leg=hedge_leg,
             ),
         )
-
-    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        return evaluate_from_snapshot_for_test(self, snapshot)

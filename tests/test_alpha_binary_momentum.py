@@ -15,11 +15,10 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 from polysignal_lab.alpha.binary_momentum_core import BinaryMomentumAlphaCore
-from polysignal_lab.alpha.types import AlphaOrderEvent
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.strategy_config import BinaryMomentumConfig
-from alpha_helpers import evaluate_core_from_snapshot
-from factories import sample_snapshot
+from alpha_helpers import evaluate_core, with_active_order
+from factories import sample_market_view
 
 
 def _momentum_config() -> BinaryMomentumConfig:
@@ -37,7 +36,7 @@ def _momentum_config() -> BinaryMomentumConfig:
 
 
 def _momentum_snapshot():
-    return sample_snapshot(up_ask=0.50, down_ask=0.45, spot_price=130.0)
+    return sample_market_view(up_ask=0.50, down_ask=0.45, spot_price=130.0)
 
 
 def _seed(core: BinaryMomentumAlphaCore, market_id: str) -> None:
@@ -49,27 +48,13 @@ def test_binary_momentum_entered_only_after_order_acceptance() -> None:
     config = _momentum_config()
     snapshot = _momentum_snapshot()
     core = BinaryMomentumAlphaCore(config)
-    _seed(core, snapshot.market.market_id)
+    _seed(core, snapshot.market_id)
 
-    first = evaluate_core_from_snapshot(core, snapshot)
-    second = evaluate_core_from_snapshot(core, snapshot)
+    first = evaluate_core(core, snapshot)
+    second = evaluate_core(core, snapshot)
 
     assert first
     assert second  # guard NOT consumed by candidate creation
 
-    core.on_order_accepted(
-        AlphaOrderEvent(
-            strategy="binary_momentum",
-            market_id=first[0].market_id,
-            condition_id=first[0].condition_id,
-            token_id=first[0].token_id,
-            side=first[0].side,
-            order_id="order-1",
-            client_order_id="client-1",
-            reason=None,
-            ts_event=first[0].metrics["created_at_for_test"],
-            metrics={},
-        )
-    )
-
-    assert evaluate_core_from_snapshot(core, snapshot) == []
+    cached = with_active_order(snapshot, "binary_momentum", side=first[0].side)
+    assert evaluate_core(core, cached) == []

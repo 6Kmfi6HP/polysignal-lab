@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, typing, typing.Any, typing.Mapping, typing.Protocol
-Output: SideBookView, SpotView, TradeView, FreshnessView, MarketView, OrderIntentSpec, AlphaDecision, AlphaCore, MarketGroupView, AlphaOrderEvent
+Output: immutable market, Cache trading, decision, and lifecycle event types
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -83,6 +83,208 @@ class FreshnessView:
 
 
 @dataclass(frozen=True, slots=True)
+class CachedOrderView:
+    client_order_id: str
+    instrument_id: str
+    strategy: str
+    market_id: str
+    condition_id: str
+    side: Side
+    pair_id: str | None
+    position_id: str | None
+    status: str
+    price: float | None
+    filled_quantity: float
+    average_fill_price: float | None
+    ts_event: datetime | None
+    hedge_leg: bool
+    reduce_only: bool
+    is_open: bool
+    is_inflight: bool
+    take_profit_price: float | None
+    stop_loss_price: float | None
+
+    @property
+    def has_fill(self) -> bool:
+        return self.filled_quantity > 0.0 or "FILLED" in self.status.upper()
+
+    @property
+    def is_active(self) -> bool:
+        return self.is_open or self.is_inflight or self.has_fill
+
+    @property
+    def was_accepted(self) -> bool:
+        status = self.status.upper()
+        if "REJECTED" in status or "DENIED" in status:
+            return False
+        return self.is_active or any(
+            name in status
+            for name in ("ACCEPTED", "CANCELED", "EXPIRED", "TRIGGERED")
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CachedPositionView:
+    position_id: str
+    instrument_id: str
+    strategy: str
+    market_id: str
+    condition_id: str
+    side: Side
+    pair_id: str | None
+    quantity: float
+    avg_entry_price: float
+    opened_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class TradingStateView:
+    orders: tuple[CachedOrderView, ...] = ()
+    positions: tuple[CachedPositionView, ...] = ()
+
+    def has_market_activity(
+        self,
+        strategy: str,
+        market_id: str,
+        side: Side | None = None,
+    ) -> bool:
+        return any(
+            order.strategy == strategy
+            and order.market_id == market_id
+            and not order.reduce_only
+            and order.is_active
+            and (side is None or order.side is side)
+            for order in self.orders
+        ) or any(
+            position.strategy == strategy
+            and position.market_id == market_id
+            and (side is None or position.side is side)
+            for position in self.positions
+        )
+
+    def unhedged_leg(
+        self,
+        strategy: str,
+        market_id: str,
+    ) -> CachedPositionView | None:
+        legs = tuple(
+            position
+            for position in self.positions
+            if position.strategy == strategy and position.market_id == market_id
+        )
+        if len({leg.side for leg in legs}) != 1:
+            return None
+        return legs[0] if legs else None
+
+    def position(
+        self,
+        strategy: str,
+        market_id: str,
+        side: Side,
+    ) -> CachedPositionView | None:
+        return next(
+            (
+                position
+                for position in self.positions
+                if position.strategy == strategy
+                and position.market_id == market_id
+                and position.side is side
+            ),
+            None,
+        )
+
+    def has_hedge_order(self, strategy: str, market_id: str) -> bool:
+        return any(
+            order.strategy == strategy
+            and order.market_id == market_id
+            and order.hedge_leg
+            and order.is_active
+            for order in self.orders
+        )
+
+    def has_exit_order(self, position_id: str) -> bool:
+        return any(
+            order.reduce_only
+            and order.position_id == position_id
+            and (order.is_open or order.is_inflight)
+            for order in self.orders
+        )
+
+    def accepted_entry_orders(
+        self,
+        strategy: str,
+        market_id: str,
+    ) -> tuple[CachedOrderView, ...]:
+        return tuple(
+            order
+            for order in self.orders
+            if order.strategy == strategy
+            and order.market_id == market_id
+            and not order.reduce_only
+            and order.was_accepted
+        )
+
+    def latest_accepted_entry(
+        self,
+        strategy: str,
+        market_id: str,
+    ) -> CachedOrderView | None:
+        dated = tuple(
+            order
+            for order in self.accepted_entry_orders(strategy, market_id)
+            if order.ts_event is not None
+        )
+        return max(dated, key=lambda order: order.ts_event) if dated else None
+
+    def has_entry_level(
+        self,
+        strategy: str,
+        market_id: str,
+        side: Side,
+        price: float,
+    ) -> bool:
+        return any(
+            order.side is side
+            and order.price is not None
+            and abs(order.price - price) < 1e-12
+            for order in self.accepted_entry_orders(strategy, market_id)
+        )
+
+    def filled_layer_count(self, strategy: str, market_id: str, side: Side) -> int:
+        return sum(
+            1
+            for order in self.orders
+            if order.strategy == strategy
+            and order.market_id == market_id
+            and order.side is side
+            and not order.reduce_only
+            and order.has_fill
+        )
+
+    def exit_thresholds(
+        self,
+        position_id: str,
+    ) -> tuple[float | None, float | None]:
+        position = next(
+            (item for item in self.positions if item.position_id == position_id),
+            None,
+        )
+        if position is None:
+            return None, None
+        orders = tuple(
+            order
+            for order in self.orders
+            if order.instrument_id == position.instrument_id
+            and order.strategy == position.strategy
+            and not order.reduce_only
+        )
+        for order in reversed(orders):
+            if order.take_profit_price is not None or order.stop_loss_price is not None:
+                return order.take_profit_price, order.stop_loss_price
+        return None, None
+
+
+@dataclass(frozen=True, slots=True)
 class MarketView:
     view_id: str
     market_id: str
@@ -102,6 +304,7 @@ class MarketView:
     down_trades: Sequence[TradeView]
     metrics: Mapping[str, Any]
     freshness: FreshnessView
+    trading: TradingStateView = TradingStateView()
 
     def book_for(self, side: Side) -> SideBookView:
         return self.up if side == Side.UP else self.down

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.timedelta, typing, typing.Final, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.PTBDiffAlphaCore
-Output: test_ptb_alpha_core_matches_equivalent_up_input, test_ptb_alpha_core_matches_equivalent_down_input, test_ptb_alpha_core_rejects_missing_verified_anchor_source, test_ptb_alpha_core_rejects_missing_market_data, test_ptb_snapshot_without_outcome_tokens_produces_no_view
+Output: test_ptb_alpha_core_matches_equivalent_up_input, test_ptb_alpha_core_matches_equivalent_down_input, test_ptb_alpha_core_rejects_missing_verified_anchor_source, test_ptb_alpha_core_rejects_missing_market_data
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -8,17 +8,14 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import timedelta
+from dataclasses import dataclass, replace
 from typing import Final
 
-from polysignal_lab.alpha.legacy_snapshot_adapter import market_view_from_snapshot
 from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
+from polysignal_lab.alpha.types import MarketView, SideBookView
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
 from polysignal_lab.domain.strategy_config import PTBDiffConfig, PTBTriggerConfig
-from polysignal_lab.utils import utc_now
-from factories import BookFactoryConfig, MarketFactoryConfig, SpotFactoryConfig, sample_book, sample_market, sample_spot
+from factories import sample_market_view
 
 PRICE_TO_BEAT: Final = 100_000.0
 
@@ -67,28 +64,17 @@ def _config() -> PTBDiffConfig:
     )
 
 
-def _snapshot(scenario: CoreScenario) -> MarketSnapshot:
-    created_at = utc_now()
-    market = sample_market(
-        MarketFactoryConfig(asset="BTC", timeframe="5m", seconds_to_close=scenario.seconds_to_close, price_to_beat=PRICE_TO_BEAT)
-    ).model_copy(update={"end_ts": created_at + timedelta(seconds=scenario.seconds_to_close)})
+def _view(scenario: CoreScenario) -> MarketView:
     up_ask = scenario.side_ask if scenario.side == Side.UP else scenario.other_ask
     down_ask = scenario.side_ask if scenario.side == Side.DOWN else scenario.other_ask
-    up_book = sample_book(market.token_for(Side.UP).token_id, BookFactoryConfig(ask=up_ask, bid=max(0.01, up_ask - 0.02), size=500))
-    down_book = sample_book(market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=down_ask, bid=max(0.01, down_ask - 0.02), size=500))
     signed_diff = scenario.diff_usd if scenario.side == Side.UP else -scenario.diff_usd
-    spot = sample_spot(SpotFactoryConfig(asset="BTC", price=PRICE_TO_BEAT + signed_diff)).model_copy(
-        update={"source": scenario.spot_source, "received_at": created_at}
-    )
-    return MarketSnapshot(
-        snapshot_id="snapshot-ptb-core",
-        created_at=created_at,
-        market=market,
-        up_book=up_book.model_copy(update={"received_at": created_at}),
-        down_book=down_book.model_copy(update={"received_at": created_at}),
-        spot=spot,
+    return sample_market_view(
+        up_ask=up_ask,
+        down_ask=down_ask,
+        seconds_to_close=scenario.seconds_to_close,
         price_to_beat=PRICE_TO_BEAT,
-        freshness=FreshnessState(up_book_ms=0, down_book_ms=0, spot_ms=0, max_ms=0),
+        spot_price=PRICE_TO_BEAT + signed_diff,
+        spot_source=scenario.spot_source,
         metrics={
             "price_to_beat_source": "anchor",
             "price_to_beat_verified": scenario.verified_ptb,
@@ -100,8 +86,7 @@ def _snapshot(scenario: CoreScenario) -> MarketSnapshot:
 
 def test_ptb_alpha_core_matches_equivalent_up_input() -> None:
     config = _config()
-    snapshot = _snapshot(CoreScenario(side=Side.UP, diff_usd=120.0, side_ask=0.82))
-    decision = PTBDiffAlphaCore(config).evaluate(market_view_from_snapshot(snapshot))[0]
+    decision = PTBDiffAlphaCore(config).evaluate(_view(CoreScenario(side=Side.UP, diff_usd=120.0, side_ask=0.82)))[0]
 
     assert decision.side == Side.UP
     assert decision.confidence > 0
@@ -112,8 +97,7 @@ def test_ptb_alpha_core_matches_equivalent_up_input() -> None:
 
 def test_ptb_alpha_core_matches_equivalent_down_input() -> None:
     config = _config()
-    snapshot = _snapshot(CoreScenario(side=Side.DOWN, diff_usd=140.0, side_ask=0.83))
-    decision = PTBDiffAlphaCore(config).evaluate(market_view_from_snapshot(snapshot))[0]
+    decision = PTBDiffAlphaCore(config).evaluate(_view(CoreScenario(side=Side.DOWN, diff_usd=140.0, side_ask=0.83)))[0]
 
     assert decision.side == Side.DOWN
     assert decision.metrics["abs_diff_usd"] > 0
@@ -122,41 +106,27 @@ def test_ptb_alpha_core_matches_equivalent_down_input() -> None:
 
 def test_ptb_alpha_core_rejects_missing_verified_anchor_source() -> None:
     config = _config()
-    snapshot = _snapshot(CoreScenario(verified_ptb=False, anchor_ptb=False))
-
-    assert PTBDiffAlphaCore(config).evaluate(market_view_from_snapshot(snapshot)) == []
+    assert PTBDiffAlphaCore(config).evaluate(_view(CoreScenario(verified_ptb=False, anchor_ptb=False))) == []
 
 
 def test_ptb_alpha_core_rejects_missing_market_data() -> None:
     config = _config()
-    snapshot = _snapshot(CoreScenario()).model_copy(update={"up_book": None})
-
-    assert PTBDiffAlphaCore(config).evaluate(market_view_from_snapshot(snapshot)) == []
-
-
-def test_ptb_snapshot_without_outcome_tokens_produces_no_view() -> None:
-    snapshot = _snapshot(CoreScenario())
-    malformed_market = snapshot.market.model_copy(update={"outcome_tokens": []})
-    malformed_snapshot = snapshot.model_copy(
-        update={"market": malformed_market, "up_book": None, "down_book": None}
+    view = _view(CoreScenario())
+    empty = SideBookView(
+        token_id=view.up.token_id,
+        best_bid=None,
+        best_ask=None,
+        spread=None,
+        freshness_ms=None,
     )
+    assert PTBDiffAlphaCore(config).evaluate(replace(view, up=empty)) == []
 
-    assert market_view_from_snapshot(malformed_snapshot) is None
 
-
-def test_legacy_snapshot_adapter_owns_snapshot_conversion() -> None:
+def test_ptb_core_consumes_market_view_directly() -> None:
     import polysignal_lab.alpha as alpha
-    from polysignal_lab.alpha.legacy_snapshot_adapter import (
-        decision_to_signal,
-        market_view_from_snapshot,
-    )
     from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
 
-    assert callable(market_view_from_snapshot)
-    assert callable(decision_to_signal)
     assert not hasattr(alpha, "market_view_from_snapshot")
     assert not hasattr(alpha, "decision_to_signal")
     assert not hasattr(PTBDiffAlphaCore, "market_view_from_snapshot")
-    assert "market_view_from_snapshot" not in dir(
-        __import__("polysignal_lab.alpha.ptb_diff_core", fromlist=["ptb_diff_core"])
-    )
+    assert not hasattr(PTBDiffAlphaCore, "evaluate_view_from_snapshot_for_test")

@@ -16,18 +16,9 @@ Pos: Application code
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Mapping
-
-from polysignal_lab.alpha.helpers import evaluate_from_snapshot_for_test
-from polysignal_lab.alpha.state import json_safe_state, restore_utc_datetime
-from polysignal_lab.alpha.types import AlphaDecision, AlphaOrderEvent, MarketView
+from datetime import datetime
+from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.domain.enums import Side
-
-if TYPE_CHECKING:
-    # ``from __future__ import annotations`` keeps this as a string — no import
-    # of ``domain.snapshot`` happens at module scope (alpha-core purity).
-    pass
 
 
 @dataclass(frozen=True)
@@ -49,22 +40,6 @@ class LateConsensusAlphaCore:
 
     def __init__(self, config) -> None:
         self.config = config
-        self._last_favorite: dict[str, tuple[Side, datetime]] = {}
-        self._last_entry_at: dict[str, datetime] = {}
-        self._accepted_counts: dict[str, int] = {}
-
-    # ------------------------------------------------------------------
-    # StatefulAlphaCore callbacks
-    # ------------------------------------------------------------------
-
-    def on_order_accepted(self, event: AlphaOrderEvent) -> None:
-        """Advance ALL callback state: frequency gate, accepted counter, flip guard."""
-        self._last_entry_at[event.market_id] = event.ts_event
-        self._accepted_counts[event.market_id] = (
-            self._accepted_counts.get(event.market_id, 0) + 1
-        )
-        if self.config.flip_guard_enabled:
-            self._last_favorite[event.market_id] = (event.side, event.ts_event)
 
     # ------------------------------------------------------------------
     # Evaluate — moved verbatim from the legacy strategy
@@ -111,10 +86,10 @@ class LateConsensusAlphaCore:
             return None
 
         # Step 2: Entry frequency check.
-        now = datetime.now(UTC)
-        last_entry = self._last_entry_at.get(market_id)
-        if last_entry is not None:
-            elapsed = (now - last_entry).total_seconds()
+        now = view.created_at
+        last_entry = view.trading.latest_accepted_entry(self.name, market_id)
+        if last_entry is not None and last_entry.ts_event is not None:
+            elapsed = (now - last_entry.ts_event).total_seconds()
             if elapsed < cfg.entry_frequency_sec:
                 return None
 
@@ -167,8 +142,9 @@ class LateConsensusAlphaCore:
             ctx.seconds, high_threshold, mid_threshold
         )
 
-        # The sequence is READ-ONLY here: only on_order_accepted increments it.
-        sequence = self._accepted_counts.get(ctx.market_id, 0)
+        sequence = len(
+            view.trading.accepted_entry_orders(self.name, ctx.market_id)
+        )
         effective_confidence = min(0.95, confidence_value + 0.35)
 
         return self._build_decision(
@@ -261,36 +237,8 @@ class LateConsensusAlphaCore:
     ) -> bool:
         if not self.config.flip_guard_enabled:
             return False
-        previous = self._last_favorite.get(market_id)
-        if previous:
-            prev_side, prev_time = previous
-            if prev_side != side and (now - prev_time).total_seconds() <= self.config.flip_guard_window_sec:
+        previous = view.trading.latest_accepted_entry(self.name, market_id)
+        if previous is not None and previous.ts_event is not None:
+            if previous.side != side and (now - previous.ts_event).total_seconds() <= self.config.flip_guard_window_sec:
                 return True
         return False
-
-    # ------------------------------------------------------------------
-    # Test helper + state round-trip
-    # ------------------------------------------------------------------
-
-    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        return evaluate_from_snapshot_for_test(self, snapshot)
-
-    def save_state(self) -> Mapping[str, object]:
-        return json_safe_state(
-            {
-                "last_favorite": self._last_favorite,
-                "last_entry_at": self._last_entry_at,
-                "accepted_counts": self._accepted_counts,
-            }
-        )
-
-    def load_state(self, payload: Mapping[str, object]) -> None:
-        fav_raw = payload.get("last_favorite", {}) or {}
-        self._last_favorite = {
-            str(k): (Side(v[0]), restore_utc_datetime(v[1]))
-            for k, v in fav_raw.items()
-        }
-        entry_raw = payload.get("last_entry_at", {}) or {}
-        self._last_entry_at = {str(k): restore_utc_datetime(v) for k, v in entry_raw.items()}
-        counts_raw = payload.get("accepted_counts", {}) or {}
-        self._accepted_counts = {str(k): int(v) for k, v in counts_raw.items()}

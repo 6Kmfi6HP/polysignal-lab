@@ -10,7 +10,6 @@ from polysignal_lab.alpha.vwap_state import (
     encode_vwap_state,
     restore_vwap_state_fields,
 )
-from polysignal_lab.domain.enums import Side
 
 
 def test_encode_vwap_state_preserves_flat_payload() -> None:
@@ -37,7 +36,7 @@ def test_decode_vwap_state_rejects_unknown_version() -> None:
         decode_vwap_state({"schema_version": VWAP_STATE_VERSION + 1, "payload": {}})
 
 
-def test_restore_vwap_state_fields_round_trips_pending_hedge() -> None:
+def test_restore_vwap_state_fields_ignores_legacy_trading_state() -> None:
     payload = {
         "trades": {},
         "can_enter": {},
@@ -46,12 +45,9 @@ def test_restore_vwap_state_fields_round_trips_pending_hedge() -> None:
         "pending_hedges": {"market-1": ["DOWN", 10.0]},
     }
 
-    (
-        _trades,
-        _can_enter,
-        _last_trade_signatures,
-        _seen_trade_signatures,
-        pending_hedges,
-    ) = restore_vwap_state_fields(payload)
+    _trades, last_trade_signatures, seen_trade_signatures = (
+        restore_vwap_state_fields(payload)
+    )
 
-    assert pending_hedges == {"market-1": (Side.DOWN, 10.0)}
+    assert last_trade_signatures == {}
+    assert seen_trade_signatures == {}

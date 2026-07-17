@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.timedelta, typing, typing.Final, polysignal_lab.domain.enums, polysignal_lab.domain.enums.(
-Output: sample_market, sample_book, sample_spot, sample_snapshot, sample_storage_lifecycle, MarketFactoryConfig, BookFactoryConfig, SpotFactoryConfig, StorageLifecycle
+Output: sample_market, sample_book, sample_spot, sample_market_view, sample_storage_lifecycle, MarketFactoryConfig, BookFactoryConfig, SpotFactoryConfig, StorageLifecycle
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -8,10 +8,12 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
-from typing import Final
+from datetime import datetime, timedelta
+from typing import Any, Final
 
+from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView, SpotView, TradeView
 from polysignal_lab.domain.enums import (
     ExitMode,
     MarketStatus,
@@ -21,9 +23,8 @@ from polysignal_lab.domain.enums import (
 )
 from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.domain.orderbook import BookLevel, OrderBook
-from polysignal_lab.domain.paper_result import DailyReport, PaperWalletSnapshot
+from polysignal_lab.domain.reporting_result import DailyReport, ReportAccountSnapshot
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
-from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
 from polysignal_lab.domain.spot import SpotPrice
 from polysignal_lab.utils import new_id, utc_now
 
@@ -56,7 +57,7 @@ class StorageLifecycle:
     fill: dict[str, object]
     position: dict[str, object]
     result: dict[str, object]
-    wallet: PaperWalletSnapshot
+    account_snapshot: ReportAccountSnapshot
     report: DailyReport
     publish: dict[str, str | None]
     event: dict[str, str]
@@ -115,7 +116,40 @@ def sample_spot(config: SpotFactoryConfig = DEFAULT_SPOT) -> SpotPrice:
     )
 
 
-def sample_snapshot(
+def _side_book_view(
+    *,
+    token_id: str,
+    ask: float,
+    bid: float | None = None,
+    size: float = 100.0,
+    freshness_ms: int | None = 0,
+    received_at: datetime | None = None,
+    ask_levels: tuple[tuple[float, float], ...] | None = None,
+) -> SideBookView:
+    resolved_bid = bid if bid is not None else max(0.01, ask - 0.03)
+    levels = ask_levels
+    if levels is None:
+        levels = (
+            (ask, size),
+            (min(0.99, ask + 0.02), size),
+        )
+    return SideBookView(
+        token_id=token_id,
+        best_bid=resolved_bid,
+        best_ask=ask,
+        spread=ask - resolved_bid,
+        freshness_ms=freshness_ms,
+        min_order_size=None,
+        tick_size=None,
+        last_trade_price=(ask + resolved_bid) / 2,
+        last_trade_size=None,
+        last_trade_timestamp=None,
+        received_at=received_at,
+        ask_levels=levels,
+    )
+
+
+def sample_market_view(
     *,
     up_ask: float = 0.82,
     down_ask: float = 0.18,
@@ -124,15 +158,26 @@ def sample_snapshot(
     timeframe: str = "5m",
     price_to_beat: float = 100000.0,
     spot_price: float | None = None,
-    snapshot_id: str | None = None,
-) -> MarketSnapshot:
-    """Build a fully-wired ``MarketSnapshot`` from the existing sample helpers.
-
-    Books are stamped at ``created_at`` and freshness is zeroed so
-    ``market_view_from_snapshot`` always assembles a non-None ``MarketView``
-    for any caller-supplied ask/spot combination.
-    """
-    created_at = utc_now()
+    view_id: str | None = None,
+    created_at: datetime | None = None,
+    start_ts: datetime | None = None,
+    end_ts: datetime | None = None,
+    up_bid: float | None = None,
+    down_bid: float | None = None,
+    book_freshness_ms: int | None = 0,
+    spot_freshness_ms: int | None = 0,
+    spot_source: str = "polymarket_rtds",
+    include_spot: bool = True,
+    include_up_book: bool = True,
+    include_down_book: bool = True,
+    metrics: Mapping[str, Any] | None = None,
+    up_trades: Sequence[TradeView] = (),
+    down_trades: Sequence[TradeView] = (),
+    up_ask_levels: tuple[tuple[float, float], ...] | None = None,
+    down_ask_levels: tuple[tuple[float, float], ...] | None = None,
+) -> MarketView:
+    """Build a fully-wired ``MarketView`` for alpha/gate fixtures."""
+    resolved_created_at = created_at or utc_now()
     market = sample_market(
         MarketFactoryConfig(
             asset=asset,
@@ -140,31 +185,101 @@ def sample_snapshot(
             seconds_to_close=seconds_to_close,
             price_to_beat=price_to_beat,
         )
-    ).model_copy(update={"end_ts": created_at + timedelta(seconds=seconds_to_close)})
-    up_book = sample_book(
-        market.token_for(Side.UP).token_id, BookFactoryConfig(ask=up_ask)
-    ).model_copy(update={"received_at": created_at})
-    down_book = sample_book(
-        market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=down_ask)
-    ).model_copy(update={"received_at": created_at})
-    spot_cfg = (
-        SpotFactoryConfig(asset=asset, price=spot_price)
-        if spot_price is not None
-        else SpotFactoryConfig(asset=asset)
     )
-    spot = sample_spot(spot_cfg).model_copy(
-        update={"source": "polymarket_rtds", "received_at": created_at}
+    resolved_start = start_ts if start_ts is not None else market.start_ts
+    resolved_end = (
+        end_ts
+        if end_ts is not None
+        else resolved_created_at + timedelta(seconds=seconds_to_close)
     )
-    return MarketSnapshot(
-        snapshot_id=snapshot_id or new_id("snapshot"),
-        created_at=created_at,
-        market=market,
-        up_book=up_book,
-        down_book=down_book,
+    empty_book = SideBookView(
+        token_id="",
+        best_bid=None,
+        best_ask=None,
+        spread=None,
+        freshness_ms=None,
+    )
+    up = (
+        _side_book_view(
+            token_id=market.token_for(Side.UP).token_id,
+            ask=up_ask,
+            bid=up_bid,
+            freshness_ms=book_freshness_ms,
+            received_at=None,
+            ask_levels=up_ask_levels,
+        )
+        if include_up_book
+        else empty_book
+    )
+    down = (
+        _side_book_view(
+            token_id=market.token_for(Side.DOWN).token_id,
+            ask=down_ask,
+            bid=down_bid,
+            freshness_ms=book_freshness_ms,
+            received_at=None,
+            ask_levels=down_ask_levels,
+        )
+        if include_down_book
+        else empty_book
+    )
+    spot = None
+    if include_spot:
+        spot_cfg = (
+            SpotFactoryConfig(asset=asset, price=spot_price)
+            if spot_price is not None
+            else SpotFactoryConfig(asset=asset)
+        )
+        spot_sample = sample_spot(spot_cfg)
+        spot = SpotView(
+            asset=spot_sample.asset,
+            symbol=spot_sample.symbol,
+            price=spot_sample.price,
+            source=spot_source,
+            freshness_ms=spot_freshness_ms,
+            received_at=None,
+        )
+    return MarketView(
+        view_id=view_id or new_id("view"),
+        market_id=market.market_id,
+        market_slug=market.market_slug,
+        condition_id=market.condition_id,
+        asset=market.asset,
+        timeframe=market.timeframe,
+        start_ts=resolved_start,
+        end_ts=resolved_end,
+        created_at=resolved_created_at,
+        seconds_to_close=seconds_to_close,
+        up=up,
+        down=down,
         spot=spot,
         price_to_beat=price_to_beat,
-        freshness=FreshnessState(up_book_ms=0, down_book_ms=0, spot_ms=0, max_ms=0),
-        metrics={},
+        up_trades=tuple(up_trades),
+        down_trades=tuple(down_trades),
+        metrics=dict(metrics or {}),
+        freshness=FreshnessView(
+            up_book_ms=book_freshness_ms if include_up_book else None,
+            down_book_ms=book_freshness_ms if include_down_book else None,
+            spot_ms=spot_freshness_ms if include_spot else None,
+            max_ms=max(
+                x
+                for x in (
+                    book_freshness_ms if include_up_book else None,
+                    book_freshness_ms if include_down_book else None,
+                    spot_freshness_ms if include_spot else None,
+                )
+                if x is not None
+            )
+            if any(
+                x is not None
+                for x in (
+                    book_freshness_ms if include_up_book else None,
+                    book_freshness_ms if include_down_book else None,
+                    spot_freshness_ms if include_spot else None,
+                )
+            )
+            else None,
+        ),
     )
 
 
@@ -172,7 +287,7 @@ def sample_storage_lifecycle(signal: SignalCandidate) -> StorageLifecycle:
     now = utc_now()
     rejected = RejectedSignal(candidate=signal, gate_name="gate", reason_code="wide_spread")
     order = {
-        "paper_order_id": "po-1",
+        "report_order_id": "po-1",
         "signal_id": signal.signal_id,
         "created_at": now.isoformat(),
         "asset": signal.asset,
@@ -190,8 +305,8 @@ def sample_storage_lifecycle(signal: SignalCandidate) -> StorageLifecycle:
         "status": "FILLED",
     }
     fill = {
-        "paper_fill_id": "pf-1",
-        "paper_order_id": order["paper_order_id"],
+        "report_fill_id": "pf-1",
+        "report_order_id": order["report_order_id"],
         "signal_id": signal.signal_id,
         "created_at": now.isoformat(),
         "token_id": signal.token_id,
@@ -204,11 +319,11 @@ def sample_storage_lifecycle(signal: SignalCandidate) -> StorageLifecycle:
         "depth_checked": True,
     }
     position = {
-        "paper_position_id": "pp-1",
+        "report_position_id": "pp-1",
         "position_id": "pp-1",
         "signal_id": signal.signal_id,
-        "paper_order_id": order["paper_order_id"],
-        "paper_fill_id": fill["paper_fill_id"],
+        "report_order_id": order["report_order_id"],
+        "report_fill_id": fill["report_fill_id"],
         "strategy": signal.strategy,
         "asset": signal.asset,
         "timeframe": signal.timeframe,
@@ -224,9 +339,9 @@ def sample_storage_lifecycle(signal: SignalCandidate) -> StorageLifecycle:
         "is_closed": False,
     }
     result = {
-        "paper_trade_id": "pt-1",
+        "report_result_id": "pt-1",
         "signal_id": signal.signal_id,
-        "paper_position_id": str(position["paper_position_id"]),
+        "report_position_id": str(position["report_position_id"]),
         "strategy": signal.strategy,
         "asset": signal.asset,
         "timeframe": signal.timeframe,
@@ -245,7 +360,7 @@ def sample_storage_lifecycle(signal: SignalCandidate) -> StorageLifecycle:
         "opened_at": now.isoformat(),
         "closed_at": now.isoformat(),
     }
-    wallet = PaperWalletSnapshot(
+    account_snapshot = ReportAccountSnapshot(
         starting_balance=1000.0,
         cash_balance=990.0,
         realized_pnl=2.8,
@@ -257,12 +372,12 @@ def sample_storage_lifecycle(signal: SignalCandidate) -> StorageLifecycle:
         report_date=now.date(),
         starting_equity=1000.0,
         ending_equity=1002.8,
-        paper_pnl=2.8,
-        paper_roi=0.0028,
+        net_pnl=2.8,
+        return_rate=0.0028,
         total_signals=1,
-        paper_orders=1,
-        paper_fills=1,
-        rejected_paper_orders=0,
+        order_count=1,
+        fill_count=1,
+        rejected_order_count=0,
         open_positions=1,
         closed_positions=1,
         win_count=1,
@@ -294,20 +409,20 @@ def sample_storage_lifecycle(signal: SignalCandidate) -> StorageLifecycle:
         fill=fill,
         position=position,
         result=result,
-        wallet=wallet,
+        account_snapshot=account_snapshot,
         report=report,
         publish=publish,
         event=event,
     )
 
 
-def sample_paper_trade_result(**overrides: object) -> dict[str, object]:
+def sample_report_result(**overrides: object) -> dict[str, object]:
     now = utc_now()
     base: dict[str, object] = {
         "schema_version": 1,
-        "paper_trade_id": "pt-test",
+        "report_result_id": "pt-test",
         "signal_id": "sig-test",
-        "paper_position_id": "pos-test",
+        "report_position_id": "pos-test",
         "strategy": "ptb_diff",
         "asset": "BTC",
         "timeframe": "5m",

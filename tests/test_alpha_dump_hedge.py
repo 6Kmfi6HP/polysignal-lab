@@ -11,61 +11,40 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from polysignal_lab.alpha.dump_hedge_core import DumpHedgeAlphaCore
-from polysignal_lab.alpha.types import AlphaFillEvent, AlphaOrderEvent
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.strategy_config import DumpHedgeConfig
-from polysignal_lab.utils import utc_now
-from alpha_helpers import evaluate_core_from_snapshot
-from factories import sample_snapshot
-
-
-def _order(decision, *, order_id: str = "order-1") -> AlphaOrderEvent:
-    return AlphaOrderEvent(
-        strategy=decision.strategy,
-        market_id=decision.market_id,
-        condition_id=decision.condition_id,
-        token_id=decision.token_id,
-        side=decision.side,
-        order_id=order_id,
-        client_order_id=None,
-        reason=None,
-        ts_event=utc_now(),
-        metrics={},
-    )
-
-
-def _fill(snapshot, side: Side, price: float) -> AlphaFillEvent:
-    return AlphaFillEvent(
-        strategy="dump_hedge",
-        market_id=snapshot.market.market_id,
-        condition_id=snapshot.market.condition_id,
-        token_id=snapshot.market.token_for(side).token_id,
-        side=side,
-        order_id=f"dump_hedge:{snapshot.market.market_id}:{side.value}",
-        client_order_id=None,
-        reason=None,
-        ts_event=utc_now(),
-        metrics={},
-        fill_price=price,
-        shares=10.0,
-        liquidity_side=None,
-    )
+from alpha_helpers import evaluate_core, with_active_order, with_open_position
+from factories import sample_market_view
 
 
 def test_dump_detection_uses_fixed_view_time_when_wall_clock_is_unavailable(
     monkeypatch,
 ) -> None:
     fixed_time = datetime(2026, 1, 1, 12, tzinfo=UTC)
-    first = sample_snapshot(up_ask=0.60, down_ask=0.50).model_copy(
-        update={
-            "created_at": fixed_time,
-            "market": sample_snapshot().market.model_copy(
-                update={"start_ts": fixed_time - timedelta(seconds=30)}
-            ),
-        }
+    first = sample_market_view(
+        up_ask=0.60,
+        down_ask=0.50,
+        created_at=fixed_time,
+        start_ts=fixed_time - timedelta(seconds=30),
     )
-    second = sample_snapshot(up_ask=0.10, down_ask=0.50).model_copy(
-        update={"created_at": fixed_time, "market": first.market}
+    second = sample_market_view(
+        up_ask=0.10,
+        down_ask=0.50,
+        created_at=fixed_time,
+        start_ts=first.start_ts,
+        end_ts=first.end_ts,
+        view_id=first.view_id,
+    )
+    # Keep same market identity across views.
+    from dataclasses import replace
+
+    second = replace(
+        second,
+        market_id=first.market_id,
+        market_slug=first.market_slug,
+        condition_id=first.condition_id,
+        up=replace(second.up, token_id=first.up.token_id),
+        down=replace(second.down, token_id=first.down.token_id),
     )
     core = DumpHedgeAlphaCore(DumpHedgeConfig())
 
@@ -82,45 +61,52 @@ def test_dump_detection_uses_fixed_view_time_when_wall_clock_is_unavailable(
         NoWallClockDateTime,
         raising=False,
     )
-    evaluate_core_from_snapshot(core, first)
-    decisions = evaluate_core_from_snapshot(core, second)
+    evaluate_core(core, first)
+    decisions = evaluate_core(core, second)
 
     assert decisions
     assert decisions[0].reason_codes[0] == "DUMP_DETECTED"
 
 
 def test_dump_candidate_generation_does_not_consume_dump_guard() -> None:
+    from dataclasses import replace
+
     config = DumpHedgeConfig()
     core = DumpHedgeAlphaCore(config)
-    first = sample_snapshot(up_ask=0.60, down_ask=0.50)
-    second = sample_snapshot(up_ask=0.10, down_ask=0.50)
-    second = second.model_copy(update={"market": first.market})
-    evaluate_core_from_snapshot(core, first)
+    first = sample_market_view(up_ask=0.60, down_ask=0.50)
+    second = sample_market_view(up_ask=0.10, down_ask=0.50)
+    second = replace(
+        second,
+        market_id=first.market_id,
+        market_slug=first.market_slug,
+        condition_id=first.condition_id,
+        up=replace(second.up, token_id=first.up.token_id),
+        down=replace(second.down, token_id=first.down.token_id),
+    )
+    evaluate_core(core, first)
 
-    first_decisions = evaluate_core_from_snapshot(core, second)
-    second_decisions = evaluate_core_from_snapshot(core, second)
+    first_decisions = evaluate_core(core, second)
+    second_decisions = evaluate_core(core, second)
 
     assert first_decisions
     assert second_decisions
-    assert first.market.market_id not in core._dump_detected
-
-    core.on_order_accepted(_order(first_decisions[0]))
-
-    assert first.market.market_id in core._dump_detected
-    assert evaluate_core_from_snapshot(core, second) == []
+    cached = with_active_order(second, "dump_hedge", side=first_decisions[0].side)
+    assert evaluate_core(core, cached) == []
 
 
-def test_dump_hedge_uses_fill_event_for_position_state() -> None:
+def test_dump_hedge_uses_cache_position_projection() -> None:
     config = DumpHedgeConfig()
     core = DumpHedgeAlphaCore(config)
-    snapshot = sample_snapshot(up_ask=0.40, down_ask=0.50)
+    view = sample_market_view(up_ask=0.40, down_ask=0.50)
 
-    assert snapshot.market.market_id not in core._positions
-    assert evaluate_core_from_snapshot(core, snapshot) == []
-
-    core.on_order_filled(_fill(snapshot, Side.UP, 0.40))
-
-    hedge = evaluate_core_from_snapshot(core, snapshot)
+    assert evaluate_core(core, view) == []
+    cached = with_open_position(
+        view,
+        "dump_hedge",
+        side=Side.UP,
+        avg_entry_price=0.40,
+    )
+    hedge = evaluate_core(core, cached)
     assert hedge
     assert hedge[0].side == Side.DOWN
     assert hedge[0].hedge_leg is True

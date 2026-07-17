@@ -20,13 +20,16 @@ import pytest
 
 from polysignal_lab.alpha.types import (
     AlphaDecision,
+    AlphaFillEvent,
     FreshnessView,
+    MarketGroupView,
     MarketView,
     OrderIntentSpec,
     SideBookView,
     SpotView,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan
 
 
 def _view() -> MarketView:
@@ -95,10 +98,6 @@ def test_alpha_decision_carries_order_intent_spec() -> None:
     assert decision.reason_codes == ("PTB_DIFF_THRESHOLD_OK",)
 
 
-from polysignal_lab.alpha.types import AlphaFillEvent, AlphaOrderEvent, MarketGroupView
-from polysignal_lab.nautilus_runtime.order_plan import NautilusOrderSpec
-
-
 def test_market_group_view_carries_relation_members() -> None:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     view = _view()
@@ -139,7 +138,7 @@ def test_alpha_order_and_fill_events_are_immutable() -> None:
 
 
 def test_nautilus_order_spec_carries_quantity_and_tags() -> None:
-    spec = NautilusOrderSpec(
+    spec = OrderSubmissionPlan(
         instrument_id="token-up.POLYMARKET",
         side=Side.UP,
         price=0.81,

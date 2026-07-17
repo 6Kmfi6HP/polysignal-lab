@@ -14,11 +14,9 @@ Pos: Application code
 
 from __future__ import annotations
 
-from statistics import mean
 from typing import Any
 
-from polysignal_lab.alpha.helpers import evaluate_from_snapshot_for_test
-from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, MarketView, OrderIntentSpec
+from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 
@@ -27,42 +25,6 @@ class MidPriceSizingAlphaCore:
 
     def __init__(self, config) -> None:
         self.config = config
-        self._layer_count: dict[str, int] = {}
-        self._entry_prices: dict[str, list[float]] = {}
-
-    @staticmethod
-    def _pos_key(market_id: str, side: Side) -> str:
-        return f"{market_id}:{side.value}"
-
-    def _avg_cost(self, key: str) -> float | None:
-        prices = self._entry_prices.get(key, [])
-        return mean(prices) if prices else None
-
-    def reset_position(self, market_id: str, side: Side | None = None) -> None:
-        if side is not None:
-            key = self._pos_key(market_id, side)
-            self._layer_count.pop(key, None)
-            self._entry_prices.pop(key, None)
-            return
-        for item in (Side.UP, Side.DOWN):
-            key = self._pos_key(market_id, item)
-            self._layer_count.pop(key, None)
-            self._entry_prices.pop(key, None)
-
-    def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
-        key = self._pos_key(event.market_id, event.side)
-        self._layer_count[key] = self._layer_count.get(key, 0) + 1
-        self._entry_prices.setdefault(key, []).append(event.fill_price)
-        return []
-
-    def on_order_closed(self, event: AlphaFillEvent) -> None:
-        self.reset_position(event.market_id, event.side)
-
-    def on_order_submitted(self, event: AlphaOrderEvent) -> None: pass
-    def on_order_accepted(self, event: AlphaOrderEvent) -> None: pass
-    def on_order_rejected(self, event: AlphaOrderEvent) -> None: pass
-    def on_order_canceled(self, event: AlphaOrderEvent) -> None: pass
-    def on_order_expired(self, event: AlphaOrderEvent) -> None: pass
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         if not self.config.enabled:
@@ -79,8 +41,8 @@ class MidPriceSizingAlphaCore:
         return decisions
 
     def _exit_triggered(self, view: MarketView, side: Side) -> bool:
-        key = self._pos_key(view.market_id, side)
-        if self._layer_count.get(key, 0) <= 0 or self._avg_cost(key) is None:
+        position = view.trading.position(self.name, view.market_id, side)
+        if position is None:
             return False
         bid = view.book_for(side).best_bid
         return bid is not None and (
@@ -101,9 +63,15 @@ class MidPriceSizingAlphaCore:
         return True
 
     def _evaluate_side(self, view: MarketView, side: Side) -> list[AlphaDecision]:
-        key = self._pos_key(view.market_id, side)
-        current_layers = self._layer_count.get(key, 0)
-        current_avg = self._avg_cost(key)
+        position = view.trading.position(self.name, view.market_id, side)
+        current_layers = view.trading.filled_layer_count(
+            self.name,
+            view.market_id,
+            side,
+        )
+        if position is not None:
+            current_layers = max(1, current_layers)
+        current_avg = None if position is None else position.avg_entry_price
         book = view.book_for(side)
         ask = book.best_ask
         bid = book.best_bid
@@ -330,29 +298,3 @@ class MidPriceSizingAlphaCore:
             order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, reduce_only=reduce_only),
         )
         return [decision]
-
-    def save_state(self) -> dict[str, object]:
-        from polysignal_lab.alpha.state import json_safe_state
-
-        return json_safe_state({
-            "_layer_count": self._layer_count,
-            "_entry_prices": self._entry_prices,
-        })
-
-    def load_state(self, state: dict[str, object]) -> None:
-        layer_raw = state.get("_layer_count", {}) or {}
-        if not isinstance(layer_raw, dict):
-            layer_raw = {}
-        self._layer_count = {
-            str(k): int(v) for k, v in layer_raw.items()
-        }
-        prices_raw = state.get("_entry_prices", {}) or {}
-        if not isinstance(prices_raw, dict):
-            prices_raw = {}
-        self._entry_prices = {
-            str(k): [float(p) for p in v]
-            for k, v in prices_raw.items()
-        }
-
-    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        return evaluate_from_snapshot_for_test(self, snapshot)

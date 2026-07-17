@@ -18,9 +18,8 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING
 
-from polysignal_lab.alpha.helpers import evaluate_from_snapshot_for_test
 from polysignal_lab.alpha.stats import _RollingPriceStats
-from polysignal_lab.alpha.types import AlphaDecision, AlphaOrderEvent, MarketView, OrderIntentSpec, SideBookView
+from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec, SideBookView
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 if TYPE_CHECKING:
@@ -35,15 +34,10 @@ class BinaryMomentumAlphaCore:
         maxlen = config.macd_slow + config.macd_signal + 20
         self._spot_prices: deque[float] = deque(maxlen=maxlen)
         self._vwap_stats = _RollingPriceStats(window_size=config.macd_slow * 2)
-        self._entered_markets: set[str] = set()
 
     def reset(self) -> None:
         self._spot_prices.clear()
         self._vwap_stats = _RollingPriceStats(window_size=self.config.macd_slow * 2)
-        self._entered_markets.clear()
-
-    def on_order_accepted(self, event: AlphaOrderEvent) -> None:
-        self._entered_markets.add(event.market_id)
 
     @staticmethod
     def _book_mid(book: SideBookView) -> float | None:
@@ -127,7 +121,7 @@ class BinaryMomentumAlphaCore:
             return []
 
         market_id = view.market_id
-        already_in = market_id in self._entered_markets
+        already_in = view.trading.has_market_activity(self.name, market_id)
         decisions: list[AlphaDecision] = []
 
         for direction_side in (Side.UP, Side.DOWN):
@@ -249,6 +243,3 @@ class BinaryMomentumAlphaCore:
             },
             order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FAK),
         )
-
-    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        return evaluate_from_snapshot_for_test(self, snapshot)

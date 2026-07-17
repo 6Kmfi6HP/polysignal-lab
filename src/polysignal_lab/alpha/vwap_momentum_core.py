@@ -17,14 +17,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
-from polysignal_lab.alpha.helpers import enabled_for_view, evaluate_from_snapshot_for_test
+from polysignal_lab.alpha.helpers import enabled_for_view
 from polysignal_lab.alpha.state import json_safe_state
 from polysignal_lab.alpha.types import (
     AlphaDecision,
-    AlphaFillEvent,
-    AlphaOrderEvent,
     MarketView,
     OrderIntentSpec,
     SideBookView,
@@ -34,11 +32,6 @@ from polysignal_lab.alpha.vwap_state import encode_vwap_state, restore_vwap_stat
 from polysignal_lab.alpha.vwap_trade_history import TradeHistory
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.trade import Trade
-
-if TYPE_CHECKING:
-    # ``from __future__ import annotations`` keeps this a string — no import of
-    # ``domain.snapshot`` at module scope (alpha-core purity).
-    pass
 
 
 @dataclass(frozen=True)
@@ -73,95 +66,8 @@ class VWAPMomentumAlphaCore:
     def __init__(self, config) -> None:
         self.config = config
         self.trades = TradeHistory()
-        self._can_enter: dict[str, bool] = defaultdict(lambda: True)
-        self._pending_signal_samples: dict[str, list[tuple[str, float, float, float]]] = {}
-        # Transient holding area: evaluate stashes the just-pushed samples per
-        # market here; the adapter binds them to the candidate's signal_id.
-        self._pending_signal_samples_hold: dict[str, list[tuple[str, float, float, float]]] = {}
         self._last_trade_signatures: dict[str, tuple[float, float, str | None, float | None]] = {}
         self._seen_trade_signatures: dict[str, set[tuple[float, float, float]]] = defaultdict(set)
-        self._pending_hedges: dict[str, tuple[Side, float]] = {}
-
-    def reset_entry_guard(self, market_id: str) -> None:
-        """Re-allow entry for a market (used by tests or manual reset)."""
-        self._can_enter[market_id] = True
-
-    # ------------------------------------------------------------------
-    # StatefulAlphaCore callbacks
-    # ------------------------------------------------------------------
-
-    def on_order_accepted(self, event: AlphaOrderEvent) -> None:
-        self._can_enter[event.market_id] = False
-        # Drop the pending-sample binding; the samples REMAIN in history.
-        self._pending_signal_samples.pop(event.order_id, None)
-        if event.metrics.get("hedge_leg"):
-            self._pending_hedges.pop(event.market_id, None)
-
-    def on_order_rejected(self, event: AlphaOrderEvent) -> None:
-        for key, price, size, timestamp in self._pending_signal_samples.pop(event.order_id, []):
-            self.trades.remove(key, price, size, timestamp)
-
-    def on_order_expired(self, event: AlphaOrderEvent) -> None:
-        # A GTD hedge filling must not stage a reverse hedge — just clear it.
-        self._pending_hedges.pop(event.market_id, None)
-
-    def on_notify_fill(self, market_id: str, side: Side, shares: float) -> None:
-        """Stage a pending hedge when an entry/hedge order fills.
-
-        Mirrors legacy ``notify_fill``: records ``(side.opposite, shares)``
-        without generating a decision.
-        """
-        if self.config.hedge_enabled and shares > 0:
-            self._pending_hedges[market_id] = (side.opposite, shares)
-
-    def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
-        """Taker fill → consume the staged pending hedge and emit a hedge decision.
-
-        A GTD fill is handled by ``on_order_expired`` (clears the pending hedge,
-        no reverse hedge); this method is only reached for taker fills.
-        """
-        if not self.config.hedge_enabled:
-            return []
-        pending = self._pending_hedges.pop(event.market_id, None)
-        if pending is None:
-            return []
-        hedge_side, contracts = pending
-        m = event.metrics
-        opposite_token_id = m.get("opposite_token_id")
-        condition_id = m.get("condition_id")
-        if not isinstance(opposite_token_id, str) or not isinstance(condition_id, str):
-            return []
-        seconds_to_close = m.get("seconds_to_close")
-        return [
-            self._build_hedge_decision(
-                _HedgeDecisionContext(
-                    asset=str(m.get("asset", "")),
-                    timeframe=str(m.get("timeframe", "")),
-                    market_id=event.market_id,
-                    market_slug=str(m.get("market_slug", "")),
-                    condition_id=condition_id,
-                    token_id=opposite_token_id,
-                    side=hedge_side,
-                    confidence=float(m.get("signal_confidence", 0.70)),
-                    seconds_to_close=int(seconds_to_close)
-                    if isinstance(seconds_to_close, (int, float))
-                    else None,
-                    data_freshness_ms=None,
-                    contracts=contracts,
-                )
-            )
-        ]
-
-    def bind_signal(self, market_id: str, signal_id: str) -> None:
-        """Bind the just-created candidate's signal_id to its pending samples.
-
-        Called by the adapter after ``decision_to_signal`` so that
-        ``on_order_rejected`` / ``on_order_accepted`` can key pending samples
-        by ``signal_id`` (matching the legacy ``_pending_signal_samples`` key).
-        """
-        samples = self._pending_signal_samples_hold.pop(market_id, None)
-        if samples is not None:
-            self._pending_signal_samples[signal_id] = samples
 
     # ------------------------------------------------------------------
     # Evaluate — moved verbatim from the legacy strategy
@@ -183,7 +89,7 @@ class VWAPMomentumAlphaCore:
 
         # Phase 2: Ingest trade data from this snapshot into history.
         now_ts = view.created_at.timestamp()
-        pushed_samples = self._ingest_trades(view, now_ts)
+        self._ingest_trades(view, now_ts)
 
         up_key = self._market_key(view.market_id, Side.UP)
         down_key = self._market_key(view.market_id, Side.DOWN)
@@ -202,9 +108,6 @@ class VWAPMomentumAlphaCore:
         if decision is None:
             return []
 
-        # Stash the just-pushed samples so the adapter can bind them to the
-        # candidate's signal_id (for on_order_rejected revert).
-        self._pending_signal_samples_hold[view.market_id] = pushed_samples
         return [decision]
 
     def _validate_and_prepare(self, view: MarketView) -> _EvalContext | None:
@@ -374,7 +277,7 @@ class VWAPMomentumAlphaCore:
             return None
 
         # One-shot entry guard (per-market) — READ ONLY here.
-        if not self._can_enter[view.market_id]:
+        if view.trading.has_market_activity(self.name, view.market_id):
             return None
 
         entry_reference_price = view.ask_for(fav_side)
@@ -436,10 +339,11 @@ class VWAPMomentumAlphaCore:
         )
 
     def _pending_hedge_decision(self, view: MarketView) -> list[AlphaDecision]:
-        pending = self._pending_hedges.get(view.market_id)
-        if pending is None:
+        position = view.trading.unhedged_leg(self.name, view.market_id)
+        if position is None or view.trading.has_hedge_order(self.name, view.market_id):
             return []
-        hedge_side, contracts = pending
+        hedge_side = position.side.opposite
+        contracts = position.quantity
         ask = view.ask_for(hedge_side)
         if ask is None:
             return []
@@ -507,8 +411,6 @@ class VWAPMomentumAlphaCore:
     # Test helper + state round-trip
     # ------------------------------------------------------------------
 
-    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        return evaluate_from_snapshot_for_test(self, snapshot)
 
 
     def _prune_trade_state(self, key: str, window_sec: float, now: float) -> None:
@@ -535,10 +437,8 @@ class VWAPMomentumAlphaCore:
                         ]
                         for key, trades in self.trades.all_trades().items()
                     },
-                    "can_enter": dict(self._can_enter),
                     "last_trade_signatures": self._last_trade_signatures,
                     "seen_trade_signatures": self._seen_trade_signatures,
-                    "pending_hedges": self._pending_hedges,
                 }
             )
         )
@@ -546,11 +446,6 @@ class VWAPMomentumAlphaCore:
     def load_state(self, payload: Mapping[str, object]) -> None:
         (
             self.trades,
-            self._can_enter,
             self._last_trade_signatures,
             self._seen_trade_signatures,
-            self._pending_hedges,
         ) = restore_vwap_state_fields(payload)
-        # Transient pending-sample bookkeeping is not persisted.
-        self._pending_signal_samples = {}
-        self._pending_signal_samples_hold = {}

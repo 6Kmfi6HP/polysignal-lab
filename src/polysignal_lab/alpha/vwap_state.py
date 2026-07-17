@@ -12,7 +12,6 @@ from collections import defaultdict
 from typing import Mapping
 
 from polysignal_lab.alpha.vwap_trade_history import TradeHistory
-from polysignal_lab.domain.enums import Side
 
 VWAP_STATE_VERSION = 1
 
@@ -37,10 +36,8 @@ def restore_vwap_state_fields(
     payload: Mapping[str, object],
 ) -> tuple[
     TradeHistory,
-    defaultdict[str, bool],
     dict[str, tuple[float, float, str | None, float | None]],
     defaultdict[str, set[tuple[float, float, float]]],
-    dict[str, tuple[Side, float]],
 ]:
     decoded = decode_vwap_state(payload)
 
@@ -53,13 +50,6 @@ def restore_vwap_state_fields(
             new_trades.push(
                 str(key), float(trade["price"]), float(trade["size"]), float(trade["timestamp"])
             )
-
-    can_enter_raw = decoded.get("can_enter", {}) or {}
-    if not isinstance(can_enter_raw, Mapping):
-        can_enter_raw = {}
-    can_enter = defaultdict(
-        lambda: True, {str(key): bool(value) for key, value in can_enter_raw.items()}
-    )
 
     sigs_raw = decoded.get("last_trade_signatures", {}) or {}
     if not isinstance(sigs_raw, Mapping):
@@ -74,17 +64,8 @@ def restore_vwap_state_fields(
         {str(key): {tuple(sig) for sig in value} for key, value in seen_raw.items()},
     )
 
-    hedges_raw = decoded.get("pending_hedges", {}) or {}
-    if not isinstance(hedges_raw, Mapping):
-        hedges_raw = {}
-    pending_hedges = {
-        str(key): (Side(value[0]), float(value[1])) for key, value in hedges_raw.items()
-    }
-
     return (
         new_trades,
-        can_enter,
         last_trade_signatures,
         seen_trade_signatures,
-        pending_hedges,
     )

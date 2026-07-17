@@ -11,7 +11,6 @@ Pos: Application code
 
 
 
-
 from __future__ import annotations
 
 from typing import Any
@@ -21,19 +20,19 @@ from polysignal_lab.alpha.helpers import (
     HedgeDecisionSpec,
     SIDES,
     OrderDecisionSpec,
-    active_unhedged_position,
     build_order_decision,
     build_hedge_order_decision,
     binary_pair_effective_cost,
     enabled_for_view,
-    evaluate_from_snapshot_for_test,
-    position_hedge_context,
-    record_two_leg_fill,
-    restore_position_state,
-    restore_string_set,
+    hedge_context_from_position,
 )
 from polysignal_lab.alpha.stats import RollingPriceStats
-from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, AlphaOrderEvent, MarketView, OrderIntentSpec
+from polysignal_lab.alpha.types import (
+    AlphaDecision,
+    CachedPositionView,
+    MarketView,
+    OrderIntentSpec,
+)
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 
@@ -43,24 +42,18 @@ class DumpHedgeAlphaCore:
     def __init__(self, config) -> None:
         self.config = config
         self._price_stats = RollingPriceStats(window_size=16)
-        self._entered_markets: set[str] = set()
-        self._positions: dict[str, dict[str, Any]] = {}
-        self._dump_detected: set[str] = set()
-        self._last_price: dict[str, float] = {}
 
     def _validate_inputs(self, view: MarketView) -> bool:
         return enabled_for_view(self.config, view)
 
-    def _active_position(self, view: MarketView) -> dict[str, Any] | None:
-        position = active_unhedged_position(self._positions, view.market_id)
-        return dict(position) if position is not None else None
+    def _active_position(self, view: MarketView) -> CachedPositionView | None:
+        return view.trading.unhedged_leg(self.name, view.market_id)
 
     def _update_price_stats(self, view: MarketView) -> None:
         for side in SIDES:
             book = view.book_for(side)
             if book.best_ask is not None:
                 self._price_stats.push(book.token_id, book.best_ask, size=1.0)
-                self._last_price[book.token_id] = book.best_ask
 
     # -- decision helpers ----------------------------------------------------
 
@@ -104,50 +97,23 @@ class DumpHedgeAlphaCore:
         elapsed = (view.created_at - view.start_ts).total_seconds()
         return 0 <= elapsed <= self.config.detection_window_minutes * 60.0
 
-    def on_order_accepted(self, event: AlphaOrderEvent) -> None:
-        self._dump_detected.add(event.market_id)
-
-    def on_order_submitted(self, event: AlphaOrderEvent) -> None:
-        self.on_order_accepted(event)
-
-    def on_order_rejected(self, event: AlphaOrderEvent) -> None:
-        self._dump_detected.discard(event.market_id)
-
-    def on_order_canceled(self, event: AlphaOrderEvent) -> None:
-        self._dump_detected.discard(event.market_id)
-
-    def on_order_expired(self, event: AlphaOrderEvent) -> None:
-        self._dump_detected.discard(event.market_id)
-
-    def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
-        self._dump_detected.add(event.market_id)
-        record_two_leg_fill(
-            self._positions,
-            self._entered_markets,
-            event,
-            enter_on_first_fill=False,
-        )
-        return []
-
-    def on_leg_failure(self, pair_id: str, market_id: str, side: Side) -> None:
-        self._positions.pop(market_id, None)
-        self._dump_detected.discard(market_id)
-
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         if not self._validate_inputs(view):
             return []
-        pos = self._active_position(view)
-        if pos is not None:
-            return self._try_hedge_or_stop(view, pos)
-        if view.market_id in self._entered_markets:
+        position = self._active_position(view)
+        if position is not None:
+            return self._try_hedge_or_stop(view, position)
+        if view.trading.has_market_activity(self.name, view.market_id):
             return []
         self._update_price_stats(view)
-        if not self._is_in_detection_window(view) or view.market_id in self._dump_detected:
+        if not self._is_in_detection_window(view):
             return []
         return self._evaluate_sides(view)
 
-    def _try_hedge_or_stop(self, view: MarketView, position: dict[str, Any]) -> list[AlphaDecision]:
-        hedge = position_hedge_context(position, view.created_at)
+    def _try_hedge_or_stop(self, view: MarketView, position: CachedPositionView) -> list[AlphaDecision]:
+        if view.trading.has_hedge_order(self.name, view.market_id):
+            return []
+        hedge = hedge_context_from_position(position, view.created_at)
         hedge_ask = view.ask_for(hedge.hedge_side)
         decisions: list[AlphaDecision] = []
 
@@ -226,20 +192,3 @@ class DumpHedgeAlphaCore:
                 hedge_leg=hedge_leg,
             ),
         )
-
-    def save_state(self) -> dict[str, object]:
-        from polysignal_lab.alpha.state import json_safe_state
-
-        return json_safe_state({
-            "_positions": self._positions,
-            "_entered_markets": self._entered_markets,
-            "_dump_detected": self._dump_detected,
-        })
-
-    def load_state(self, state: dict[str, object]) -> None:
-        self._positions = restore_position_state(state.get("_positions", {}) or {})
-        self._entered_markets = restore_string_set(state.get("_entered_markets", []) or [])
-        self._dump_detected = restore_string_set(state.get("_dump_detected", []) or [])
-
-    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        return evaluate_from_snapshot_for_test(self, snapshot)

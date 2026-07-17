@@ -22,9 +22,8 @@ from polysignal_lab.alpha.helpers import (
     OrderDecisionSpec,
     build_order_decision,
     depth_weighted_ask,
-    evaluate_from_snapshot_for_test,
 )
-from polysignal_lab.alpha.types import AlphaDecision, AlphaFillEvent, MarketGroupView, MarketView, OrderIntentSpec
+from polysignal_lab.alpha.types import AlphaDecision, MarketGroupView, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 
@@ -48,7 +47,6 @@ class CrossMarketAlphaCore:
         self.config = config
         self._relations: list[MarketRelation] = []
         self._market_to_relations: dict[str, list[int]] = {}
-        self._active_baskets: dict[str, dict[str, Any]] = {}
 
     def register_relation(self, relation_id: str, rel_type: RelationType, condition_ids: list[str], sides: list[Side]) -> None:
         if len(condition_ids) != len(sides):
@@ -58,25 +56,6 @@ class CrossMarketAlphaCore:
         self._relations.append(rel)
         for condition_id in condition_ids:
             self._market_to_relations.setdefault(condition_id, []).append(idx)
-
-    def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]:
-        self.on_notify_fill(event.market_id, event.side, event.fill_price, event.shares)
-        return []
-
-    def on_notify_fill(self, market_id: str, side: Side, fill_price: float, shares: float) -> None:
-        for basket in self._active_baskets.values():
-            if market_id in basket.get("markets", set()):
-                basket.setdefault("fills", {})[market_id] = {
-                    "side": side,
-                    "fill_price": fill_price,
-                    "shares": shares,
-                }
-                return
-
-    def on_leg_failure(self, pair_id: str, market_id: str, side: Side) -> None:
-        basket = self._active_baskets.setdefault(pair_id, {"fills": {}, "markets": set()})
-        basket["failed"] = True
-        basket["failed_leg"] = {"market_id": market_id, "side": side}
 
     def _pair_effective_cost(self, *leg_prices: float) -> float:
         return sum(leg_prices) + len(leg_prices) * self.config.fee_rate
@@ -127,9 +106,6 @@ class CrossMarketAlphaCore:
 
         relation_code = "EXHAUSTIVE_MUTUALLY_EXCLUSIVE" if rel.rel_type == RelationType.EXHAUSTIVE_MUTUALLY_EXCLUSIVE else "INCLUSION"
         confidence = min(0.90, 0.60 + (1.0 - cost) * 2.0)
-        basket = self._active_baskets.setdefault(rel.relation_id, {"fills": {}, "markets": set(), "failed": False})
-        basket["markets"].update(item.market_id for item in views)
-
         decisions: list[AlphaDecision] = []
         n_legs = len(views)
         leg_price_map = {condition_id: round(price, 4) for condition_id, price in zip(rel.condition_ids, leg_exec_prices, strict=True)}
@@ -210,8 +186,6 @@ class CrossMarketAlphaCore:
             return []
 
         confidence = min(0.90, 0.60 + (1.0 - metrics.get("estimated_pair_cost", 1.0)) * 2.0)
-        basket = self._active_baskets.setdefault(rel.relation_id, {"fills": {}, "markets": set(), "failed": False})
-        basket["markets"].add(view.market_id)
         decision = self._decision(
             view,
             target_side,
@@ -237,18 +211,3 @@ class CrossMarketAlphaCore:
                 fallback_to_max_entry=True,
             ),
         )
-
-    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        return evaluate_from_snapshot_for_test(self, snapshot)
-
-    def save_state(self) -> dict[str, object]:
-        from polysignal_lab.alpha.state import json_safe_state
-
-        return json_safe_state({
-            "_active_baskets": self._active_baskets,
-        })
-
-    def load_state(self, payload: dict[str, object]) -> None:
-        baskets = payload.get("_active_baskets", {})
-        if isinstance(baskets, dict):
-            self._active_baskets = baskets

@@ -4,7 +4,6 @@
 - Application code
 
 **Files**:
-- `legacy_snapshot_adapter.py` - Compatibility/test-only MarketSnapshot adaptation
 - `vwap_trade_history.py` - Exports TradeHistory
 - `vwap_state.py` - Exports encode_vwap_state, decode_vwap_state, restore_vwap_state_fields
 - `vwap_momentum_core.py` - Exports VWAPMomentumAlphaCore
@@ -18,7 +17,7 @@
 - `mid_price_sizing_core.py` - Exports MidPriceSizingAlphaCore
 - `low_side_dual_reversion_core.py` - Exports LowSideDualReversionAlphaCore
 - `late_consensus_core.py` - Exports LateConsensusAlphaCore
-- `helpers.py` - Shared alpha helpers including evaluate_from_snapshot_for_test
+- `helpers.py` - Shared alpha helpers
 - `fibonacci_core.py` - Exports _RollingPriceStats and 3 more
 - `dump_hedge_core.py` - Exports RollingPriceStats and 1 more
 - `cross_market_core.py` - Exports RelationType and 2 more

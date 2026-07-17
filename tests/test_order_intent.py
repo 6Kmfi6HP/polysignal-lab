@@ -8,16 +8,11 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
-from datetime import timedelta
-
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
-from polysignal_lab.domain.enums import MarketStatus, OrderIntent, Side
-from polysignal_lab.domain.orderbook import BookLevel, OrderBook
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
-from polysignal_lab.domain.spot import SpotPrice
 from polysignal_lab.signal_layer.gate import SignalGate
-from polysignal_lab.utils import utc_now
+from factories import sample_market_view
 
 
 def test_order_intent_values():
@@ -131,41 +126,23 @@ def _make_passive_signal() -> SignalCandidate:
     )
 
 
-def _make_fresh_book() -> OrderBook:
-    return OrderBook(
-        token_id="t-up", bids=[BookLevel(price=0.30, size=100)],
-        asks=[BookLevel(price=0.55, size=100)],
-        last_trade_price=0.42, received_at=utc_now(),
-    )
-
-
-def _make_active_snapshot(book: OrderBook) -> MarketSnapshot:
-    from polysignal_lab.domain.market import Market, OutcomeToken
-
-    now = utc_now()
-    market = Market(
-        market_id="mkt-1", market_slug="s", condition_id="c",
-        question_id="q", question="Q", asset="BTC", timeframe="5m",
-        start_ts=now - timedelta(seconds=100),
-        end_ts=now + timedelta(seconds=300),
-        status=MarketStatus.ACTIVE, resolution_source="test",
-        outcome_tokens=[
-            OutcomeToken(token_id="t-up", side=Side.UP, outcome_name="Up", market_id="mkt-1"),
-            OutcomeToken(token_id="t-down", side=Side.DOWN, outcome_name="Down", market_id="mkt-1"),
-        ],
-    )
-    return MarketSnapshot(
-        snapshot_id="snap-1", market=market,
-        up_book=book, down_book=None,
-        spot=SpotPrice(asset="BTC", symbol="BTCUSDT", price=42000.0),
-        freshness=FreshnessState(up_book_ms=10, down_book_ms=None, spot_ms=10, max_ms=10),
+def _make_active_view():
+    return sample_market_view(
+        up_ask=0.55,
+        up_bid=0.30,
+        down_ask=0.45,
+        book_freshness_ms=10,
+        spot_freshness_ms=10,
+        spot_price=42000.0,
+        seconds_to_close=300,
+        view_id="snap-1",
     )
 
 
 def test_passive_gtd_skips_max_entry_check():
     gate = _make_gate()
     sig = _make_passive_signal()
-    snap = _make_active_snapshot(_make_fresh_book())
+    snap = _make_active_view()
     # ask=0.55 > max_entry=0.35, but PASSIVE_GTD should pass
     reason = gate._max_entry(sig, snap)
     assert reason is None
@@ -182,7 +159,7 @@ def test_taker_still_fails_ask_above_max_entry():
         reason_codes=["TEST"], metrics={},
         # no order_intent → default taker
     )
-    snap = _make_active_snapshot(_make_fresh_book())
+    snap = _make_active_view()
     reason = gate._max_entry(sig, snap)
     assert reason is not None
     assert reason.reason_code == "ASK_ABOVE_MAX_ENTRY"
@@ -200,7 +177,7 @@ def test_gtd_expiry_rejects_missing():
         order_intent=OrderIntent.PASSIVE_GTD,
         # expiry_seconds NOT set
     )
-    snap = _make_active_snapshot(_make_fresh_book())
+    snap = _make_active_view()
     reason = gate._gtd_expiry(sig, snap)
     assert reason is not None
     assert reason.reason_code == "MISSING_GTD_EXPIRY"
@@ -217,7 +194,7 @@ def test_gtd_expiry_rejects_too_long():
         reason_codes=["TEST"], metrics={},
         order_intent=OrderIntent.PASSIVE_GTD, expiry_seconds=100000,
     )
-    snap = _make_active_snapshot(_make_fresh_book())
+    snap = _make_active_view()
     reason = gate._gtd_expiry(sig, snap)
     assert reason is not None
     assert reason.reason_code == "GTD_EXPIRY_EXCEEDS_24H"
@@ -226,7 +203,7 @@ def test_gtd_expiry_rejects_too_long():
 def test_gtd_expiry_accepts_valid():
     gate = _make_gate()
     sig = _make_passive_signal()
-    snap = _make_active_snapshot(_make_fresh_book())
+    snap = _make_active_view()
     reason = gate._gtd_expiry(sig, snap)
     assert reason is None
 
@@ -234,7 +211,7 @@ def test_gtd_expiry_accepts_valid():
 def test_passive_gtd_skips_spread_check():
     gate = _make_gate()
     sig = _make_passive_signal()
-    snap = _make_active_snapshot(_make_fresh_book())
+    snap = _make_active_view()
     reason = gate._spread(sig, snap)
     assert reason is None
 
@@ -242,7 +219,7 @@ def test_passive_gtd_skips_spread_check():
 def test_passive_gtd_skips_time_window():
     gate = _make_gate()
     sig = _make_passive_signal()
-    snap = _make_active_snapshot(_make_fresh_book())
+    snap = _make_active_view()
     reason = gate._time_window(sig, snap)
     assert reason is None
 
@@ -250,7 +227,7 @@ def test_passive_gtd_skips_time_window():
 def test_passive_gtd_full_evaluate_accepted():
     gate = _make_gate()
     sig = _make_passive_signal()
-    snap = _make_active_snapshot(_make_fresh_book())
+    snap = _make_active_view()
     decision = gate.evaluate(sig, snap)
     assert decision.accepted is True
     assert decision.signal is not None

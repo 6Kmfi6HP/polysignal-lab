@@ -15,8 +15,7 @@ Pos: Application code
 
 from __future__ import annotations
 
-from polysignal_lab.alpha.helpers import evaluate_from_snapshot_for_test
-from polysignal_lab.alpha.types import AlphaDecision, AlphaOrderEvent, MarketView, OrderIntentSpec, SideBookView
+from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec, SideBookView
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 
@@ -27,13 +26,9 @@ class NinetyNineCentSniperAlphaCore:
 
     def __init__(self, config) -> None:
         self.config = config
-        self._sniped_markets: set[tuple[str, str]] = set()
 
     def reset(self) -> None:
-        self._sniped_markets.clear()
-
-    def on_order_accepted(self, event: AlphaOrderEvent) -> None:
-        self._sniped_markets.add((event.market_id, event.side.value))
+        return None
 
     @staticmethod
     def _book_mid(book: SideBookView) -> float | None:
@@ -72,7 +67,7 @@ class NinetyNineCentSniperAlphaCore:
         self, view: MarketView, side: Side, seconds_to_close: int
     ) -> AlphaDecision | None:
         cfg = self.config
-        if (view.market_id, side.value) in self._sniped_markets:
+        if view.trading.has_market_activity(self.name, view.market_id, side):
             return None
         book = view.book_for(side)
         best_ask = book.best_ask
@@ -128,6 +123,3 @@ class NinetyNineCentSniperAlphaCore:
         if opposite_ask is None or opposite_ask > 0.05:
             return None
         return opposite_ask
-
-    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        return evaluate_from_snapshot_for_test(self, snapshot)

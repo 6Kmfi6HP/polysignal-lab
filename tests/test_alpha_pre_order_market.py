@@ -11,37 +11,23 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from polysignal_lab.alpha.pre_order_market_core import PreOrderMarketAlphaCore
-from polysignal_lab.alpha.types import AlphaFillEvent, AlphaOrderEvent
+from polysignal_lab.alpha.types import MarketView
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.strategy_config import PreOrderMarketConfig
 from polysignal_lab.utils import utc_now
-from alpha_helpers import evaluate_core_from_snapshot
-from factories import sample_snapshot
+from alpha_helpers import evaluate_core, with_active_order, with_open_position
+from factories import sample_market_view
 
 
-def _preopen_snapshot():
+def _preopen_view() -> MarketView:
     now = utc_now()
-    snapshot = sample_snapshot(up_ask=0.50, down_ask=0.50, seconds_to_close=300)
-    return snapshot.model_copy(
-        update={
-            "created_at": now,
-            "market": snapshot.market.model_copy(update={"start_ts": now + timedelta(seconds=120), "end_ts": now + timedelta(seconds=300)}),
-        }
-    )
-
-
-def _order(decision, *, order_id: str = "order-1") -> AlphaOrderEvent:
-    return AlphaOrderEvent(
-        strategy=decision.strategy,
-        market_id=decision.market_id,
-        condition_id=decision.condition_id,
-        token_id=decision.token_id,
-        side=decision.side,
-        order_id=order_id,
-        client_order_id=None,
-        reason=None,
-        ts_event=utc_now(),
-        metrics={},
+    return sample_market_view(
+        up_ask=0.50,
+        down_ask=0.50,
+        seconds_to_close=300,
+        created_at=now,
+        start_ts=now + timedelta(seconds=120),
+        end_ts=now + timedelta(seconds=300),
     )
 
 
@@ -49,16 +35,13 @@ def test_pre_order_expiry_uses_fixed_view_time_when_wall_clock_is_unavailable(
     monkeypatch,
 ) -> None:
     fixed_time = datetime(2026, 1, 1, 12, tzinfo=UTC)
-    snapshot = sample_snapshot(up_ask=0.50, down_ask=0.50).model_copy(
-        update={
-            "created_at": fixed_time,
-            "market": sample_snapshot().market.model_copy(
-                update={
-                    "start_ts": fixed_time + timedelta(seconds=120),
-                    "end_ts": fixed_time + timedelta(seconds=300),
-                }
-            ),
-        }
+    view = sample_market_view(
+        up_ask=0.50,
+        down_ask=0.50,
+        created_at=fixed_time,
+        start_ts=fixed_time + timedelta(seconds=120),
+        end_ts=fixed_time + timedelta(seconds=300),
+        seconds_to_close=300,
     )
     core = PreOrderMarketAlphaCore(PreOrderMarketConfig())
 
@@ -70,7 +53,7 @@ def test_pre_order_expiry_uses_fixed_view_time_when_wall_clock_is_unavailable(
     import polysignal_lab.alpha.pre_order_market_core as pre_order_module
 
     monkeypatch.setattr(pre_order_module, "datetime", NoWallClockDateTime)
-    decisions = evaluate_core_from_snapshot(core, snapshot)
+    decisions = evaluate_core(core, view)
 
     assert decisions
     assert {decision.order_intent.expiry_seconds for decision in decisions} == {150}
@@ -79,63 +62,40 @@ def test_pre_order_expiry_uses_fixed_view_time_when_wall_clock_is_unavailable(
 def test_pre_order_candidates_repeat_until_order_submitted() -> None:
     config = PreOrderMarketConfig()
     core = PreOrderMarketAlphaCore(config)
-    snapshot = _preopen_snapshot()
+    view = _preopen_view()
 
-    first = evaluate_core_from_snapshot(core, snapshot)
-    second = evaluate_core_from_snapshot(core, snapshot)
+    first = evaluate_core(core, view)
+    second = evaluate_core(core, view)
 
     assert len(first) == 4
     assert len(second) == 4
-    assert snapshot.market.market_id not in core._pre_ordered
-
-    core.on_order_submitted(_order(first[0]))
-
-    assert snapshot.market.market_id in core._pre_ordered
-    assert evaluate_core_from_snapshot(core, snapshot) == []
+    cached = with_active_order(view, "pre_order_market", side=first[0].side)
+    assert evaluate_core(core, cached) == []
 
 
-def test_pre_order_cancel_or_expire_rolls_back_pre_order_guard() -> None:
+def test_pre_order_without_active_cache_order_remains_eligible() -> None:
     config = PreOrderMarketConfig()
     core = PreOrderMarketAlphaCore(config)
-    snapshot = _preopen_snapshot()
-    decisions = evaluate_core_from_snapshot(core, snapshot)
+    view = _preopen_view()
+    decisions = evaluate_core(core, view)
     assert decisions
 
-    core.on_order_submitted(_order(decisions[0]))
-    core.on_order_canceled(_order(decisions[0]))
-    assert len(evaluate_core_from_snapshot(core, snapshot)) == 4
-
-    core.on_order_submitted(_order(decisions[0]))
-    core.on_order_expired(_order(decisions[0]))
-    assert len(evaluate_core_from_snapshot(core, snapshot)) == 4
+    assert len(evaluate_core(core, view)) == 4
 
 
-def test_pre_order_reconcile_uses_fill_event_state() -> None:
+def test_pre_order_reconcile_uses_cache_position_projection() -> None:
     config = PreOrderMarketConfig()
     core = PreOrderMarketAlphaCore(config)
-    snapshot = _preopen_snapshot()
+    view = _preopen_view()
 
-    assert snapshot.market.market_id not in core._positions
-
-    core.on_order_filled(
-        AlphaFillEvent(
-            strategy="pre_order_market",
-            market_id=snapshot.market.market_id,
-            condition_id=snapshot.market.condition_id,
-            token_id=snapshot.market.token_for(Side.UP).token_id,
-            side=Side.UP,
-            order_id="fill-1",
-            client_order_id=None,
-            reason=None,
-            ts_event=utc_now(),
-            metrics={},
-            fill_price=0.45,
-            shares=5.0,
-            liquidity_side=None,
-        )
+    cached = with_open_position(
+        view,
+        "pre_order_market",
+        side=Side.UP,
+        avg_entry_price=0.45,
+        quantity=5.0,
     )
-
-    decisions = evaluate_core_from_snapshot(core, snapshot)
+    decisions = evaluate_core(core, cached)
     assert decisions
     assert decisions[0].side == Side.DOWN
     assert decisions[0].hedge_leg is True

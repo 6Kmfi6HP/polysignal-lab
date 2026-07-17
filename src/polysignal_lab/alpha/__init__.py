@@ -32,6 +32,8 @@ from polysignal_lab.alpha.types import (
     AlphaDecision,
     AlphaFillEvent,
     AlphaOrderEvent,
+    CachedOrderView,
+    CachedPositionView,
     FreshnessView,
     GroupAlphaCore,
     MarketGroupView,
@@ -41,6 +43,7 @@ from polysignal_lab.alpha.types import (
     SpotView,
     StatefulAlphaCore,
     TradeView,
+    TradingStateView,
 )
 
 __all__ = [
@@ -48,6 +51,8 @@ __all__ = [
     "AlphaDecision",
     "AlphaFillEvent",
     "AlphaOrderEvent",
+    "CachedOrderView",
+    "CachedPositionView",
     "BinaryMomentumAlphaCore",
     "CrossMarketAlphaCore",
     "DumpHedgeAlphaCore",
@@ -71,6 +76,7 @@ __all__ = [
     "StatefulAlphaCore",
     "TradeHistory",
     "TradeView",
+    "TradingStateView",
     "VWAPMomentumAlphaCore",
     "ZigZagDetector",
     "json_safe_state",

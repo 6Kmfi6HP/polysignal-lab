@@ -15,8 +15,7 @@ Pos: Application code
 
 from __future__ import annotations
 
-from polysignal_lab.alpha.helpers import evaluate_from_snapshot_for_test
-from polysignal_lab.alpha.types import AlphaDecision, AlphaOrderEvent, MarketView, OrderIntentSpec
+from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 
@@ -27,16 +26,6 @@ class OneCentBuyAlphaCore:
 
     def __init__(self, config) -> None:
         self.config = config
-        # {(market_id, price)} — advanced only on order acceptance.
-        self._submitted_levels: set[tuple[str, float]] = set()
-
-    def reset(self) -> None:
-        self._submitted_levels.clear()
-
-    def on_order_accepted(self, event: AlphaOrderEvent) -> None:
-        level_price = event.metrics.get("level_price")
-        if level_price is not None:
-            self._submitted_levels.add((event.market_id, float(level_price)))
 
     def _elapsed_seconds(self, view: MarketView) -> float | None:
         seconds_to_close = view.seconds_to_close
@@ -69,8 +58,12 @@ class OneCentBuyAlphaCore:
                 continue
 
             for price in cfg.entry_prices:
-                level_key = (market_id, float(price))
-                if level_key in self._submitted_levels:
+                if view.trading.has_entry_level(
+                    self.name,
+                    market_id,
+                    side,
+                    float(price),
+                ):
                     continue
                 # Passive: only place when our price is below the current ask.
                 if book.best_ask <= price:
@@ -121,6 +114,3 @@ class OneCentBuyAlphaCore:
                 )
 
         return decisions
-
-    def evaluate_view_from_snapshot_for_test(self, snapshot) -> list[AlphaDecision]:
-        return evaluate_from_snapshot_for_test(self, snapshot)
