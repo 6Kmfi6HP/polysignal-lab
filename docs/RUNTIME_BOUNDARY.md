@@ -1,29 +1,40 @@
 # Runtime Boundary
 
-> Living document. Runtime forbid-list, sandbox defaults, and report-only constraints after the architecture cutover (2026-07-12).
+> Living document. Runtime ownership, safe composition, and reporting constraints after the native migration.
 >
 > Companion: [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md)
 >
 > Historical migration/review notes live under `docs/archive/` and are not current requirements.
 
+## Trading modes
+
+| Mode | Data | Execution | Reconciliation | Live factory |
+|---|---|---|---|---|
+| `sandbox` | Official Polymarket data + optional managed RTDS | Nautilus sandbox execution | Off | Never registered |
+| `live` | Official Polymarket data + optional managed RTDS | Official Polymarket execution | On | Registered only after all gates pass |
+| `backtest` | Historical native market data and the same CustomData types | Native BacktestEngine matching | Off | Never imported or registered |
+
+The default is `sandbox`. `live` requires `execution_mode=live`,
+`allow_live_polymarket_execution=true`,
+`safety.allow_live_market_actions=true`, complete credentials, and successful
+configuration validation. Any missing condition fails before node construction.
+
+All modes register the same `PolySignalNativeStrategy` and frozen,
+JSON-serializable `PolySignalStrategyConfig`; mode differences end at node,
+data client, execution client, and historical input composition.
+
 ## Runtime surface
 
-- Entry: `TradingNode` + `TradingNodeConfig` (not legacy `LiveNode.builder`).
-- Data: official Polymarket live data client factory.
-- Execution: sandbox execution client factory only; live Polymarket execution stays disabled.
-- Orders: `order_factory` + `submit_order` only.
-- Books/ticks: Nautilus `Cache` is the only live authority for MarketView books.
-- MarketView assembly: Cache-backed provider bound after Cache exists; fail closed when books are missing. No `OrderBookRegistry` fallback.
-- Spot: managed RTDS `LiveDataClient` is the single source; MarketRotation must not republish RTDS spot.
-- CustomData routing: SIDECAR and RTDS client ids stay separated.
-
-## Composition rules
-
-1. Construct `MarketCatalog` + unbound Cache-backed books provider at projection setup.
-2. After trader registration and `node.build()`, bind the real Nautilus Cache once.
-3. Do not leave an empty-book bootstrap on the live path as a permanent second provider type.
-4. Shared `DecisionPolicy` injection is mandatory for strategies.
-5. Pure policy class name is `DecisionPolicy`. Optional `NautilusDecisionPolicyActor` is only the thin Nautilus lifecycle adapter.
+- Node composition uses the latest pyo3 `LiveNode.builder` or `BacktestEngine`.
+- Nautilus Cache, Portfolio, Account, native Order/Position, ExecutionEngine, and
+  RiskEngine are the only trading facts.
+- Orders enter through `order_factory` and `submit_order` only.
+- MarketView books and positions are Cache projections and fail closed when absent.
+- RTDS is a managed `LiveDataClient`; MarketRotation publishes only immutable
+  universe, metadata, and price-to-beat CustomData.
+- Candidate and approval traffic uses immutable native Signal messages between
+  the Strategy and the sole `DecisionPolicyActor` owner.
+- All decision timers and event timestamps come from Nautilus Clock.
 
 ## Forbid list (live / decision / trading paths)
 
@@ -34,20 +45,16 @@ Runtime, bridge decision wiring, and signal-policy code must not reattach:
 | `OrderBookRegistry` / domain live book registry as decision truth | Second book truth |
 | Standalone CLOB REST/WS clients as live book feeds | Bypasses DataEngine |
 | Local paper executors / matching engine / wallet ledger | Second execution truth |
-| Fabricated settlement fills / `PositionClosed` / Portfolio mutation | Unsupported in 1.229.0 |
-| Live Polymarket execution client factories | Lab remains paper-safe |
+| Fabricated settlement fills / `PositionClosed` / Portfolio mutation | No public sandbox/live settlement authority |
+| Ungated live Polymarket execution client factories | Live must remain fail closed |
 | Dynamic runtime class factories / reverse instrument registries | Ownership dilution |
 
 Enforcement: `scripts/safety_scan.py`, `tests/test_safety.py`, `tests/test_nautilus_platform_boundary.py`, `tests/test_nautilus_safety_boundary.py`.
 
-Legacy OrderBook/CLOB modules may remain only as non-live residue for tests or quarantined adapters. They must not be imported from:
+Migration quality gates (pytest, safety, basedpyright baseline, live-off default)
+are defined in [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md#quality-gates-native-migration-complete).
 
-- `src/polysignal_lab/nautilus_runtime/`
-- `src/polysignal_lab/nautilus_bridge/` (except accepted anchor/spot helpers that are not book truth)
-- `src/polysignal_lab/signal_layer/`
-- `src/polysignal_lab/alpha/`
-
-## Sandbox / paper defaults
+## Sandbox defaults
 
 - Sandbox book type remains L2-aligned with current config (`sandbox_book_type`).
 - Pre-trade project constraints may read Cache open state; they do not invent a portfolio ledger.
@@ -55,21 +62,48 @@ Legacy OrderBook/CLOB modules may remain only as non-live residue for tests or q
 
 ## Exit ownership (accepted)
 
-- **Sole paper exit authority:** `NativeExitPolicy` over Nautilus Cache open positions.
+- `NativeExitPolicy` reads Nautilus Cache open positions and submits native exits.
 - Exits submit **reduce-only** orders via `order_factory` + `submit_order` only.
-- Sandbox keeps `support_contingent_orders=False` and `use_reduce_only=True`. PolySignal does **not** attach Nautilus bracket / contingent TP-SL child orders under locked 1.229.0.
+- Sandbox keeps `support_contingent_orders=False` and `use_reduce_only=True`.
 - **Threshold precedence (per open position):**
-  1. Entry-time stamps on the position (`tp_sl_tp_prob` / `tp_sl_stop_prob` from ptb_diff, or `flip_stop_price` when `flip_stop_enabled` from late_consensus), bound into a strategy-local map on entry fill and also tagged on entry orders as `exit_tp_price` / `exit_stop_price`. Stamps clear only when the Cache position is **fully closed** (not on partial reduce-only fills).
-  2. Else global `paper_trading.exit_model` prices (`take_profit_price`, `stop_loss_price`).
+  1. Entry order tags `exit_tp_price` and `exit_stop_price`, rebuilt from Cache orders.
+  2. Global `trading.exit_model` prices.
   3. `max_hold_time_sec` remains **global** only (not stamped per entry).
-- Global enable flags (`take_profit_enabled` / `stop_loss_enabled`) still gate whether TP/SL fire; only the **price levels** are per-position when stamped.
-- Strategy YAML exit knobs must not create a second exit engine — they only supply threshold stamps consumed by `NativeExitPolicy`.
-- Early TP/SL/max-hold closes write Reporting Truth `paper_trade_results` with `exit_mode` ∈ {`TAKE_PROFIT`,`STOP_LOSS`,`MAX_HOLD_TIME`}. Market-resolution settlement remains report-only and does not fabricate Nautilus `PositionClosed`.
-- Early-exit durable results also take the same best-effort Telegram path as resolution settlement (`ObservabilityService.notify_paper_result` → `PublishService.publish_paper_result`) when `telegram.send_paper_results` is true. Publish failure must not roll back the durable write.
+- Threshold tags express intent only; quantities, fills, open/closed state, and PnL
+  always come from Cache and native events.
+- Early exits create `report_results` projections after native execution events.
+  Reporting or Telegram failures cannot roll back or advance trading state.
 
 ## Settlement
 
-`native_settlement_mode=report_only`. No public payout/redeem authority in locked 1.229.0. Do not synthesize fills or closed positions from Gamma/WS/chain resolution into Nautilus state.
+`native_settlement_mode=report_only` for sandbox and live. The verified latest
+adapter has resolution data and polling but no public payout, redeem, or settle
+authority. Gamma, WS, chain, or `InstrumentClose` observations must not
+synthesize fills, positions, Portfolio, Account, or Cache mutation.
+
+The pyo3 `BacktestEngine` is narrower and has a verified native
+`InstrumentClose(CONTRACT_EXPIRED)` path: its simulated matching engine creates
+the expiration order/fill and updates Position, Cache, Portfolio, and Account.
+PolySignal may replay that data event in backtest, but must not reproduce the
+mutation itself.
+
+## Registration and policy ownership
+
+The latest pyo3 API provides native Signal publish/subscribe. Importable config
+registration creates one `DecisionPolicyActor` and one Strategy instance; no
+registration global, staged object copy, or local MessageBus remains. Candidate
+batches are immutable and the Actor publishes immutable approval/rejection
+results. See [`NAUTILUS_CAPABILITY_MATRIX.md`](NAUTILUS_CAPABILITY_MATRIX.md).
+
+## Reporting boundary
+
+- SQLite tables use `report_*` names and are disposable read projections.
+- JSONL, Telegram, and Dashboard consume reporting rows only.
+- Schema migration backs up a database before converting legacy tables.
+- Runtime never restores orders, fills, positions, exposure, reservations, or
+  account values from reporting storage.
+- Deleting reporting storage may remove display history but cannot change the
+  Strategy, RiskEngine, reconciliation, orders, or positions.
 
 ## Verification seams (only these three)
 
@@ -77,10 +111,11 @@ Legacy OrderBook/CLOB modules may remain only as non-live residue for tests or q
 2. **Safety / import boundary** — dual-path and second-execution symbols blocked.
 3. **Decision + strategy behavior** — rename/extraction preserve gate, order map, reduce-only exits.
 
-## Optional dependency
+## Runtime dependency
 
 ```bash
-uv sync --extra nautilus --python 3.12
+uv sync --python 3.12
 ```
 
-Default Python 3.11 core install must not hard-require Nautilus where the project already isolates it.
+Python 3.12 and the exact Nautilus package version in `pyproject.toml` are
+required runtime contracts.

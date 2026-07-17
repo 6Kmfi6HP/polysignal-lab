@@ -19,7 +19,7 @@ Auto-generated project index maintained by the Fractal Multi-level Index System.
       ├── errors/ (5 files)
       ├── leaderboard/ (2 files)
       ├── overview/ (2 files)
-      ├── paper-trading/ (2 files)
+      ├── reporting/ (2 files)
       ├── signals/ (2 files)
       ├── strategy-status/ (2 files)
       ├── system-health/ (2 files)
@@ -46,7 +46,7 @@ Auto-generated project index maintained by the Fractal Multi-level Index System.
       ├── strategies/ (3 files)
       ├── strategy/ (3 files)
     ├── observability/ (6 files)
-    ├── paper/ (6 files)
+    ├── reporting/ (6 files)
     ├── publish/ (4 files)
     ├── signal_layer/ (7 files)
     ├── storage/ (5 files)
@@ -106,7 +106,7 @@ graph TD
   strategy_status[strategy-status]
   signals[signals]
   route[route]
-  paper_trading[paper-trading]
+  reporting[reporting]
   vite_config --> path_from__path_
   vite_config --> __defineConfig___from__vite_
   vite_config --> plugin_react_
@@ -229,9 +229,9 @@ graph TD
   route --> react_router_
   route --> authenticated_layout_
   route --> react_router
-  paper_trading --> react_router_
-  paper_trading --> paper_trading_
-  paper_trading --> react_router
+  reporting --> react_router_
+  reporting --> reporting_
+  reporting --> react_router
 ```
 
 ## 📊 Statistics

@@ -1,7 +1,6 @@
 app:
   name: PolySignal Lab
   environment: lab
-  mode: signal_plus_paper
   timezone: Asia/Bangkok
   log_level: INFO
 
@@ -19,7 +18,7 @@ telegram:
   parse_mode: HTML
   send_signals: true
   send_consensus_signals: true
-  send_paper_results: true
+  send_report_results: true
   send_daily_report: true
   max_message_chars: 4096
   retry_attempts: 3
@@ -42,13 +41,6 @@ data:
     rest_rate_limit_per_sec: 8.0
     max_book_staleness_ms: 60000
     max_market_metadata_staleness_ms: 10000
-    settlement:
-      chain_enabled: true
-      polygon_rpc_url: ""
-      chain_timeout_sec: 3.0
-      gamma_enabled: true
-      ws_enabled: true
-      prefer_chain: true
   binance:
     enabled: true
     base_ws_url: wss://stream.binance.com:9443/stream
@@ -70,14 +62,10 @@ signal:
   max_signals_per_market: 3
   max_signals_per_hour: 60
 
-paper_trading:
-  enabled: true
+trading:
   starting_balance_usdc: 1000.0
   stake_mode: fixed
   fixed_stake_usdc: 10.0
-  max_open_positions: 10
-  max_market_exposure_usdc: 30.0
-  max_strategy_exposure_usdc: 100.0
   exit_model:
     mode: hold_to_resolution_with_optional_tp_sl
     take_profit_enabled: true
@@ -199,9 +187,13 @@ runtime:
   nautilus:
     trader_id: PolySignal-Nautilus-001
     python: "3.12"
-    execution_mode: paper_sandbox
+    execution_mode: sandbox
     sandbox_base_currency: pUSD
     allow_live_polymarket_execution: false
+    risk:
+      max_order_submit_rate: 100/00:00:01
+      max_order_modify_rate: 100/00:00:01
+      max_notional_per_order: {}
     intercept_os_signals: false
     sandbox_book_type: L2_MBP
     polymarket_data:
@@ -209,13 +201,8 @@ runtime:
       ws_max_subscriptions_per_connection: 200
     sidecar:
       spot_source: polymarket_rtds
-      price_to_beat_source: anchor_or_gamma
-    decision_policy:
-      preserve_gate_first_failure_order: true
-      consensus_enabled: true
-      arbiter_policy: suppress_ambiguous
     state_persistence:
-      enabled: true
+      enabled: false
       host: 127.0.0.1
       port: 6379
     market_rotation:

@@ -21,12 +21,8 @@
 - `test_signal_layer.py` - Exports test_signal_gate_accepts_good_signal and 4 more
 - `test_signal_gate.py` - Exports test_signal_gate_records_prd_reason_details and 11 more
 - `test_signal_arbiter.py` - Exports candidate_factory and 2 more
-- `test_settlement_sources.py` - Exports test_chain_evidence_wins_and_records_conflicting_gamma and 5 more
-- `test_settlement_resolver.py` - Exports test_resolver_collects_chain_gamma_and_ws and 1 more
 - `test_settlement_config.py` - Exports test_default_settlement_config and 1 more
-- `test_settlement.py` - Exports test_projection_settlement_builds_result_from_nautilus_position_row and 5 more
 - `test_scheduler_strategy_readiness.py` - Exports test_nautilus_owned_scheduler_cannot_run_legacy_evaluate_once and 8 more
-- `test_scheduler_settlement_resolution.py` - Exports test_resolved_numeric_half_payout_closes_as_void_with_provenance and 4 more
 - `test_scheduler_services.py` - Exports test_supervisor_starts_and_stops_services_in_reverse_order and 1 more
 - `test_scheduler_paper.py` - Test Layer - Unit/Integration tests
 - `test_scheduler_lifecycle.py` - Exports test_scheduler_exposes_services_and_supervisor and 4 more
@@ -40,7 +36,7 @@
 - `test_price_to_beat_provider.py` - Exports test_ptb_provider_prefers_verified_anchor_over_metadata and 9 more
 - `test_polymarket_clob_rest.py` - Exports test_clob_rest_constructor_does_not_expose_sdk_client and 3 more
 - `test_persistence_service.py` - Exports test_persistence_service_wraps_counts_and_close
-- `test_paper_calibration.py` - Exports test_calibration_buckets_use_signal_confidence_from_paper_flow
+- `test_reporting_calibration.py` - Covers calibration over report results
 - `test_orderbook_snapshot.py` - Exports test_orderbook_best_bid_ask_spread_depth and 3 more
 - `test_order_intent.py` - Exports test_base_strategy_notify_defaults_are_noops and 15 more
 - `test_nautilus_trading_node_runtime.py` - Exports test_trading_node_exposes_expected_client_ids and 12 more
@@ -61,7 +57,7 @@
 - `test_nautilus_market_view_assembler.py` - Exports test_assembler_builds_coherent_market_view and 4 more
 - `test_nautilus_market_rotation.py` - Exports test_market_universe_data_round_trips and 23 more
 - `test_nautilus_market_catalog.py` - Exports test_market_catalog_registers_binary_yes_no_pair and 4 more
-- `test_nautilus_full_paper_runtime_smoke.py` - Exports test_full_paper_runtime_builds_node_without_live_execution and 3 more
+- `test_nautilus_full_sandbox_runtime_smoke.py` - Covers sandbox composition and native Strategy order submission
 - `test_nautilus_exit_policy.py` - Exports test_custom_nautilus_exit_policy_module_is_removed and 1 more
 - `test_nautilus_execution.py` - Exports test_project_source_contains_no_local_paper_symbols
 - `test_nautilus_dependency_boundary.py` - Exports test_default_package_import_does_not_require_nautilus and 2 more
@@ -79,10 +75,8 @@
 - `test_integration_smoke.py` - Exports test_fake_public_api_outage_degrades_without_unhandled_exception and 2 more
 - `test_healthcheck.py` - Exports test_liveness_passes_for_fresh_heartbeat and 20 more
 - `test_health_metrics.py` - Exports test_health_registry_aggregates_component_status_and_transitions and 13 more
-- `test_gamma_resolution_client.py` - Exports test_gamma_client_fetches_exact_market_by_id and 2 more
 - `test_function_size_boundaries.py` - Exports test_runtime_functions_stay_reviewable
 - `test_dashboard.py` - Exports test_dashboard_readonly_endpoints_return_stored_data and 7 more
-- `test_ctf_resolution_client.py` - Exports test_denominator_zero_returns_unresolved_without_numerators and 3 more
 - `test_cross_market_coordination.py` - Exports test_cross_market_context_contains_all_relation_legs and 6 more
 - `test_config_security.py` - Exports test_settings_load_without_secret_key_material and 2 more
 - `test_config.py` - Exports test_load_settings_records_explicit_strategy_names and 13 more
