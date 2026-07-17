@@ -25,13 +25,13 @@ def project_order_event(event: object) -> dict[str, object]:
     tags = _tags(getattr(event, "tags", None))
     metrics = _metrics(event)
     signal_id = tags.get("signal_id", str(metrics.get("signal_id") or ""))
-    order_intent = tags.get("order_intent", str(metrics.get("paper_order_intent") or ""))
-    if order_intent and "paper_order_intent" not in metrics:
-        metrics["paper_order_intent"] = order_intent
+    order_intent = tags.get("order_intent", str(metrics.get("order_intent") or ""))
+    if order_intent:
+        metrics.setdefault("order_intent", order_intent)
     client_order_id = _text_attr(event, "client_order_id")
     return {
         "event_id": _text_attr(event, "event_id"),
-        "paper_order_id": client_order_id,
+        "report_order_id": client_order_id,
         "client_order_id": client_order_id,
         "instrument_id": _text_attr(event, "instrument_id"),
         "side": _text_attr(event, "order_side"),
@@ -61,8 +61,8 @@ def project_fill_event(event: object) -> dict[str, object]:
     client_order_id = _text_attr(event, "client_order_id")
     return {
         "event_id": _text_attr(event, "event_id"),
-        "paper_fill_id": trade_id,
-        "paper_order_id": client_order_id,
+        "report_fill_id": trade_id,
+        "report_order_id": client_order_id,
         "client_order_id": client_order_id,
         "instrument_id": _text_attr(event, "instrument_id"),
         "trade_id": trade_id,
@@ -95,7 +95,7 @@ def project_position(position: object) -> dict[str, object]:
         else opened_at or event_at or closed_at
     )
     return {
-        "paper_position_id": position_id,
+        "report_position_id": position_id,
         "position_id": position_id,
         "instrument_id": _text_attr(position, "instrument_id"),
         "quantity": quantity,

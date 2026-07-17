@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, asyncio, logging, signal, threading, time, types, types.SimpleNamespace, typing, polysignal_lab.nautilus_runtime.market_discovery_worker
-Output: test_live_engine_config_builders_import_configs_from_config_module, test_build_live_node_uses_trading_node_config, test_native_runtime_rejects_disabled_paper_trading, test_build_live_node_uses_configured_non_default_trader_id, test_build_live_node_returns_nautilus_runtime_components, test_build_live_node_injects_shared_projections_and_no_manual_sync_components, test_build_live_node_gives_each_strategy_own_custom_data_state, test_build_live_node_uses_static_runtime_classes, test_build_live_node_registers_market_rotation_actor, test_all_native_strategies_share_runtime_policy, test_build_live_node_uses_sandbox_execution_not_matching_client, test_run_nautilus_housekeeping_once_recalculates_after_settlement
+Output: test_live_engine_config_builders_import_configs_from_config_module, test_build_live_node_uses_live_node_config, test_native_runtime_rejects_disabled_trading, test_build_live_node_uses_configured_non_default_trader_id, test_build_live_node_returns_nautilus_runtime_components, test_build_live_node_injects_shared_projections_and_no_manual_sync_components, test_build_live_node_gives_each_strategy_own_custom_data_state, test_build_live_node_uses_static_runtime_classes, test_build_live_node_registers_market_rotation_actor, test_all_native_strategies_share_runtime_policy, test_build_live_node_uses_sandbox_execution_not_matching_client, test_run_nautilus_housekeeping_once_recalculates_after_settlement
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -18,7 +18,6 @@ import asyncio
 import logging
 import signal
 import threading
-import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
@@ -31,7 +30,6 @@ from polysignal_lab.nautilus_runtime.runtime_context_factory import (
 )
 from polysignal_lab.nautilus_runtime.node import (
     build_live_node,
-    build_control,
     run_nautilus_cli,
     run_nautilus_cli_async,
     _load_runtime_trader_state,
@@ -39,11 +37,11 @@ from polysignal_lab.nautilus_runtime.node import (
     _start_interactive_telegram_bot_thread,
     _stop_interactive_telegram_bot_thread,
 )
+from polysignal_lab.nautilus_runtime.strategy_builder import build_control
 from polysignal_lab.nautilus_runtime.live_node import (
-    PAPER_EXEC_CLIENT_ID,
-    SIDECAR_DATA_CLIENT_ID,
-    SPOT_DATA_CLIENT_ID,
+    SANDBOX_EXEC_CLIENT_ID,
 )
+from polysignal_lab.nautilus_runtime.custom_data_types import SPOT_DATA_CLIENT_ID
 
 if TYPE_CHECKING:
     from polysignal_lab.publish.telegram_publisher import TelegramPublisher
@@ -116,12 +114,9 @@ def test_native_runtime_rejects_spot_dependent_strategy_without_spot_ingress() -
         validate_native_runtime_settings(settings)
 
 
-def test_native_runtime_rejects_disabled_paper_trading() -> None:
-    settings = Settings()
-    settings.paper_trading.enabled = False
-
-    with pytest.raises(RuntimeError, match="paper_trading.enabled"):
-        validate_native_runtime_settings(settings)
+def test_trading_config_rejects_removed_enabled_switch() -> None:
+    with pytest.raises(ValueError, match="enabled"):
+        Settings.model_validate({"trading": {"enabled": False}})
 
 
 @pytest.mark.anyio
@@ -190,13 +185,13 @@ def test_live_engine_config_builders_import_configs_from_config_module(monkeypat
     monkeypatch.setattr(live_node, "_import_callable", _recording_import_callable)
 
     live_data_engine_config = live_node.build_data_engine_config()
-    live_node.build_exec_engine_config()
+    live_node.build_exec_engine_config(reconciliation=False)
 
     external_clients = getattr(live_data_engine_config, "external_clients")
-    assert str(external_clients[0]) == SIDECAR_DATA_CLIENT_ID
+    assert str(external_clients[0]) == SPOT_DATA_CLIENT_ID
     assert calls == [
-        ("nautilus_trader.config", "LiveDataEngineConfig"),
-        ("nautilus_trader.config", "LiveExecEngineConfig"),
+        ("nautilus_trader.core.nautilus_pyo3", "LiveDataEngineConfig"),
+        ("nautilus_trader.core.nautilus_pyo3", "LiveExecEngineConfig"),
     ]
 
 
@@ -214,28 +209,22 @@ def test_runtime_class_loader_requires_three_classes(monkeypatch: pytest.MonkeyP
 
 
 def _patch_nautilus_placeholders(monkeypatch):
-    """Monkeypatch TradingNode runtime placeholders so tests run without Nautilus."""
+    """Monkeypatch LiveNode runtime placeholders so tests run without Nautilus."""
 
-    class FakeTradingNodeConfig:
+    class FakeLiveNodeConfig:
         def __init__(self, **kwargs):
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
-    class FakeTradingNode:
-        def __init__(self, *, config):
-            self.config = config
+    class FakeLiveNode:
+        def __init__(self, *, config=None):
+            self.config = config or FakeLiveNodeConfig()
             self.data_client_factories = []
             self.exec_client_factories = []
             self.trader = SimpleNamespace(strategies=[], actors=[])
             self.trader.add_strategy = self.trader.strategies.append
             self.trader.add_actor = self.trader.actors.append
             self.built = False
-
-        def add_data_client_factory(self, name, factory):
-            self.data_client_factories.append((name, factory))
-
-        def add_exec_client_factory(self, name, factory):
-            self.exec_client_factories.append((name, factory))
 
         def build(self):
             self.built = True
@@ -244,6 +233,7 @@ def _patch_nautilus_placeholders(monkeypatch):
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.strategy_name = kwargs["strategy_name"]
+            self.strategy_id = f"PolySignal-{self.strategy_name}"
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
@@ -252,6 +242,78 @@ def _patch_nautilus_placeholders(monkeypatch):
             self.kwargs = kwargs
             for key, value in kwargs.items():
                 setattr(self, key, value)
+
+    class FakeLiveNodeType:
+        @staticmethod
+        def builder(name, trader_id, environment):
+            handle = SimpleNamespace(
+                name=name,
+                trader_id=trader_id,
+                environment=environment,
+                data_clients=[],
+                exec_clients=[],
+                kwargs={},
+            )
+
+            def with_cache_config(config):
+                handle.kwargs["cache"] = config
+                return handle
+
+            def with_data_engine_config(config):
+                handle.kwargs["data_engine"] = config
+                return handle
+
+            def with_exec_engine_config(config):
+                handle.kwargs["exec_engine"] = config
+                return handle
+
+            def with_load_state(enabled):
+                handle.kwargs["load_state"] = enabled
+                return handle
+
+            def with_save_state(enabled):
+                handle.kwargs["save_state"] = enabled
+                return handle
+
+            def add_data_client(name, factory, config):
+                handle.data_clients.append((name, factory, config))
+                return handle
+
+            def add_simulated_exec_client(name, factory, config):
+                handle.exec_clients.append((name, factory, config))
+                return handle
+
+            def build():
+                node = FakeLiveNode(
+                    config=FakeLiveNodeConfig(
+                        trader_id=trader_id,
+                        environment=environment,
+                        cache=handle.kwargs.get("cache"),
+                        data_engine=handle.kwargs.get("data_engine"),
+                        exec_engine=handle.kwargs.get("exec_engine"),
+                        data_clients={n: c for n, _f, c in handle.data_clients},
+                        exec_clients={n: c for n, _f, c in handle.exec_clients},
+                        load_state=handle.kwargs.get("load_state", False),
+                        save_state=handle.kwargs.get("save_state", False),
+                    )
+                )
+                node.data_client_factories = [
+                    (n, f) for n, f, _c in handle.data_clients
+                ]
+                node.exec_client_factories = [
+                    (n, f) for n, f, _c in handle.exec_clients
+                ]
+                return node
+
+            handle.with_cache_config = with_cache_config
+            handle.with_data_engine_config = with_data_engine_config
+            handle.with_exec_engine_config = with_exec_engine_config
+            handle.with_load_state = with_load_state
+            handle.with_save_state = with_save_state
+            handle.add_data_client = add_data_client
+            handle.add_simulated_exec_client = add_simulated_exec_client
+            handle.build = build
+            return handle
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node.PolymarketInstrumentProviderConfig",
@@ -262,12 +324,8 @@ def _patch_nautilus_placeholders(monkeypatch):
         lambda *, load_ids: SimpleNamespace(load_ids=load_ids),
     )
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.live_node.TradingNode",
-        FakeTradingNode,
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.live_node.TradingNodeConfig",
-        FakeTradingNodeConfig,
+        "polysignal_lab.nautilus_runtime.live_node.LiveNode",
+        FakeLiveNodeType,
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.live_node.TraderId",
@@ -278,12 +336,32 @@ def _patch_nautilus_placeholders(monkeypatch):
         SimpleNamespace(SANDBOX="SANDBOX"),
     )
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.live_node.PolymarketLiveDataClientFactory",
-        object(),
+        "polysignal_lab.nautilus_runtime.live_node.PolymarketDataClientFactory",
+        type("FakePolymarketDataClientFactory", (), {"__call__": lambda self: self}),
     )
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.live_node.SandboxLiveExecClientFactory",
-        object(),
+        "polysignal_lab.nautilus_runtime.live_node.SandboxExecutionClientFactory",
+        type("FakeSandboxExecutionClientFactory", (), {"__call__": lambda self: self}),
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.live_node.Venue",
+        lambda value: f"Venue:{value}",
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.live_node.Money",
+        lambda amount, currency: f"Money:{amount}:{currency}",
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.live_node.CurrencyFromStr",
+        lambda value: f"Currency:{value}",
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.live_node._import_callable",
+            lambda module_name, attr_name: (
+                lambda *args, **kwargs: SimpleNamespace(
+                    module_name=module_name, attr_name=attr_name, **kwargs
+                )
+            ),
     )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node._load_runtime_classes",
@@ -293,10 +371,10 @@ def _patch_nautilus_placeholders(monkeypatch):
         "polysignal_lab.nautilus_runtime.node_builder._load_runtime_classes",
         lambda: (FakeRuntimeStrategy, FakeRuntimeActor, DecisionPolicy),
     )
-    return FakeTradingNode
+    return FakeLiveNode
 
 
-def test_build_live_node_uses_trading_node_config(monkeypatch) -> None:
+def test_build_live_node_uses_live_node_config(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
 
     runtime = build_live_node(condition_ids=("condition-btc-5m",))
@@ -306,10 +384,9 @@ def test_build_live_node_uses_trading_node_config(monkeypatch) -> None:
     assert config.trader_id == "TraderId:PolySignal-Nautilus-001"
     assert config.environment == "SANDBOX"
     assert set(config.data_clients) == {"POLYMARKET", SPOT_DATA_CLIENT_ID}
-    assert set(config.exec_clients) == {PAPER_EXEC_CLIENT_ID}
+    assert set(config.exec_clients) == {SANDBOX_EXEC_CLIENT_ID}
     assert node.data_client_factories[0][0] == "POLYMARKET"
-    assert node.data_client_factories[1][0] == SPOT_DATA_CLIENT_ID
-    assert node.exec_client_factories[0][0] == PAPER_EXEC_CLIENT_ID
+    assert node.exec_client_factories[0][0] == SANDBOX_EXEC_CLIENT_ID
     assert node.exec_client_factories[0][0] != "POLYMARKET"
     assert node.built is True
 
@@ -497,13 +574,12 @@ def test_all_native_strategies_share_runtime_policy(monkeypatch) -> None:
     )
     node = runtime["node"]
 
-    assert len(node.trader.actors) == 2
+    assert len(node.trader.actors) == 1
     assert node.trader.actors[0] is runtime["market_rotation_actor"]
-    assert node.trader.actors[1] is runtime["policy"]
-    assert isinstance(runtime["policy"], FakePolicyActor)
+    assert isinstance(runtime["policy"], DecisionPolicy)
     strategies = cast(list[FakeStrategy], runtime["strategies"])
-    assert len(strategies) == 2
-    assert all(strategy.policy is runtime["policy"] for strategy in strategies)
+    assert len(strategies) == 1
+    assert strategies[0].policy is runtime["policy"]
 
 def test_build_live_node_uses_sandbox_execution_not_matching_client(monkeypatch) -> None:
     _patch_nautilus_placeholders(monkeypatch)
@@ -522,7 +598,7 @@ def test_build_live_node_strategies_is_list(monkeypatch) -> None:
     assert isinstance(runtime["strategies"], list)
 
 
-def test_build_live_node_assigns_stable_native_strategy_identity(
+def test_build_live_node_assigns_unique_native_strategy_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_nautilus_placeholders(monkeypatch)
@@ -532,16 +608,12 @@ def test_build_live_node_assigns_stable_native_strategy_identity(
     runtime = build_live_node(settings=settings, condition_ids=("condition-btc-5m",))
 
     strategies = cast(list[object], runtime["strategies"])
-    configs = [getattr(strategy, "kwargs")["config"] for strategy in strategies]
+    names = [getattr(strategy, "strategy_name") for strategy in strategies]
+    strategy_ids = [str(getattr(strategy, "strategy_id")) for strategy in strategies]
 
-    assert [getattr(config, "strategy_id") for config in configs] == [
-        "PolySignal",
-        "PolySignal",
-    ]
-    assert [getattr(config, "order_id_tag") for config in configs] == [
-        "vwap_momentum",
-        "ptb_diff",
-    ]
+    assert names == ["polysignal"]
+    assert strategy_ids == ["PolySignal-polysignal"]
+    assert len(set(strategy_ids)) == len(strategy_ids)
 
 def test_build_live_node_forwards_unsubscribe_exited_to_native_strategy(
     monkeypatch: pytest.MonkeyPatch,
@@ -586,7 +658,7 @@ def test_build_live_node_forwards_unsubscribe_exited_to_native_strategy(
     assert len(strategies) == 1
     assert getattr(runtime["node"], "trader").strategies == strategies
     assert captured_kwargs["unsubscribe_exited"] is False
-    assert captured_kwargs["strategy_name"] == "vwap_momentum"
+    assert captured_kwargs["strategy_name"] == "polysignal"
 
 
 def test_build_live_node_skips_disabled_native_strategies(
@@ -629,7 +701,7 @@ def test_build_live_node_skips_disabled_native_strategies(
 
 
 
-def test_build_live_node_uses_paper_trading_fixed_stake_for_native_strategies(
+def test_build_live_node_uses_trading_fixed_stake_for_native_strategies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_nautilus_placeholders(monkeypatch)
@@ -658,7 +730,7 @@ def test_build_live_node_uses_paper_trading_fixed_stake_for_native_strategies(
     )
 
     settings = Settings()
-    settings.paper_trading.fixed_stake_usdc = 17.5
+    settings.trading.fixed_stake_usdc = 17.5
     settings.strategies.set_explicit_strategy_names(("vwap_momentum",))
 
     build_live_node(settings=settings, condition_ids=("condition-btc-5m",))
@@ -787,7 +859,7 @@ def test_build_control_adapts_policy() -> None:
     assert not ctrl.is_strategy_enabled("vwap_momentum")
 
 
-async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node(
+async def test_build_nautilus_runtime_discovers_market_universe_for_live_node(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
@@ -815,7 +887,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
         def insert_rejected_signal(self, payload):
             _ = payload
 
-        def insert_paper_trade_result(self, payload):
+        def insert_report_result(self, payload):
             _ = payload
 
         def insert_system_event(self, payload):
@@ -853,7 +925,7 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
             self.telegram_bot = None
             self.nautilus_cache = None
             self.nautilus_portfolio = None
-            self.paper_execution_metadata = None
+            self.execution_metadata = None
             self._running = False
             self._nautilus_runtime_owned_by_live_node = True
             self._trading_components_initialized = True
@@ -868,13 +940,14 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     monkeypatch.setattr(
         node_mod,
         "build_live_node",
-        lambda settings=None, *, condition_ids=(), markets=(), market_universe=None, store=None, health=None, observability=None: captured.update(
+        lambda settings=None, *, condition_ids=(), markets=(), market_universe=None, store=None, health=None, observability=None, reporting_services=None, **_kwargs: captured.update(
             condition_ids=tuple(condition_ids),
             markets=tuple(markets),
             market_universe=market_universe,
             store=store,
             health=health,
             observability=observability,
+            reporting_services=reporting_services,
         )
         or {
             "assembler": SimpleNamespace(books=None),
@@ -897,12 +970,12 @@ async def test_build_nautilus_runtime_discovers_market_universe_for_trading_node
     assert captured["health"] is bundle.context.health
     assert captured["observability"] is not None
     assert callable(getattr(captured["observability"], "accepted_signal_notifier", None))
-    assert callable(getattr(captured["observability"], "paper_result_notifier", None))
+    assert callable(getattr(captured["observability"], "report_result_notifier", None))
 
     assert bundle.context is not None
     assert getattr(bundle.context, "nautilus_cache") is cache_holder
     assert getattr(bundle.context, "nautilus_portfolio") is cache_holder
-    assert getattr(bundle.context, "paper_execution_metadata") == {
+    assert getattr(bundle.context, "execution_metadata") == {
         "sandbox_book_type": "L2_MBP",
     }
     assert bundle.websocket_tasks == []
@@ -1024,7 +1097,7 @@ def test_prepare_nautilus_runtime_context_rebinds_market_discovery_client_for_la
         def insert_rejected_signal(self, payload):
             _ = payload
 
-        def insert_paper_trade_result(self, payload):
+        def insert_report_result(self, payload):
             _ = payload
 
         def insert_system_event(self, payload):
@@ -1056,7 +1129,7 @@ def test_prepare_nautilus_runtime_context_rebinds_market_discovery_client_for_la
             self.telegram_bot = None
             self.nautilus_cache = None
             self.nautilus_portfolio = None
-            self.paper_execution_metadata = None
+            self.execution_metadata = None
             self._running = False
             self._nautilus_runtime_owned_by_live_node = True
             self._trading_components_initialized = True
@@ -1112,6 +1185,8 @@ async def test_prepare_nautilus_runtime_context_does_not_wire_shadow_wallet_mirr
             read_state=lambda name, default=None: [],
             insert_signal=lambda payload: None,
             insert_rejected_signal=lambda payload: None,
+            insert_report_result=lambda payload: None,
+            insert_system_event=lambda payload: None,
             upsert_market=lambda m: None,
         ),
         sqlite=SimpleNamespace(),
@@ -1151,40 +1226,8 @@ async def test_run_nautilus_housekeeping_once_skips_legacy_settlement(
     assert calls == ["report:2026-07-04"]
 
 
-async def test_run_nautilus_housekeeping_once_recalculates_after_settlement(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from polysignal_lab.nautilus_runtime.signal_sidecar import (
-        _run_nautilus_housekeeping_once,
-    )
-    import polysignal_lab.app._settlement_check as settlement_mod
-    import polysignal_lab.app.scheduler_shared as shared_mod
-
-    report_dates: list[object] = []
-
-    async def check_settlements(_services: object) -> list[dict[str, str]]:
-        return [{"paper_trade_id": "pt-late"}]
-
-    async def generate_iteration_report(
-        _scheduler: object,
-        last_report_date: object,
-    ) -> str:
-        report_dates.append(last_report_date)
-        return "2026-07-05"
-
-    monkeypatch.setattr(settlement_mod, "check_settlements", check_settlements)
-    monkeypatch.setattr(shared_mod, "_generate_iteration_report", generate_iteration_report)
-
-    scheduler = SimpleNamespace(logger=logging.getLogger("test"))
-
-    result = await _run_nautilus_housekeeping_once(scheduler, "2026-07-05")
-
-    assert result == "2026-07-05"
-    assert report_dates == [None]
-
-
 async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
-    class FakeTradingNode:
+    class FakeLiveNode:
         def __init__(self):
             self.running = False
 
@@ -1198,7 +1241,7 @@ async def test_run_nautilus_cli_async_exits_on_stop_event(monkeypatch) -> None:
         _ = args, kwargs
 
     fake_bundle = SimpleNamespace(
-        node=FakeTradingNode(),
+        node=FakeLiveNode(),
         websocket_tasks=[],
         context=_fake_runtime_context(),
         observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
@@ -1239,7 +1282,7 @@ async def test_run_nautilus_cli_async_refreshes_startup_marker_before_runtime_bu
     marker.write_text(json.dumps({"started_at": old_started_at}), encoding="utf-8")
     observed: dict[str, object] = {}
 
-    class FakeTradingNode:
+    class FakeLiveNode:
         def run(self):
             return None
 
@@ -1252,7 +1295,7 @@ async def test_run_nautilus_cli_async_refreshes_startup_marker_before_runtime_bu
         assert isinstance(payload["started_at"], str)
         assert payload["started_at"] != old_started_at
         return SimpleNamespace(
-            node=FakeTradingNode(),
+            node=FakeLiveNode(),
             websocket_tasks=[],
             context=_fake_runtime_context(),
             observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
@@ -1275,7 +1318,7 @@ async def test_run_nautilus_cli_async_suppresses_probe_write_failures(
 
     settings = Settings()
 
-    class FakeTradingNode:
+    class FakeLiveNode:
         def run(self):
             return None
 
@@ -1285,7 +1328,7 @@ async def test_run_nautilus_cli_async_suppresses_probe_write_failures(
     async def fake_build(received_settings=None):
         assert received_settings is settings
         return SimpleNamespace(
-            node=FakeTradingNode(),
+            node=FakeLiveNode(),
             websocket_tasks=[],
             context=_fake_runtime_context(),
             observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
@@ -1308,7 +1351,7 @@ async def test_run_nautilus_cli_async_suppresses_probe_write_failures(
 async def test_run_nautilus_cli_async_does_not_install_signal_handlers_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeTradingNode:
+    class FakeLiveNode:
         def run(self):
             return None
 
@@ -1316,7 +1359,7 @@ async def test_run_nautilus_cli_async_does_not_install_signal_handlers_by_defaul
         _ = args, kwargs
 
     fake_bundle = SimpleNamespace(
-        node=FakeTradingNode(),
+        node=FakeLiveNode(),
         websocket_tasks=[],
         context=_fake_runtime_context(),
         observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
@@ -1351,7 +1394,7 @@ async def test_run_nautilus_cli_async_installs_signal_handlers_when_enabled(
     installed: list[tuple[object, object]] = []
     removed: list[object] = []
 
-    class FakeTradingNode:
+    class FakeLiveNode:
         def run(self):
             return None
 
@@ -1359,7 +1402,7 @@ async def test_run_nautilus_cli_async_installs_signal_handlers_when_enabled(
         _ = args, kwargs
 
     fake_bundle = SimpleNamespace(
-        node=FakeTradingNode(),
+        node=FakeLiveNode(),
         websocket_tasks=[],
         context=_fake_runtime_context(
             settings=_runtime_settings_stub(
@@ -1410,7 +1453,7 @@ async def test_run_nautilus_cli_async_restores_signals_after_shutdown_failure(
     }
 
 
-    class FakeTradingNode:
+    class FakeLiveNode:
         def run(self):
             return None
 
@@ -1418,7 +1461,7 @@ async def test_run_nautilus_cli_async_restores_signals_after_shutdown_failure(
         _ = args, kwargs
 
     fake_bundle = SimpleNamespace(
-        node=FakeTradingNode(),
+        node=FakeLiveNode(),
         websocket_tasks=[],
         context=_fake_runtime_context(
             settings=_runtime_settings_stub(
@@ -1479,7 +1522,7 @@ async def test_run_nautilus_cli_async_restores_signals_after_shutdown_failure(
             signal.signal(sig, handler)
 
 async def test_run_nautilus_cli_async_surfaces_node_run_failure(monkeypatch) -> None:
-    class FakeTradingNode:
+    class FakeLiveNode:
         def run(self):
             raise RuntimeError("node boom")
 
@@ -1490,7 +1533,7 @@ async def test_run_nautilus_cli_async_surfaces_node_run_failure(monkeypatch) -> 
         _ = args, kwargs
 
     fake_bundle = SimpleNamespace(
-        node=FakeTradingNode(),
+        node=FakeLiveNode(),
         websocket_tasks=[],
         context=_fake_runtime_context(),
         observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
@@ -1503,15 +1546,6 @@ async def test_run_nautilus_cli_async_surfaces_node_run_failure(monkeypatch) -> 
 
     async def fake_to_thread(fn, *args):
         return fn(*args)
-
-    async def fake_report_loop(scheduler, stop_event):
-        _ = scheduler
-        await stop_event.wait()
-
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node_sidecar._run_nautilus_report_loop",
-        fake_report_loop,
-    )
 
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node.build_nautilus_runtime",
@@ -1532,7 +1566,7 @@ async def test_async_runtime_uses_framework_run_async_and_stop_async(
     calls: list[str] = []
     run_released = asyncio.Event()
 
-    class FakeTradingNode:
+    class FakeLiveNode:
         async def run_async(self) -> None:
             calls.append("run_async")
             await run_released.wait()
@@ -1545,7 +1579,7 @@ async def test_async_runtime_uses_framework_run_async_and_stop_async(
         _ = args, kwargs
 
     fake_bundle = SimpleNamespace(
-        node=FakeTradingNode(),
+        node=FakeLiveNode(),
         websocket_tasks=[],
         context=_fake_runtime_context(),
         observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
@@ -1556,20 +1590,19 @@ async def test_async_runtime_uses_framework_run_async_and_stop_async(
         _ = settings
         return fake_bundle
 
-    async def fake_report_loop(scheduler, stop_event):
-        _ = scheduler
-        stop_event.set()
-
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node_sidecar._run_nautilus_report_loop",
-        fake_report_loop,
-    )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node.build_nautilus_runtime",
         fake_build,
     )
 
-    await run_nautilus_cli_async()
+    stop = asyncio.Event()
+
+    async def _release_soon() -> None:
+        await asyncio.sleep(0.05)
+        stop.set()
+
+    _ = asyncio.create_task(_release_soon())
+    await run_nautilus_cli_async(stop_event=stop)
 
     assert calls == ["run_async", "stop_async"]
 
@@ -1580,7 +1613,7 @@ async def test_run_nautilus_cli_async_waits_for_node_stop_instead_of_canceling_r
     run_released = asyncio.Event()
     calls: list[str] = []
 
-    class FakeTradingNode:
+    class FakeLiveNode:
         def run(self):
             calls.append("run")
 
@@ -1595,7 +1628,7 @@ async def test_run_nautilus_cli_async_waits_for_node_stop_instead_of_canceling_r
         _ = args, kwargs
 
     fake_bundle = SimpleNamespace(
-        node=FakeTradingNode(),
+        node=FakeLiveNode(),
         websocket_tasks=[],
         context=_fake_runtime_context(),
         observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
@@ -1611,14 +1644,6 @@ async def test_run_nautilus_cli_async_waits_for_node_stop_instead_of_canceling_r
             return fn(*args)
         await run_released.wait()
 
-    async def fake_report_loop(scheduler, stop_event):
-        _ = scheduler
-        stop_event.set()
-
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node_sidecar._run_nautilus_report_loop",
-        fake_report_loop,
-    )
     monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node.build_nautilus_runtime",
         fake_build,
@@ -1628,7 +1653,14 @@ async def test_run_nautilus_cli_async_waits_for_node_stop_instead_of_canceling_r
         fake_to_thread,
     )
 
-    await run_nautilus_cli_async()
+    stop = asyncio.Event()
+
+    async def _release_soon() -> None:
+        await asyncio.sleep(0.05)
+        stop.set()
+
+    _ = asyncio.create_task(_release_soon())
+    await run_nautilus_cli_async(stop_event=stop)
 
     assert calls == ["stop", "dispose"]
 
@@ -1636,7 +1668,7 @@ async def test_run_nautilus_cli_async_waits_for_node_stop_instead_of_canceling_r
 async def test_run_nautilus_cli_async_disposes_node_in_async_wrapper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeTradingNode:
+    class FakeLiveNode:
         def run(self):
             return None
 
@@ -1646,12 +1678,8 @@ async def test_run_nautilus_cli_async_disposes_node_in_async_wrapper(
     async def _noop(*args, **kwargs):
         _ = args, kwargs
 
-    async def fake_report_loop(scheduler, stop_event):
-        _ = scheduler
-        await stop_event.wait()
-
     fake_bundle = SimpleNamespace(
-        node=FakeTradingNode(),
+        node=FakeLiveNode(),
         websocket_tasks=[],
         context=_fake_runtime_context(),
         observability=SimpleNamespace(notify_startup=_noop, notify_shutdown=_noop),
@@ -1663,10 +1691,6 @@ async def test_run_nautilus_cli_async_disposes_node_in_async_wrapper(
         return fake_bundle
 
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.node_sidecar._run_nautilus_report_loop",
-        fake_report_loop,
-    )
-    monkeypatch.setattr(
         "polysignal_lab.nautilus_runtime.node.build_nautilus_runtime",
         fake_build,
     )
@@ -1675,15 +1699,14 @@ async def test_run_nautilus_cli_async_disposes_node_in_async_wrapper(
 
     assert node is fake_bundle.node
 
-async def test_run_nautilus_cli_async_notifies_and_starts_report_loop(
+async def test_run_nautilus_cli_async_notifies_without_report_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
-    import polysignal_lab.nautilus_runtime.node_sidecar as sidecar_mod
 
     calls: list[tuple[object, ...]] = []
 
-    class FakeTradingNode:
+    class FakeLiveNode:
         def run(self):
             calls.append(("run",))
 
@@ -1703,7 +1726,7 @@ async def test_run_nautilus_cli_async_notifies_and_starts_report_loop(
     async def fake_build(settings=None):
         _ = settings
         return SimpleNamespace(
-            node=FakeTradingNode(),
+            node=FakeLiveNode(),
             websocket_tasks=[],
             context=_fake_runtime_context(stop=fake_stop),
             observability=FakeObservability(),
@@ -1713,30 +1736,24 @@ async def test_run_nautilus_cli_async_notifies_and_starts_report_loop(
     async def fake_to_thread(fn, *args):
         return fn(*args)
 
-    async def fake_report_loop(scheduler, stop_event):
-        calls.append(("report_loop", scheduler))
-        stop_event.set()
-
     monkeypatch.setattr(node_mod, "build_nautilus_runtime", fake_build)
-    monkeypatch.setattr(sidecar_mod, "_run_nautilus_report_loop", fake_report_loop)
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
 
     await node_mod.run_nautilus_cli_async()
 
     assert any(call[0] == "startup" for call in calls)
     assert ("startup", ("one_cent_buy",), {"sandbox_book_type": "L2_MBP"}) in calls
-    assert any(call[0] == "report_loop" for call in calls)
+    assert not any(call[0] == "report_loop" for call in calls)
     assert any(call[0] == "shutdown" for call in calls)
 
 async def test_run_nautilus_cli_async_tolerates_notification_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
-    import polysignal_lab.nautilus_runtime.node_sidecar as sidecar_mod
 
     calls: list[tuple[object, ...]] = []
 
-    class FakeTradingNode:
+    class FakeLiveNode:
         def run(self):
             calls.append(("run",))
 
@@ -1764,7 +1781,7 @@ async def test_run_nautilus_cli_async_tolerates_notification_failures(
     async def fake_build(settings=None):
         _ = settings
         return SimpleNamespace(
-            node=FakeTradingNode(),
+            node=FakeLiveNode(),
             websocket_tasks=[],
             context=_fake_runtime_context(stop=fake_stop, logger=FakeLogger()),
             observability=FakeObservability(),
@@ -1774,12 +1791,7 @@ async def test_run_nautilus_cli_async_tolerates_notification_failures(
     async def fake_to_thread(fn, *args):
         return fn(*args)
 
-    async def fake_report_loop(scheduler, stop_event):
-        calls.append(("report_loop", scheduler))
-        stop_event.set()
-
     monkeypatch.setattr(node_mod, "build_nautilus_runtime", fake_build)
-    monkeypatch.setattr(sidecar_mod, "_run_nautilus_report_loop", fake_report_loop)
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
 
     await node_mod.run_nautilus_cli_async()
@@ -2302,54 +2314,63 @@ def test_start_interactive_telegram_bot_thread_returns_none_without_bot() -> Non
     assert _start_interactive_telegram_bot_thread(cast(object, scheduler)) is None
 
 
-def test_start_nautilus_report_loop_thread_runs_housekeeping_until_stop(
+def test_reporting_housekeeping_actor_uses_clock_timer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from polysignal_lab.nautilus_runtime.node import (
-        _start_nautilus_report_loop_thread,
-        _stop_nautilus_report_loop_thread,
+    from datetime import timedelta
+
+    from polysignal_lab.nautilus_runtime.reporting_actor import (
+        REPORT_TIMER_NAME,
+        ReportingHousekeepingActor,
     )
 
-    calls: list[str] = []
+    timers: list[tuple[str, timedelta, object]] = []
+    requests: list[object] = []
 
-    async def fake_housekeeping(scheduler, last_report_date):
-        _ = scheduler
-        calls.append("housekeeping")
-        return last_report_date
+    class FakeClock:
+        def set_timer(self, name, interval, callback):
+            timers.append((name, interval, callback))
 
+        def cancel_timer(self, name):
+            timers.append((f"cancel:{name}", timedelta(seconds=0), None))
+
+    class FakeWorker:
+        def request(self, last_report_date):
+            requests.append(last_report_date)
+            return True
+
+        def take_result(self):
+            return None
+
+        def close(self) -> None:
+            return None
+
+    services = SimpleNamespace(
+        settings=SimpleNamespace(markets=SimpleNamespace(refresh_interval_sec=2)),
+    )
+    actor = ReportingHousekeepingActor(services=services, interval_sec=2)
+    actor._worker = FakeWorker()
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.signal_sidecar._run_nautilus_housekeeping_once",
-        fake_housekeeping,
+        ReportingHousekeepingActor,
+        "clock",
+        property(lambda self: FakeClock()),
     )
 
-    scheduler = SimpleNamespace(
-        settings=SimpleNamespace(markets=SimpleNamespace(refresh_interval_sec=0.01)),
-        logger=SimpleNamespace(exception=print),
-    )
-    handle = _start_nautilus_report_loop_thread(cast(object, scheduler))
-    assert handle is not None
-    deadline = time.monotonic() + 2.0
-    while not calls and time.monotonic() < deadline:
-        time.sleep(0.05)
-    _stop_nautilus_report_loop_thread(handle)
-    assert calls
+    actor.on_start()
+    assert timers[0][0] == REPORT_TIMER_NAME
+    assert timers[0][1] == timedelta(seconds=2)
+    assert requests == [None]
+    cast(object, timers[0][2])()
+    assert len(requests) == 2
+    actor.on_stop()
+    assert any(name.startswith("cancel:") for name, _, _ in timers)
 
 
-def test_run_nautilus_cli_starts_report_loop_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_nautilus_cli_does_not_start_report_loop_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import polysignal_lab.nautilus_runtime.node as node_mod
     import polysignal_lab.nautilus_runtime.node_sidecar as sidecar_mod
-
-    started = threading.Event()
-    stopped = threading.Event()
-
-    def fake_start_report_loop(scheduler):
-        _ = scheduler
-        started.set()
-        return threading.Thread(), threading.Event()
-
-    def fake_stop_report_loop(handle, *, timeout_sec=15.0):
-        _ = handle, timeout_sec
-        stopped.set()
 
     class FakeNode:
         def run(self) -> None:
@@ -2377,10 +2398,6 @@ def test_run_nautilus_cli_starts_report_loop_thread(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(node_mod, "_prepare_nautilus_runtime_context", fake_prepare)
     monkeypatch.setattr(node_mod, "_rebind_market_discovery_client", lambda _scheduler: None)
     monkeypatch.setattr(node_mod, "_build_nautilus_runtime_bundle", fake_bundle)
-    monkeypatch.setattr(sidecar_mod, "_start_nautilus_report_loop_thread", fake_start_report_loop)
-    monkeypatch.setattr(sidecar_mod, "_stop_nautilus_report_loop_thread", fake_stop_report_loop)
+    assert not hasattr(sidecar_mod, "_start_nautilus_report_loop_thread")
 
     run_nautilus_cli()
-
-    assert started.wait(timeout=5.0)
-    assert stopped.is_set()

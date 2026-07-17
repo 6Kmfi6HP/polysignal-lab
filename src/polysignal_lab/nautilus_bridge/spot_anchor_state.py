@@ -9,7 +9,11 @@ from polysignal_lab.domain.spot import SpotPrice
 
 
 class SpotAnchorState:
-    """Keep managed spot observations and optional verified anchors together."""
+    """Keep managed spot observations and optional verified anchors together.
+
+    SpotRegistry is Actor-local history for anchor capture only — not a parallel
+    spot truth for trading decisions (those use Nautilus CustomData / Cache).
+    """
 
     def __init__(self, anchor_store: AnchorPriceStore | None = None) -> None:
         self.registry = SpotRegistry()

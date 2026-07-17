@@ -132,13 +132,6 @@ def handle_market_universe(
 
 
 def handle_generic_data(strategy: _CustomDataStrategy, data: object) -> None:
-    assembler = strategy._require_assembler()
-    updater = getattr(assembler, "on_data", None) or getattr(assembler, "update", None)
-    if callable(updater):
-        _ = updater(data)
-    condition_id = getattr(data, "condition_id", None)
-    if condition_id is not None:
-        strategy.evaluate_condition(str(condition_id))
-        return
-    for candidate in strategy._active_condition_ids:
-        strategy.evaluate_condition(candidate)
+    """Drop unknown payloads; MarketView assembly is Cache + typed CustomData only."""
+    _ = data
+    strategy._note_runtime_progress("dropped_frame")

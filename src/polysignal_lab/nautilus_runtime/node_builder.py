@@ -71,7 +71,7 @@ class _RuntimeBuildParts(NamedTuple):
     config: object
     registry: MarketCatalog
     assembler: MarketViewAssembler
-    policy: DecisionPolicy
+    policy: DecisionPolicy | None
 
 
 # Stub placeholder -- _ensure_nautilus_imports() overwrites it at runtime.
@@ -85,7 +85,7 @@ _NativeStrategyLike = NativeStrategyLike
 
 @dataclass(slots=True)
 class NautilusRuntimeBundle:
-    """Wired Nautilus TradingNode runtime components."""
+    """Wired Nautilus LiveNode runtime components."""
 
     context: NautilusRuntimeContext
     components: dict[str, object]
@@ -105,11 +105,18 @@ def _ensure_nautilus_imports() -> None:
         PolymarketInstrumentProviderConfig = cast(Callable[..., object], module_provider)
         return
 
-    provider_mod = importlib.import_module("nautilus_trader.adapters.polymarket.providers")
-    PolymarketInstrumentProviderConfig = cast(
-        Callable[..., object],
-        provider_mod.PolymarketInstrumentProviderConfig,
-    )
+    try:
+        provider_mod = importlib.import_module("nautilus_trader.core.nautilus_pyo3")
+        PolymarketInstrumentProviderConfig = cast(
+            Callable[..., object],
+            provider_mod.PolymarketInstrumentProviderConfig,
+        )
+    except (ImportError, AttributeError):
+        provider_mod = importlib.import_module("nautilus_trader.adapters.polymarket.providers")
+        PolymarketInstrumentProviderConfig = cast(
+            Callable[..., object],
+            provider_mod.PolymarketInstrumentProviderConfig,
+        )
     if mod is not None:
         mod.PolymarketInstrumentProviderConfig = PolymarketInstrumentProviderConfig
 
@@ -117,12 +124,12 @@ def _ensure_nautilus_imports() -> None:
 def _load_runtime_classes() -> tuple[type[object], type[object], type[object]]:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
     from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
-    from polysignal_lab.nautilus_runtime.decision_policy_actor import NautilusDecisionPolicyActor
+    from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 
     return (
         PolySignalNativeStrategy,
         MarketRotationActor,
-        NautilusDecisionPolicyActor,
+        DecisionPolicy,
     )
 
 
@@ -132,6 +139,17 @@ def _runtime_class_triple() -> tuple[type[object], type[object], type[object]]:
         raise ValueError("_load_runtime_classes must return three runtime classes")
     strategy_cls, rotation_actor_cls, policy_actor_cls = classes
     return strategy_cls, rotation_actor_cls, policy_actor_cls
+
+
+def build_runtime_node(settings: Settings, *, instrument_config: object) -> object:
+    """Dispatch native node composition by configured execution mode."""
+    if settings.runtime.nautilus.execution_mode == "backtest":
+        from polysignal_lab.nautilus_runtime.backtest_node import build_backtest_engine
+
+        return build_backtest_engine(settings)
+    from polysignal_lab.nautilus_runtime.live_node import build_runtime_node as build
+
+    return build(settings, instrument_config=instrument_config)
 
 
 def _create_configured_live_node(
@@ -144,9 +162,7 @@ def _create_configured_live_node(
     instrument_config = PolymarketInstrumentProviderConfig(
         load_ids=_instrument_load_ids(configured_markets),
     )
-    from polysignal_lab.nautilus_runtime.live_node import build_paper_live_node
-
-    node = build_paper_live_node(settings, instrument_config=instrument_config)
+    node = build_runtime_node(settings, instrument_config=instrument_config)
     return cast(_NautilusNodeLike, node), instrument_config
 
 
@@ -167,7 +183,14 @@ def _build_runtime_context(
     )
     node, config = _create_configured_live_node(settings, configured_markets)
     registry, assembler = _create_market_projection_components(configured_markets)
-    policy = _build_policy(settings, policy_type=_runtime_class_triple()[2])
+    kernel = getattr(node, "node", node)
+    supports_importable = callable(getattr(kernel, "add_strategy_from_config", None)) and callable(
+        getattr(kernel, "add_actor_from_config", None)
+    )
+    policy = None if supports_importable else _build_policy(
+        settings,
+        policy_type=_runtime_class_triple()[2],
+    )
     return _RuntimeBuildParts(
         settings,
         configured_markets,
@@ -190,8 +213,9 @@ def build_live_node(
     store: AnchorPriceStore | None = None,
     health: object | None = None,
     observability: ObservabilityService | None = None,
+    reporting_services: object | None = None,
 ) -> dict[str, object]:
-    """Build a TradingNode-based paper runtime wiring."""
+    """Build a LiveNode-based sandbox runtime wiring."""
     context = _build_runtime_context(settings, condition_ids, markets, market_universe)
     return wire_live_node_runtime(
         settings=context.settings,
@@ -206,6 +230,7 @@ def build_live_node(
         store=store,
         health=health,
         observability=observability,
+        reporting_services=reporting_services,
     )
 
 

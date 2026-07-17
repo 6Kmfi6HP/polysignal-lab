@@ -1,5 +1,5 @@
 """
-Input: __future__, collections.abc, logging, pathlib, typing, polysignal_lab.config, polysignal_lab.app.services, polysignal_lab.domain, polysignal_lab.paper
+Input: __future__, collections.abc, logging, pathlib, typing, polysignal_lab.config, polysignal_lab.app.services, polysignal_lab.domain, polysignal_lab.reporting
 Output: NautilusRuntimeContext, build_nautilus_runtime_context
 Pos: Nautilus runtime service context factory — replaces legacy PolySignalScheduler DI
 
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
 
 if TYPE_CHECKING:
-    from polysignal_lab.domain.paper_result import DailyReport
+    from polysignal_lab.domain.reporting_result import DailyReport
 
 from polysignal_lab.app.services.market_universe_service import MarketUniverseService
 from polysignal_lab.app.services.persistence_service import PersistenceService
@@ -26,8 +26,7 @@ from polysignal_lab.data.state import MarketRegistry
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.observability.health import HealthRegistry
-from polysignal_lab.paper.event_projection import paper_token_id
-from polysignal_lab.paper.settlement_resolver import SettlementResolver
+from polysignal_lab.storage.event_projection import report_token_id
 from polysignal_lab.publish.telegram_publisher import PublishResult, TelegramPublisher
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.storage.jsonl_store import JSONLStore
@@ -59,10 +58,6 @@ SUPPORTED_NATIVE_SPOT_SOURCES: Final = frozenset({"disabled", "polymarket_rtds"}
 
 def validate_native_runtime_settings(settings: Settings) -> None:
     """Reject native strategies without a managed spot-data ingress."""
-    if not settings.paper_trading.enabled:
-        raise RuntimeError(
-            "paper_trading.enabled must be true for the paper_sandbox Nautilus runtime"
-        )
     spot_source = str(settings.runtime.nautilus.sidecar.spot_source).strip().lower()
     if spot_source not in SUPPORTED_NATIVE_SPOT_SOURCES:
         raise RuntimeError(
@@ -130,7 +125,7 @@ def _maybe_create_telegram_bot(
     )
 
 
-def _market_for_paper_event(
+def _market_for_report_event(
     markets: MarketRegistry,
     row: Mapping[str, object],
 ) -> Market | None:
@@ -141,7 +136,7 @@ def _market_for_paper_event(
         market = markets.get(market_id)
         if market is not None:
             return market
-    token_id = paper_token_id(row)
+    token_id = report_token_id(row)
     return markets.for_token(token_id) if token_id else None
 
 
@@ -157,32 +152,9 @@ def _build_publish_service(
         publisher,
         persistence,
         timeout_sec=settings.telegram.publish_timeout_sec,
-        market_lookup=lambda row: _market_for_paper_event(markets, row),
+        market_lookup=lambda row: _market_for_report_event(markets, row),
     )
     return publish_service, publisher
-
-
-def _build_settlement_resolver(settings: Settings, logger: logging.Logger) -> SettlementResolver:
-    from polysignal_lab.data.ctf_resolution_client import CtfResolutionClient
-    from polysignal_lab.data.gamma_resolution_client import GammaResolutionClient
-    from polysignal_lab.paper.settlement_sources import WsResolutionCache
-
-    settlement = settings.data.polymarket.settlement
-    chain = None
-    polygon_rpc_url = settlement.polygon_rpc_url.strip()
-    if settlement.chain_enabled and polygon_rpc_url:
-        chain = CtfResolutionClient(
-            polygon_rpc_url,
-            timeout_sec=settlement.chain_timeout_sec,
-            contract="0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
-        )
-    gamma = (
-        GammaResolutionClient(settings.data.polymarket.gamma_base_url)
-        if settlement.gamma_enabled
-        else None
-    )
-    ws_cache = WsResolutionCache() if settlement.ws_enabled else None
-    return SettlementResolver(chain, gamma, ws_cache, logger=logger)
 
 
 @dataclass(slots=True)
@@ -200,14 +172,12 @@ class NautilusRuntimeContext:
     sqlite: SQLiteStore
     discovery: MarketDiscovery
     logger: logging.Logger
-    settlement_resolver: SettlementResolver
-
     # Runtime state bag (mutable)
     nautilus_cache: object | None = None
     nautilus_portfolio: object | None = None
     market_catalog: object | None = None
     telegram_bot: object | None = None
-    paper_execution_metadata: object | None = None
+    execution_metadata: object | None = None
     strategy_schedule: object | None = None
     strategies: object | None = None
     arbiter: object | None = None
@@ -234,7 +204,7 @@ class NautilusRuntimeContext:
             await publisher.client.aclose()
 
     async def generate_daily_report(self) -> DailyReport | None:
-        from polysignal_lab.app.scheduler_reporting import generate_daily_report
+        from polysignal_lab.app.reporting import generate_daily_report
 
         return await generate_daily_report(self)
 
@@ -269,7 +239,6 @@ def build_nautilus_runtime_context(
         markets,
     )
     telegram_bot = _maybe_create_telegram_bot(settings, persistence, markets, formatter)
-    settlement_resolver = _build_settlement_resolver(settings, runtime_logger)
     return NautilusRuntimeContext(
         settings=settings,
         market_universe=market_universe,
@@ -283,5 +252,4 @@ def build_nautilus_runtime_context(
         discovery=discovery,
         logger=runtime_logger,
         telegram_bot=telegram_bot,
-        settlement_resolver=settlement_resolver,
     )

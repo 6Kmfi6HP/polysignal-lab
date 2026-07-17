@@ -1,16 +1,10 @@
 """
 Input: __future__, __future__.annotations, json, os, subprocess, sys, pathlib, pathlib.Path, types, types.ModuleType
-Output: test_cli_help_lists_supported_runtime_modes_without_removed_alias, test_dashboard_compatibility_alias_resolves_to_dashboard, test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given, test_main_uses_nautilus_when_no_mode_is_given, test_main_import_does_not_load_legacy_scheduler_stack, test_main_scheduler_mode_without_once_aliases_to_nautilus, test_scheduler_compatibility_rejects_smoke_flags, test_smoke_flags_require_explicit_smoke_mode, test_explicit_smoke_writes_bounded_evidence, _FakeSettings
+Output: CLI runtime mode tests without scheduler/--dashboard aliases
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
-
-
-
-
-
-
 
 from __future__ import annotations
 
@@ -43,37 +37,23 @@ def _worktree_env() -> dict[str, str]:
 
 
 def test_cli_help_lists_supported_runtime_modes_without_removed_alias() -> None:
-    # Given: the installed module CLI is available.
     command = [sys.executable, "-m", "polysignal_lab.app.main", "--help"]
 
-    # When: help is requested through the public CLI surface.
     result = subprocess.run(command, capture_output=True, check=True, text=True, env=_worktree_env())
 
-    # Then: help lists stable supported modes and excludes removed aliases.
-    assert "--mode {dashboard,smoke,nautilus,scheduler}" in result.stdout
+    assert "--mode {dashboard,smoke,nautilus,sandbox,live,backtest}" in result.stdout
     assert "--once" in result.stdout
     assert "--real-readonly-smoke" in result.stdout
+    assert "--dashboard" not in result.stdout
+    assert "scheduler" not in result.stdout
     assert "--allow-legacy-scheduler" not in result.stdout
-    assert "deprecated" in result.stdout.lower()
     assert "polysignal-demo" not in result.stdout
     assert "demo" not in result.stdout
-
-
-def test_dashboard_compatibility_alias_resolves_to_dashboard() -> None:
-    # Given: callers still use the historical dashboard flag.
-    argv = ["--dashboard"]
-
-    # When: CLI options are parsed.
-    options = app_main.parse_cli(argv)
-
-    # Then: the flag resolves to the explicit dashboard mode.
-    assert options.mode is app_main.RuntimeMode.DASHBOARD
 
 
 def test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given: no explicit runtime selector and the loaded settings default to Nautilus.
     calls: list[str] = []
     fake_settings = _FakeSettings()
     fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
@@ -86,10 +66,8 @@ def test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given(
     monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
     monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
 
-    # When: the main entry runs without command or --mode.
     exit_code = app_main.main([])
 
-    # Then: it follows the configured Nautilus default instead of the legacy scheduler default.
     assert exit_code == 0
     assert calls == ["nautilus"]
 
@@ -114,6 +92,29 @@ def test_main_uses_nautilus_when_no_mode_is_given(
     assert calls == ["nautilus"]
 
 
+@pytest.mark.parametrize("mode", ["sandbox", "live", "backtest"])
+def test_main_selects_explicit_nautilus_trading_mode(
+    mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    fake_settings = _FakeSettings()
+    fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
+    setattr(
+        fake_module,
+        "run_nautilus_cli",
+        lambda settings: calls.append(settings.runtime.nautilus.execution_mode),
+    )
+
+    monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
+    monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
+
+    exit_code = app_main.main(["--mode", mode])
+
+    assert exit_code == 0
+    assert calls == [mode]
+
+
 def test_main_import_does_not_load_legacy_scheduler_stack() -> None:
     command = [
         sys.executable,
@@ -130,37 +131,18 @@ def test_main_import_does_not_load_legacy_scheduler_stack() -> None:
     assert result.stdout.strip() == "False"
 
 
-def test_main_scheduler_mode_without_once_aliases_to_nautilus(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Given: the caller requests scheduler mode without --once.
-    calls: list[str] = []
-    fake_settings = _FakeSettings()
-    fake_module = ModuleType("polysignal_lab.nautilus_runtime.node")
-    setattr(fake_module, "run_nautilus_cli", lambda settings: calls.append("nautilus"))
-
-    monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
-    monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
-
-    # When: scheduler mode is provided without --once.
-    exit_code = app_main.main(["--mode", "scheduler"])
-
-    # Then: the legacy scheduler selector aliases to Nautilus instead of the scheduler CLI.
-    assert exit_code == 0
-    assert calls == ["nautilus"]
-    assert "'scheduler' is deprecated" in capsys.readouterr().err
-
-
-def test_scheduler_compatibility_rejects_smoke_flags(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_scheduler_mode_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
-        app_main.parse_cli(["--mode", "scheduler", "--once"])
+        app_main.parse_cli(["--mode", "scheduler"])
 
-    stderr = capsys.readouterr().err
-    assert "'scheduler' always maps to 'nautilus'" in stderr
-    assert "use the explicit 'smoke' mode" in stderr
+    assert "invalid choice" in capsys.readouterr().err.lower() or "scheduler" in capsys.readouterr().err
+
+
+def test_dashboard_flag_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        app_main.parse_cli(["--dashboard"])
+
+    assert "unrecognized arguments" in capsys.readouterr().err.lower() or "dashboard" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("flag", ["--once", "--real-readonly-smoke"])
@@ -177,7 +159,6 @@ def test_smoke_flags_require_explicit_smoke_mode(
 def test_explicit_smoke_writes_bounded_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Given: the bounded smoke mode is requested with an evidence destination.
     evidence_path = tmp_path / "smoke.json"
     argv = ["--mode", "smoke", "--evidence", str(evidence_path)]
     payload: ReadonlySmokeEvidence = {
@@ -196,6 +177,7 @@ def test_explicit_smoke_writes_bounded_evidence(
         "failure_count": 0,
         "surfaces": {},
         "scheduler_snapshot": {
+            "status": "created",
             "created": True,
             "market_count": 1,
             "token_count": 2,
@@ -216,8 +198,8 @@ def test_explicit_smoke_writes_bounded_evidence(
                 }
             ],
         },
-        "dashboard_reads": {"ok": True, "endpoint_count": 4, "detail": None},
-        "safety_scan": {"ok": True, "finding_count": 0, "detail": None},
+        "dashboard_reads": {"status": "ok", "ok": True, "endpoint_count": 4, "detail": None},
+        "safety_scan": {"status": "ok", "ok": True, "finding_count": 0, "detail": None},
     }
 
     async def fake_collect(request: ReadonlySmokeRequest) -> ReadonlySmokeEvidence:
@@ -227,10 +209,8 @@ def test_explicit_smoke_writes_bounded_evidence(
 
     monkeypatch.setattr(app_main, "_collect_readonly_smoke", fake_collect)
 
-    # When: the public CLI is invoked.
     exit_code = app_main.main(argv)
 
-    # Then: it exits successfully and records public read-only smoke evidence.
     recorded = json.loads(evidence_path.read_text(encoding="utf-8"))
     assert exit_code == 0
     assert recorded["mode"] == "smoke"

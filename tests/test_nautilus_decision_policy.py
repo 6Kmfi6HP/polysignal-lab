@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, importlib, sys, dataclasses, dataclasses.replace, pathlib, pathlib.Path, types, types.ModuleType
-Output: test_decision_policy_preserves_gate_first_failure_reasons, test_manual_disable_uses_pipeline_reason_without_touching_gate, test_dependency_disable_uses_pipeline_reason_without_touching_gate, test_approved_decision_preserves_order_intent_fields, test_approved_decision_includes_consensus_signal_when_engine_merges, test_candidate_from_decision_uses_market_view_time_for_identity, test_decision_policy_module_imports_without_nautilus_dependency, test_nautilus_decision_policy_actor_exposes_domain_state_not_nautilus_lifecycle, test_nautilus_decision_policy_actor_constructs_without_nautilus_installed, test_nautilus_decision_policy_actor_on_save_on_load_delegate_to_policy_state, test_runtime_classes_expose_registerable_nautilus_policy_actor
+Input: __future__, __future__.annotations, importlib, dataclasses, dataclasses.replace, pathlib, pathlib.Path, nautilus_trader.core.nautilus_pyo3
+Output: DecisionPolicy behavior and native actor ownership contract
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -15,12 +15,11 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 import importlib
-import sys
 from dataclasses import replace
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
 
 import pytest
+from nautilus_trader.core.nautilus_pyo3 import DataActor
 
 from polysignal_lab.alpha.types import (
     AlphaDecision,
@@ -194,7 +193,7 @@ def test_decision_policy_module_imports_without_nautilus_dependency() -> None:
     assert module.DecisionPolicy is DecisionPolicy
 
 
-def test_decision_policy_actor_exposes_domain_state_not_nautilus_lifecycle() -> None:
+def test_decision_policy_exposes_domain_state_not_nautilus_lifecycle() -> None:
     actor = DecisionPolicy(disabled_strategies={"manual"})
 
     assert callable(actor.save_state)
@@ -203,98 +202,13 @@ def test_decision_policy_actor_exposes_domain_state_not_nautilus_lifecycle() -> 
     assert not hasattr(actor, "on_load")
 
 
-def test_nautilus_decision_policy_actor_constructs_without_nautilus_installed() -> None:
-    from polysignal_lab.nautilus_runtime.decision_policy_actor import (
-        NautilusDecisionPolicyActor,
+def test_decision_policy_actor_is_the_native_policy_owner() -> None:
+    module = importlib.import_module(
+        "polysignal_lab.nautilus_runtime.decision_policy_actor"
     )
 
-    actor = NautilusDecisionPolicyActor(disabled_strategies={"manual"})
-
-    assert isinstance(actor, DecisionPolicy)
-    assert actor.save_state()["disabled_strategies"] == ["manual"]
-
-
-def test_nautilus_decision_policy_actor_on_save_on_load_delegate_to_policy_state() -> None:
-    from polysignal_lab.nautilus_bridge.state import decode_state, state_key
-    from polysignal_lab.nautilus_runtime.decision_policy_actor import (
-        NautilusDecisionPolicyActor,
-    )
-
-    actor = NautilusDecisionPolicyActor(
-        disabled_strategies={"base", "manual"},
-        dependencies={"dependent": ("base", "other")},
-    )
-    restored = NautilusDecisionPolicyActor()
-
-    saved = actor.on_save()
-    restored.on_load(saved)
-
-    assert state_key("decision_policy") in saved
-    assert decode_state("decision_policy", saved) == {
-        "disabled_strategies": ["base", "manual"],
-        "strategy_dependencies": {"dependent": ["base", "other"]},
-    }
-    assert restored.save_state() == actor.save_state()
-    assert restored.evaluate(_decision(strategy="dependent"), _view()).reason_code == (
-        "dependency_disabled:base"
-    )
-
-
-def test_runtime_classes_expose_registerable_nautilus_policy_actor(monkeypatch) -> None:
-    runtime_module_name = "polysignal_lab.nautilus_runtime.decision_policy_actor"
-    missing = object()
-    previous_runtime_module = sys.modules.get(runtime_module_name, missing)
-    _ = sys.modules.pop(runtime_module_name, None)
-
-    nautilus_module = ModuleType("nautilus_trader")
-    common_module = ModuleType("nautilus_trader.common")
-    actor_module = ModuleType("nautilus_trader.common.actor")
-    config_module = ModuleType("nautilus_trader.config")
-    trading_module = ModuleType("nautilus_trader.trading")
-    strategy_module = ModuleType("nautilus_trader.trading.strategy")
-
-    class FakeActor:
-        def __init__(self, *, config: object) -> None:
-            self.actor_config = config
-
-    class FakeStrategy:
-        def __init__(self, *, config: object) -> None:
-            self.strategy_config = config
-
-    actor_module.Actor = FakeActor
-    config_module.ActorConfig = lambda: "actor-config"
-    config_module.StrategyConfig = lambda: "strategy-config"
-    strategy_module.Strategy = FakeStrategy
-    nautilus_module.common = common_module
-    nautilus_module.config = config_module
-    nautilus_module.trading = trading_module
-    common_module.actor = actor_module
-    trading_module.strategy = strategy_module
-
-    monkeypatch.setitem(sys.modules, "nautilus_trader", nautilus_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.common", common_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.common.actor", actor_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.config", config_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.trading", trading_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.trading.strategy", strategy_module)
-
-    try:
-        module = importlib.import_module(runtime_module_name)
-        actor = module.NautilusDecisionPolicyActor(disabled_strategies={"manual"})
-        node = SimpleNamespace(trader=SimpleNamespace(actors=[]))
-        node.trader.add_actor = node.trader.actors.append
-
-        node.trader.add_actor(actor)
-
-        assert isinstance(actor, FakeActor)
-        assert isinstance(actor, DecisionPolicy)
-        assert actor.actor_config == "actor-config"
-        assert node.trader.actors == [actor]
-    finally:
-        if previous_runtime_module is missing:
-            _ = sys.modules.pop(runtime_module_name, None)
-        else:
-            sys.modules[runtime_module_name] = previous_runtime_module
+    assert issubclass(module.DecisionPolicyActor, DataActor)
+    assert getattr(module.DecisionPolicyActor, "POLICY_OWNER_ID") == "PolySignal-DecisionPolicy"
 
 
 def test_state_round_trips_disabled_strategies_and_dependencies() -> None:

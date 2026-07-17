@@ -1,27 +1,33 @@
 """
-Input: __future__, __future__.annotations, importlib.util, sys, pytest
+Input: __future__, __future__.annotations, importlib.util, os, sys, pytest
 Output: require_nautilus
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
 
-
-
-
-
-
-
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 
 import pytest
 
 
 def require_nautilus() -> None:
+    required = os.environ.get("NAUTILUS_REQUIRED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     if sys.version_info < (3, 12):
-        pytest.skip("nautilus_trader requires Python 3.12+")
+        message = "nautilus_trader requires Python 3.12+"
+        if required:
+            pytest.fail(message)
+        pytest.skip(message)
     if importlib.util.find_spec("nautilus_trader") is None:
-        pytest.skip("nautilus_trader is not installed")
+        message = "nautilus_trader is not installed"
+        if required:
+            pytest.fail(message)
+        pytest.skip(message)

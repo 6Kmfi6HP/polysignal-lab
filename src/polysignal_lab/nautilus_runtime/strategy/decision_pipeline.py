@@ -24,7 +24,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
 )
 from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy, submit_approved_decision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
-from polysignal_lab.nautilus_runtime.order_plan import NautilusOrderSpec
+from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan
 from polysignal_lab.nautilus_runtime.strategy.helpers import _market_view_ready
 
 
@@ -62,7 +62,7 @@ def map_approved_to_order_spec(
     *,
     view: MarketView,
     fixed_stake_usdc: float,
-) -> NautilusOrderSpec:
+) -> OrderSubmissionPlan:
     signal = approved.signal
     book = view.book_for(signal.side)
     return order_spec_from_decision(
@@ -75,11 +75,9 @@ def map_approved_to_order_spec(
 
 @dataclass
 class DecisionPipelineState:
-    submitted_signal_keys: set[str] = field(default_factory=set)
     rejected_decisions: deque[RejectedDecision] = field(
         default_factory=lambda: deque(maxlen=1000)
     )
-    submitted_orders: deque[object] = field(default_factory=lambda: deque(maxlen=1000))
 
 
 class NativeDecisionSink(Protocol):
@@ -143,9 +141,11 @@ class DecisionPipeline:
         policy: DecisionPolicy | Callable[[], DecisionPolicy],
         *,
         is_active_condition: Callable[[str], bool],
+        is_signal_submitted: Callable[[str], bool],
     ) -> None:
         self._policy = policy
         self._is_active_condition = is_active_condition
+        self._is_signal_submitted = is_signal_submitted
 
     def _resolve_policy(self) -> DecisionPolicy:
         if callable(self._policy) and not isinstance(self._policy, DecisionPolicy):
@@ -169,7 +169,7 @@ class DecisionPipeline:
                 for condition_id in (decision.condition_id,)
                 if self._is_active_condition(condition_id)
             },
-            submitted_signal_keys=state.submitted_signal_keys,
+            is_signal_submitted=self._is_signal_submitted,
             submit_approved=lambda approved, market_view: sink.submit_order(
                 approved, view=market_view
             ),
@@ -205,6 +205,47 @@ class DecisionPipeline:
     ) -> None:
         _record_rejection(rejected, decision, state=state, sink=sink)
 
+    def handle_policy_result(
+        self,
+        result: ApprovedDecision | RejectedDecision,
+        decision: AlphaDecision,
+        view: MarketView,
+        *,
+        state: DecisionPipelineState,
+        sink: NativeDecisionSink,
+    ) -> None:
+        if isinstance(result, RejectedDecision):
+            self._on_rejected(result, decision, state=state, sink=sink)
+            return
+        signal_key = result.signal.dedupe_key
+        if self._is_signal_submitted(signal_key):
+            self._on_duplicate(
+                RejectedDecision(
+                    reason_code="DUPLICATE_IN_FLIGHT_SIGNAL",
+                    detail={"dedupe_key": signal_key},
+                    candidate=result.signal,
+                ),
+                decision,
+                state=state,
+                sink=sink,
+            )
+            return
+        try:
+            order = sink.submit_order(result, view=view)
+        except ValueError as exc:
+            self._on_order_mapping_failed(
+                RejectedDecision(
+                    reason_code="ORDER_MAPPING_FAILED",
+                    detail={"error": str(exc)},
+                    candidate=result.signal,
+                ),
+                decision,
+                state=state,
+                sink=sink,
+            )
+            return
+        self._on_approved(result, decision, order, state=state, sink=sink)
+
     @staticmethod
     def _on_duplicate(
         rejected: RejectedDecision,
@@ -235,7 +276,6 @@ class DecisionPipeline:
         sink: NativeDecisionSink,
     ) -> None:
         sink.remember_metrics(order, approved)
-        state.submitted_orders.append(order)
         sink.record_signal(approved.signal)
         sink.notify_accepted(approved.signal)
         sink.record_decision(decision, accepted=True)
@@ -257,9 +297,9 @@ class DecisionPipeline:
         decision: AlphaDecision,
         view: MarketView,
         fixed_stake_usdc: float,
-        spec_transform: Callable[[NautilusOrderSpec, AlphaDecision], NautilusOrderSpec]
+        spec_transform: Callable[[OrderSubmissionPlan, AlphaDecision], OrderSubmissionPlan]
         | None = None,
-    ) -> NautilusOrderSpec | RejectedDecision:
+    ) -> OrderSubmissionPlan | RejectedDecision:
         try:
             spec = map_approved_to_order_spec(
                 approved,
@@ -283,7 +323,7 @@ def handle_policy_decision(
     *,
     policy: DecisionPolicy,
     active_condition_ids: set[str],
-    submitted_signal_keys: set[str],
+    is_signal_submitted: Callable[[str], bool],
     submit_approved: Callable[[ApprovedDecision, MarketView], object],
     on_duplicate: Callable[[RejectedDecision, AlphaDecision], None],
     on_order_mapping_failed: Callable[[RejectedDecision, AlphaDecision], None],
@@ -301,7 +341,7 @@ def handle_policy_decision(
     policy_result = policy.decide(decision, view)
     if isinstance(policy_result, ApprovedDecision):
         signal_key = policy_result.signal.dedupe_key
-        if signal_key in submitted_signal_keys:
+        if is_signal_submitted(signal_key):
             rejected = RejectedDecision(
                 reason_code="DUPLICATE_IN_FLIGHT_SIGNAL",
                 detail={"dedupe_key": signal_key},
@@ -309,11 +349,9 @@ def handle_policy_decision(
             )
             on_duplicate(rejected, decision)
             return
-        submitted_signal_keys.add(signal_key)
         try:
             order = submit_approved(policy_result, view)
         except ValueError as exc:
-            submitted_signal_keys.discard(signal_key)
             rejected = RejectedDecision(
                 reason_code="ORDER_MAPPING_FAILED",
                 detail={"error": str(exc)},

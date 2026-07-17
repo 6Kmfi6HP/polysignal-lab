@@ -38,13 +38,10 @@ from polysignal_lab.nautilus_runtime.node_signals import (
 )
 from polysignal_lab.nautilus_runtime.signal_sidecar import (
     _InteractiveTelegramBotThread,
-    _NautilusReportLoopThread,
     _notify_accepted_signal,
-    _notify_paper_result,
+    _notify_report_result,
     _start_interactive_telegram_bot_thread,  # noqa: F401  # re-exported for tests and lazy imports
-    _start_nautilus_report_loop_thread,  # noqa: F401
     _stop_interactive_telegram_bot_thread,  # noqa: F401
-    _stop_nautilus_report_loop_thread,  # noqa: F401
     _stop_nautilus_services,  # noqa: F401
 )
 from polysignal_lab.nautilus_runtime.node_cli import (
@@ -71,8 +68,7 @@ from polysignal_lab.nautilus_runtime.strategy_builder import (
     _build_native_strategies,  # noqa: F401
     _build_policy,  # noqa: F401
     _native_core_for,  # noqa: F401
-    build_control,
-)
+    )
 from polysignal_lab.nautilus_runtime.node_shared import (
     _rebind_market_discovery_client,
     _install_sync_os_signal_handlers,
@@ -104,9 +100,35 @@ def _attach_cache_projections(
     )
 
     _ = registry
-    kernel = getattr(node, "kernel", None)
-    nautilus_cache = getattr(node, "cache", None) or getattr(kernel, "cache", None)
-    nautilus_portfolio = getattr(node, "portfolio", None) or getattr(kernel, "portfolio", None)
+    handle_cache = getattr(node, "cache", None)
+    handle_portfolio = getattr(node, "portfolio", None)
+    kernel = getattr(node, "node", None) or getattr(node, "kernel", None)
+    nautilus_cache = (
+        handle_cache
+        or getattr(node, "cache", None)
+        or getattr(kernel, "cache", None)
+    )
+    nautilus_portfolio = (
+        handle_portfolio
+        or getattr(node, "portfolio", None)
+        or getattr(kernel, "portfolio", None)
+    )
+    if nautilus_cache is None or nautilus_portfolio is None:
+        from_components_cache = None
+        from_components_portfolio = None
+        for component in (*strategies, getattr(node, "trader", None)):
+            if component is None:
+                continue
+            from_components_cache = getattr(component, "cache", None)
+            from_components_portfolio = getattr(component, "portfolio", None)
+            if from_components_cache is not None and from_components_portfolio is not None:
+                break
+        nautilus_cache = nautilus_cache or from_components_cache
+        nautilus_portfolio = nautilus_portfolio or from_components_portfolio
+    if nautilus_cache is not None and hasattr(node, "_cache"):
+        setattr(node, "_cache", nautilus_cache)
+    if nautilus_portfolio is not None and hasattr(node, "_portfolio"):
+        setattr(node, "_portfolio", nautilus_portfolio)
 
     books = getattr(assembler, "books", None)
     if not isinstance(books, CacheBoundBookDataProvider):
@@ -134,35 +156,89 @@ def _attach_cache_projections(
 def _register_runtime_trader_components(
     node: _NautilusNodeLike,
     market_rotation_actor: object,
-    policy: DecisionPolicy,
+    policy: DecisionPolicy | None,
     strategies: Sequence[_NativeStrategyLike],
-) -> None:
-    node.trader.add_actor(market_rotation_actor)
-    if _is_runtime_policy_actor(policy):
-        node.trader.add_actor(policy)
+    *,
+    settings: Settings,
+    configured_markets: Sequence[Market],
+    configured_condition_ids: Sequence[str],
+    reporting_actor: object | None = None,
+) -> list[_NativeStrategyLike]:
+    """Register actors/strategies on LiveNode kernel; return kernel-owned strategies."""
+
+    kernel = getattr(node, "node", node)
+    trader = getattr(node, "trader", None)
+
+    supports_importable = callable(getattr(kernel, "add_strategy_from_config", None)) and callable(
+        getattr(kernel, "add_actor_from_config", None)
+    )
+    if supports_importable:
+        from dataclasses import asdict
+
+        from nautilus_trader.core import nautilus_pyo3
+
+        from polysignal_lab.nautilus_runtime.decision_policy_actor import (
+            DecisionPolicyActor,
+            DecisionPolicyActorConfig,
+        )
+        from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+        from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
+
+        def fqn(component: type[object]) -> str:
+            return f"{component.__module__}:{component.__qualname__}"
+
+        policy_config = DecisionPolicyActorConfig.build(settings)
+        kernel.add_actor_from_config(
+            nautilus_pyo3.ImportableActorConfig(
+                actor_path=fqn(DecisionPolicyActor),
+                config_path=fqn(DecisionPolicyActorConfig),
+                config=asdict(policy_config),
+            )
+        )
+        enabled_strategy_names = tuple(
+            name
+            for name in settings.strategies.explicit_strategy_names()
+            if bool(getattr(settings.strategies, name).enabled)
+        )
+        if enabled_strategy_names:
+            strategy_config = PolySignalStrategyConfig.build(
+                settings,
+                tuple(configured_markets),
+                tuple(configured_condition_ids),
+            )
+            kernel.add_strategy_from_config(
+                nautilus_pyo3.ImportableStrategyConfig(
+                    strategy_path=fqn(PolySignalNativeStrategy),
+                    config_path=fqn(PolySignalStrategyConfig),
+                    config=asdict(strategy_config),
+                )
+            )
+        _load_runtime_trader_state(node)
+        return []
+
+    if trader is None:
+        raise RuntimeError("LiveNode runtime requires a trader facade for actor/strategy wiring")
+    trader.add_actor(market_rotation_actor)
+    if reporting_actor is not None:
+        trader.add_actor(reporting_actor)
     for strategy in strategies:
-        node.trader.add_strategy(strategy)
+        trader.add_strategy(strategy)
     _load_runtime_trader_state(node)
-    node.build()
+    build = getattr(node, "build", None)
+    if callable(build):
+        build()
+    return list(strategies)
 
 
 def _load_runtime_trader_state(node: _NautilusNodeLike) -> None:
     config = getattr(node, "config", None)
     if not bool(getattr(config, "load_state", False)):
         return
-    load = getattr(node.trader, "load", None)
+    trader = getattr(node, "trader", None)
+    load = getattr(trader, "load", None) if trader is not None else None
     if not callable(load):
         raise RuntimeError("native state persistence requires Trader.load()")
     load()
-
-
-def _is_runtime_policy_actor(policy: DecisionPolicy) -> bool:
-    """True when policy is the thin Nautilus Actor adapter, not pure DecisionPolicy."""
-    return (
-        type(policy) is not DecisionPolicy
-        and callable(getattr(policy, "on_save", None))
-        and callable(getattr(policy, "on_load", None))
-    )
 
 
 def _build_market_rotation_actor(
@@ -174,6 +250,7 @@ def _build_market_rotation_actor(
     registry: MarketCatalog,
     store: AnchorPriceStore | None,
     health: object | None,
+    markets_projection: object | None = None,
 ) -> object:
     _strategy_cls, actor_cls, _policy_cls = _runtime_class_triple()
     actor_factory = cast(Callable[..., object], actor_cls)
@@ -185,6 +262,7 @@ def _build_market_rotation_actor(
         catalog=registry,
         anchor_store=store,
         health=health,
+        markets_projection=markets_projection,
     )
 
 
@@ -209,7 +287,7 @@ async def _prepare_nautilus_runtime_context(
             signal,
             stake_usdc,
         ),
-        paper_result_notifier=lambda result: _notify_paper_result(context, result),
+        report_result_notifier=lambda result: _notify_report_result(context, result),
     )
     return context, discovered_markets, observability
 
@@ -229,18 +307,17 @@ def _build_nautilus_runtime_bundle(
         store=context.sqlite,
         health=context.health,
         observability=observability,
+        reporting_services=context,
     )
-    paper_execution_metadata = {
+    execution_metadata = {
         "sandbox_book_type": settings.runtime.nautilus.sandbox_book_type,
     }
     context.nautilus_cache = components.get("cache")
     context.nautilus_portfolio = components.get("portfolio")
     context.market_catalog = components.get("registry")
-    context.paper_execution_metadata = paper_execution_metadata
-    policy = cast(DecisionPolicy, components["policy"])
+    context.execution_metadata = execution_metadata
     bot = context.telegram_bot
     if bot is not None:
-        bot.strategy_control = build_control(policy)
         nautilus_cache = context.nautilus_cache
         if nautilus_cache is not None:
             from polysignal_lab.nautilus_runtime.cache_market_data import (
@@ -304,9 +381,8 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
     runtime_logger = cast(logging.Logger, getattr(bundle.context, "logger", logging.getLogger(__name__)))
     strategy_names = _strategy_names_from_bundle(bundle)
     telegram_bot_thread: _InteractiveTelegramBotThread | None = None
-    report_loop_thread: _NautilusReportLoopThread | None = None
     try:
-        telegram_bot_thread, report_loop_thread = _run_sync_cli_main(
+        telegram_bot_thread = _run_sync_cli_main(
             bundle,
             node,
             settings,
@@ -318,7 +394,6 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
             bundle,
             node,
             telegram_bot_thread,
-            report_loop_thread,
             runtime_logger,
             cleanup_signals,
         )

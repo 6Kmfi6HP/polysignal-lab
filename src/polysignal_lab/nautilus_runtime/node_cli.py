@@ -65,7 +65,9 @@ async def run_nautilus_cli_async(
 
     request_stop: Callable[[], None] = event.set
     runtime_logger = cast(logging.Logger, getattr(bundle.context, "logger", logger))
-    cleanup_signals: Callable[[], None] = lambda: None
+    def cleanup_signals() -> None:
+        return None
+
     runtime_settings = getattr(bundle.context, "settings", settings)
     if _runtime_intercepts_os_signals(runtime_settings):
         cleanup_signals = _install_async_os_signal_handlers(loop, request_stop)

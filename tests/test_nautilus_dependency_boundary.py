@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, importlib, tomllib, pathlib, pathlib.Path
-Output: test_default_package_import_does_not_require_nautilus, test_nautilus_is_optional_polymarket_extra_not_default_dependency, test_nautilus_node_does_not_import_scheduler_compat_shadow_wallet
+Output: test_default_package_import_does_not_require_nautilus, test_nautilus_is_required_default_dependency, test_nautilus_node_does_not_import_legacy_trading_state
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -42,7 +42,7 @@ def test_alpha_package_import_does_not_require_nautilus() -> None:
         "module = importlib.import_module('polysignal_lab.alpha'); "
         "print(module.__name__); "
         "print('nautilus_loaded', 'nautilus_trader' in sys.modules); "
-        "print('has_spec', hasattr(module, 'NautilusOrderSpec'))"
+        "print('has_spec', hasattr(module, 'OrderSubmissionPlan'))"
     )
 
     assert result.returncode == 0, result.stderr
@@ -54,30 +54,30 @@ def test_alpha_package_import_does_not_require_nautilus() -> None:
 def test_order_plan_dto_import_does_not_require_nautilus() -> None:
     result = _run_python(
         "import sys; "
-        "from polysignal_lab.nautilus_runtime.order_plan import NautilusOrderSpec, OrderSubmissionPlan; "
+        "from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan; "
         "print(OrderSubmissionPlan.__name__); "
-        "print('alias_same', NautilusOrderSpec is OrderSubmissionPlan); "
         "print('nautilus_loaded', 'nautilus_trader' in sys.modules)"
     )
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[0] == "OrderSubmissionPlan"
-    assert "alias_same True" in result.stdout
     assert "nautilus_loaded False" in result.stdout
 
 
-def test_nautilus_is_optional_polymarket_extra_not_default_dependency() -> None:
+def test_nautilus_is_required_default_dependency() -> None:
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     default_deps = data["project"]["dependencies"]
     optional_deps = data["project"]["optional-dependencies"]
 
-    assert all("nautilus_trader" not in dep for dep in default_deps)
+    expected = "nautilus_trader[polymarket]==1.231.0.dev20260716+16604"
+    assert expected in default_deps
     assert optional_deps["nautilus"] == [
-        "nautilus_trader[polymarket]==1.229.0; python_version >= '3.12'"
+        expected
     ]
+    assert data["project"]["requires-python"] == ">=3.12"
 
-def test_nautilus_node_does_not_import_scheduler_compat_shadow_wallet() -> None:
+def test_nautilus_node_does_not_import_legacy_trading_state() -> None:
     source = Path("src/polysignal_lab/nautilus_runtime/node.py").read_text()
 
     assert "scheduler_compat" not in source

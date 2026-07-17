@@ -993,10 +993,6 @@ def test_market_rotation_actor_on_start_uses_clock_timer_when_available(
     )
     actor.publish_data = lambda data_type, data: None
     monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.market_rotation._register_polysignal_data_types_if_available",
-        lambda: None,
-    )
-    monkeypatch.setattr(
         "asyncio.create_task",
         lambda coro: _record_task(created, cast(Coroutine[Any, Any, object], coro)),
     )
@@ -1399,13 +1395,68 @@ def test_market_rotation_actor_on_stop_cancels_clock_without_feed_lifecycle(
         property(lambda self: fake_clock),
     )
     actor.publish_data = lambda data_type, data: None
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.market_rotation._register_polysignal_data_types_if_available",
-        lambda: None,
-    )
 
     actor.on_stop()
 
     assert cancelled == ["market_rotation_refresh"]
     assert worker.closed is True
     assert not hasattr(actor, "rtds_feed")
+
+def test_market_rotation_reload_replays_universe_and_projects_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.data.state import MarketRegistry
+    from polysignal_lab.nautilus_runtime.custom_data_types import (
+        PolySignalMarketMetaData,
+        PolySignalMarketUniverseData,
+    )
+
+    published: list[object] = []
+    settings = Settings()
+    settings.runtime.nautilus.sidecar.spot_source = "disabled"
+    settings.runtime.nautilus.market_rotation.enabled = False
+    market = _market("condition-reload")
+    projection = MarketRegistry()
+    actor = MarketRotationActor(
+        settings=settings,
+        startup_markets=(market,),
+        market_universe=_Universe([[market]]),
+        catalog=MarketCatalog(),
+        markets_projection=projection,
+        anchor_store=None,
+        health=None,
+    )
+    actor.publish_data = lambda _data_type, data: published.append(data)
+    monkeypatch.setattr(
+        actor.ptb_provider,
+        "get_sync",
+        lambda _market: PriceToBeatResult(value=None, source="unavailable", verified=False),
+    )
+
+    saved = actor.on_save()
+    restored = MarketRotationActor(
+        settings=settings,
+        startup_markets=(),
+        market_universe=_Universe([[]]),
+        catalog=MarketCatalog(),
+        markets_projection=projection,
+        anchor_store=None,
+        health=None,
+    )
+    restored.publish_data = lambda _data_type, data: published.append(data)
+    monkeypatch.setattr(
+        restored.ptb_provider,
+        "get_sync",
+        lambda _market: PriceToBeatResult(value=None, source="unavailable", verified=False),
+    )
+    restored.on_load(saved)
+    published.clear()
+    restored.on_start()
+
+    universes = [item for item in published if isinstance(item, PolySignalMarketUniverseData)]
+    metadata = [item for item in published if isinstance(item, PolySignalMarketMetaData)]
+    assert universes
+    assert universes[0].active_condition_ids == ("condition-reload",)
+    assert [item.condition_id for item in metadata] == ["condition-reload"]
+    assert projection.get(market.market_id) is not None
+    assert restored._loaded_from_state is True

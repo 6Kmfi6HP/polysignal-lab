@@ -253,7 +253,7 @@ def test_project_order_event_uses_nautilus_event_fields() -> None:
 
     row = project_order_event(event)
 
-    assert row["paper_order_id"] == "C-001"
+    assert row["report_order_id"] == "C-001"
     assert row["client_order_id"] == "C-001"
     assert row["instrument_id"] == "up-token.POLYMARKET"
     assert row["side"] == "BUY"
@@ -280,8 +280,8 @@ def test_project_fill_event_uses_nautilus_fill_fields() -> None:
 
     row = project_fill_event(event)
 
-    assert row["paper_fill_id"] == "T-001"
-    assert row["paper_order_id"] == "C-001"
+    assert row["report_fill_id"] == "T-001"
+    assert row["report_order_id"] == "C-001"
     assert row["client_order_id"] == "C-001"
     assert row["trade_id"] == "T-001"
     assert row["quantity"] == 12.5
@@ -321,7 +321,7 @@ def test_project_position_uses_nautilus_position_fields() -> None:
 
     row = project_position(position)
 
-    assert row["paper_position_id"] == "P-001"
+    assert row["report_position_id"] == "P-001"
     assert row["position_id"] == "P-001"
     assert row["instrument_id"] == "up-token.POLYMARKET"
     assert row["quantity"] == 20.0

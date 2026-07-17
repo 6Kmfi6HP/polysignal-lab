@@ -34,10 +34,7 @@ from polysignal_lab.nautilus_runtime.observability import (
     DecisionPolicyControl,
     ObservabilityService,
 )
-from polysignal_lab.nautilus_runtime.paper_risk import PaperRiskGate
-from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
-    MarketSubscriptionCoordinator,
-)
+from polysignal_lab.nautilus_runtime.composite_alpha import CompositeAlphaCore
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
@@ -192,16 +189,6 @@ def build_control(policy: DecisionPolicy) -> DecisionPolicyControl:
     return DecisionPolicyControl(policy)
 
 
-def _build_paper_risk_gate(settings: Settings, registry: MarketCatalog) -> PaperRiskGate:
-    return PaperRiskGate(
-        enabled=settings.paper_trading.enabled,
-        max_open_positions=settings.paper_trading.max_open_positions,
-        max_market_exposure_usdc=settings.paper_trading.max_market_exposure_usdc,
-        max_strategy_exposure_usdc=settings.paper_trading.max_strategy_exposure_usdc,
-        market_id_for_instrument=registry.market_id_for_instrument,
-    )
-
-
 def _build_native_strategies(
     settings: Settings,
     assembler: MarketViewAssembler,
@@ -212,70 +199,40 @@ def _build_native_strategies(
 ) -> list[_NativeStrategyLike]:
     strategy_cls, _actor_cls, _policy_cls = _runtime_class_triple()
     strategy_type = cast(Callable[..., _NativeStrategyLike], strategy_cls)
-    paper_risk_gate = _build_paper_risk_gate(settings, registry)
-    strategies: list[_NativeStrategyLike] = []
-    subscription_coordinator = MarketSubscriptionCoordinator()
-    strategy_names: set[str] = set()
+    cores: dict[str, AlphaCore] = {}
+    condition_ids_for_strategy: set[str] = set(condition_ids)
     for entry in _build_nautilus_config_strategy_schedule(settings):
         name = entry.name
-        if name in strategy_names:
+        cfg = cast(object | None, getattr(settings.strategies, name, None))
+        if cfg is None or not bool(getattr(cfg, "enabled", False)):
             continue
-        strategy_names.add(name)
-        strategy = _build_native_strategy(
-            settings,
-            assembler,
-            policy,
-            condition_ids,
-            registry,
-            observability,
-            strategy_type,
-            paper_risk_gate,
-            subscription_coordinator,
-            name,
-        )
-        if strategy is not None:
-            strategies.append(strategy)
-    return strategies
-
-
-def _build_native_strategy(
-    settings: Settings,
-    assembler: MarketViewAssembler,
-    policy: DecisionPolicy,
-    condition_ids: Sequence[str],
-    registry: MarketCatalog,
-    observability: ObservabilityService | None,
-    strategy_type: Callable[..., _NativeStrategyLike],
-    paper_risk_gate: PaperRiskGate,
-    subscription_coordinator: MarketSubscriptionCoordinator,
-    name: str,
-) -> _NativeStrategyLike | None:
-    cfg = cast(object | None, getattr(settings.strategies, name, None))
-    if cfg is None or not bool(getattr(cfg, "enabled", False)):
-        return None
-    core = _native_core_for(name, cfg)
-    if core is None:
-        logger.warning("no native alpha core for strategy %s", name)
-        return None
+        core = _native_core_for(name, cfg)
+        if core is None:
+            logger.warning("no native alpha core for strategy %s", name)
+            continue
+        cores[name] = core
+        configured = getattr(cfg, "condition_ids", ())
+        if isinstance(configured, Sequence):
+            condition_ids_for_strategy.update(str(item) for item in configured)
+    if not cores:
+        return []
     strategy = _create_native_strategy(
         strategy_type,
         settings,
         assembler,
         policy,
-        configured_condition_ids=condition_ids,
-        strategy_name=name,
-        core=core,
-        fixed_stake=_fixed_stake_for(cfg, float(settings.paper_trading.fixed_stake_usdc)),
-        paper_risk_gate=paper_risk_gate,
-        exit_model=settings.paper_trading.exit_model,
+        configured_condition_ids=tuple(condition_ids_for_strategy),
+        strategy_name="polysignal",
+        core=CompositeAlphaCore(cores),
+        fixed_stake=float(settings.trading.fixed_stake_usdc),
+        exit_model=settings.trading.exit_model,
         strategy_book_type=settings.runtime.nautilus.sandbox_book_type,
         instrument_id_resolver=_instrument_id_resolver(registry),
         registry=registry,
         observability=observability,
-        subscription_coordinator=subscription_coordinator,
     )
     _attach_strategy_custom_data(strategy, assembler)
-    return strategy
+    return [strategy]
 
 
 def _create_native_strategy(
@@ -288,16 +245,12 @@ def _create_native_strategy(
     strategy_name: str,
     core: AlphaCore,
     fixed_stake: float,
-    paper_risk_gate: PaperRiskGate,
     exit_model: object,
     strategy_book_type: str,
     instrument_id_resolver: Callable[[str], object],
     registry: MarketCatalog,
     observability: ObservabilityService | None,
-    subscription_coordinator: MarketSubscriptionCoordinator,
 ) -> _NativeStrategyLike:
-    from nautilus_trader.config import StrategyConfig
-
     return strategy_type(
         core=core,
         assembler=assembler,
@@ -305,7 +258,6 @@ def _create_native_strategy(
         strategy_name=strategy_name,
         policy=policy,
         fixed_stake_usdc=fixed_stake,
-        paper_risk_gate=paper_risk_gate,
         exit_model=exit_model,
         book_type=strategy_book_type,
         instrument_id_resolver=instrument_id_resolver,
@@ -313,10 +265,8 @@ def _create_native_strategy(
         observability=observability,
         progress_callback=_runtime_progress_callback(settings),
         readiness_callback=_runtime_readiness_callback(settings),
-        subscription_coordinator=subscription_coordinator,
         unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
         l1_book_snapshot_interval_ms=settings.runtime.nautilus.l1_book_snapshot_interval_ms,
-        config=StrategyConfig(strategy_id="PolySignal", order_id_tag=strategy_name),
     )
 
 

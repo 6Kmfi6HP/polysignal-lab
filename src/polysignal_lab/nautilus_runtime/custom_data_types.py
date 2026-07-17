@@ -1,6 +1,6 @@
 """
 Input: __future__, collections.abc, dataclasses, types, typing, pyarrow, nautilus_trader.core.data, nautilus_trader.model.custom
-Output: PolySignalSpotData, PolySignalPriceToBeatData, PolySignalMarketMetaData, PolySignalMarketUniverseData, register_polysignal_data_types
+Output: PolySignalSpotData, PolySignalPriceToBeatData, PolySignalMarketMetaData, PolySignalMarketUniverseData
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -205,39 +205,6 @@ class PolySignalMarketUniverseData(Data, _FrozenData):
             ts_event=_require_int(raw["ts_event"], "ts_event"),
             ts_init=_require_int(raw["ts_init"], "ts_init"),
         )
-
-
-# @customdataclass registers all types at class definition time, so the
-# legacy register_polysignal_data_types() is a no-op at runtime. Tests
-# that monkeypatch _polysignal_data_types_registered can still exercise
-# the function body.
-_polysignal_data_types_registered = True
-
-
-def register_polysignal_data_types() -> None:
-    """Register PolySignal custom data types with the Nautilus serializer.
-
-    Registration is handled automatically by ``@customdataclass`` at import
-    time.  This function is retained for backward compatibility.
-    """
-    # @customdataclass auto-registers at class definition time, so no-op.
-    # If called during a re-import (e.g., test isolation), ignore the
-    # duplicate-registration KeyError that Nautilus raises.
-    if _polysignal_data_types_registered:
-        return
-
-    from nautilus_trader.serialization.base import register_serializable_type
-
-    for cls in (
-        PolySignalSpotData,
-        PolySignalPriceToBeatData,
-        PolySignalMarketMetaData,
-        PolySignalMarketUniverseData,
-    ):
-        try:
-            register_serializable_type(cls, cls.to_dict, cls.from_dict)
-        except KeyError:
-            pass  # already registered by @customdataclass
 
 
 def _require_int(value: object, field_name: str) -> int:

@@ -1,7 +1,7 @@
 """
 Input: __future__, dataclasses, datetime, math, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_runtime.projections, polysignal_lab.utils
 Output: NativeExitPolicy
-Pos: Native strategy risk-exit policy — sole paper exit authority (not contingent brackets)
+Pos: Native strategy risk-exit policy — sole native exit authority (not contingent brackets)
 
 🔄 Self-reference: When this file changes, update this header
 """
@@ -13,10 +13,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import math
 
-from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
+from polysignal_lab.alpha.types import (
+    AlphaDecision,
+    MarketView,
+    OrderIntentSpec,
+    TradingStateView,
+)
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.projections import project_position
+from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.utils import parse_dt
 
 
@@ -79,15 +85,18 @@ class NativeExitPolicy:
         registry: MarketCatalog,
         view: MarketView,
         now: datetime,
-        inflight: set[str],
-        position_thresholds: Mapping[str, PositionExitThresholds] | None = None,
     ) -> tuple[AlphaDecision, ...]:
         if cache is None or strategy_id is None:
             return ()
         pair = registry.by_condition(view.condition_id)
         if pair is None:
             return ()
-        thresholds_by_instrument = position_thresholds or {}
+        trading = trading_state_from_cache(
+            cache,
+            strategy_id=strategy_id,
+            registry=registry,
+            condition_id=view.condition_id,
+        )
         decisions: list[AlphaDecision] = []
         for position in _open_positions(cache, strategy_id):
             decision = self._decision_for_position(
@@ -96,8 +105,7 @@ class NativeExitPolicy:
                 pair=pair,
                 view=view,
                 now=now,
-                inflight=inflight,
-                position_thresholds=thresholds_by_instrument,
+                trading=trading,
             )
             if decision is not None:
                 decisions.append(decision)
@@ -111,8 +119,7 @@ class NativeExitPolicy:
         pair: object,
         view: MarketView,
         now: datetime,
-        inflight: set[str],
-        position_thresholds: Mapping[str, PositionExitThresholds],
+        trading: TradingStateView,
     ) -> AlphaDecision | None:
         projection = project_position(position)
         if bool(projection.get("is_closed")):
@@ -131,7 +138,13 @@ class NativeExitPolicy:
         if bid is None or not math.isfinite(float(bid)) or float(bid) <= 0:
             return None
         opened_at = _opened_at(projection)
-        stamped = position_thresholds.get(instrument_id) or position_thresholds.get(token_id)
+        thresholds_for_position = trading.exit_thresholds(position_id)
+        stamped = PositionExitThresholds(
+            take_profit_price=thresholds_for_position[0],
+            stop_loss_price=thresholds_for_position[1],
+        )
+        if stamped.take_profit_price is None and stamped.stop_loss_price is None:
+            stamped = None
         reason = self._reason(
             bid=float(bid),
             entry_price=entry_price,
@@ -139,7 +152,7 @@ class NativeExitPolicy:
             now=now,
             thresholds=stamped,
         )
-        if reason is None or position_id in inflight:
+        if reason is None or trading.has_exit_order(position_id):
             return None
         return _build_exit_decision(
             view=view,

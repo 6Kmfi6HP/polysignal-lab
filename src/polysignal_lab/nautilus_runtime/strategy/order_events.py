@@ -1,5 +1,5 @@
 """
-Input: __future__, collections.abc, typing, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_runtime.strategy.event_projection, polysignal_lab.paper.exit_result, polysignal_lab.utils
+Input: __future__, collections.abc, typing, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_runtime.strategy.event_projection, polysignal_lab.reporting.exit_result, polysignal_lab.utils
 Output: handle_order_lifecycle_event, handle_order_filled, handle_position_event, project_strategy_order_event, project_strategy_fill_event, should_notify_fill, forget_approved_metrics, call_core, _record_early_exit_result
 Pos: Application code
 
@@ -25,7 +25,7 @@ from polysignal_lab.nautilus_runtime.strategy.event_projection import (
     project_fill_event,
     project_order_event,
 )
-from polysignal_lab.paper.exit_result import paper_trade_result_from_early_exit
+from polysignal_lab.reporting.exit_result import report_result_from_early_exit
 from polysignal_lab.utils import utc_iso
 
 
@@ -86,7 +86,7 @@ def project_strategy_fill_event(
 
 
 def should_notify_fill(strategy: _OrderEventStrategy, event: AlphaFillEvent) -> bool:
-    if strategy.strategy_name != "vwap_momentum":
+    if event.strategy != "vwap_momentum":
         return True
     intent = event.metrics.get("order_intent")
     if isinstance(intent, OrderIntent):
@@ -135,10 +135,6 @@ def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
     strategy._record_nautilus_fill(event, alpha_event.metrics)
     if bool(alpha_event.metrics.get("reduce_only")):
         _record_early_exit_result(strategy, alpha_event)
-    else:
-        binder = getattr(strategy, "bind_position_exit_thresholds", None)
-        if callable(binder):
-            binder(event, alpha_event)
     forget_approved_metrics(
         strategy,
         event,
@@ -184,7 +180,7 @@ def _record_early_exit_result(
             closed_at = fill.ts_event.isoformat()
         except AttributeError:
             closed_at = None
-    result = paper_trade_result_from_early_exit(
+    result = report_result_from_early_exit(
         metrics,
         fill_price=float(fill.fill_price),
         fill_shares=float(fill.shares),
@@ -205,7 +201,7 @@ def _record_early_exit_result(
     except Exception:
         strategy._note_runtime_progress("early_exit_result_failed")
         return
-    notify = getattr(observability, "notify_paper_result", None)
+    notify = getattr(observability, "notify_report_result", None)
     if callable(notify):
         # Best-effort: durable write already succeeded; never block or re-raise.
         try:
@@ -220,32 +216,3 @@ def handle_position_event(strategy: _OrderEventStrategy, position: object) -> No
 
 def handle_position_closed(strategy: _OrderEventStrategy, position: object) -> None:
     handle_position_event(strategy, position)
-    clearer = getattr(strategy, "clear_position_exit_thresholds_for_position", None)
-    if callable(clearer):
-        clearer(position)
-    reset_position = getattr(strategy.core, "reset_position", None)
-    registry = strategy.registry
-    if registry is None or not callable(reset_position):
-        return
-    instrument_id = str(getattr(position, "instrument_id", ""))
-    try:
-        pair, token_meta = _catalog_position_identity(registry, instrument_id)
-    except (RuntimeError, ValueError):
-        return
-    if token_meta is None or pair is None:
-        return
-    reset_position(pair.market_id, token_meta.side)
-
-
-def _catalog_position_identity(
-    registry: MarketCatalog,
-    instrument_id: str,
-) -> tuple[object | None, object | None]:
-    for condition_id in registry.condition_ids():
-        pair = registry.by_condition(condition_id)
-        if pair is None:
-            continue
-        for token_meta in (pair.up, pair.down):
-            if registry.instrument_id_for_token(token_meta.token_id) == instrument_id:
-                return pair, token_meta
-    return None, None

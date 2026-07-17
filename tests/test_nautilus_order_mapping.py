@@ -19,12 +19,11 @@ from dataclasses import replace
 from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
+from polysignal_lab.alpha.late_consensus_core import LateConsensusAlphaCore
+from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision, candidate_from_decision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 from polysignal_lab.domain.strategy_config import LateConsensusConfig
-from polysignal_lab.alpha.late_consensus_core import LateConsensusAlphaCore
-from polysignal_lab.alpha.legacy_snapshot_adapter import decision_to_signal, market_view_from_snapshot
-from factories import sample_snapshot
+from factories import sample_market_view
 
 
 def _decision(
@@ -209,13 +208,11 @@ def test_approved_signal_candidate_preserves_gtd_expiry_and_pair_metadata() -> N
 
 
 def test_late_consensus_maps_to_current_favorite_ask_not_price_ceiling() -> None:
-    snapshot = sample_snapshot(up_ask=0.82, down_ask=0.18, seconds_to_close=100)
-    view = market_view_from_snapshot(snapshot)
-    assert view is not None
+    view = sample_market_view(up_ask=0.82, down_ask=0.18, seconds_to_close=100)
     decisions = LateConsensusAlphaCore(
         LateConsensusConfig(entry_frequency_sec=0)
     ).evaluate(view)
-    signal = decision_to_signal(decisions[0], view.view_id, None)
+    signal = candidate_from_decision(decisions[0], view)
 
     spec = order_spec_from_decision(
         ApprovedDecision(signal=signal),
@@ -237,4 +234,4 @@ def test_missing_order_intent_uses_paper_safe_taker_at_max_entry_price() -> None
     assert spec.quantity == 25.0
     assert spec.intent == OrderIntent.TAKER_IOC
     assert spec.tags["time_in_force"] == "IOC"
-    assert spec.tags["paper_safe_default"] == "true"
+    assert spec.tags["sandbox_safe_default"] == "true"

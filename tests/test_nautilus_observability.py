@@ -182,29 +182,29 @@ def test_observability_actor_isolates_accepted_signal_notifier_failure() -> None
     assert "telemetry_write_failures" not in component.metrics
 
 
-def test_observability_actor_isolates_paper_result_notifier_failure() -> None:
+def test_observability_actor_isolates_report_result_notifier_failure() -> None:
     actor = ObservabilityService(
-        paper_result_notifier=lambda _result: (_ for _ in ()).throw(
+        report_result_notifier=lambda _result: (_ for _ in ()).throw(
             RuntimeError("telegram paper result failed")
         )
     )
 
-    actor.notify_paper_result({"paper_trade_id": "pt-1", "result": "WIN"})
+    actor.notify_report_result({"report_result_id": "pt-1", "result": "WIN"})
 
     component = actor.health.components["observability_actor"]
     assert component.status == "degraded"
     assert component.metrics["non_critical_side_effect_failures"] == 1
-    assert component.metrics["side_effect_kind"] == "paper_result_notifier"
+    assert component.metrics["side_effect_kind"] == "report_result_notifier"
 
 
-def test_notify_paper_result_suppresses_duplicate_trade_ids() -> None:
+def test_notify_report_result_suppresses_duplicate_trade_ids() -> None:
     calls: list[object] = []
     actor = ObservabilityService(
-        paper_result_notifier=lambda result: calls.append(result),
+        report_result_notifier=lambda result: calls.append(result),
     )
 
-    actor.notify_paper_result({"paper_trade_id": "pt-dup", "result": "WIN"})
-    actor.notify_paper_result({"paper_trade_id": "pt-dup", "result": "WIN"})
+    actor.notify_report_result({"report_result_id": "pt-dup", "result": "WIN"})
+    actor.notify_report_result({"report_result_id": "pt-dup", "result": "WIN"})
 
     assert len(calls) == 1
 
@@ -223,7 +223,7 @@ def test_best_effort_telemetry_queue_drops_when_full_and_marks_health() -> None:
     actor.record_event(
         "nautilus_order",
         {
-            "paper_order_id": "order-durable",
+            "report_order_id": "order-durable",
             "status": "ACCEPTED",
             "ts": "2026-07-13T12:00:00Z",
         },
@@ -236,7 +236,7 @@ def test_best_effort_telemetry_queue_drops_when_full_and_marks_health() -> None:
     assert store.tables == {
         "nautilus_order": [
             {
-                "paper_order_id": "order-durable",
+                "report_order_id": "order-durable",
                 "status": "ACCEPTED",
                 "ts": "2026-07-13T12:00:00Z",
             }
@@ -652,15 +652,15 @@ def test_record_nautilus_projection_events_write_projected_rows() -> None:
     position_rows = store.tables["nautilus_position"]
 
     assert order_rows[0]["client_order_id"] == "C-001"
-    assert order_rows[0]["paper_order_id"] == "C-001"
+    assert order_rows[0]["report_order_id"] == "C-001"
     assert order_rows[0]["status"] == "ACCEPTED"
     assert order_rows[0]["metrics"]["level_price"] == 0.01
     assert fill_rows[0]["client_order_id"] == "C-001"
     assert fill_rows[0]["trade_id"] == "T-001"
-    assert fill_rows[0]["paper_order_id"] == "C-001"
-    assert fill_rows[0]["paper_fill_id"] == "T-001"
+    assert fill_rows[0]["report_order_id"] == "C-001"
+    assert fill_rows[0]["report_fill_id"] == "T-001"
     assert position_rows[0]["position_id"] == "P-001"
-    assert position_rows[0]["paper_position_id"] == "P-001"
+    assert position_rows[0]["report_position_id"] == "P-001"
     assert position_rows[0]["is_closed"] is False
 
 def test_nautilus_projection_events_with_integer_timestamps_get_unique_event_ids() -> None:
@@ -761,8 +761,8 @@ class FakePersistence:
     def insert_rejected_signal(self, rejected: object) -> None:
         self.calls.append(("insert_rejected_signal", rejected))
 
-    def insert_paper_trade_result(self, result: object) -> None:
-        self.calls.append(("insert_paper_trade_result", result))
+    def insert_report_result(self, result: object) -> None:
+        self.calls.append(("insert_report_result", result))
 
     def insert_system_event(self, event: object) -> None:
         self.calls.append(("insert_system_event", event))
@@ -820,7 +820,7 @@ class LockingSystemEventPersistence(FakePersistence):
 
 
 class LockingCriticalPersistence(FakePersistence):
-    def insert_paper_trade_result(self, result: object) -> None:
+    def insert_report_result(self, result: object) -> None:
         raise sqlite3.OperationalError("database is locked")
 
 
@@ -828,7 +828,7 @@ def test_event_store_raises_on_critical_paper_state_sqlite_lock() -> None:
     adapter = NautilusEventStoreAdapter(LockingCriticalPersistence())
 
     with pytest.raises(sqlite3.OperationalError, match="database is locked"):
-        adapter.insert_json("settlements", {"paper_trade_id": "trade-1"})
+        adapter.insert_json("settlements", {"report_result_id": "trade-1"})
 
 
 def test_nautilus_event_store_surfaces_lifecycle_sqlite_lock_for_runtime_degradation() -> None:
@@ -851,19 +851,19 @@ def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
 
     adapter.insert_json("signals", {"signal_id": "s1"})
     adapter.insert_json("rejected_signals", {"rejected_id": "r1"})
-    adapter.insert_json("settlements", {"paper_trade_id": "t1"})
+    adapter.insert_json("settlements", {"report_result_id": "t1"})
     adapter.insert_json("health_snapshot", {"event_id": "h1", "event_type": "health_snapshot", "severity": "info", "created_at": "now"})
 
     assert [name for name, _ in persistence.calls] == [
         "insert_signal",
         "insert_rejected_signal",
-        "insert_paper_trade_result",
+        "insert_report_result",
         "insert_system_event",
     ]
     assert [stream for stream, _ in persistence.logs] == [
         "signals",
         "rejected_signals",
-        "paper_trade_results",
+        "report_results",
     ]
     with pytest.raises(ValueError, match="Unknown Nautilus event table"):
         adapter.insert_json("unknown", {})
@@ -912,7 +912,7 @@ def test_best_effort_telemetry_uses_single_sink_and_enforces_retention(
     adapter.insert_json(
         "nautilus_order",
         {
-            "paper_order_id": "order-durable",
+            "report_order_id": "order-durable",
             "status": "ACCEPTED",
             "ts": "2026-07-13T12:00:00Z",
         },

@@ -197,13 +197,8 @@ def event_lookup_ids(event: object) -> tuple[str, ...]:
 class ApprovedSignalMetricsTracker:
     """Track approved-signal metadata keyed by order identifiers."""
 
-    def __init__(
-        self,
-        *,
-        submitted_signal_keys: set[str],
-    ) -> None:
+    def __init__(self) -> None:
         self._approved_signal_metrics: dict[str, dict[str, object]] = {}
-        self._submitted_signal_keys = submitted_signal_keys
 
     def metrics_for_event(self, event: object) -> dict[str, object]:
         for key in event_lookup_ids(event):
@@ -255,8 +250,4 @@ class ApprovedSignalMetricsTracker:
         if order.client_order_id:
             keys.add(order.client_order_id)
         for key in keys:
-            metrics = self._approved_signal_metrics.pop(key, None)
-            if metrics is not None:
-                dedupe_key = metrics.get("dedupe_key")
-                if isinstance(dedupe_key, str):
-                    self._submitted_signal_keys.discard(dedupe_key)
+            self._approved_signal_metrics.pop(key, None)

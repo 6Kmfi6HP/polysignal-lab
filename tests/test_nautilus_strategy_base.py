@@ -19,7 +19,7 @@ import sys
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any, Protocol, cast
 
 from polysignal_lab.alpha.types import (
@@ -73,6 +73,37 @@ class FakeCore:
 class _NoopClock:
     def set_timer(self, name: object, interval: object, *, callback: object) -> None:
         _ = name, interval, callback
+
+
+class _NativeSubscriptionMethods:
+    def subscribe_data(
+        self,
+        data_type: object,
+        client_id: object | None = None,
+    ) -> None:
+        _ = data_type, client_id
+
+    def subscribe_quotes(self, instrument_id: object, *args: object, **kwargs: object) -> None:
+        _ = instrument_id, args, kwargs
+
+    def subscribe_trades(self, instrument_id: object, *args: object, **kwargs: object) -> None:
+        _ = instrument_id, args, kwargs
+
+    def subscribe_book_deltas(
+        self, instrument_id: object, *args: object, **kwargs: object
+    ) -> None:
+        _ = instrument_id, args, kwargs
+
+    def unsubscribe_quotes(self, instrument_id: object, *args: object, **kwargs: object) -> None:
+        _ = instrument_id, args, kwargs
+
+    def unsubscribe_trades(self, instrument_id: object, *args: object, **kwargs: object) -> None:
+        _ = instrument_id, args, kwargs
+
+    def unsubscribe_book_deltas(
+        self, instrument_id: object, *args: object, **kwargs: object
+    ) -> None:
+        _ = instrument_id, args, kwargs
 
 
 class StatefulFakeCore(FakeCore):
@@ -145,44 +176,24 @@ def _load_static_native_strategy(
     previous_runtime_module = sys.modules.get(runtime_module_name, missing)
     _ = sys.modules.pop(runtime_module_name, None)
 
-    nautilus_module = ModuleType("nautilus_trader")
-    common_module = ModuleType("nautilus_trader.common")
-    actor_module = ModuleType("nautilus_trader.common.actor")
-    config_module = ModuleType("nautilus_trader.config")
-    strategy_module = ModuleType("nautilus_trader.trading.strategy")
-    trading_module = ModuleType("nautilus_trader.trading")
-    model_module = ModuleType("nautilus_trader.model")
-    identifiers_module = ModuleType("nautilus_trader.model.identifiers")
+    # PolySignalNativeStrategy subclasses pyo3 Strategy; swap that base for unit doubles.
+    import nautilus_trader.core.nautilus_pyo3 as real_pyo3
 
-    class FakeClientId(str):
-        pass
+    class _FakePyo3StrategyConfig:
+        def __init__(self, strategy_id: object = None, order_id_tag: str | None = None, **_: object) -> None:
+            self.strategy_id = strategy_id
+            self.order_id_tag = order_id_tag or strategy_config
 
-    class FakeActor:
-        def __init__(self, *, config: object) -> None:
-            self.actor_config = config
+    class _FakeStrategyId:
+        def __init__(self, value: str) -> None:
+            self.value = value
 
-    actor_module.Actor = FakeActor
-    config_module.ActorConfig = lambda: "actor-config"
-    config_module.StrategyConfig = lambda: strategy_config
-    strategy_module.Strategy = strategy_base
-    identifiers_module.ClientId = FakeClientId
+        def __str__(self) -> str:
+            return self.value
 
-    nautilus_module.common = common_module
-    nautilus_module.config = config_module
-    nautilus_module.trading = trading_module
-    nautilus_module.model = model_module
-    common_module.actor = actor_module
-    trading_module.strategy = strategy_module
-    model_module.identifiers = identifiers_module
-
-    monkeypatch.setitem(sys.modules, "nautilus_trader", nautilus_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.common", common_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.common.actor", actor_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.config", config_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.trading", trading_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.trading.strategy", strategy_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.model", model_module)
-    monkeypatch.setitem(sys.modules, "nautilus_trader.model.identifiers", identifiers_module)
+    monkeypatch.setattr(real_pyo3, "Strategy", strategy_base)
+    monkeypatch.setattr(real_pyo3, "StrategyConfig", _FakePyo3StrategyConfig)
+    monkeypatch.setattr(real_pyo3, "StrategyId", _FakeStrategyId)
 
     try:
         module = import_module(runtime_module_name)
@@ -259,8 +270,10 @@ def test_native_strategy_on_save_load_delegates_to_core_via_encode_decode() -> N
     assert core.save_calls == 1
     assert set(state) == {state_key("ptb_diff")}
     assert decode_state("ptb_diff", state) == {
-        "alpha_marker": 42,
-        "trades": {"condition-btc-5m": []},
+        "alpha": {
+            "alpha_marker": 42,
+            "trades": {"condition-btc-5m": []},
+        },
     }
     assert restored_core.loaded_payload == {
         "alpha_marker": 42,
@@ -269,7 +282,7 @@ def test_native_strategy_on_save_load_delegates_to_core_via_encode_decode() -> N
     assert restored_core.state == restored_core.loaded_payload
 
 
-def test_native_strategy_on_save_persists_only_core_state() -> None:
+def test_native_strategy_on_save_excludes_runtime_trading_state() -> None:
     from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
 
     core = StatefulFakeCore([])
@@ -278,31 +291,27 @@ def test_native_strategy_on_save_persists_only_core_state() -> None:
         "dedupe_key": "dedupe-1",
         "level_price": 0.82,
     }
-    strategy._pipeline_state.submitted_signal_keys.add("dedupe-1")
-    strategy.submitted_orders.append(SimpleNamespace(client_order_id="client-1"))
     strategy.rejected_decisions.append(
         RejectedDecision(reason_code="TEST", detail={}, candidate=None)
     )
 
     payload = decode_state("vwap_momentum", strategy.on_save())
 
-    assert payload == dict(core.save_state())
+    assert payload["alpha"] == dict(core.save_state())
+    assert "workflow" not in payload
     assert "submitted_orders" not in payload
     assert "approved_signal_metrics" not in payload
-    assert "submitted_signal_keys" not in payload
     assert "rejected_decisions" not in payload
     assert "fill_state" not in payload
     assert "accepted_state" not in payload
 
 
-def test_native_strategy_on_load_restores_core_without_runtime_order_truth() -> None:
+def test_native_strategy_on_load_does_not_restore_runtime_trading_state() -> None:
     from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
 
     core = StatefulFakeCore([])
     strategy = _minimal_native_strategy(core=core, strategy_name="ptb_diff")
     strategy._metrics_tracker._approved_signal_metrics["client-1"] = {"dedupe_key": "dedupe-1"}
-    strategy._pipeline_state.submitted_signal_keys.add("dedupe-1")
-    strategy.submitted_orders.append(SimpleNamespace(client_order_id="client-1"))
     strategy.rejected_decisions.append(
         RejectedDecision(reason_code="TEST", detail={}, candidate=None)
     )
@@ -319,8 +328,8 @@ def test_native_strategy_on_load_restores_core_without_runtime_order_truth() -> 
         "trades": {"condition-btc-5m": []},
     }
     assert restored._metrics_tracker._approved_signal_metrics == {"preexisting": {"dedupe_key": "keep-me"}}
-    assert len(restored.submitted_orders) == 0
-    assert restored._pipeline_state.submitted_signal_keys == set()
+    assert not hasattr(restored, "_exit_inflight")
+    assert not hasattr(restored, "_exit_thresholds_for_instruments")
     assert len(restored.rejected_decisions) == 0
 
 
@@ -432,7 +441,7 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
 
     from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.submitted = []
@@ -441,6 +450,10 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
             self.submitted.append(order)
 
     class SpecCapturingStrategy(FakeNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.captured_specs = []
+
         def _submit_approved(self, approved, *, view):
             book = view.book_for(approved.signal.side)
             spec = order_spec_from_decision(
@@ -448,7 +461,7 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
                 fixed_stake_usdc=self.fixed_stake_usdc,
                 best_ask=book.best_ask,
             )
-            self.submitted_specs.append(spec)
+            self.captured_specs.append(spec)
             return SimpleNamespace(client_order_id="captured")
 
     readiness: list[tuple[str, bool]] = []
@@ -466,16 +479,12 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
         **_native_projections(),
     )
 
-    strategy._subscription_state.stale_refresh_attempts_by_condition[
-        "condition-btc-5m"
-    ] = 2
     strategy.evaluate_condition("condition-btc-5m")
 
     assert readiness == [("condition-btc-5m", True)]
-    assert strategy._subscription_state.stale_refresh_attempts_by_condition == {}
-    assert len(strategy.submitted_specs) == 1
-    assert strategy.submitted_specs[0].intent == OrderIntent.TAKER_FOK
-    assert strategy.submitted_specs[0].quantity == 20.0
+    assert len(strategy.captured_specs) == 1
+    assert strategy.captured_specs[0].intent == OrderIntent.TAKER_FOK
+    assert strategy.captured_specs[0].quantity == 20.0
     assert len(strategy.rejected_decisions) == 0
 
 
@@ -514,13 +523,7 @@ def test_native_strategy_gate_rejection_does_not_drive_data_plane_readiness() ->
         def book_for(self, side: Side) -> _BookViewLike:
             return self.books[side]
 
-    refreshes: list[str] = []
     readiness: list[tuple[str, bool]] = []
-
-    class FakeNativeStrategy(PolySignalNativeStrategy):
-        def refresh_stale_market_subscription(self, condition_id: str) -> bool:
-            refreshes.append(condition_id)
-            return False
 
     up_decision = _decision()
     down_decision = replace(
@@ -531,7 +534,7 @@ def test_native_strategy_gate_rejection_does_not_drive_data_plane_readiness() ->
     core = FakeCore([up_decision, down_decision])
     view = View()
     policy = StaleOrderBookPolicy()
-    strategy = FakeNativeStrategy(
+    strategy = PolySignalNativeStrategy(
         core=core,
         assembler=_assembler(view),
         condition_ids=("condition-btc-5m",),
@@ -551,7 +554,6 @@ def test_native_strategy_gate_rejection_does_not_drive_data_plane_readiness() ->
         ("condition-btc-5m", True),
         ("condition-btc-5m", True),
     ]
-    assert refreshes == []
 
 
 def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
@@ -567,7 +569,7 @@ def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
             _ = side
             return Book()
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.submitted = []
@@ -608,7 +610,7 @@ def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
 
     strategy.evaluate_condition("condition-btc-5m")
 
-    assert len(strategy.submitted_orders) == 0
+    assert strategy.submitted == []
     assert len(strategy.rejected_decisions) != 0
 
 
@@ -625,18 +627,28 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
             _ = event
             return [_decision()]
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.submitted: list[str] = []
+            self.active_dedupe_keys: set[str] = set()
+
+        def _is_signal_submitted(self, dedupe_key: str) -> bool:
+            return dedupe_key in self.active_dedupe_keys
 
         def _submit_approved(self, approved, *, view):
             _ = view
-            self.submitted.append(approved.signal.dedupe_key)
+            dedupe_key = approved.signal.dedupe_key
+            self.submitted.append(dedupe_key)
+            self.active_dedupe_keys.add(dedupe_key)
             return SimpleNamespace(
                 id=f"order-{len(self.submitted)}",
                 tags={"signal_id": approved.signal.signal_id},
             )
+
+        def on_order_filled(self, event: object) -> None:
+            super().on_order_filled(event)
+            self.active_dedupe_keys.clear()
 
     strategy = FakeNativeStrategy(
         core=ReenteringCore([_decision()]),
@@ -685,32 +697,32 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
             self.custom_subscriptions = []
             self.clock = _NoopClock()
 
-        def subscribe_order_book_deltas(
+        def subscribe_book_deltas(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
 
-        def subscribe_quote_ticks(
+        def subscribe_quotes(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
 
-        def subscribe_trade_ticks(
+        def subscribe_trades(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
 
-        def unsubscribe_order_book_deltas(
+        def unsubscribe_book_deltas(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
 
-        def unsubscribe_quote_ticks(
+        def unsubscribe_quotes(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
 
-        def unsubscribe_trade_ticks(
+        def unsubscribe_trades(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
@@ -780,32 +792,32 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
             self._msgbus = FakeMsgBus()
             self.clock = _NoopClock()
 
-        def subscribe_order_book_deltas(
+        def subscribe_book_deltas(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
 
-        def subscribe_quote_ticks(
+        def subscribe_quotes(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
 
-        def subscribe_trade_ticks(
+        def subscribe_trades(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
 
-        def unsubscribe_order_book_deltas(
+        def unsubscribe_book_deltas(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
 
-        def unsubscribe_quote_ticks(
+        def unsubscribe_quotes(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
 
-        def unsubscribe_trade_ticks(
+        def unsubscribe_trades(
             self, instrument_id: object, *args: object, **kwargs: object
         ) -> None:
             _ = instrument_id, args, kwargs
@@ -847,13 +859,13 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
     assert cast(FakeMsgBus, getattr(strategy, "_msgbus")).calls == []
     custom_subscriptions = cast(list[tuple[object, object | None]], getattr(strategy, "custom_subscriptions"))
     assert {
-        getattr(data_type, "type", data_type): str(client_id)
+        getattr(data_type, "type_name", data_type): str(client_id)
         for data_type, client_id in custom_subscriptions
     } == {
-        PolySignalSpotData: "POLYSIGNAL_SPOT",
-        PolySignalPriceToBeatData: "POLYSIGNAL_SIDECAR",
-        PolySignalMarketMetaData: "POLYSIGNAL_SIDECAR",
-        PolySignalMarketUniverseData: "POLYSIGNAL_SIDECAR",
+        PolySignalSpotData.__name__: "POLYSIGNAL_SPOT",
+        PolySignalPriceToBeatData.__name__: "POLYSIGNAL_SIDECAR",
+        PolySignalMarketMetaData.__name__: "POLYSIGNAL_SIDECAR",
+        PolySignalMarketUniverseData.__name__: "POLYSIGNAL_SIDECAR",
     }
 
     strategy.on_data(
@@ -878,7 +890,7 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
 def test_native_strategy_generates_signal_from_on_data_callback() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         @property
         def order_factory(self) -> FakeOrderFactoryForNative:
             return FakeOrderFactoryForNative()
@@ -891,16 +903,21 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
         def submit_order(self, order: object) -> None:
             self.submitted.append(order)
 
-        def subscribe_data(self, data_type: object) -> None:
-            self.subscriptions.append(data_type)
+        def subscribe_data(
+            self,
+            data_type: object,
+            client_id: object | None = None,
+        ) -> None:
+            self.subscriptions.append((data_type, client_id))
 
     class FakeOrderFactoryForNative:
         def limit(self, **kwargs: object) -> dict[str, object]:
             return dict(kwargs)
 
-    class DataEvent:
+    class UnknownDataEvent:
         condition_id = "condition-btc-5m"
 
+    progress: list[str] = []
     strategy = FakeNativeStrategy(
         core=FakeCore([_decision()]),
         assembler=_assembler(_MockView()),
@@ -909,10 +926,16 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
         policy=RuntimeFakePolicy(),
         fixed_stake_usdc=10.0,
         instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        progress_callback=lambda phase: progress.append(phase),
         **_native_projections(),
     )
 
-    _ = cast(_DataHandler, cast(object, strategy)).on_data(DataEvent())
+    # Generic assembler fallback is removed; unknown CustomData is dropped.
+    _ = cast(_DataHandler, cast(object, strategy)).on_data(UnknownDataEvent())
+    assert progress == ["dropped_frame"]
+    assert strategy.submitted == []
+
+    strategy.evaluate_condition("condition-btc-5m")
 
     assert len(strategy.submitted) == 1
     assert str(strategy.submitted[0]["instrument_id"]) == "up-token.POLYMARKET"
@@ -924,23 +947,20 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
         )
         == "GTD"
     )
-    assert len(strategy.submitted_specs) == 0
-    assert len(strategy.execution_results) == 0
 
 
-def test_native_strategy_requires_shared_policy() -> None:
-    import pytest
-
+def test_native_strategy_without_local_policy_uses_actor_signal_path() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    with pytest.raises(TypeError, match="policy"):
-        PolySignalNativeStrategy(
-            core=FakeCore([]),
-            assembler=_assembler(None),
-            condition_ids=(),
-            strategy_name="ptb_diff",
-            registry=_test_market_catalog(),
-        )
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=(),
+        strategy_name="ptb_diff",
+        registry=_test_market_catalog(),
+    )
+
+    assert strategy.policy is None
 
 
 def test_native_strategy_constructor_requires_injected_projections() -> None:
@@ -991,13 +1011,18 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
     )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.custom_subscriptions: list[object] = []
 
-        def subscribe_data(self, data_type):
-            self.custom_subscriptions.append(getattr(data_type, "type", data_type))
+        def subscribe_data(
+            self,
+            data_type: object,
+            client_id: object | None = None,
+        ) -> None:
+            _ = client_id
+            self.custom_subscriptions.append(getattr(data_type, "type_name", data_type))
 
         def _start_evaluation_heartbeat(self) -> None:
             return None
@@ -1013,10 +1038,10 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
 
     strategy.on_start()
 
-    assert PolySignalMarketMetaData in strategy.custom_subscriptions
-    assert PolySignalMarketUniverseData in strategy.custom_subscriptions
-    assert PolySignalSpotData in strategy.custom_subscriptions
-    assert PolySignalPriceToBeatData in strategy.custom_subscriptions
+    assert PolySignalMarketMetaData.__name__ in strategy.custom_subscriptions
+    assert PolySignalMarketUniverseData.__name__ in strategy.custom_subscriptions
+    assert PolySignalSpotData.__name__ in strategy.custom_subscriptions
+    assert PolySignalPriceToBeatData.__name__ in strategy.custom_subscriptions
 
 
 def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
@@ -1025,9 +1050,6 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import (
         EVALUATION_HEARTBEAT_TIMER_NAME,
         PolySignalNativeStrategy,
-    )
-    from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
-        MarketSubscriptionCoordinator,
     )
 
     class FakeClock:
@@ -1045,7 +1067,7 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         def cancel_timer(self, name):
             self.canceled.append(name)
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         @property
         def clock(self) -> FakeClock:
             return self.fake_clock
@@ -1056,13 +1078,16 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
             self.evaluated: list[str] = []
             self.fake_clock = FakeClock()
 
-        def subscribe_data(self, data_type):
-            self.custom_subscriptions.append(data_type)
+        def subscribe_data(
+            self,
+            data_type: object,
+            client_id: object | None = None,
+        ) -> None:
+            self.custom_subscriptions.append((data_type, client_id))
 
         def evaluate_condition(self, condition_id: str) -> None:
             self.evaluated.append(condition_id)
 
-    coordinator = MarketSubscriptionCoordinator()
     strategy = FakeNativeStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
@@ -1070,7 +1095,6 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         strategy_name="ptb_diff",
         policy=RuntimeFakePolicy(),
         registry=_test_market_catalog(),
-        subscription_coordinator=coordinator,
     )
     strategy._active_condition_ids = {"condition-btc-5m"}
 
@@ -1108,22 +1132,17 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         "condition-btc-5m",
     ]
 
-    assert coordinator.unready_consumer("condition-btc-5m") is strategy
     strategy.on_stop()
 
     assert strategy.clock.canceled == [EVALUATION_HEARTBEAT_TIMER_NAME]
-    assert coordinator.unready_consumer("condition-btc-5m") is None
-    assert strategy._subscription_coordinator is coordinator
 
     strategy.on_start()
 
-    assert coordinator.unready_consumer("condition-btc-5m") is strategy
     strategy.on_stop()
     assert strategy.clock.canceled == [
         EVALUATION_HEARTBEAT_TIMER_NAME,
         EVALUATION_HEARTBEAT_TIMER_NAME,
     ]
-    assert coordinator.unready_consumer("condition-btc-5m") is None
 
 def test_native_strategy_reports_progress_on_internal_evaluation_heartbeat() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -1147,8 +1166,11 @@ def test_native_strategy_reports_progress_on_internal_evaluation_heartbeat() -> 
 def test_native_strategy_reports_progress_on_start_without_market_data() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
+        pass
+
     progress_events: list[str] = []
-    strategy = PolySignalNativeStrategy(
+    strategy = FakeNativeStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m",),
@@ -1431,12 +1453,11 @@ def test_native_strategy_readiness_gate_skips_missing_required_market_view_input
     assert readiness == [("condition-btc-5m", False)]
 
 
-def test_native_strategy_missing_view_triggers_readiness_recovery() -> None:
+def test_native_strategy_missing_view_fails_closed_without_resubscription() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     phases: list[str] = []
     readiness: list[tuple[str, bool]] = []
-    refreshes: list[str] = []
     strategy = PolySignalNativeStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
@@ -1449,15 +1470,10 @@ def test_native_strategy_missing_view_triggers_readiness_recovery() -> None:
         ),
         **_native_projections(),
     )
-    strategy.refresh_stale_market_subscription = (  # type: ignore[method-assign]
-        lambda condition_id: refreshes.append(condition_id) or True
-    )
-
     strategy.evaluate_condition("condition-btc-5m")
 
     assert "readiness_miss" in phases
     assert readiness == [("condition-btc-5m", False)]
-    assert refreshes == ["condition-btc-5m"]
 
 
 def test_native_strategy_routes_decisions_through_policy_actor_decide() -> None:
@@ -1491,8 +1507,6 @@ def test_native_strategy_routes_decisions_through_policy_actor_decide() -> None:
 
 
 def test_cache_market_data_provider_uses_observed_receipt_time_for_freshness() -> None:
-    from nautilus_trader.model.identifiers import InstrumentId
-
     from polysignal_lab.nautilus_runtime.cache_market_data import (
         NautilusCacheMarketDataProvider,
     )
@@ -1513,7 +1527,6 @@ def test_cache_market_data_provider_uses_observed_receipt_time_for_freshness() -
 
     class Cache:
         def order_book(self, instrument_id: object) -> NautilusLikeOrderBook:
-            assert isinstance(instrument_id, InstrumentId)
             assert str(instrument_id) == "up-token.POLYMARKET"
             return NautilusLikeOrderBook()
 
@@ -1784,24 +1797,6 @@ def test_native_strategy_bounds_rejected_decisions_to_prevent_memory_leak() -> N
     assert len(strategy.rejected_decisions) <= 1000
 
 
-def test_native_strategy_bounds_submitted_orders_to_prevent_memory_leak() -> None:
-    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-
-    strategy = PolySignalNativeStrategy(
-        core=FakeCore([]),
-        assembler=_assembler(None),
-        condition_ids=("condition-btc-5m",),
-        strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
-        **_native_projections(),
-    )
-
-    for _ in range(2000):
-        strategy.submitted_orders.append("order")
-    # With unbounded list this will have 2000 entries, with bounded maxlen <= 1000
-    assert len(strategy.submitted_orders) <= 1000
-
-
 def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument() -> (
     None
 ):
@@ -1811,7 +1806,7 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
     )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.book_subscriptions = []
@@ -1823,10 +1818,10 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
             _ = args, kwargs
             self.instrument_requests.append(str(instrument_id))
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             self.book_subscriptions.append(instrument_id)
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(instrument_id)
 
         def subscribe_data(self, data_type, *args, **kwargs):
@@ -1884,7 +1879,7 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
 
     seen: list[tuple[str, str]] = []
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, *, label: str, **kwargs):
             super().__init__(**kwargs)
             self.label = label
@@ -1898,19 +1893,19 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
             _ = args, kwargs
             self.instrument_requests.append(str(instrument_id))
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             _ = args, kwargs
             self.book_subscriptions.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             _ = args, kwargs
             self.trade_subscriptions.append(str(instrument_id))
 
-        def unsubscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def unsubscribe_book_deltas(self, instrument_id, *args, **kwargs):
             _ = args, kwargs
             self.book_unsubscriptions.append(str(instrument_id))
 
-        def unsubscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def unsubscribe_trades(self, instrument_id, *args, **kwargs):
             _ = args, kwargs
             self.trade_unsubscriptions.append(str(instrument_id))
 
@@ -2043,7 +2038,7 @@ def test_native_strategy_universe_update_subscribes_entered_market_once() -> Non
     )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.book_subscriptions = []
@@ -2054,10 +2049,10 @@ def test_native_strategy_universe_update_subscribes_entered_market_once() -> Non
             _ = args, kwargs
             self.instrument_requests.append(str(instrument_id))
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             self.book_subscriptions.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
     registry = _test_market_catalog()
@@ -2141,16 +2136,16 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
     from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.book_subscriptions = []
             self.trade_subscriptions = []
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             self.book_subscriptions.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
     registry = _test_market_catalog()
@@ -2212,16 +2207,16 @@ def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> (
     from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.book_subscriptions = []
             self.trade_subscriptions = []
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             self.book_subscriptions.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
     registry = _test_market_catalog()
@@ -2279,7 +2274,7 @@ def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> No
     from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.instrument_requests = []
@@ -2290,10 +2285,10 @@ def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> No
             _ = args, kwargs
             self.instrument_requests.append(str(instrument_id))
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             self.book_subscriptions.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
     registry = _test_market_catalog()
@@ -2348,16 +2343,16 @@ def test_native_strategy_active_market_without_metadata_stays_pending_until_meta
     )
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.book_subscriptions = []
             self.trade_subscriptions = []
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             self.book_subscriptions.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
     strategy = FakeNativeStrategy(
@@ -2444,7 +2439,7 @@ def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
             key = str(instrument_id)
             return SimpleNamespace(id=instrument_id) if key in self.loaded else None
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.cache = FakeCache()
@@ -2456,11 +2451,11 @@ def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
             _ = args, kwargs
             self.instrument_requests.append(str(instrument_id))
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             _ = args, kwargs
             self.book_subscriptions.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             _ = args, kwargs
             self.trade_subscriptions.append(str(instrument_id))
 
@@ -2510,58 +2505,6 @@ def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
 
 
 
-def test_native_strategy_active_market_without_subscribe_hooks_still_marks_wired() -> (
-    None
-):
-    from polysignal_lab.nautilus_bridge.market_catalog import (
-        InstrumentTokenMeta,
-        MarketPairMeta,
-    )
-    from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketUniverseData
-    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-
-    registry = _test_market_catalog()
-    registry.register(
-        MarketPairMeta(
-            market_id="btc-updown-5m-a",
-            market_slug="btc-updown-5m-a",
-            condition_id="condition-a",
-            asset="BTC",
-            timeframe="5m",
-            start_ts=None,
-            end_ts=None,
-            up=InstrumentTokenMeta("up-a", Side.UP),
-            down=InstrumentTokenMeta("down-a", Side.DOWN),
-        )
-    )
-    strategy = PolySignalNativeStrategy(
-        core=FakeCore([]),
-        assembler=_assembler(None),
-        condition_ids=(),
-        strategy_name="ptb_diff",
-        policy=RuntimeFakePolicy(),
-        registry=registry,
-    )
-
-    strategy.on_data(
-        PolySignalMarketUniverseData(
-            epoch=2,
-            active_condition_ids=("condition-a",),
-            entered_condition_ids=(),
-            exited_condition_ids=(),
-            condition_to_up_token={"condition-a": "up-a"},
-            condition_to_down_token={"condition-a": "down-a"},
-            condition_to_asset={"condition-a": "BTC"},
-            condition_to_timeframe={"condition-a": "5m"},
-            ts_event=1,
-            ts_init=1,
-        )
-    )
-
-    assert strategy._subscription_state.wire_condition_ids == {"condition-a"}
-    assert strategy._subscription_state.pending_subscribe_condition_ids == set()
-
-
 def test_native_strategy_exited_market_is_gated_even_if_late_tick_arrives() -> None:
     from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -2569,7 +2512,7 @@ def test_native_strategy_exited_market_is_gated_even_if_late_tick_arrives() -> N
     seen: list[str] = []
     readiness: list[tuple[str, bool]] = []
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def _handle_decision(self, decision, view):
             _ = decision
             seen.append(view.condition_id)
@@ -2663,7 +2606,7 @@ def test_native_strategy_exited_market_fill_follow_up_is_gated() -> None:
         def limit(self, **kwargs):
             return kwargs
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.order_factory = FakeOrderFactory()
@@ -2722,7 +2665,6 @@ def test_native_strategy_exited_market_fill_follow_up_is_gated() -> None:
 
     assert core.fill_condition_ids == ["condition-a"]
     assert strategy.submitted == []
-    assert len(strategy.submitted_orders) == 0
 
 
 def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
@@ -2733,7 +2675,7 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
     from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.book_subscriptions = []
@@ -2741,16 +2683,16 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
             self.book_unsubscriptions = []
             self.trade_unsubscriptions = []
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             self.book_subscriptions.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
-        def unsubscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def unsubscribe_book_deltas(self, instrument_id, *args, **kwargs):
             self.book_unsubscriptions.append(str(instrument_id))
 
-        def unsubscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def unsubscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_unsubscriptions.append(str(instrument_id))
 
     registry = _test_market_catalog()
@@ -2797,7 +2739,6 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
     assert strategy.book_unsubscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
     assert strategy.trade_unsubscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
     assert strategy._subscription_state.wire_condition_ids == set()
-    assert strategy._subscription_state.retained_wire_condition_ids == set()
 
     strategy.on_data(
         PolySignalMarketUniverseData(
@@ -2829,7 +2770,7 @@ def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
     from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.quote_subscriptions = []
@@ -2837,16 +2778,16 @@ def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
             self.quote_unsubscriptions = []
             self.trade_unsubscriptions = []
 
-        def subscribe_quote_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_quotes(self, instrument_id, *args, **kwargs):
             self.quote_subscriptions.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
-        def unsubscribe_quote_ticks(self, instrument_id, *args, **kwargs):
+        def unsubscribe_quotes(self, instrument_id, *args, **kwargs):
             self.quote_unsubscriptions.append(str(instrument_id))
 
-        def unsubscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def unsubscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_unsubscriptions.append(str(instrument_id))
 
     registry = _test_market_catalog()
@@ -2903,22 +2844,22 @@ def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() ->
     from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.book_unsubscriptions = []
             self.trade_unsubscriptions = []
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             _ = instrument_id, args, kwargs
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             _ = instrument_id, args, kwargs
 
-        def unsubscribe_order_book_deltas(self, instrument_id):
+        def unsubscribe_book_deltas(self, instrument_id):
             self.book_unsubscriptions.append(str(instrument_id))
 
-        def unsubscribe_trade_ticks(self, instrument_id):
+        def unsubscribe_trades(self, instrument_id):
             self.trade_unsubscriptions.append(str(instrument_id))
 
     registry = _test_market_catalog()
@@ -2972,22 +2913,22 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
     from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.book_unsubscriptions = []
             self.trade_unsubscriptions = []
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             _ = instrument_id
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             _ = instrument_id
 
-        def unsubscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def unsubscribe_book_deltas(self, instrument_id, *args, **kwargs):
             self.book_unsubscriptions.append(str(instrument_id))
 
-        def unsubscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def unsubscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_unsubscriptions.append(str(instrument_id))
 
     registry = _test_market_catalog()
@@ -3038,7 +2979,6 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
     assert strategy._subscription_state.pending_metadata_condition_ids == set()
     assert strategy._subscription_state.pending_subscribe_condition_ids == set()
     assert strategy._subscription_state.wire_condition_ids == {"condition-a"}
-    assert strategy._subscription_state.retained_wire_condition_ids == set()
 
 
 def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_state() -> (
@@ -3051,16 +2991,16 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_sta
     from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketUniverseData
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.book_subscriptions = []
             self.trade_subscriptions = []
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             self.book_subscriptions.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             self.trade_subscriptions.append(str(instrument_id))
 
     registry = _test_market_catalog()
@@ -3104,7 +3044,6 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_sta
 
     assert strategy._active_condition_ids == set()
     assert strategy._subscription_state.wire_condition_ids == set()
-    assert strategy._subscription_state.retained_wire_condition_ids == set()
 
     strategy.on_data(
         PolySignalMarketUniverseData(
@@ -3133,7 +3072,6 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_sta
         "up-a.POLYMARKET",
         "down-a.POLYMARKET",
     ]
-    assert strategy._subscription_state.retained_wire_condition_ids == set()
 
 
 def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
@@ -3148,11 +3086,11 @@ def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
 
     seen: list[str] = []
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             _ = instrument_id, args, kwargs
 
-        def subscribe_trade_ticks(self, instrument_id, *args, **kwargs):
+        def subscribe_trades(self, instrument_id, *args, **kwargs):
             _ = instrument_id, args, kwargs
 
         def _handle_decision(self, decision, view):
@@ -3211,7 +3149,6 @@ def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
         )
     )
 
-    assert strategy._subscription_state.retained_wire_condition_ids == set()
     assert seen == []
 
 
@@ -3254,7 +3191,7 @@ def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_on
         )
     )
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
 
@@ -3454,7 +3391,7 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
         custom_data=sidecar,
     )
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.cache = fake_cache
@@ -3495,6 +3432,7 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
     from types import SimpleNamespace
 
     from polysignal_lab.alpha.one_cent_buy_core import OneCentBuyAlphaCore
+    from polysignal_lab.alpha.types import TradingStateView
     from polysignal_lab.nautilus_bridge.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
@@ -3543,6 +3481,7 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
             self.timeframe = "5m"
             self.market_slug = "btc-updown-5m"
             self.freshness = SimpleNamespace(max_ms=10)
+            self.trading = TradingStateView()
 
         def book_for(self, side):
             if side == Side.DOWN:
@@ -3561,7 +3500,7 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
                 freshness_ms=10,
             )
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(**kwargs)
             self.order_factory = FakeOrderFactoryForNative()
@@ -3617,7 +3556,6 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
 
     strategy.on_order_accepted(accepted)
 
-    assert ("btc-5m", 0.01) in core._submitted_levels
     assert observability.decisions == [("one_cent_buy", True)]
     assert len(observability.orders) == 1
     accepted_order = cast(_ObservedOrder, observability.orders[0])
@@ -3716,7 +3654,7 @@ def test_order_submitted_observability_failure_does_not_block_core_event() -> No
             _ = event
             raise sqlite3.OperationalError("database is locked")
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(**kwargs)
             self.order_factory = object()
@@ -3795,7 +3733,7 @@ def test_native_strategy_surfaces_approved_signal_to_observability() -> None:
         def limit(self, **kwargs):
             return kwargs
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(**kwargs)
             self.order_factory = FakeOrderFactory()
@@ -3861,7 +3799,7 @@ def test_native_strategy_does_not_swallow_durable_signal_persistence_failure() -
         def limit(self, **kwargs):
             return kwargs
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(**kwargs)
             self.order_factory = FakeOrderFactory()
@@ -3957,7 +3895,7 @@ def test_native_strategy_fill_and_position_callbacks_bridge_to_observability() -
         def record_nautilus_position(self, position: object) -> None:
             self.positions.append(position)
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(**kwargs)
             self.order_factory = object()
@@ -4080,7 +4018,7 @@ def test_native_strategy_l1_subscribes_data_names_without_snapshot_request() -> 
 
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.cache = SimpleNamespace(instrument=lambda instrument_id: object())
@@ -4089,13 +4027,13 @@ def test_native_strategy_l1_subscribes_data_names_without_snapshot_request() -> 
             self.subscribed_deltas: list[str] = []
             self.snapshot_requests: list[str] = []
 
-        def subscribe_quote_ticks(self, instrument_id):
+        def subscribe_quotes(self, instrument_id):
             self.subscribed_quotes.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id):
+        def subscribe_trades(self, instrument_id):
             self.subscribed_trades.append(str(instrument_id))
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             _ = args, kwargs
             self.subscribed_deltas.append(str(instrument_id))
 
@@ -4127,18 +4065,18 @@ def test_native_strategy_l1_subscribes_all_data_names() -> None:
 
     phases: list[str] = []
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.cache = SimpleNamespace(instrument=lambda instrument_id: object())
             self.subscribed_deltas: list[str] = []
             self.subscribed_trades: list[str] = []
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             _ = args, kwargs
             self.subscribed_deltas.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id):
+        def subscribe_trades(self, instrument_id):
             self.subscribed_trades.append(str(instrument_id))
 
     strategy = FakeNativeStrategy(
@@ -4164,7 +4102,7 @@ def test_native_strategy_l2_subscribes_all_data_names() -> None:
 
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    class FakeNativeStrategy(PolySignalNativeStrategy):
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.cache = SimpleNamespace(instrument=lambda instrument_id: object())
@@ -4172,13 +4110,13 @@ def test_native_strategy_l2_subscribes_all_data_names() -> None:
             self.subscribed_trades: list[str] = []
             self.subscribed_deltas: list[str] = []
 
-        def subscribe_quote_ticks(self, instrument_id):
+        def subscribe_quotes(self, instrument_id):
             self.subscribed_quotes.append(str(instrument_id))
 
-        def subscribe_trade_ticks(self, instrument_id):
+        def subscribe_trades(self, instrument_id):
             self.subscribed_trades.append(str(instrument_id))
 
-        def subscribe_order_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
             _ = args, kwargs
             self.subscribed_deltas.append(str(instrument_id))
 

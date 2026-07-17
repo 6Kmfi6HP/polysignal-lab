@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, typing, typing.SupportsFloat, typing.cast, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.NautilusOrderSpec
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, typing, typing.SupportsFloat, typing.cast, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
 Output: build_order_spec, resolve_order_intent, explicit_order_intent, resolve_order_price, resolve_order_quantity, build_order_tags, add_optional_source_tags, add_time_in_force_tags, expiry_seconds_for, pair_id_for
 Pos: Application code
 
@@ -35,9 +35,6 @@ class OrderSubmissionPlan:
     reduce_only: bool
     hedge_leg: bool
     tags: Mapping[str, str]
-
-
-NautilusOrderSpec = OrderSubmissionPlan
 
 
 def build_order_spec(
@@ -188,9 +185,9 @@ def build_order_tags(
 
 
 def add_optional_source_tags(tags: dict[str, str], source: AlphaDecision | SignalCandidate) -> None:
-    signal_id = source.signal_id if isinstance(source, SignalCandidate) else None
-    if signal_id is not None:
-        tags["signal_id"] = str(signal_id)
+    if isinstance(source, SignalCandidate):
+        tags["signal_id"] = str(source.signal_id)
+        tags["dedupe_key"] = source.dedupe_key
     if source.seconds_to_close is not None:
         tags["seconds_to_close"] = str(source.seconds_to_close)
     if source.data_freshness_ms is not None:
@@ -221,7 +218,7 @@ def add_time_in_force_tags(
         return
     tags["fill_policy"] = "FAK" if intent == OrderIntent.TAKER_FAK else "IOC"
     if explicit_order_intent(source) is None:
-        tags["paper_safe_default"] = "true"
+        tags["sandbox_safe_default"] = "true"
 
 
 def expiry_seconds_for(source: AlphaDecision | SignalCandidate) -> int | None:

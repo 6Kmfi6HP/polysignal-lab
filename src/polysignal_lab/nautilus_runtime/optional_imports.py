@@ -7,26 +7,31 @@ from importlib import import_module
 
 @dataclass(frozen=True, slots=True)
 class LiveRuntimeSymbols:
-    trading_node: object
-    trading_node_config: object
+    live_node: object
     trader_id: Callable[[str], object]
     environment: object
     polymarket_data_factory: object
     sandbox_exec_factory: object
+    polymarket_exec_factory: object
+    venue: Callable[[str], object]
+    money: Callable[..., object]
+    currency_from_str: Callable[[str], object]
+
+
+def _load_live_node_cls() -> object:
+    return import_module("nautilus_trader.core.nautilus_pyo3").LiveNode
 
 
 def load_live_runtime_symbols() -> LiveRuntimeSymbols:
-    live_node_mod = import_module("nautilus_trader.live.node")
-    config_mod = import_module("nautilus_trader.config")
-    common_mod = import_module("nautilus_trader.common")
-    identifiers_mod = import_module("nautilus_trader.model.identifiers")
-    polymarket_mod = import_module("nautilus_trader.adapters.polymarket")
-    sandbox_mod = import_module("nautilus_trader.adapters.sandbox.factory")
+    pyo3 = import_module("nautilus_trader.core.nautilus_pyo3")
     return LiveRuntimeSymbols(
-        trading_node=live_node_mod.TradingNode,
-        trading_node_config=config_mod.TradingNodeConfig,
-        trader_id=identifiers_mod.TraderId,
-        environment=common_mod.Environment,
-        polymarket_data_factory=polymarket_mod.PolymarketLiveDataClientFactory,
-        sandbox_exec_factory=sandbox_mod.SandboxLiveExecClientFactory,
+        live_node=_load_live_node_cls(),
+        trader_id=pyo3.TraderId,
+        environment=pyo3.Environment,
+        polymarket_data_factory=pyo3.PolymarketDataClientFactory,
+        sandbox_exec_factory=pyo3.SandboxExecutionClientFactory,
+        polymarket_exec_factory=pyo3.PolymarketExecutionClientFactory,
+        venue=pyo3.Venue,
+        money=pyo3.Money,
+        currency_from_str=pyo3.Currency.from_str,
     )

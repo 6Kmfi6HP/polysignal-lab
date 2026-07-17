@@ -25,13 +25,13 @@ def test_runtime_config_defaults_to_nautilus_and_stays_paper_safe() -> None:
     settings = Settings()
 
     assert settings.runtime.nautilus.allow_live_polymarket_execution is False
-    assert settings.runtime.nautilus.execution_mode == "paper_sandbox"
+    assert settings.runtime.nautilus.execution_mode == "sandbox"
 
 
 def test_nautilus_book_type_defaults_are_paper_only() -> None:
     settings = Settings()
 
-    assert settings.runtime.nautilus.execution_mode == "paper_sandbox"
+    assert settings.runtime.nautilus.execution_mode == "sandbox"
     assert settings.runtime.nautilus.sandbox_book_type == "L2_MBP"
     assert settings.runtime.nautilus.allow_live_polymarket_execution is False
 
@@ -64,7 +64,7 @@ def test_nautilus_rejects_unknown_sandbox_book_type() -> None:
 def test_nautilus_runtime_uses_sandbox_book_type_not_matching_engine() -> None:
     settings = Settings()
 
-    assert settings.runtime.nautilus.execution_mode == "paper_sandbox"
+    assert settings.runtime.nautilus.execution_mode == "sandbox"
     assert settings.runtime.nautilus.sandbox_book_type == "L2_MBP"
     assert not hasattr(settings.runtime.nautilus, "paper_engine")
     assert not hasattr(settings.runtime.nautilus, "matching_accuracy_mode")
@@ -94,6 +94,67 @@ def test_removed_nautilus_matching_keys_fail_fast() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "field",
+    (
+        "max_open_positions",
+        "max_market_exposure_usdc",
+        "max_strategy_exposure_usdc",
+    ),
+)
+def test_removed_shadow_risk_fields_fail_fast(field: str) -> None:
+    with pytest.raises(ValidationError):
+        _ = Settings.model_validate({"trading": {field: 10}})
+
+
+def test_native_risk_limits_are_runtime_configuration() -> None:
+    settings = Settings.model_validate(
+        {
+            "runtime": {
+                "nautilus": {
+                    "risk": {
+                        "max_order_submit_rate": "20/00:00:01",
+                        "max_order_modify_rate": "10/00:00:01",
+                        "max_notional_per_order": {
+                            "123.POLYMARKET": "25.0",
+                        },
+                    }
+                }
+            }
+        }
+    )
+
+    assert settings.runtime.nautilus.risk.max_order_submit_rate == "20/00:00:01"
+    assert settings.runtime.nautilus.risk.max_notional_per_order == {
+        "123.POLYMARKET": "25.0"
+    }
+
+
+def test_native_risk_config_builds_with_project_limits() -> None:
+    from polysignal_lab.nautilus_runtime.live_node import build_risk_engine_config
+
+    settings = Settings.model_validate(
+        {
+            "runtime": {
+                "nautilus": {
+                    "risk": {
+                        "max_order_submit_rate": "20/00:00:01",
+                        "max_order_modify_rate": "10/00:00:01",
+                        "max_notional_per_order": {
+                            "123.POLYMARKET": "25.0",
+                        },
+                    }
+                }
+            }
+        }
+    )
+
+    built = repr(build_risk_engine_config(settings))
+    assert 'max_order_submit_rate: "20/00:00:01"' in built
+    assert 'max_order_modify_rate: "10/00:00:01"' in built
+    assert '"123.POLYMARKET": "25.0"' in built
+
+
 def test_yaml_runtime_book_type_values_are_explicit() -> None:
     production = Settings.from_yaml("config/signal_bot.yaml")
     lab = Settings.from_yaml("config/signal_bot.lab.yaml")
@@ -106,7 +167,16 @@ def test_yaml_runtime_book_type_values_are_explicit() -> None:
     assert lab.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
 
 
-def test_live_polymarket_execution_is_invalid_in_default_runtime() -> None:
+def test_runtime_modes_are_explicit() -> None:
+    for mode in ("sandbox", "live", "backtest"):
+        values = {"execution_mode": mode}
+        if mode == "live":
+            values["allow_live_polymarket_execution"] = True
+        settings = Settings.model_validate({"runtime": {"nautilus": values}})
+        assert settings.runtime.nautilus.execution_mode == mode
+
+
+def test_live_polymarket_execution_requires_live_mode() -> None:
     with pytest.raises(ValueError, match="live Polymarket execution"):
         _ = Settings.model_validate(
             {
@@ -115,6 +185,28 @@ def test_live_polymarket_execution_is_invalid_in_default_runtime() -> None:
                 }
             }
         )
+
+
+def test_live_mode_requires_explicit_execution_switch() -> None:
+    with pytest.raises(ValueError, match="allow_live_polymarket_execution"):
+        _ = Settings.model_validate(
+            {"runtime": {"nautilus": {"execution_mode": "live"}}}
+        )
+
+
+def test_live_safety_flag_is_settable() -> None:
+    settings = Settings.model_validate(
+        {
+            "safety": {"allow_live_market_actions": True},
+            "runtime": {
+                "nautilus": {
+                    "execution_mode": "live",
+                    "allow_live_polymarket_execution": True,
+                }
+            },
+        }
+    )
+    assert settings.safety.allow_live_market_actions is True
 
 
 def test_production_yaml_declares_nautilus_runtime_section() -> None:

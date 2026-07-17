@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, os, pathlib, pathlib.Path, typing, typing.Final, typing.Literal, yaml, pydantic
-Output: load_settings, SecurityConfigError, AppConfig, SafetyConfig, TelegramConfig, MarketConfig, PolymarketSettlementConfig, PolymarketDataConfig, BinanceDataConfig, DataConfig
+Output: load_settings, SecurityConfigError, AppConfig, SafetyConfig, TelegramConfig, MarketConfig, PolymarketDataConfig, BinanceDataConfig, DataConfig
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -82,9 +82,6 @@ def _yaml_bool(val: str) -> bool | str:
 class AppConfig(BaseModel):
     name: str = "PolySignal Lab"
     environment: str = "production"
-    mode: Literal["signal_only", "paper_only", "signal_plus_paper"] = (
-        "signal_plus_paper"
-    )
     timezone: str = "Asia/Bangkok"
     log_level: str = "INFO"
 
@@ -96,18 +93,6 @@ class SafetyConfig(BaseModel):
     allow_position_redemption: bool = False
     fail_on_disallowed_env_keys: bool = True
 
-    @model_validator(mode="after")
-    def validate_locked_down(self) -> "SafetyConfig":
-        if (
-            self.allow_secret_key_material
-            or self.allow_secure_polymarket_client
-            or self.allow_live_market_actions
-            or self.allow_position_redemption
-        ):
-            raise ValueError("Safety flags must remain false for PolySignal Lab.")
-        return self
-
-
 class TelegramConfig(BaseModel):
     enabled: bool = True
     bot_token_env: str = "TELEGRAM_BOT_TOKEN"
@@ -115,7 +100,7 @@ class TelegramConfig(BaseModel):
     parse_mode: str = "HTML"
     send_signals: bool = True
     send_consensus_signals: bool = True
-    send_paper_results: bool = True
+    send_report_results: bool = True
     send_daily_report: bool = True
     max_message_chars: int = 4096
     retry_attempts: int = 3
@@ -152,14 +137,6 @@ class MarketConfig(BaseModel):
 
 
 
-class PolymarketSettlementConfig(BaseModel):
-    chain_enabled: bool = True
-    polygon_rpc_url: str = ""
-    chain_timeout_sec: float = 3.0
-    gamma_enabled: bool = True
-    ws_enabled: bool = True
-    prefer_chain: bool = True
-
 class PolymarketDataConfig(BaseModel):
     gamma_base_url: str = "https://gamma-api.polymarket.com"
     clob_base_url: str = "https://clob.polymarket.com"
@@ -173,11 +150,6 @@ class PolymarketDataConfig(BaseModel):
     rest_rate_limit_per_sec: float = 8.0
     max_book_staleness_ms: int = 60000  # 60s — books refetched every ~30-40s via REST
     max_market_metadata_staleness_ms: int = 10000
-    settlement: PolymarketSettlementConfig = Field(
-        default_factory=PolymarketSettlementConfig
-    )
-
-
 class BinanceDataConfig(BaseModel):
     enabled: bool = True
     base_ws_url: str = "wss://stream.binance.com:9443/stream"
@@ -222,14 +194,12 @@ class ExitModelConfig(BaseModel):
     max_hold_time_sec: int = 900
 
 
-class PaperTradingConfig(BaseModel):
-    enabled: bool = True
+class TradingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     starting_balance_usdc: float = 1000.0
     stake_mode: Literal["fixed"] = "fixed"
     fixed_stake_usdc: float = 10.0
-    max_open_positions: int = 10
-    max_market_exposure_usdc: float = 30.0
-    max_strategy_exposure_usdc: float = 100.0
     exit_model: ExitModelConfig = Field(default_factory=ExitModelConfig)
 
 
@@ -269,18 +239,12 @@ class HealthConfig(BaseModel):
 
 class NautilusSidecarConfig(BaseModel):
     spot_source: Literal["disabled", "polymarket_rtds"] = "disabled"
-    price_to_beat_source: str = "anchor_or_gamma"
 
 
 class NautilusDataClientConfig(BaseModel):
     enabled: bool = True
     ws_max_subscriptions_per_connection: int = 200
 
-
-class NautilusDecisionPolicyConfig(BaseModel):
-    preserve_gate_first_failure_order: bool = True
-    consensus_enabled: bool = True
-    arbiter_policy: Literal["suppress_ambiguous"] = "suppress_ambiguous"
 
 class NautilusMarketRotationConfig(BaseModel):
     enabled: bool = True
@@ -300,24 +264,38 @@ class NautilusStatePersistenceConfig(BaseModel):
     ssl: bool = False
 
 
+class NautilusBacktestConfig(BaseModel):
+    data_dir: str = "data/nautilus_backtest"
+    start: str | None = None
+    end: str | None = None
+    starting_balance_usdc: float = 1000.0
+
+
+class NautilusRiskConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_order_submit_rate: str = "100/00:00:01"
+    max_order_modify_rate: str = "100/00:00:01"
+    max_notional_per_order: dict[str, str] = Field(default_factory=dict)
+
+
 class NautilusRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     trader_id: str = "PolySignal-Nautilus-001"
     python: str = "3.12"
-    execution_mode: Literal["paper_sandbox"] = "paper_sandbox"
+    execution_mode: Literal["sandbox", "live", "backtest"] = "sandbox"
     sandbox_base_currency: str = "pUSD"
     sandbox_book_type: Literal["L1_MBP", "L2_MBP"] = "L2_MBP"
     l1_book_snapshot_interval_ms: int = 1000
     allow_live_polymarket_execution: bool = False
+    backtest: NautilusBacktestConfig = Field(default_factory=NautilusBacktestConfig)
+    risk: NautilusRiskConfig = Field(default_factory=NautilusRiskConfig)
     intercept_os_signals: bool = False
     polymarket_data: NautilusDataClientConfig = Field(
         default_factory=NautilusDataClientConfig
     )
     sidecar: NautilusSidecarConfig = Field(default_factory=NautilusSidecarConfig)
-    decision_policy: NautilusDecisionPolicyConfig = Field(
-        default_factory=NautilusDecisionPolicyConfig
-    )
     market_rotation: NautilusMarketRotationConfig = Field(
         default_factory=NautilusMarketRotationConfig
     )
@@ -334,11 +312,13 @@ class NautilusRuntimeConfig(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def validate_paper_safe(self) -> "NautilusRuntimeConfig":
-        if self.allow_live_polymarket_execution:
+    def validate_execution_mode(self) -> "NautilusRuntimeConfig":
+        if self.execution_mode != "live" and self.allow_live_polymarket_execution:
             raise ValueError(
-                "live Polymarket execution is invalid in the default runtime"
+                "live Polymarket execution is invalid outside live mode"
             )
+        if self.execution_mode == "live" and not self.allow_live_polymarket_execution:
+            raise ValueError("live mode requires allow_live_polymarket_execution")
         return self
 
 
@@ -355,7 +335,7 @@ class Settings(BaseSettings):
     markets: MarketConfig = Field(default_factory=MarketConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     signal: SignalConfig = Field(default_factory=SignalConfig)
-    paper_trading: PaperTradingConfig = Field(default_factory=PaperTradingConfig)
+    trading: TradingConfig = Field(default_factory=TradingConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)

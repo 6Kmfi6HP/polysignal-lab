@@ -78,29 +78,11 @@ def submit_approved_decision(
             spec,
             quantity=_reduce_only_quantity(strategy, instrument),
         )
-    risk_gate = getattr(strategy, "paper_risk_gate", None)
-    validate_risk = getattr(risk_gate, "validate", None)
-    reservation_id: str | None = None
-    if callable(validate_risk):
-        raw_reservation_id = validate_risk(
-            strategy,
-            spec,
-            market_id=str(approved.signal.market_id),
-            instrument_id=str(_instrument_id(instrument)),
-        )
-        if raw_reservation_id:
-            reservation_id = str(raw_reservation_id)
-            spec = replace(
-                spec,
-                tags={**spec.tags, "reservation_id": reservation_id},
-            )
-    try:
-        return _submit_native_order(strategy, spec, instrument, now=now)
-    except Exception:
-        release = getattr(risk_gate, "release", None)
-        if reservation_id and callable(release):
-            release(reservation_id)
-        raise
+    spec = replace(
+        spec,
+        tags={**spec.tags, "strategy": str(approved.signal.strategy)},
+    )
+    return _submit_native_order(strategy, spec, instrument, now=now)
 
 
 def _submit_native_order(
@@ -138,7 +120,7 @@ def _submit_native_order(
 def _reduce_only_quantity(strategy: object, instrument: object) -> float:
     cache = getattr(strategy, "cache", None)
     positions_open = getattr(cache, "positions_open", None)
-    strategy_id = getattr(strategy, "id", None)
+    strategy_id = getattr(strategy, "strategy_id", None) or getattr(strategy, "id", None)
     if not callable(positions_open) or strategy_id is None:
         raise ValueError("NO_REDUCIBLE_POSITION")
     positions = positions_open(

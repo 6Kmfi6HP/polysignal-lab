@@ -52,7 +52,7 @@ def persistence_class_for_table(table: str) -> PersistenceClass:
 class PersistenceWriter(Protocol):
     def insert_signal(self, signal: object) -> None: ...
     def insert_rejected_signal(self, rejected: object) -> None: ...
-    def insert_paper_trade_result(self, result: object) -> None: ...
+    def insert_report_result(self, result: object) -> None: ...
     def insert_system_event(self, event: dict[str, object]) -> None: ...
     def append_log(self, stream: str, payload: object) -> None: ...
 
@@ -72,9 +72,7 @@ class AcceptedSignalNotifier(Protocol):
     def __call__(self, signal: SignalCandidate, stake_usdc: float) -> None: ...
 
 
-class PaperResultNotifier(Protocol):
-    """Sync best-effort hook for publishing durable paper_trade_results (e.g. Telegram)."""
-
+class ReportResultNotifier(Protocol):
     def __call__(self, result: Mapping[str, object]) -> None: ...
 
 
@@ -95,11 +93,11 @@ def _event_identity(payload: Mapping[str, object]) -> str:
     for key in (
         "event_id",
         "trade_id",
-        "paper_fill_id",
+        "report_fill_id",
         "client_order_id",
-        "paper_order_id",
+        "report_order_id",
         "position_id",
-        "paper_position_id",
+        "report_position_id",
     ):
         value = payload.get(key)
         if value not in (None, ""):
@@ -124,11 +122,11 @@ class NautilusEventStoreAdapter:
 
     def __init__(self, persistence: PersistenceWriter) -> None:
         self.persistence: PersistenceWriter = persistence
-        insert_system_event = getattr(persistence, "insert_system_event", lambda payload: None)
+        insert_system_event = persistence.insert_system_event
         self._routes: dict[str, Callable[[dict[str, object]], None]] = {
             "signals": persistence.insert_signal,
             "rejected_signals": persistence.insert_rejected_signal,
-            "settlements": getattr(persistence, "insert_paper_trade_result", insert_system_event),
+            "settlements": persistence.insert_report_result,
             "health_snapshot": insert_system_event,
             "system_events": insert_system_event,
             "nautilus_decision": insert_system_event,
@@ -139,7 +137,7 @@ class NautilusEventStoreAdapter:
         self._streams: dict[str, str] = {
             "signals": "signals",
             "rejected_signals": "rejected_signals",
-            "settlements": "paper_trade_results",
+            "settlements": "report_results",
             "health_snapshot": "system_events",
             "system_events": "system_events",
             "nautilus_decision": "nautilus_decisions",

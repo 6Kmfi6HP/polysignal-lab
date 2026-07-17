@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-LOCAL_PAPER_FORBIDDEN_TEXT = (
+LEGACY_TRADING_FORBIDDEN_TEXT = (
     "from polysignal_lab.paper.order_intent_executor import",
     "BestAskTakerExecutor",
     "PassiveGtdExecutor",
@@ -44,7 +44,7 @@ def test_project_source_contains_no_local_paper_symbols() -> None:
         text = path.read_text(encoding="utf-8")
         findings.extend(
             f"{path}:{symbol}"
-            for symbol in LOCAL_PAPER_FORBIDDEN_TEXT
+            for symbol in LEGACY_TRADING_FORBIDDEN_TEXT
             if symbol in text
         )
 

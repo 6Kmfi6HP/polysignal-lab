@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.NautilusOrderSpec, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.nautilus_runtime.decision_policy, polysignal_lab.nautilus_runtime.decision_policy.ApprovedDecision, polysignal_lab.nautilus_runtime.order_plan
+Input: __future__, __future__.annotations, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.nautilus_runtime.decision_policy, polysignal_lab.nautilus_runtime.decision_policy.ApprovedDecision, polysignal_lab.nautilus_runtime.order_plan
 Output: order_spec_from_decision
 Pos: Application code
 

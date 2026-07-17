@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, asyncio, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, json, pathlib, pathlib.Path, sqlite3, types, types.SimpleNamespace, factories, factories.sample_paper_trade_result, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._report_equity_inputs, polysignal_lab.app.scheduler_reporting.generate_daily_report, polysignal_lab.app.scheduler_reporting_sources._collect_daily_report_inputs, polysignal_lab.app.services.persistence_service.PersistenceService, polysignal_lab.app.services.publish_service.PublishService, polysignal_lab.observability.health.HealthRegistry, polysignal_lab.paper.report.PaperReportService, polysignal_lab.publish.telegram_publisher.PublishResult, polysignal_lab.signal_layer.formatter.MessageFormatter, polysignal_lab.storage.jsonl_store.JSONLStore, polysignal_lab.storage.sqlite_store.SQLiteStore, polysignal_lab.storage.state_store.StateStore
+Input: __future__, __future__.annotations, asyncio, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, json, pathlib, pathlib.Path, sqlite3, types, types.SimpleNamespace, factories, factories.sample_report_result, polysignal_lab.app.reporting, polysignal_lab.app.reporting._report_equity_inputs, polysignal_lab.app.reporting.generate_daily_report, polysignal_lab.app.reporting_sources._collect_daily_report_inputs, polysignal_lab.app.services.persistence_service.PersistenceService, polysignal_lab.app.services.publish_service.PublishService, polysignal_lab.observability.health.HealthRegistry, polysignal_lab.reporting.daily_report.DailyReportService, polysignal_lab.publish.telegram_publisher.PublishResult, polysignal_lab.signal_layer.formatter.MessageFormatter, polysignal_lab.storage.jsonl_store.JSONLStore, polysignal_lab.storage.sqlite_store.SQLiteStore, polysignal_lab.storage.state_store.StateStore
 Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_selects_pusd_portfolio_equity, test_report_equity_inputs_requires_exact_usdc_portfolio_currency, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_native_cache_accounts_api, test_generate_daily_report_uses_configured_pusd_equity, test_daily_report_accepts_legacy_payload_without_equity_source, test_daily_report_revises_legacy_payload_for_new_equity_source, test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss, test_daily_report_orders_use_creation_day_after_cross_day_update, test_daily_report_marks_inferred_legacy_order_creation_time, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_revises_after_late_settlement, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_uses_scalar_portfolio_equity_without_account, test_report_equity_inputs_uses_no_arg_portfolio_equity_without_account, test_report_equity_inputs_uses_starting_balance_for_named_portfolio_without_account, test_report_equity_inputs_uses_starting_balance_for_wrapped_portfolio_without_account, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
 Pos: Test Layer - Unit/Integration tests
 
@@ -20,21 +20,21 @@ from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
 
-from polysignal_lab.app.scheduler_reporting import (
+from polysignal_lab.app.reporting import (
     _report_equity_inputs,
     generate_daily_report,
 )
-from polysignal_lab.app.scheduler_reporting_sources import _collect_daily_report_inputs
+from polysignal_lab.app.reporting_sources import _collect_daily_report_inputs
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.observability.health import HealthRegistry
-from polysignal_lab.paper.report import PaperReportService
+from polysignal_lab.reporting.daily_report import DailyReportService
 from polysignal_lab.publish.telegram_publisher import PublishResult
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
-from factories import sample_paper_trade_result
+from factories import sample_report_result
 
 
 def _settings(
@@ -43,7 +43,7 @@ def _settings(
     sandbox_base_currency: str = "USDC",
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        paper_trading=SimpleNamespace(starting_balance_usdc=starting_balance),
+        trading=SimpleNamespace(starting_balance_usdc=starting_balance),
         runtime=SimpleNamespace(
             nautilus=SimpleNamespace(sandbox_base_currency=sandbox_base_currency),
         ),
@@ -326,7 +326,7 @@ def test_generate_daily_report_uses_configured_pusd_equity(tmp_path: Path) -> No
     )
 
     report = asyncio.run(generate_daily_report(scheduler))
-    stored = store.restore_daily_reports()
+    stored = store.query_daily_reports()
 
     assert report is not None
     assert report.ending_equity == 987.65
@@ -341,15 +341,15 @@ def test_generate_daily_report_uses_configured_pusd_equity(tmp_path: Path) -> No
 def test_daily_report_accepts_legacy_payload_without_equity_source(tmp_path: Path) -> None:
     db_path = tmp_path / "reports.sqlite3"
     store = SQLiteStore(db_path)
-    report = PaperReportService().build_daily_report(
+    report = DailyReportService().build_daily_report(
         report_date=datetime.now(UTC).date(),
         starting_equity=1_000.0,
         ending_equity=1_000.0,
         equity_source="starting_balance",
         total_signals=0,
-        paper_orders=0,
-        paper_fills=0,
-        rejected_paper_orders=0,
+        order_count=0,
+        fill_count=0,
+        rejected_order_count=0,
         open_positions=0,
         results=[],
     )
@@ -364,7 +364,7 @@ def test_daily_report_accepts_legacy_payload_without_equity_source(tmp_path: Pat
         )
 
     store = SQLiteStore(db_path)
-    restored = store.restore_daily_reports()
+    restored = store.query_daily_reports()
     persisted, created = store.claim_daily_report(
         report.model_copy(update={"equity_source": None}),
         enqueue_publish=False,
@@ -380,15 +380,15 @@ def test_daily_report_accepts_legacy_payload_without_equity_source(tmp_path: Pat
 def test_daily_report_revises_legacy_payload_for_new_equity_source(tmp_path: Path) -> None:
     db_path = tmp_path / "reports.sqlite3"
     store = SQLiteStore(db_path)
-    report = PaperReportService().build_daily_report(
+    report = DailyReportService().build_daily_report(
         report_date=datetime.now(UTC).date(),
         starting_equity=1_000.0,
         ending_equity=1_000.0,
         equity_source="starting_balance",
         total_signals=0,
-        paper_orders=0,
-        paper_fills=0,
-        rejected_paper_orders=0,
+        order_count=0,
+        fill_count=0,
+        rejected_order_count=0,
         open_positions=0,
         results=[],
     )
@@ -415,7 +415,7 @@ def test_daily_report_revises_legacy_payload_for_new_equity_source(tmp_path: Pat
     assert created
     assert revised.revision == 2
     assert revised.equity_source == "account_balance"
-    assert store.restore_daily_reports()[0]["equity_source"] == "account_balance"
+    assert store.query_daily_reports()[0]["equity_source"] == "account_balance"
 
 
 def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss(
@@ -439,7 +439,7 @@ def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_lo
                 "event_type": "nautilus_order",
                 "severity": "info",
                 "created_at": event_at,
-                "paper_order_id": "order-current",
+                "report_order_id": "order-current",
                 "status": status,
                 "ts": event_at,
             }
@@ -450,7 +450,7 @@ def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_lo
             "event_type": "nautilus_order",
             "severity": "warning",
             "created_at": now.isoformat(),
-            "paper_order_id": "order-invalid",
+            "report_order_id": "order-invalid",
             "ts": now.isoformat(),
         }
     )
@@ -531,12 +531,12 @@ def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_lo
     report = asyncio.run(generate_daily_report(scheduler))
 
     assert report is not None
-    assert report.paper_orders == 1
-    assert report.paper_fills == 1
+    assert report.order_count == 1
+    assert report.fill_count == 1
     assert report.telemetry_status == "incomplete"
     assert report.telemetry_incomplete_reasons == [
-        "paper_fill_projection_invalid:3",
-        "paper_order_projection_invalid:1",
+        "report_fill_projection_invalid:3",
+        "report_order_projection_invalid:1",
         "telemetry_queue_drops",
     ]
 
@@ -565,7 +565,7 @@ def test_daily_report_orders_use_creation_day_after_cross_day_update(tmp_path: P
                 "event_type": "nautilus_order",
                 "severity": "info",
                 "created_at": event_at.isoformat(),
-                "paper_order_id": "order-cross-day",
+                "report_order_id": "order-cross-day",
                 "status": status,
                 "ts": event_at.isoformat(),
             }
@@ -576,7 +576,7 @@ def test_daily_report_orders_use_creation_day_after_cross_day_update(tmp_path: P
             "event_type": "nautilus_order",
             "severity": "info",
             "created_at": created_at.isoformat(),
-            "paper_order_id": "invalid-order-cross-day",
+            "report_order_id": "invalid-order-cross-day",
             "status": "ACCEPTED",
             "ts": created_at.isoformat(),
         }
@@ -587,7 +587,7 @@ def test_daily_report_orders_use_creation_day_after_cross_day_update(tmp_path: P
             "event_type": "nautilus_order",
             "severity": "warning",
             "created_at": updated_at.isoformat(),
-            "paper_order_id": "invalid-order-cross-day",
+            "report_order_id": "invalid-order-cross-day",
             "status": "UNKNOWN",
             "ts": updated_at.isoformat(),
         }
@@ -612,11 +612,11 @@ def test_daily_report_orders_use_creation_day_after_cross_day_update(tmp_path: P
     assert len(creation_day.today_orders_raw) == 1
     assert creation_day.today_orders_raw[0]["status"] == "FILLED"
     assert creation_day.telemetry_incomplete_reasons == (
-        "paper_order_projection_invalid:1",
+        "report_order_projection_invalid:1",
     )
     assert update_day.today_orders_raw == []
     assert update_day.telemetry_incomplete_reasons == (
-        "paper_order_projection_invalid:1",
+        "report_order_projection_invalid:1",
     )
 
 
@@ -630,7 +630,7 @@ def test_daily_report_marks_inferred_legacy_order_creation_time(tmp_path: Path) 
             "event_type": "nautilus_order",
             "severity": "info",
             "created_at": event_at.isoformat(),
-            "paper_order_id": "legacy-order",
+            "report_order_id": "legacy-order",
             "status": "ACCEPTED",
             "ts": event_at.isoformat(),
         }
@@ -638,7 +638,7 @@ def test_daily_report_marks_inferred_legacy_order_creation_time(tmp_path: Path) 
     store.close()
     with sqlite3.connect(db_path) as connection:
         connection.execute(
-            "UPDATE paper_order_states SET created_event_at=''"
+            "UPDATE report_orders SET created_event_at=''"
         )
         connection.execute("DELETE FROM system_events")
         connection.execute("PRAGMA user_version = 1")
@@ -662,7 +662,7 @@ def test_daily_report_marks_inferred_legacy_order_creation_time(tmp_path: Path) 
 
     assert len(inputs.today_orders_raw) == 1
     assert inputs.telemetry_incomplete_reasons == (
-        "paper_order_creation_time_inferred:1",
+        "report_order_creation_time_inferred:1",
     )
 
 
@@ -830,17 +830,17 @@ def test_generate_daily_report_revises_after_late_settlement(tmp_path: Path) -> 
     )
 
     initial = asyncio.run(generate_daily_report(scheduler))
-    persistence.insert_paper_trade_result(
-        sample_paper_trade_result(
-            paper_trade_id="pt-late-settlement",
-            paper_position_id="pos-late-settlement",
+    persistence.insert_report_result(
+        sample_report_result(
+            report_result_id="pt-late-settlement",
+            report_position_id="pos-late-settlement",
             closed_at=datetime.now(UTC).isoformat(),
         )
     )
     revised = asyncio.run(generate_daily_report(scheduler))
     duplicate = asyncio.run(generate_daily_report(scheduler))
 
-    reports = store.restore_daily_reports()
+    reports = store.query_daily_reports()
     outbox = sorted(
         store.restore_report_publish_outbox(),
         key=lambda row: int(row["revision"]),
@@ -877,14 +877,14 @@ def test_generate_daily_report_revises_after_late_settlement(tmp_path: Path) -> 
 def test_generate_daily_report_retries_prior_day_pending_publish(tmp_path: Path) -> None:
     db_path = tmp_path / "reports.sqlite3"
     store = SQLiteStore(db_path)
-    prior_report = PaperReportService().build_daily_report(
+    prior_report = DailyReportService().build_daily_report(
         report_date=datetime.now(UTC).date() - timedelta(days=1),
         starting_equity=1000.0,
         ending_equity=1000.0,
         total_signals=0,
-        paper_orders=0,
-        paper_fills=0,
-        rejected_paper_orders=0,
+        order_count=0,
+        fill_count=0,
+        rejected_order_count=0,
         open_positions=0,
         results=[],
     )

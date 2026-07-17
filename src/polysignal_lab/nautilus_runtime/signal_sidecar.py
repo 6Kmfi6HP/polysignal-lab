@@ -18,7 +18,6 @@ import asyncio
 import logging
 import threading
 from collections.abc import Awaitable, Callable, Mapping
-from contextlib import suppress
 from datetime import date
 from typing import Protocol, cast
 
@@ -46,7 +45,6 @@ class _InteractiveBotLike(Protocol):
 
 
 _InteractiveTelegramBotThread = tuple[threading.Thread, threading.Event]
-_NautilusReportLoopThread = tuple[threading.Thread, threading.Event]
 
 
 async def _stop_nautilus_services(services: object) -> None:
@@ -117,7 +115,7 @@ def _notify_accepted_signal(
     thread.start()
 
 
-async def _publish_paper_result_once(
+async def _publish_report_result_once(
     services: object,
     result: Mapping[str, object],
 ) -> dict[str, str | None]:
@@ -125,10 +123,10 @@ async def _publish_paper_result_once(
     publish_fn = (
         None
         if publish_service is None
-        else getattr(publish_service, "publish_paper_result", None)
+        else getattr(publish_service, "publish_report_result", None)
     )
     if not callable(publish_fn):
-        raise RuntimeError("publish_service.publish_paper_result is not available")
+        raise RuntimeError("publish_service.publish_report_result is not available")
     publish = await cast(Callable[..., Awaitable[object]], publish_fn)(result)
     as_dict = getattr(publish, "as_dict", None)
     if not callable(as_dict):
@@ -136,17 +134,17 @@ async def _publish_paper_result_once(
     return cast(dict[str, str | None], as_dict())
 
 
-def _publish_paper_result_in_background(
+def _publish_report_result_in_background(
     services: object,
     result: Mapping[str, object],
 ) -> None:
     try:
-        publish = asyncio.run(_publish_paper_result_once(services, result))
+        publish = asyncio.run(_publish_report_result_once(services, result))
         scheduler_health.note_publish_result(services, publish)
     except Exception as exc:
         cast(logging.Logger, getattr(services, "logger", logger)).warning(
-            "Nautilus early-exit paper result publish failed for %s: %s",
-            result.get("paper_trade_id"),
+            "Nautilus early-exit report result publish failed for %s: %s",
+            result.get("report_result_id"),
             exc,
         )
         persistence = getattr(services, "persistence", None)
@@ -159,14 +157,14 @@ def _publish_paper_result_in_background(
             event = {
                 "event_id": new_id(
                     "evt",
-                    "paper_result_publish_failed",
-                    str(result.get("paper_trade_id") or ""),
+                    "report_result_publish_failed",
+                    str(result.get("report_result_id") or ""),
                 ),
-                "event_type": "paper_result_publish_failed",
+                "event_type": "report_result_publish_failed",
                 "severity": "WARNING",
                 "created_at": utc_iso(),
-                "paper_trade_id": result.get("paper_trade_id"),
-                "paper_position_id": result.get("paper_position_id"),
+                "report_result_id": result.get("report_result_id"),
+                "report_position_id": result.get("report_position_id"),
                 "signal_id": result.get("signal_id"),
                 "error_type": type(exc).__name__,
                 "error": redact_text(str(exc)),
@@ -177,21 +175,21 @@ def _publish_paper_result_in_background(
                 append_log("system_events", event)
         except Exception:
             cast(logging.Logger, getattr(services, "logger", logger)).debug(
-                "Failed to audit paper_result_publish_failed",
+                "Failed to audit report_result_publish_failed",
                 exc_info=True,
             )
 
 
-def _notify_paper_result(
+def _notify_report_result(
     services: object,
     result: Mapping[str, object],
 ) -> None:
     if not getattr(getattr(services, "settings", None), "telegram", None):
         return
-    if not getattr(getattr(services, "settings").telegram, "send_paper_results", False):
+    if not getattr(getattr(services, "settings").telegram, "send_report_results", False):
         return
     thread = threading.Thread(
-        target=_publish_paper_result_in_background,
+        target=_publish_report_result_in_background,
         args=(services, dict(result)),
         daemon=True,
     )
@@ -258,92 +256,11 @@ def _stop_interactive_telegram_bot_thread(
     thread.join(timeout=timeout_sec)
 
 
-def _start_nautilus_report_loop_thread(
-    services: object,
-) -> _NautilusReportLoopThread:
-    stop_event = threading.Event()
-    runtime_logger = cast(logging.Logger, getattr(services, "logger", logger))
-
-    def _run() -> None:
-        async def _main() -> None:
-            asyncio_stop = asyncio.Event()
-
-            async def _watch_stop() -> None:
-                while not stop_event.is_set():
-                    await asyncio.sleep(0.5)
-                asyncio_stop.set()
-
-            watcher = asyncio.create_task(_watch_stop())
-            try:
-                await _run_nautilus_report_loop(services, asyncio_stop)
-            finally:
-                _ = watcher.cancel()
-                with suppress(asyncio.CancelledError):
-                    await watcher
-
-        try:
-            asyncio.run(_main())
-        except Exception:
-            runtime_logger.exception("Nautilus report loop thread exited with error")
-
-    thread = threading.Thread(
-        target=_run,
-        name="nautilus-report-loop",
-        daemon=True,
-    )
-    thread.start()
-    return thread, stop_event
-
-
-def _stop_nautilus_report_loop_thread(
-    handle: _NautilusReportLoopThread | None,
-    *,
-    timeout_sec: float = 15.0,
-) -> None:
-    if handle is None:
-        return
-    thread, stop_event = handle
-    stop_event.set()
-    thread.join(timeout=timeout_sec)
-
-
 async def _run_nautilus_housekeeping_once(
     services: object,
     last_report_date: date | None,
 ) -> date | None:
-    from polysignal_lab.app._settlement_check import check_settlements
+    """Generate the daily report (called from ReportingHousekeepingActor)."""
     from polysignal_lab.app.scheduler_shared import _generate_iteration_report
 
-    try:
-        settled = await check_settlements(services)
-        if settled:
-            cast(logging.Logger, getattr(services, "logger", logger)).info(
-                "Nautilus settlement projections recorded: %d",
-                len(settled),
-            )
-            last_report_date = None
-    except Exception:
-        cast(logging.Logger, getattr(services, "logger", logger)).exception(
-            "Nautilus settlement check failed; continuing report loop"
-        )
     return await _generate_iteration_report(services, last_report_date)
-
-
-async def _run_nautilus_report_loop(
-    services: object,
-    stop_event: asyncio.Event,
-) -> None:
-    last_report_date = None
-    settings = getattr(services, "settings", None)
-    interval_sec = 60.0
-    if settings is not None:
-        interval_sec = max(float(getattr(settings.markets, "refresh_interval_sec", 60)), 1.0)
-    while not stop_event.is_set():
-        last_report_date = await _run_nautilus_housekeeping_once(
-            services,
-            last_report_date,
-        )
-        try:
-            _ = await asyncio.wait_for(stop_event.wait(), timeout=interval_sec)
-        except asyncio.TimeoutError:
-            continue

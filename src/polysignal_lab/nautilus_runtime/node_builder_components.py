@@ -23,7 +23,7 @@ class NativeStrategyLike(Protocol):
 
 
 class CacheBoundBookDataProvider:
-    """Cache-backed books provider bound once after TradingNode cache exists.
+    """Cache-backed books provider bound once after LiveNode cache exists.
 
     Unbound reads fail closed (None / empty). Live composition must call
     ``bind_cache`` after node build; empty-book bootstrap is not a live path.
@@ -145,6 +145,7 @@ def runtime_components(
     strategies: Sequence[NativeStrategyLike],
     cache: object,
     portfolio: object,
+    strategy_names: Sequence[str] = (),
 ) -> dict[str, object]:
     return {
         "node": node,
@@ -154,7 +155,7 @@ def runtime_components(
         "assembler": assembler,
         "policy": policy,
         "strategies": list(strategies),
-        "strategy_names": [strategy.strategy_name for strategy in strategies],
+        "strategy_names": list(strategy_names) or [strategy.strategy_name for strategy in strategies],
         "cache": cache,
         "portfolio": portfolio,
     }
@@ -165,11 +166,13 @@ def _live_node_strategies_and_cache(
     node: object,
     settings: object,
     assembler: MarketViewAssembler,
-    policy: object,
+    policy: object | None,
     configured_condition_ids: Sequence[str],
     registry: MarketCatalog,
     market_rotation_actor: object,
     observability: object | None,
+    reporting_actor: object | None = None,
+    configured_markets: Sequence[Market] = (),
 ) -> tuple[object, object, Sequence[NativeStrategyLike]]:
     from polysignal_lab.nautilus_runtime.node import (
         _attach_cache_projections,
@@ -177,15 +180,28 @@ def _live_node_strategies_and_cache(
         _register_runtime_trader_components,
     )
 
-    strategies = _build_native_strategies(
-        settings,
-        assembler,
-        policy,
-        configured_condition_ids,
-        registry,
-        observability,
+    kernel = getattr(node, "node", node)
+    supports_importable = callable(getattr(kernel, "add_strategy_from_config", None)) and callable(
+        getattr(kernel, "add_actor_from_config", None)
     )
-    _register_runtime_trader_components(node, market_rotation_actor, policy, strategies)
+    if supports_importable:
+        strategies = []
+    else:
+        if policy is None:
+            raise RuntimeError("direct runtime wiring requires DecisionPolicy")
+        strategies = _build_native_strategies(
+            settings, assembler, policy, configured_condition_ids, registry, observability
+        )
+    strategies = _register_runtime_trader_components(
+        node,
+        market_rotation_actor,
+        policy,
+        strategies,
+        settings=settings,
+        configured_markets=configured_markets,
+        configured_condition_ids=configured_condition_ids,
+        reporting_actor=reporting_actor,
+    )
     return _attach_cache_projections(node, registry, assembler, strategies) + (strategies,)
 
 
@@ -199,23 +215,37 @@ def wire_live_node_runtime(
     config: object,
     registry: MarketCatalog,
     assembler: MarketViewAssembler,
-    policy: object,
+    policy: object | None,
     store: object | None = None,
     health: object | None = None,
     observability: object | None = None,
+    reporting_services: object | None = None,
 ) -> dict[str, object]:
-    from polysignal_lab.nautilus_runtime.node import _build_market_rotation_actor
-    refresh_once_sync = getattr(runtime_market_universe, "refresh_once_sync")
-    discovery_worker = MarketDiscoveryWorker(refresh_once_sync)
-    market_rotation_actor = _build_market_rotation_actor(
-        settings=settings,
-        startup_markets=configured_markets,
-        market_universe=runtime_market_universe,
-        discovery_worker=discovery_worker,
-        registry=registry,
-        store=store,
-        health=health,
+    kernel = getattr(node, "node", node)
+    supports_importable = callable(getattr(kernel, "add_strategy_from_config", None)) and callable(
+        getattr(kernel, "add_actor_from_config", None)
     )
+    market_rotation_actor = None
+    reporting_actor = None
+    if not supports_importable:
+        from polysignal_lab.nautilus_runtime.node import _build_market_rotation_actor
+        from polysignal_lab.nautilus_runtime.reporting_actor import ReportingHousekeepingActor
+
+        refresh_once_sync = getattr(runtime_market_universe, "refresh_once_sync")
+        discovery_worker = MarketDiscoveryWorker(refresh_once_sync)
+        markets_projection = getattr(runtime_market_universe, "markets", None)
+        market_rotation_actor = _build_market_rotation_actor(
+            settings=settings,
+            startup_markets=configured_markets,
+            market_universe=runtime_market_universe,
+            discovery_worker=discovery_worker,
+            registry=registry,
+            store=store,
+            health=health,
+            markets_projection=markets_projection,
+        )
+        if reporting_services is not None:
+            reporting_actor = ReportingHousekeepingActor(services=reporting_services)
     nautilus_cache, nautilus_portfolio, strategies = _live_node_strategies_and_cache(
         node=node,
         settings=settings,
@@ -225,6 +255,13 @@ def wire_live_node_runtime(
         registry=registry,
         market_rotation_actor=market_rotation_actor,
         observability=observability,
+        reporting_actor=reporting_actor,
+        configured_markets=configured_markets,
+    )
+    enabled_strategy_names = tuple(
+        str(name)
+        for name in getattr(settings, "strategies").explicit_strategy_names()
+        if bool(getattr(getattr(settings, "strategies"), name).enabled)
     )
     return runtime_components(
         node=node,
@@ -236,4 +273,5 @@ def wire_live_node_runtime(
         strategies=strategies,
         cache=nautilus_cache,
         portfolio=nautilus_portfolio,
+        strategy_names=("polysignal",) if enabled_strategy_names else (),
     )

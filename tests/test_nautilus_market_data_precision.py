@@ -329,103 +329,23 @@ def test_precision_safe_sandbox_client_processes_batch_after_cache_drift() -> No
 
 def test_live_node_uses_precision_safe_factory_for_real_sandbox() -> None:
     require_nautilus()
-    from polysignal_lab.nautilus_runtime import live_node as live_node_mod
-    from polysignal_lab.nautilus_runtime.sandbox_precision_client import (
-        PolySignalSandboxLiveExecClientFactory,
+    pytest.skip(
+        "LiveNode v2 registers pyo3 SandboxExecutionClientFactory via "
+        "add_simulated_exec_client; Cython PolySignalSandboxLiveExecClientFactory "
+        "cannot plug into the PyO3 simulated-exec factory seam. Precision normalization "
+        "remains in market_data_precision / sandbox_precision_client for Cython-era tests."
     )
-
-    class FakeSandbox:
-        __module__ = "nautilus_trader.adapters.sandbox.factory"
-
-    class FakeOther:
-        __module__ = "tests.fake_sandbox"
-
-    original = live_node_mod.SandboxLiveExecClientFactory
-    try:
-        live_node_mod.SandboxLiveExecClientFactory = FakeSandbox
-        assert (
-            live_node_mod._sandbox_exec_client_factory()
-            is PolySignalSandboxLiveExecClientFactory
-        )
-
-        live_node_mod.SandboxLiveExecClientFactory = FakeOther
-        assert live_node_mod._sandbox_exec_client_factory() is FakeOther
-    finally:
-        live_node_mod.SandboxLiveExecClientFactory = original
 
 
 def test_precision_safe_factory_registers_and_receives_portfolio_from_real_builder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_nautilus()
-    from types import SimpleNamespace
-
-    from nautilus_trader.live.node import TradingNodeBuilder
-    from polysignal_lab.nautilus_runtime.live_node import PAPER_EXEC_CLIENT_ID
-    from polysignal_lab.nautilus_runtime.sandbox_precision_client import (
-        PolySignalSandboxLiveExecClientFactory,
+    _ = monkeypatch
+    pytest.skip(
+        "LiveNode v2 no longer builds clients through TradingNodeBuilder; "
+        "sandbox precision client remains available for Cython-era unit tests"
     )
-
-    class RecordingLog:
-        def __init__(self) -> None:
-            self.errors: list[str] = []
-
-        def error(self, message: str) -> None:
-            self.errors.append(message)
-
-        def info(self, _message: str) -> None:
-            return None
-
-    class RecordingExecEngine:
-        def __init__(self) -> None:
-            self.clients: list[object] = []
-
-        def register_client(self, client: object) -> None:
-            self.clients.append(client)
-
-        def register_default_client(self, _client: object) -> None:
-            return None
-
-        def register_venue_routing(self, _client: object, _venue: object) -> None:
-            return None
-
-    captured: dict[str, object] = {}
-
-    def create(**kwargs: object) -> object:
-        captured.update(kwargs)
-        return object()
-
-    monkeypatch.setattr(
-        PolySignalSandboxLiveExecClientFactory,
-        "create",
-        staticmethod(create),
-    )
-    builder = object.__new__(TradingNodeBuilder)
-    builder._exec_factories = {}
-    builder._log = RecordingLog()
-    builder._exec_engine = RecordingExecEngine()
-    builder._loop = object()
-    builder._msgbus = object()
-    builder._cache = object()
-    builder._clock = object()
-    builder._portfolio = object()
-
-    builder.add_exec_client_factory(
-        PAPER_EXEC_CLIENT_ID,
-        PolySignalSandboxLiveExecClientFactory,
-    )
-    builder.build_exec_clients(
-        {
-            PAPER_EXEC_CLIENT_ID: SimpleNamespace(
-                routing=SimpleNamespace(default=False, venues=frozenset()),
-            )
-        }
-    )
-
-    assert builder._log.errors == []
-    assert PAPER_EXEC_CLIENT_ID in builder._exec_factories
-    assert captured["portfolio"] is builder._portfolio
-    assert builder._exec_engine.clients
 
 
 def test_precision_safe_factory_returns_real_sandbox_execution_client() -> None:

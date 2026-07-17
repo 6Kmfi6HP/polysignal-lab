@@ -6,7 +6,8 @@
 **Files**:
 - `strategy_builder.py` - Exports build_control and 1 more
 - `state.py` - Application code
-- `signal_sidecar.py` - Runs settlement/report housekeeping and retriggers late-settlement revisions
+- `signal_sidecar.py` - Telegram notify helpers + housekeeping callable used by ReportingHousekeepingActor
+- `reporting_actor.py` - Nautilus-clock-driven settlement/report projections (read-only)
 - `sidecar_data.py` - Exports market_metadata and 3 more
 - `runtime_context_factory.py` - Exports NautilusRuntimeContext and build_nautilus_runtime_context
 - `projections.py` - Projects native order, fill, position, account, and portfolio reporting payloads
@@ -27,7 +28,6 @@
 - `optional_imports.py` - Exports load_live_runtime_symbols and optional Nautilus import gateway
 - `live_node.py` - Exports assert_no_live_polymarket_execution and 7 more
 - `group_views.py` - Exports MarketGroupViewAssembler
-- `decision_policy_actor.py` - Exports NautilusDecisionPolicyActor
 - `decision_policy.py` - Exports ApprovedDecision and 6 more
 - `custom_data_state.py` - Exports PriceToBeatView and 3 more
 - `cache_reader.py` - Exports NautilusCacheReader

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, dataclasses, dataclasses.dataclass, typing, typing.cast, polysignal_lab.alpha.types
-Output: ApprovedDecision, RejectedDecision, candidate_from_decision, _MarketAdapter, _BookAdapter, _SpotAdapter, _GateSnapshotAdapter, DecisionPolicy
+Output: ApprovedDecision, RejectedDecision, candidate_from_decision, DecisionPolicy
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -17,15 +17,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
 from typing import cast
 
-from polysignal_lab.alpha.types import AlphaDecision, MarketView, SideBookView, SpotView
+from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.domain.snapshot import MarketSnapshot
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
@@ -42,8 +40,6 @@ def _string_tuple_mapping(raw: object) -> dict[str, tuple[str, ...]]:
         if isinstance(deps, Iterable):
             coerced[str(name)] = tuple(str(dep) for dep in deps)
     return coerced
-
-_UNKNOWN_LAG_MS = 10**12
 
 
 def candidate_from_decision(decision: AlphaDecision, view: MarketView) -> SignalCandidate:
@@ -100,70 +96,6 @@ _BatchEntry = tuple[AlphaDecision, MarketView, SignalCandidate]
 _PreparedBatchEntry = tuple[
     AlphaDecision, MarketView, SignalCandidate | None, RejectedDecision | None
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class _MarketAdapter:
-    is_active: bool
-
-
-@dataclass(frozen=True, slots=True)
-class _BookAdapter:
-    book: SideBookView
-
-    @property
-    def spread(self) -> float | None:
-        return self.book.spread
-
-    def freshness_ms(self, _now: object = None) -> int:
-        return self.book.freshness_ms if self.book.freshness_ms is not None else _UNKNOWN_LAG_MS
-
-
-@dataclass(frozen=True, slots=True)
-class _SpotAdapter:
-    spot: SpotView
-
-    def freshness_ms(self, now: object = None) -> int:
-        if isinstance(now, datetime):
-            dynamic = self.spot.freshness_ms_at(now)
-            if dynamic is not None:
-                return dynamic
-        return self.spot.freshness_ms if self.spot.freshness_ms is not None else _UNKNOWN_LAG_MS
-
-
-@dataclass(frozen=True, slots=True)
-class _GateSnapshotAdapter:
-    """Minimal MarketSnapshot-shaped view over MarketView for SignalGate.evaluate."""
-
-    view: MarketView
-
-    @property
-    def created_at(self) -> object:
-        return self.view.created_at
-
-    @property
-    def market(self) -> _MarketAdapter:
-        metrics = cast(Mapping[str, object], self.view.metrics)
-        raw = metrics.get("market_is_active", metrics.get("is_active", True))
-        return _MarketAdapter(is_active=bool(raw))
-
-    @property
-    def spot(self) -> _SpotAdapter | None:
-        return _SpotAdapter(self.view.spot) if self.view.spot is not None else None
-
-    def book_for(self, side: Side) -> _BookAdapter | None:
-        book = self.view.book_for(side)
-        if (
-            book.best_bid is None
-            and book.best_ask is None
-            and book.spread is None
-            and book.freshness_ms is None
-        ):
-            return None
-        return _BookAdapter(book)
-
-    def ask_for(self, side: Side) -> float | None:
-        return self.view.ask_for(side)
 
 
 class DecisionPolicy:
@@ -268,10 +200,7 @@ class DecisionPolicy:
                 candidate=candidate,
             )
 
-        gate_decision = self.gate.evaluate(
-            candidate,
-            cast(MarketSnapshot, cast(object, _GateSnapshotAdapter(view))),
-        )
+        gate_decision = self.gate.evaluate(candidate, view)
         if gate_decision.accepted:
             signal = gate_decision.signal or candidate
             return ApprovedDecision(signal=signal, consensus=self.consensus.add(signal))
@@ -491,10 +420,7 @@ class DecisionPolicy:
         if skip_reason is not None:
             return RejectedDecision(reason_code=skip_reason, detail={})
         candidate = self._candidate_from_decision(decision, view)
-        gate_decision = self.gate.prevalidate(
-            candidate,
-            cast(MarketSnapshot, cast(object, _GateSnapshotAdapter(view))),
-        )
+        gate_decision = self.gate.prevalidate(candidate, view)
         if gate_decision.accepted:
             return gate_decision.signal or candidate
         if gate_decision.rejected is not None:

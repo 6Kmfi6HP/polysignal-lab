@@ -35,20 +35,33 @@ LIVE_FORBIDDEN_TEXT = (
 
 
 def test_default_nautilus_source_avoids_live_execution_symbols() -> None:
+    """Live credential/factory symbols are allowed only in live-gated composition."""
     findings: list[str] = []
+    gated_allow = {
+        Path("src/polysignal_lab/nautilus_runtime/live_node.py"),
+        Path("src/polysignal_lab/nautilus_runtime/optional_imports.py"),
+    }
     for root in (RUNTIME_ROOT, BRIDGE_ROOT):
         for path in root.rglob("*.py"):
             text = path.read_text(encoding="utf-8")
+            tokens = LIVE_FORBIDDEN_TEXT
+            if path in gated_allow:
+                # Official pyo3 live exec factory + credential env names.
+                tokens = (
+                    "PolymarketLiveExecClientFactory",
+                    "set_allowances.py",
+                    "create_api_key.py",
+                )
             findings.extend(
                 f"{path}:{forbidden}"
-                for forbidden in LIVE_FORBIDDEN_TEXT
+                for forbidden in tokens
                 if forbidden in text
             )
 
     assert findings == []
-    from polysignal_lab.nautilus_runtime.live_node import PAPER_EXEC_CLIENT_ID
+    from polysignal_lab.nautilus_runtime.live_node import SANDBOX_EXEC_CLIENT_ID
 
-    assert PAPER_EXEC_CLIENT_ID != "POLYMARKET"
+    assert SANDBOX_EXEC_CLIENT_ID != "POLYMARKET"
 
 
 def test_project_source_avoids_local_paper_execution_wheels() -> None:

@@ -14,6 +14,7 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
@@ -105,7 +106,6 @@ def test_market_rotation_actor_subscribes_to_managed_rtds_spot_and_does_not_repu
 ) -> None:
     from polysignal_lab.config import Settings
     from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
-    from polysignal_lab.nautilus_runtime import market_rotation
     from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
 
     class FakeUniverse:
@@ -124,13 +124,23 @@ def test_market_rotation_actor_subscribes_to_managed_rtds_spot_and_does_not_repu
         market_universe=FakeUniverse(),
         catalog=MarketCatalog(),
     )
+    fake_clock = SimpleNamespace(timestamp_ns=lambda: 1_700_000_000_000_000_000)
+    monkeypatch.setattr(
+        MarketRotationActor,
+        "trader_id",
+        property(lambda self: "TEST-TRADER"),
+    )
+    monkeypatch.setattr(
+        MarketRotationActor,
+        "clock",
+        property(lambda self: fake_clock),
+    )
     subscriptions: list[tuple[object, object | None]] = []
     published: list[object] = []
     actor.subscribe_data = lambda data_type, client_id=None: subscriptions.append(
         (data_type, client_id)
     )
     actor.publish_data = lambda data_type, data: published.append(data)
-    monkeypatch.setattr(market_rotation, "_register_polysignal_data_types_if_available", lambda: None)
 
     actor.on_start()
     published.clear()
@@ -226,10 +236,6 @@ def test_market_rotation_actor_uses_clock_timer_for_startup(monkeypatch) -> None
     )
     published: list[object] = []
     actor.publish_data = lambda data_type, data: published.append(data)
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.market_rotation.register_polysignal_data_types",
-        lambda: None,
-    )
 
     actor.on_start()
 

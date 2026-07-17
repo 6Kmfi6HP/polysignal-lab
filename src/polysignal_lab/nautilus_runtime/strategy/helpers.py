@@ -12,20 +12,10 @@ Pos: Application code
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Protocol, cast
-
-try:
-    from nautilus_trader.model.data import DataType as _NautilusDataType
-    from nautilus_trader.model.enums import book_type_from_str as _book_type_from_str
-    from nautilus_trader.model.identifiers import InstrumentId as _InstrumentId
-except ModuleNotFoundError:
-    _NautilusDataType = None
-    _book_type_from_str = None
-    _InstrumentId = None
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
@@ -40,6 +30,51 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     SPOT_DATA_CLIENT_ID,
 )
 from polysignal_lab.nautilus_runtime.projections import _tags  # noqa: F401
+
+try:
+    from nautilus_trader.core.nautilus_pyo3 import BookType as _Pyo3BookType
+    from nautilus_trader.core.nautilus_pyo3 import ClientId as _Pyo3ClientId
+    from nautilus_trader.core.nautilus_pyo3 import InstrumentId as _Pyo3InstrumentId
+except ModuleNotFoundError:
+    _Pyo3BookType = None
+    _Pyo3ClientId = None
+    _Pyo3InstrumentId = None
+
+try:
+    from nautilus_trader.model.data import DataType as _NautilusDataType
+    from nautilus_trader.model.enums import book_type_from_str as _book_type_from_str
+    from nautilus_trader.model.identifiers import InstrumentId as _InstrumentId
+except ModuleNotFoundError:
+    _NautilusDataType = None
+    _book_type_from_str = None
+    _InstrumentId = None
+
+
+def _nautilus_instrument_id(value: object) -> object:
+    if isinstance(value, str):
+        if _Pyo3InstrumentId is not None:
+            return _Pyo3InstrumentId.from_str(value)
+        if _InstrumentId is not None:
+            return _InstrumentId.from_str(value)
+    return value
+
+
+def _nautilus_book_type(value: str) -> object:
+    if _Pyo3BookType is not None:
+        return _Pyo3BookType.from_str(value)
+    if _book_type_from_str is not None:
+        return _book_type_from_str(value)
+    return value
+
+
+def _data_client_id(value: str) -> object | None:
+    if _Pyo3ClientId is not None:
+        return _Pyo3ClientId(value)
+    try:
+        from nautilus_trader.model.identifiers import ClientId
+    except ModuleNotFoundError:
+        return None
+    return ClientId(value)
 
 DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
 MISSING_PROJECTIONS_ERROR = "PolySignalNativeStrategy requires injected registry and assembler projections"
@@ -107,25 +142,28 @@ class _Observability(Protocol):
     def record_nautilus_position(self, position: object) -> None: ...
 
 
+class _CustomDataSubscriber(Protocol):
+    def subscribe_data(
+        self,
+        data_type: object,
+        client_id: object | None = None,
+    ) -> object: ...
+
+
 def _identity_instrument_id(token_id: str) -> str:
     return token_id
 
 
-def _nautilus_instrument_id(value: object) -> object:
-    if _InstrumentId is not None and isinstance(value, str):
-        return _InstrumentId.from_str(value)
-    return value
-
-
-def _nautilus_book_type(value: str) -> object:
-    if _book_type_from_str is not None:
-        return _book_type_from_str(value)
-    return value
-
-
 def _nautilus_data_type(value: object) -> object:
-    if _NautilusDataType is not None and isinstance(value, type):
-        return _NautilusDataType(value)
+    if isinstance(value, type):
+        try:
+            from nautilus_trader.core.nautilus_pyo3 import DataType as _Pyo3DataType
+
+            return _Pyo3DataType(value.__name__)
+        except (ImportError, TypeError, ValueError):
+            pass
+        if _NautilusDataType is not None:
+            return _NautilusDataType(value)
     return value
 
 
@@ -322,14 +360,6 @@ def event_datetime(value: object) -> datetime:
         raise ValueError("ts_event must be a positive Unix nanosecond timestamp") from exc
 
 
-def _data_client_id(value: str) -> object | None:
-    try:
-        from nautilus_trader.model.identifiers import ClientId
-    except ModuleNotFoundError:
-        return None
-    return ClientId(value)
-
-
 def _spot_data_client_id() -> object | None:
     return _data_client_id(SPOT_DATA_CLIENT_ID)
 
@@ -339,33 +369,12 @@ def _sidecar_data_client_id() -> object | None:
 
 
 def _subscribe_custom_data(
-    strategy: object,
+    strategy: _CustomDataSubscriber,
     data_type: object,
     *,
-    allow_fallback: bool = True,
     client_id: object | None = None,
 ) -> None:
-    resolved_data_type = _nautilus_data_type(data_type)
-    if not allow_fallback:
-        return
-    fallback = getattr(strategy, "subscribe_data", None)
-    if callable(fallback):
-        try:
-            if client_id is not None:
-                parameters = inspect.signature(fallback).parameters
-                supports_client_id = "client_id" in parameters or any(
-                    parameter.kind is inspect.Parameter.VAR_KEYWORD
-                    for parameter in parameters.values()
-                )
-            else:
-                supports_client_id = False
-            if supports_client_id:
-                _ = fallback(resolved_data_type, client_id=client_id)
-            else:
-                _ = fallback(resolved_data_type)
-        except ValueError as e:
-            if "not been registered" not in str(e):
-                raise
+    _ = strategy.subscribe_data(_nautilus_data_type(data_type), client_id=client_id)
 
 
 def _json_state_payload(value: object) -> Mapping[str, JsonValue]:

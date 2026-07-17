@@ -38,14 +38,9 @@ def _registry() -> MarketCatalog:
 class _Core:
     def __init__(self) -> None:
         self.fill_calls = 0
-        self.reset_calls: list[tuple[str, Side]] = []
 
     def on_order_filled(self, _event: object) -> None:
         self.fill_calls += 1
-
-    def reset_position(self, market_id: str, side: Side) -> None:
-        self.reset_calls.append((market_id, side))
-
 
 class _Metrics:
     def metrics_for_event(self, _event: object) -> dict[str, object]:
@@ -109,11 +104,11 @@ def test_reduce_only_fill_does_not_count_as_new_alpha_entry() -> None:
     assert strategy.core.fill_calls == 0
 
 
-def test_position_closed_resets_core_state_using_catalog_identity() -> None:
+def test_position_closed_only_records_native_projection() -> None:
     strategy = _Strategy()
     position = SimpleNamespace(instrument_id="token-up.POLYMARKET")
 
     handle_position_closed(strategy, position)
 
     assert strategy.positions == [position]
-    assert strategy.core.reset_calls == [("market-1", Side.UP)]
+    assert not hasattr(strategy.core, "reset_position")

@@ -316,6 +316,7 @@ def test_cross_market_decisions_use_native_decision_pipeline() -> None:
     pipeline = DecisionPipeline(
         AllowAllPolicy(),
         is_active_condition=lambda _condition_id: True,
+        is_signal_submitted=lambda _dedupe_key: False,
     )
     sink = _RecordingSink(submitted)
 
@@ -326,27 +327,18 @@ def test_cross_market_decisions_use_native_decision_pipeline() -> None:
 
     # Then
     assert len(submitted) == len(decisions)
-    assert len(state.submitted_orders) == len(decisions)
 
 
-def test_cross_market_leg_failure_marks_basket() -> None:
+def test_cross_market_core_has_no_shadow_basket_state() -> None:
     core = _core()
-    core.on_leg_failure("btc-eth-rel", "cond-btc", Side.UP)
-    basket = core._active_baskets.get("btc-eth-rel", {})
-    assert basket.get("failed") is True
+    assert not hasattr(core, "_active_baskets")
 
 
-def test_cross_market_state_roundtrip() -> None:
-    """Core state encodes basket state and decodes back."""
+def test_cross_market_state_excludes_order_and_fill_state() -> None:
     from polysignal_lab.nautilus_bridge.state import decode_state, save_strategy_state
 
     core = _core()
-    core._active_baskets["btc-eth-rel"] = {
-        "fills": {"cond-btc": {"side": "UP", "price": 0.20, "shares": 10}},
-        "markets": {"cond-btc", "cond-eth"},
-        "failed": False,
-    }
     raw = save_strategy_state("cross_market_bot", core)
     decoded = decode_state("cross_market_bot", raw)
     assert isinstance(decoded, Mapping)
-    assert "_active_baskets" in decoded
+    assert decoded["alpha"] == {}
