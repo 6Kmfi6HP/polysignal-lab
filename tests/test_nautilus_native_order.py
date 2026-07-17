@@ -6,12 +6,6 @@ Pos: Test Layer - Unit/Integration tests
 🔄 Self-reference: When this file changes, update this header
 """
 
-
-
-
-
-
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -22,7 +16,10 @@ from typing import cast
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
-from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy, submit_approved_decision
+from polysignal_lab.nautilus_runtime.native_order import (
+    OrderSubmittingStrategy,
+    submit_approved_decision,
+)
 
 
 @dataclass(slots=True)
@@ -35,6 +32,7 @@ class FakeOrder:
     reduce_only: bool
     expire_time: object | None
     tags: list[str]
+
 
 def _enum_name(value: object) -> object:
     return getattr(value, "name", value)
@@ -118,6 +116,7 @@ def _approved(
     )
     return ApprovedDecision(signal=signal)
 
+
 def test_order_plan_resolves_taker_price_from_best_ask() -> None:
     from polysignal_lab.nautilus_runtime.order_plan import build_order_spec
 
@@ -168,7 +167,6 @@ def test_submit_approved_decision_submits_limit_order_through_strategy() -> None
     assert "condition_id=condition-btc-5m" in order.tags
 
 
-
 def test_submit_approved_decision_uses_instrument_value_converters() -> None:
     strategy = FakeStrategy()
 
@@ -194,7 +192,6 @@ def test_submit_approved_decision_uses_instrument_value_converters() -> None:
     assert order.price == "price:0.5"
 
 
-
 def test_submit_approved_decision_quantizes_price_before_instrument_converter() -> None:
     strategy = FakeStrategy()
 
@@ -216,8 +213,9 @@ def test_submit_approved_decision_quantizes_price_before_instrument_converter() 
     assert order.price == "price:0.510"
 
 
-
-def test_submit_approved_decision_preserves_price_precision_when_price_type_available() -> None:
+def test_submit_approved_decision_preserves_price_precision_when_price_type_available() -> (
+    None
+):
     strategy = FakeStrategy()
 
     class FakePrice:
@@ -254,7 +252,6 @@ def test_submit_approved_decision_preserves_price_precision_when_price_type_avai
     assert price.precision == 3
 
 
-
 def test_submit_approved_decision_maps_passive_gtd_expiry() -> None:
     strategy = FakeStrategy()
 
@@ -286,7 +283,9 @@ def test_submit_approved_decision_requires_runtime_clock_for_gtd_expiry() -> Non
         )
 
 
-def test_submit_approved_decision_passive_gtd_allows_no_immediate_visible_depth() -> None:
+def test_submit_approved_decision_passive_gtd_allows_no_immediate_visible_depth() -> (
+    None
+):
     strategy = FakeStrategy()
 
     order = submit_approved_decision(
@@ -336,9 +335,7 @@ def test_reduce_only_submission_uses_strategy_scoped_native_position_quantity() 
         fixed_stake_usdc=10.0,
         best_ask=0.80,
         best_bid=0.45,
-        instrument_id_resolver=lambda _value: SimpleNamespace(
-            id="up-token.POLYMARKET"
-        ),
+        instrument_id_resolver=lambda _value: SimpleNamespace(id="up-token.POLYMARKET"),
     )
 
     assert str(calls["instrument_id"]) == "up-token.POLYMARKET"
@@ -371,3 +368,42 @@ def test_reduce_only_submission_rejects_non_positive_native_position() -> None:
                 id="up-token.POLYMARKET"
             ),
         )
+
+
+def test_submit_approved_decision_uses_native_pyo3_instrument_converters() -> None:
+    from nautilus_trader.core import nautilus_pyo3 as pyo3
+
+    price_increment = pyo3.Price.from_str("0.01")
+    size_increment = pyo3.Quantity.from_str("0.01")
+    instrument = pyo3.BinaryOption(
+        instrument_id=pyo3.InstrumentId.from_str("up-token.POLYMARKET"),
+        raw_symbol=pyo3.Symbol("up-token"),
+        asset_class=pyo3.AssetClass.ALTERNATIVE,
+        currency=pyo3.Currency.from_str("USDC"),
+        price_precision=price_increment.precision,
+        size_precision=size_increment.precision,
+        price_increment=price_increment,
+        size_increment=size_increment,
+        activation_ns=0,
+        expiration_ns=10_000_000_000,
+        ts_event=0,
+        ts_init=0,
+        min_quantity=size_increment,
+        outcome="Yes",
+    )
+    strategy = FakeStrategy()
+
+    order = submit_approved_decision(
+        cast(OrderSubmittingStrategy[FakeOrder], strategy),
+        _approved(OrderIntent.TAKER_IOC),
+        fixed_stake_usdc=10.0,
+        best_ask=0.505,
+        instrument_id_resolver=lambda _token_id: instrument,
+    )
+
+    expected_price = instrument.make_price(0.505)
+    expected_quantity = instrument.make_qty(10.0 / 0.505)
+    assert order.price == expected_price
+    assert order.quantity == expected_quantity
+    assert order.price.precision == instrument.price_precision
+    assert order.quantity.precision == instrument.size_precision
