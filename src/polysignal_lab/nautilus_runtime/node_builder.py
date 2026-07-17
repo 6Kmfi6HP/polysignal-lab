@@ -1,25 +1,20 @@
 """
-Input: __future__, __future__.annotations, asyncio, importlib, logging, sys, collections.abc, collections.abc.Callable, collections.abc.Sequence, dataclasses
-Output: build_nautilus_runtime_context, build_live_node, build_nautilus_runtime, _TraderLike, _Disposable, _NautilusNodeLike, _NativeStrategyLike, CacheBoundBookDataProvider, _StaticMarketUniverse, NautilusRuntimeContext
+Input: __future__, asyncio, logging, collections.abc, dataclasses, nautilus_pyo3, polysignal_lab.config
+Output: build_nautilus_runtime_context, build_live_node, build_nautilus_runtime, NautilusRuntimeBundle
 Pos: Application code
 
-🔄 Self-reference: When this file changes, update this header
+Self-reference: When this file changes, update this header
 """
-
-
-
-
 
 from __future__ import annotations
 
 import asyncio
-import importlib
 import logging
-import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from types import SimpleNamespace
-from typing import NamedTuple, Protocol, cast, runtime_checkable
+from typing import NamedTuple, Protocol, runtime_checkable
+
+from nautilus_trader.core.nautilus_pyo3 import PolymarketInstrumentProviderConfig
 
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
@@ -42,24 +37,9 @@ from polysignal_lab.nautilus_runtime.runtime_context_factory import (
 )
 
 
-class _TraderLike(Protocol):
-    def add_actor(self, _: object) -> None: ...
-    def add_strategy(self, strategy: object) -> None: ...
-
-
 @runtime_checkable
 class _Disposable(Protocol):
     def dispose(self) -> None: ...
-
-
-class _NautilusNodeLike(Protocol):
-    trader: _TraderLike
-
-    def build(self) -> None: ...
-    def run(self, raise_exception: bool = False) -> None: ...
-    async def run_async(self) -> None: ...
-    def stop(self) -> None: ...
-    async def stop_async(self) -> None: ...
 
 
 class _RuntimeBuildParts(NamedTuple):
@@ -67,16 +47,11 @@ class _RuntimeBuildParts(NamedTuple):
     configured_markets: tuple[Market, ...]
     configured_condition_ids: tuple[str, ...]
     runtime_market_universe: object
-    node: _NautilusNodeLike
+    node: object
     config: object
     registry: MarketCatalog
     assembler: MarketViewAssembler
     policy: DecisionPolicy | None
-
-
-# Stub placeholder -- _ensure_nautilus_imports() overwrites it at runtime.
-# Do not expand this gateway with import-time static Nautilus imports.
-PolymarketInstrumentProviderConfig: Callable[..., object] = SimpleNamespace
 
 
 logger = logging.getLogger(__name__)
@@ -90,35 +65,9 @@ class NautilusRuntimeBundle:
     context: NautilusRuntimeContext
     components: dict[str, object]
     bridge_registry: MarketCatalog
-    node: _NautilusNodeLike
+    node: object
     observability: ObservabilityService
     websocket_tasks: list[asyncio.Task[object]]
-
-
-def _ensure_nautilus_imports() -> None:
-    """Lazy-import the Nautilus instrument provider configuration."""
-    global PolymarketInstrumentProviderConfig
-
-    mod = sys.modules.get(__name__)
-    module_provider = getattr(mod, "PolymarketInstrumentProviderConfig", None) if mod is not None else None
-    if module_provider is not None and module_provider is not SimpleNamespace:
-        PolymarketInstrumentProviderConfig = cast(Callable[..., object], module_provider)
-        return
-
-    try:
-        provider_mod = importlib.import_module("nautilus_trader.core.nautilus_pyo3")
-        PolymarketInstrumentProviderConfig = cast(
-            Callable[..., object],
-            provider_mod.PolymarketInstrumentProviderConfig,
-        )
-    except (ImportError, AttributeError):
-        provider_mod = importlib.import_module("nautilus_trader.adapters.polymarket.providers")
-        PolymarketInstrumentProviderConfig = cast(
-            Callable[..., object],
-            provider_mod.PolymarketInstrumentProviderConfig,
-        )
-    if mod is not None:
-        mod.PolymarketInstrumentProviderConfig = PolymarketInstrumentProviderConfig
 
 
 def _load_runtime_classes() -> tuple[type[object], type[object], type[object]]:
@@ -155,15 +104,12 @@ def build_runtime_node(settings: Settings, *, instrument_config: object) -> obje
 def _create_configured_live_node(
     settings: Settings,
     configured_markets: Sequence[Market],
-) -> tuple[_NautilusNodeLike, object]:
-    _ensure_nautilus_imports()
-    if PolymarketInstrumentProviderConfig is None:
-        raise RuntimeError("Nautilus PolymarketInstrumentProviderConfig is unavailable")
+) -> tuple[object, object]:
     instrument_config = PolymarketInstrumentProviderConfig(
         load_ids=_instrument_load_ids(configured_markets),
     )
     node = build_runtime_node(settings, instrument_config=instrument_config)
-    return cast(_NautilusNodeLike, node), instrument_config
+    return node, instrument_config
 
 
 def _build_runtime_context(

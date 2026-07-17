@@ -3,7 +3,7 @@ Input: __future__, __future__.annotations, collections, collections.deque, colle
 Output: PolySignalNativeStrategy
 Pos: Application code
 
-🔄 Self-reference: When this file changes, update this header
+Self-reference: When this file changes, update this header
 """
 
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import cast
 
 from nautilus_trader.core.nautilus_pyo3 import Strategy
@@ -435,8 +435,6 @@ class PolySignalNativeStrategy(Strategy):
             return "preloaded"
         if condition_id in state.pending_metadata_condition_ids:
             return "pending_metadata"
-        if condition_id in state.pending_subscribe_condition_ids:
-            return "subscribe_failed"
         if condition_id in self._stale_orderbook_recovery_by_condition:
             return "stale_orderbook"
         if pending_sides:
@@ -883,7 +881,6 @@ class PolySignalNativeStrategy(Strategy):
             return False
         self._active_condition_ids.discard(condition_id)
         self._subscription_state.pending_metadata_condition_ids.discard(condition_id)
-        self._subscription_state.pending_subscribe_condition_ids.discard(condition_id)
         _retire_market_book_generation_fn(self, condition_id)
         if self.unsubscribe_exited:
             self._unsubscribe_market_conditions((condition_id,))
@@ -1167,12 +1164,8 @@ class PolySignalNativeStrategy(Strategy):
     def _retry_market_instrument_requests(
         self,
         condition_ids: Sequence[str],
-        *,
-        retry_after: timedelta | None = None,
     ) -> None:
-        _retry_market_instrument_requests_fn(
-            self, condition_ids, retry_after=retry_after
-        )
+        _retry_market_instrument_requests_fn(self, condition_ids)
 
     def _subscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
         _subscribe_market_conditions_fn(

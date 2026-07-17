@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from typing import Final
 
+from nautilus_trader.common.config import ActorConfig
 from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.core.nautilus_pyo3 import ActorId, DataActor, Signal
 
@@ -17,22 +18,28 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicy,
     RejectedDecision,
 )
+from polysignal_lab.nautilus_runtime.runtime_configs import importable_config_dict
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
 
 
-@dataclass(frozen=True, slots=True)
-class DecisionPolicyActorConfig:
+_DEFAULT_ACTOR_ID: Final = "PolySignal-DecisionPolicy"
+
+
+class DecisionPolicyActorConfig(ActorConfig, frozen=True):
     settings_json: str
     strategy_names: tuple[str, ...] = ()
-    actor_id: str = "PolySignal-DecisionPolicy"
+    actor_id: str = _DEFAULT_ACTOR_ID
 
     @classmethod
     def build(cls, settings: Settings) -> DecisionPolicyActorConfig:
+        actor_id = _DEFAULT_ACTOR_ID
         return cls(
             settings_json=settings.model_dump_json(),
             strategy_names=tuple(settings.strategies.explicit_strategy_names()),
+            actor_id=actor_id,
+            component_id=actor_id,
         )
 
     def settings(self) -> Settings:
@@ -40,9 +47,12 @@ class DecisionPolicyActorConfig:
         settings.strategies.set_explicit_strategy_names(tuple(self.strategy_names))
         return settings
 
+    def importable_dict(self) -> dict[str, object]:
+        return importable_config_dict(self)
+
 
 class DecisionPolicyActor(DataActor):
-    POLICY_OWNER_ID = "PolySignal-DecisionPolicy"
+    POLICY_OWNER_ID = _DEFAULT_ACTOR_ID
 
     def __new__(
         cls,
@@ -58,7 +68,10 @@ class DecisionPolicyActor(DataActor):
         *,
         policy: DecisionPolicy | None = None,
     ) -> None:
-        resolved = config or DecisionPolicyActorConfig(settings_json=Settings().model_dump_json())
+        resolved = config or DecisionPolicyActorConfig(
+            settings_json=Settings().model_dump_json(),
+            component_id=_DEFAULT_ACTOR_ID,
+        )
         config_type = getattr(nautilus_pyo3, "DataActorConfig")
         actor_config = config_type(actor_id=ActorId(str(resolved.actor_id)))
         super().__init__(actor_config)

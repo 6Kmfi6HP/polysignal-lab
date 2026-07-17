@@ -3,7 +3,7 @@ Input: polysignal_lab.nautilus_runtime.custom_data_types, polysignal_lab.nautilu
 Output: custom data routing helpers for PolySignalNativeStrategy
 Pos: Application code
 
-🔄 Self-reference: When this file changes, update this header
+Self-reference: When this file changes, update this header
 """
 
 from __future__ import annotations
@@ -122,7 +122,6 @@ def handle_market_universe(
     strategy._refresh_asset_conditions()
     for condition_id in exited_condition_ids:
         strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)
-        strategy._subscription_state.pending_subscribe_condition_ids.discard(condition_id)
         retire_market_book_generation(strategy, condition_id)
         strategy._note_runtime_readiness(condition_id, ready=True)
     if strategy.unsubscribe_exited:

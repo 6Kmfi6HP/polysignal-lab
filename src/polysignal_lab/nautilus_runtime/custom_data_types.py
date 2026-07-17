@@ -3,7 +3,7 @@ Input: __future__, collections.abc, dataclasses, types, typing, pyarrow, nautilu
 Output: PolySignalSpotData, PolySignalPriceToBeatData, PolySignalMarketMetaData, PolySignalMarketUniverseData
 Pos: Application code
 
-🔄 Self-reference: When this file changes, update this header
+Self-reference: When this file changes, update this header
 """
 
 from __future__ import annotations
@@ -20,43 +20,54 @@ _polysignal_data_types_registered = False
 SPOT_DATA_CLIENT_ID = "POLYSIGNAL_SPOT"
 SIDECAR_DATA_CLIENT_ID = "POLYSIGNAL_SIDECAR"
 
-# --------------------------------------------------------------------------
-#  Arrow support
-# --------------------------------------------------------------------------
+# Registration-only schema so @customdataclass skips auto-schema generation
+# (project field types include unions/tuples/mappings that auto-schema rejects).
+# Arrow is not used on production paths; to_arrow/from_arrow fail fast.
+_ARROW_REGISTRATION_SCHEMA = pa.schema([])
 
-# Placeholder schema – Arrow serialization is not used at runtime, but
-# @customdataclass requires a valid pa.Schema for registration.
-_EMPTY_ARROW_SCHEMA = pa.schema({})
 
-# --------------------------------------------------------------------------
-#  Frozen mixin -- provides __setattr__-based immutability.
-#  Inherit from (Data, _FrozenData) to keep Nautilus's Data base first.
-# --------------------------------------------------------------------------
+def _unsupported_arrow(self_or_cls: object, *_args: object, **_kwargs: object) -> object:
+    name = (
+        self_or_cls.__name__
+        if isinstance(self_or_cls, type)
+        else type(self_or_cls).__name__
+    )
+    raise TypeError(f"Arrow serialization is unsupported for {name}")
+
+
+# Frozen mixin -- provides __setattr__-based immutability.
+# Inherit from (Data, _FrozenData) to keep Nautilus's Data base first.
 
 
 class _FrozenData:
     """Minimal mixin: __setattr__ guard that rejects mutation after freeze."""
 
     def __setattr__(self, name: str, value: object) -> None:
-        # Always allow these internal names so the decorator can write them
-        # after __post_init__ (or custom __init__) freezes the instance.
-        if name in ("_frozen", "_ts_event", "_ts_init"):
-            super().__setattr__(name, value)
-            return
+        # Never allow thawing via normal assignment; construction uses
+        # object.__setattr__(self, "_frozen", True).
+        if name == "_frozen":
+            raise AttributeError(
+                f"{type(self).__name__} cannot change freeze state via attribute assignment"
+            )
+        # Decorator __init__ assigns _ts_event/_ts_init once after fields_init;
+        # allow only the first assignment of each.
+        if name in ("_ts_event", "_ts_init"):
+            try:
+                super().__getattribute__(name)
+            except AttributeError:
+                super().__setattr__(name, value)
+                return
+            raise AttributeError(f"{type(self).__name__} is immutable")
         try:
             frozen = super().__getattribute__("_frozen")
         except AttributeError:
             frozen = False
         if frozen:
-            raise AttributeError(
-                f"{type(self).__name__} is immutable"
-            )
+            raise AttributeError(f"{type(self).__name__} is immutable")
         super().__setattr__(name, value)
 
 
-# --------------------------------------------------------------------------
-#  Data types
-# --------------------------------------------------------------------------
+# Data types
 
 
 @customdataclass
@@ -68,7 +79,9 @@ class PolySignalSpotData(Data, _FrozenData):
     price: float = 0.0
     source: str = ""
     freshness_ms: int | None = None
-    _schema = _EMPTY_ARROW_SCHEMA
+    _schema = _ARROW_REGISTRATION_SCHEMA
+    to_arrow = _unsupported_arrow
+    from_arrow = classmethod(_unsupported_arrow)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_frozen", True)
@@ -85,7 +98,9 @@ class PolySignalPriceToBeatData(Data, _FrozenData):
     from_anchor_service: bool = False
     anchor_source: str | None = None
     anchor_lag_ms: int | None = None
-    _schema = _EMPTY_ARROW_SCHEMA
+    _schema = _ARROW_REGISTRATION_SCHEMA
+    to_arrow = _unsupported_arrow
+    from_arrow = classmethod(_unsupported_arrow)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_frozen", True)
@@ -107,7 +122,9 @@ class PolySignalMarketMetaData(Data, _FrozenData):
     question: str | None = None
     up_outcome: str | None = None
     down_outcome: str | None = None
-    _schema = _EMPTY_ARROW_SCHEMA
+    _schema = _ARROW_REGISTRATION_SCHEMA
+    to_arrow = _unsupported_arrow
+    from_arrow = classmethod(_unsupported_arrow)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_frozen", True)
@@ -125,7 +142,9 @@ class PolySignalMarketUniverseData(Data, _FrozenData):
     condition_to_down_token: Mapping[str, str] = field(default_factory=dict)
     condition_to_asset: Mapping[str, str] = field(default_factory=dict)
     condition_to_timeframe: Mapping[str, str] = field(default_factory=dict)
-    _schema = _EMPTY_ARROW_SCHEMA
+    _schema = _ARROW_REGISTRATION_SCHEMA
+    to_arrow = _unsupported_arrow
+    from_arrow = classmethod(_unsupported_arrow)
 
     def __init__(  # pyright: ignore[reportMissingSuperCall]
         self,

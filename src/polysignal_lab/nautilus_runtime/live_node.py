@@ -3,21 +3,21 @@ Input: __future__, __future__.annotations, importlib, collections.abc, typing, p
 Output: assert_no_live_polymarket_execution, validate_polymarket_market_data_credentials, build_sandbox_live_node, build_cache_config, build_data_engine_config, build_exec_engine_config, build_polymarket_data_client_config, build_sandbox_exec_client_config
 Pos: Application code
 
-🔄 Self-reference: When this file changes, update this header
+Self-reference: When this file changes, update this header
 """
 
 from __future__ import annotations
 
 import importlib
-import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import cast
 
+from nautilus_trader.core import nautilus_pyo3 as _pyo3
+
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.nautilus_runtime.custom_data_types import SPOT_DATA_CLIENT_ID
-from polysignal_lab.nautilus_runtime.optional_imports import load_live_runtime_symbols
 
 SANDBOX_EXEC_CLIENT_ID = "POLYSIGNAL_PM_SANDBOX"
 LIVE_EXEC_CLIENT_ID = "POLYMARKET"
@@ -30,15 +30,17 @@ POLYMARKET_MARKET_DATA_CREDENTIALS = (
     "POLYMARKET_" + "FUNDER",
 )
 
-LiveNode: object | None = None
-TraderId: Callable[[str], object] | None = None
-Environment: object | None = None
-PolymarketDataClientFactory: object | None = None
-SandboxExecutionClientFactory: object | None = None
-PolymarketExecutionClientFactory: object | None = None
-Venue: Callable[[str], object] | None = None
-Money: Callable[..., object] | None = None
-CurrencyFromStr: Callable[[str], object] | None = None
+# Module-level bindings (monkeypatchable in tests). pyo3 LiveNode has no .trader /
+# arbitrary attrs, so NautilusNodeHandle remains the application adapter.
+LiveNode = _pyo3.LiveNode
+TraderId = _pyo3.TraderId
+Environment = _pyo3.Environment
+PolymarketDataClientFactory = _pyo3.PolymarketDataClientFactory
+SandboxExecutionClientFactory = _pyo3.SandboxExecutionClientFactory
+PolymarketExecutionClientFactory = _pyo3.PolymarketExecutionClientFactory
+Venue = _pyo3.Venue
+Money = _pyo3.Money
+CurrencyFromStr = _pyo3.Currency.from_str
 
 
 @dataclass(slots=True)
@@ -159,7 +161,6 @@ def build_sandbox_live_node(
 ) -> NautilusNodeHandle:
     if settings is None:
         settings = load_settings()
-    _ensure_live_imports()
     _validate_real_polymarket_data_factory_credentials()
     data_config = build_polymarket_data_client_config(
         settings, instrument_config=instrument_config
@@ -185,7 +186,6 @@ def build_live_execution_node(
         raise RuntimeError("live execution requires allow_live_polymarket_execution")
     if not settings.safety.allow_live_market_actions:
         raise RuntimeError("live execution requires safety.allow_live_market_actions")
-    _ensure_live_imports()
     validate_live_execution_credentials()
     data_config = build_polymarket_data_client_config(
         settings, instrument_config=instrument_config
@@ -373,7 +373,6 @@ def build_sandbox_exec_client_config(settings: Settings) -> object:
         "nautilus_trader.core.nautilus_pyo3",
         "SandboxExecutionClientConfig",
     )
-    _ensure_live_imports()
     venue_cls = cast(Callable[[str], object], _required(Venue, "Venue"))
     money_cls = cast(Callable[..., object], _required(Money, "Money"))
     currency_from_str = cast(
@@ -450,73 +449,6 @@ def _validate_real_polymarket_data_factory_credentials() -> None:
     module_name = getattr(factory, "__module__", "")
     if isinstance(module_name, str) and "polymarket" in module_name:
         validate_polymarket_market_data_credentials()
-
-
-def _install_live_runtime_symbols(symbols: object, mod: object | None) -> None:
-    global LiveNode, TraderId, Environment
-    global PolymarketDataClientFactory, SandboxExecutionClientFactory
-    global PolymarketExecutionClientFactory
-    global Venue, Money, CurrencyFromStr
-
-    LiveNode = getattr(symbols, "live_node")
-    TraderId = cast(Callable[[str], object], getattr(symbols, "trader_id"))
-    Environment = getattr(symbols, "environment")
-    PolymarketDataClientFactory = getattr(symbols, "polymarket_data_factory")
-    SandboxExecutionClientFactory = getattr(symbols, "sandbox_exec_factory")
-    PolymarketExecutionClientFactory = getattr(
-        symbols, "polymarket_exec_factory"
-    )
-    Venue = cast(Callable[[str], object], getattr(symbols, "venue"))
-    Money = cast(Callable[..., object], getattr(symbols, "money"))
-    CurrencyFromStr = cast(
-        Callable[[str], object], getattr(symbols, "currency_from_str")
-    )
-    if mod is not None:
-        mod.LiveNode = LiveNode
-        mod.TraderId = TraderId
-        mod.Environment = Environment
-        mod.PolymarketDataClientFactory = PolymarketDataClientFactory
-        mod.SandboxExecutionClientFactory = SandboxExecutionClientFactory
-        mod.PolymarketExecutionClientFactory = PolymarketExecutionClientFactory
-
-
-def _ensure_live_imports() -> None:
-    """Lazy-import Nautilus LiveNode symbols into module globals."""
-    global LiveNode
-
-    mod = sys.modules.get(__name__)
-    current = getattr(mod, "LiveNode", None) if mod is not None else LiveNode
-    if current is not None:
-        LiveNode = current
-        if mod is not None:
-            _sync_live_module_globals(mod)
-        return
-    _install_live_runtime_symbols(load_live_runtime_symbols(), mod)
-
-
-def _sync_live_module_globals(mod: object) -> None:
-    global TraderId, Environment
-    global PolymarketDataClientFactory, SandboxExecutionClientFactory
-    global PolymarketExecutionClientFactory
-    global Venue, Money, CurrencyFromStr
-
-    TraderId = cast(Callable[[str], object] | None, getattr(mod, "TraderId", TraderId))
-    Environment = getattr(mod, "Environment", Environment)
-    PolymarketDataClientFactory = getattr(
-        mod, "PolymarketDataClientFactory", PolymarketDataClientFactory
-    )
-    SandboxExecutionClientFactory = getattr(
-        mod, "SandboxExecutionClientFactory", SandboxExecutionClientFactory
-    )
-    PolymarketExecutionClientFactory = getattr(
-        mod, "PolymarketExecutionClientFactory", PolymarketExecutionClientFactory
-    )
-    Venue = cast(Callable[[str], object] | None, getattr(mod, "Venue", Venue))
-    Money = cast(Callable[..., object] | None, getattr(mod, "Money", Money))
-    CurrencyFromStr = cast(
-        Callable[[str], object] | None,
-        getattr(mod, "CurrencyFromStr", CurrencyFromStr),
-    )
 
 
 def _import_callable(module_name: str, attr_name: str) -> Callable[..., object]:

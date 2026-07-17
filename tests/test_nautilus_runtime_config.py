@@ -288,3 +288,48 @@ def test_production_yaml_declares_market_rotation_section() -> None:
     assert cfg.include_next_periods == 1
     assert cfg.stale_grace_sec == 5
     assert cfg.unsubscribe_exited is True
+
+
+def test_polysignal_strategy_config_extends_nautilus_strategy_config() -> None:
+    from nautilus_trader.trading.config import StrategyConfig
+
+    from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
+
+    settings = Settings()
+    config = PolySignalStrategyConfig.build(settings, (), ())
+
+    assert isinstance(config, StrategyConfig)
+    assert config.strategy_id == "PolySignal-polysignal"
+    assert config.order_id_tag == "polysignal"
+    assert config.strategy_name == "polysignal"
+    reconstructed = PolySignalStrategyConfig(**config.importable_dict())
+    assert reconstructed.settings_json == config.settings_json
+    assert tuple(reconstructed.condition_ids) == tuple(config.condition_ids)
+
+
+def test_market_rotation_actor_config_extends_nautilus_actor_config() -> None:
+    from nautilus_trader.common.config import ActorConfig
+
+    from polysignal_lab.nautilus_runtime.runtime_configs import MarketRotationActorConfig
+
+    config = MarketRotationActorConfig.build(Settings(), ())
+
+    assert isinstance(config, ActorConfig)
+    assert config.actor_id == "PolySignal-MarketRotation"
+    assert str(config.component_id) == "PolySignal-MarketRotation"
+
+
+def test_decision_policy_actor_config_extends_nautilus_actor_config() -> None:
+    from nautilus_trader.common.config import ActorConfig
+
+    from polysignal_lab.nautilus_runtime.decision_policy_actor import (
+        DecisionPolicyActor,
+        DecisionPolicyActorConfig,
+    )
+
+    config = DecisionPolicyActorConfig.build(Settings())
+
+    assert isinstance(config, ActorConfig)
+    assert config.actor_id == DecisionPolicyActor.POLICY_OWNER_ID
+    actor = DecisionPolicyActor(config=config)
+    assert str(actor.config.actor_id) == DecisionPolicyActor.POLICY_OWNER_ID

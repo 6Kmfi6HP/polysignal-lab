@@ -3,7 +3,7 @@ Input: __future__, asyncio, contextlib, datetime, json, typing, websockets, naut
 Output: PolymarketRtdsSpotDataClientConfig, PolymarketRtdsSpotDataClient, PolymarketRtdsSpotDataClientFactory
 Pos: Nautilus-managed spot data client
 
-🔄 Self-reference: When this file changes, update this header
+Self-reference: When this file changes, update this header
 """
 
 from __future__ import annotations
@@ -16,7 +16,9 @@ import logging
 from typing import Any
 
 import websockets
+from nautilus_trader.common.component import LiveClock, MessageBus
 from nautilus_trader.config import LiveDataClientConfig
+from nautilus_trader.cache.cache import Cache
 from nautilus_trader.data.messages import RequestData, SubscribeData, UnsubscribeData
 from nautilus_trader.live.data_client import LiveDataClient
 from nautilus_trader.live.factories import LiveDataClientFactory
@@ -42,9 +44,9 @@ class PolymarketRtdsSpotDataClient(LiveDataClient):
         *,
         loop: asyncio.AbstractEventLoop,
         client_id: ClientId,
-        msgbus: object,
-        cache: object,
-        clock: object,
+        msgbus: MessageBus,
+        cache: Cache,
+        clock: LiveClock,
         config: PolymarketRtdsSpotDataClientConfig,
     ) -> None:
         super().__init__(
@@ -167,13 +169,7 @@ class PolymarketRtdsSpotDataClient(LiveDataClient):
         )
 
     def _framework_timestamp_ns(self) -> int:
-        clock = getattr(self, "_clock", None)
-        if clock is None:
-            clock = getattr(self, "clock", None)
-        timestamp_ns = getattr(clock, "timestamp_ns", None)
-        if not callable(timestamp_ns):
-            raise RuntimeError("Nautilus framework clock is required for spot data")
-        value = int(timestamp_ns())
+        value = int(self._clock.timestamp_ns())
         if value <= 0:
             raise RuntimeError("Nautilus framework clock returned an invalid timestamp")
         return value

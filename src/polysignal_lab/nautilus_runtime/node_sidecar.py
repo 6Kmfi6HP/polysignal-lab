@@ -3,7 +3,7 @@ Input: __future__, asyncio, inspect, logging, contextlib, collections.abc, typin
 Output: CLI sidecar helpers — Telegram is isolated read-only external; reporting is Nautilus Actor
 Pos: Application code
 
-🔄 Self-reference: When this file changes, update this header
+Self-reference: When this file changes, update this header
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from polysignal_lab.nautilus_runtime.node_builder import (
     NautilusRuntimeBundle,
     NautilusRuntimeContext,
     _Disposable,
-    _NautilusNodeLike,
 )
 from polysignal_lab.nautilus_runtime.node_crash import (
     _dump_thread_stacks,
@@ -83,7 +82,7 @@ async def _notify_async_cli_startup(
         runtime_logger.exception("Nautilus startup notification failed")
 
 
-async def _run_node_async(node: _NautilusNodeLike) -> None:
+async def _run_node_async(node: object) -> None:
     run_async = getattr(node, "run_async", None)
     if callable(run_async):
         result = run_async()
@@ -96,7 +95,7 @@ async def _run_node_async(node: _NautilusNodeLike) -> None:
         await result
 
 
-async def _stop_node_async(node: _NautilusNodeLike) -> None:
+async def _stop_node_async(node: object) -> None:
     stop_async = getattr(node, "stop_async", None)
     if callable(stop_async):
         result = stop_async()
@@ -108,7 +107,7 @@ async def _stop_node_async(node: _NautilusNodeLike) -> None:
 
 
 async def _run_async_node_with_report_loop(
-    node: _NautilusNodeLike,
+    node: object,
     context: NautilusRuntimeContext,
     event: asyncio.Event,
 ) -> None:
@@ -171,7 +170,7 @@ async def _finalize_async_cli_runtime(
 
 def _run_sync_cli_main(
     bundle: NautilusRuntimeBundle,
-    node: _NautilusNodeLike,
+    node: object,
     settings: Settings,
     strategy_names: list[str],
     runtime_logger: logging.Logger,
@@ -208,7 +207,7 @@ def _run_sync_cli_main(
 
 def _finalize_sync_cli_runtime(
     bundle: NautilusRuntimeBundle,
-    node: _NautilusNodeLike,
+    node: object,
     telegram_bot_thread: _InteractiveTelegramBotThread | None,
     runtime_logger: logging.Logger,
     cleanup_signals: Callable[[], None],

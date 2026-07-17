@@ -3,16 +3,14 @@ Input: __future__, collections.abc, dataclasses, datetime, typing, polysignal_la
 Output: market subscription lifecycle and wire-operation helpers
 Pos: Application code
 
-🔄 Self-reference: When this file changes, update this header
+Self-reference: When this file changes, update this header
 """
-
-
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Protocol
 
 from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
@@ -31,7 +29,6 @@ class MarketSubscriptionState:
 
     wire_condition_ids: set[str] = field(default_factory=set)
     pending_metadata_condition_ids: set[str] = field(default_factory=set)
-    pending_subscribe_condition_ids: set[str] = field(default_factory=set)
     awaiting_book_sides_by_condition: dict[str, set[Side]] = field(default_factory=dict)
     book_generation_started_at_by_condition: dict[str, datetime] = field(default_factory=dict)
     last_book_at_by_condition: dict[str, dict[Side, datetime]] = field(default_factory=dict)
@@ -79,11 +76,7 @@ class InstrumentSubscriptionManager:
         self._strategy = strategy
 
     def retry_instrument_requests(self, condition_ids: tuple[str, ...]) -> None:
-        retry_market_instrument_requests(
-            self._strategy,
-            condition_ids,
-            retry_after=timedelta(seconds=10),
-        )
+        retry_market_instrument_requests(self._strategy, condition_ids)
 
 
 def refresh_asset_conditions(strategy: _SubscriptionStrategy) -> None:
@@ -98,10 +91,7 @@ def refresh_asset_conditions(strategy: _SubscriptionStrategy) -> None:
 def retry_market_instrument_requests(
     strategy: _SubscriptionStrategy,
     condition_ids: Sequence[str],
-    *,
-    retry_after: timedelta | None = None,
 ) -> None:
-    _ = retry_after
     if strategy.registry is None:
         return
     for instrument_id in _instrument_ids(strategy.registry, condition_ids):
@@ -122,25 +112,17 @@ def _subscribe_market_condition(
     state = strategy._subscription_state
     if condition_id in state.wire_condition_ids:
         state.pending_metadata_condition_ids.discard(condition_id)
-        state.pending_subscribe_condition_ids.discard(condition_id)
         return
     instrument_ids = _instrument_ids(registry, (condition_id,))
     if not instrument_ids:
         state.pending_metadata_condition_ids.add(condition_id)
-        state.pending_subscribe_condition_ids.discard(condition_id)
         return
     if condition_id in strategy._active_condition_ids:
         begin_market_book_generation(strategy, condition_id, now=now)
     state.pending_metadata_condition_ids.discard(condition_id)
-    subscribed = True
     for instrument_id in condition_instruments(strategy, condition_id):
-        if not subscribe_market_instrument(strategy, instrument_id):
-            subscribed = False
-    if subscribed:
-        state.pending_subscribe_condition_ids.discard(condition_id)
-        state.wire_condition_ids.add(condition_id)
-        return
-    state.pending_subscribe_condition_ids.add(condition_id)
+        _ = subscribe_market_instrument(strategy, instrument_id)
+    state.wire_condition_ids.add(condition_id)
 
 
 def subscribe_market_conditions(
@@ -199,7 +181,6 @@ def clear_condition_subscription_state(
     condition_id: str,
 ) -> None:
     strategy._subscription_state.wire_condition_ids.discard(condition_id)
-    strategy._subscription_state.pending_subscribe_condition_ids.discard(condition_id)
     strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)
     retire_market_book_generation(strategy, condition_id, clear_history=False)
 

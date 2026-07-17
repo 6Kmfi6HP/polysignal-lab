@@ -16,12 +16,112 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
+    PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
     PolySignalSpotData,
 )
+
+
+def test_custom_spot_data_rejects_payload_mutation_after_construction() -> None:
+    data = PolySignalSpotData(
+        asset="BTC",
+        symbol="BTCUSD",
+        price=100000.0,
+        source="polymarket_rtds",
+        freshness_ms=10,
+        ts_event=1,
+        ts_init=2,
+    )
+
+    with pytest.raises(AttributeError, match="immutable"):
+        data.price = 1.0
+
+
+def test_custom_spot_data_rejects_timestamp_reassignment() -> None:
+    data = PolySignalSpotData(
+        asset="BTC",
+        symbol="BTCUSD",
+        price=100000.0,
+        source="polymarket_rtds",
+        freshness_ms=10,
+        ts_event=1,
+        ts_init=2,
+    )
+
+    with pytest.raises(AttributeError, match="immutable"):
+        data._ts_event = 99
+    with pytest.raises(AttributeError, match="immutable"):
+        data._ts_init = 99
+
+
+def test_custom_spot_data_rejects_thaw_via_frozen_flag() -> None:
+    data = PolySignalSpotData(
+        asset="BTC",
+        symbol="BTCUSD",
+        price=100000.0,
+        source="polymarket_rtds",
+        freshness_ms=10,
+        ts_event=1,
+        ts_init=2,
+    )
+
+    with pytest.raises(AttributeError):
+        data._frozen = False
+    with pytest.raises(AttributeError, match="immutable"):
+        data.price = 1.0
+
+
+@pytest.mark.parametrize(
+    "factory",
+    (
+        lambda: PolySignalSpotData(
+            asset="BTC",
+            symbol="BTCUSD",
+            price=1.0,
+            source="x",
+            freshness_ms=1,
+            ts_event=10,
+            ts_init=20,
+        ),
+        lambda: PolySignalPriceToBeatData(
+            condition_id="c1",
+            value=1.0,
+            source="anchor",
+            verified=True,
+            from_anchor_service=True,
+            ts_event=10,
+            ts_init=20,
+        ),
+        lambda: PolySignalMarketMetaData(
+            market_id="m1",
+            market_slug="s1",
+            condition_id="c1",
+            asset="BTC",
+            timeframe="5m",
+            up_token_id="up",
+            down_token_id="down",
+            ts_event=10,
+            ts_init=20,
+        ),
+        lambda: PolySignalMarketUniverseData(
+            epoch=1,
+            active_condition_ids=("c1",),
+            ts_event=10,
+            ts_init=20,
+        ),
+    ),
+)
+def test_custom_data_arrow_serialization_fails_fast(factory) -> None:
+    data = factory()
+    with pytest.raises(TypeError, match="Arrow serialization is unsupported"):
+        data.to_arrow()
+    with pytest.raises(TypeError, match="Arrow serialization is unsupported"):
+        type(data).from_arrow(None)
 
 
 def test_custom_spot_data_round_trips_dict() -> None:

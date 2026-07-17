@@ -2500,7 +2500,6 @@ def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
     assert strategy.instrument_requests == []
     assert strategy.book_subscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
     assert strategy.trade_subscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
-    assert strategy._subscription_state.pending_subscribe_condition_ids == set()
     assert strategy._subscription_state.wire_condition_ids == {"condition-a"}
 
 
@@ -2957,7 +2956,6 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
 
     strategy.on_start()
     strategy._subscription_state.pending_metadata_condition_ids.add("condition-a")
-    strategy._subscription_state.pending_subscribe_condition_ids.add("condition-a")
 
     strategy.on_data(
         PolySignalMarketUniverseData(
@@ -2977,7 +2975,6 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
     assert strategy.book_unsubscriptions == []
     assert strategy.trade_unsubscriptions == []
     assert strategy._subscription_state.pending_metadata_condition_ids == set()
-    assert strategy._subscription_state.pending_subscribe_condition_ids == set()
     assert strategy._subscription_state.wire_condition_ids == {"condition-a"}
 
 

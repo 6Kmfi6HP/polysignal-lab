@@ -3,7 +3,7 @@ Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime
 Output: run_nautilus_cli, main
 Pos: Application code
 
-🔄 Self-reference: When this file changes, update this header
+Self-reference: When this file changes, update this header
 """
 
 
@@ -57,7 +57,7 @@ from polysignal_lab.nautilus_runtime.node_builder import (
     NautilusRuntimeContext,
     build_nautilus_runtime_context,
     PolymarketInstrumentProviderConfig,  # noqa: F401
-    _NautilusNodeLike,
+    _Disposable,  # noqa: F401
     _NativeStrategyLike,
     _load_runtime_classes,  # noqa: F401
     _runtime_class_triple,
@@ -90,7 +90,7 @@ logger = logging.getLogger(__name__)
 
 
 def _attach_cache_projections(
-    node: _NautilusNodeLike,
+    node: object,
     registry: MarketCatalog,
     assembler: MarketViewAssembler,
     strategies: Sequence[_NativeStrategyLike],
@@ -154,7 +154,7 @@ def _attach_cache_projections(
 
 
 def _register_runtime_trader_components(
-    node: _NautilusNodeLike,
+    node: object,
     market_rotation_actor: object,
     policy: DecisionPolicy | None,
     strategies: Sequence[_NativeStrategyLike],
@@ -173,8 +173,6 @@ def _register_runtime_trader_components(
         getattr(kernel, "add_actor_from_config", None)
     )
     if supports_importable:
-        from dataclasses import asdict
-
         from nautilus_trader.core import nautilus_pyo3
 
         from polysignal_lab.nautilus_runtime.decision_policy_actor import (
@@ -192,7 +190,7 @@ def _register_runtime_trader_components(
             nautilus_pyo3.ImportableActorConfig(
                 actor_path=fqn(DecisionPolicyActor),
                 config_path=fqn(DecisionPolicyActorConfig),
-                config=asdict(policy_config),
+                config=policy_config.importable_dict(),
             )
         )
         enabled_strategy_names = tuple(
@@ -210,7 +208,7 @@ def _register_runtime_trader_components(
                 nautilus_pyo3.ImportableStrategyConfig(
                     strategy_path=fqn(PolySignalNativeStrategy),
                     config_path=fqn(PolySignalStrategyConfig),
-                    config=asdict(strategy_config),
+                    config=strategy_config.importable_dict(),
                 )
             )
         _load_runtime_trader_state(node)
@@ -230,7 +228,7 @@ def _register_runtime_trader_components(
     return list(strategies)
 
 
-def _load_runtime_trader_state(node: _NautilusNodeLike) -> None:
+def _load_runtime_trader_state(node: object) -> None:
     config = getattr(node, "config", None)
     if not bool(getattr(config, "load_state", False)):
         return
@@ -334,7 +332,7 @@ def _build_nautilus_runtime_bundle(
         context=context,
         components=components,
         bridge_registry=cast(MarketCatalog, components["registry"]),
-        node=cast(_NautilusNodeLike, components["node"]),
+        node=components["node"],
         observability=observability,
         websocket_tasks=[],
     )
