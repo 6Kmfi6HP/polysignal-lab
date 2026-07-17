@@ -1,3 +1,7 @@
 [submodule "refs/poly-btc-martingale"]
 	path = refs/poly-btc-martingale
 	url = https://github.com/6Kmfi6HP/poly-btc-martingale
+
+[submodule "refs/prediction-market-backtesting"]
+	path = refs/prediction-market-backtesting
+	url = https://github.com/evan-kolberg/prediction-market-backtesting
