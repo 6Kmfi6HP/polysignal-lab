@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, html, typing, typing.Literal, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.report_date_text, polysignal_lab.domain.paper_result.report_float, polysignal_lab.domain.paper_result.report_nested_mapping, polysignal_lab.domain.paper_result.report_text, polysignal_lab.domain.paper_result.trade_result_float, polysignal_lab.domain.paper_result.trade_result_status, polysignal_lab.domain.paper_result.trade_result_text
-Output: PaperTradeResultRow helpers, DailyReportRow helpers, MessageFormatter
+Input: __future__, __future__.annotations, html, typing, typing.Literal, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.reporting_result, polysignal_lab.domain.reporting_result.report_date_text, polysignal_lab.domain.reporting_result.report_float, polysignal_lab.domain.reporting_result.report_nested_mapping, polysignal_lab.domain.reporting_result.report_text, polysignal_lab.domain.reporting_result.trade_result_float, polysignal_lab.domain.reporting_result.trade_result_status, polysignal_lab.domain.reporting_result.trade_result_text
+Output: ReportResultRow helpers, DailyReportRow helpers, MessageFormatter
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -20,7 +20,7 @@ from typing import Literal
 from collections.abc import Mapping
 
 from polysignal_lab.domain.enums import TradeResultStatus
-from polysignal_lab.domain.paper_result import (
+from polysignal_lab.domain.reporting_result import (
     report_date_text,
     report_float,
     report_nested_mapping,
@@ -50,7 +50,7 @@ Close  {self._format_seconds(signal.seconds_to_close)}
 <b>Why</b>
 {why}
 
-Mode: Paper
+Mode: Sandbox
 ID: <code>{html.escape(signal.signal_id)}</code>"""
         return self._truncate(message)
 
@@ -82,7 +82,7 @@ PnL    {sign}{pnl_usdc:.4f} USDC
 ROI    {sign}{trade_result_float(result, "roi"):.2%}
 Settle {trade_result_float(result, "settlement_value"):.4f} USDC
 
-Mode: Paper
+Mode: Sandbox
 ID: <code>{html.escape(signal_id)}</code>"""
         return self._truncate(message)
 
@@ -97,9 +97,9 @@ Fill   {fill_price:.4f}
 Shares {shares:.4f}
 Stake  {stake_usdc:.2f} USDC
 
-Mode: Paper
+Mode: Sandbox
 Order  <code>{html.escape(str(fill.get("client_order_id", "")))}</code>
-FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
+FillID <code>{html.escape(str(fill.get("report_fill_id", "")))}</code>"""
         return self._truncate(message)
 
     def daily_report_message(self, report: object) -> str:
@@ -117,9 +117,9 @@ FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
         )
         revision = int(report_float(report, "revision", 1.0))
         title = (
-            "📊 Daily Paper Report"
+            "📊 Daily Trading Report"
             if revision <= 1
-            else f"♻️ Daily Paper Report Correction · Revision {revision}"
+            else f"♻️ Daily Trading Report Correction · Revision {revision}"
         )
         reasons_raw = (
             report.get("telemetry_incomplete_reasons", ())
@@ -151,7 +151,7 @@ FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
                 f"{float(row.get('total_pnl_usdc', 0.0)):+.2f} USDC"
             )
         strategy_text = "\n".join(lines) if lines else "• No closed trades"
-        rejects_by_reason = report_nested_mapping(report, "paper_rejects_by_reason")
+        rejects_by_reason = report_nested_mapping(report, "rejects_by_reason")
         reject_text = "none"
         if rejects_by_reason:
             reject_text = ", ".join(
@@ -165,15 +165,15 @@ FillID <code>{html.escape(str(fill.get("paper_fill_id", "")))}</code>"""
 {report_date_text(report)}
 
 Equity  {report_float(report, 'starting_equity'):.2f} → {report_float(report, 'ending_equity'):.2f} {html.escape(equity_currency)}{source_line}
-PnL     {report_float(report, 'paper_pnl'):+.2f} {html.escape(equity_currency)}
-ROI     {report_float(report, 'paper_roi'):+.2%}
+PnL     {report_float(report, 'net_pnl'):+.2f} {html.escape(equity_currency)}
+ROI     {report_float(report, 'return_rate'):+.2%}
 
 Signals {int(report_float(report, 'total_signals'))}
-Orders  {int(report_float(report, 'paper_orders'))}
-Rejects {int(report_float(report, 'rejected_paper_orders'))} ({reject_text})
+Orders  {int(report_float(report, 'order_count'))}
+Rejects {int(report_float(report, 'rejected_order_count'))} ({reject_text})
 ExecLag {exec_lag}
 Telemetry {html.escape(telemetry_text)}
-Filled  {int(report_float(report, 'paper_fills'))}
+Filled  {int(report_float(report, 'fill_count'))}
 Closed  {int(report_float(report, 'closed_positions'))}
 W/L     {int(report_float(report, 'win_count'))} / {int(report_float(report, 'loss_count'))}
 WR      {report_float(report, 'win_rate'):.2%}

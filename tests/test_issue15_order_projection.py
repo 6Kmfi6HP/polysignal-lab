@@ -17,7 +17,7 @@ from polysignal_lab.nautilus_runtime.strategy.event_projection import (
     project_nautilus_order_event,
 )
 from polysignal_lab.nautilus_runtime.projections import project_order_event
-from polysignal_lab.paper.event_projection import normalize_paper_order
+from polysignal_lab.storage.event_projection import normalize_report_order
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 
 
@@ -71,7 +71,7 @@ def test_event_store_adapter_uses_explicit_id_and_safe_lifecycle_fallback(
             SimpleNamespace(
                 insert_signal=lambda _payload: None,
                 insert_rejected_signal=lambda _payload: None,
-                insert_paper_trade_result=lambda _payload: None,
+                insert_report_result=lambda _payload: None,
                 insert_system_event=store.insert_system_event,
                 append_log=lambda _stream, _payload: None,
             )
@@ -135,7 +135,7 @@ def test_real_nautilus_order_lifecycle_uses_unique_durable_event_ids(
         persistence = SimpleNamespace(
             insert_signal=lambda _payload: None,
             insert_rejected_signal=lambda _payload: None,
-            insert_paper_trade_result=lambda _payload: None,
+            insert_report_result=lambda _payload: None,
             insert_system_event=store.insert_system_event,
             append_log=lambda _stream, _payload: None,
         )
@@ -212,7 +212,7 @@ def test_real_nautilus_order_lifecycle_uses_unique_durable_event_ids(
         for recorder, event in lifecycle[:2]:
             recorder(event)
         replayed = store._conn.execute(
-            "SELECT status,payload_json FROM paper_order_states WHERE paper_order_id=?",
+            "SELECT status,payload_json FROM report_orders WHERE report_order_id=?",
             (str(order.client_order_id),),
         ).fetchone()
         assert replayed is not None
@@ -235,7 +235,7 @@ def test_real_nautilus_order_lifecycle_uses_unique_durable_event_ids(
         }
 
         row = store._conn.execute(
-            "SELECT status,payload_json FROM paper_order_states WHERE paper_order_id=?",
+            "SELECT status,payload_json FROM report_orders WHERE report_order_id=?",
             (str(order.client_order_id),),
         ).fetchone()
         assert row is not None
@@ -285,7 +285,7 @@ def test_upsert_order_and_fill_projection_stays_valid(tmp_path: Path) -> None:
                 "severity": "info",
                 "created_at": "2026-07-14T07:00:01Z",
                 "client_order_id": "O-test-1",
-                "paper_order_id": "O-test-1",
+                "report_order_id": "O-test-1",
                 "trade_id": "T-1",
                 "price": 0.55,
                 "quantity": 12.0,
@@ -302,7 +302,7 @@ def test_upsert_order_and_fill_projection_stays_valid(tmp_path: Path) -> None:
                 "severity": "info",
                 "created_at": "2026-07-14T07:00:02Z",
                 "client_order_id": "O-test-1",
-                "paper_order_id": "O-test-1",
+                "report_order_id": "O-test-1",
                 "status": "",
                 "price": 0.0,
                 "quantity": 0.0,
@@ -314,7 +314,7 @@ def test_upsert_order_and_fill_projection_stays_valid(tmp_path: Path) -> None:
             }
         )
         row = store._conn.execute(
-            "SELECT status,payload_json FROM paper_order_states WHERE paper_order_id=?",
+            "SELECT status,payload_json FROM report_orders WHERE report_order_id=?",
             ("O-test-1",),
         ).fetchone()
         assert row is not None
@@ -330,8 +330,8 @@ def test_upsert_order_and_fill_projection_stays_valid(tmp_path: Path) -> None:
         store.close()
 
 
-def test_normalize_paper_order_uses_metrics_side_and_contracts() -> None:
-    payload = normalize_paper_order(
+def test_normalize_report_order_uses_metrics_side_and_contracts() -> None:
+    payload = normalize_report_order(
         {
             "client_order_id": "O-1",
             "status": "SUBMITTED",

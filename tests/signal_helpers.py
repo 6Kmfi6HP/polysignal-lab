@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from polysignal_lab.alpha.legacy_snapshot_adapter import decision_to_signal, market_view_from_snapshot
 from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
+from polysignal_lab.alpha.types import MarketView
 from polysignal_lab.config import Settings
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.domain.snapshot import MarketSnapshot
+from polysignal_lab.nautilus_runtime.decision_policy import candidate_from_decision
 
 
 def _ptb_freshness_policy(settings: Settings) -> FreshnessPolicy:
@@ -18,26 +18,25 @@ def _ptb_freshness_policy(settings: Settings) -> FreshnessPolicy:
     )
 
 
-def ptb_signals_from_snapshot(
-    snapshot: MarketSnapshot,
+def ptb_signals_from_view(
+    view: MarketView,
     settings: Settings,
 ) -> list[SignalCandidate]:
     core = PTBDiffAlphaCore(settings.strategies.ptb_diff)
-    view = market_view_from_snapshot(snapshot)
-    if view is None:
-        return []
     freshness_policy = _ptb_freshness_policy(settings)
     return [
-        decision_to_signal(decision, view.view_id, freshness_policy)
+        candidate_from_decision(decision, view).model_copy(
+            update={"freshness_policy": freshness_policy}
+        )
         for decision in core.evaluate(view)
     ]
 
 
-def ptb_signal_from_snapshot(
-    snapshot: MarketSnapshot,
+def ptb_signal_from_view(
+    view: MarketView,
     settings: Settings,
 ) -> SignalCandidate:
-    signals = ptb_signals_from_snapshot(snapshot, settings)
+    signals = ptb_signals_from_view(view, settings)
     if not signals:
         raise ValueError("ptb_diff produced no decisions")
     return signals[0]

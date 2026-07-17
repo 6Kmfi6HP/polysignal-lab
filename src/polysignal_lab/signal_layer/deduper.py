@@ -14,7 +14,6 @@ Pos: Application code
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from threading import Lock
 
@@ -28,13 +27,13 @@ class SignalDeduper:
     _lock: Lock = field(default_factory=Lock)
 
     def contains(self, signal: SignalCandidate) -> bool:
-        now = time.time()
+        now = signal.created_at.timestamp()
         with self._lock:
             seen_at = self._seen.get(signal.dedupe_key)
             return seen_at is not None and now - seen_at <= self.ttl_sec
 
     def is_duplicate(self, signal: SignalCandidate) -> bool:
-        now = time.time()
+        now = signal.created_at.timestamp()
         with self._lock:
             self._seen = {k: v for k, v in self._seen.items() if now - v <= self.ttl_sec}
             if signal.dedupe_key in self._seen:

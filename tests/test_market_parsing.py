@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, pydantic, pydantic.JsonValue, polysignal_lab.data.market_snapshot, polysignal_lab.data.market_snapshot.MarketSnapshotBuilder, polysignal_lab.data.price_to_beat_provider
-Output: test_gamma_resolved_payload_sets_resolved_outcome, test_gamma_crypto_payload_prefers_event_window_over_listing_start_date, test_gamma_down_resolution_can_be_parsed_from_winning_token_id, test_gamma_void_resolution_is_cancelled_without_winning_side, test_gamma_malformed_official_resolution_stays_unknown, test_normalized_snapshot_carries_ptb_resolution_and_token_metadata, test_gamma_uma_resolved_outcome_prices_sets_resolved_outcome, test_gamma_half_half_outcome_prices_resolved_without_side_winner
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, pydantic, pydantic.JsonValue, polysignal_lab.domain.market
+Output: gamma market parsing resolution tests
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -18,13 +18,9 @@ from datetime import UTC, datetime
 
 from pydantic import JsonValue
 
-from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
-from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
-from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
 from polysignal_lab.domain.enums import MarketStatus, Side
 from polysignal_lab.domain.market import Market
 import polysignal_lab.domain.market as market_module
-from factories import BookFactoryConfig, SpotFactoryConfig, sample_book, sample_spot
 
 
 def _gamma_payload(outcome: JsonValue = "Up") -> dict[str, JsonValue]:
@@ -140,31 +136,6 @@ def test_gamma_malformed_official_resolution_stays_unknown() -> None:
     assert market.resolved_outcome is None
 
 
-async def test_normalized_snapshot_carries_ptb_resolution_and_token_metadata() -> None:
-    market = Market.from_gamma(_gamma_payload(), asset="BTC", timeframe="5m")
-    books = OrderBookRegistry()
-    spots = SpotRegistry()
-    books.update(sample_book("token-up", BookFactoryConfig(ask=0.72, bid=0.70)))
-    books.update(sample_book("token-down", BookFactoryConfig(ask=0.30, bid=0.28)))
-    spots.update(sample_spot(SpotFactoryConfig(asset="BTC", price=105200.0)))
-
-    snapshot = await MarketSnapshotBuilder(
-        books, spots, PriceToBeatProvider()
-    ).build(market)
-
-    assert snapshot.price_to_beat == 105150.25
-    assert snapshot.metrics["price_to_beat_source"] == "market_metadata"
-    assert snapshot.metrics["price_to_beat_verified"] is True
-    assert snapshot.metrics["price_to_beat_from_anchor_service"] is False
-    assert snapshot.metrics["anchor_price_source"] is None
-    assert snapshot.metrics["anchor_price_lag_ms"] is None
-    assert snapshot.metrics["market_status"] == "RESOLVED"
-    assert snapshot.metrics["resolved_outcome"] == "UP"
-    assert snapshot.metrics["resolution_source"] == "gamma"
-    assert snapshot.metrics["up_token_id"] == "token-up"
-    assert snapshot.metrics["down_token_id"] == "token-down"
-    assert snapshot.metrics["market_start_ts"] == "2026-06-22T12:00:00Z"
-    assert snapshot.metrics["market_end_ts"] == "2026-06-22T12:05:00Z"
 
 
 def test_gamma_uma_resolved_outcome_prices_sets_resolved_outcome() -> None:

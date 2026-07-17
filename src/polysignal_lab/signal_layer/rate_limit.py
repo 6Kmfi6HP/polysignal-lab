@@ -14,7 +14,6 @@ Pos: Application code
 
 from __future__ import annotations
 
-import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from threading import Lock
@@ -28,8 +27,7 @@ class ChannelRateLimiter:
     _market: dict[str, deque[float]] = field(default_factory=lambda: defaultdict(deque))
     _lock: Lock = field(default_factory=Lock)
 
-    def can_allow(self, market_ids: list[str]) -> bool:
-        now = time.time()
+    def can_allow(self, market_ids: list[str], *, now: float) -> bool:
         cutoff = now - 3600
         with self._lock:
             global_count = sum(ts >= cutoff for ts in self._global)
@@ -45,8 +43,7 @@ class ChannelRateLimiter:
                     return False
             return True
 
-    def allow(self, market_id: str) -> bool:
-        now = time.time()
+    def allow(self, market_id: str, *, now: float) -> bool:
         cutoff = now - 3600
         with self._lock:
             while self._global and self._global[0] < cutoff:

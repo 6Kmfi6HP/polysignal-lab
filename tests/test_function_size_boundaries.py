@@ -28,7 +28,7 @@ LIMITS = {
     "src/polysignal_lab/nautilus_runtime/node_cli.py": {
         "run_nautilus_cli_async": 70,
     },
-    "src/polysignal_lab/app/scheduler_reporting.py": {
+    "src/polysignal_lab/app/reporting.py": {
         "generate_daily_report": 80,
     },
 }

@@ -36,7 +36,3 @@ class SpotPrice(BaseModel):
 
     def is_fresh(self, max_staleness_ms: int, now: datetime | None = None) -> bool:
         return self.freshness_ms(now) <= max_staleness_ms
-
-
-# Backward-compatible alias after merging SpotTick into SpotPrice.
-SpotTick = SpotPrice

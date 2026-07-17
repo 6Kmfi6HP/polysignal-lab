@@ -64,7 +64,7 @@ def test_liveness_fails_for_fatal_heartbeat(tmp_path) -> None:
         path,
         phase="fatal",
         fatal=True,
-        fatal_reason="TradingNode.run returned unexpectedly",
+        fatal_reason="LiveNode.run returned unexpectedly",
         now=_dt(0),
     )
 
@@ -72,7 +72,7 @@ def test_liveness_fails_for_fatal_heartbeat(tmp_path) -> None:
 
     assert result.ok is False
     assert result.reason == "fatal"
-    assert result.fatal_reason == "TradingNode.run returned unexpectedly"
+    assert result.fatal_reason == "LiveNode.run returned unexpectedly"
 
 
 def test_liveness_fails_for_missing_heartbeat(tmp_path) -> None:

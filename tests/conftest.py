@@ -1,10 +1,11 @@
 """
-Input: __future__, __future__.annotations, pytest, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.data.price_to_beat_provider, polysignal_lab.data.price_to_beat_provider.PriceToBeatProvider, polysignal_lab.data.state, polysignal_lab.data.state.OrderBookRegistry, polysignal_lab.data.state.SpotRegistry
-Output: settings, market, books, spots, snapshot
+Input: __future__, __future__.annotations, pytest, polysignal_lab.config, polysignal_lab.config.Settings, factories
+Output: settings, market, market_view
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
 
 
 
@@ -17,18 +18,7 @@ from __future__ import annotations
 import pytest
 
 from polysignal_lab.config import Settings
-from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
-from polysignal_lab.data.state import OrderBookRegistry, SpotRegistry
-from polysignal_lab.data.market_snapshot import MarketSnapshotBuilder
-from polysignal_lab.domain.enums import Side
-from factories import (
-    BookFactoryConfig,
-    MarketFactoryConfig,
-    SpotFactoryConfig,
-    sample_book,
-    sample_market,
-    sample_spot,
-)
+from factories import MarketFactoryConfig, sample_market, sample_market_view
 
 
 @pytest.fixture
@@ -42,21 +32,20 @@ def market():
 
 
 @pytest.fixture
-def books(market):
-    reg = OrderBookRegistry()
-    reg.update(sample_book(market.token_for(Side.UP).token_id, BookFactoryConfig(ask=0.82, bid=0.79, size=500)))
-    reg.update(sample_book(market.token_for(Side.DOWN).token_id, BookFactoryConfig(ask=0.18, bid=0.15, size=500)))
-    return reg
-
-
-@pytest.fixture
-def spots():
-    reg = SpotRegistry()
-    reg.update(sample_spot(SpotFactoryConfig(asset="BTC", price=100120.0)).model_copy(update={"source": "polymarket_rtds"}))
-    return reg
-
-
-@pytest.fixture
-async def snapshot(market, books, spots):
-    builder = MarketSnapshotBuilder(books, spots, PriceToBeatProvider())
-    return await builder.build(market)
+def market_view(market):
+    return sample_market_view(
+        asset=market.asset,
+        timeframe=market.timeframe,
+        seconds_to_close=120,
+        price_to_beat=100000.0,
+        up_ask=0.82,
+        down_ask=0.18,
+        spot_price=100120.0,
+        spot_source="polymarket_rtds",
+        metrics={
+            "price_to_beat_source": "market_metadata",
+            "price_to_beat_verified": True,
+            "price_to_beat_from_anchor_service": False,
+            "spot_source": "polymarket_rtds",
+        },
+    )

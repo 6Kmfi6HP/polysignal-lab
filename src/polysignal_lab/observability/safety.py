@@ -45,7 +45,7 @@ NAUTILUS_RUNTIME_ALLOWED_SYMBOLS: Final = {"submit_order"}
 
 SKIP_TOP_LEVEL_DIRS: Final = {"data", "logs", "refs", "state"}
 
-LOCAL_PAPER_ISOLATION_SYMBOLS: Final = (
+LEGACY_TRADING_ISOLATION_SYMBOLS: Final = (
     "from polysignal_lab.paper.order_intent_executor import",
     "BestAsk" + "TakerExecutor",
     "Passive" + "GtdExecutor",
@@ -71,12 +71,16 @@ LOCAL_PAPER_ISOLATION_SYMBOLS: Final = (
 )
 # Dual-path residue that must not re-enter live runtime / decision / trading wiring.
 LEGACY_DUAL_PATH_SYMBOLS: Final = (
-    "from polysignal_lab.data.state import OrderBookRegistry",
-    "from polysignal_lab.data.state import OrderBookRegistry,",
-    "OrderBookRegistry()",
+    "from polysignal_lab.data.state import " + "OrderBookRegistry",
+    "from polysignal_lab.data.state import " + "OrderBookRegistry,",
+    "OrderBook" + "Registry()",
     "from polysignal_lab.data.polymarket_clob_ws import",
     "from polysignal_lab.data.polymarket_clob_rest import",
+    "from polysignal_lab.data.binance_" + "spot_ws import",
     "EmptyBookDataProvider",
+    "Trading" + "NodeConfig",
+    "Trading" + "Node(",
+    "from nautilus_trader.live.node import Trading" + "Node",
 )
 ACTOR_SCHEDULING_FALLBACK_SYMBOLS: Final = ("asyncio.create_task(",)
 ACTOR_SCHEDULING_FALLBACK_PATHS: Final = {
@@ -113,7 +117,7 @@ def scan(root: str | Path) -> list[tuple[str, str]]:
         report_path = path.name if base_is_file else str(path.relative_to(base))
         symbols = list(blocked_symbols())
         if _is_project_source(path):
-            symbols.extend(LOCAL_PAPER_ISOLATION_SYMBOLS)
+            symbols.extend(LEGACY_TRADING_ISOLATION_SYMBOLS)
         if _is_actor_scheduling_fallback_path(base, path):
             symbols.extend(ACTOR_SCHEDULING_FALLBACK_SYMBOLS)
         if _is_legacy_dual_path_guarded(base, path):

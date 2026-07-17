@@ -80,29 +80,29 @@ def test_sqlite_restores_latest_system_event_payload(tmp_path) -> None:
     store.insert_system_event(older)
     store.insert_system_event(newer)
 
-    assert store.restore_latest_system_event("health_snapshot") == newer
+    assert store.query_latest_system_event("health_snapshot") == newer
 
 
 async def test_runtime_records_gate_rejections_and_persists_health_snapshot(
-    tmp_path, snapshot, settings
+    tmp_path, market_view, settings
 ) -> None:
     from polysignal_lab.app import scheduler_health
     from polysignal_lab.nautilus_runtime.runtime_context_factory import build_nautilus_runtime_context
     from polysignal_lab.signal_layer.gate import SignalGate
-    from signal_helpers import ptb_signal_from_snapshot
+    from signal_helpers import ptb_signal_from_view
 
     runtime = build_nautilus_runtime_context(settings, base_dir=tmp_path)
     gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
-    signal = ptb_signal_from_snapshot(snapshot, settings).model_copy(update={"confidence": 0.01})
+    signal = ptb_signal_from_view(market_view, settings).model_copy(update={"confidence": 0.01})
 
-    decision = gate.evaluate(signal, snapshot)
+    decision = gate.evaluate(signal, market_view)
     assert decision.rejected is not None
     runtime.health.inc_metric(
         "signal_gate", f"rejected_{decision.rejected.reason_code}"
     )
     scheduler_health.persist_health_snapshot(runtime)
 
-    latest = runtime.sqlite.restore_latest_system_event("health_snapshot")
+    latest = runtime.sqlite.query_latest_system_event("health_snapshot")
     assert latest is not None
     components = {component["name"]: component for component in latest["components"]}
     assert components["signal_gate"]["metrics"]["rejected_CONFIDENCE_TOO_LOW"] == 1

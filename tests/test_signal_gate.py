@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.timedelta, polysignal_lab.config, polysignal_lab.config.BinanceDataConfig, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.config.SignalConfig, polysignal_lab.domain.enums, polysignal_lab.domain.enums.MarketStatus
-Output: test_signal_gate_records_prd_reason_details, test_signal_deduper_prevents_duplicate_channel_publish, test_signal_rate_limiter_rejects_after_channel_limit, test_signal_candidate_carries_freshness_policy, test_gate_rejects_strategy_policy_stale_orderbook_with_details, test_gate_uses_strictest_threshold_when_global_is_lower, test_gate_uses_global_threshold_when_strategy_has_no_policy, test_gate_distinguishes_missing_orderbook_from_stale_orderbook, test_gate_distinguishes_missing_spot_from_stale_spot, test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason, test_reduce_only_candidate_bypasses_entry_price_ceiling
+Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, polysignal_lab.config, polysignal_lab.signal_layer.gate
+Output: signal gate freshness and reduce-only tests on MarketView
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -12,38 +12,33 @@ Pos: Test Layer - Unit/Integration tests
 
 
 
+
 from __future__ import annotations
 
-from datetime import timedelta
+from dataclasses import replace
 
+from polysignal_lab.alpha.types import FreshnessView, MarketView
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
-from polysignal_lab.domain.enums import MarketStatus, OrderIntent, Side
-from polysignal_lab.domain.market import Market, OutcomeToken
-from polysignal_lab.domain.orderbook import BookLevel, OrderBook
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.domain.snapshot import FreshnessState, MarketSnapshot
-from polysignal_lab.domain.spot import SpotPrice
 from polysignal_lab.signal_layer.gate import SignalGate
-from signal_helpers import ptb_signal_from_snapshot, ptb_signals_from_snapshot
-from polysignal_lab.utils import utc_now
+from factories import sample_market_view
+from signal_helpers import ptb_signal_from_view, ptb_signals_from_view
 
 
-async def _ptb_signal(snapshot, settings):
-    return ptb_signal_from_snapshot(snapshot, settings)
+async def _ptb_signal(view, settings):
+    return ptb_signal_from_view(view, settings)
 
 
-async def test_signal_gate_records_prd_reason_details(snapshot, settings) -> None:
-    # Given: a signal below the publish confidence threshold.
-    signal = (await _ptb_signal(snapshot, settings)).model_copy(
+async def test_signal_gate_records_prd_reason_details(market_view, settings) -> None:
+    signal = (await _ptb_signal(market_view, settings)).model_copy(
         update={"confidence": 0.1}
     )
     gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
 
-    # When: the gate evaluates the signal.
-    decision = gate.evaluate(signal, snapshot)
+    decision = gate.evaluate(signal, market_view)
 
-    # Then: the rejection contains concrete PRD audit fields.
     assert decision.accepted is False
     assert decision.rejected is not None
     assert decision.rejected.reason_code == "CONFIDENCE_TOO_LOW"
@@ -56,18 +51,15 @@ async def test_signal_gate_records_prd_reason_details(snapshot, settings) -> Non
 
 
 async def test_signal_deduper_prevents_duplicate_channel_publish(
-    snapshot, settings
+    market_view, settings
 ) -> None:
-    # Given: dedupe is enabled and the same channel signal is evaluated twice.
-    signal = await _ptb_signal(snapshot, settings)
+    signal = await _ptb_signal(market_view, settings)
     config = settings.signal.model_copy(update={"max_signals_per_hour": 10})
     gate = SignalGate(config, settings.data.polymarket, settings.data.binance)
 
-    # When: both evaluations run through the real gate.
-    first = gate.evaluate(signal, snapshot)
-    second = gate.evaluate(signal, snapshot)
+    first = gate.evaluate(signal, market_view)
+    second = gate.evaluate(signal, market_view)
 
-    # Then: only the first signal is publishable and the second is rejected safely.
     assert first.accepted is True
     assert second.accepted is False
     assert second.rejected is not None
@@ -76,10 +68,9 @@ async def test_signal_deduper_prevents_duplicate_channel_publish(
 
 
 async def test_signal_rate_limiter_rejects_after_channel_limit(
-    snapshot, settings
+    market_view, settings
 ) -> None:
-    # Given: dedupe is disabled so rate limiting is the only repeated-signal gate.
-    signal = await _ptb_signal(snapshot, settings)
+    signal = await _ptb_signal(market_view, settings)
     config = SignalConfig(
         min_confidence_to_publish=settings.signal.min_confidence_to_publish,
         dedupe_enabled=False,
@@ -88,11 +79,9 @@ async def test_signal_rate_limiter_rejects_after_channel_limit(
     )
     gate = SignalGate(config, settings.data.polymarket, settings.data.binance)
 
-    # When: two signals pass all earlier checks in the same hour.
-    first = gate.evaluate(signal, snapshot)
-    second = gate.evaluate(signal, snapshot)
+    first = gate.evaluate(signal, market_view)
+    second = gate.evaluate(signal, market_view)
 
-    # Then: the channel limit rejects the second publish attempt.
     assert first.accepted is True
     assert second.accepted is False
     assert second.rejected is not None
@@ -160,56 +149,17 @@ def _freshness_signal(
     )
 
 
-def _freshness_snapshot(*, book_age_ms: int | None, spot_age_ms: int | None) -> MarketSnapshot:
-    now = utc_now()
-    market = Market(
-        market_id="mkt-1",
-        market_slug="btc-updown-5m-test",
-        condition_id="condition-1",
-        question_id="question-1",
-        question="BTC Up or Down?",
-        asset="BTC",
-        timeframe="5m",
-        start_ts=now - timedelta(seconds=210),
-        end_ts=now + timedelta(seconds=90),
-        status=MarketStatus.ACTIVE,
-        resolution_source="test",
-        outcome_tokens=[
-            OutcomeToken(token_id="token-up", side=Side.UP, outcome_name="Up", market_id="mkt-1"),
-            OutcomeToken(token_id="token-down", side=Side.DOWN, outcome_name="Down", market_id="mkt-1"),
-        ],
-    )
-    up_book = None
-    if book_age_ms is not None:
-        up_book = OrderBook(
-            market_id="mkt-1",
-            token_id="token-up",
-            bids=[BookLevel(price=0.80, size=100.0)],
-            asks=[BookLevel(price=0.82, size=100.0)],
-            received_at=now - timedelta(milliseconds=book_age_ms),
-        )
-    spot = None
-    if spot_age_ms is not None:
-        spot = SpotPrice(
-            asset="BTC",
-            symbol="BTCUSDT",
-            price=100_000.0,
-            received_at=now - timedelta(milliseconds=spot_age_ms),
-            event_time=now - timedelta(milliseconds=spot_age_ms),
-        )
-    return MarketSnapshot(
-        snapshot_id="snap-freshness",
-        created_at=now,
-        market=market,
-        up_book=up_book,
-        down_book=None,
-        spot=spot,
-        freshness=FreshnessState(
-            up_book_ms=book_age_ms,
-            down_book_ms=None,
-            spot_ms=spot_age_ms,
-            max_ms=max(x for x in (book_age_ms, spot_age_ms) if x is not None) if book_age_ms is not None or spot_age_ms is not None else None,
-        ),
+def _freshness_view(*, book_age_ms: int | None, spot_age_ms: int | None) -> MarketView:
+    return sample_market_view(
+        up_ask=0.82,
+        down_ask=0.18,
+        include_up_book=book_age_ms is not None,
+        include_down_book=False,
+        include_spot=spot_age_ms is not None,
+        book_freshness_ms=book_age_ms,
+        spot_freshness_ms=spot_age_ms,
+        up_bid=0.80,
+        metrics={"max_spread": 0.20},
     )
 
 
@@ -222,9 +172,9 @@ def test_gate_rejects_strategy_policy_stale_orderbook_with_details() -> None:
     signal = _freshness_signal(
         FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
     )
-    snapshot = _freshness_snapshot(book_age_ms=2_000, spot_age_ms=100)
+    view = _freshness_view(book_age_ms=2_000, spot_age_ms=100)
 
-    decision = gate.evaluate(signal, snapshot)
+    decision = gate.evaluate(signal, view)
 
     assert decision.accepted is False
     assert decision.rejected is not None
@@ -233,7 +183,6 @@ def test_gate_rejects_strategy_policy_stale_orderbook_with_details() -> None:
     assert decision.rejected.details["threshold_ms"] == 1_500
     assert decision.rejected.details["source"] == "orderbook"
     assert decision.rejected.details["policy_source"] == "strategy_and_global"
-
 
 
 def test_gate_uses_strictest_threshold_when_global_is_lower() -> None:
@@ -245,9 +194,9 @@ def test_gate_uses_strictest_threshold_when_global_is_lower() -> None:
     signal = _freshness_signal(
         FreshnessPolicy(max_orderbook_staleness_ms=5_000, max_spot_staleness_ms=5_000)
     )
-    snapshot = _freshness_snapshot(book_age_ms=2_000, spot_age_ms=100)
+    view = _freshness_view(book_age_ms=2_000, spot_age_ms=100)
 
-    decision = gate.evaluate(signal, snapshot)
+    decision = gate.evaluate(signal, view)
 
     assert decision.accepted is False
     assert decision.rejected is not None
@@ -256,6 +205,7 @@ def test_gate_uses_strictest_threshold_when_global_is_lower() -> None:
     assert decision.rejected.details["threshold_ms"] == 1_000
     assert decision.rejected.details["policy_source"] == "strategy_and_global"
 
+
 def test_gate_uses_global_threshold_when_strategy_has_no_policy() -> None:
     gate = SignalGate(
         SignalConfig(dedupe_enabled=False),
@@ -263,9 +213,9 @@ def test_gate_uses_global_threshold_when_strategy_has_no_policy() -> None:
         BinanceDataConfig(max_price_staleness_ms=60_000),
     )
     signal = _freshness_signal(policy=None)
-    snapshot = _freshness_snapshot(book_age_ms=2_000, spot_age_ms=100)
+    view = _freshness_view(book_age_ms=2_000, spot_age_ms=100)
 
-    decision = gate.evaluate(signal, snapshot)
+    decision = gate.evaluate(signal, view)
 
     assert decision.accepted is True
 
@@ -275,9 +225,9 @@ def test_gate_distinguishes_missing_orderbook_from_stale_orderbook() -> None:
     signal = _freshness_signal(
         FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
     )
-    snapshot = _freshness_snapshot(book_age_ms=None, spot_age_ms=100)
+    view = _freshness_view(book_age_ms=None, spot_age_ms=100)
 
-    decision = gate.evaluate(signal, snapshot)
+    decision = gate.evaluate(signal, view)
 
     assert decision.accepted is False
     assert decision.rejected is not None
@@ -291,8 +241,8 @@ def test_gate_distinguishes_missing_spot_from_stale_spot() -> None:
     signal = _freshness_signal(
         FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
     )
-    missing = gate.evaluate(signal, _freshness_snapshot(book_age_ms=100, spot_age_ms=None))
-    stale = gate.evaluate(signal, _freshness_snapshot(book_age_ms=100, spot_age_ms=2_000))
+    missing = gate.evaluate(signal, _freshness_view(book_age_ms=100, spot_age_ms=None))
+    stale = gate.evaluate(signal, _freshness_view(book_age_ms=100, spot_age_ms=2_000))
 
     assert missing.rejected is not None
     assert missing.rejected.reason_code == "MISSING_SPOT_PRICE"
@@ -304,9 +254,9 @@ def test_gate_distinguishes_missing_spot_from_stale_spot() -> None:
 
 
 async def test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason(
-    snapshot, settings
+    market_view, settings
 ) -> None:
-    signals = ptb_signals_from_snapshot(snapshot, settings)
+    signals = ptb_signals_from_view(market_view, settings)
 
     assert signals
     metrics = signals[0].metrics
@@ -316,22 +266,24 @@ async def test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason(
     assert isinstance(metrics["max_lag_ms"], int | float)
     assert "PTB_ORDERBOOK_FRESH" not in signals[0].reason_codes
 
-async def test_ptb_diff_stale_spot_candidate_is_rejected_by_gate(snapshot, settings) -> None:
-    stale_snapshot = snapshot.model_copy(
-        update={
-            "spot": snapshot.spot.model_copy(
-                update={"received_at": snapshot.created_at - timedelta(seconds=3)}
-            ),
-            "freshness": snapshot.freshness.model_copy(
-                update={"spot_ms": 3_000, "max_ms": 3_000}
-            ),
-        }
+
+async def test_ptb_diff_stale_spot_candidate_is_rejected_by_gate(market_view, settings) -> None:
+    assert market_view.spot is not None
+    stale_view = replace(
+        market_view,
+        spot=replace(market_view.spot, freshness_ms=3_000, received_at=None),
+        freshness=FreshnessView(
+            up_book_ms=market_view.freshness.up_book_ms,
+            down_book_ms=market_view.freshness.down_book_ms,
+            spot_ms=3_000,
+            max_ms=3_000,
+        ),
     )
-    signals = ptb_signals_from_snapshot(stale_snapshot, settings)
+    signals = ptb_signals_from_view(stale_view, settings)
     assert signals
 
     gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
-    decision = gate.evaluate(signals[0], stale_snapshot)
+    decision = gate.evaluate(signals[0], stale_view)
 
     assert decision.accepted is False
     assert decision.rejected is not None
@@ -344,27 +296,25 @@ async def test_ptb_diff_stale_spot_candidate_is_rejected_by_gate(snapshot, setti
 
 
 async def test_ptb_diff_stale_orderbook_candidate_has_no_fresh_reason(
-    snapshot, settings
+    market_view, settings
 ) -> None:
-    stale_snapshot = snapshot.model_copy(
-        update={
-            "up_book": snapshot.up_book.model_copy(
-                update={"received_at": snapshot.created_at - timedelta(seconds=3)}
-            ),
-            "down_book": snapshot.down_book.model_copy(
-                update={"received_at": snapshot.created_at - timedelta(seconds=3)}
-            ),
-            "freshness": snapshot.freshness.model_copy(
-                update={"up_book_ms": 3_000, "down_book_ms": 3_000, "max_ms": 3_000}
-            ),
-        }
+    stale_view = replace(
+        market_view,
+        up=replace(market_view.up, freshness_ms=3_000, received_at=None),
+        down=replace(market_view.down, freshness_ms=3_000, received_at=None),
+        freshness=FreshnessView(
+            up_book_ms=3_000,
+            down_book_ms=3_000,
+            spot_ms=market_view.freshness.spot_ms,
+            max_ms=3_000,
+        ),
     )
-    signals = ptb_signals_from_snapshot(stale_snapshot, settings)
+    signals = ptb_signals_from_view(stale_view, settings)
     assert signals
     assert "PTB_ORDERBOOK_FRESH" not in signals[0].reason_codes
 
     gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
-    decision = gate.evaluate(signals[0], stale_snapshot)
+    decision = gate.evaluate(signals[0], stale_view)
 
     assert decision.accepted is False
     assert decision.rejected is not None
@@ -389,14 +339,13 @@ def test_reduce_only_exit_bypasses_entry_confidence_and_rate_limit() -> None:
     )
     entry = _freshness_signal()
     close = _freshness_signal(reduce_only=True).model_copy(update={"confidence": 0.10})
-    snapshot = _freshness_snapshot(book_age_ms=100, spot_age_ms=100)
+    view = _freshness_view(book_age_ms=100, spot_age_ms=100)
 
     assert entry.dedupe_key != close.dedupe_key
-    assert gate.evaluate(entry, snapshot).accepted is True
-    decision = gate.evaluate(close, snapshot)
+    assert gate.evaluate(entry, view).accepted is True
+    decision = gate.evaluate(close, view)
 
     assert decision.accepted is True
-
 
     gate = SignalGate(
         SignalConfig(dedupe_enabled=False),
@@ -410,9 +359,9 @@ def test_reduce_only_exit_bypasses_entry_confidence_and_rate_limit() -> None:
             "reduce_only": True,
         }
     )
-    snapshot = _freshness_snapshot(book_age_ms=100, spot_age_ms=100)
+    view = _freshness_view(book_age_ms=100, spot_age_ms=100)
 
-    decision = gate.evaluate(signal, snapshot)
+    decision = gate.evaluate(signal, view)
 
     assert decision.accepted is True
 
@@ -431,9 +380,9 @@ def test_reduce_only_exit_survives_entry_batch_rejection() -> None:
     close = _freshness_signal(reduce_only=True).model_copy(
         update={"confidence": 0.10}
     )
-    snapshot = _freshness_snapshot(book_age_ms=100, spot_age_ms=100)
+    view = _freshness_view(book_age_ms=100, spot_age_ms=100)
 
-    assert gate.evaluate(entry, snapshot).accepted is True
+    assert gate.evaluate(entry, view).accepted is True
     decisions = gate.commit([entry, close])
 
     assert decisions[0].accepted is False
@@ -441,7 +390,6 @@ def test_reduce_only_exit_survives_entry_batch_rejection() -> None:
     assert decisions[0].rejected.reason_code == "DUPLICATE_SIGNAL"
     assert decisions[1].accepted is True
     assert decisions[1].signal == close
-
 
     gate = SignalGate(
         SignalConfig(
@@ -456,14 +404,8 @@ def test_reduce_only_exit_survives_entry_batch_rejection() -> None:
     close = _freshness_signal(reduce_only=True).model_copy(
         update={"confidence": 0.10, "seconds_to_close": 0}
     )
-    snapshot = _freshness_snapshot(book_age_ms=100, spot_age_ms=100).model_copy(
-        update={"spot": None}
-    )
-    snapshot = snapshot.model_copy(
-        update={
-            "up_book": snapshot.up_book.model_copy(update={"spread": 0.9}),
-        }
-    )
+    base = _freshness_view(book_age_ms=100, spot_age_ms=100)
+    view = replace(base, spot=None, up=replace(base.up, spread=0.9))
 
-    assert gate.evaluate(close, snapshot).accepted is True
-    assert gate.evaluate(close, snapshot).accepted is True
+    assert gate.evaluate(close, view).accepted is True
+    assert gate.evaluate(close, view).accepted is True

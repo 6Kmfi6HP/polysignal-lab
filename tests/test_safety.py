@@ -17,9 +17,6 @@ from pathlib import Path
 
 from polysignal_lab.observability.safety import scan
 
-_ALLOWED_SDK_IMPORT_FILE = Path("src/polysignal_lab/data/polymarket_clob_rest.py")
-
-
 def find_forbidden_sdk_imports(paths: list[Path]) -> list[Path]:
     offenders: list[Path] = []
     for root in paths:
@@ -27,8 +24,6 @@ def find_forbidden_sdk_imports(paths: list[Path]) -> list[Path]:
         for path in files:
             text = path.read_text(encoding="utf-8")
             if "py_clob_client_v2" not in text:
-                continue
-            if path.resolve() == _ALLOWED_SDK_IMPORT_FILE.resolve():
                 continue
             offenders.append(path)
     return offenders
