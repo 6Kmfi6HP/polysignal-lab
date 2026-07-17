@@ -273,7 +273,7 @@ def test_build_sandbox_live_node_uses_official_rtds_via_polymarket_config(
 ) -> None:
     _patch_live_node_fakes(monkeypatch)
     settings = Settings()
-    settings.runtime.nautilus.sidecar.spot_source = "polymarket_rtds"
+    settings.runtime.nautilus.spot_data.source = "polymarket_rtds"
     settings.data.polymarket.rtds_assets = ("BTC", "ETH")
     instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 

@@ -6,8 +6,8 @@
 **Files**:
 - `strategy_builder.py` - Exports build_control and 1 more
 - `state.py` - Application code
-- `signal_sidecar.py` - Outbound Telegram notification helpers for native runtime events
-- `sidecar_data.py` - Exports market_metadata and 3 more
+- `signal_notifications.py` - Outbound Telegram notification helpers for native runtime events
+- `custom_data_publisher.py` - Exports market_metadata and 3 more
 - `runtime_context_factory.py` - Exports NautilusRuntimeContext and build_nautilus_runtime_context
 - `projections.py` - Projects native order, fill, position, account, and portfolio reporting payloads
 - `order_plan.py` - Exports build_order_spec and 11 more

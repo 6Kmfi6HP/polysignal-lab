@@ -28,8 +28,8 @@ from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.spot import SpotPrice
-from polysignal_lab.nautilus_bridge.spot_anchor_state import SpotAnchorState
-from polysignal_lab.nautilus_bridge.state import JsonValue, decode_state, encode_state
+from polysignal_lab.nautilus_runtime.spot_anchor_state import SpotAnchorState
+from polysignal_lab.nautilus_runtime.state import JsonValue, decode_state, encode_state
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
     PolySignalSpotData,
@@ -41,7 +41,7 @@ from polysignal_lab.nautilus_runtime.market_discovery_worker import (
     MarketDiscoveryResult,
     MarketDiscoveryWorker,
 )
-from polysignal_lab.nautilus_runtime.sidecar_data import (
+from polysignal_lab.nautilus_runtime.custom_data_publisher import (
     CustomDataPublisher,
     market_metadata,
     timestamp_ns,
@@ -127,10 +127,10 @@ class MarketRotationActor(DataActor):
         if settings is None:
             raise RuntimeError("MarketRotationActor requires settings")
         DataActor.__init__(self, config)
-        spot_source = settings.runtime.nautilus.sidecar.spot_source
+        spot_source = settings.runtime.nautilus.spot_data.source
         if spot_source not in {"disabled", "polymarket_rtds"}:
             raise RuntimeError(
-                f"unsupported Nautilus sidecar spot source: {spot_source!r}"
+                f"unsupported Nautilus spot data source: {spot_source!r}"
             )
         self.settings: Settings = settings
         self.health: _Health | None = health
@@ -177,7 +177,7 @@ class MarketRotationActor(DataActor):
         raise RuntimeError("Nautilus actor clock timestamp_ns is unavailable")
 
     def on_start(self) -> None:
-        if self.settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds":
+        if self.settings.runtime.nautilus.spot_data.source == "polymarket_rtds":
             self.subscribe_data(
                 custom_data_type(PolySignalSpotData),
                 client_id=ClientId(SPOT_DATA_CLIENT_ID),

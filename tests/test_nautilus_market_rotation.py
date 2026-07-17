@@ -131,7 +131,7 @@ def _rotation_actor(
     settings: Settings | None = None,
 ) -> MarketRotationActor:
     resolved = settings or Settings()
-    resolved.runtime.nautilus.sidecar.spot_source = "disabled"
+    resolved.runtime.nautilus.spot_data.source = "disabled"
     if settings is None:
         resolved.runtime.nautilus.market_rotation.enabled = False
     return MarketRotationActor(
@@ -354,7 +354,7 @@ def test_market_rotation_on_start_uses_actor_clock_and_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = Settings()
-    settings.runtime.nautilus.sidecar.spot_source = "disabled"
+    settings.runtime.nautilus.spot_data.source = "disabled"
     settings.runtime.nautilus.market_rotation.enabled = True
     worker = _StubDiscoveryWorker()
     actor = _rotation_actor(discovery_worker=worker, settings=settings)
@@ -538,7 +538,7 @@ def test_market_rotation_state_reload_replays_native_custom_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = Settings()
-    settings.runtime.nautilus.sidecar.spot_source = "disabled"
+    settings.runtime.nautilus.spot_data.source = "disabled"
     settings.runtime.nautilus.market_rotation.enabled = False
     market = _market("condition-reload")
     actor = _rotation_actor(

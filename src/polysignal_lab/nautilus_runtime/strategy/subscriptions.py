@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
 
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _asset_conditions,
@@ -70,7 +70,7 @@ class _SubscriptionStrategy(Protocol):
 
 
 class InstrumentSubscriptionManager:
-    """Thin bridge used by custom-data handlers to re-request missing instruments."""
+    """Thin connector used by custom-data handlers to re-request missing instruments."""
 
     def __init__(self, strategy: _SubscriptionStrategy) -> None:
         self._strategy = strategy

@@ -1,5 +1,5 @@
 """
-Shared helpers for Nautilus runtime node files (node.py, node_sidecar.py).
+Shared helpers for Nautilus runtime node files (node.py, node_lifecycle.py).
 
 Extracted from duplicate definitions to eliminate Type-2 rename clones flagged by pyscn.
 

@@ -40,7 +40,7 @@ async def run_nautilus_cli_async(
 ) -> object:
     """Run the Nautilus CLI with async orchestration and signal handling."""
     # Delayed import to avoid circular dependency — node module owns
-    # the runtime construction and sidecar helpers that this function
+    # the runtime construction and runtime lifecycle helpers that this function
     # orchestrates.
     from polysignal_lab.nautilus_runtime.node import (
         _finalize_async_cli_runtime,

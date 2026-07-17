@@ -1,5 +1,5 @@
 """
-Input: __future__, collections.abc, typing, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_runtime.strategy.event_projection, polysignal_lab.reporting.exit_result, polysignal_lab.utils
+Input: __future__, collections.abc, typing, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.strategy.event_projection, polysignal_lab.reporting.exit_result, polysignal_lab.utils
 Output: handle_order_lifecycle_event, handle_order_filled, handle_position_event, project_strategy_order_event, project_strategy_fill_event, should_notify_fill, forget_approved_metrics, call_core, _record_early_exit_result
 Pos: Application code
 
@@ -20,7 +20,7 @@ from polysignal_lab.alpha.types import (
     MarketView,
 )
 from polysignal_lab.domain.enums import OrderIntent
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.strategy.event_projection import (
     project_fill_event,
     project_order_event,

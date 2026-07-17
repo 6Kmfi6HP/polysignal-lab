@@ -237,8 +237,8 @@ class HealthConfig(BaseModel):
     restart_gate: HealthRestartGateConfig = Field(default_factory=HealthRestartGateConfig)
 
 
-class NautilusSidecarConfig(BaseModel):
-    spot_source: Literal["disabled", "polymarket_rtds"] = "disabled"
+class NautilusSpotDataConfig(BaseModel):
+    source: Literal["disabled", "polymarket_rtds"] = "disabled"
 
 
 class NautilusDataClientConfig(BaseModel):
@@ -294,7 +294,7 @@ class NautilusRuntimeConfig(BaseModel):
     polymarket_data: NautilusDataClientConfig = Field(
         default_factory=NautilusDataClientConfig
     )
-    sidecar: NautilusSidecarConfig = Field(default_factory=NautilusSidecarConfig)
+    spot_data: NautilusSpotDataConfig = Field(default_factory=NautilusSpotDataConfig)
     market_rotation: NautilusMarketRotationConfig = Field(
         default_factory=NautilusMarketRotationConfig
     )

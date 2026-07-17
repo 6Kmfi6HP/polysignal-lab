@@ -7,8 +7,8 @@ from typing import Protocol, cast
 
 from polysignal_lab.alpha.types import SideBookView, TradeView
 from polysignal_lab.domain.market import Market
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
-from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog, MarketPairMeta
+from polysignal_lab.nautilus_runtime.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 
 logger = logging.getLogger(__name__)

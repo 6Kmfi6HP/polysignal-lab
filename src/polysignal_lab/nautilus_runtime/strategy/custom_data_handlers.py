@@ -1,5 +1,5 @@
 """
-Input: polysignal_lab.nautilus_runtime.custom_data_types, polysignal_lab.nautilus_bridge.market_catalog
+Input: polysignal_lab.nautilus_runtime.custom_data_types, polysignal_lab.nautilus_runtime.market_catalog
 Output: custom data routing helpers for PolySignalNativeStrategy
 Pos: Application code
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Callable, Protocol
 
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog, MarketPairMeta
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,

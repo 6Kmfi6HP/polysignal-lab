@@ -30,12 +30,12 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
-from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
 
-from polysignal_lab.nautilus_bridge.state import decode_state, state_key
+from polysignal_lab.nautilus_runtime.state import decode_state, state_key
 
 
 class _FloatLike:
@@ -705,7 +705,7 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
 def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
     monkeypatch,
 ) -> None:
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -783,7 +783,7 @@ def test_static_native_strategy_uses_nautilus_subscribe_data_for_custom_data(
 
 
 def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatch) -> None:
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -1312,7 +1312,7 @@ def test_native_strategy_unknown_quote_tick_instrument_is_dropped_with_metric() 
 
 
 def test_native_strategy_partial_market_data_mappings_are_dropped_without_evaluation() -> None:
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
         MarketCatalog,
@@ -1583,7 +1583,7 @@ def test_cache_market_data_provider_uses_observed_receipt_time_for_freshness() -
             _ = instrument_id
             return []
 
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -1631,7 +1631,7 @@ def test_cache_market_data_provider_treats_missing_trade_ticks_as_empty() -> Non
             _ = instrument_id
             raise LookupError("no cached trades")
 
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -1665,7 +1665,7 @@ def test_cache_market_data_provider_treats_absent_trade_ticks_api_as_empty() -> 
             _ = instrument_id
             return None
 
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -1845,7 +1845,7 @@ def test_native_strategy_bounds_rejected_decisions_to_prevent_memory_leak() -> N
 def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -1911,11 +1911,11 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
 def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
     from types import SimpleNamespace
 
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
-    from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+    from polysignal_lab.nautilus_runtime.market_view_assembler import MarketViewAssembler
 
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -2070,7 +2070,7 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
 
 
 def test_native_strategy_universe_update_subscribes_entered_market_once() -> None:
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -2170,7 +2170,7 @@ def test_native_strategy_universe_update_subscribes_entered_market_once() -> Non
 def test_native_strategy_universe_update_recovers_still_active_missing_subscription() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -2240,7 +2240,7 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
 def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -2306,7 +2306,7 @@ def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> (
 
 
 def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> None:
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -2461,7 +2461,7 @@ def test_native_strategy_active_market_without_metadata_stays_pending_until_meta
 def test_native_strategy_subscribes_market_data_without_cache_gate() -> None:
     from types import SimpleNamespace
 
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -2701,7 +2701,7 @@ def test_native_strategy_exited_market_fill_follow_up_is_gated() -> None:
 
 
 def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -2795,7 +2795,7 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
 
 
 def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -2868,7 +2868,7 @@ def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
 
 
 def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() -> None:
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -2936,7 +2936,7 @@ def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() ->
 
 
 def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> None:
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -3011,7 +3011,7 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
 def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_state() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -3103,7 +3103,7 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_sta
 def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
     from types import SimpleNamespace
 
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -3180,7 +3180,7 @@ def test_native_strategy_exited_market_trade_tick_stays_gated() -> None:
 def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_only() -> (
     None
 ):
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -3318,11 +3318,11 @@ def test_native_strategy_routes_ptb_custom_data_to_matching_active_condition_onl
 def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_trade_history_write() -> None:
     from types import SimpleNamespace
 
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
-    from polysignal_lab.nautilus_bridge.market_view_assembler import MarketViewAssembler
+    from polysignal_lab.nautilus_runtime.market_view_assembler import MarketViewAssembler
 
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -3381,8 +3381,8 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
             down=InstrumentTokenMeta("down-token", Side.DOWN),
         )
     )
-    sidecar = StrategyCustomDataState()
-    sidecar.apply(
+    custom_data = StrategyCustomDataState()
+    custom_data.apply(
         PolySignalSpotData(
             asset="BTC",
             symbol="BTCUSD",
@@ -3393,7 +3393,7 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
             ts_init=0,
         )
     )
-    sidecar.apply(
+    custom_data.apply(
         PolySignalPriceToBeatData(
             condition_id="condition-btc-5m",
             value=99950.0,
@@ -3411,7 +3411,7 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
     assembler = MarketViewAssembler(
         catalog=registry,
         books=books,
-        custom_data=sidecar,
+        custom_data=custom_data,
     )
 
     class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
@@ -3454,7 +3454,7 @@ def test_native_strategy_on_order_accepted_preserves_approved_signal_metrics() -
     from types import SimpleNamespace
 
     from polysignal_lab.alpha.one_cent_buy_core import OneCentBuyAlphaCore
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )
@@ -3567,7 +3567,7 @@ def test_native_strategy_attributes_inactive_registered_down_order_and_fill_from
 ):
     from types import SimpleNamespace
 
-    from polysignal_lab.nautilus_bridge.market_catalog import (
+    from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
     )

@@ -23,7 +23,7 @@ from polysignal_lab.nautilus_runtime.node_builder import (
     build_live_node,
     build_runtime_node,
 )
-from polysignal_lab.nautilus_runtime.node_sidecar import (
+from polysignal_lab.nautilus_runtime.node_lifecycle import (
     _run_node_async,
     _strategy_names_from_bundle,
 )

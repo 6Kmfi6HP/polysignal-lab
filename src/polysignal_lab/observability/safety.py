@@ -61,9 +61,7 @@ LEGACY_TRADING_ISOLATION_SYMBOLS: Final = (
     "paper_portfolio.process_signal",
     "paper_portfolio.tick_resting_orders",
     "new_class(",
-    "ExternalDataSidecar",
     "runtime_native_strategy_type",
-    "runtime_sidecar_actor_type",
     "runtime_market_rotation_actor_type",
     "_by_instrument",
     "condition_id_for_instrument",
@@ -85,7 +83,7 @@ LEGACY_DUAL_PATH_SYMBOLS: Final = (
 ACTOR_SCHEDULING_FALLBACK_SYMBOLS: Final = ("asyncio.create_task(",)
 ACTOR_SCHEDULING_FALLBACK_PATHS: Final = {
     Path("src/polysignal_lab/nautilus_runtime/market_rotation.py"),
-    Path("src/polysignal_lab/nautilus_runtime/sidecar_data.py"),
+    Path("src/polysignal_lab/nautilus_runtime/custom_data_publisher.py"),
 }
 
 
@@ -176,7 +174,7 @@ def _is_legacy_dual_path_guarded(base: Path, path: Path) -> bool:
     if path.suffix != ".py":
         return False
     return any(
-        part in {"alpha", "nautilus_runtime", "nautilus_bridge", "signal_layer"}
+        part in {"alpha", "nautilus_runtime", "nautilus_runtime", "signal_layer"}
         for part in path.parts
     )
 

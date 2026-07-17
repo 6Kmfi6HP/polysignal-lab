@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.node_builder_components import instrument_load_ids
 from factories import MarketFactoryConfig, sample_market
 

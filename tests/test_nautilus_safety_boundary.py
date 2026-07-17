@@ -20,7 +20,6 @@ from polysignal_lab.observability.safety import scan
 
 
 RUNTIME_ROOT = Path("src/polysignal_lab/nautilus_runtime")
-BRIDGE_ROOT = Path("src/polysignal_lab/nautilus_bridge")
 LIVE_FORBIDDEN_TEXT = (
     "PolymarketExecutionClient",
     "PolymarketLiveExecClientFactory",
@@ -41,7 +40,7 @@ def test_default_nautilus_source_avoids_live_execution_symbols() -> None:
         Path("src/polysignal_lab/nautilus_runtime/live_node.py"),
         Path("src/polysignal_lab/nautilus_runtime/optional_imports.py"),
     }
-    for root in (RUNTIME_ROOT, BRIDGE_ROOT):
+    for root in (RUNTIME_ROOT,):
         for path in root.rglob("*.py"):
             text = path.read_text(encoding="utf-8")
             tokens = LIVE_FORBIDDEN_TEXT

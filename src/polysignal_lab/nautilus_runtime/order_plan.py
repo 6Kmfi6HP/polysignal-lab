@@ -207,7 +207,7 @@ def add_time_in_force_tags(
     intent: OrderIntent,
     expiry_seconds: int | None,
 ) -> None:
-    from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
+    from polysignal_lab.nautilus_runtime.polymarket_adapter import PolymarketEnumParser
 
     tags["time_in_force"] = PolymarketEnumParser.to_nautilus_time_in_force(intent).name
     if intent == OrderIntent.PASSIVE_GTD:

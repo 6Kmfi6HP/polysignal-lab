@@ -15,7 +15,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     unwrap_custom_data,
 )
 from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
-from polysignal_lab.nautilus_runtime.sidecar_data import CustomDataPublisher
+from polysignal_lab.nautilus_runtime.custom_data_publisher import CustomDataPublisher
 
 
 class FakePublisher:
@@ -66,7 +66,6 @@ def test_custom_data_publisher_publishes_price_to_beat_as_pyo3_custom_data() -> 
     assert data_type == custom_data_type(PolySignalPriceToBeatData)
     assert isinstance(envelope, nautilus_pyo3.CustomData)
     assert isinstance(unwrap_custom_data(envelope), PolySignalPriceToBeatData)
-    assert not hasattr(actor, "sidecar")
     assert not hasattr(actor, "registry")
 
 
@@ -97,18 +96,18 @@ def test_custom_data_publisher_publishes_market_metadata_without_shadow_state() 
 
 def test_market_rotation_actor_accepts_managed_rtds_source() -> None:
     settings = Settings()
-    settings.runtime.nautilus.sidecar.spot_source = "polymarket_rtds"
+    settings.runtime.nautilus.spot_data.source = "polymarket_rtds"
 
     actor = _actor(settings)
 
-    assert actor.settings.runtime.nautilus.sidecar.spot_source == "polymarket_rtds"
+    assert actor.settings.runtime.nautilus.spot_data.source == "polymarket_rtds"
 
 
 def test_market_rotation_actor_subscribes_to_managed_rtds_spot(
     monkeypatch,
 ) -> None:
     settings = Settings()
-    settings.runtime.nautilus.sidecar.spot_source = "polymarket_rtds"
+    settings.runtime.nautilus.spot_data.source = "polymarket_rtds"
     actor = _actor(settings)
     fake_clock = SimpleNamespace(timestamp_ns=lambda: 1_700_000_000_000_000_000)
     monkeypatch.setattr(
@@ -152,7 +151,7 @@ def test_market_rotation_actor_subscribes_to_managed_rtds_spot(
 
 def test_market_rotation_actor_does_not_construct_legacy_rtds_feed() -> None:
     settings = Settings()
-    settings.runtime.nautilus.sidecar.spot_source = "polymarket_rtds"
+    settings.runtime.nautilus.spot_data.source = "polymarket_rtds"
 
     actor = _actor(settings)
 

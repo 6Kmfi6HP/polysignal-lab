@@ -248,7 +248,7 @@ def build_polymarket_data_client_config(
     )
     nautilus_runtime = settings.runtime.nautilus
     polymarket = settings.data.polymarket
-    spot_source = str(nautilus_runtime.sidecar.spot_source).strip().lower()
+    spot_source = str(nautilus_runtime.spot_data.source).strip().lower()
     kwargs: dict[str, object] = {
         "instrument_config": instrument_config,
         "update_instruments_interval_mins": 0,
@@ -324,7 +324,7 @@ def build_polymarket_exec_client_config(settings: Settings) -> object:
 
 
 def _build_spot_data_client_config(settings: Settings) -> object | None:
-    if settings.runtime.nautilus.sidecar.spot_source != "polymarket_rtds":
+    if settings.runtime.nautilus.spot_data.source != "polymarket_rtds":
         return None
     config_cls = _import_callable(
         "polysignal_lab.nautilus_runtime.spot_data_client",

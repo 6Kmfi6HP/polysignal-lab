@@ -1,4 +1,4 @@
-"""Application spot state used by the Nautilus market-rotation bridge."""
+"""Application spot state used by the Nautilus market rotation actor."""
 
 from __future__ import annotations
 

@@ -90,7 +90,7 @@ def test_default_source_keeps_forbidden_live_symbols_out_of_runtime() -> None:
         "POLYMARKET_PASSPHRASE",
         "add_exec_client",
     )
-    scanned_roots = [Path("src/polysignal_lab/nautilus_runtime"), Path("src/polysignal_lab/nautilus_bridge")]
+    scanned_roots = [Path("src/polysignal_lab/nautilus_runtime")]
     findings: list[str] = []
     for root in scanned_roots:
         if not root.exists():
@@ -240,7 +240,7 @@ def test_nautilus_runtime_does_not_mirror_market_data_outside_nautilus_cache() -
             "update_trade",
             "_domain_order_book(",
         ),
-        Path("src/polysignal_lab/nautilus_bridge/market_view_assembler.py"): (
+        Path("src/polysignal_lab/nautilus_runtime/market_view_assembler.py"): (
             "self._books",
             "self._trades",
             "update_book(",
@@ -289,7 +289,12 @@ def test_nautilus_runtime_does_not_construct_instruments_locally() -> None:
         "return f\"{condition}-{token}.POLYMARKET\"",
     )
     findings: list[str] = []
-    for path in Path("src/polysignal_lab/nautilus_runtime").rglob("*.py"):
+    runtime_root = Path("src/polysignal_lab/nautilus_runtime")
+    # MarketCatalog delegates identifier creation to the official Polymarket adapter;
+    # it does not construct or cache Nautilus instruments locally.
+    for path in runtime_root.rglob("*.py"):
+        if path.name == "market_catalog.py":
+            continue
         text = path.read_text(encoding="utf-8")
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
@@ -351,12 +356,11 @@ def test_default_runtime_has_no_dynamic_runtime_class_factories() -> None:
     forbidden = (
         "new_class(",
         "runtime_native_strategy_type",
-        "runtime_sidecar_actor_type",
         "runtime_market_rotation_actor_type",
     )
     scanned_paths = (
         Path("src/polysignal_lab/nautilus_runtime/native_strategy.py"),
-        Path("src/polysignal_lab/nautilus_runtime/sidecar_data.py"),
+        Path("src/polysignal_lab/nautilus_runtime/custom_data_publisher.py"),
         Path("src/polysignal_lab/nautilus_runtime/market_rotation.py"),
         Path("src/polysignal_lab/nautilus_runtime/node.py"),
     )
@@ -367,20 +371,15 @@ def test_default_runtime_has_no_dynamic_runtime_class_factories() -> None:
 
     assert findings == []
 
-def test_default_runtime_has_no_shared_external_sidecar_store() -> None:
+def test_default_runtime_has_no_shared_external_data_store() -> None:
     forbidden_paths = (
-        Path("src/polysignal_lab/nautilus_bridge/external_data.py"),
+        Path("src/polysignal_lab/nautilus_runtime/external_data.py"),
     )
     forbidden_tokens = (
-        "ExternalDataSidecar",
         "update_spot(",
         "update_price_to_beat(",
-        "self.sidecar",
     )
-    scanned_roots = (
-        Path("src/polysignal_lab/nautilus_runtime"),
-        Path("src/polysignal_lab/nautilus_bridge"),
-    )
+    scanned_roots = (Path("src/polysignal_lab/nautilus_runtime"),)
     path_findings = [str(path) for path in forbidden_paths if path.exists()]
     token_findings: list[str] = []
     for root in scanned_roots:
@@ -399,8 +398,8 @@ def test_market_catalog_has_no_reverse_instrument_truth_source() -> None:
         "token_id_for_instrument(",
     )
     scanned_paths = (
-        Path("src/polysignal_lab/nautilus_bridge/market_registry.py"),
-        Path("src/polysignal_lab/nautilus_bridge/market_catalog.py"),
+        Path("src/polysignal_lab/nautilus_runtime/market_registry.py"),
+        Path("src/polysignal_lab/nautilus_runtime/market_catalog.py"),
     )
     findings: list[str] = []
     for path in scanned_paths:
@@ -419,7 +418,7 @@ def test_default_runtime_has_no_asyncio_actor_scheduling_fallbacks() -> None:
             "asyncio.run(",
             "asyncio.to_thread(",
         ),
-        Path("src/polysignal_lab/nautilus_runtime/sidecar_data.py"): (
+        Path("src/polysignal_lab/nautilus_runtime/custom_data_publisher.py"): (
             "asyncio.create_task(",
             "asyncio.sleep(",
             "asyncio.new_event_loop(",
@@ -446,7 +445,6 @@ def test_runtime_decision_paths_block_legacy_orderbook_and_clob_reattachment() -
     )
     roots = (
         Path("src/polysignal_lab/nautilus_runtime"),
-        Path("src/polysignal_lab/nautilus_bridge"),
         Path("src/polysignal_lab/signal_layer"),
         Path("src/polysignal_lab/alpha"),
     )
@@ -606,7 +604,7 @@ def test_final_v2_single_track_static_gates() -> None:
             )
             if path in wall_clock_allowed:
                 continue
-            if "nautilus_runtime" in path.parts or "nautilus_bridge" in path.parts:
+            if "nautilus_runtime" in path.parts:
                 findings.extend(
                     f"{path}:{token}"
                     for token in wall_clock_tokens
@@ -639,10 +637,7 @@ def test_default_cli_docker_compose_are_livenode_only() -> None:
 def test_large_nautilus_runtime_functions_stay_under_limit() -> None:
     import ast
 
-    roots = (
-        Path("src/polysignal_lab/nautilus_runtime"),
-        Path("src/polysignal_lab/nautilus_bridge"),
-    )
+    roots = (Path("src/polysignal_lab/nautilus_runtime"),)
     findings: list[str] = []
     allowed_existing_boundaries = {
         "native_strategy_exit.py:_build_exit_decision",

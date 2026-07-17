@@ -52,7 +52,7 @@ SUPPORTED_NATIVE_SPOT_SOURCES: Final = frozenset({"disabled", "polymarket_rtds"}
 
 def validate_native_runtime_settings(settings: Settings) -> None:
     """Reject native strategies without a managed spot-data ingress."""
-    spot_source = str(settings.runtime.nautilus.sidecar.spot_source).strip().lower()
+    spot_source = str(settings.runtime.nautilus.spot_data.source).strip().lower()
     if spot_source not in SUPPORTED_NATIVE_SPOT_SOURCES:
         raise RuntimeError(
             f"unsupported native spot source: {spot_source!r}; "

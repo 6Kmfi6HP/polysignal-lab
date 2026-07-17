@@ -24,11 +24,11 @@ from polysignal_lab.nautilus_runtime.node_crash import (
     _dump_thread_stacks,
     _install_crash_logger,
 )
-from polysignal_lab.nautilus_runtime.signal_sidecar import (
+from polysignal_lab.nautilus_runtime.signal_notifications import (
     _stop_nautilus_services,
 )
 
-logger = logging.getLogger("polysignal_lab.nautilus_runtime.node_sidecar")
+logger = logging.getLogger("polysignal_lab.nautilus_runtime.node_lifecycle")
 
 
 def _strategy_names_from_bundle(bundle: NautilusRuntimeBundle) -> list[str]:

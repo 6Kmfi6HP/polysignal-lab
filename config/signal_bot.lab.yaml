@@ -199,8 +199,8 @@ runtime:
     polymarket_data:
       enabled: true
       ws_max_subscriptions_per_connection: 200
-    sidecar:
-      spot_source: polymarket_rtds
+    spot_data:
+      source: polymarket_rtds
     state_persistence:
       enabled: false
       host: 127.0.0.1

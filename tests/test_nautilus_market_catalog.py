@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market, polysignal_lab.domain.market.OutcomeToken, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_bridge.market_catalog.MarketCatalog, polysignal_lab.nautilus_bridge.market_catalog.MarketPairMeta
-Output: test_market_catalog_registers_binary_yes_no_pair, test_register_replacement_removes_previous_token_indexes, test_market_catalog_token_meta_returns_registered_side_metadata, test_market_catalog_rejects_non_binary_market, test_market_catalog_derives_instrument_id_from_condition_and_token, test_market_catalog_uses_injected_instrument_id_resolver, test_market_catalog_resolves_market_from_instrument_id, test_market_catalog_from_sidecar_metadata_keeps_optional_binary_option_fields
+Input: __future__, __future__.annotations, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market, polysignal_lab.domain.market.OutcomeToken, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.market_catalog.MarketCatalog, polysignal_lab.nautilus_runtime.market_catalog.MarketPairMeta
+Output: test_market_catalog_registers_binary_yes_no_pair, test_register_replacement_removes_previous_token_indexes, test_market_catalog_token_meta_returns_registered_side_metadata, test_market_catalog_rejects_non_binary_market, test_market_catalog_derives_instrument_id_from_condition_and_token, test_market_catalog_uses_injected_instrument_id_resolver, test_market_catalog_resolves_market_from_instrument_id, test_market_catalog_from_custom_data_metadata_keeps_optional_binary_option_fields
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -21,7 +21,7 @@ import pytest
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import OutcomeToken
-from polysignal_lab.nautilus_bridge.market_catalog import (
+from polysignal_lab.nautilus_runtime.market_catalog import (
     InstrumentTokenMeta,
     MarketCatalog,
     MarketPairMeta,
@@ -166,7 +166,7 @@ def test_instrument_token_meta_keeps_positional_constructors_compatible() -> Non
     assert meta.outcome is None
 
 
-def test_market_catalog_from_sidecar_metadata_keeps_optional_binary_option_fields() -> None:
+def test_market_catalog_from_custom_data_metadata_keeps_optional_binary_option_fields() -> None:
     market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
     pair = MarketPairMeta.from_metadata(
         SimpleNamespace(

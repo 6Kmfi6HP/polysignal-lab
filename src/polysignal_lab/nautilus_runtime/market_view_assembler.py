@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from typing_extensions import final
 
 from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView, TradeView
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.utils import stable_hash
 
 if TYPE_CHECKING:

@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, pytest, polysignal_lab.nautilus_bridge.state
+Input: __future__, __future__.annotations, pytest, polysignal_lab.nautilus_runtime.state
 Output: state schema v2 encode/decode and migration tests
 Pos: Test Layer - Unit/Integration tests
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from polysignal_lab.nautilus_bridge.state import (
+from polysignal_lab.nautilus_runtime.state import (
     STRATEGY_STATE_VERSION,
     StateSchemaError,
     decode_state,

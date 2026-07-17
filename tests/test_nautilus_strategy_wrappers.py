@@ -23,7 +23,7 @@ from polysignal_lab.alpha.types import (
 )
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     BatchArbitrationResult,

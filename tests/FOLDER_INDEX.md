@@ -43,7 +43,7 @@
 - `test_nautilus_strategy_wrappers.py` - Exports test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data and 23 more
 - `test_nautilus_strategy_base.py` - Exports test_native_strategy_on_save_load_delegates_to_core_via_encode_decode and 72 more
 - `test_nautilus_state.py` - Exports test_state_key_uses_polysignal_strategy_version_format and 4 more
-- `test_nautilus_sidecar_actor.py` - Exports test_custom_data_publisher_publishes_spot_without_local_store and 6 more
+- `test_nautilus_custom_data_actor.py` - Exports test_custom_data_publisher_publishes_spot_without_local_store and 6 more
 - `test_nautilus_safety_boundary.py` - Exports test_default_nautilus_source_avoids_live_execution_symbols and 3 more
 - `test_nautilus_runtime_config.py` - Exports test_runtime_config_defaults_to_nautilus_and_stays_paper_safe and 11 more
 - `test_nautilus_reporting_cache_source.py` - Covers native equity/fills, telemetry completeness, creation-day orders, revisions, and outbox retries

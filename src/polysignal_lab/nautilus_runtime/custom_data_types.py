@@ -20,7 +20,6 @@ from nautilus_trader.model.custom import customdataclass_pyo3
 from nautilus_trader.model.data import CustomData as CythonCustomData
 
 SPOT_DATA_CLIENT_ID = "POLYSIGNAL_SPOT"
-SIDECAR_DATA_CLIENT_ID = "POLYSIGNAL_SIDECAR"
 _register_custom_data_class = cast(
     Callable[[type[object]], None],
     getattr(nautilus_pyo3, "register_custom_data_class"),

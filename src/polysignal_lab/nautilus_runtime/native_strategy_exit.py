@@ -1,5 +1,5 @@
 """
-Input: __future__, dataclasses, datetime, math, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_bridge.market_catalog, polysignal_lab.nautilus_runtime.projections, polysignal_lab.utils
+Input: __future__, dataclasses, datetime, math, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.projections, polysignal_lab.utils
 Output: NativeExitPolicy
 Pos: Native strategy risk-exit policy — sole native exit authority (not contingent brackets)
 
@@ -20,7 +20,7 @@ from polysignal_lab.alpha.types import (
     TradingStateView,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.projections import project_position
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.utils import parse_dt

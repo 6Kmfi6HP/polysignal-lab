@@ -26,11 +26,11 @@ from polysignal_lab.alpha.types import (
 )
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.nautilus_bridge.market_catalog import (
+from polysignal_lab.nautilus_runtime.market_catalog import (
     MarketCatalog,
 )
-from polysignal_lab.nautilus_bridge.market_view_assembler import BookReceiptObserver
-from polysignal_lab.nautilus_bridge.state import load_strategy_state, save_strategy_state
+from polysignal_lab.nautilus_runtime.market_view_assembler import BookReceiptObserver
+from polysignal_lab.nautilus_runtime.state import load_strategy_state, save_strategy_state
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     RejectedDecision,
@@ -60,7 +60,7 @@ from polysignal_lab.nautilus_runtime.native_order import (
 from polysignal_lab.nautilus_runtime.native_strategy_exit import (
     NativeExitPolicy,
 )
-from polysignal_lab.nautilus_runtime.sidecar_data import timestamp_ns
+from polysignal_lab.nautilus_runtime.custom_data_publisher import timestamp_ns
 from polysignal_lab.nautilus_runtime.strategy.custom_data_handlers import route_strategy_data
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
     DecisionPipelineState,
@@ -213,7 +213,7 @@ class PolySignalNativeStrategy(Strategy):
             )
             if (
                 settings.runtime.nautilus.execution_mode != "backtest"
-                and settings.runtime.nautilus.sidecar.spot_source != "disabled"
+                and settings.runtime.nautilus.spot_data.source != "disabled"
             ):
                 spot_data_client_id = _spot_data_client_id()
             config = StrategyConfig(

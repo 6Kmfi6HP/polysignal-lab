@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, collections.abc, datetime, types, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_bridge.market_catalog
+Input: __future__, __future__.annotations, collections.abc, datetime, types, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_runtime.market_catalog
 Output: project_order_event, project_fill_event, project_nautilus_order_event, project_nautilus_fill_event, ApprovedSignalMetricsTracker
 Pos: Application code
 
@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from typing import cast
 
 from polysignal_lab.alpha.types import AlphaFillEvent, AlphaOrderEvent
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _condition_id_from_catalog_instrument,

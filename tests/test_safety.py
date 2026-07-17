@@ -100,15 +100,15 @@ def test_safety_scan_blocks_create_task_in_nautilus_actor_fallback_paths(tmp_pat
     runtime_dir = tmp_path / "src" / "polysignal_lab" / "nautilus_runtime"
     runtime_dir.mkdir(parents=True)
     market_rotation = runtime_dir / "market_rotation.py"
-    sidecar_data = runtime_dir / "sidecar_data.py"
+    publisher_data = runtime_dir / "custom_data_publisher.py"
     node = runtime_dir / "node.py"
     market_rotation.write_text("import asyncio\nasyncio.create_task(job())\n", encoding="utf-8")
-    sidecar_data.write_text("import asyncio\nasyncio.create_task(job())\n", encoding="utf-8")
+    publisher_data.write_text("import asyncio\nasyncio.create_task(job())\n", encoding="utf-8")
     node.write_text("import asyncio\nasyncio.create_task(job())\n", encoding="utf-8")
 
     assert set(scan(tmp_path)) == {
         ("src/polysignal_lab/nautilus_runtime/market_rotation.py", "asyncio.create_task("),
-        ("src/polysignal_lab/nautilus_runtime/sidecar_data.py", "asyncio.create_task("),
+        ("src/polysignal_lab/nautilus_runtime/custom_data_publisher.py", "asyncio.create_task("),
     }
 
 

@@ -10,7 +10,7 @@ from polysignal_lab.alpha.types import (
     TradingStateView,
 )
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 
 
 def cache_has_active_order_dedupe_key(

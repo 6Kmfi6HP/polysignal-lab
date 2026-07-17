@@ -6,7 +6,7 @@ from nautilus_trader.model.enums import OrderStatus as NautilusOrderStatus
 from nautilus_trader.model.enums import TimeInForce
 
 from polysignal_lab.domain.enums import OrderIntent, Side
-from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
+from polysignal_lab.nautilus_runtime.polymarket_adapter import PolymarketEnumParser
 
 
 def test_polymarket_enum_parser_maps_side_to_nautilus_order_side() -> None:

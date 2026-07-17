@@ -28,7 +28,7 @@ from polysignal_lab.nautilus_runtime.node_probes import (
 from polysignal_lab.nautilus_runtime.node_shared import (
     _install_sync_os_signal_handlers,
 )
-from polysignal_lab.nautilus_runtime.node_sidecar import (
+from polysignal_lab.nautilus_runtime.node_lifecycle import (
     _finalize_async_cli_runtime as _finalize_async_cli_runtime,
     _finalize_sync_cli_runtime,
     _notify_async_cli_startup as _notify_async_cli_startup,
@@ -44,7 +44,7 @@ from polysignal_lab.nautilus_runtime.observability import (
     ObservabilityService,
 )
 from polysignal_lab.nautilus_runtime.runtime_registration import enabled_strategy_names
-from polysignal_lab.nautilus_runtime.signal_sidecar import (
+from polysignal_lab.nautilus_runtime.signal_notifications import (
     _notify_accepted_signal,
     _notify_report_result,
 )

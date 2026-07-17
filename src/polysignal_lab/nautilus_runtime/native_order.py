@@ -23,7 +23,7 @@ from nautilus_trader.model.objects import Price, Quantity
 from typing import Protocol, TypeVar, cast
 
 from polysignal_lab.domain.enums import OrderIntent
-from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
+from polysignal_lab.nautilus_runtime.polymarket_adapter import PolymarketEnumParser
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan

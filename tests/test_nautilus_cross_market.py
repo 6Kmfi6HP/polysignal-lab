@@ -364,7 +364,7 @@ def test_cross_market_core_has_no_shadow_basket_state() -> None:
 
 
 def test_cross_market_state_excludes_order_and_fill_state() -> None:
-    from polysignal_lab.nautilus_bridge.state import decode_state, save_strategy_state
+    from polysignal_lab.nautilus_runtime.state import decode_state, save_strategy_state
 
     core = _core()
     raw = save_strategy_state("cross_market_bot", core)

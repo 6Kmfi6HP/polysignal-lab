@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.nautilus_bridge.market_catalog import (
+from polysignal_lab.nautilus_runtime.market_catalog import (
     InstrumentTokenMeta,
     MarketCatalog,
     MarketPairMeta,

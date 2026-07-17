@@ -48,7 +48,7 @@ class MarketPairMeta:
     @classmethod
     def from_market(cls, market: Market) -> "MarketPairMeta":
         if len(market.outcome_tokens) != 2:
-            raise ValueError("Only binary YES/NO markets are supported by the Nautilus bridge")
+            raise ValueError("Only binary YES/NO markets are supported by the Nautilus runtime")
         up_token = market.token_for(Side.UP)
         down_token = market.token_for(Side.DOWN)
         return cls(

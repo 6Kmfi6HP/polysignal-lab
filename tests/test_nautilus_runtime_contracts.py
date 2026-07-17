@@ -30,8 +30,8 @@ from nautilus_runtime_contracts_harness import (
     synthetic_quotes,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
-from polysignal_lab.nautilus_bridge.enum_parser import PolymarketEnumParser
-from polysignal_lab.nautilus_bridge.state import decode_state, save_strategy_state
+from polysignal_lab.nautilus_runtime.polymarket_adapter import PolymarketEnumParser
+from polysignal_lab.nautilus_runtime.state import decode_state, save_strategy_state
 from polysignal_lab.nautilus_runtime.live_node import (
     SANDBOX_EXEC_CLIENT_ID,
     POLYMARKET_CLIENT_ID,

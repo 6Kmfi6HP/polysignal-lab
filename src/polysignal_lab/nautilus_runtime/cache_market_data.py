@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import Callable, cast
 
 from polysignal_lab.alpha.types import SideBookView, TradeView
-from polysignal_lab.nautilus_bridge.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.strategy.helpers import _maybe_float, _nautilus_instrument_id
 
 

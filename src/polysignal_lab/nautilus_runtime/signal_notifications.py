@@ -23,7 +23,7 @@ from typing import Protocol, cast
 from polysignal_lab.app import scheduler_health
 from polysignal_lab.domain.signal import SignalCandidate
 
-logger = logging.getLogger("polysignal_lab.nautilus_runtime.signal_sidecar")
+logger = logging.getLogger("polysignal_lab.nautilus_runtime.signal_notifications")
 
 
 class _PublishResultLike(Protocol):
