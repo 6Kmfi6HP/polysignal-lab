@@ -15,7 +15,6 @@ from typing import cast
 from nautilus_trader.core import nautilus_pyo3 as _pyo3
 
 from polysignal_lab.config import Settings, load_settings
-from polysignal_lab.nautilus_runtime.custom_data_types import SPOT_DATA_CLIENT_ID
 
 SANDBOX_EXEC_CLIENT_ID = "POLYSIGNAL_PM_SANDBOX"
 LIVE_EXEC_CLIENT_ID = "POLYMARKET"
@@ -156,8 +155,6 @@ def _build_live_node(
     environment = _required(Environment, "Environment")
     trader_id_text = settings.runtime.nautilus.trader_id
     trader_id = trader_id_cls(trader_id_text)
-    load_state = False
-    save_state = False
     exec_engine_config = build_exec_engine_config(reconciliation=live)
     data_factory = _required(
         PolymarketDataClientFactory, "PolymarketDataClientFactory"
@@ -169,23 +166,16 @@ def _build_live_node(
     execution_environment = getattr(environment, "LIVE" if live else "SANDBOX")
     builder = (
         live_node_cls.builder(trader_id_text, trader_id, execution_environment)
-        .with_cache_config(build_cache_config(settings))
+        .with_cache_config(build_cache_config())
         .with_data_engine_config(build_data_engine_config())
         .with_exec_engine_config(exec_engine_config)
-        .with_load_state(load_state)
-        .with_save_state(save_state)
+        .with_load_state(True)
+        .with_save_state(True)
         .add_data_client(POLYMARKET_CLIENT_ID, data_factory(), data_config)
     )
     with_risk = getattr(builder, "with_risk_engine_config", None)
     if callable(with_risk):
         builder = with_risk(build_risk_engine_config(settings))
-    spot_config = _build_spot_data_client_config(settings)
-    if spot_config is not None:
-        builder = builder.add_data_client(
-            SPOT_DATA_CLIENT_ID,
-            _spot_data_client_factory(),
-            spot_config,
-        )
     if live:
         builder = builder.add_exec_client(LIVE_EXEC_CLIENT_ID, exec_factory(), exec_config)
     else:
@@ -195,15 +185,10 @@ def _build_live_node(
     return builder.build()
 
 
-def build_cache_config(settings: Settings | None = None) -> object:
+def build_cache_config() -> object:
     cache_config = _import_callable(
         "nautilus_trader.core.nautilus_pyo3", "CacheConfig"
     )
-    if settings is not None and settings.runtime.nautilus.state_persistence.enabled:
-        raise RuntimeError(
-            "installed pyo3 LiveNode does not expose a configurable "
-            "cache backend; state persistence cannot be enabled safely"
-        )
     return cache_config()
 
 
@@ -211,10 +196,7 @@ def build_data_engine_config() -> object:
     live_data_engine_config = _import_callable(
         "nautilus_trader.core.nautilus_pyo3", "LiveDataEngineConfig"
     )
-    return live_data_engine_config(
-        validate_data_sequence=True,
-        external_clients=[SPOT_DATA_CLIENT_ID],
-    )
+    return live_data_engine_config(validate_data_sequence=True)
 
 
 def build_exec_engine_config(*, reconciliation: bool) -> object:
@@ -321,27 +303,6 @@ def build_polymarket_exec_client_config(settings: Settings) -> object:
         "funder": os.environ["POLYMARKET_FUNDER"],
     }
     return config_cls(**kwargs)
-
-
-def _build_spot_data_client_config(settings: Settings) -> object | None:
-    if settings.runtime.nautilus.spot_data.source != "polymarket_rtds":
-        return None
-    config_cls = _import_callable(
-        "polysignal_lab.nautilus_runtime.spot_data_client",
-        "PolymarketRtdsSpotDataClientConfig",
-    )
-    polymarket = settings.data.polymarket
-    return config_cls(
-        rtds_ws_url=polymarket.rtds_ws_url,
-        assets=polymarket.rtds_assets,
-    )
-
-
-def _spot_data_client_factory() -> object:
-    return getattr(
-        importlib.import_module("polysignal_lab.nautilus_runtime.spot_data_client"),
-        "PolymarketRtdsSpotDataClientFactory",
-    )
 
 
 def _validate_real_polymarket_data_factory_credentials() -> None:

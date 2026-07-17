@@ -33,7 +33,7 @@ from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
-from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData
 
 from polysignal_lab.nautilus_runtime.state import decode_state, state_key
 
@@ -791,9 +791,9 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
         PolySignalMarketMetaData,
         PolySignalMarketUniverseData,
         PolySignalPriceToBeatData,
-        PolySignalSpotData,
     )
     from polysignal_lab.nautilus_runtime.decision_messages import DecisionResultData
+    from nautilus_trader.core.nautilus_pyo3 import PolymarketRtdsCryptoPrice
 
     class FakeMsgBus:
         def __init__(self) -> None:
@@ -881,22 +881,14 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
         for data_type, client_id in custom_subscriptions
     } == {
         DecisionResultData.__name__: "None",
-        PolySignalSpotData.__name__: "None",
+        PolymarketRtdsCryptoPrice.__name__: "None",
         PolySignalPriceToBeatData.__name__: "None",
         PolySignalMarketMetaData.__name__: "None",
         PolySignalMarketUniverseData.__name__: "None",
     }
 
     strategy.on_data(
-        PolySignalSpotData(
-            asset="BTC",
-            symbol="BTCUSD",
-            price=100000.0,
-            source="polymarket_rtds",
-            freshness_ms=5,
-            ts_event=1,
-            ts_init=1,
-        )
+        PolymarketRtdsCryptoPrice("BTCUSD", "100000.0", 0, 0, 1, 1)
     )
 
     spot = strategy.custom_data.spot_for("BTC")
@@ -1024,8 +1016,8 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
         PolySignalMarketMetaData,
         PolySignalMarketUniverseData,
         PolySignalPriceToBeatData,
-        PolySignalSpotData,
     )
+    from nautilus_trader.core.nautilus_pyo3 import PolymarketRtdsCryptoPrice
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
@@ -1056,7 +1048,7 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
 
     assert PolySignalMarketMetaData.__name__ in strategy.custom_subscriptions
     assert PolySignalMarketUniverseData.__name__ in strategy.custom_subscriptions
-    assert PolySignalSpotData.__name__ in strategy.custom_subscriptions
+    assert PolymarketRtdsCryptoPrice.__name__ in strategy.custom_subscriptions
     assert PolySignalPriceToBeatData.__name__ in strategy.custom_subscriptions
 
 
@@ -3184,7 +3176,7 @@ def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_on
         InstrumentTokenMeta,
         MarketPairMeta,
     )
-    from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalSpotData
+    from nautilus_trader.core.nautilus_pyo3 import PolymarketRtdsCryptoPrice
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     seen = []
@@ -3232,15 +3224,7 @@ def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_on
     )
 
     _ = cast(_DataHandler, cast(object, strategy)).on_data(
-        PolySignalSpotData(
-            asset="BTC",
-            symbol="BTCUSD",
-            price=100000.0,
-            source="polymarket_rtds",
-            freshness_ms=10,
-            ts_event=1,
-            ts_init=2,
-        )
+        PolymarketRtdsCryptoPrice("BTCUSD", "100000.0", 0, 0, 1, 2)
     )
 
     assert seen == ["condition-btc-5m"]
@@ -3325,6 +3309,7 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
     from polysignal_lab.nautilus_runtime.market_view_assembler import MarketViewAssembler
 
     from polysignal_lab.nautilus_runtime.cache_market_data import NautilusCacheMarketDataProvider
+    from nautilus_trader.core.nautilus_pyo3 import PolymarketRtdsCryptoPrice
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     class FakeLevel:
@@ -3383,15 +3368,7 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
     )
     custom_data = StrategyCustomDataState()
     custom_data.apply(
-        PolySignalSpotData(
-            asset="BTC",
-            symbol="BTCUSD",
-            price=100000.0,
-            source="polymarket_rtds",
-            freshness_ms=10,
-            ts_event=0,
-            ts_init=0,
-        )
+        PolymarketRtdsCryptoPrice("BTCUSD", "100000.0", 0, 0, 1, 2)
     )
     custom_data.apply(
         PolySignalPriceToBeatData(

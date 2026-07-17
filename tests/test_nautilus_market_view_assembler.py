@@ -23,7 +23,8 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_runtime.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
-from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+from nautilus_trader.core.nautilus_pyo3 import PolymarketRtdsCryptoPrice
+from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData
 from factories import MarketFactoryConfig, sample_market
 
 
@@ -53,16 +54,7 @@ def _components() -> tuple[MarketViewAssembler, MarketPairMeta, FakeBookProvider
 
 def _apply_custom_data(custom_data: StrategyCustomDataState, condition_id: str) -> None:
     custom_data.apply(
-        PolySignalSpotData(
-            asset="BTC",
-            symbol="BTCUSD",
-            price=100120.0,
-            source="polymarket_rtds",
-            freshness_ms=30,
-            ts_event=1,
-            ts_init=int(datetime(2026, 1, 1, tzinfo=UTC).timestamp() * 1_000_000_000)
-            - 30_000_000,
-        )
+        PolymarketRtdsCryptoPrice("BTCUSD", "100120.0", 0, 0, 1, int(datetime(2026, 1, 1, tzinfo=UTC).timestamp() * 1_000_000_000) - 30_000_000)
     )
     custom_data.apply(
         PolySignalPriceToBeatData(

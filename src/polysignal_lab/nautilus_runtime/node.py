@@ -87,7 +87,6 @@ def _build_nautilus_runtime_bundle(
         node=build_runtime_node(settings),
         observability=observability,
         strategy_names=enabled_strategy_names(settings),
-        websocket_tasks=[],
     )
 
 

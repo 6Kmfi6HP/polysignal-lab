@@ -49,8 +49,8 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
-    PolySignalSpotData,
     custom_data_type,
+    polymarket_rtds_crypto_price_type,
     unwrap_custom_data,
     wrap_custom_data,
 )
@@ -124,7 +124,6 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _identity_instrument_id,
     _market_view_ready,
     _nautilus_instrument_id,
-    _spot_data_client_id,
     _subscribe_custom_data,
     classify_project_owned_data,
 )
@@ -187,7 +186,6 @@ class PolySignalNativeStrategy(Strategy):
         readiness_callback: Callable[[str, bool, dict[str, object]], None] | None = None,
         unsubscribe_exited: bool = True,
         l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
-        spot_data_client_id: object | None = None,
     ) -> None:
         from nautilus_trader.core.nautilus_pyo3 import StrategyConfig, StrategyId
 
@@ -211,11 +209,6 @@ class PolySignalNativeStrategy(Strategy):
             orderbook_staleness_ms = float(
                 settings.data.polymarket.max_book_staleness_ms
             )
-            if (
-                settings.runtime.nautilus.execution_mode != "backtest"
-                and settings.runtime.nautilus.spot_data.source != "disabled"
-            ):
-                spot_data_client_id = _spot_data_client_id()
             config = StrategyConfig(
                 strategy_id=StrategyId(str(config.strategy_id)),
                 order_id_tag=str(config.order_id_tag),
@@ -245,7 +238,6 @@ class PolySignalNativeStrategy(Strategy):
             readiness_callback=readiness_callback,
             l1_book_snapshot_interval_ms=l1_book_snapshot_interval_ms,
             orderbook_staleness_ms=orderbook_staleness_ms,
-            spot_data_client_id=spot_data_client_id,
         )
         self._initialize_runtime_state(registry, unsubscribe_exited=unsubscribe_exited)
 
@@ -282,7 +274,6 @@ class PolySignalNativeStrategy(Strategy):
         readiness_callback: Callable[[str, bool, dict[str, object]], None] | None,
         l1_book_snapshot_interval_ms: int,
         orderbook_staleness_ms: float,
-        spot_data_client_id: object | None,
     ) -> None:
         self.fixed_stake_usdc = fixed_stake_usdc
         self.exit_policy = NativeExitPolicy.from_config(exit_model)
@@ -294,7 +285,6 @@ class PolySignalNativeStrategy(Strategy):
         self.progress_callback = progress_callback
         self.readiness_callback = readiness_callback
         self.orderbook_staleness_ms = float(orderbook_staleness_ms)
-        self.spot_data_client_id = spot_data_client_id
 
     def _initialize_runtime_state(
         self,
@@ -614,11 +604,7 @@ class PolySignalNativeStrategy(Strategy):
             bind_cache(self.cache)
         _subscribe_custom_data(self, DecisionResultData)
         self._subscribe_market_conditions(self._startup_condition_ids)
-        _subscribe_custom_data(
-            self,
-            PolySignalSpotData,
-            client_id=self.spot_data_client_id,
-        )
+        _subscribe_custom_data(self, polymarket_rtds_crypto_price_type())
         _subscribe_custom_data(
             self,
             PolySignalPriceToBeatData,

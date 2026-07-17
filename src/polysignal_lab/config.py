@@ -143,10 +143,7 @@ class PolymarketDataConfig(BaseModel):
     chain_id: int = 137
     market_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     use_market_ws: bool = True
-    use_crypto_price_api: bool = False
     rtds_ws_url: str = "wss://ws-live-data.polymarket.com"
-    use_rtds_ws: bool = True
-    rtds_assets: tuple[str, ...] = ("BTC", "ETH", "SOL", "XRP")
     rest_rate_limit_per_sec: float = 8.0
     max_book_staleness_ms: int = 60000  # 60s — books refetched every ~30-40s via REST
     max_market_metadata_staleness_ms: int = 10000
@@ -242,7 +239,6 @@ class NautilusSpotDataConfig(BaseModel):
 
 
 class NautilusDataClientConfig(BaseModel):
-    enabled: bool = True
     ws_max_subscriptions_per_connection: int = 200
 
 
@@ -252,15 +248,6 @@ class NautilusMarketRotationConfig(BaseModel):
     include_next_periods: int = 1
     stale_grace_sec: int = 5
     unsubscribe_exited: bool = True
-
-
-class NautilusStatePersistenceConfig(BaseModel):
-    enabled: bool = False
-    host: str = "127.0.0.1"
-    port: int = 6379
-    username_env: str | None = None
-    password_env: str | None = None
-    ssl: bool = False
 
 
 class NautilusBacktestConfig(BaseModel):
@@ -297,9 +284,6 @@ class NautilusRuntimeConfig(BaseModel):
     spot_data: NautilusSpotDataConfig = Field(default_factory=NautilusSpotDataConfig)
     market_rotation: NautilusMarketRotationConfig = Field(
         default_factory=NautilusMarketRotationConfig
-    )
-    state_persistence: NautilusStatePersistenceConfig = Field(
-        default_factory=NautilusStatePersistenceConfig
     )
 
     @field_validator("sandbox_base_currency")

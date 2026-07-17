@@ -16,7 +16,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
-    PolySignalSpotData,
+    is_polymarket_rtds_crypto_price,
     unwrap_custom_data,
 )
 from polysignal_lab.nautilus_runtime.strategy.data_boundary import DataBoundaryClassification
@@ -81,7 +81,10 @@ def handle_custom_data(
     *,
     subscription_manager: _SubscriptionManagerLike,
 ) -> bool:
-    if not isinstance(data, (PolySignalSpotData, PolySignalPriceToBeatData)):
+    if not (
+        is_polymarket_rtds_crypto_price(data)
+        or isinstance(data, PolySignalPriceToBeatData)
+    ):
         return False
     result = strategy.custom_data.apply(data)
     if result.spot_asset is not None:

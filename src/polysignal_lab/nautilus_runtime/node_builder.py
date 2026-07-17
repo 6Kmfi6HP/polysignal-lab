@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast, runtime_checkable
@@ -39,7 +38,6 @@ class NautilusRuntimeBundle:
     node: object
     observability: ObservabilityService
     strategy_names: tuple[str, ...]
-    websocket_tasks: list[asyncio.Task[object]]
 
 
 def build_runtime_node(

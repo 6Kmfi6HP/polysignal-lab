@@ -22,7 +22,6 @@ from polysignal_lab.nautilus_runtime.live_node import (
     SANDBOX_EXEC_CLIENT_ID,
     POLYMARKET_CLIENT_ID,
     assert_no_live_polymarket_execution,
-    build_cache_config,
     build_exec_engine_config,
     build_live_execution_node,
     build_sandbox_live_node,
@@ -261,6 +260,8 @@ def test_build_sandbox_live_node_uses_polymarket_data_and_sandbox_exec(
     assert builder.exec_clients[0][0] == SANDBOX_EXEC_CLIENT_ID
     assert SANDBOX_EXEC_CLIENT_ID != POLYMARKET_CLIENT_ID
     assert getattr(builder.kwargs["exec_engine"], "reconciliation") is False
+    assert builder.kwargs["load_state"] is True
+    assert builder.kwargs["save_state"] is True
 
     data_config = builder.data_clients[0][2]
     exec_config = builder.exec_clients[0][2]
@@ -274,16 +275,14 @@ def test_build_sandbox_live_node_uses_official_rtds_via_polymarket_config(
     _patch_live_node_fakes(monkeypatch)
     settings = Settings()
     settings.runtime.nautilus.spot_data.source = "polymarket_rtds"
-    settings.data.polymarket.rtds_assets = ("BTC", "ETH")
     instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 
     node = build_sandbox_live_node(settings, instrument_config=instrument_config)
 
     builder = cast(FakeLiveNode, node).builder
-    assert [item[0] for item in builder.data_clients] == ["POLYMARKET", "POLYSIGNAL_SPOT"]
+    assert [item[0] for item in builder.data_clients] == ["POLYMARKET"]
     market_config = builder.data_clients[0][2]
     assert getattr(market_config, "base_url_rtds") == settings.data.polymarket.rtds_ws_url
-    assert builder.data_clients[1][0] == "POLYSIGNAL_SPOT"
 
 
 def test_build_polymarket_data_client_config_uses_dynamic_loading_without_bulk_refresh(
@@ -316,17 +315,6 @@ def test_build_sandbox_live_node_bounds_cache_config(
     builder = cast(FakeLiveNode, node).builder
     cache = builder.kwargs["cache"]
     assert getattr(cache, "attr_name") == "CacheConfig"
-
-
-def test_build_cache_config_rejects_unsupported_pyo3_state_persistence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patch_live_node_fakes(monkeypatch)
-    settings = Settings()
-    settings.runtime.nautilus.state_persistence.enabled = True
-
-    with pytest.raises(RuntimeError, match="does not expose a configurable cache backend"):
-        build_cache_config(settings)
 
 
 def test_build_sandbox_exec_client_config_uses_paper_venue(
@@ -472,7 +460,6 @@ async def test_run_nautilus_cli_async_starts_and_stops_observability_writer(
         _ = settings
         return SimpleNamespace(
             node=FakeNode(),
-            websocket_tasks=[],
             context=SimpleNamespace(settings=settings),
             observability=FakeObservability(),
             strategy_names=(),

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pyarrow as pa
 import pytest
+from nautilus_trader.serialization.arrow.serializer import ArrowSerializer
 from nautilus_trader.core import nautilus_pyo3
 
 from factories import sample_market_view
@@ -28,6 +30,7 @@ from polysignal_lab.nautilus_runtime.decision_policy_actor import (
     DecisionPolicyActor,
     DecisionPolicyActorConfig,
 )
+from polysignal_lab.nautilus_runtime.state import decode_state
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     custom_data_type,
     unwrap_custom_data,
@@ -75,6 +78,68 @@ def test_candidate_message_is_immutable_and_round_trips_domain_values() -> None:
     assert unwrap_custom_data(wrapped) is message
     with pytest.raises(AttributeError, match="immutable"):
         message.request_id = "mutated"
+
+
+def test_decision_messages_round_trip_arrow_and_catalog(tmp_path) -> None:
+    view = sample_market_view()
+    decision = AlphaDecision(
+        strategy="ptb_diff",
+        asset=view.asset,
+        timeframe=view.timeframe,
+        market_id=view.market_id,
+        market_slug=view.market_slug,
+        condition_id=view.condition_id,
+        token_id=view.up.token_id,
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.51,
+        max_entry_price=0.52,
+        seconds_to_close=view.seconds_to_close,
+        data_freshness_ms=view.freshness.max_ms,
+        reason_codes=("PTB_EDGE",),
+        metrics={"edge": 0.1},
+    )
+    messages = (
+        DecisionCandidateData.from_domain(
+            request_id="request-1",
+            batch_id="batch-1",
+            batch_index=0,
+            batch_size=1,
+            decision=decision,
+            view=view,
+            ts_event=11,
+            ts_init=12,
+        ),
+        DecisionResultData.from_approved(
+            request_id="request-1",
+            signal=candidate_from_decision(decision, view),
+            ts_event=13,
+            ts_init=14,
+        ),
+        DecisionResultData.from_rejected(
+            request_id="request-2",
+            rejected=RejectedDecision(
+                reason_code="ARBITRATION_SUPPRESSED",
+                detail={"strategy": decision.strategy},
+            ),
+            ts_event=15,
+            ts_init=16,
+        ),
+    )
+
+    catalog = nautilus_pyo3.ParquetDataCatalog(str(tmp_path))
+    for message in messages:
+        batch = ArrowSerializer.serialize(message)
+        restored = ArrowSerializer.deserialize(type(message), batch)
+        catalog.write_custom_data([wrap_custom_data(message)])
+        catalog_restored = catalog.query_custom_data(type(message).__name__)
+
+        assert isinstance(batch, pa.RecordBatch)
+        assert batch.schema == type(message)._schema
+        assert restored == [message]
+        assert unwrap_custom_data(catalog_restored[-1]) == message
+        with pytest.raises(AttributeError, match="immutable"):
+            restored[0].request_id = "mutated"
 
 
 def test_policy_actor_evaluates_the_complete_batch_as_single_owner() -> None:
@@ -138,6 +203,28 @@ def test_policy_actor_builds_its_only_policy_from_serialized_config() -> None:
 
     assert str(actor.config.actor_id) == DecisionPolicyActor.POLICY_OWNER_ID
     assert isinstance(actor.policy, DecisionPolicy)
+
+
+def test_policy_actor_state_round_trip_excludes_pending_batches() -> None:
+    policy = DecisionPolicy(
+        disabled_strategies=("disabled",),
+        dependencies={"dependent": ("disabled",)},
+    )
+    actor = DecisionPolicyActor(policy=policy)
+    actor._pending_batches["unfinished"] = {}
+
+    state = actor.on_save()
+
+    assert decode_state(actor.state_name, state) == {
+        "policy": {
+            "disabled_strategies": ["disabled"],
+            "strategy_dependencies": {"dependent": ["disabled"]},
+        }
+    }
+    restored = DecisionPolicyActor(policy=DecisionPolicy())
+    restored.on_load(state)
+    assert restored.policy.save_state() == policy.save_state()
+    assert restored._pending_batches == {}
 
 
 def test_policy_actor_returns_one_result_for_every_batch_request() -> None:

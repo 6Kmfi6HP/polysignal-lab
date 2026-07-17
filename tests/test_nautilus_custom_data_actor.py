@@ -4,13 +4,13 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from nautilus_trader.core import nautilus_pyo3
+from nautilus_trader.core.nautilus_pyo3 import PolymarketRtdsCryptoPrice
 
 from polysignal_lab.config import Settings
 from polysignal_lab.nautilus_runtime import market_rotation
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalPriceToBeatData,
-    PolySignalSpotData,
     custom_data_type,
     unwrap_custom_data,
 )
@@ -131,21 +131,12 @@ def test_market_rotation_actor_subscribes_to_managed_rtds_spot(
     actor.on_start()
     published.clear()
     actor.on_data(
-        PolySignalSpotData(
-            asset="BTC",
-            symbol="BTCUSD",
-            price=100000.0,
-            source="polymarket_rtds",
-            freshness_ms=0,
-            ts_event=1,
-            ts_init=1,
-        )
+        PolymarketRtdsCryptoPrice("BTCUSD", "100000.0", 0, 0, 1, 1)
     )
 
     assert subscriptions == [
-        (custom_data_type(PolySignalSpotData), subscriptions[0][1]),
+        (custom_data_type(PolymarketRtdsCryptoPrice), None),
     ]
-    assert str(subscriptions[0][1]) == "POLYSIGNAL_SPOT"
     assert published == []
 
 
@@ -158,3 +149,63 @@ def test_market_rotation_actor_does_not_construct_legacy_rtds_feed() -> None:
     assert actor is not None
     assert not hasattr(actor, "rtds_feed")
     assert not hasattr(market_rotation, "PolymarketRtdsPriceFeed")
+
+
+def test_pyo3_engine_routes_rtds_custom_data_by_data_type() -> None:
+    rtds_type = custom_data_type(PolymarketRtdsCryptoPrice)
+    other_type = nautilus_pyo3.DataType("OtherSpotPrice")
+
+    class ProbeActor(nautilus_pyo3.DataActor):
+        def __init__(self) -> None:
+            super().__init__(
+                nautilus_pyo3.DataActorConfig(
+                    actor_id=nautilus_pyo3.ActorId("RTDS-Probe")
+                )
+            )
+            self.received: list[object] = []
+
+        def on_start(self) -> None:
+            self.subscribe_data(rtds_type)
+
+        def on_data(self, data: object) -> None:
+            self.received.append(data)
+
+    class PublisherActor(nautilus_pyo3.DataActor):
+        def __init__(self) -> None:
+            super().__init__(
+                nautilus_pyo3.DataActorConfig(
+                    actor_id=nautilus_pyo3.ActorId("RTDS-Publisher")
+                )
+            )
+
+        def on_start(self) -> None:
+            payload = PolymarketRtdsCryptoPrice("BTCUSD", "100000.0", 0, 0, 1, 2)
+            self.publish_data(
+                other_type,
+                nautilus_pyo3.CustomData(other_type, payload),
+            )
+            self.publish_data(
+                rtds_type,
+                nautilus_pyo3.CustomData(rtds_type, payload),
+            )
+
+    engine = nautilus_pyo3.BacktestEngine(
+        nautilus_pyo3.BacktestEngineConfig(
+            trader_id=nautilus_pyo3.TraderId("RTDS-DISPATCH-001"),
+            bypass_logging=True,
+        )
+    )
+    probe = ProbeActor()
+    engine.add_actor(probe)
+    engine.add_actor(PublisherActor())
+
+    try:
+        engine.run()
+
+        assert len(probe.received) == 1
+        envelope = probe.received[0]
+        assert isinstance(envelope, nautilus_pyo3.CustomData)
+        assert envelope.data_type == rtds_type
+        assert isinstance(unwrap_custom_data(envelope), PolymarketRtdsCryptoPrice)
+    finally:
+        engine.dispose()

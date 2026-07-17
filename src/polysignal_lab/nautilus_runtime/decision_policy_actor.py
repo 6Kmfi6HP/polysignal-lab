@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Final, cast
 
 from nautilus_trader.common.config import ActorConfig
@@ -22,6 +22,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.runtime_configs import importable_config_dict
+from polysignal_lab.nautilus_runtime.state import JsonValue, decode_state, encode_state
 from polysignal_lab.signal_layer.arbiter import SignalArbiter
 from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
@@ -56,6 +57,7 @@ class DecisionPolicyActorConfig(ActorConfig, frozen=True):
 
 class DecisionPolicyActor(DataActor):
     POLICY_OWNER_ID = _DEFAULT_ACTOR_ID
+    state_name = "decision_policy"
 
     def __new__(
         cls,
@@ -110,6 +112,17 @@ class DecisionPolicyActor(DataActor):
             self._publish(result)
 
     def on_stop(self) -> None:
+        self._pending_batches.clear()
+
+    def on_save(self) -> dict[str, bytes]:
+        policy_state = cast(Mapping[str, JsonValue], self.policy.save_state())
+        return encode_state(self.state_name, {"policy": dict(policy_state)})
+
+    def on_load(self, state: Mapping[str, bytes]) -> None:
+        payload = cast(Mapping[str, object], decode_state(self.state_name, state))
+        policy_state = payload.get("policy", {})
+        if isinstance(policy_state, Mapping):
+            self.policy.load_state(policy_state)
         self._pending_batches.clear()
 
     def evaluate_batch(

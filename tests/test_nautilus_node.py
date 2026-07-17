@@ -376,7 +376,6 @@ async def test_async_cli_uses_bundle_strategy_names_and_stops_observability(
         node=SimpleNamespace(run=lambda: None),
         observability=cast(Any, observability),
         strategy_names=("one_cent_buy",),
-        websocket_tasks=[],
     )
     async def fake_build(_settings: Settings) -> NautilusRuntimeBundle:
         return bundle
@@ -399,7 +398,6 @@ def test_bundle_strategy_names_have_no_component_introspection() -> None:
         node=object(),
         observability=cast(Any, _Observability()),
         strategy_names=("one_cent_buy", "ptb_diff"),
-        websocket_tasks=[],
     )
 
     assert enabled_strategy_names(_settings_with_strategy()) == ("one_cent_buy",)

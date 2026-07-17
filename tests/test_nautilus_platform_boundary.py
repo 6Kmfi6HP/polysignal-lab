@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, importlib, sys, tomllib, pytest, pathlib, pathlib.Path, typing, typing.cast
-Output: test_default_import_does_not_require_nautilus, test_nautilus_node_and_strategies_do_not_import_legacy_execution, test_nautilus_extra_is_optional_and_polymarket_scoped, test_nautilus_docker_and_lock_avoid_git_source_builds, test_cli_exposes_nautilus_mode_and_script, test_default_source_keeps_forbidden_live_symbols_out_of_runtime, test_default_nautilus_runtime_source_avoids_local_paper_executors, test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources, test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime_layers, test_nautilus_runtime_duplicate_platform_modules_are_deleted
+Input: __future__, __future__.annotations, ast, importlib, re, sys, tomllib, pathlib, pathlib.Path, typing, typing.cast
+Output: test_default_import_does_not_require_nautilus, test_nautilus_node_and_strategies_do_not_import_legacy_execution, test_nautilus_is_required_dependency_for_default_runtime, test_nautilus_docker_and_lock_avoid_git_source_builds, test_cli_exposes_nautilus_mode_and_script, test_default_source_keeps_forbidden_live_symbols_out_of_runtime, test_default_nautilus_runtime_source_avoids_local_paper_executors, test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources, test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime_layers, test_nautilus_runtime_duplicate_platform_modules_are_deleted, test_nautilus_runtime_has_single_managed_rtds_entrypoint
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,12 +14,15 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+import ast
 import importlib
+import re
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
 from typing import cast
+
 
 from polysignal_lab.app import main as app_main
 
@@ -193,6 +196,50 @@ def test_nautilus_runtime_duplicate_platform_modules_are_deleted() -> None:
     )
 
     assert [str(path) for path in duplicate_modules if path.exists()] == []
+
+
+def test_nautilus_runtime_has_single_managed_rtds_entrypoint() -> None:
+    runtime_root = Path("src/polysignal_lab/nautilus_runtime")
+    deleted_modules = (
+        runtime_root / "spot_data_client.py",
+        runtime_root / "spot_data_client" / "__init__.py",
+    )
+    forbidden_identifiers = {
+        "PolySignalSpotData",
+        "PolymarketRtdsSpotDataClient",
+        "POLYSIGNAL_SPOT",
+    }
+    findings = [str(path) for path in deleted_modules if path.exists()]
+
+    for path in runtime_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "websockets" or "spot_data_client" in alias.name.split("."):
+                        findings.append(f"{path}:{node.lineno}:import:{alias.name}")
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if module == "websockets" or module.startswith("websockets."):
+                    findings.append(f"{path}:{node.lineno}:import:{module}")
+                if "spot_data_client" in module.split("."):
+                    findings.append(f"{path}:{node.lineno}:import:{module}")
+            elif isinstance(node, (ast.Name, ast.Attribute)):
+                identifier = node.id if isinstance(node, ast.Name) else node.attr
+                if identifier in forbidden_identifiers:
+                    findings.append(f"{path}:{node.lineno}:identifier:{identifier}")
+            elif isinstance(node, ast.Constant) and node.value == "POLYSIGNAL_SPOT":
+                findings.append(f"{path}:{node.lineno}:literal:POLYSIGNAL_SPOT")
+
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    direct_dependencies = cast(list[str], pyproject["project"]["dependencies"])
+    findings.extend(
+        f"pyproject.toml:direct-dependency:{dependency}"
+        for dependency in direct_dependencies
+        if re.split(r"[\s\[<>=!~;@]", dependency, maxsplit=1)[0].lower() == "websockets"
+    )
+
+    assert findings == []
 
 
 def test_nautilus_runtime_source_has_no_platform_truth_source_terms() -> None:
@@ -583,6 +630,8 @@ def test_final_v2_single_track_static_gates() -> None:
         "_subscription_method",
         "_resolve_subscribe_data",
         "PolymarketSettlementConfig",
+        "PolymarketRtdsSpotDataClient",
+        "POLYSIGNAL_SPOT",
     )
     wall_clock_tokens = (
         "datetime.now(",
@@ -610,6 +659,115 @@ def test_final_v2_single_track_static_gates() -> None:
                     for token in wall_clock_tokens
                     if token in text
                 )
+    assert findings == []
+
+
+def test_custom_data_registration_requires_real_arrow_codecs() -> None:
+    scanned = (
+        Path("src/polysignal_lab/nautilus_runtime/custom_data_types.py"),
+        Path("src/polysignal_lab/nautilus_runtime/decision_messages.py"),
+    )
+    forbidden = (
+        "pa.schema([])",
+        "_ARROW_REGISTRATION_SCHEMA",
+        "_unsupported_arrow",
+        "Arrow serialization is unsupported",
+    )
+    findings: list[str] = []
+    for path in scanned:
+        source = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in source)
+        tree = ast.parse(source, filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and any(
+                isinstance(base, ast.Name) and base.id == "Data" for base in node.bases
+            ):
+                assignments = {
+                    target.id
+                    for item in node.body
+                    if isinstance(item, (ast.Assign, ast.AnnAssign))
+                    for target in (item.targets if isinstance(item, ast.Assign) else [item.target])
+                    if isinstance(target, ast.Name)
+                }
+                required = {
+                    "_schema",
+                    "to_arrow",
+                    "from_arrow",
+                    "encode_record_batch_py",
+                    "decode_record_batch_py",
+                }
+                findings.extend(
+                    f"{path}:{node.name}:missing:{name}"
+                    for name in sorted(required - assignments)
+                )
+    assert findings == []
+
+
+def test_live_node_component_state_is_not_hard_disabled() -> None:
+    source = Path("src/polysignal_lab/nautilus_runtime/live_node.py").read_text(
+        encoding="utf-8"
+    )
+    forbidden = ("with_load_state(False)", "with_save_state(False)")
+    required = ("with_load_state(True)", "with_save_state(True)")
+
+    assert [token for token in forbidden if token in source] == []
+    assert [token for token in required if token not in source] == []
+
+
+def test_tester_contracts_do_not_restore_false_unavailable_premise() -> None:
+    source = Path("tests/test_nautilus_runtime_contracts.py").read_text(encoding="utf-8")
+    forbidden = (
+        "test_datatester_exectester_pyo3_matrix_unavailable",
+        "DataTester unavailable",
+        "ExecTester unavailable",
+    )
+    required = (
+        "test_datatester_is_constructible_with_polymarket_data_contract",
+        "test_exectester_is_constructible_with_safe_local_contract",
+        "test_tester_importable_registration_reports_native_type_boundary",
+    )
+
+    assert [token for token in forbidden if token in source] == []
+    assert [token for token in required if token not in source] == []
+
+
+def test_deleted_precision_and_local_venue_io_modules_stay_deleted() -> None:
+    runtime_root = Path("src/polysignal_lab/nautilus_runtime")
+    deleted = (
+        runtime_root / "market_data_precision.py",
+        runtime_root / "sandbox_precision_client.py",
+        runtime_root / "spot_data_client.py",
+    )
+    forbidden = (
+        "market_data_precision",
+        "sandbox_precision_client",
+        "spot_data_client",
+        "normalize_market_data_to_instrument",
+        "PolymarketRtdsSpotDataClient",
+    )
+    findings = [str(path) for path in deleted if path.exists()]
+    for path in runtime_root.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in source)
+    assert findings == []
+
+
+def test_runtime_has_no_local_order_position_or_fill_truth() -> None:
+    runtime_root = Path("src/polysignal_lab/nautilus_runtime")
+    forbidden = (
+        "class LocalOrderStore",
+        "class LocalPositionStore",
+        "class LocalFillStore",
+        "self._orders =",
+        "self._positions =",
+        "self._fills =",
+        "cache.add_order",
+        "cache.add_position",
+    )
+    findings: list[str] = []
+    for path in runtime_root.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in source)
     assert findings == []
 
 

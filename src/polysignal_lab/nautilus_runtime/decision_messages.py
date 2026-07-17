@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+
+import pyarrow as pa
 from typing import Final
 
 from nautilus_trader.core.data import Data
@@ -11,9 +13,11 @@ from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
 from polysignal_lab.nautilus_runtime.custom_data_types import (
-    _ARROW_REGISTRATION_SCHEMA,
     _FrozenData,
-    _unsupported_arrow,
+    _decode_record_batch_py,
+    _encode_record_batch_py,
+    _from_arrow,
+    _to_arrow,
     register_custom_data_type,
 )
 
@@ -30,9 +34,23 @@ class DecisionCandidateData(Data, _FrozenData):
     batch_size: int = 0
     decision_json: str = ""
     view_json: str = ""
-    _schema = _ARROW_REGISTRATION_SCHEMA
-    to_arrow = _unsupported_arrow
-    from_arrow = classmethod(_unsupported_arrow)
+    _schema = pa.schema(
+        [
+            ("request_id", pa.string()),
+            ("batch_id", pa.string()),
+            ("batch_index", pa.int64()),
+            ("batch_size", pa.int64()),
+            ("decision_json", pa.string()),
+            ("view_json", pa.string()),
+            ("type", pa.string()),
+            ("ts_event", pa.int64()),
+            ("ts_init", pa.int64()),
+        ]
+    )
+    to_arrow = _to_arrow
+    from_arrow = classmethod(_from_arrow)
+    encode_record_batch_py = _encode_record_batch_py
+    decode_record_batch_py = classmethod(_decode_record_batch_py)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_frozen", True)
@@ -74,9 +92,22 @@ class DecisionResultData(Data, _FrozenData):
     signal_json: str = ""
     reason_code: str = ""
     detail_json: str = "{}"
-    _schema = _ARROW_REGISTRATION_SCHEMA
-    to_arrow = _unsupported_arrow
-    from_arrow = classmethod(_unsupported_arrow)
+    _schema = pa.schema(
+        [
+            ("request_id", pa.string()),
+            ("approved", pa.bool_()),
+            ("signal_json", pa.string()),
+            ("reason_code", pa.string()),
+            ("detail_json", pa.string()),
+            ("type", pa.string()),
+            ("ts_event", pa.int64()),
+            ("ts_init", pa.int64()),
+        ]
+    )
+    to_arrow = _to_arrow
+    from_arrow = classmethod(_from_arrow)
+    encode_record_batch_py = _encode_record_batch_py
+    decode_record_batch_py = classmethod(_decode_record_batch_py)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_frozen", True)

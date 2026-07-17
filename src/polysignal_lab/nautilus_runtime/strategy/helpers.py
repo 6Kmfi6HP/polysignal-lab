@@ -19,7 +19,6 @@ from typing import Protocol, cast
 
 from nautilus_trader.core.nautilus_pyo3 import (
     BookType as _Pyo3BookType,
-    ClientId as _Pyo3ClientId,
     DataType as _Pyo3DataType,
     InstrumentId as _Pyo3InstrumentId,
 )
@@ -32,8 +31,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
-    PolySignalSpotData,
-    SPOT_DATA_CLIENT_ID,
+    is_polymarket_rtds_crypto_price,
 )
 from polysignal_lab.nautilus_runtime.projections import _tags  # noqa: F401
 
@@ -57,9 +55,6 @@ def _nautilus_book_type(value: str) -> object:
     return _book_type_from_str(value)
 
 
-def _data_client_id(value: str) -> object:
-    return _Pyo3ClientId(value)
-
 DEFAULT_NATIVE_DATA_NAMES = ("quote_ticks", "trade_ticks", "order_book_deltas")
 MISSING_PROJECTIONS_ERROR = "PolySignalNativeStrategy requires injected registry and assembler projections"
 EVALUATION_HEARTBEAT_TIMER_NAME = "polysignal_evaluation_heartbeat"
@@ -76,10 +71,9 @@ class DataBoundaryClassification(Enum):
 
 
 def classify_project_owned_data(data: object) -> DataBoundaryClassification:
-    if isinstance(
+    if is_polymarket_rtds_crypto_price(data) or isinstance(
         data,
         (
-            PolySignalSpotData,
             PolySignalPriceToBeatData,
             PolySignalMarketMetaData,
             PolySignalMarketUniverseData,
@@ -335,10 +329,6 @@ def event_datetime(value: object) -> datetime:
         return datetime.fromtimestamp(value / 1_000_000_000, UTC)
     except (OverflowError, OSError, ValueError) as exc:
         raise ValueError("ts_event must be a positive Unix nanosecond timestamp") from exc
-
-
-def _spot_data_client_id() -> object | None:
-    return _data_client_id(SPOT_DATA_CLIENT_ID)
 
 
 def _subscribe_custom_data(

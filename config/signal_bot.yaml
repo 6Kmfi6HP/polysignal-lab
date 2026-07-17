@@ -210,7 +210,6 @@ runtime:
     intercept_os_signals: false
     sandbox_book_type: L2_MBP
     polymarket_data:
-      enabled: true
       ws_max_subscriptions_per_connection: 200
     spot_data:
       source: polymarket_rtds

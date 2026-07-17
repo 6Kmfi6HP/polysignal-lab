@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone, typing, typing.Protocol
-Output: window_for_market, AnchorWindow, AnchorPriceStore, AnchorPriceService
+Output: window_for_market, AnchorWindow, AnchorPriceStore, capture_anchor_price, AnchorPriceService
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,12 +14,14 @@ Pos: Application code
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Protocol
+from typing import Callable, Protocol, cast
 
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.market import Market
+from polysignal_lab.domain.spot import SpotPrice
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +64,53 @@ class AnchorPriceStore(Protocol):
     ) -> AnchorPrice | None: ...
 
 
+def capture_anchor_price(
+    spots: Sequence[SpotPrice],
+    market: Market,
+    store: AnchorPriceStore,
+    *,
+    max_lag_ms: int = 2_000,
+    latest_by_key: dict[str, AnchorPrice] | None = None,
+) -> AnchorPrice | None:
+    window = window_for_market(market)
+    if window is None or not spots:
+        return None
+
+    best = min(
+        spots,
+        key=lambda spot: abs(
+            ((spot.event_time or spot.received_at) - window.window_start).total_seconds()
+        ),
+    )
+    best_time = best.event_time or best.received_at
+    lag_ms = int(abs((best_time - window.window_start).total_seconds()) * 1000)
+    source = str(getattr(best, "source", "binance")).removesuffix("_spot")
+    anchor = AnchorPrice(
+        asset=market.asset.upper(),
+        timeframe=market.timeframe,
+        market_slug=market.market_slug,
+        window_start=window.window_start,
+        window_end=window.window_end,
+        price=best.price if lag_ms <= max_lag_ms else None,
+        source=source,
+        verified=lag_ms <= max_lag_ms,
+        captured_at=best.received_at,
+        lag_ms=lag_ms,
+    )
+    if not anchor.verified:
+        existing = store.get_verified_anchor_price(
+            anchor.asset, anchor.timeframe, anchor.market_slug
+        )
+        if existing is not None:
+            if latest_by_key is not None:
+                latest_by_key[f"{existing.asset}:{existing.timeframe}"] = existing
+            return existing
+    store.upsert_anchor_price(anchor)
+    if latest_by_key is not None:
+        latest_by_key[f"{anchor.asset}:{anchor.timeframe}"] = anchor
+    return anchor
+
+
 class AnchorPriceService:
     def __init__(self, spots, store: AnchorPriceStore, max_lag_ms: int = 2_000) -> None:
         self.spots = spots
@@ -70,41 +119,13 @@ class AnchorPriceService:
         self._latest_by_key: dict[str, AnchorPrice] = {}
 
     def capture_for_market(self, market: Market) -> AnchorPrice | None:
-        window = window_for_market(market)
-        if window is None:
-            return None
-        samples = self._spot_history(market.asset)
-        if not samples:
-            return None
-        best = min(
-            samples,
-            key=lambda spot: abs(((spot.event_time or spot.received_at) - window.window_start).total_seconds()),
+        return capture_anchor_price(
+            self._spot_history(market.asset),
+            market,
+            self.store,
+            max_lag_ms=self.max_lag_ms,
+            latest_by_key=self._latest_by_key,
         )
-        best_time = best.event_time or best.received_at
-        lag_ms = int(abs((best_time - window.window_start).total_seconds()) * 1000)
-        source = str(getattr(best, "source", "binance")).removesuffix("_spot")
-        anchor = AnchorPrice(
-            asset=market.asset.upper(),
-            timeframe=market.timeframe,
-            market_slug=market.market_slug,
-            window_start=window.window_start,
-            window_end=window.window_end,
-            price=best.price if lag_ms <= self.max_lag_ms else None,
-            source=source,
-            verified=lag_ms <= self.max_lag_ms,
-            captured_at=best.received_at,
-            lag_ms=lag_ms,
-        )
-        if not anchor.verified:
-            existing = self.store.get_verified_anchor_price(
-                anchor.asset, anchor.timeframe, anchor.market_slug
-            )
-            if existing is not None:
-                self._latest_by_key[f"{existing.asset}:{existing.timeframe}"] = existing
-                return existing
-        self.store.upsert_anchor_price(anchor)
-        self._latest_by_key[f"{anchor.asset}:{anchor.timeframe}"] = anchor
-        return anchor
 
 
     def health_metrics(self) -> dict[str, dict[str, int | float | str | bool | None]]:
@@ -118,10 +139,12 @@ class AnchorPriceService:
             for key, anchor in self._latest_by_key.items()
         }
 
-    def _spot_history(self, asset: str):
+    def _spot_history(self, asset: str) -> list[SpotPrice]:
         history = getattr(self.spots, "history", None)
         if callable(history):
-            return list(history(asset))
+            history_reader = cast(Callable[[str], Sequence[SpotPrice]], history)
+            return list(history_reader(asset))
         if isinstance(history, dict):
-            return list(history.get(asset.upper(), ()))
+            histories = cast(dict[str, Sequence[SpotPrice]], history)
+            return list(histories.get(asset.upper(), ()))
         return []

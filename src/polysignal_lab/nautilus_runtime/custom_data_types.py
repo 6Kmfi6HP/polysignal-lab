@@ -1,6 +1,6 @@
 """
 Input: __future__, collections.abc, dataclasses, types, typing, pyarrow, nautilus_trader.core, nautilus_trader.core.data, nautilus_trader.model.custom, nautilus_trader.model.data
-Output: PolySignalSpotData, PolySignalPriceToBeatData, PolySignalMarketMetaData, PolySignalMarketUniverseData, custom_data_type, wrap_custom_data, unwrap_custom_data
+Output: PolySignalPriceToBeatData, PolySignalMarketMetaData, PolySignalMarketUniverseData, PolymarketRtdsCryptoPriceData, is_polymarket_rtds_crypto_price, polymarket_rtds_crypto_price_type, polymarket_rtds_spot_identity, custom_data_type, wrap_custom_data, unwrap_custom_data
 Pos: Application code
 
 Self-reference: When this file changes, update this header
@@ -9,9 +9,10 @@ Self-reference: When this file changes, update this header
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import json
 from dataclasses import field
 from types import MappingProxyType
-from typing import cast
+from typing import Protocol, TypeGuard, cast
 
 import pyarrow as pa
 from nautilus_trader.core import nautilus_pyo3
@@ -19,25 +20,71 @@ from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass_pyo3
 from nautilus_trader.model.data import CustomData as CythonCustomData
 
-SPOT_DATA_CLIENT_ID = "POLYSIGNAL_SPOT"
 _register_custom_data_class = cast(
     Callable[[type[object]], None],
     getattr(nautilus_pyo3, "register_custom_data_class"),
 )
 
-# Registration-only schema so @customdataclass skips auto-schema generation
-# (project field types include unions/tuples/mappings that auto-schema rejects).
-# Arrow is not used on production paths; to_arrow/from_arrow fail fast.
-_ARROW_REGISTRATION_SCHEMA = pa.schema([])
+def _arrow_record(data: object) -> dict[str, object]:
+    values = data.to_dict()
+    schema = type(data)._schema
+    record: dict[str, object] = {}
+    for field in schema:
+        value = values[field.name]
+        if isinstance(value, Mapping):
+            value = json.dumps(dict(value), sort_keys=True, separators=(",", ":"))
+        elif pa.types.is_list(field.type) and isinstance(value, tuple):
+            value = list(value)
+        record[field.name] = value
+    return record
 
 
-def _unsupported_arrow(self_or_cls: object, *_args: object, **_kwargs: object) -> object:
-    name = (
-        self_or_cls.__name__
-        if isinstance(self_or_cls, type)
-        else type(self_or_cls).__name__
+def _to_arrow(data: object) -> pa.RecordBatch:
+    return pa.RecordBatch.from_pylist([_arrow_record(data)], schema=type(data)._schema)
+
+
+def _from_arrow(cls: type[object], table: pa.RecordBatch | pa.Table) -> list[object]:
+    return [cls.from_dict(record) for record in table.to_pylist()]
+
+
+def _encode_record_batch_py(data: object, items: list[object]) -> pa.RecordBatch:
+    return pa.RecordBatch.from_pylist(
+        [_arrow_record(item) for item in items],
+        schema=type(data)._schema,
     )
-    raise TypeError(f"Arrow serialization is unsupported for {name}")
+
+
+def _decode_record_batch_py(
+    cls: type[object],
+    metadata: dict[str, object],
+    batch: pa.RecordBatch,
+) -> list[object]:
+    _ = metadata
+    return _from_arrow(cls, batch)
+
+
+class PolymarketRtdsCryptoPriceData(Protocol):
+    symbol: str
+    value: str
+    ts_event: int
+    ts_init: int
+
+
+_POLYMARKET_RTDS_CRYPTO_PRICE_TYPE = cast(
+    type[object],
+    getattr(nautilus_pyo3, "PolymarketRtdsCryptoPrice"),
+)
+
+
+def is_polymarket_rtds_crypto_price(
+    data: object,
+) -> TypeGuard[PolymarketRtdsCryptoPriceData]:
+    return isinstance(data, _POLYMARKET_RTDS_CRYPTO_PRICE_TYPE)
+
+
+def polymarket_rtds_crypto_price_type() -> type[object]:
+    return _POLYMARKET_RTDS_CRYPTO_PRICE_TYPE
+
 
 
 # Frozen mixin -- provides __setattr__-based immutability.
@@ -76,23 +123,6 @@ class _FrozenData:
 
 
 @customdataclass_pyo3()
-class PolySignalSpotData(Data, _FrozenData):
-    """A single spot price observation from a data source."""
-
-    asset: str = ""
-    symbol: str = ""
-    price: float = 0.0
-    source: str = ""
-    freshness_ms: int | None = None
-    _schema = _ARROW_REGISTRATION_SCHEMA
-    to_arrow = _unsupported_arrow
-    from_arrow = classmethod(_unsupported_arrow)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "_frozen", True)
-
-
-@customdataclass_pyo3()
 class PolySignalPriceToBeatData(Data, _FrozenData):
     """A price-to-beat observation used for consensus / anchor comparison."""
 
@@ -103,9 +133,24 @@ class PolySignalPriceToBeatData(Data, _FrozenData):
     from_anchor_service: bool = False
     anchor_source: str | None = None
     anchor_lag_ms: int | None = None
-    _schema = _ARROW_REGISTRATION_SCHEMA
-    to_arrow = _unsupported_arrow
-    from_arrow = classmethod(_unsupported_arrow)
+    _schema = pa.schema(
+        [
+            ("condition_id", pa.string()),
+            ("value", pa.float64()),
+            ("source", pa.string()),
+            ("verified", pa.bool_()),
+            ("from_anchor_service", pa.bool_()),
+            ("anchor_source", pa.string()),
+            ("anchor_lag_ms", pa.int64()),
+            ("type", pa.string()),
+            ("ts_event", pa.int64()),
+            ("ts_init", pa.int64()),
+        ]
+    )
+    to_arrow = _to_arrow
+    from_arrow = classmethod(_from_arrow)
+    encode_record_batch_py = _encode_record_batch_py
+    decode_record_batch_py = classmethod(_decode_record_batch_py)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_frozen", True)
@@ -127,9 +172,29 @@ class PolySignalMarketMetaData(Data, _FrozenData):
     question: str | None = None
     up_outcome: str | None = None
     down_outcome: str | None = None
-    _schema = _ARROW_REGISTRATION_SCHEMA
-    to_arrow = _unsupported_arrow
-    from_arrow = classmethod(_unsupported_arrow)
+    _schema = pa.schema(
+        [
+            ("market_id", pa.string()),
+            ("market_slug", pa.string()),
+            ("condition_id", pa.string()),
+            ("asset", pa.string()),
+            ("timeframe", pa.string()),
+            ("start_ts_ns", pa.int64()),
+            ("end_ts_ns", pa.int64()),
+            ("up_token_id", pa.string()),
+            ("down_token_id", pa.string()),
+            ("question", pa.string()),
+            ("up_outcome", pa.string()),
+            ("down_outcome", pa.string()),
+            ("type", pa.string()),
+            ("ts_event", pa.int64()),
+            ("ts_init", pa.int64()),
+        ]
+    )
+    to_arrow = _to_arrow
+    from_arrow = classmethod(_from_arrow)
+    encode_record_batch_py = _encode_record_batch_py
+    decode_record_batch_py = classmethod(_decode_record_batch_py)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_frozen", True)
@@ -147,9 +212,25 @@ class PolySignalMarketUniverseData(Data, _FrozenData):
     condition_to_down_token: Mapping[str, str] = field(default_factory=dict)
     condition_to_asset: Mapping[str, str] = field(default_factory=dict)
     condition_to_timeframe: Mapping[str, str] = field(default_factory=dict)
-    _schema = _ARROW_REGISTRATION_SCHEMA
-    to_arrow = _unsupported_arrow
-    from_arrow = classmethod(_unsupported_arrow)
+    _schema = pa.schema(
+        [
+            ("epoch", pa.int64()),
+            ("active_condition_ids", pa.list_(pa.string())),
+            ("entered_condition_ids", pa.list_(pa.string())),
+            ("exited_condition_ids", pa.list_(pa.string())),
+            ("condition_to_up_token", pa.string()),
+            ("condition_to_down_token", pa.string()),
+            ("condition_to_asset", pa.string()),
+            ("condition_to_timeframe", pa.string()),
+            ("type", pa.string()),
+            ("ts_event", pa.int64()),
+            ("ts_init", pa.int64()),
+        ]
+    )
+    to_arrow = _to_arrow
+    from_arrow = classmethod(_from_arrow)
+    encode_record_batch_py = _encode_record_batch_py
+    decode_record_batch_py = classmethod(_decode_record_batch_py)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "active_condition_ids", tuple(self.active_condition_ids))
@@ -234,6 +315,8 @@ def _require_str_tuple(value: object, field_name: str) -> tuple[str, ...]:
 
 
 def _require_str_mapping(value: object, field_name: str) -> dict[str, str]:
+    if isinstance(value, str):
+        value = json.loads(value)
     if not isinstance(value, Mapping):
         raise TypeError(f"{field_name} must be a mapping of strings")
     items: dict[str, str] = {}
@@ -246,6 +329,14 @@ def _require_str_mapping(value: object, field_name: str) -> dict[str, str]:
 
 def custom_data_type(payload_cls: type[object]) -> nautilus_pyo3.DataType:
     return nautilus_pyo3.DataType(payload_cls.__name__)
+
+
+def polymarket_rtds_spot_identity(symbol: object) -> tuple[str, str]:
+    normalized = str(symbol).upper().replace("/", "")
+    for quote in ("USDT", "USDC", "USD"):
+        if normalized.endswith(quote) and len(normalized) > len(quote):
+            return normalized[: -len(quote)], normalized
+    return normalized, normalized
 
 
 def wrap_custom_data(payload: object) -> nautilus_pyo3.CustomData:
@@ -263,7 +354,6 @@ def register_custom_data_type(payload_cls: type[object]) -> None:
 
 
 for _payload_cls in (
-    PolySignalSpotData,
     PolySignalPriceToBeatData,
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, polysignal_lab.data.price_to_beat_provider, polysignal_lab.data.price_to_beat_provider.PriceToBeatProvider, polysignal_lab.domain.anchor_price, polysignal_lab.domain.anchor_price.AnchorPrice, polysignal_lab.domain.enums
-Output: test_ptb_provider_prefers_verified_anchor_over_metadata, test_crypto_price_api_is_opt_in_to_avoid_cloudflare_startup_403, test_enabled_crypto_price_api_uses_market_asset_and_timeframe_variant, test_crypto_price_api_falls_back_to_close_price, FailingAsyncClient, RecordingResponse, RecordingAsyncClient, CloseOnlyResponse, CloseOnlyAsyncClient, _AnchorStore
+Output: test_ptb_provider_prefers_verified_anchor_over_metadata, _AnchorStore
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -20,57 +20,6 @@ from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.enums import MarketStatus, Side
 from polysignal_lab.domain.market import Market, OutcomeToken
-
-
-class FailingAsyncClient:
-    async def get(
-        self,
-        url: str,
-        params: dict[str, str] | None = None,
-        headers: dict[str, str] | None = None,
-    ) -> "RecordingResponse":
-        del url, params, headers
-        raise AssertionError("crypto-price API should not be called")
-
-
-class RecordingResponse:
-    status_code: int = 200
-
-    def json(self) -> dict[str, float]:
-        return {"openPrice": 123.45}
-
-
-class RecordingAsyncClient:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, str], dict[str, str]]] = []
-
-    async def get(
-        self,
-        url: str,
-        params: dict[str, str] | None = None,
-        headers: dict[str, str] | None = None,
-    ) -> RecordingResponse:
-        self.calls.append((url, params or {}, headers or {}))
-        return RecordingResponse()
-
-
-class CloseOnlyResponse:
-    status_code: int = 200
-
-    def json(self) -> dict[str, float]:
-        return {"closePrice": 456.78}
-
-
-class CloseOnlyAsyncClient(RecordingAsyncClient):
-    async def get(
-        self,
-        url: str,
-        params: dict[str, str] | None = None,
-        headers: dict[str, str] | None = None,
-    ) -> CloseOnlyResponse:
-        self.calls.append((url, params or {}, headers or {}))
-        return CloseOnlyResponse()
-
 
 
 class _AnchorStore:
@@ -126,34 +75,3 @@ async def test_ptb_provider_prefers_verified_anchor_over_metadata() -> None:
     assert result.anchor_source == "binance"
     assert result.anchor_lag_ms == 100
     assert result.from_anchor_service is True
-
-
-async def test_crypto_price_api_is_opt_in_to_avoid_cloudflare_startup_403() -> None:
-    provider = PriceToBeatProvider(client=FailingAsyncClient())
-
-    result = await provider.get(_market())
-
-    assert result.value is None
-    assert result.source == "unavailable"
-    assert result.reason == "PTB_UNAVAILABLE"
-
-
-async def test_enabled_crypto_price_api_uses_market_asset_and_timeframe_variant() -> None:
-    client = RecordingAsyncClient()
-    provider = PriceToBeatProvider(client=client, use_crypto_price_api=True)
-
-    result = await provider.get(_market(asset="ETH", timeframe="5m"))
-
-    assert result.value == 123.45
-    assert result.source == "crypto_price_api"
-    assert client.calls[0][1]["symbol"] == "ETH"
-    assert client.calls[0][1]["variant"] == "fifteen"
-
-
-async def test_crypto_price_api_falls_back_to_close_price() -> None:
-    provider = PriceToBeatProvider(client=CloseOnlyAsyncClient(), use_crypto_price_api=True)
-
-    result = await provider.get(_market(asset="BTC", timeframe="5m"))
-
-    assert result.value == 456.78
-    assert result.source == "crypto_price_api"

@@ -14,6 +14,7 @@ from polysignal_lab.config import Settings
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatResult
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market, OutcomeToken
+from polysignal_lab.domain.spot import SpotPrice
 from polysignal_lab.nautilus_runtime import market_rotation
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
@@ -31,6 +32,7 @@ from polysignal_lab.nautilus_runtime.market_rotation import (
     REFRESH_TIMER_NAME,
     MarketRotationActor,
 )
+from polysignal_lab.nautilus_runtime.spot_anchor_state import SpotAnchorState
 
 
 def _market(condition_id: str, *, asset: str = "BTC", timeframe: str = "5m") -> Market:
@@ -162,6 +164,40 @@ def _ptb(value: float = 100_000.0) -> PriceToBeatResult:
         anchor_lag_ms=5,
         from_anchor_service=True,
     )
+
+
+def test_spot_anchor_state_captures_actor_local_history_without_trading_projection() -> None:
+    class _Store:
+        def __init__(self) -> None:
+            self.anchors: list[object] = []
+
+        def upsert_anchor_price(self, anchor: object) -> None:
+            self.anchors.append(anchor)
+
+        def get_verified_anchor_price(
+            self, _asset: str, _timeframe: str, _market_slug: str
+        ) -> None:
+            return None
+
+    market = _market("condition-anchor")
+    assert market.start_ts is not None
+    state = SpotAnchorState(cast(Any, _Store()))
+    state.update(
+        SpotPrice(
+            asset="BTC",
+            symbol="BTCUSD",
+            price=100_000.0,
+            source="polymarket_rtds",
+            event_time=market.start_ts,
+            received_at=market.start_ts,
+        )
+    )
+
+    anchor = state.capture_for_market(market)
+
+    assert anchor is not None
+    assert getattr(anchor, "price") == 100_000.0
+    assert getattr(anchor, "verified") is True
 
 
 def test_market_universe_data_round_trips_and_is_immutable() -> None:

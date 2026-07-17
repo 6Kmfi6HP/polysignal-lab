@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, cast
 
-from nautilus_trader.core.nautilus_pyo3 import ClientId, DataActor
+from nautilus_trader.core.nautilus_pyo3 import DataActor
 
 from polysignal_lab.config import Settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
@@ -32,9 +32,10 @@ from polysignal_lab.nautilus_runtime.spot_anchor_state import SpotAnchorState
 from polysignal_lab.nautilus_runtime.state import JsonValue, decode_state, encode_state
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
-    PolySignalSpotData,
-    SPOT_DATA_CLIENT_ID,
     custom_data_type,
+    is_polymarket_rtds_crypto_price,
+    polymarket_rtds_crypto_price_type,
+    polymarket_rtds_spot_identity,
     unwrap_custom_data,
 )
 from polysignal_lab.nautilus_runtime.market_discovery_worker import (
@@ -141,15 +142,7 @@ class MarketRotationActor(DataActor):
         self.publisher: CustomDataPublisher = CustomDataPublisher(publisher=self)
         # Spot history lives only inside SpotAnchorState (Actor-local).
         self._spot_state = SpotAnchorState(anchor_store)
-        if settings.data.polymarket.use_crypto_price_api:
-            raise ValueError(
-                "crypto-price API fallback is unsupported in MarketRotationActor; "
-                "publish PriceToBeat through a worker or Nautilus CustomData source"
-            )
-        self.ptb_provider: PriceToBeatProvider = PriceToBeatProvider(
-            use_crypto_price_api=False,
-            anchor_store=anchor_store,
-        )
+        self.ptb_provider: PriceToBeatProvider = PriceToBeatProvider(anchor_store=anchor_store)
         self._active_by_condition: dict[str, Market] = _markets_by_condition(startup_markets)
         self._epoch: int = 0
         self._requested_epoch: int = self._epoch
@@ -178,10 +171,7 @@ class MarketRotationActor(DataActor):
 
     def on_start(self) -> None:
         if self.settings.runtime.nautilus.spot_data.source == "polymarket_rtds":
-            self.subscribe_data(
-                custom_data_type(PolySignalSpotData),
-                client_id=ClientId(SPOT_DATA_CLIENT_ID),
-            )
+            self.subscribe_data(custom_data_type(polymarket_rtds_crypto_price_type()))
         if self._epoch == 0:
             self._epoch = 1
             self._requested_epoch = max(self._requested_epoch, self._epoch)
@@ -408,8 +398,9 @@ class MarketRotationActor(DataActor):
 
     def on_data(self, data: object) -> None:
         payload = unwrap_custom_data(data)
-        if not isinstance(payload, PolySignalSpotData):
+        if not is_polymarket_rtds_crypto_price(payload):
             return
+        asset, symbol = polymarket_rtds_spot_identity(payload.symbol)
         received_at = _data_datetime(
             getattr(payload, "ts_init", 0),
             fallback=self._framework_now(),
@@ -420,10 +411,10 @@ class MarketRotationActor(DataActor):
         )
         self._on_spot(
             SpotPrice(
-                asset=payload.asset,
-                symbol=payload.symbol,
-                price=float(payload.price),
-                source=payload.source,
+                asset=asset,
+                symbol=symbol,
+                price=float(payload.value),
+                source="polymarket_rtds",
                 event_time=event_time,
                 received_at=received_at,
             )

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 # ruff: noqa: E402
 
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -339,16 +340,116 @@ def test_adapter_enum_parser_boundary_rejects_unknown_and_maps_known() -> None:
         PolymarketEnumParser.to_nautilus_order_status("not-a-real-status")
 
 
-def test_datatester_exectester_pyo3_matrix_unavailable() -> None:
-    """DataTester/ExecTester are classic Cython Actor/Strategy — not pyo3 LiveNode."""
-    from nautilus_trader.test_kit.strategies.tester_data import DataTester
-    from nautilus_trader.test_kit.strategies.tester_exec import ExecTester
+def test_datatester_is_constructible_with_polymarket_data_contract() -> None:
+    from nautilus_trader.common.actor import Actor
+    from nautilus_trader.model.enums import BookType
+    from nautilus_trader.model.identifiers import InstrumentId
+    from nautilus_trader.test_kit.strategies.tester_data import (
+        DataTester,
+        DataTesterConfig,
+    )
 
-    assert not issubclass(DataTester, pyo3.Strategy)
-    assert not issubclass(ExecTester, pyo3.Strategy)
+    instrument_id = InstrumentId.from_str("123.POLYMARKET")
+    config = DataTesterConfig(
+        instrument_ids=[instrument_id],
+        request_instruments=True,
+        subscribe_book_deltas=True,
+        subscribe_trades=True,
+        manage_book=True,
+        log_data=False,
+    )
+    tester = DataTester(config)
+
+    assert isinstance(tester, Actor)
+    assert tester.config is config
+    assert config.instrument_ids == [instrument_id]
+    assert config.book_type == BookType.L2_MBP
+    assert config.request_instruments is True
+    assert config.subscribe_book_deltas is True
+    assert config.subscribe_trades is True
+    assert config.manage_book is True
+
+
+def test_exectester_is_constructible_with_safe_local_contract() -> None:
+    from nautilus_trader.model.identifiers import InstrumentId
+    from nautilus_trader.test_kit.strategies.tester_exec import (
+        ExecTester,
+        ExecTesterConfig,
+    )
+    from nautilus_trader.trading.strategy import Strategy
+
+    instrument_id = InstrumentId.from_str("123.POLYMARKET")
+    config = ExecTesterConfig(
+        instrument_id=instrument_id,
+        order_qty=Decimal("1"),
+        enable_limit_buys=True,
+        enable_limit_sells=False,
+        use_post_only=True,
+        dry_run=True,
+        log_data=False,
+    )
+    tester = ExecTester(config)
+
+    assert isinstance(tester, Strategy)
+    assert tester.config is config
+    assert config.instrument_id == instrument_id
+    assert config.order_qty == Decimal("1")
+    assert config.enable_limit_buys is True
+    assert config.enable_limit_sells is False
+    assert config.use_post_only is True
+    assert config.dry_run is True
+
+
+def test_tester_importable_registration_reports_native_type_boundary() -> None:
+    node = pyo3.LiveNode.builder(
+        "TESTERS",
+        pyo3.TraderId("TESTERS-001"),
+        pyo3.Environment.SANDBOX,
+    ).build()
+    actor_config = pyo3.ImportableActorConfig(
+        actor_path="nautilus_trader.test_kit.strategies.tester_data:DataTester",
+        config_path=(
+            "nautilus_trader.test_kit.strategies.tester_data:DataTesterConfig"
+        ),
+        config={
+            "instrument_ids": ["123.POLYMARKET"],
+            "request_instruments": True,
+            "log_data": False,
+        },
+    )
+    strategy_config = pyo3.ImportableStrategyConfig(
+        strategy_path="nautilus_trader.test_kit.strategies.tester_exec:ExecTester",
+        config_path=(
+            "nautilus_trader.test_kit.strategies.tester_exec:ExecTesterConfig"
+        ),
+        config={
+            "instrument_id": "123.POLYMARKET",
+            "order_qty": "1",
+            "dry_run": True,
+            "log_data": False,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="not an instance of 'DataActor'"):
+        node.add_actor_from_config(actor_config)
+    with pytest.raises(RuntimeError, match="not an instance of 'Strategy'"):
+        node.add_strategy_from_config(strategy_config)
+
+
+def test_polymarket_datatester_live_acceptance_blocked() -> None:
     pytest.skip(
-        "DataTester/ExecTester target classic TradingNode; "
-        "no pyo3 LiveNode/BacktestEngine matrix API — adapter live matrix deferred"
+        "Blocked: applicable TC-D01 through TC-D72 require network access and a "
+        "live Polymarket instrument fixture; installed DataTester is constructible "
+        "but is a Cython Actor, not a PyO3 DataActor accepted by LiveNode"
+    )
+
+
+def test_polymarket_exectester_live_acceptance_blocked() -> None:
+    pytest.skip(
+        "Blocked: applicable TC-E01 through TC-E87 require network access, "
+        "credentials, funds, and a live Polymarket instrument fixture; installed "
+        "ExecTester is constructible but is a Cython Strategy, not a PyO3 Strategy "
+        "accepted by LiveNode"
     )
 
 

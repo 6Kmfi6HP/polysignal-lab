@@ -19,7 +19,11 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from polysignal_lab.alpha.types import SpotView
-from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData, PolySignalSpotData
+from polysignal_lab.nautilus_runtime.custom_data_types import (
+    PolySignalPriceToBeatData,
+    is_polymarket_rtds_crypto_price,
+    polymarket_rtds_spot_identity,
+)
 
 
 def event_datetime(ts_event: int) -> datetime:
@@ -60,13 +64,14 @@ class StrategyCustomDataState:
         self._ptb: dict[str, PriceToBeatView] = {}
 
     def apply(self, data: object) -> CustomDataApplyResult:
-        if isinstance(data, PolySignalSpotData):
+        if is_polymarket_rtds_crypto_price(data):
+            asset, symbol = polymarket_rtds_spot_identity(data.symbol)
             spot = SpotView(
-                asset=data.asset,
-                symbol=data.symbol,
-                price=data.price,
-                source=data.source,
-                freshness_ms=data.freshness_ms,
+                asset=asset,
+                symbol=symbol,
+                price=float(data.value),
+                source="polymarket_rtds",
+                freshness_ms=0,
                 received_at=(
                     event_datetime(data.ts_init)
                     if data.ts_init > 0
