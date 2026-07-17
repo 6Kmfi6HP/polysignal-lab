@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, polysignal_lab.alpha.late_consensus_core, polysignal_lab.alpha.late_consensus_core.LateConsensusAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.domain.enums
-Output: test_late_consensus_core_matches_legacy_candidate, test_late_consensus_sequence_not_incremented_until_acceptance, test_late_consensus_flip_guard_advances_only_on_acceptance, test_late_consensus_adapter_applies_dedupe_suffix_from_sequence, test_late_consensus_core_state_roundtrip
+Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, polysignal_lab.alpha.late_consensus_core, polysignal_lab.alpha.late_consensus_core.LateConsensusAlphaCore
+Output: test_late_consensus_sequence_comes_from_cached_accepted_orders, test_late_consensus_flip_guard_advances_only_on_acceptance, test_late_consensus_frequency_uses_market_view_time, test_late_consensus_does_not_store_order_state
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

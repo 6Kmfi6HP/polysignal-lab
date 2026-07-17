@@ -1,15 +1,19 @@
 # Architecture Ownership
 
-> Living document. Ownership and dependency direction after the native Nautilus migration.
+> Living document. **Who owns what** after the native Nautilus migration.
 >
-> Companion: [`RUNTIME_BOUNDARY.md`](RUNTIME_BOUNDARY.md)
+> | Doc | Role |
+> |---|---|
+> | This file | Ownership, dependency direction, quality gates |
+> | [`RUNTIME_BOUNDARY.md`](RUNTIME_BOUNDARY.md) | Modes, forbid list, exits, settlement, reporting constraints |
+> | [`NAUTILUS_CAPABILITY_MATRIX.md`](NAUTILUS_CAPABILITY_MATRIX.md) | Verified package capabilities (evidence only) |
 
 ## Three truths
 
 | Truth | Owner | Must not own |
 |---|---|---|
 | **Nautilus Runtime** | `LiveNode`/`BacktestEngine`, DataEngine, ExecutionEngine, RiskEngine, Cache, Portfolio, native Order/Position, Account | Alpha formulas, market discovery rules, report sinks |
-| **PolySignal Decision** | `MarketCatalog`, `MarketViewAssembler`, alpha cores, sole `DecisionPolicyActor`, pure `DecisionPolicy`, native order mapping, read-only Cache allocation rules | Live books, fill/order lifecycle, balances, exposure, portfolio ledger |
+| **PolySignal Decision** | `MarketCatalog`, `MarketViewAssembler`, alpha cores, pure in-process `DecisionPolicy` / `SignalGate` (business quals only), native order mapping, read-only Cache allocation rules | Live books, fill/order lifecycle, balances, exposure, portfolio ledger; no DecisionPolicyActor bus; no second RiskEngine |
 | **Reporting** | SQLite/JSONL, Telegram, dashboard projections, report-only settlement | Trading state mutation |
 
 Any module that is not one of these three either becomes a collaborator of one truth or is quarantined/deleted.
@@ -23,8 +27,8 @@ Runtime mode dispatcher
   ├─ BacktestEngine with historical native data
   ├─ RTDS LiveDataClient (managed spot, single source)
   ├─ MarketRotationActor  (universe / metadata / PTB CustomData; no RTDS spot republish)
-  ├─ DecisionPolicyActor  (sole owner; native Signal request/response)
   └─ PolySignalNativeStrategy + PolySignalStrategyConfig
+        ├─ DecisionPolicy  (in-process; SignalGate business quals)
         ├─ MarketViewAssembler  ← Cache-backed books + CustomData
         ├─ DecisionPipeline / NativeExitPolicy / native_order
         └─ observability hooks  → Reporting Truth
@@ -35,28 +39,28 @@ Rules:
 1. Decision code does not import venue transports or legacy OrderBook/CLOB stacks.
 2. Strategy remains a Nautilus callback host; multi-step business logic lives in collaborators under `nautilus_runtime/strategy/`.
 3. Reporting consumes projections only; it never invents open positions or settlement fills.
-4. Candidate/approval messages are frozen and serialized over native Signal.
-5. Python 3.12 and the exact Nautilus dependency are required.
+4. Decision evaluation is in-process on `PolySignalNativeStrategy` via pure `DecisionPolicy` / `SignalGate`; do not reintroduce a DecisionPolicyActor, candidate/approval Signal bus, or a local account/exposure gate that duplicates RiskEngine.
+5. Decision timers and event timestamps come from the Nautilus Clock; do not bypass with wall-clock side channels for trading decisions.
+6. Python 3.12 and the exact Nautilus dependency are required.
+
+Registration surface, mode gates, exits, settlement, and reporting storage rules live in
+[`RUNTIME_BOUNDARY.md`](RUNTIME_BOUNDARY.md).
 
 ## Accepted boundaries (do not “fix”)
 
+These are intentional product/domain seams, not debt:
+
 - `MarketCatalog` business-key boundary (condition/token → instrument id)
 - `MarketViewAssembler` pure domain projection
-- `Side` UP/DOWN vs Nautilus `OrderSide`
-- `OrderIntent` vs `TimeInForce`
+- `Side` UP/DOWN vs Nautilus `OrderSide`; `OrderIntent` vs `TimeInForce`
 - `native_order` thin mapping (`order_factory` + `submit_order` only)
-- `SignalGate` / consensus / arbitration as business policy (not RiskEngine)
-- Settlement is **report-only** for sandbox/live under the verified latest package;
-  backtest alone has a verified native contract-expiry matching-engine path
+- `SignalGate` as business eligibility policy (not RiskEngine; no cross-strategy arbiter bus)
+- Settlement **report-only** for sandbox/live; backtest may replay native
+  `InstrumentClose` (see Runtime Boundary)
 - RTDS spot via LiveDataClient only; SIDECAR vs RTDS client-id separation
-- `NativeExitPolicy` over Cache positions (reduce-only in sandbox only);
-  Polymarket live execution does not support reduce-only, and contingent/bracket
-  orders remain disabled (`support_contingent_orders=False`)
-- Report projections may record execution assumptions but cannot feed trading decisions.
-- SQLite/JSONL runtime names are `report_orders`, `report_fills`,
-  `report_positions`, `report_results`, and `report_account_snapshots`.
-- Strategy custom state contains only research state or immutable intent; Cache
-  orders, fills, positions, and tags reconstruct in-flight management.
+- `NativeExitPolicy` over Cache positions (sandbox reduce-only; live venue narrower)
+- Report projections never feed trading decisions; SQLite/JSONL use `report_*` names
+- Strategy custom state = research state or immutable intent only; Cache reconstructs in-flight management
 
 ## False-positive traps
 
@@ -67,8 +71,7 @@ High CBO/LCOM on Strategy/Actor/policy hubs is often framework-shaped or desirab
 Executable API truth: installed and locked
 `nautilus_trader[polymarket]==1.231.0.dev20260716+16604`.
 `docs/nautilus_reference/` is reference material, not a version lock.
-The verified capability and migration-blocker details are recorded in
-[`NAUTILUS_CAPABILITY_MATRIX.md`](NAUTILUS_CAPABILITY_MATRIX.md).
+Verified capability rows: [`NAUTILUS_CAPABILITY_MATRIX.md`](NAUTILUS_CAPABILITY_MATRIX.md).
 
 ## Quality gates (native migration complete)
 

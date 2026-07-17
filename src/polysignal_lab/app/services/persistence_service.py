@@ -1,10 +1,12 @@
 """
-Input: __future__, dataclasses, datetime, typing, polysignal_lab.domain.reporting_result, polysignal_lab.storage.jsonl_store, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.state_store
-Output: TelemetryRetentionPolicy, telemetry_retention_policy, PersistenceService
-Pos: Service Layer - projection writes and read-only query APIs (no runtime restore_*)
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, typing, typing.Any, typing.Final
+Output: telemetry_retention_policy, TelemetryRetentionPolicy, PersistenceService
+Pos: Service Layer - Business logic
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -197,7 +199,7 @@ class PersistenceService:
         return self.sqlite.query_report_closed_positions()
 
     def query_daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
-        return self.sqlite.query_daily_reports(limit=limit)
+        return self.sqlite.daily_reports(limit=limit)
 
     def query_closed_trade_results(
         self,

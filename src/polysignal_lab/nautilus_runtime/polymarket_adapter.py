@@ -1,15 +1,29 @@
+"""
+Input: __future__, __future__.annotations, typing, typing.assert_never, nautilus_trader.model.enums, nautilus_trader.model.enums.OrderSide, nautilus_trader.model.enums.TimeInForce, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side
+Output: PolymarketEnumParser
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 from typing import assert_never
 
 from nautilus_trader.model.enums import OrderSide
-from nautilus_trader.model.enums import OrderStatus as NautilusOrderStatus
 from nautilus_trader.model.enums import TimeInForce
 
 from polysignal_lab.domain.enums import OrderIntent, Side
 
 
 class PolymarketEnumParser:
+    """Map PolySignal domain Side/OrderIntent → Nautilus order enums.
+
+    Order *status* is never mapped here: runtime events already carry
+    Nautilus OrderStatus; string→enum remapping was a dual-path leftover.
+    """
+
     @staticmethod
     def to_nautilus_order_side(side: Side, *, reduce_only: bool = False) -> OrderSide:
         if reduce_only:
@@ -31,23 +45,3 @@ class PolymarketEnumParser:
                 return TimeInForce.IOC
             case unreachable:
                 assert_never(unreachable)
-
-    @staticmethod
-    def to_nautilus_order_status(status: str) -> NautilusOrderStatus:
-        match status.upper():
-            case "PENDING":
-                return NautilusOrderStatus.SUBMITTED
-            case "RESTING" | "ACCEPTED":
-                return NautilusOrderStatus.ACCEPTED
-            case "REJECTED":
-                return NautilusOrderStatus.REJECTED
-            case "CANCELLED" | "CANCELED":
-                return NautilusOrderStatus.CANCELED
-            case "FILLED":
-                return NautilusOrderStatus.FILLED
-            case "PARTIAL" | "PARTIALLY_FILLED":
-                return NautilusOrderStatus.PARTIALLY_FILLED
-            case "EXPIRED":
-                return NautilusOrderStatus.EXPIRED
-            case _:
-                raise ValueError(f"unsupported Polymarket order status: {status}")

@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate, polysignal_lab.signal_layer.gate, polysignal_lab.signal_layer.gate.SignalGate
-Output: test_order_intent_values, test_projection_order_status_strings, test_signal_candidate_has_order_intent_fields, test_signal_candidate_with_order_intent, test_nautilus_order_payload_has_order_intent_field, test_nautilus_order_payload_with_order_intent, test_passive_gtd_skips_max_entry_check, test_taker_still_fails_ask_above_max_entry, test_gtd_expiry_rejects_missing
+Input: __future__, __future__.annotations, polysignal_lab.config, polysignal_lab.config.BinanceDataConfig, polysignal_lab.config.PolymarketDataConfig, polysignal_lab.config.SignalConfig, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side, polysignal_lab.domain.signal
+Output: test_order_intent_values, test_projection_order_status_strings, test_signal_candidate_has_order_intent_fields, test_signal_candidate_with_order_intent, test_nautilus_order_payload_has_order_intent_field, test_nautilus_order_payload_with_order_intent, test_passive_gtd_skips_max_entry_check, test_taker_still_fails_ask_above_max_entry, test_gtd_expiry_rejects_missing, test_gtd_expiry_rejects_too_long
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

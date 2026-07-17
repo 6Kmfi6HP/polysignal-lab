@@ -1,10 +1,12 @@
 /**
- * Input: { makeDailyReport, makeHealthResponse, makeOverviewResponse } from '@/test-utils/fixtures', { renderWithQueryClient } from '@/test-utils/render-with-query-client', { screen } from '@testing-library/react', { afterEach, describe, expect, it, vi } from 'vitest', * as client from '@/lib/api/client', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', { SidebarProvider } from '@/components/ui/sidebar', { OverviewPage } from './index'
+ * Input: {, { renderWithQueryClient } from '@/test-utils/render-with-query-client', { screen } from '@testing-library/react', { afterEach, describe, expect, it, vi } from 'vitest', * as client from '@/lib/api/client', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', { SidebarProvider } from '@/components/ui/sidebar', { OverviewPage } from './index', @/test-utils/render-with-query-client
  * Output: renderOverviewPage
  * Pos: Application code
  *
  * 🔄 Self-reference: When this file changes, update this header
  */
+
+
 
 
 

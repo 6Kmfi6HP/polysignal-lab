@@ -1,10 +1,12 @@
 """
-Input: polysignal_lab.app.services.persistence_service, polysignal_lab.app.services.persistence_service.PersistenceService, polysignal_lab.storage.jsonl_store, polysignal_lab.storage.jsonl_store.JSONLStore, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.sqlite_store.SQLiteStore, polysignal_lab.storage.state_store, polysignal_lab.storage.state_store.StateStore
-Output: test_persistence_service_uses_public_cleanup_transactions, test_persistence_service_cleanup_transactions_delete_related_rows, test_persistence_service_wraps_counts_and_close
+Input: typing, typing.cast, polysignal_lab.app.services.persistence_service, polysignal_lab.app.services.persistence_service.PersistenceService, polysignal_lab.storage.jsonl_store, polysignal_lab.storage.jsonl_store.JSONLStore, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.sqlite_store.SQLiteStore, polysignal_lab.storage.state_store, polysignal_lab.storage.state_store.StateStore
+Output: test_persistence_service_uses_public_cleanup_transactions, test_persistence_service_cleanup_transactions_delete_related_rows, test_persistence_service_wraps_counts_and_close, _CleanupStore
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

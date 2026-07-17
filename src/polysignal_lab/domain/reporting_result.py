@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, math, typing, typing.Any, polysignal_lab.domain.reporting_models
-Output: InvalidReportResultRow, ReportResultRow, parse_report_result_row, trade_result_status, ReportAccountSnapshot, DailyReport, EquitySource
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, math, typing
+Output: trade_result_status, trade_result_text, trade_result_float, parse_report_result_row, trade_result_details, InvalidReportResultRow, ReportResultRow
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

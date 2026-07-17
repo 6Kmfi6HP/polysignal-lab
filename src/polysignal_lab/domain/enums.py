@@ -12,6 +12,8 @@ Pos: Application code
 
 
 
+
+
 from __future__ import annotations
 
 from enum import EnumMeta, StrEnum

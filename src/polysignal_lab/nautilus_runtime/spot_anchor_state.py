@@ -1,6 +1,17 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.data.anchor_price_service, polysignal_lab.data.anchor_price_service.AnchorPriceStore, polysignal_lab.data.anchor_price_service.capture_anchor_price, polysignal_lab.data.state, polysignal_lab.data.state.append_spot_history, polysignal_lab.domain.anchor_price, polysignal_lab.domain.anchor_price.AnchorPrice, polysignal_lab.domain.market
+Output: SpotAnchorState
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
+
 from __future__ import annotations
 
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore, capture_anchor_price
+from polysignal_lab.data.state import append_spot_history
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.spot import SpotPrice
@@ -9,8 +20,8 @@ from polysignal_lab.domain.spot import SpotPrice
 class SpotAnchorState:
     """Keep managed spot observations and optional verified anchors together.
 
-    This history is only for anchor capture. Trading decisions use Nautilus
-    CustomData and Cache projections.
+    History storage uses the shared ``append_spot_history`` helper.
+    Trading decisions still use Nautilus CustomData + Cache.
     """
 
     _anchor_store: AnchorPriceStore | None
@@ -27,9 +38,7 @@ class SpotAnchorState:
         return self._anchor_store is not None
 
     def update(self, spot: SpotPrice) -> None:
-        history = self._history_by_asset.setdefault(spot.asset.upper(), [])
-        history.append(spot)
-        del history[:-512]
+        append_spot_history(self._history_by_asset, spot)
 
     def capture_for_market(self, market: Market) -> AnchorPrice | None:
         if self._anchor_store is None:

@@ -1,10 +1,12 @@
 """
-Input: __future__, sqlite3, time, dataclasses, queue, collections.abc, enum, typing, polysignal_lab.app.services.persistence_service, polysignal_lab.observability.health, polysignal_lab.utils, polysignal_lab.domain.signal
-Output: persistence_class_for_table, PersistenceClass, PersistenceWriter, Publisher, AcceptedSignalNotifier, EventStore, Notifier, NautilusEventStoreAdapter, NautilusNotifierAdapter, _health_set_backlog, _health_mark_drop, _health_mark_side_effect_failure, _health_mark_sqlite_lock_retry, _drop_queued_events
-Pos: Observability persistence routing — enums, protocols, adapters, and shared health metric helpers
+Input: __future__, __future__.annotations, logging, sqlite3, collections.abc, collections.abc.Callable, collections.abc.Mapping, collections.abc.Sequence, dataclasses, dataclasses.replace
+Output: persistence_class_for_table, PersistenceClass, PersistenceWriter, Publisher, AcceptedSignalNotifier, ReportResultNotifier, EventStore, Notifier, NautilusEventStoreAdapter, NautilusNotifierAdapter
+Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -224,7 +226,7 @@ REPEAT_SUPPRESS_TTL_SEC = 60.0
 
 
 # ── Shared health metric helpers ──────────────────────────────────────────────
-# These helpers are used by both ObservabilityActor and TelemetryWriter to
+# These helpers are used by ObservabilityService best-effort telemetry outbox to
 # update the same observability_actor component in the health registry.
 
 

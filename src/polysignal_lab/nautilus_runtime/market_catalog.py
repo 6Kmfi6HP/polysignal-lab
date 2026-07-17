@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, importlib, typing
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, importlib
 Output: InstrumentTokenMeta, MarketPairMeta, MarketCatalog
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -22,6 +24,23 @@ from typing import cast
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
+
+
+def _nautilus_polymarket_instrument_id(condition_id: str, token_id: str) -> object:
+    """Single path: official NT get_polymarket_instrument_id (no local id formatting)."""
+    try:
+        helper = cast(
+            Callable[[str, str], object],
+            getattr(
+                import_module("nautilus_trader.adapters.polymarket"),
+                "get_polymarket_instrument_id",
+            ),
+        )
+    except (ModuleNotFoundError, AttributeError) as exc:
+        raise RuntimeError(
+            "Nautilus Polymarket adapter is required to resolve instrument IDs"
+        ) from exc
+    return helper(condition_id, token_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,19 +188,7 @@ class MarketCatalog:
             raise ValueError("condition_id must not be empty")
         if not token:
             raise ValueError("token_id must not be empty")
-        try:
-            helper = cast(
-                Callable[[str, str], object],
-                getattr(
-                    import_module("nautilus_trader.adapters.polymarket"),
-                    "get_polymarket_instrument_id",
-                ),
-            )
-        except (ModuleNotFoundError, AttributeError) as exc:
-            raise RuntimeError(
-                "Nautilus Polymarket adapter is required to resolve instrument IDs"
-            ) from exc
-        return str(helper(condition, token))
+        return str(_nautilus_polymarket_instrument_id(condition, token))
 
     def market_id_for_instrument(self, instrument_id: str) -> str | None:
         for pair in self._by_condition.values():

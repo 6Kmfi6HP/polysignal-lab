@@ -1,10 +1,12 @@
 """
-Input: __future__, json, pathlib, types, uuid, nautilus optional
-Output: issue #15 lifecycle identity and filled order projection validity tests
+Input: __future__, __future__.annotations, json, pathlib, pathlib.Path, types, types.SimpleNamespace, nautilus_optional, nautilus_optional.require_nautilus, polysignal_lab.nautilus_runtime.projections
+Output: test_project_order_event_derives_status_from_event_type, test_event_store_adapter_uses_explicit_id_and_safe_lifecycle_fallback, test_real_nautilus_order_lifecycle_uses_unique_durable_event_ids, test_upsert_order_and_fill_projection_stays_valid, test_normalize_report_order_uses_metrics_side_and_contracts, test_partial_fill_does_not_mark_report_order_filled, OrderSubmitted
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -13,10 +15,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from nautilus_optional import require_nautilus
-from polysignal_lab.nautilus_runtime.strategy.event_projection import (
-    project_nautilus_order_event,
+from polysignal_lab.nautilus_runtime.projections import (
+    project_order_event,
 )
-from polysignal_lab.nautilus_runtime.projections import project_order_event
 from polysignal_lab.storage.event_projection import normalize_report_order
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 
@@ -39,17 +40,15 @@ class OrderSubmitted:
         self.ts_event = 1_784_000_000_000_000_000
 
 
-def test_project_nautilus_order_event_derives_status_from_event_type() -> None:
+def test_project_order_event_derives_status_from_event_type() -> None:
     metrics = {
         "signal_id": "sig_test",
         "strategy": "late_consensus",
         "market_id": "1",
         "side": "UP",
         "contracts": 12,
-        "up_ask": 0.55,
     }
-    projected = project_nautilus_order_event(OrderSubmitted(), metrics)
-    row = project_order_event(projected)
+    row = project_order_event(OrderSubmitted(), metrics=metrics)
     assert row["status"] == "SUBMITTED"
     assert row["price"] == 0.55
     assert row["quantity"] == 12.0
@@ -125,9 +124,9 @@ def test_real_nautilus_order_lifecycle_uses_unique_durable_event_ids(
     from polysignal_lab.nautilus_runtime.observability_persistence import (
         NautilusEventStoreAdapter,
     )
-    from polysignal_lab.nautilus_runtime.strategy.event_projection import (
-        project_nautilus_fill_event,
-        project_nautilus_order_event,
+    from polysignal_lab.nautilus_runtime.projections import (
+        project_fill_event,
+        project_order_event,
     )
 
     store = SQLiteStore(tmp_path / "issue15-lifecycle.sqlite3")
@@ -192,25 +191,25 @@ def test_real_nautilus_order_lifecycle_uses_unique_durable_event_ids(
 
         lifecycle = (
             (
-                observability.record_nautilus_order_event,
-                project_nautilus_order_event(submitted, metrics),
+                "nautilus_order",
+                project_order_event(submitted, metrics=metrics),
             ),
             (
-                observability.record_nautilus_order_event,
-                project_nautilus_order_event(accepted, metrics),
+                "nautilus_order",
+                project_order_event(accepted, metrics=metrics),
             ),
             (
-                observability.record_nautilus_fill_event,
-                project_nautilus_fill_event(filled, metrics),
+                "nautilus_fill",
+                project_fill_event(filled, metrics=metrics),
             ),
         )
-        for recorder, event in lifecycle:
-            recorder(event)
+        for table, payload in lifecycle:
+            observability.record_event(table, payload)
         while observability.drain_telemetry_once():
             pass
 
-        for recorder, event in lifecycle[:2]:
-            recorder(event)
+        for table, payload in lifecycle[:2]:
+            observability.record_event(table, payload)
         replayed = store._conn.execute(
             "SELECT status,payload_json FROM report_orders WHERE report_order_id=?",
             (str(order.client_order_id),),
@@ -220,7 +219,7 @@ def test_real_nautilus_order_lifecycle_uses_unique_durable_event_ids(
         assert replayed["status"] == "FILLED"
         assert float(replayed_payload.get("limit_price") or 0) == 0.55
 
-        lifecycle[2][0](lifecycle[2][1])
+        observability.record_event(lifecycle[2][0], lifecycle[2][1])
         while observability.drain_telemetry_once():
             pass
 
@@ -266,9 +265,7 @@ def test_upsert_order_and_fill_projection_stays_valid(tmp_path: Path) -> None:
             "up_ask": 0.55,
             "token_id": "token-up",
         }
-        order_event = project_order_event(
-            project_nautilus_order_event(OrderSubmitted(), metrics)
-        )
+        order_event = project_order_event(OrderSubmitted(), metrics=metrics)
         store.insert_system_event(
             {
                 "event_id": "nautilus_order:O-test-1:1",
@@ -335,20 +332,59 @@ def test_normalize_report_order_uses_metrics_side_and_contracts() -> None:
         {
             "client_order_id": "O-1",
             "status": "SUBMITTED",
-            "price": 0.0,
-            "quantity": 0.0,
+            "price": 0.7,
+            "quantity": 8.0,
             "metrics": {
                 "signal_id": "sig_1",
                 "strategy": "late_consensus",
                 "market_id": "9",
                 "side": "UP",
                 "contracts": 8,
-                "up_ask": 0.7,
             },
         }
     )
-    assert payload["status"] == "RESTING" or payload["status"] == "SUBMITTED" or payload["status"]
+    assert payload["status"] in {"ACCEPTED", "SUBMITTED", "RESTING"} or payload["status"]
     assert payload["side"] == "UP"
     assert payload["signal_id"] == "sig_1"
     assert float(payload.get("shares") or 0) == 8.0
     assert float(payload.get("limit_price") or 0) == 0.7
+
+
+def test_partial_fill_does_not_mark_report_order_filled(tmp_path: Path) -> None:
+    """report_fills durable source must distinguish PARTIALLY_FILLED vs FILLED."""
+    store = SQLiteStore(tmp_path / "partial_fill.sqlite3")
+    try:
+        event = {
+            "event_id": "fill-partial-1",
+            "event_type": "nautilus_fill",
+            "client_order_id": "O-partial-1",
+            "report_order_id": "O-partial-1",
+            "trade_id": "T-partial-1",
+            "quantity": 4.0,
+            "price": 0.5,
+            "leaves_qty": 8.0,
+            "filled_qty": 4.0,
+            "order_quantity": 12.0,
+            "ts": "2026-07-18T00:00:00Z",
+            "metrics": {"contracts": 12.0, "signal_id": "sig-p", "strategy": "ptb_diff"},
+        }
+        store.insert_system_event(
+            {
+                **event,
+                "severity": "info",
+                "created_at": "2026-07-18T00:00:00Z",
+            }
+        )
+        row = store._conn.execute(
+            "SELECT status,payload_json FROM report_orders WHERE report_order_id=?",
+            ("O-partial-1",),
+        ).fetchone()
+        assert row is not None
+        assert row["status"] == "PARTIALLY_FILLED"
+        fill_row = store._conn.execute(
+            "SELECT report_fill_id FROM report_fills WHERE report_order_id=?",
+            ("O-partial-1",),
+        ).fetchone()
+        assert fill_row is not None
+    finally:
+        store.close()

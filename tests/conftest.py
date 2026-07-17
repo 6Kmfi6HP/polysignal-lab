@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, pytest, polysignal_lab.config, polysignal_lab.config.Settings, factories
+Input: __future__, __future__.annotations, pytest, polysignal_lab.config, polysignal_lab.config.Settings, factories, factories.MarketFactoryConfig, factories.sample_market, factories.sample_market_view
 Output: settings, market, market_view
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

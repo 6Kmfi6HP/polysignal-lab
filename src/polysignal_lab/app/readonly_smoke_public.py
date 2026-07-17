@@ -1,10 +1,12 @@
 """
-Input: __future__, typing, httpx, pydantic, polysignal_lab.app.readonly_smoke_types, polysignal_lab.config, polysignal_lab.data.market_discovery_helpers, polysignal_lab.domain, polysignal_lab.utils
-Output: make_public_client, check_gamma_events, check_clob_book, check_clob_404, check_binance_spot, public_get, raw_public_get, response_json, surface, first_token_id, clob_book_payload_ok, spot_from_payload
+Input: __future__, __future__.annotations, typing, typing.Final, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.app.readonly_smoke_types, polysignal_lab.app.readonly_smoke_types.(
+Output: make_public_client, check_gamma_events, check_clob_book, check_clob_404, check_binance_spot, public_get, raw_public_get, response_json, surface, first_token_id
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

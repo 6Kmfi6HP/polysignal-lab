@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, typing, typing.cast, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaCore
+Output: AlphaCoreRegistry
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 from collections.abc import Callable

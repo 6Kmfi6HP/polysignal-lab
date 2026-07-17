@@ -1,10 +1,12 @@
 """
 Input: pytest, sqlite3, polysignal_lab.app.services.market_universe_service, polysignal_lab.app.services.market_universe_service.MarketUniverseService, polysignal_lab.domain.enums, polysignal_lab.domain.enums.MarketStatus, polysignal_lab.data.state, polysignal_lab.data.state.MarketRegistry, factories, factories.MarketFactoryConfig
-Output: test_market_universe_refresh_keeps_registry_empty_when_no_markets, test_market_universe_refresh_appends_market_log_only_on_change, test_market_universe_refresh_keeps_tokens_when_persistence_fails, test_market_universe_refresh_passes_rotation_window_options, test_market_universe_refresh_does_not_apply_rotation_window_options_in_legacy_mode, test_market_universe_resolved_refresh_keeps_registry_when_persistence_fails, test_market_universe_resolved_refresh_continues_after_sqlite_failure, test_fetch_resolved_uses_exact_market_lookup_for_open_ids, _Discovery, _Persistence
+Output: test_market_universe_refresh_keeps_registry_empty_when_no_markets, test_market_universe_refresh_appends_market_log_only_on_change, test_market_universe_refresh_keeps_tokens_when_persistence_fails, test_market_universe_refresh_passes_rotation_window_options, test_market_universe_resolved_refresh_keeps_registry_when_persistence_fails, test_market_universe_resolved_refresh_continues_after_sqlite_failure, test_fetch_resolved_uses_exact_market_lookup_for_open_ids, _Discovery, _Persistence, _OneMarketDiscovery
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -208,11 +210,12 @@ async def test_fetch_resolved_uses_exact_market_lookup_for_open_ids(monkeypatch)
         def json(self) -> dict[str, object]:
             return {
                 "id": "market-1",
-                "conditionId": "condition-1",
+                # NT instrument_id is `{condition_id}-{token_id}` — neither side may contain `-`.
+                "conditionId": "0xcondition1",
                 "slug": "slug-1",
                 "umaResolutionStatus": "resolved",
                 "outcomePrices": '["1", "0"]',
-                "clobTokenIds": '["token-up", "token-down"]',
+                "clobTokenIds": '["111", "222"]',
                 "outcomes": '["Up", "Down"]',
             }
         def raise_for_status(self) -> None:
@@ -231,7 +234,9 @@ async def test_fetch_resolved_uses_exact_market_lookup_for_open_ids(monkeypatch)
 
     monkeypatch.setattr("polysignal_lab.app.services.market_universe_service.httpx.AsyncClient", _Client)
     registry = MarketRegistry()
-    registry.upsert_many([sample_market().model_copy(update={"market_id": "market-1", "condition_id": "condition-1"})])
+    registry.upsert_many(
+        [sample_market().model_copy(update={"market_id": "market-1", "condition_id": "0xcondition1"})]
+    )
     service = MarketUniverseService(discovery=object(), markets=registry, persistence=_Persistence(), settings=Settings())
 
     resolved = await service.fetch_resolved({"market-1"})

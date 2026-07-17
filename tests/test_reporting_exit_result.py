@@ -1,10 +1,12 @@
 """
-Input: polysignal_lab.domain.enums, polysignal_lab.reporting.exit_result, polysignal_lab.app.reporting_projection
-Output: early-exit result + fee_model v1 contract tests
-Pos: Test Layer
+Input: __future__, __future__.annotations, datetime, datetime.date, factories, factories.MarketFactoryConfig, factories.sample_market, polysignal_lab.app.reporting_projection, polysignal_lab.app.reporting_projection.report_result_from_projection, polysignal_lab.domain.enums
+Output: test_fee_fields_v1_marker, test_resolution_result_writes_fee_model_ignored_v1, test_early_exit_take_profit_builds_win_result, test_early_exit_stop_loss_builds_loss_result, test_early_exit_ignores_non_exit_fills
+Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

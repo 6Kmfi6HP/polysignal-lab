@@ -1,6 +1,15 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, datetime, datetime.UTC, datetime.datetime, typing, typing.cast, polysignal_lab.alpha.types
+Output: cache_has_active_order_dedupe_key, trading_state_from_cache
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import cast
 
@@ -11,6 +20,7 @@ from polysignal_lab.alpha.types import (
 )
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.projections import _tags
 
 
 def cache_has_active_order_dedupe_key(
@@ -195,19 +205,6 @@ def _instrument_identity(
             if str(registry.instrument_id_for_token(token.token_id)) == instrument_id:
                 return pair.market_id, candidate_condition_id, token.side
     return None
-
-
-def _tags(raw: object) -> dict[str, str]:
-    if isinstance(raw, Mapping):
-        return {str(key): str(value) for key, value in raw.items()}
-    if not isinstance(raw, Iterable) or isinstance(raw, (str, bytes, bytearray)):
-        return {}
-    parsed: dict[str, str] = {}
-    for item in raw:
-        key, separator, value = str(item).partition("=")
-        if separator and key:
-            parsed[key] = value
-    return parsed
 
 
 def _text(value: object) -> str:

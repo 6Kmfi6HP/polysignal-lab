@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, typing, typing.Any
+Output: normalize_reject_reason, is_rejected_order_payload
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 from typing import Any

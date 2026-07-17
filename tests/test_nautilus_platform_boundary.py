@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, ast, importlib, re, sys, tomllib, pathlib, pathlib.Path, typing, typing.cast
-Output: test_default_import_does_not_require_nautilus, test_nautilus_node_and_strategies_do_not_import_legacy_execution, test_nautilus_is_required_dependency_for_default_runtime, test_nautilus_docker_and_lock_avoid_git_source_builds, test_cli_exposes_nautilus_mode_and_script, test_default_source_keeps_forbidden_live_symbols_out_of_runtime, test_default_nautilus_runtime_source_avoids_local_paper_executors, test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources, test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime_layers, test_nautilus_runtime_duplicate_platform_modules_are_deleted, test_nautilus_runtime_has_single_managed_rtds_entrypoint
+Input: __future__, __future__.annotations, ast, importlib, re, subprocess, sys, tomllib, pathlib, pathlib.Path
+Output: test_default_import_does_not_require_nautilus, test_nautilus_node_and_strategies_do_not_import_legacy_execution, test_nautilus_is_required_dependency_for_default_runtime, test_nautilus_docker_and_lock_avoid_git_source_builds, test_cli_exposes_nautilus_mode_and_script, test_default_source_keeps_forbidden_live_symbols_out_of_runtime, test_default_nautilus_runtime_source_avoids_local_paper_executors, test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources, test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime_layers, test_nautilus_runtime_duplicate_platform_modules_are_deleted
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -193,6 +195,8 @@ def test_nautilus_runtime_duplicate_platform_modules_are_deleted() -> None:
         Path("src/polysignal_lab/nautilus_runtime/settlement.py"),
         Path("src/polysignal_lab/nautilus_runtime/book_data.py"),
         Path("src/polysignal_lab/nautilus_runtime/patch_nautilus_polymarket_autoload.py"),
+        Path("src/polysignal_lab/nautilus_runtime/decision_policy_actor.py"),
+        Path("src/polysignal_lab/nautilus_runtime/decision_messages.py"),
     )
 
     assert [str(path) for path in duplicate_modules if path.exists()] == []
@@ -596,6 +600,11 @@ def test_final_v2_single_track_static_gates() -> None:
         "stale_refresh_attempts_by_condition",
         "last_stale_refresh_at",
         "NautilusDecisionPolicyActor",
+        "DecisionPolicyActor",
+        "DecisionCandidateData",
+        "DecisionResultData",
+        "decision_policy_actor",
+        "decision_messages",
         "HedgeWorkflow",
         "hedge_workflows",
         "_entered_markets",
@@ -665,7 +674,6 @@ def test_final_v2_single_track_static_gates() -> None:
 def test_custom_data_registration_requires_real_arrow_codecs() -> None:
     scanned = (
         Path("src/polysignal_lab/nautilus_runtime/custom_data_types.py"),
-        Path("src/polysignal_lab/nautilus_runtime/decision_messages.py"),
     )
     forbidden = (
         "pa.schema([])",
@@ -701,6 +709,62 @@ def test_custom_data_registration_requires_real_arrow_codecs() -> None:
                     for name in sorted(required - assignments)
                 )
     assert findings == []
+
+
+def test_nautilus_runtime_has_no_decision_policy_actor_bus() -> None:
+    forbidden = (
+        "DecisionCandidateData",
+        "DecisionResultData",
+        "DecisionPolicyActor",
+        "decision_policy_actor",
+        "decision_messages",
+    )
+    findings: list[str] = []
+    for path in Path("src/polysignal_lab/nautilus_runtime").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        findings.extend(f"{path}:{token}" for token in forbidden if token in text)
+    assert findings == []
+
+
+def test_strategy_owns_decision_policy_not_separate_actor() -> None:
+    source = Path("src/polysignal_lab/nautilus_runtime/native_strategy.py").read_text(
+        encoding="utf-8"
+    )
+    host_init = Path(
+        "src/polysignal_lab/nautilus_runtime/strategy/host_init.py"
+    ).read_text(encoding="utf-8")
+    # Policy is Strategy-owned DI (bound in host_init), not a separate Actor bus.
+    assert "strategy.policy =" in host_init or "self.policy =" in source
+    assert "_apply_decision_batch" in source
+    assert "DecisionCandidateData" not in source
+    assert "DecisionCandidate" not in source
+    registration = Path(
+        "src/polysignal_lab/nautilus_runtime/runtime_registration.py"
+    ).read_text(encoding="utf-8")
+    assert "DecisionPolicyActor" not in registration
+
+
+def test_native_strategy_does_not_expose_framework_owned_setters() -> None:
+    source = Path("src/polysignal_lab/nautilus_runtime/native_strategy.py").read_text(
+        encoding="utf-8"
+    )
+    forbidden = (
+        "@cache.setter",
+        "@order_factory.setter",
+        "def cache(self, value",
+        "def order_factory(self, value",
+    )
+
+    assert [token for token in forbidden if token in source] == []
+
+
+def test_signal_gate_commit_does_not_call_channel_rate_limiter() -> None:
+    source = Path("src/polysignal_lab/signal_layer/gate.py").read_text(encoding="utf-8")
+    commit_start = source.index("def commit(")
+    commit_end = source.index("\n    def ", commit_start + 1)
+    commit_body = source[commit_start:commit_end]
+    assert "rate_limiter" not in commit_body
+    assert "CHANNEL_RATE_LIMIT" not in commit_body
 
 
 def test_live_node_component_state_is_not_hard_disabled() -> None:

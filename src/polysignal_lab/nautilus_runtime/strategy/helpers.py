@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.UTC, datetime.datetime, polysignal_lab.nautilus_runtime.projections
-Output: classify_project_owned_data, DataBoundaryClassification, _Assembler, _Observability
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.UTC, datetime.datetime, datetime.timedelta
+Output: classify_project_owned_data, catalog_instrument_id_resolver, DataBoundaryClassification, _Assembler, _Observability, _CustomDataSubscriber
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -24,9 +26,9 @@ from nautilus_trader.core.nautilus_pyo3 import (
 )
 
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog, MarketPairMeta
+from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.state import JsonValue, StateSchemaError
-from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
+from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState, event_datetime
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
@@ -60,7 +62,6 @@ MISSING_PROJECTIONS_ERROR = "PolySignalNativeStrategy requires injected registry
 EVALUATION_HEARTBEAT_TIMER_NAME = "polysignal_evaluation_heartbeat"
 EVALUATION_HEARTBEAT_INTERVAL = timedelta(seconds=10)
 DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS = 1000
-L1_RAW_DELTA_FALLBACK_PHASE = "l1_raw_delta_fallback"
 
 
 class DataBoundaryClassification(Enum):
@@ -113,9 +114,17 @@ class _Observability(Protocol):
 
     def record_rejected_decision(self, rejected: object) -> None: ...
 
-    def record_nautilus_order_event(self, event: object) -> None: ...
+    def record_nautilus_order_event(
+        self,
+        event: object,
+        metrics: Mapping[str, object] | None = None,
+    ) -> None: ...
 
-    def record_nautilus_fill_event(self, event: object) -> None: ...
+    def record_nautilus_fill_event(
+        self,
+        event: object,
+        metrics: Mapping[str, object] | None = None,
+    ) -> None: ...
 
     def record_nautilus_position(self, position: object) -> None: ...
 
@@ -128,8 +137,21 @@ class _CustomDataSubscriber(Protocol):
     ) -> object: ...
 
 
-def _identity_instrument_id(token_id: str) -> str:
-    return token_id
+def catalog_instrument_id_resolver(
+    registry: object,
+) -> Callable[[str], object]:
+    """Resolve token_id → instrument id via MarketCatalog (NT get_polymarket_instrument_id)."""
+
+    def resolve(token_id: str) -> object:
+        getter = getattr(registry, "instrument_id_for_token", None)
+        if not callable(getter):
+            raise RuntimeError("registry must implement instrument_id_for_token")
+        instrument_id = getter(token_id)
+        if instrument_id is None:
+            raise ValueError(f"unknown Polymarket token_id {token_id!r}")
+        return instrument_id
+
+    return resolve
 
 
 def _nautilus_data_type(value: object) -> object:
@@ -203,7 +225,7 @@ def _event_side(
             meta = registry.token_meta(resolved_token_id)
             if meta is not None:
                 return meta.side
-    return Side.UP
+    raise ValueError("unresolved order/fill side; refusing Side.UP fabrication")
 
 
 def _instrument_ids(
@@ -284,53 +306,6 @@ def _maybe_float(value: object) -> float | None:
         return None
 
 
-def _positive_value(source: Mapping[str, object], key: str) -> float | None:
-    value = _maybe_float(source.get(key))
-    return value if value is not None and value > 0.0 else None
-
-
-def _fallback_fill_price(
-    metrics: Mapping[str, object],
-    tags: Mapping[str, object],
-    side: Side,
-) -> float | None:
-    side_key = side.value.lower()
-    for key in (
-        "fill_price",
-        "favorite_price",
-        "fav_price",
-        f"{side_key}_ask",
-        f"{side_key}_last_price",
-        "best_ask",
-        "current_ask",
-        "hedge_price",
-        "level_price",
-        "bid_price",
-        "entry_reference_price",
-        "max_entry_price",
-    ):
-        value = _positive_value(metrics, key) or _positive_value(tags, key)
-        if value is not None:
-            return value
-    return None
-
-
-def event_datetime(value: object) -> datetime:
-    if isinstance(value, datetime):
-        try:
-            if value.tzinfo is None or value.utcoffset() is None:
-                raise ValueError("ts_event datetime must be timezone-aware")
-            return value.astimezone(UTC)
-        except Exception as exc:
-            raise ValueError("ts_event datetime must be timezone-aware") from exc
-    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-        raise ValueError("ts_event must be a positive Unix nanosecond timestamp")
-    try:
-        return datetime.fromtimestamp(value / 1_000_000_000, UTC)
-    except (OverflowError, OSError, ValueError) as exc:
-        raise ValueError("ts_event must be a positive Unix nanosecond timestamp") from exc
-
-
 def _subscribe_custom_data(
     strategy: _CustomDataSubscriber,
     data_type: object,
@@ -354,5 +329,4 @@ def _datetime_ns(value: int | None) -> datetime | None:
     return datetime.fromtimestamp(value / 1_000_000_000, UTC)
 
 
-def _pair_from_metadata(meta: PolySignalMarketMetaData) -> MarketPairMeta:
-    return MarketPairMeta.from_metadata(meta)
+

@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, typing, typing.Any, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.AlphaFillEvent
+Input: __future__, __future__.annotations, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side
 Output: LowSideDualReversionAlphaCore
 Pos: Application code
 
@@ -11,9 +11,9 @@ Pos: Application code
 
 
 
-from __future__ import annotations
 
-from typing import Any
+
+from __future__ import annotations
 
 from polysignal_lab.alpha.helpers import (
     HedgeDecisionContext,
@@ -96,22 +96,25 @@ class LowSideDualReversionAlphaCore:
         )
         decisions: list[AlphaDecision] = []
         for side in SIDES:
-            decision = self._decision(
+            decision = build_order_decision(
+                self.name,
                 view,
                 side,
-                confidence=0.60,
-                max_entry_price=best_price,
-                reason_codes=("DUAL_REVERSION_BID", f"PRICE_{best_price}"),
-                metrics={
-                    "pair_cost": round(best_cost, 4),
-                    "pair_cost_cap": self.config.pair_cost_cap,
-                    "bid_price": best_price,
-                    "shares": self.config.shares_per_level,
-                },
-                order_intent=OrderIntentSpec(
-                    OrderIntent.PASSIVE_GTD,
-                    expiry_seconds=min(seconds_to_close - 60, 300),
-                    pair_id=f"{view.market_id}:dual",
+                OrderDecisionSpec(
+                    confidence=0.60,
+                    max_entry_price=best_price,
+                    reason_codes=("DUAL_REVERSION_BID", f"PRICE_{best_price}"),
+                    metrics={
+                        "pair_cost": round(best_cost, 4),
+                        "pair_cost_cap": self.config.pair_cost_cap,
+                        "bid_price": best_price,
+                        "shares": self.config.shares_per_level,
+                    },
+                    order_intent=OrderIntentSpec(
+                        OrderIntent.PASSIVE_GTD,
+                        expiry_seconds=min(seconds_to_close - 60, 300),
+                        pair_id=f"{view.market_id}:dual",
+                    ),
                 ),
             )
             if decision:
@@ -201,17 +204,4 @@ class LowSideDualReversionAlphaCore:
                         decisions.append(decision)
         return decisions
 
-    def _decision(self, view: MarketView, side: Side, *, confidence: float, max_entry_price: float, reason_codes: tuple[str, ...], metrics: dict[str, Any], order_intent: OrderIntentSpec, hedge_leg: bool = False) -> AlphaDecision | None:
-        return build_order_decision(
-            self.name,
-            view,
-            side,
-            OrderDecisionSpec(
-                confidence=confidence,
-                max_entry_price=max_entry_price,
-                reason_codes=reason_codes,
-                metrics=metrics,
-                order_intent=order_intent,
-                hedge_leg=hedge_leg,
-            ),
-        )
+

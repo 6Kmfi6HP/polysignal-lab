@@ -1,10 +1,12 @@
 """
-Input: pytest, factories, factories.sample_report_result, polysignal_lab.app.services.publish_service, polysignal_lab.app.services.publish_service.PublishService, polysignal_lab.domain.reporting_result, polysignal_lab.domain.reporting_result.InvalidReportResultRow
-Output: test_publish_service_health_starts_ok, test_deliver_daily_report_uses_durable_idempotency_key, test_publish_signal_persists_publish_audit, test_publish_report_result_rejects_invalid_payload, test_publish_nautilus_fill_persists_publish_audit, _Publish, _Formatter, _Publisher, _Persistence, _Signal
+Input: pytest, factories, factories.sample_report_result, polysignal_lab.app.services.publish_service, polysignal_lab.app.services.publish_service.PublishService, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market, polysignal_lab.domain.market.Market, polysignal_lab.domain.market.OutcomeToken
+Output: test_publish_service_health_starts_ok, test_deliver_daily_report_uses_durable_idempotency_key, test_publish_signal_persists_publish_audit, test_publish_report_result_rejects_invalid_payload, test_publish_nautilus_fill_persists_publish_audit, test_publish_nautilus_fill_normalizes_projected_rows, _Publish, _Formatter, _Publisher, _Persistence
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

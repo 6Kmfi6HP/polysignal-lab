@@ -1,10 +1,12 @@
 """
-Input: __future__, inspect, logging, sqlite3, collections.abc, typing, httpx, polysignal_lab.config, polysignal_lab.data.market_discovery_helpers, polysignal_lab.data.state, polysignal_lab.domain
+Input: __future__, __future__.annotations, inspect, logging, sqlite3, collections.abc, collections.abc.Awaitable, collections.abc.Callable, typing, typing.Any
 Output: token_ids_for_markets, MarketUniverseService
 Pos: Service Layer - Business logic
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

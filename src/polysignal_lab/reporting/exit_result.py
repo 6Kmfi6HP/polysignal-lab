@@ -1,10 +1,12 @@
 """
-Input: __future__, collections.abc, math, typing, polysignal_lab.domain.enums, polysignal_lab.utils
-Output: FEE_MODEL_IGNORED_V1, report_result_from_early_exit, fee_fields_v1, exit_mode_from_reason
-Pos: Reporting Truth - early reduce-only exit results
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, math, typing, typing.Any, typing.TypedDict, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode
+Output: fee_fields_v1, exit_mode_from_reason, report_result_from_early_exit, FeeFields
+Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

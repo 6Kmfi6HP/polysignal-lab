@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, importlib, collections.abc, typing, polysignal_lab.config
-Output: assert_no_live_polymarket_execution, validate_polymarket_market_data_credentials, build_sandbox_live_node, build_cache_config, build_data_engine_config, build_exec_engine_config, build_polymarket_data_client_config, build_sandbox_exec_client_config
+Input: __future__, __future__.annotations, importlib, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.cast, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3
+Output: assert_no_live_polymarket_execution, build_sandbox_live_node, build_live_execution_node, build_runtime_node, build_cache_config, build_data_engine_config, build_exec_engine_config, build_risk_engine_config, build_polymarket_data_client_config, build_sandbox_exec_client_config
 Pos: Application code
 
-Self-reference: When this file changes, update this header
+🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -19,13 +21,6 @@ from polysignal_lab.config import Settings, load_settings
 SANDBOX_EXEC_CLIENT_ID = "POLYSIGNAL_PM_SANDBOX"
 LIVE_EXEC_CLIENT_ID = "POLYMARKET"
 POLYMARKET_CLIENT_ID = "POLYMARKET"
-POLYMARKET_MARKET_DATA_CREDENTIALS = (
-    "POLYMARKET_" + "API_KEY",
-    "POLYMARKET_" + "API_SECRET",
-    "POLYMARKET_" + "PASSPHRASE",
-    "POLYMARKET_" + "PK",
-    "POLYMARKET_" + "FUNDER",
-)
 
 LiveNode = getattr(_pyo3, "LiveNode")
 TraderId = _pyo3.TraderId
@@ -36,43 +31,6 @@ PolymarketExecutionClientFactory = getattr(_pyo3, "PolymarketExecutionClientFact
 Venue = _pyo3.Venue
 Money = _pyo3.Money
 CurrencyFromStr = _pyo3.Currency.from_str
-
-def validate_polymarket_market_data_credentials(
-    environ: Mapping[str, str] | None = None,
-) -> None:
-    """Fail before Nautilus builds its credentialed Polymarket data client."""
-    import os
-
-    source = os.environ if environ is None else environ
-    missing = tuple(
-        name
-        for name in POLYMARKET_MARKET_DATA_CREDENTIALS
-        if not str(source.get(name) or "").strip()
-    )
-    if missing:
-        names = ", ".join(missing)
-        raise RuntimeError(
-            "Nautilus Polymarket market-data adapter requires credentials: "
-            f"{names}"
-        )
-
-
-def validate_live_execution_credentials(
-    environ: Mapping[str, str] | None = None,
-) -> None:
-    import os
-
-    source = os.environ if environ is None else environ
-    missing = tuple(
-        name
-        for name in POLYMARKET_MARKET_DATA_CREDENTIALS
-        if not str(source.get(name) or "").strip()
-    )
-    if missing:
-        raise RuntimeError(
-            "live Polymarket execution requires credentials: "
-            + ", ".join(missing)
-        )
 
 
 def assert_no_live_polymarket_execution(config: object) -> None:
@@ -90,7 +48,6 @@ def build_sandbox_live_node(
 ) -> object:
     if settings is None:
         settings = load_settings()
-    _validate_real_polymarket_data_factory_credentials()
     data_config = build_polymarket_data_client_config(
         settings, instrument_config=instrument_config
     )
@@ -115,7 +72,6 @@ def build_live_execution_node(
         raise RuntimeError("live execution requires allow_live_polymarket_execution")
     if not settings.safety.allow_live_market_actions:
         raise RuntimeError("live execution requires safety.allow_live_market_actions")
-    validate_live_execution_credentials()
     data_config = build_polymarket_data_client_config(
         settings, instrument_config=instrument_config
     )
@@ -174,8 +130,11 @@ def _build_live_node(
         .add_data_client(POLYMARKET_CLIENT_ID, data_factory(), data_config)
     )
     with_risk = getattr(builder, "with_risk_engine_config", None)
-    if callable(with_risk):
-        builder = with_risk(build_risk_engine_config(settings))
+    if not callable(with_risk):
+        raise RuntimeError(
+            "LiveNode builder missing with_risk_engine_config; refuse fail-open start"
+        )
+    builder = with_risk(build_risk_engine_config(settings))
     if live:
         builder = builder.add_exec_client(LIVE_EXEC_CLIENT_ID, exec_factory(), exec_config)
     else:
@@ -207,14 +166,19 @@ def build_exec_engine_config(*, reconciliation: bool) -> object:
 
 
 def build_risk_engine_config(settings: Settings) -> object:
+    """Fail-closed RiskEngine config: bypass is always False."""
     risk_config = _import_callable(
         "nautilus_trader.core.nautilus_pyo3", "LiveRiskEngineConfig"
     )
     configured = settings.runtime.nautilus.risk
+    max_submit = getattr(configured, "max_order_submit_rate", None)
+    max_modify = getattr(configured, "max_order_modify_rate", None)
+    if max_submit is None or max_modify is None:
+        raise RuntimeError("risk max_order_submit_rate/max_order_modify_rate required")
     return risk_config(
         bypass=False,
-        max_order_submit_rate=configured.max_order_submit_rate,
-        max_order_modify_rate=configured.max_order_modify_rate,
+        max_order_submit_rate=max_submit,
+        max_order_modify_rate=max_modify,
         max_notional_per_order=dict(configured.max_notional_per_order),
     )
 
@@ -282,6 +246,7 @@ def build_sandbox_exec_client_config(settings: Settings) -> object:
 
 
 def build_polymarket_exec_client_config(settings: Settings) -> object:
+    """Build live exec config without injecting secrets — adapter Rust resolves credentials."""
     config_cls = _import_callable(
         "nautilus_trader.core.nautilus_pyo3", "PolymarketExecClientConfig"
     )
@@ -289,27 +254,14 @@ def build_polymarket_exec_client_config(settings: Settings) -> object:
         "nautilus_trader.core.nautilus_pyo3", "AccountId"
     )
     runtime = settings.runtime.nautilus
-    import os
-
     kwargs = {
         "trader_id": cast(Callable[[str], object], _required(TraderId, "TraderId"))(
             runtime.trader_id
         ),
         "account_id": account_id_cls(f"{POLYMARKET_CLIENT_ID}-001"),
-        "private_key": os.environ["POLYMARKET_PK"],
-        "api_key": os.environ["POLYMARKET_API_KEY"],
-        "api_secret": os.environ["POLYMARKET_API_SECRET"],
-        "passphrase": os.environ["POLYMARKET_PASSPHRASE"],
-        "funder": os.environ["POLYMARKET_FUNDER"],
+        # Credential fields intentionally unset; Polymarket adapter resolves from env.
     }
     return config_cls(**kwargs)
-
-
-def _validate_real_polymarket_data_factory_credentials() -> None:
-    factory = PolymarketDataClientFactory
-    module_name = getattr(factory, "__module__", "")
-    if isinstance(module_name, str) and "polymarket" in module_name:
-        validate_polymarket_market_data_credentials()
 
 
 def _import_callable(module_name: str, attr_name: str) -> Callable[..., object]:

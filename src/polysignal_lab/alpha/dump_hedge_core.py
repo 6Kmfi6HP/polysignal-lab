@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, collections, collections.defaultdict, collections.deque, datetime, datetime.datetime, datetime.timezone, statistics, statistics.mean
-Output: RollingPriceStats, DumpHedgeAlphaCore
+Input: __future__, __future__.annotations, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.stats, polysignal_lab.alpha.stats.RollingPriceStats, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent
+Output: DumpHedgeAlphaCore
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -11,9 +11,9 @@ Pos: Application code
 
 
 
-from __future__ import annotations
 
-from typing import Any
+
+from __future__ import annotations
 
 from polysignal_lab.alpha.helpers import (
     HedgeDecisionContext,
@@ -33,7 +33,7 @@ from polysignal_lab.alpha.types import (
     MarketView,
     OrderIntentSpec,
 )
-from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.enums import OrderIntent
 
 
 class DumpHedgeAlphaCore:
@@ -70,20 +70,23 @@ class DumpHedgeAlphaCore:
                 continue
             drop_ratio = (vwap - current_ask) / vwap
             if drop_ratio >= self.config.move_threshold:
-                decision = self._decision(
+                decision = build_order_decision(
+                    self.name,
                     view,
                     side,
-                    confidence=0.75,
-                    max_entry_price=current_ask,
-                    reason_codes=("DUMP_DETECTED", f"DROP_{drop_ratio:.1%}", f"SIDE_{side.value}"),
-                    metrics={
-                        "vwap": round(vwap, 4),
-                        "current_ask": round(current_ask, 4),
-                        "drop_ratio": round(drop_ratio, 4),
-                        "move_threshold": self.config.move_threshold,
-                        "shares": self.config.leg_shares,
-                    },
-                    order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dump"),
+                    OrderDecisionSpec(
+                        confidence=0.75,
+                        max_entry_price=current_ask,
+                        reason_codes=("DUMP_DETECTED", f"DROP_{drop_ratio:.1%}", f"SIDE_{side.value}"),
+                        metrics={
+                            "vwap": round(vwap, 4),
+                            "current_ask": round(current_ask, 4),
+                            "drop_ratio": round(drop_ratio, 4),
+                            "move_threshold": self.config.move_threshold,
+                            "shares": self.config.leg_shares,
+                        },
+                        order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dump"),
+                    ),
                 )
                 if decision:
                     decisions.append(decision)
@@ -167,28 +170,4 @@ class DumpHedgeAlphaCore:
                     decisions.append(decision)
         return decisions
 
-    def _decision(
-        self,
-        view: MarketView,
-        side: Side,
-        *,
-        confidence: float,
-        max_entry_price: float,
-        reason_codes: tuple[str, ...],
-        metrics: dict[str, Any],
-        order_intent: OrderIntentSpec,
-        hedge_leg: bool = False,
-    ) -> AlphaDecision | None:
-        return build_order_decision(
-            self.name,
-            view,
-            side,
-            OrderDecisionSpec(
-                confidence=confidence,
-                max_entry_price=max_entry_price,
-                reason_codes=reason_codes,
-                metrics=metrics,
-                order_intent=order_intent,
-                hedge_leg=hedge_leg,
-            ),
-        )
+

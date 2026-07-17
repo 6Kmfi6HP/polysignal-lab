@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, collections, collections.defaultdict, collections.deque, typing, typing.Any, typing.Mapping, polysignal_lab.alpha.state, polysignal_lab.alpha.state.json_safe_state
-Output: _RollingPriceStats, ZigZagDetector, FibonacciCalculator, FibonacciAlphaCore
+Input: __future__, __future__.annotations, collections, collections.deque, typing, typing.Any, typing.Mapping, typing.Sequence, typing.TypedDict, polysignal_lab.alpha.helpers
+Output: _FibState, _FibSetup, ZigZagDetector, FibonacciCalculator, FibonacciAlphaCore
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -291,7 +293,7 @@ class FibonacciAlphaCore:
             return []
         return self._build_fib_decisions(view, state, setup)
 
-    # --- StatefulAlphaCore -------------------------------------------------
+    # --- alpha state -------------------------------------------------
 
     def save_state(self) -> Mapping[str, object]:
         return json_safe_state(

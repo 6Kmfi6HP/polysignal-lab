@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, html, typing, typing.Literal, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.reporting_result, polysignal_lab.domain.reporting_result.report_date_text, polysignal_lab.domain.reporting_result.report_float, polysignal_lab.domain.reporting_result.report_nested_mapping, polysignal_lab.domain.reporting_result.report_text, polysignal_lab.domain.reporting_result.trade_result_float, polysignal_lab.domain.reporting_result.trade_result_status, polysignal_lab.domain.reporting_result.trade_result_text
-Output: ReportResultRow helpers, DailyReportRow helpers, MessageFormatter
+Input: __future__, __future__.annotations, html, typing, typing.Literal, collections.abc, collections.abc.Mapping, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.reporting_result
+Output: MessageFormatter
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

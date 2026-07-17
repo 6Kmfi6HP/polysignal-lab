@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Sequence, dataclasses, dataclasses.dataclass, typing, typing.Protocol, typing.cast
+Output: build_runtime_node, build_live_node, build_nautilus_runtime, _Disposable, NautilusRuntimeBundle
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -57,9 +66,19 @@ def build_runtime_node(
             condition_ids=configured_ids,
         )
 
-    instrument_config = PolymarketInstrumentProviderConfig(
-        load_ids=instrument_load_ids(configured_markets),
+    # Official pyo3 provider owns Gamma instrument load. Project only supplies
+    # asset/timeframe/period slug selection (and optional startup load_ids).
+    from polysignal_lab.nautilus_runtime.polymarket_slugs import (
+        build_polymarket_updown_event_slugs,
     )
+
+    load_ids = instrument_load_ids(configured_markets)
+    instrument_kwargs: dict[str, object] = {
+        "event_slugs": build_polymarket_updown_event_slugs(settings),
+    }
+    if load_ids:
+        instrument_kwargs["load_ids"] = list(load_ids)
+    instrument_config = PolymarketInstrumentProviderConfig(**instrument_kwargs)
     from polysignal_lab.nautilus_runtime.live_node import build_runtime_node as build
 
     node = build(settings, instrument_config=instrument_config)

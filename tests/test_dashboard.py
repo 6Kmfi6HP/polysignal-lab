@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timezone, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.dashboard.app
-Output: test_dashboard_uses_injected_reporting_read_port, test_dashboard_readonly_endpoints_return_stored_data, test_dashboard_positions_returns_latest_metadata_first, test_dashboard_reduces_order_and_position_lifecycle_to_current_state, test_dashboard_health_reports_missing_runtime_as_unknown, test_dashboard_health_reports_stale_runtime_as_degraded, test_dashboard_health_keeps_fresh_runtime_ok_when_storage_fails, test_dashboard_health_ignores_superseded_runtime_snapshot_status, test_dashboard_health_returns_component_snapshot_from_system_events, test_dashboard_exposes_paper_execution_quality, test_leaderboard_uses_closed_trade_results_not_report_snapshots, test_leaderboard_recomputes_calibration_status_after_aggregation, test_dashboard_exposes_bounded_strategy_status_rows, test_dashboard_rejects_write_methods
+Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timedelta, datetime.timezone, unittest.mock, unittest.mock.Mock, httpx
+Output: test_dashboard_uses_injected_reporting_read_port, test_dashboard_readonly_endpoints_return_stored_data, test_dashboard_positions_returns_latest_metadata_first, test_dashboard_reduces_order_and_position_lifecycle_to_current_state, test_dashboard_positions_normalize_nautilus_rows_with_market_lookup, test_dashboard_health_reports_missing_runtime_as_unknown, test_dashboard_health_reports_stale_runtime_as_degraded, test_dashboard_health_reports_persistent_readiness_detail, test_dashboard_health_keeps_fresh_runtime_ok_when_storage_fails, test_dashboard_health_ignores_superseded_runtime_snapshot_status
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -679,7 +681,7 @@ async def test_dashboard_order_count_normalize_nautilus_rows() -> None:
     assert row["reference_price"] == 0.63
     assert row["stake_usdc"] == 32.0
     assert row["shares"] == 40.0
-    assert row["status"] == "RESTING"
+    assert row["status"] == "ACCEPTED"
     assert row["metrics"]["nonfinite"] is None
 
 

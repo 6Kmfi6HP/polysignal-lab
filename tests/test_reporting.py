@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.date, typing, typing.Any, typing.assert_never, factories, factories.sample_report_result, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.reporting.daily_report, polysignal_lab.reporting.daily_report.DailyReportService, polysignal_lab.signal_layer.formatter, polysignal_lab.signal_layer.formatter.MessageFormatter
-Output: ResultSpec, test_daily_report_includes_strategy_win_rate_and_pnl, test_daily_report_counts_split_as_closed_without_win_loss_void, test_daily_report_includes_strategy_asset_timeframe_calibration, test_daily_report_aggregates_paper_execution_quality
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.date, typing, typing.Any, typing.assert_never, factories
+Output: test_daily_report_includes_strategy_win_rate_and_pnl, test_daily_report_counts_split_as_closed_without_win_loss_void, test_daily_report_includes_strategy_asset_timeframe_calibration, test_daily_report_aggregates_paper_execution_quality, ResultSpec
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

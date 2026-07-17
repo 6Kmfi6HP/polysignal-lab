@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, polysignal_lab.alpha.one_cent_buy_core, polysignal_lab.alpha.one_cent_buy_core.OneCentBuyAlphaCore, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.OneCentBuyConfig, alpha_helpers, alpha_helpers.with_active_order
+Output: test_one_cent_buy_uses_cached_orders_for_level_guard
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 from polysignal_lab.alpha.one_cent_buy_core import OneCentBuyAlphaCore

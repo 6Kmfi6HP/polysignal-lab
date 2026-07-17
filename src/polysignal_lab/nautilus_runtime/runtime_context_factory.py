@@ -1,10 +1,12 @@
 """
-Input: __future__, collections.abc, logging, pathlib, typing, polysignal_lab.config, polysignal_lab.app.services, polysignal_lab.domain, polysignal_lab.reporting
-Output: NautilusRuntimeContext, build_nautilus_runtime_context
-Pos: Nautilus runtime service context factory — replaces legacy PolySignalScheduler DI
+Input: __future__, __future__.annotations, logging, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, typing, typing.TYPE_CHECKING, typing.Final
+Output: validate_native_runtime_settings, build_nautilus_runtime_context, NautilusRuntimeContext
+Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

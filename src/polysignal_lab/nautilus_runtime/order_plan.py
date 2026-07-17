@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, typing, typing.SupportsFloat, typing.cast, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
-Output: build_order_spec, resolve_order_intent, explicit_order_intent, resolve_order_price, resolve_order_quantity, build_order_tags, add_optional_source_tags, add_time_in_force_tags, expiry_seconds_for, pair_id_for
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, typing, typing.SupportsFloat, typing.cast, polysignal_lab.alpha.types
+Output: build_order_spec, source_reduce_only, resolve_order_intent, explicit_order_intent, resolve_order_price, resolve_order_quantity, build_order_tags, add_optional_source_tags, add_time_in_force_tags, expiry_seconds_for
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

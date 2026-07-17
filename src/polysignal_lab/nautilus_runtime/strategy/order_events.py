@@ -1,6 +1,6 @@
 """
-Input: __future__, collections.abc, typing, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.strategy.event_projection, polysignal_lab.reporting.exit_result, polysignal_lab.utils
-Output: handle_order_lifecycle_event, handle_order_filled, handle_position_event, project_strategy_order_event, project_strategy_fill_event, should_notify_fill, forget_approved_metrics, call_core, _record_early_exit_result
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, typing, typing.Protocol, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.domain.enums
+Output: should_notify_fill, handle_order_lifecycle_event, handle_order_filled, handle_position_event, handle_position_closed, _OrderEventStrategy
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -10,20 +10,17 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
-from typing import Protocol, cast
+from collections.abc import Mapping
+from typing import Protocol
 
-from polysignal_lab.alpha.types import (
-    AlphaDecision,
-    AlphaFillEvent,
-    AlphaOrderEvent,
-    MarketView,
-)
+from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.strategy.event_projection import (
-    project_fill_event,
-    project_order_event,
+    fill_side,
+    fill_ts_event,
+    project_fill_metrics,
+    project_order_metrics,
 )
 from polysignal_lab.reporting.exit_result import report_result_from_early_exit
 from polysignal_lab.utils import utc_iso
@@ -35,7 +32,6 @@ class _OrderEventStrategy(Protocol):
     strategy_name: str
     observability: object | None
     _active_condition_ids: set[str]
-    _metrics_tracker: object
 
     def _note_runtime_progress(self, phase: str) -> None: ...
     def _record_nautilus_order(
@@ -49,61 +45,16 @@ class _OrderEventStrategy(Protocol):
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None: ...
 
 
-def call_core(strategy: _OrderEventStrategy, method_name: str, event: AlphaOrderEvent) -> None:
-    handler = getattr(strategy.core, method_name, None)
-    if callable(handler):
-        _ = handler(event)
-
-
-def project_strategy_order_event(
-    strategy: _OrderEventStrategy, event: object
-) -> AlphaOrderEvent:
-    metrics_lookup = cast(
-        Callable[[object], Mapping[str, object]],
-        strategy._metrics_tracker.metrics_for_event,  # type: ignore[attr-defined]
-    )
-    return project_order_event(
-        event,
-        registry=strategy.registry,
-        strategy_name=strategy.strategy_name,
-        metrics_lookup=metrics_lookup,
-    )
-
-
-def project_strategy_fill_event(
-    strategy: _OrderEventStrategy, event: object
-) -> AlphaFillEvent:
-    metrics_lookup = cast(
-        Callable[[object], Mapping[str, object]],
-        strategy._metrics_tracker.metrics_for_event,  # type: ignore[attr-defined]
-    )
-    return project_fill_event(
-        event,
-        registry=strategy.registry,
-        strategy_name=strategy.strategy_name,
-        metrics_lookup=metrics_lookup,
-    )
-
-
-def should_notify_fill(strategy: _OrderEventStrategy, event: AlphaFillEvent) -> bool:
-    if event.strategy != "vwap_momentum":
+def should_notify_fill(strategy: _OrderEventStrategy, metrics: Mapping[str, object]) -> bool:
+    if str(metrics.get("strategy") or strategy.strategy_name) != "vwap_momentum":
         return True
-    intent = event.metrics.get("order_intent")
+    intent = metrics.get("order_intent")
     if isinstance(intent, OrderIntent):
         intent = intent.value
     return not (
-        bool(event.metrics.get("hedge_leg"))
+        bool(metrics.get("hedge_leg"))
         or intent == OrderIntent.PASSIVE_GTD.value
     )
-
-
-def forget_approved_metrics(
-    strategy: _OrderEventStrategy,
-    event: object,
-    order: AlphaOrderEvent,
-) -> None:
-    forget = cast(Callable[[object, AlphaOrderEvent], None], strategy._metrics_tracker.forget)  # type: ignore[attr-defined]
-    forget(event, order)
 
 
 def handle_order_lifecycle_event(
@@ -113,77 +64,68 @@ def handle_order_lifecycle_event(
     *,
     forget_metrics: bool = False,
 ) -> None:
+    _ = method_name, forget_metrics  # no core on_order_* / metrics tracker
     strategy._note_runtime_progress("order_event")
-    alpha_event = project_strategy_order_event(strategy, event)
-    strategy._record_nautilus_order(event, alpha_event.metrics)
-    call_core(strategy, method_name, alpha_event)
-    if forget_metrics:
-        forget_approved_metrics(
-            strategy,
+    try:
+        metrics = project_order_metrics(
             event,
-            cast(AlphaOrderEvent, cast(object, alpha_event)),
+            registry=strategy.registry,
+            strategy_name=strategy.strategy_name,
         )
+    except ValueError:
+        strategy._note_runtime_progress("order_event_quarantined")
+        return
+    strategy._record_nautilus_order(event, metrics)
 
 
 def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
     strategy._note_runtime_progress("order_event")
-    alpha_event = project_strategy_fill_event(strategy, event)
-    if should_notify_fill(strategy, alpha_event):
+    try:
+        metrics = project_fill_metrics(
+            event,
+            registry=strategy.registry,
+            strategy_name=strategy.strategy_name,
+        )
+    except ValueError:
+        strategy._note_runtime_progress("fill_event_quarantined")
+        return
+    if should_notify_fill(strategy, metrics):
         notify = getattr(strategy.core, "on_notify_fill", None)
         if callable(notify):
-            _ = notify(alpha_event.market_id, alpha_event.side, alpha_event.shares)
-    strategy._record_nautilus_fill(event, alpha_event.metrics)
-    if bool(alpha_event.metrics.get("reduce_only")):
-        _record_early_exit_result(strategy, alpha_event)
-    forget_approved_metrics(
-        strategy,
-        event,
-        cast(AlphaOrderEvent, cast(object, alpha_event)),
-    )
-    if bool(alpha_event.metrics.get("reduce_only")):
+            side = fill_side(metrics)
+            shares = float(metrics.get("shares") or 0.0)
+            _ = notify(str(metrics.get("market_id") or ""), side, shares)
+    strategy._record_nautilus_fill(event, metrics)
+    if bool(metrics.get("reduce_only")):
+        _record_early_exit_result(strategy, metrics)
         return
-    handler = getattr(strategy.core, "on_order_filled", None)
-    decisions = handler(alpha_event) if callable(handler) else ()
-    if isinstance(decisions, Iterable) and not isinstance(decisions, (str, bytes)):
-        for decision in cast(Iterable[AlphaDecision], decisions):
-            if decision.condition_id not in strategy._active_condition_ids:
-                continue
-            view = strategy._require_assembler().build(  # type: ignore[attr-defined]
-                decision.condition_id,
-                created_at=alpha_event.ts_event,
-            )
-            if view is None:
-                continue
-            strategy._handle_decision(decision, cast(MarketView, view))
+    # Production cores do not implement on_order_filled; no follow-up decisions.
 
 
 def _record_early_exit_result(
     strategy: _OrderEventStrategy,
-    fill: AlphaFillEvent,
+    metrics: Mapping[str, object],
 ) -> None:
     """Persist Reporting Truth for NativeExitPolicy reduce-only closes."""
-    metrics = dict(fill.metrics)
-    if "side" not in metrics and fill.side is not None:
-        metrics["side"] = getattr(fill.side, "value", fill.side)
-    for key, value in (
-        ("market_id", fill.market_id),
-        ("condition_id", fill.condition_id),
-        ("token_id", fill.token_id),
-        ("strategy", fill.strategy),
-    ):
-        if value not in (None, "") and key not in metrics:
-            metrics[key] = value
-    metrics.setdefault("owning_strategy", strategy.strategy_name)
+    payload = dict(metrics)
+    side = fill_side(payload)
+    if "side" not in payload and side is not None:
+        payload["side"] = side.value
+    for key in ("market_id", "condition_id", "token_id", "strategy"):
+        if payload.get(key) in (None, ""):
+            continue
+    payload.setdefault("owning_strategy", strategy.strategy_name)
+    ts = fill_ts_event(payload)
     closed_at = None
-    if fill.ts_event is not None:
+    if ts is not None:
         try:
-            closed_at = fill.ts_event.isoformat()
+            closed_at = ts.isoformat()
         except AttributeError:
             closed_at = None
     result = report_result_from_early_exit(
-        metrics,
-        fill_price=float(fill.fill_price),
-        fill_shares=float(fill.shares),
+        payload,
+        fill_price=float(payload.get("fill_price") or 0.0),
+        fill_shares=float(payload.get("shares") or 0.0),
         strategy_name=strategy.strategy_name,
         closed_at=closed_at or utc_iso(),
     )
@@ -203,16 +145,42 @@ def _record_early_exit_result(
         return
     notify = getattr(observability, "notify_report_result", None)
     if callable(notify):
-        # Best-effort: durable write already succeeded; never block or re-raise.
         try:
             notify(result)
         except Exception:
             strategy._note_runtime_progress("early_exit_result_publish_failed")
 
 
-def handle_position_event(strategy: _OrderEventStrategy, position: object) -> None:
+def _position_from_event(strategy: _OrderEventStrategy, event: object) -> object | None:
+    """Resolve Cache Position via event.position_id — never treat PositionEvent as Position."""
+    position_id = getattr(event, "position_id", None)
+    if position_id is None:
+        if (
+            getattr(event, "instrument_id", None) is not None
+            or getattr(event, "is_closed", None) is not None
+            or getattr(event, "signed_qty", None) is not None
+        ):
+            return event
+        return None
+    cache = getattr(strategy, "cache", None)
+    if cache is None:
+        return None
+    getter = getattr(cache, "position", None)
+    if not callable(getter):
+        return None
+    try:
+        return getter(position_id)
+    except (LookupError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def handle_position_event(strategy: _OrderEventStrategy, event: object) -> None:
+    position = _position_from_event(strategy, event)
+    if position is None:
+        strategy._note_runtime_progress("position_event_unresolved")
+        return
     strategy._record_nautilus_position(position)
 
 
-def handle_position_closed(strategy: _OrderEventStrategy, position: object) -> None:
-    handle_position_event(strategy, position)
+def handle_position_closed(strategy: _OrderEventStrategy, event: object) -> None:
+    handle_position_event(strategy, event)

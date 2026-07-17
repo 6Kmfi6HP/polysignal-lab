@@ -12,6 +12,8 @@
 
 
 
+
+
 import { type SVGProps } from 'react'
 
 export function IconLayoutCompact(props: SVGProps<SVGSVGElement>) {

@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, datetime, datetime.date, datetime.datetime, typing, typing.Any, pydantic, pydantic.BaseModel, pydantic.Field, polysignal_lab.utils
-Output: ReportAccountSnapshotRow, DailyReportRow, EquitySource, daily_report_row, account_float, report_float, report_text, report_date_text, report_nested_mapping, ReportAccountSnapshot, DailyReport
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, datetime, datetime.date, datetime.datetime, math, typing, typing.Any
+Output: account_float, report_float, report_text, report_date_text, report_nested_mapping, daily_report_row, ReportAccountSnapshotRow, DailyReportRow, ReportAccountSnapshot, DailyReport
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

@@ -1,10 +1,12 @@
 """
-Input: __future__, pytest, nautilus_optional, nautilus_runtime_contracts_harness, polysignal_lab
-Output: v2 backtest/live sandbox runtime contract acceptance tests
-Pos: Test Layer - Acceptance / Integration
+Input: __future__, __future__.annotations, decimal, decimal.Decimal, types, types.SimpleNamespace, pytest, nautilus_optional, nautilus_optional.require_nautilus, nautilus_trader.core
+Output: test_nautilus_version_has_native_strategy_messaging, test_message_and_market_view_immutability, test_backtest_dataengine_dispatch_and_order_lifecycle, test_backtest_cache_portfolio_updates_after_fill, test_multi_strategy_isolation_unique_ids_and_positions, test_strategy_state_save_load_bytes_round_trip, test_backtest_settlement_close_via_strategy_api, test_instrument_close_contract_expired_closes_position_in_backtest, test_same_strategy_registers_on_livenode_sandbox, test_backtest_live_strategy_surface_equivalence
+Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -330,14 +332,14 @@ def test_native_strategy_has_no_request_settlement_close() -> None:
     assert not hasattr(ns, "request_" + "settlement_close")
 
 
-def test_adapter_enum_parser_boundary_rejects_unknown_and_maps_known() -> None:
+def test_adapter_enum_parser_maps_side_and_intent_only() -> None:
+    """Order status string remapping deleted — NT events already carry OrderStatus."""
     assert PolymarketEnumParser.to_nautilus_order_side(Side.UP).name == "BUY"
     assert (
         PolymarketEnumParser.to_nautilus_time_in_force(OrderIntent.TAKER_FAK).name
         == "IOC"
     )
-    with pytest.raises(ValueError, match="unsupported"):
-        PolymarketEnumParser.to_nautilus_order_status("not-a-real-status")
+    assert not hasattr(PolymarketEnumParser, "to_nautilus_order_status")
 
 
 def test_datatester_is_constructible_with_polymarket_data_contract() -> None:

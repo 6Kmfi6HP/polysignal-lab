@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, statistics, statistics.mean, typing, typing.Any, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.AlphaFillEvent, polysignal_lab.alpha.types.AlphaOrderEvent
+Input: __future__, __future__.annotations, typing, typing.Any, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.OrderIntentSpec, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent
 Output: MidPriceSizingAlphaCore
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

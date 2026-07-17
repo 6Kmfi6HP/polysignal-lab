@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, polysignal_lab.alpha.mid_price_sizing_core, polysignal_lab.alpha.mid_price_sizing_core.MidPriceSizingAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.config
+Output: test_mid_price_exit_bypasses_entry_regime_and_uses_exit_confidence, test_mid_price_entry_and_addition_export_configured_notional_contracts, test_mid_price_without_cache_position_has_no_shadow_state
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

@@ -1,4 +1,12 @@
-"""Unit tests for VWAP state codec."""
+"""
+Input: __future__, __future__.annotations, pytest, polysignal_lab.alpha.vwap_state, polysignal_lab.alpha.vwap_state.(
+Output: test_encode_vwap_state_preserves_flat_payload, test_decode_vwap_state_accepts_flat_payload, test_decode_vwap_state_unwraps_nested_envelope, test_decode_vwap_state_rejects_unknown_version, test_restore_vwap_state_fields_drops_legacy_trade_ledger
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 
 from __future__ import annotations
 
@@ -13,21 +21,18 @@ from polysignal_lab.alpha.vwap_state import (
 
 
 def test_encode_vwap_state_preserves_flat_payload() -> None:
-    payload = {"trades": {}, "can_enter": {"market-1": False}}
-
+    payload = {"note": "empty-core-state"}
     assert encode_vwap_state(payload) == payload
 
 
 def test_decode_vwap_state_accepts_flat_payload() -> None:
-    payload = {"trades": {}, "pending_hedges": {"market-1": ["DOWN", 10.0]}}
-
+    payload = {"note": "empty-core-state"}
     assert decode_vwap_state(payload) == payload
 
 
 def test_decode_vwap_state_unwraps_nested_envelope() -> None:
-    inner = {"trades": {}, "can_enter": {}}
+    inner = {"note": "empty-core-state"}
     payload = {"schema_version": VWAP_STATE_VERSION, "payload": inner}
-
     assert decode_vwap_state(payload) == inner
 
 
@@ -36,18 +41,15 @@ def test_decode_vwap_state_rejects_unknown_version() -> None:
         decode_vwap_state({"schema_version": VWAP_STATE_VERSION + 1, "payload": {}})
 
 
-def test_restore_vwap_state_fields_ignores_legacy_trading_state() -> None:
+def test_restore_vwap_state_fields_drops_legacy_trade_ledger() -> None:
     payload = {
-        "trades": {},
+        "trades": {"market:UP": [{"price": 0.5, "size": 1.0, "timestamp": 1.0}]},
         "can_enter": {},
-        "last_trade_signatures": {},
-        "seen_trade_signatures": {},
+        "last_trade_signatures": {"market:UP": [0.5, 1.0, None, 1.0]},
+        "seen_trade_signatures": {"market:UP": [[0.5, 1.0, 1.0]]},
         "pending_hedges": {"market-1": ["DOWN", 10.0]},
+        "note": "keep-me",
     }
 
-    _trades, last_trade_signatures, seen_trade_signatures = (
-        restore_vwap_state_fields(payload)
-    )
-
-    assert last_trade_signatures == {}
-    assert seen_trade_signatures == {}
+    restored = restore_vwap_state_fields(payload)
+    assert restored == {"note": "keep-me"}

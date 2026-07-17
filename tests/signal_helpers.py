@@ -1,4 +1,12 @@
-"""Shared helpers for signal-layer tests."""
+"""
+Input: __future__, __future__.annotations, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.PTBDiffAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.MarketView, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.domain.freshness, polysignal_lab.domain.freshness.FreshnessPolicy
+Output: ptb_signals_from_view, ptb_signal_from_view
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 
 from __future__ import annotations
 

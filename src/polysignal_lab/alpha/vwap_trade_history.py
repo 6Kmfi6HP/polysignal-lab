@@ -1,132 +1,127 @@
 """
-Input: collections, polysignal_lab.domain.trade
-Output: TradeHistory
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, typing, typing.Protocol
+Output: samples_from_trade_views, latest_price, trades_in_window, vwap, momentum, _TradeLike, TradeSample
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
 
+
+
 from __future__ import annotations
 
-from collections import defaultdict
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Protocol
 
-from polysignal_lab.domain.trade import Trade
+
+class _TradeLike(Protocol):
+    price: float
+    size: float
 
 
-class TradeHistory:
-    """Time-windowed trade history per (market_id, side) key.
+@dataclass(frozen=True, slots=True)
+class TradeSample:
+    price: float
+    size: float
+    timestamp: float
 
-    Mirrors PolyBullLabs' deque of Trade objects used for VWAP,
-    deviation, and momentum calculations.
+
+def samples_from_trade_views(
+    trades: Sequence[object],
+    *,
+    now_ts: float,
+) -> tuple[TradeSample, ...]:
+    """Normalize Cache-projected trade views into timestamped samples."""
+    samples: list[TradeSample] = []
+    for raw in trades:
+        sample = _sample(raw, now_ts=now_ts)
+        if sample is not None:
+            samples.append(sample)
+    return tuple(samples)
+
+
+def latest_price(trades: Sequence[TradeSample]) -> float | None:
+    if not trades:
+        return None
+    return trades[-1].price
+
+
+def trades_in_window(
+    trades: Sequence[TradeSample],
+    window_sec: float,
+    now: float,
+) -> tuple[TradeSample, ...]:
+    cutoff = now - window_sec
+    return tuple(trade for trade in trades if trade.timestamp >= cutoff)
+
+
+def vwap(
+    trades: Sequence[TradeSample],
+    window_sec: float,
+    now: float,
+) -> float | None:
+    windowed = trades_in_window(trades, window_sec, now)
+    if not windowed:
+        return None
+    total_vol = sum(trade.size for trade in windowed)
+    if total_vol <= 0:
+        return None
+    return sum(trade.price * trade.size for trade in windowed) / total_vol
+
+
+def momentum(
+    trades: Sequence[TradeSample],
+    window_sec: float,
+    now: float,
+) -> float | None:
+    """Price change vs arithmetic mean price ~window_sec seconds ago.
+
+    Uses a time-band approach matching PolyBullLabs:
+    takes all trades in [now - window_sec - 1.5, now - window_sec + 1.5]
+    (a 3-second band), computes the arithmetic mean of prices in that
+    band, and returns the fractional change from that mean to the
+    current price.
     """
+    if not trades:
+        return None
 
-    def __init__(self) -> None:
-        # key -> list[Trade] sorted oldest-first
-        self._trades: dict[str, list[Trade]] = defaultdict(list)
+    band_start = now - window_sec - 1.5
+    band_end = now - window_sec + 1.5
+    band_prices = [
+        trade.price
+        for trade in trades
+        if band_start <= trade.timestamp <= band_end
+    ]
+    if not band_prices:
+        return None
 
-    def push(self, key: str, price: float, size: float, timestamp: float) -> None:
-        self._trades[key].append(Trade(price=price, size=size, timestamp=timestamp))
+    mean_price_ago = sum(band_prices) / len(band_prices)
+    if mean_price_ago <= 0:
+        return None
 
-    def remove(self, key: str, price: float, size: float, timestamp: float) -> None:
-        trades = self._trades.get(key)
-        if not trades:
-            return
-        for idx in range(len(trades) - 1, -1, -1):
-            trade = trades[idx]
-            if (
-                trade.price == price
-                and trade.size == size
-                and trade.timestamp == timestamp
-            ):
-                del trades[idx]
-                if not trades:
-                    self._trades.pop(key, None)
-                return
+    current = latest_price(trades)
+    if current is None or current <= 0:
+        return None
+    return (current - mean_price_ago) / mean_price_ago
 
-    def _prune(self, key: str, window_sec: float, now: float) -> None:
-        """Trim trades older than ``window_sec`` from storage.
 
-        Momentum needs the band around ``now - window_sec`` while VWAP needs the
-        recent window itself. We keep only data that could still affect either
-        calculation, plus the newest trade so ``latest_price`` remains available.
-        """
-        trades = self._trades.get(key)
-        if not trades:
-            return
-        cutoff = now - window_sec
-        idx = 0
-        while idx < len(trades) - 1 and trades[idx].timestamp < cutoff:
-            idx += 1
-        if idx > 0:
-            self._trades[key] = trades[idx:]
+def _sample(raw: object, *, now_ts: float) -> TradeSample | None:
+    price = getattr(raw, "price", None)
+    size = getattr(raw, "size", None)
+    if not isinstance(price, (int, float)) or not isinstance(size, (int, float)):
+        return None
+    if float(price) <= 0 or float(size) <= 0:
+        return None
 
-    def trades_in_window(self, key: str, window_sec: float, now: float) -> list[Trade]:
-        """Return trades within the window WITHOUT modifying storage."""
-        trades = self._trades.get(key)
-        if not trades:
-            return []
-        cutoff = now - window_sec
-        return [t for t in trades if t.timestamp >= cutoff]
+    timestamp = now_ts
+    ts = getattr(raw, "ts", None)
+    if isinstance(ts, datetime):
+        timestamp = ts.timestamp()
+    else:
+        raw_ts = getattr(raw, "timestamp", None)
+        if isinstance(raw_ts, (int, float)) and float(raw_ts) > 0:
+            timestamp = float(raw_ts)
 
-    def vwap(self, key: str, window_sec: float, now: float) -> float | None:
-        trades = self.trades_in_window(key, window_sec, now)
-        if not trades:
-            return None
-        total_vol = sum(t.size for t in trades)
-        if total_vol <= 0:
-            return None
-        return sum(t.price * t.size for t in trades) / total_vol
-
-    def momentum(self, key: str, window_sec: float, now: float) -> float | None:
-        """Price change vs arithmetic mean price ~window_sec seconds ago.
-
-        Uses a time-band approach matching PolyBullLabs:
-        takes all trades in [now - window_sec - 1.5, now - window_sec + 1.5]
-        (a 3-second band), computes the arithmetic mean of prices in that
-        band, and returns the fractional change from that mean to the
-        current price.
-
-        Returns None if no trades are found in the band.
-        """
-        trades = self._trades.get(key)
-        if not trades:
-            return None
-
-        band_start = now - window_sec - 1.5
-        band_end = now - window_sec + 1.5
-
-        band_prices = [t.price for t in trades if band_start <= t.timestamp <= band_end]
-
-        if not band_prices:
-            return None
-
-        mean_price_ago = sum(band_prices) / len(band_prices)
-        if mean_price_ago <= 0:
-            return None
-
-        current_price = self.latest_price(key)
-        if current_price is None or current_price <= 0:
-            return None
-
-        return (current_price - mean_price_ago) / mean_price_ago
-
-    def latest_price(self, key: str) -> float | None:
-        trades = self._trades.get(key)
-        if not trades:
-            return None
-        return trades[-1].price
-
-    def prune(self, key: str, window_sec: float, now: float) -> None:
-        """Public wrapper for _prune — trim trades older than window_sec."""
-        self._prune(key, window_sec, now)
-
-    def trades_for_key(self, key: str) -> tuple[Trade, ...]:
-        """Return an immutable snapshot of trades for ``key``."""
-        return tuple(self._trades.get(key, ()))
-
-    def all_trades(self) -> dict[str, tuple[Trade, ...]]:
-        """Return immutable per-key snapshots of all stored trades."""
-        return {key: tuple(trades) for key, trades in self._trades.items()}
-
-    def clear_key(self, key: str) -> None:
-        self._trades.pop(key, None)
+    return TradeSample(price=float(price), size=float(size), timestamp=timestamp)

@@ -1,15 +1,21 @@
 """
-Input: __future__, __future__.annotations, time, collections.abc, polysignal_lab.alpha.types, polysignal_lab.domain.signal, polysignal_lab.nautilus_runtime.decision_policy, polysignal_lab.observability.health, polysignal_lab.utils, polysignal_lab.nautilus_runtime.projections
-Output: PersistenceClass, persistence_class_for_table, PersistenceWriter, Publisher, AcceptedSignalNotifier, EventStore, Notifier, NautilusEventStoreAdapter, NautilusNotifierAdapter, ObservabilityActor, StrategyControl, DecisionPolicyControl, REPEAT_SUPPRESS_TTL_SEC
+Input: __future__, __future__.annotations, sqlite3, time, collections.abc, collections.abc.Mapping, collections.abc.Sequence, dataclasses, dataclasses.dataclass, queue
+Output: _TelemetryEvent, ObservabilityService, StrategyControl, DecisionPolicyControl
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
 
+
+
 from __future__ import annotations
 
+import sqlite3
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from queue import Empty, Full, Queue
+from threading import Event, Thread
 from typing import Protocol
 
 from polysignal_lab.alpha.types import AlphaDecision
@@ -21,7 +27,11 @@ from polysignal_lab.nautilus_runtime.observability_persistence import (
     NautilusNotifierAdapter,
     ReportResultNotifier,
     PersistenceClass,
+    _drop_queued_events,
+    _health_mark_drop,
     _health_mark_side_effect_failure,
+    _health_mark_sqlite_lock_retry,
+    _health_set_backlog,
     persistence_class_for_table,
 )
 from polysignal_lab.nautilus_runtime.projections import (
@@ -29,9 +39,14 @@ from polysignal_lab.nautilus_runtime.projections import (
     project_order_event,
     project_position,
 )
-from polysignal_lab.nautilus_runtime.telemetry_writer import TelemetryWriter
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.utils import utc_iso
+
+
+@dataclass(frozen=True, slots=True)
+class _TelemetryEvent:
+    table: str
+    payload: Mapping[str, object]
 
 # Re-exported so that existing test and application imports resolve through
 # ``from polysignal_lab.nautilus_runtime.observability import ...``.
@@ -79,17 +94,16 @@ class ObservabilityService:
         self.report_result_notifier: ReportResultNotifier | None = report_result_notifier
         self._event_count: int = 0
         self._recent_rejections: dict[tuple[object, ...], float] = {}
-
-        self._telemetry_writer: TelemetryWriter | None = None
+        # Best-effort telemetry queue lives on ObservabilityService (no TelemetryWriter).
+        self._telemetry_queue: Queue[_TelemetryEvent] | None = None
+        self._telemetry_stop = Event()
+        self._telemetry_thread: Thread | None = None
+        self._sqlite_lock_retries = telemetry_sqlite_lock_retries
+        self._retry_backoff_sec = telemetry_retry_backoff_sec
         if store is not None:
-            self._telemetry_writer = TelemetryWriter(
-                health=self.health,
-                insert_best_effort=self._insert_best_effort,
-                queue_size=telemetry_queue_size,
-                sqlite_lock_retries=telemetry_sqlite_lock_retries,
-                retry_backoff_sec=telemetry_retry_backoff_sec,
-                autostart=telemetry_autostart,
-            )
+            self._telemetry_queue = Queue(maxsize=telemetry_queue_size)
+            if telemetry_autostart:
+                self.start()
 
     @property
     def event_count(self) -> int:
@@ -108,30 +122,95 @@ class ObservabilityService:
         self._recent_rejections[key] = now
         return False
 
-    # ── Telemetry writer lifecycle ──────────────────────────────────────────────
+    # ── Best-effort telemetry outbox (node-owned, not per-callback threads) ───
 
     def start(self) -> None:
-        if self._telemetry_writer is not None:
-            self._telemetry_writer.start()
+        if self._telemetry_queue is None:
+            return
+        if self._telemetry_thread is not None and self._telemetry_thread.is_alive():
+            return
+        self._telemetry_stop.clear()
+        self._telemetry_thread = Thread(
+            target=self._telemetry_run,
+            name="polysignal-telemetry-outbox",
+            daemon=True,
+        )
+        self._telemetry_thread.start()
 
     def stop(self) -> None:
-        if self._telemetry_writer is not None:
-            self._telemetry_writer.stop()
+        self._telemetry_stop.set()
+        thread = self._telemetry_thread
+        if thread is not None:
+            thread.join(timeout=5.0)
+        self._telemetry_thread = None
+        if self._telemetry_queue is not None:
+            _drop_queued_events(
+                self.health,
+                self._telemetry_queue,
+                "telemetry outbox stopped before draining",
+            )
 
     def drain_telemetry_once(self) -> bool:
-        if self._telemetry_writer is None:
+        if self._telemetry_queue is None:
             return False
-        return self._telemetry_writer.drain_once()
+        try:
+            event = self._telemetry_queue.get_nowait()
+        except Empty:
+            _health_set_backlog(self.health, self._telemetry_queue.qsize())
+            return False
+        try:
+            self._write_telemetry_event(event)
+        finally:
+            self._telemetry_queue.task_done()
+            _health_set_backlog(self.health, self._telemetry_queue.qsize())
+        return True
 
     def _enqueue_best_effort(self, table: str, payload: Mapping[str, object]) -> None:
-        if self._telemetry_writer is None:
+        if self._telemetry_queue is None:
             return
-        self._telemetry_writer.enqueue(table, payload)
+        try:
+            self._telemetry_queue.put_nowait(
+                _TelemetryEvent(table=table, payload=dict(payload))
+            )
+        except Full:
+            _health_mark_drop(self.health, self._telemetry_queue.qsize())
+            return
+        _health_set_backlog(self.health, self._telemetry_queue.qsize())
+
+    def _telemetry_run(self) -> None:
+        while not self._telemetry_stop.is_set() or (
+            self._telemetry_queue is not None and not self._telemetry_queue.empty()
+        ):
+            if not self.drain_telemetry_once():
+                _ = self._telemetry_stop.wait(0.1)
+
+    def _write_telemetry_event(self, event: _TelemetryEvent) -> None:
+        attempts = 0
+        while True:
+            try:
+                self._insert_best_effort(event.table, event.payload)
+                return
+            except sqlite3.OperationalError as exc:
+                if (
+                    "locked" not in str(exc).lower()
+                    or attempts >= self._sqlite_lock_retries
+                ):
+                    _health_mark_side_effect_failure(
+                        self.health, kind=event.table, error=exc
+                    )
+                    return
+                attempts += 1
+                _health_mark_sqlite_lock_retry(self.health, event.table)
+                time.sleep(self._retry_backoff_sec)
+            except Exception as exc:
+                _health_mark_side_effect_failure(
+                    self.health, kind=event.table, error=exc
+                )
+                return
 
     def _insert_best_effort(
         self, table: str, payload: Mapping[str, object]
     ) -> None:
-        """Callback used by TelemetryWriter for the actual store write."""
         if self.store is None:
             return
         if isinstance(self.store, NautilusEventStoreAdapter):
@@ -221,11 +300,19 @@ class ObservabilityService:
             return
         self.store.insert_json(table, data)
 
-    def record_nautilus_order_event(self, event: object) -> None:
-        self.record_event("nautilus_order", project_order_event(event))
+    def record_nautilus_order_event(
+        self,
+        event: object,
+        metrics: Mapping[str, object] | None = None,
+    ) -> None:
+        self.record_event("nautilus_order", project_order_event(event, metrics=metrics))
 
-    def record_nautilus_fill_event(self, event: object) -> None:
-        self.record_event("nautilus_fill", project_fill_event(event))
+    def record_nautilus_fill_event(
+        self,
+        event: object,
+        metrics: Mapping[str, object] | None = None,
+    ) -> None:
+        self.record_event("nautilus_fill", project_fill_event(event, metrics=metrics))
 
     def record_nautilus_position(self, position: object) -> None:
         self.record_event("nautilus_position", project_position(position))

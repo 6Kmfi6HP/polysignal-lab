@@ -1,10 +1,12 @@
 """
 Input: __future__, __future__.annotations, argparse, ast, pathlib, pathlib.Path, typing, typing.Final
-Output: blocked_symbols, scan, skip_path, _legacy_dual_path_imports, main
+Output: blocked_symbols, scan, skip_path, main
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -56,10 +58,15 @@ LEGACY_TRADING_ISOLATION_SYMBOLS: Final = (
     "Paper" + "ExecutionPreflight",
     "Paper" + "ExitEngine",
     "Paper" + "SettlementEngine(self.wallet)",
+    "Paper" + "FillNotifier",
+    "Paper" + "FillMirror",
+    "from polysignal_lab.domain.paper_" + "order import",
+    "from polysignal_lab.domain.paper_" + "position import",
     "scheduler." + "wallet",
     "scheduler." + "paper",
     "paper_portfolio.process_signal",
     "paper_portfolio.tick_resting_orders",
+    "shadow_" + "wallet",
     "new_class(",
     "runtime_native_strategy_type",
     "runtime_market_rotation_actor_type",
@@ -79,6 +86,11 @@ LEGACY_DUAL_PATH_SYMBOLS: Final = (
     "Trading" + "NodeConfig",
     "Trading" + "Node(",
     "from nautilus_trader.live.node import Trading" + "Node",
+    "Decision" + "PolicyActor",
+    "Nautilus" + "Decision" + "PolicyActor",
+    "from polysignal_lab.nautilus_" + "bridge",
+    "import polysignal_lab.nautilus_" + "bridge",
+    "Matching" + "Engine(",
 )
 ACTOR_SCHEDULING_FALLBACK_SYMBOLS: Final = ("asyncio.create_task(",)
 ACTOR_SCHEDULING_FALLBACK_PATHS: Final = {
@@ -208,29 +220,60 @@ def _legacy_dual_path_imports(text: str) -> list[str]:
                 if node.level
                 else "polysignal_lab.data.polymarket_clob_rest",
             }
+            # Split tokens so static forbid-list scans of this file stay clean.
+            _bridge = "nautilus_" + "bridge"
+            _book_reg = "OrderBook" + "Registry"
+            _policy_actor = "Decision" + "PolicyActor"
+            _policy_mod = "decision_" + "policy_actor"
+            bridge_modules = {
+                f"{relative_prefix}{_bridge}"
+                if node.level
+                else f"polysignal_lab.{_bridge}",
+            }
+            paper_modules_prefix = (
+                f"{relative_prefix}paper"
+                if node.level
+                else "polysignal_lab.paper"
+            )
             imported_names = {alias.name for alias in node.names}
             if import_module == state_module and (
-                "OrderBookRegistry" in imported_names or "*" in imported_names
+                _book_reg in imported_names or "*" in imported_names
             ):
-                symbol = "*" if "*" in imported_names else "OrderBookRegistry"
+                symbol = "*" if "*" in imported_names else _book_reg
                 findings.append(f"from {import_module} import {symbol}")
             elif import_module in clob_modules:
+                findings.append(f"from {import_module} import")
+            elif import_module in bridge_modules or import_module.startswith(
+                f"{list(bridge_modules)[0]}."
+            ):
+                findings.append(f"from {import_module} import")
+            elif import_module == paper_modules_prefix or import_module.startswith(
+                f"{paper_modules_prefix}."
+            ):
                 findings.append(f"from {import_module} import")
             elif import_module == data_module:
                 for name in ("state", "polymarket_clob_ws", "polymarket_clob_rest"):
                     if name in imported_names:
                         findings.append(f"from {import_module} import {name}")
-                if "OrderBookRegistry" in imported_names or "*" in imported_names:
-                    symbol = "*" if "*" in imported_names else "OrderBookRegistry"
+                if _book_reg in imported_names or "*" in imported_names:
+                    symbol = "*" if "*" in imported_names else _book_reg
                     findings.append(f"from {import_module} import {symbol}")
+            elif _policy_actor in imported_names or import_module.endswith(_policy_mod):
+                findings.append(f"from {import_module} import {_policy_actor}")
         elif isinstance(node, ast.Import):
+            _bridge = "nautilus_" + "bridge"
+            blocked_imports = {
+                "polysignal_lab.data.state",
+                "polysignal_lab.data.polymarket_clob_ws",
+                "polysignal_lab.data.polymarket_clob_rest",
+                f"polysignal_lab.{_bridge}",
+            }
             for alias in node.names:
-                if alias.name not in {
-                    "polysignal_lab.data.state",
-                    "polysignal_lab.data.polymarket_clob_ws",
-                    "polysignal_lab.data.polymarket_clob_rest",
-                }:
-                    continue
+                if alias.name not in blocked_imports and not alias.name.startswith(
+                    f"polysignal_lab.{_bridge}."
+                ):
+                    if not alias.name.startswith("polysignal_lab.paper"):
+                        continue
                 symbol = f"import {alias.name}"
                 if alias.asname:
                     symbol += f" as {alias.asname}"

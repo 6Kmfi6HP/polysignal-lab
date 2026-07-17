@@ -1,10 +1,12 @@
 """
-Input: __future__, collections.abc, math, typing
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, math, typing, typing.cast
 Output: normalize_report_order, normalize_report_fill, normalize_report_position, report_token_id
-Pos: Storage/reporting projection seam — canonical sparse event projection (not an execution domain)
+Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -15,15 +17,15 @@ from typing import cast
 _ORDER_STATUSES = {
     "FILLED": "FILLED",
     "PARTIAL": "PARTIAL",
-    "PARTIALLY_FILLED": "PARTIAL",
+    "PARTIALLY_FILLED": "PARTIALLY_FILLED",
     "REJECTED": "REJECTED",
-    "DENIED": "REJECTED",
+    "DENIED": "DENIED",
     "CANCELLED": "CANCELLED",
-    "CANCELED": "CANCELLED",
-    "EXPIRED": "CANCELLED",
-    "ACCEPTED": "RESTING",
+    "CANCELED": "CANCELED",
+    "EXPIRED": "EXPIRED",
+    "ACCEPTED": "ACCEPTED",
     "RESTING": "RESTING",
-    "SUBMITTED": "RESTING",
+    "SUBMITTED": "SUBMITTED",
 }
 
 
@@ -67,7 +69,7 @@ def normalize_report_order(
         metrics,
         "limit_price",
         "price",
-        metric_keys=("price", "level_price", "up_ask", "down_ask"),
+        metric_keys=("price", "level_price"),
     )
     shares = _number(
         row,
@@ -84,7 +86,7 @@ def normalize_report_order(
         metric_price = _number(
             {},
             metrics,
-            metric_keys=("up_ask", "down_ask", "level_price", "price"),
+            metric_keys=("level_price", "price"),
         )
         if metric_price not in (None, 0.0):
             limit_price = metric_price
@@ -104,16 +106,15 @@ def normalize_report_order(
     )
     _set_number(payload, "stake_usdc", stake)
     _set_number(payload, "shares", shares)
-    payload["status"] = _ORDER_STATUSES.get(
-        _text(
+    payload["status"] = _ORDER_STATUSES.get(native, "") if (
+        native := _text(
             row,
             metrics,
             "status",
             "order_status",
             metric_keys=("status", "order_status"),
-        ).upper(),
-        "",
-    )
+        ).upper()
+    ) else ""
     _fill_missing(
         payload,
         "reject_reason",

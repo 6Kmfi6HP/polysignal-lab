@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.date, datetime.datetime, datetime.time, datetime.timedelta, datetime.timezone, math.isfinite, typing, typing.Any, typing.cast, zoneinfo, zoneinfo.ZoneInfo, polysignal_lab.app.reporting_types
-Output: _collect_daily_report_inputs, _fill_payloads_with_order_intents, _order_metrics
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.date, datetime.datetime, datetime.time, datetime.timedelta, datetime.timezone, math
+Output: None
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

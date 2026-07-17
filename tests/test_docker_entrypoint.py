@@ -1,3 +1,12 @@
+"""
+Input: pathlib, pathlib.Path
+Output: test_entrypoint_defaults_to_nautilus, test_dockerfile_defaults_to_nautilus, test_entrypoint_retires_scheduler_execution_mode, test_entrypoint_wires_execution_mode_env_overrides
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from pathlib import Path
 
 

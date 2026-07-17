@@ -1,10 +1,12 @@
 """
-Input: __future__, argparse, sys, collections.abc, dataclasses, enum, pathlib, typing, anyio, uvicorn, polysignal_lab.config, polysignal_lab.dashboard, polysignal_lab.observability, polysignal_lab.storage
+Input: __future__, __future__.annotations, argparse, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, enum, enum.StrEnum, pathlib
 Output: build_parser, parse_cli, run_dashboard_cli, run_readonly_smoke, main, RuntimeMode, CliOptions
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

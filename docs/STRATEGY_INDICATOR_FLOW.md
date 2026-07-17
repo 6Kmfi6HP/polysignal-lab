@@ -1,5 +1,8 @@
 # 当前策略指标获取方法
 
+> Living document. **行情/指标如何进入 Strategy**。
+> 所有权与运行时禁止面见 [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md)、[`RUNTIME_BOUNDARY.md`](RUNTIME_BOUNDARY.md)。
+
 当前 native runtime 不是策略直接请求指标 API，也不再通过独立 scheduler 组装第二套行情真相。链路是：
 
 > Gamma 市场发现 → Nautilus `TradingNode` / Polymarket `LiveDataClient` → `DataEngine` / `Cache` → `MarketViewAssembler` → `PolySignalNativeStrategy` callback → `AlphaCore.evaluate(view)` → `DecisionPipeline` / `DecisionPolicy` → Nautilus `order_factory` / `submit_order`

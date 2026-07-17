@@ -1,11 +1,17 @@
+"""
+Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Sequence, polysignal_lab.domain.market, polysignal_lab.domain.market.Market, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.market_catalog.MarketCatalog, polysignal_lab.nautilus_runtime.market_catalog.MarketPairMeta
+Output: create_market_projection_components, register_markets, instrument_load_ids, configured_condition_ids
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from datetime import datetime
-from typing import Protocol, cast
 
-from polysignal_lab.alpha.types import SideBookView, TradeView
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_runtime.market_view_assembler import MarketViewAssembler
@@ -14,81 +20,15 @@ from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomData
 logger = logging.getLogger(__name__)
 
 
-class _BookDataProvider(Protocol):
-    def book_for_token(
-        self,
-        token_id: str,
-        *,
-        now: datetime | None = None,
-    ) -> SideBookView | None: ...
-
-    def trades_for_token(self, token_id: str) -> Sequence[TradeView]: ...
-
-    def observe_book_received(
-        self,
-        token_id: str,
-        *,
-        received_at: datetime,
-    ) -> None: ...
-
-
-class CacheBoundBookDataProvider:
-    def __init__(self, catalog: MarketCatalog) -> None:
-        self._catalog = catalog
-        self._provider: _BookDataProvider | None = None
-
-    @property
-    def is_bound(self) -> bool:
-        return self._provider is not None
-
-    def bind_cache(self, cache: object) -> None:
-        if cache is None:
-            raise RuntimeError("MarketView books require a Nautilus Cache")
-        from polysignal_lab.nautilus_runtime.cache_market_data import (
-            NautilusCacheMarketDataProvider,
-        )
-
-        self._provider = cast(
-            _BookDataProvider,
-            NautilusCacheMarketDataProvider(cache, catalog=self._catalog),
-        )
-
-    def observe_book_received(
-        self,
-        token_id: str,
-        *,
-        received_at: datetime,
-    ) -> None:
-        provider = self._provider
-        if provider is not None:
-            provider.observe_book_received(token_id, received_at=received_at)
-
-    def book_for_token(
-        self,
-        token_id: str,
-        *,
-        now: datetime | None = None,
-    ) -> SideBookView | None:
-        provider = self._provider
-        if provider is None:
-            return None
-        return provider.book_for_token(token_id, now=now)
-
-    def trades_for_token(self, token_id: str) -> tuple[TradeView, ...]:
-        provider = self._provider
-        if provider is None:
-            return ()
-        return tuple(provider.trades_for_token(token_id))
-
-
 def create_market_projection_components(
     configured_markets: Sequence[Market],
 ) -> tuple[MarketCatalog, MarketViewAssembler]:
+    """Catalog + assembler; books bind to Cache on strategy start (no DI provider chain)."""
     catalog = MarketCatalog()
     register_markets(catalog, configured_markets)
     assembler = MarketViewAssembler(
         catalog=catalog,
-        books=CacheBoundBookDataProvider(catalog),
+        books=None,
         custom_data=StrategyCustomDataState(),
     )
     return catalog, assembler

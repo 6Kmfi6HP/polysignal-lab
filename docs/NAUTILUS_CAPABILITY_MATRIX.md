@@ -1,5 +1,9 @@
 # NautilusTrader capability matrix
 
+> Living document. **Verified package capabilities only** (not ownership or
+> runtime policy). Those live in [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md)
+> and [`RUNTIME_BOUNDARY.md`](RUNTIME_BOUNDARY.md).
+
 Verified on Python 3.12 against the installed and locked
 `nautilus_trader[polymarket]==1.231.0.dev20260716+16604` package. Evidence comes
 from installed code, public signatures, and executable local probes. It is not
@@ -9,9 +13,9 @@ live venue acceptance evidence.
 |---|---|---|---|
 | Polymarket live data | Official `PolymarketDataClientFactory` and config imports construct | Supported | Use the official data factory in sandbox and live |
 | Polymarket live execution | Official `PolymarketExecutionClientFactory` and exec config construct | Composition supported | Register only in explicit live mode after both safety switches and credential validation |
-| Live registration | Builder exposes data, simulated-exec, and live-exec registration; node exposes importable Actor/Strategy configs | Supported by serialized config | Register one policy Actor and one `PolySignalNativeStrategy` config; do not retain pre-registration owners |
-| Native Actor/Strategy messaging | `publish_signal` and `subscribe_signal` complete a real BacktestEngine roundtrip; `Signal` is immutable | Supported | Candidate/approval messages use native Signal with strict JSON payloads |
-| CustomData | Latest Strategy/Actor expose `publish_data` and `subscribe_data`; pyo3 `DataType` accepts registered type names | Supported for subscriptions | RTDS and sidecar data use native data subscriptions; trading policy messaging stays on verified Signal transport |
+| Live registration | Builder exposes data, simulated-exec, and live-exec registration; node exposes importable Actor/Strategy configs | Supported by serialized config | Register one `MarketRotationActor` and one `PolySignalNativeStrategy` config; no `DecisionPolicyActor` |
+| Native Actor/Strategy messaging | `publish_signal` and `subscribe_signal` complete a real BacktestEngine roundtrip; `Signal` is immutable | Supported (engine) | Not used for candidate/approval; decision path is in-process `DecisionPolicy` on Strategy |
+| CustomData | Latest Strategy/Actor expose `publish_data` and `subscribe_data`; pyo3 `DataType` accepts registered type names | Supported for subscriptions | Universe/metadata/PTB and RTDS use native data subscriptions; policy stays in-process on Strategy |
 | Sandbox execution | Official sandbox execution factory/config construct | Supported | Sandbox uses simulated execution, reconciliation off, and never registers live execution |
 | Backtest composition | `BacktestEngine` accepts instruments, market data, CustomData, and `InstrumentClose` | Supported | Backtest imports no live transport and reuses the same Strategy/config schema |
 | Backtest expiry semantics | Probe observed native expiration order/fill, Position close, Cache/Portfolio flatten, and Account update | Supported by native matching engine | Replay `InstrumentClose` as data; never reproduce these mutations in PolySignal |

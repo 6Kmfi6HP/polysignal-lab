@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, asyncio, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, json, pathlib, pathlib.Path, sqlite3, types, types.SimpleNamespace, factories, factories.sample_report_result, polysignal_lab.app.reporting, polysignal_lab.app.reporting._report_equity_inputs, polysignal_lab.app.reporting.generate_daily_report, polysignal_lab.app.reporting_sources._collect_daily_report_inputs, polysignal_lab.app.services.persistence_service.PersistenceService, polysignal_lab.app.services.publish_service.PublishService, polysignal_lab.observability.health.HealthRegistry, polysignal_lab.reporting.daily_report.DailyReportService, polysignal_lab.publish.telegram_publisher.PublishResult, polysignal_lab.signal_layer.formatter.MessageFormatter, polysignal_lab.storage.jsonl_store.JSONLStore, polysignal_lab.storage.sqlite_store.SQLiteStore, polysignal_lab.storage.state_store.StateStore
-Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_selects_pusd_portfolio_equity, test_report_equity_inputs_requires_exact_usdc_portfolio_currency, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_native_cache_accounts_api, test_generate_daily_report_uses_configured_pusd_equity, test_daily_report_accepts_legacy_payload_without_equity_source, test_daily_report_revises_legacy_payload_for_new_equity_source, test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss, test_daily_report_orders_use_creation_day_after_cross_day_update, test_daily_report_marks_inferred_legacy_order_creation_time, test_generate_daily_report_retries_pending_outbox_without_duplicate_report, test_generate_daily_report_revises_after_late_settlement, test_generate_daily_report_retries_prior_day_pending_publish, test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity, test_report_equity_inputs_uses_scalar_portfolio_equity_without_account, test_report_equity_inputs_uses_no_arg_portfolio_equity_without_account, test_report_equity_inputs_uses_starting_balance_for_named_portfolio_without_account, test_report_equity_inputs_uses_starting_balance_for_wrapped_portfolio_without_account, test_report_equity_inputs_requires_nautilus_cache, test_report_equity_inputs_requires_reporting_cache_protocol, test_report_equity_inputs_ignores_shadow_wallet_without_cache
+Input: __future__, __future__.annotations, asyncio, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, json, pathlib, pathlib.Path
+Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_selects_pusd_portfolio_equity, test_report_equity_inputs_requires_exact_usdc_portfolio_currency, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_native_cache_accounts_api, test_generate_daily_report_uses_configured_pusd_equity, test_daily_report_accepts_legacy_payload_without_equity_source
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -326,7 +328,7 @@ def test_generate_daily_report_uses_configured_pusd_equity(tmp_path: Path) -> No
     )
 
     report = asyncio.run(generate_daily_report(scheduler))
-    stored = store.query_daily_reports()
+    stored = store.daily_reports()
 
     assert report is not None
     assert report.ending_equity == 987.65
@@ -364,7 +366,7 @@ def test_daily_report_accepts_legacy_payload_without_equity_source(tmp_path: Pat
         )
 
     store = SQLiteStore(db_path)
-    restored = store.query_daily_reports()
+    restored = store.daily_reports()
     persisted, created = store.claim_daily_report(
         report.model_copy(update={"equity_source": None}),
         enqueue_publish=False,
@@ -415,7 +417,7 @@ def test_daily_report_revises_legacy_payload_for_new_equity_source(tmp_path: Pat
     assert created
     assert revised.revision == 2
     assert revised.equity_source == "account_balance"
-    assert store.query_daily_reports()[0]["equity_source"] == "account_balance"
+    assert store.daily_reports()[0]["equity_source"] == "account_balance"
 
 
 def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_loss(
@@ -840,7 +842,7 @@ def test_generate_daily_report_revises_after_late_settlement(tmp_path: Path) -> 
     revised = asyncio.run(generate_daily_report(scheduler))
     duplicate = asyncio.run(generate_daily_report(scheduler))
 
-    reports = store.query_daily_reports()
+    reports = store.daily_reports()
     outbox = sorted(
         store.restore_report_publish_outbox(),
         key=lambda row: int(row["revision"]),

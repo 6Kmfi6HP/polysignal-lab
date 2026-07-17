@@ -1,10 +1,12 @@
 """
-Input: __future__, pathlib, pytest, sqlite3
-Output: issue #14 SQLite cold-start open retry tests
+Input: __future__, __future__.annotations, sqlite3, pathlib, pathlib.Path, pytest, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.sqlite_store.SQLiteStore
+Output: test_sqlite_store_retries_until_parent_and_file_become_available, test_sqlite_store_raises_after_retry_exhaustion, test_dashboard_cli_uses_retrying_sqlite_open
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

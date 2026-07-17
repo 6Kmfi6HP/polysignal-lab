@@ -1,10 +1,12 @@
 """
-Input: __future__, pytest, polysignal_lab.alpha.types, polysignal_lab.nautilus_runtime.decision_policy, polysignal_lab.nautilus_runtime.native_strategy
-Output: test_static_native_strategy_initializes_nautilus_base
+Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaCore, polysignal_lab.nautilus_runtime.native_strategy, polysignal_lab.nautilus_runtime.native_strategy.PolySignalNativeStrategy
+Output: test_static_native_strategy_initializes_nautilus_base, _FakeAssembler, _FakeRegistry, _FakeCore
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -47,5 +49,6 @@ def test_static_native_strategy_initializes_nautilus_base() -> None:
     assert strategy.strategy_name == "polysignal"
     assert hasattr(strategy, "strategy_id")
     assert isinstance(strategy.core, _FakeCore)
-    assert not hasattr(strategy, "policy")
+    assert hasattr(strategy, "policy")
+    assert callable(strategy.policy.decide)
     _ = AlphaCore, SimpleNamespace  # keep alpha protocol import used for typing intent

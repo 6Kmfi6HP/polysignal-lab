@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.timedelta, typing, typing.Final, polysignal_lab.domain.enums, polysignal_lab.domain.enums.(
-Output: sample_market, sample_book, sample_spot, sample_market_view, sample_storage_lifecycle, MarketFactoryConfig, BookFactoryConfig, SpotFactoryConfig, StorageLifecycle
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta
+Output: sample_market, sample_book, sample_spot, sample_market_view, sample_storage_lifecycle, sample_report_result, MarketFactoryConfig, BookFactoryConfig, SpotFactoryConfig, StorageLifecycle
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -22,7 +24,6 @@ from polysignal_lab.domain.enums import (
     TradeResultStatus,
 )
 from polysignal_lab.domain.market import Market, OutcomeToken
-from polysignal_lab.domain.orderbook import BookLevel, OrderBook
 from polysignal_lab.domain.reporting_result import DailyReport, ReportAccountSnapshot
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
 from polysignal_lab.domain.spot import SpotPrice
@@ -91,17 +92,15 @@ def sample_market(config: MarketFactoryConfig = DEFAULT_MARKET) -> Market:
     )
 
 
-def sample_book(token_id: str, config: BookFactoryConfig = DEFAULT_BOOK) -> OrderBook:
+def sample_book(token_id: str, config: BookFactoryConfig = DEFAULT_BOOK) -> SideBookView:
+    """Cache-projection shaped book fixture (not domain OrderBook)."""
     bid = config.bid if config.bid is not None else max(0.01, config.ask - 0.03)
-    return OrderBook(
-        market_id=token_id.rsplit("-", 1)[0],
+    return _side_book_view(
         token_id=token_id,
-        bids=[BookLevel(price=bid, size=config.size), BookLevel(price=max(0.01, bid - 0.01), size=config.size)],
-        asks=[
-            BookLevel(price=config.ask, size=config.size),
-            BookLevel(price=min(0.99, config.ask + 0.02), size=config.size),
-        ],
-        last_trade_price=(config.ask + bid) / 2,
+        ask=config.ask,
+        bid=bid,
+        size=config.size,
+        freshness_ms=0,
         received_at=utc_now(),
     )
 

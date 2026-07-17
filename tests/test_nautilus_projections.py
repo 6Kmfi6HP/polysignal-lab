@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.nautilus_runtime.projections, polysignal_lab.nautilus_runtime.projections.(
-Output: test_project_order_event_uses_nautilus_event_fields, test_project_fill_event_uses_nautilus_fill_fields, test_project_fill_event_accepts_nautilus_price_quantity_objects, test_project_position_uses_nautilus_position_fields, test_project_closed_position_uses_close_time_for_lifecycle_ordering, test_project_position_leaves_missing_money_unknown, test_project_portfolio_snapshot_selects_currency_equity_mapping, test_project_portfolio_snapshot_sums_currency_equity_mapping, _FloatLike, _MoneyLike, _CurrencyLike
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, datetime.timezone, datetime.tzinfo, types, types.SimpleNamespace
+Output: test_project_order_event_converts_nautilus_nanoseconds_to_utc, test_project_order_event_normalizes_malformed_timezone_error, test_project_order_event_normalizes_runtime_timezone_error, test_project_order_event_rejects_invalid_event_time, test_project_order_event_rejects_missing_event_time, test_project_order_event_normalizes_timezone_aware_test_double, test_fill_records_metrics_from_tags_without_core_follow_up, test_project_order_event_uses_nautilus_event_fields, test_project_fill_event_uses_nautilus_fill_fields, test_project_fill_event_accepts_nautilus_price_quantity_objects
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -29,16 +31,15 @@ from polysignal_lab.nautilus_runtime.projections import (
 
 
 def test_project_order_event_converts_nautilus_nanoseconds_to_utc() -> None:
-    event = SimpleNamespace(ts_event=1_788_451_200_123_456_789)
+    event = SimpleNamespace(ts_event=1_788_451_200_123_456_789, side="UP")
 
-    projected = event_projection.project_order_event(
+    projected = event_projection.project_order_metrics(
         event,
         registry=None,
         strategy_name="alpha",
-        metrics_lookup=lambda _: {},
     )
 
-    assert projected.ts_event == datetime.fromtimestamp(1_788_451_200.1234567, UTC)
+    assert projected['ts_event'] == datetime.fromtimestamp(1_788_451_200.1234567, UTC)
 
 
 class _NaiveTimezone(tzinfo):
@@ -66,26 +67,27 @@ class _RuntimeErrorTimezone(tzinfo):
 
 
 def test_project_order_event_normalizes_malformed_timezone_error() -> None:
-    event = SimpleNamespace(ts_event=datetime(2026, 1, 1, tzinfo=_BadTimezone()))
+    event = SimpleNamespace(ts_event=datetime(2026, 1, 1, tzinfo=_BadTimezone()), side="UP")
 
     with pytest.raises(ValueError, match="ts_event datetime"):
-        event_projection.project_order_event(
+        event_projection.project_order_metrics(
             event,
             registry=None,
             strategy_name="alpha",
-            metrics_lookup=lambda _: {},
         )
 
 
 def test_project_order_event_normalizes_runtime_timezone_error() -> None:
-    event = SimpleNamespace(ts_event=datetime(2026, 1, 1, tzinfo=_RuntimeErrorTimezone()))
+    event = SimpleNamespace(
+        ts_event=datetime(2026, 1, 1, tzinfo=_RuntimeErrorTimezone()),
+        side="UP",
+    )
 
     with pytest.raises(ValueError, match="ts_event datetime"):
-        event_projection.project_order_event(
+        event_projection.project_order_metrics(
             event,
             registry=None,
             strategy_name="alpha",
-            metrics_lookup=lambda _: {},
         )
 
 
@@ -104,94 +106,66 @@ def test_project_order_event_normalizes_runtime_timezone_error() -> None:
     ),
 )
 def test_project_order_event_rejects_invalid_event_time(timestamp: object) -> None:
-    event = SimpleNamespace(ts_event=timestamp)
+    event = SimpleNamespace(ts_event=timestamp, side="UP")
 
     with pytest.raises(ValueError, match="ts_event"):
-        event_projection.project_order_event(
+        event_projection.project_order_metrics(
             event,
             registry=None,
             strategy_name="alpha",
-            metrics_lookup=lambda _: {},
         )
 
 
 def test_project_order_event_rejects_missing_event_time() -> None:
     with pytest.raises(ValueError, match="ts_event"):
-        event_projection.project_order_event(
-            SimpleNamespace(),
+        event_projection.project_order_metrics(
+            SimpleNamespace(side="UP"),
             registry=None,
             strategy_name="alpha",
-            metrics_lookup=lambda _: {},
         )
 
 
 def test_project_order_event_normalizes_timezone_aware_test_double() -> None:
     event = SimpleNamespace(
-        ts_event=datetime(2026, 1, 1, 12, tzinfo=timezone(timedelta(hours=-5)))
+        ts_event=datetime(2026, 1, 1, 12, tzinfo=timezone(timedelta(hours=-5))),
+        side="UP",
     )
 
-    projected = event_projection.project_order_event(
+    projected = event_projection.project_order_metrics(
         event,
         registry=None,
         strategy_name="alpha",
-        metrics_lookup=lambda _: {},
     )
 
-    assert projected.ts_event == datetime(2026, 1, 1, 17, tzinfo=UTC)
+    assert projected['ts_event'] == datetime(2026, 1, 1, 17, tzinfo=UTC)
 
 
-def test_fill_follow_up_builds_view_at_event_time() -> None:
-    created_at = datetime.fromtimestamp(1_788_451_200.1234567, UTC)
-    decision = SimpleNamespace(condition_id="condition-btc-5m")
-
-    class MetricsTracker:
-        def metrics_for_event(self, event: object) -> dict[str, object]:
-            _ = event
-            return {}
-
-        def forget(self, event: object, order: object) -> None:
-            _ = event, order
-
-    class Assembler:
-        def __init__(self) -> None:
-            self.created_at: datetime | None = None
-
-        def build(
-            self, condition_id: str, *, created_at: datetime | None = None
-        ) -> object:
-            assert condition_id == "condition-btc-5m"
-            self.created_at = created_at
-            return object()
-
-    class Core:
-        def on_order_filled(self, event: object) -> tuple[object, ...]:
-            _ = event
-            return (decision,)
+def test_fill_records_metrics_from_tags_without_core_follow_up() -> None:
+    """Production path no longer routes AlphaFillEvent into core.on_order_filled."""
 
     class Strategy:
         registry = None
         strategy_name = "alpha"
         _active_condition_ids = {"condition-btc-5m"}
-        _metrics_tracker = MetricsTracker()
+        observability = None
 
         def __init__(self) -> None:
-            self.core = Core()
-            self.assembler = Assembler()
-            self.handled: list[tuple[object, object]] = []
+            self.core = SimpleNamespace()
+            self.recorded: list[object] = []
+            self.progress: list[str] = []
 
         def _note_runtime_progress(self, phase: str) -> None:
-            _ = phase
+            self.progress.append(phase)
 
-        def _record_nautilus_fill(
-            self, event: object, metrics: object
-        ) -> None:
-            _ = event, metrics
+        def _record_nautilus_fill(self, event: object, metrics: object) -> None:
+            _ = event
+            self.recorded.append(metrics)
 
-        def _require_assembler(self) -> Assembler:
-            return self.assembler
+        def _require_assembler(self) -> object:
+            raise AssertionError("no core follow-up")
 
         def _handle_decision(self, decision: object, view: object) -> None:
-            self.handled.append((decision, view))
+            raise AssertionError("no core follow-up")
 
     from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
 
@@ -202,11 +176,15 @@ def test_fill_follow_up_builds_view_at_event_time() -> None:
             ts_event=1_788_451_200_123_456_789,
             last_px=0.5,
             last_qty=1.0,
+            side="UP",
+            tags=["strategy=alpha", "condition_id=condition-btc-5m"],
         ),
     )
 
-    assert strategy.assembler.created_at == created_at
-    assert len(strategy.handled) == 1
+    assert len(strategy.recorded) == 1
+    assert strategy.recorded[0]["fill_price"] == 0.5
+    assert strategy.recorded[0]["shares"] == 1.0
+    assert "order_event" in strategy.progress
 
 
 class _FloatLike:

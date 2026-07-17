@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Sequence, typing, typing.cast, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3, polysignal_lab.config
+Output: enabled_strategy_names, register_runtime_components
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -7,10 +16,6 @@ from nautilus_trader.core import nautilus_pyo3
 
 from polysignal_lab.config import Settings
 from polysignal_lab.domain.market import Market
-from polysignal_lab.nautilus_runtime.decision_policy_actor import (
-    DecisionPolicyActor,
-    DecisionPolicyActorConfig,
-)
 from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 from polysignal_lab.nautilus_runtime.runtime_configs import (
@@ -61,21 +66,13 @@ def register_runtime_components(
         )
     )
 
-    policy_config = DecisionPolicyActorConfig.build(settings)
-    add_actor(
-        _importable_actor_config(
-            actor_path=_fqn(DecisionPolicyActor),
-            config_path=_fqn(DecisionPolicyActorConfig),
-            config=policy_config.importable_dict(),
-        )
-    )
-
     strategy_names = enabled_strategy_names(settings)
-    if strategy_names:
+    for name in strategy_names:
         strategy_config = PolySignalStrategyConfig.build(
             settings,
             configured_markets,
             configured_condition_ids,
+            strategy_name=name,
         )
         add_strategy(
             _importable_strategy_config(

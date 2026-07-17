@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.date, json, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode, polysignal_lab.domain.enums.PositionStatus, polysignal_lab.domain.enums.Side, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.reporting_result
-Output: test_sqlite_store_restores_account_reports_and_leaderboard, test_sqlite_store_rejects_invalid_paper_trade_rows, test_sqlite_store_skips_malformed_payload_paper_trade_rows, test_sqlite_store_excludes_invalid_position_events, test_sqlite_store_invalid_latest_position_hides_prior_current_state, test_strategy_leaderboard_win_rate_counts_voids_as_closed, test_sqlite_store_uses_wal_and_busy_timeout
+Input: __future__, __future__.annotations, datetime, datetime.date, json, pathlib, pathlib.Path, sqlite3, pytest, factories
+Output: test_payload_insert_preserves_duplicate_detection, test_sqlite_store_restores_account_reports_and_leaderboard, test_sqlite_store_rejects_invalid_paper_trade_rows, test_sqlite_store_rejects_zero_money_paper_trade_rows, test_sqlite_store_rejects_boolean_money_paper_trade_rows, test_sqlite_store_rejects_huge_integer_paper_trade_rows, test_sqlite_store_skips_malformed_payload_paper_trade_rows, test_sqlite_store_skips_malformed_timestamp_paper_trade_rows, test_sqlite_store_skips_json_integer_digit_limit_payloads, test_sqlite_store_skips_malformed_system_events
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -153,8 +155,8 @@ def test_sqlite_store_restores_account_reports_and_leaderboard(tmp_path):
     # When: restart-time data is reconstructed from SQLite payloads.
     restored_account = store.query_latest_report_account_snapshot()
     restored_positions = store.query_report_open_positions()
-    restored_reports = store.query_daily_reports()
-    leaderboard = store.query_strategy_leaderboard()
+    restored_reports = store.daily_reports()
+    leaderboard = store.strategy_leaderboard()
 
     # Then: restored values match persisted rows, not fabricated in-memory state.
     assert restored_account is not None
@@ -450,7 +452,7 @@ def test_sqlite_store_skips_json_integer_digit_limit_payloads(tmp_path: Path) ->
 
     assert store.query_json("report_results") == []
     assert store.query_json("system_events") == []
-    assert store.query_daily_reports() == []
+    assert store.daily_reports() == []
     assert store.query_latest_report_account_snapshot() is None
 
 
@@ -498,8 +500,8 @@ def test_sqlite_store_skips_malformed_daily_reports(tmp_path: Path) -> None:
         )
 
     # When/Then: report restore surfaces skip the bad row instead of raising JSONDecodeError.
-    assert store.query_daily_reports() == []
-    assert store.query_strategy_leaderboard() == []
+    assert store.daily_reports() == []
+    assert store.strategy_leaderboard() == []
 
 
 def test_sqlite_store_rejects_malformed_existing_payload(tmp_path: Path) -> None:
@@ -943,8 +945,8 @@ def test_sqlite_store_skips_hostile_daily_report_payload(tmp_path: Path) -> None
         )
 
     # When/Then: restore and leaderboard fail closed.
-    assert store.query_daily_reports() == []
-    assert store.query_strategy_leaderboard() == []
+    assert store.daily_reports() == []
+    assert store.strategy_leaderboard() == []
 
 
 def test_sqlite_store_excludes_open_position_events_without_timestamp(tmp_path) -> None:
@@ -1193,7 +1195,7 @@ def test_strategy_leaderboard_win_rate_counts_voids_as_closed(tmp_path):
         )
     )
 
-    leaderboard = store.query_strategy_leaderboard()
+    leaderboard = store.strategy_leaderboard()
 
     assert leaderboard[0]["closed_positions"] == 2
     assert leaderboard[0]["win_count"] == 1

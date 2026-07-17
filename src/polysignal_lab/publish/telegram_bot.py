@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Callable, datetime, datetime.UTC, datetime.datetime, datetime.time, telegram, polysignal_lab.app.services.persistence_service, polysignal_lab.config, polysignal_lab.data.state, polysignal_lab.nautilus_runtime.observability, polysignal_lab.reporting.strategy_stats, polysignal_lab.publish.telegram_render, polysignal_lab.signal_layer.formatter, polysignal_lab.utils
-Output: TelegramBotService, _position_display_payload
+Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Callable, datetime, datetime.UTC, datetime.datetime, datetime.time, datetime.timedelta
+Output: TelegramBotService
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

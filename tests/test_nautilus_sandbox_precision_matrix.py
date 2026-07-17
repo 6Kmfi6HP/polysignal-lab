@@ -1,4 +1,12 @@
-"""Native PyO3 precision matrix for Polymarket-shaped instruments."""
+"""
+Input: __future__, __future__.annotations, decimal, decimal.Decimal, pytest, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3
+Output: test_native_converters_preserve_valid_increment_boundaries, test_native_converters_quantize_half_and_excess_precision, test_native_quantity_converter_does_not_enforce_minimum, test_engine_cache_and_fill_retain_instrument_precision, _FillPrecisionStrategy
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 
 from __future__ import annotations
 

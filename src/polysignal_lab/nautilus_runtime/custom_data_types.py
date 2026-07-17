@@ -1,10 +1,12 @@
 """
-Input: __future__, collections.abc, dataclasses, types, typing, pyarrow, nautilus_trader.core, nautilus_trader.core.data, nautilus_trader.model.custom, nautilus_trader.model.data
-Output: PolySignalPriceToBeatData, PolySignalMarketMetaData, PolySignalMarketUniverseData, PolymarketRtdsCryptoPriceData, is_polymarket_rtds_crypto_price, polymarket_rtds_crypto_price_type, polymarket_rtds_spot_identity, custom_data_type, wrap_custom_data, unwrap_custom_data
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Mapping, json, dataclasses, dataclasses.field, types, types.MappingProxyType
+Output: is_polymarket_rtds_crypto_price, polymarket_rtds_crypto_price_type, custom_data_type, polymarket_rtds_spot_identity, wrap_custom_data, unwrap_custom_data, register_custom_data_type, PolymarketRtdsCryptoPriceData, _FrozenData, PolySignalPriceToBeatData
 Pos: Application code
 
-Self-reference: When this file changes, update this header
+🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -18,7 +20,6 @@ import pyarrow as pa
 from nautilus_trader.core import nautilus_pyo3
 from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass_pyo3
-from nautilus_trader.model.data import CustomData as CythonCustomData
 
 _register_custom_data_class = cast(
     Callable[[type[object]], None],
@@ -344,7 +345,7 @@ def wrap_custom_data(payload: object) -> nautilus_pyo3.CustomData:
 
 
 def unwrap_custom_data(data: object) -> object:
-    if isinstance(data, nautilus_pyo3.CustomData | CythonCustomData):
+    if isinstance(data, nautilus_pyo3.CustomData):
         return getattr(data, "data")
     return data
 

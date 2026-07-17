@@ -1,10 +1,12 @@
 """
-Input: __future__, pathlib, pathlib.Path, polysignal_lab.storage.projection_migration, polysignal_lab.storage.sqlite_schema, polysignal_lab.storage.sqlite_store
-Output: test_migrate_paper_tables_to_projections_is_idempotent, test_insert_report_result_does_not_write_legacy_paper_table, test_settlement_forbids_open_cache_closed_sqlite_fork
-Pos: Focused migration / projection / settlement tests for Nautilus v2 projection seam
+Input: __future__, __future__.annotations, pathlib, pathlib.Path, sqlite3, polysignal_lab.storage.event_projection, polysignal_lab.storage.event_projection.normalize_report_order, polysignal_lab.storage.sqlite_schema, polysignal_lab.storage.sqlite_schema.PROJECTION_SCHEMA_VERSION, polysignal_lab.storage.sqlite_store
+Output: test_normalize_report_order_emits_only_report_identity, test_migrate_legacy_tables_to_reporting_backs_up_and_drops_legacy, test_insert_report_result_does_not_write_legacy_paper_table, test_migrate_v4_reporting_columns_renames_and_canonicalizes_payload, test_migrate_v5_account_and_daily_report_payload_to_runtime_neutral_names
+Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -29,7 +31,7 @@ def test_normalize_report_order_emits_only_report_identity() -> None:
     assert payload["report_order_id"] == "C-1"
     assert "paper_order_id" not in payload
     assert "projected_order_id" not in payload
-    assert payload["status"] == "RESTING"
+    assert payload["status"] == "ACCEPTED"
     assert payload["side"] == "UP"
 
 

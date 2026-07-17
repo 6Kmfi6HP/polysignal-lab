@@ -1,10 +1,12 @@
 """
 Input: __future__, __future__.annotations, pathlib, pathlib.Path, pytest, pydantic, pydantic.ValidationError, polysignal_lab.config, polysignal_lab.config.Settings
-Output: test_runtime_config_defaults_to_nautilus_and_stays_paper_safe, test_nautilus_book_type_defaults_are_paper_only, test_nautilus_requires_nonempty_sandbox_base_currency, test_nautilus_rejects_unknown_sandbox_book_type, test_nautilus_runtime_uses_sandbox_book_type_not_matching_engine, test_removed_nautilus_matching_keys_fail_fast, test_yaml_runtime_book_type_values_are_explicit, test_live_polymarket_execution_is_invalid_in_default_runtime, test_production_yaml_declares_nautilus_runtime_section, test_health_config_defaults_are_conservative, test_health_config_accepts_yaml_overrides
+Output: test_runtime_config_defaults_to_nautilus_and_stays_paper_safe, test_nautilus_book_type_defaults_are_paper_only, test_nautilus_requires_nonempty_sandbox_base_currency, test_nautilus_rejects_unknown_sandbox_book_type, test_nautilus_runtime_uses_sandbox_book_type_not_matching_engine, test_removed_nautilus_matching_keys_fail_fast, test_removed_shadow_risk_fields_fail_fast, test_native_risk_limits_are_runtime_configuration, test_native_risk_config_builds_with_project_limits, test_yaml_runtime_book_type_values_are_explicit
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -296,15 +298,17 @@ def test_polysignal_strategy_config_extends_nautilus_strategy_config() -> None:
     from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
 
     settings = Settings()
-    config = PolySignalStrategyConfig.build(settings, (), ())
+    config = PolySignalStrategyConfig.build(settings, (), (), strategy_name="one_cent_buy")
 
     assert isinstance(config, StrategyConfig)
-    assert config.strategy_id == "PolySignal-polysignal"
-    assert config.order_id_tag == "polysignal"
-    assert config.strategy_name == "polysignal"
+    assert config.strategy_id == "PolySignal-one_cent_buy"
+    assert config.order_id_tag == "onecentbuy"
+    assert config.strategy_name == "one_cent_buy"
+    assert config.strategy_names == ("one_cent_buy",)
     reconstructed: PolySignalStrategyConfig = PolySignalStrategyConfig.parse(config.json())
     assert reconstructed.settings_json == config.settings_json
     assert tuple(reconstructed.condition_ids) == tuple(config.condition_ids)
+    assert reconstructed.strategy_name == "one_cent_buy"
 
 
 def test_market_rotation_actor_config_extends_nautilus_actor_config() -> None:
@@ -319,15 +323,13 @@ def test_market_rotation_actor_config_extends_nautilus_actor_config() -> None:
     assert str(config.component_id) == "PolySignal-MarketRotation"
 
 
-def test_decision_policy_actor_config_extends_nautilus_actor_config() -> None:
-    from nautilus_trader.common.config import ActorConfig
-
-    from polysignal_lab.nautilus_runtime.decision_policy_actor import (
-        DecisionPolicyActor,
-        DecisionPolicyActorConfig,
+def test_decision_policy_from_settings_is_strategy_owned_factory() -> None:
+    from polysignal_lab.nautilus_runtime.decision_policy import (
+        DecisionPolicy,
+        decision_policy_from_settings,
     )
 
-    config = DecisionPolicyActorConfig.build(Settings())
-
-    assert isinstance(config, ActorConfig)
-    assert config.actor_id == DecisionPolicyActor.POLICY_OWNER_ID
+    policy = decision_policy_from_settings(Settings())
+    assert isinstance(policy, DecisionPolicy)
+    assert callable(policy.decide)
+    assert callable(policy.batch_arbitrate)

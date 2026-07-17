@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, collections, collections.defaultdict, collections.abc, collections.abc.Iterable, collections.abc.Mapping, typing, typing.Any, typing.assert_never
+Output: build_strategy_leaderboard_rows
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 from collections import defaultdict

@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, asyncio, logging, datetime, datetime.timezone, typing, typing.cast, polysignal_lab.config, polysignal_lab.config.Settings
+Output: run_nautilus_cli, main
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 import asyncio
@@ -56,12 +65,6 @@ logger = logging.getLogger(__name__)
 async def _prepare_nautilus_runtime_context(
     settings: Settings,
 ) -> tuple[NautilusRuntimeContext, ObservabilityService]:
-    if settings.runtime.nautilus.execution_mode != "backtest":
-        from polysignal_lab.nautilus_runtime.live_node import (
-            validate_polymarket_market_data_credentials,
-        )
-
-        validate_polymarket_market_data_credentials()
     context = build_nautilus_runtime_context(settings)
     observability = ObservabilityService(
         health=context.health,

@@ -12,6 +12,8 @@ Pos: Application code
 
 
 
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -26,10 +28,21 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
 )
 
 
-def event_datetime(ts_event: int) -> datetime:
-    if ts_event <= 0:
-        raise ValueError("CustomData ts_event must be a positive Unix nanosecond timestamp")
-    return datetime.fromtimestamp(ts_event / 1_000_000_000, UTC)
+def event_datetime(value: object) -> datetime:
+    """Strict Unix-ns / timezone-aware datetime primitive (sole conversion surface)."""
+    if isinstance(value, datetime):
+        try:
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("ts_event datetime must be timezone-aware")
+            return value.astimezone(UTC)
+        except Exception as exc:
+            raise ValueError("ts_event datetime must be timezone-aware") from exc
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError("ts_event must be a positive Unix nanosecond timestamp")
+    try:
+        return datetime.fromtimestamp(value / 1_000_000_000, UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise ValueError("ts_event must be a positive Unix nanosecond timestamp") from exc
 
 
 @dataclass(frozen=True, slots=True)

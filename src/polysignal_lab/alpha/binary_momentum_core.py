@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, collections, collections.defaultdict, collections.deque, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.OrderIntentSpec
-Output: _RollingPriceStats, BinaryMomentumAlphaCore
+Input: __future__, __future__.annotations, collections, collections.deque, typing, typing.TYPE_CHECKING, polysignal_lab.alpha.stats, polysignal_lab.alpha.stats._RollingPriceStats, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
+Output: BinaryMomentumAlphaCore
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

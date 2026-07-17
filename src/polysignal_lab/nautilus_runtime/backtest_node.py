@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.config.load_settings, polysignal_lab.domain.market, polysignal_lab.domain.market.Market
+Output: build_backtest_engine
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 from collections.abc import Sequence

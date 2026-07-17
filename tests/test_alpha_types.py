@@ -1,10 +1,12 @@
 """
 Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, pytest, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent
-Output: test_market_view_exposes_side_books_and_asks, test_market_view_is_immutable, test_alpha_decision_carries_order_intent_spec, test_market_group_view_carries_relation_members, test_alpha_order_and_fill_events_are_immutable, test_nautilus_order_spec_carries_quantity_and_tags
+Output: test_market_view_exposes_side_books_and_asks, test_market_view_is_immutable, test_alpha_decision_carries_order_intent_spec, test_market_group_view_carries_relation_members, test_nautilus_order_spec_carries_quantity_and_tags
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -20,7 +22,6 @@ import pytest
 
 from polysignal_lab.alpha.types import (
     AlphaDecision,
-    AlphaFillEvent,
     FreshnessView,
     MarketGroupView,
     MarketView,
@@ -112,29 +113,6 @@ def test_market_group_view_carries_relation_members() -> None:
 
     assert group.views_by_condition_id[view.condition_id] is view
     assert group.max_source_skew_ms == 25
-
-
-def test_alpha_order_and_fill_events_are_immutable() -> None:
-    now = datetime(2026, 1, 1, tzinfo=UTC)
-    event = AlphaFillEvent(
-        strategy="vwap_momentum",
-        market_id="market-1",
-        condition_id="condition-1",
-        token_id="token-up",
-        side=Side.UP,
-        order_id="order-1",
-        client_order_id="client-1",
-        reason=None,
-        ts_event=now,
-        metrics={"source": "test"},
-        fill_price=0.81,
-        shares=12.0,
-        liquidity_side="TAKER",
-    )
-
-    assert event.fill_price == 0.81
-    with pytest.raises(AttributeError):
-        event.shares = 13.0  # type: ignore[misc]
 
 
 def test_nautilus_order_spec_carries_quantity_and_tags() -> None:

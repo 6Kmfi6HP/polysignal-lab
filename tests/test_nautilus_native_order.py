@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, sys, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime
-Output: test_order_plan_resolves_taker_price_from_best_ask, test_order_plan_rejects_taker_without_best_ask, test_submit_approved_decision_submits_limit_order_through_strategy, test_submit_approved_decision_uses_instrument_value_converters, test_submit_approved_decision_quantizes_price_before_instrument_converter, test_submit_approved_decision_preserves_price_precision_when_price_type_available, test_submit_approved_decision_maps_passive_gtd_expiry, test_submit_approved_decision_passive_gtd_allows_no_immediate_visible_depth, test_submit_approved_decision_does_not_require_available_shares, test_static_native_strategy_initializes_nautilus_base, test_reduce_only_submission_uses_strategy_scoped_native_position_quantity, test_reduce_only_submission_rejects_non_positive_native_position
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, typing
+Output: test_order_plan_resolves_taker_price_from_best_ask, test_order_plan_rejects_taker_without_best_ask, test_submit_approved_decision_submits_limit_order_through_strategy, test_submit_approved_decision_uses_instrument_value_converters, test_submit_approved_decision_quantizes_price_before_instrument_converter, test_submit_approved_decision_preserves_price_precision_when_price_type_available, test_submit_approved_decision_maps_passive_gtd_expiry, test_submit_approved_decision_requires_runtime_clock_for_gtd_expiry, test_submit_approved_decision_passive_gtd_allows_no_immediate_visible_depth, test_submit_approved_decision_does_not_require_available_shares
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -79,9 +81,17 @@ class FakeOrderFactory:
 
 class FakeStrategy:
     def __init__(self) -> None:
-        self.order_factory: FakeOrderFactory = FakeOrderFactory()
+        self._order_factory_override: FakeOrderFactory = FakeOrderFactory()
         self.submitted: list[FakeOrder] = []
         self.submitted_orders = self.submitted
+
+    @property
+    def order_factory(self) -> FakeOrderFactory:
+        return self._order_factory_override
+
+    @property
+    def cache(self) -> object:
+        return self._cache_override
 
     def submit_order(self, order: FakeOrder) -> None:
         self.submitted.append(order)
@@ -328,7 +338,7 @@ def test_reduce_only_submission_uses_strategy_scoped_native_position_quantity() 
             calls.update(kwargs)
             return [SimpleNamespace(signed_qty=3.5)]
 
-    strategy.cache = FakeCache()
+    strategy._cache_override = FakeCache()
     order = submit_approved_decision(
         cast(OrderSubmittingStrategy[FakeOrder], strategy),
         _approved(OrderIntent.TAKER_FAK, reduce_only=True),
@@ -355,7 +365,7 @@ def test_reduce_only_submission_rejects_non_positive_native_position() -> None:
         def positions_open(self, **_kwargs: object) -> list[object]:
             return [SimpleNamespace(signed_qty=-3.5)]
 
-    strategy.cache = FakeCache()
+    strategy._cache_override = FakeCache()
 
     with pytest.raises(ValueError, match="NO_REDUCIBLE_POSITION"):
         submit_approved_decision(

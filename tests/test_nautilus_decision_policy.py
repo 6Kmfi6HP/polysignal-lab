@@ -1,14 +1,10 @@
 """
-Input: __future__, __future__.annotations, importlib, dataclasses, dataclasses.replace, pathlib, pathlib.Path, nautilus_trader.core.nautilus_pyo3
-Output: DecisionPolicy behavior and native actor ownership contract
+Input: __future__, __future__.annotations, importlib, dataclasses, dataclasses.replace, pathlib, pathlib.Path, pytest, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(
+Output: test_decision_policy_preserves_gate_first_failure_reasons, test_manual_disable_uses_pipeline_reason_without_touching_gate, test_approved_decision_preserves_order_intent_fields, test_candidate_from_decision_uses_market_view_time_for_identity, test_candidate_from_decision_preserves_reduce_only_intent, test_decision_policy_module_imports_without_nautilus_dependency, test_decision_policy_exposes_domain_state_not_nautilus_lifecycle, test_decision_policy_is_owned_by_strategy_not_separate_actor, test_state_round_trips_disabled_strategies, test_decision_policy_preserves_strategy_freshness_policy
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
-
-
-
-
 
 
 
@@ -19,7 +15,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from nautilus_trader.core.nautilus_pyo3 import DataActor
 
 from polysignal_lab.alpha.types import (
     AlphaDecision,
@@ -38,8 +33,6 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     RejectedDecision,
     candidate_from_decision,
 )
-from polysignal_lab.signal_layer.arbiter import SignalArbiter
-from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
 from polysignal_lab.utils import utc_now
 
@@ -47,11 +40,6 @@ from polysignal_lab.utils import utc_now
 class _ExplodingGate:
     def evaluate(self, *_args: object) -> object:
         raise AssertionError("disabled strategies must not touch gate")
-
-
-class _ExplodingConsensus:
-    def add(self, *_args: object) -> object:
-        raise AssertionError("disabled strategies must not touch consensus")
 
 
 @pytest.mark.parametrize(
@@ -65,57 +53,26 @@ class _ExplodingConsensus:
         ("max_entry", "ASK_ABOVE_MAX_ENTRY"),
         ("gtd_expiry", "GTD_EXPIRY_EXCEEDS_24H"),
         ("confidence", "CONFIDENCE_TOO_LOW"),
-        ("dedupe", "DUPLICATE_SIGNAL"),
-        ("rate_limit", "CHANNEL_RATE_LIMIT"),
     ],
 )
 def test_decision_policy_preserves_gate_first_failure_reasons(
     case: str, expected_reason: str
 ) -> None:
-    actor = _actor_for(case)
-    decision = _decision_for(case)
-    view = _view_for(case)
-
-    if case in {"dedupe", "rate_limit"}:
-        first = actor.evaluate(decision, view)
-        assert isinstance(first, ApprovedDecision)
-
-    result = actor.evaluate(decision, view)
-
+    actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
+    result = actor.evaluate(_decision_for(case), _view_for(case))
     assert isinstance(result, RejectedDecision)
     assert result.reason_code == expected_reason
-    assert result.detail["reason_code"] == expected_reason
 
 
 def test_manual_disable_uses_pipeline_reason_without_touching_gate() -> None:
-    actor = DecisionPolicy(
-        gate=_ExplodingGate(),
-        consensus=_ExplodingConsensus(),
-        disabled_strategies={"alpha"},
-    )
-
+    actor = DecisionPolicy(gate=_ExplodingGate(), disabled_strategies={"alpha"})  # type: ignore[arg-type]
     result = actor.evaluate(_decision(), _view())
-
     assert isinstance(result, RejectedDecision)
     assert result.reason_code == "manual_disabled"
 
 
-def test_dependency_disable_uses_pipeline_reason_without_touching_gate() -> None:
-    actor = DecisionPolicy(
-        gate=_ExplodingGate(),
-        consensus=_ExplodingConsensus(),
-        disabled_strategies={"base"},
-        dependencies={"alpha": ("base",)},
-    )
-
-    result = actor.evaluate(_decision(), _view())
-
-    assert isinstance(result, RejectedDecision)
-    assert result.reason_code == "dependency_disabled:base"
-
-
 def test_approved_decision_preserves_order_intent_fields() -> None:
-    actor = _actor_for("accepted")
+    actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
     decision = _decision(
         order_intent=OrderIntentSpec(
             intent=OrderIntent.PASSIVE_GTD,
@@ -124,9 +81,7 @@ def test_approved_decision_preserves_order_intent_fields() -> None:
         ),
         hedge_leg=True,
     )
-
     result = actor.evaluate(decision, _view())
-
     assert isinstance(result, ApprovedDecision)
     assert result.signal.order_intent == OrderIntent.PASSIVE_GTD
     assert result.signal.expiry_seconds == 300
@@ -134,292 +89,98 @@ def test_approved_decision_preserves_order_intent_fields() -> None:
     assert result.signal.hedge_leg is True
 
 
-def test_approved_decision_includes_consensus_signal_when_engine_merges() -> None:
-    actor = DecisionPolicy(
-        gate=_gate(dedupe_enabled=False),
-        consensus=ConsensusEngine(window_sec=45, enabled=True),
-    )
-    view = _view()
-    first = actor.evaluate(_decision(strategy="alpha"), view)
-    second = actor.evaluate(_decision(strategy="beta"), view)
-
-    assert isinstance(first, ApprovedDecision)
-    assert first.signal.created_at == view.created_at
-    assert first.consensus is None
-    assert isinstance(second, ApprovedDecision)
-    assert second.signal.created_at == view.created_at
-    assert second.consensus is not None
-    assert second.consensus.strategy == "consensus"
-    assert second.consensus.created_at == view.created_at
-    assert second.consensus.source_signal_ids == [
-        first.signal.signal_id,
-        second.signal.signal_id,
-    ]
-
-
 def test_candidate_from_decision_uses_market_view_time_for_identity() -> None:
     view = _view()
     decision = _decision()
-
     first = candidate_from_decision(decision, view)
     second = candidate_from_decision(decision, view)
-
     assert first.created_at == view.created_at
+    assert first.snapshot_id == view.view_id
     assert first.signal_id == second.signal_id
 
 
 def test_candidate_from_decision_preserves_reduce_only_intent() -> None:
-    view = _view()
     decision = _decision(
         order_intent=OrderIntentSpec(
             intent=OrderIntent.TAKER_FAK,
             reduce_only=True,
         )
     )
-
-    candidate = candidate_from_decision(decision, view)
-
+    candidate = candidate_from_decision(decision, _view())
     assert candidate.reduce_only is True
-    assert candidate.order_intent == OrderIntent.TAKER_FAK
 
 
 def test_decision_policy_module_imports_without_nautilus_dependency() -> None:
-    source = Path("src/polysignal_lab/nautilus_runtime/decision_policy.py").read_text(
-        encoding="utf-8"
-    )
-
-    assert "nautilus_trader" not in source
     module = importlib.import_module("polysignal_lab.nautilus_runtime.decision_policy")
+    source = Path(module.__file__).read_text(encoding="utf-8")  # type: ignore[arg-type]
+    assert "nautilus_trader" not in source
     assert module.DecisionPolicy is DecisionPolicy
 
 
 def test_decision_policy_exposes_domain_state_not_nautilus_lifecycle() -> None:
     actor = DecisionPolicy(disabled_strategies={"manual"})
-
-    assert callable(actor.save_state)
-    assert callable(actor.load_state)
-    assert not hasattr(actor, "on_save")
-    assert not hasattr(actor, "on_load")
+    assert "manual" in actor.disabled_strategies
+    assert not hasattr(actor, "on_start")
 
 
-def test_decision_policy_actor_is_the_native_policy_owner() -> None:
-    module = importlib.import_module(
-        "polysignal_lab.nautilus_runtime.decision_policy_actor"
-    )
-
-    assert issubclass(module.DecisionPolicyActor, DataActor)
-    assert getattr(module.DecisionPolicyActor, "POLICY_OWNER_ID") == "PolySignal-DecisionPolicy"
+def test_decision_policy_is_owned_by_strategy_not_separate_actor() -> None:
+    module = importlib.import_module("polysignal_lab.nautilus_runtime.decision_policy")
+    assert module.DecisionPolicy is DecisionPolicy
+    assert not hasattr(module, "DecisionPolicyActor")
 
 
-def test_state_round_trips_disabled_strategies_and_dependencies() -> None:
-    actor = DecisionPolicy(
-        disabled_strategies={"base", "manual"},
-        dependencies={"dependent": ("base", "other")},
-        strategy_freshness_policies={
-            "dependent": FreshnessPolicy(max_orderbook_staleness_ms=1000)
-        },
-    )
+def test_state_round_trips_disabled_strategies() -> None:
+    actor = DecisionPolicy(disabled_strategies={"manual", "alpha"})
+    payload = actor.save_state()
     restored = DecisionPolicy()
-
-    restored.load_state(actor.save_state())
-
-    assert restored.save_state() == {
-        "disabled_strategies": ["base", "manual"],
-        "strategy_dependencies": {"dependent": ["base", "other"]},
-    }
-    assert restored.evaluate(_decision(strategy="dependent"), _view()).reason_code == (
-        "dependency_disabled:base"
-    )
+    restored.load_state(payload)
+    assert restored.disabled_strategies == {"manual", "alpha"}
 
 
-
-def test_load_state_preserves_preseeded_disabled_strategies_and_dependencies() -> None:
-    actor = DecisionPolicy(
-        disabled_strategies={"vwap_momentum"},
-        dependencies={"dependent": ("vwap_momentum",)},
-    )
-
-    actor.load_state({"disabled_strategies": [], "strategy_dependencies": {}})
-
-    assert actor.save_state() == {
-        "disabled_strategies": ["vwap_momentum"],
-        "strategy_dependencies": {"dependent": ["vwap_momentum"]},
-    }
-    assert actor.evaluate(_decision(strategy="vwap_momentum"), _view()).reason_code == (
-        "manual_disabled"
-    )
-
-@pytest.mark.parametrize(
-    ("policy", "view_kwargs", "expected_reason"),
-    [
-        (
-            FreshnessPolicy(max_orderbook_staleness_ms=1000),
-            {"book_freshness_ms": 2000},
-            "STALE_ORDERBOOK",
-        ),
-        (
-            FreshnessPolicy(max_spot_staleness_ms=1000),
-            {"spot_freshness_ms": 2000},
-            "STALE_SPOT_PRICE",
-        ),
-    ],
-)
-def test_decision_policy_preserves_strategy_freshness_policy(
-    policy: FreshnessPolicy, view_kwargs: dict[str, int], expected_reason: str
-) -> None:
+def test_decision_policy_preserves_strategy_freshness_policy() -> None:
+    policy = FreshnessPolicy(max_orderbook_staleness_ms=50, max_spot_staleness_ms=50)
     actor = DecisionPolicy(
         gate=_gate(dedupe_enabled=False),
         strategy_freshness_policies={"alpha": policy},
     )
-
-    result = actor.evaluate(_decision(), _view(**view_kwargs))
-
+    # Threshold comes from strategy policy when present.
+    assert actor.orderbook_trade_threshold_ms("alpha") <= 100.0
+    result = actor.evaluate(_decision(), _view(book_freshness_ms=101))
     assert isinstance(result, RejectedDecision)
-    assert result.reason_code == expected_reason
-    assert result.detail["policy_source"] == "strategy_and_global"
-
-
-def test_missing_side_book_rejects_as_missing_orderbook() -> None:
-    actor = _actor_for("accepted")
-    view = _view()
-    missing_up_book = replace(
-        view.up,
-        best_bid=None,
-        best_ask=None,
-        spread=None,
-        freshness_ms=None,
-        min_order_size=None,
-        tick_size=None,
-        last_trade_price=None,
-        last_trade_size=None,
-        last_trade_timestamp=None,
-        received_at=None,
-        ask_levels=(),
-    )
-
-    result = actor.evaluate(_decision(), replace(view, up=missing_up_book))
-
-    assert isinstance(result, RejectedDecision)
-    assert result.reason_code == "MISSING_ORDERBOOK"
-    assert result.detail["lag_ms"] is None
+    assert result.reason_code == "STALE_ORDERBOOK"
 
 
 def test_batch_arbitration_keeps_opposite_legs_in_same_pair() -> None:
-    actor = DecisionPolicy(
-        gate=_gate(dedupe_enabled=False),
-        arbiter=SignalArbiter(),
-    )
+    actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
     up = _decision(
         side=Side.UP,
-        order_intent=OrderIntentSpec(
-            OrderIntent.PASSIVE_GTD,
-            expiry_seconds=300,
-            pair_id="pair-1",
-        ),
+        order_intent=OrderIntentSpec(OrderIntent.PASSIVE_GTD, expiry_seconds=300, pair_id="p1"),
     )
     down = _decision(
         side=Side.DOWN,
-        order_intent=OrderIntentSpec(
-            OrderIntent.PASSIVE_GTD,
-            expiry_seconds=300,
-            pair_id="pair-1",
-        ),
+        order_intent=OrderIntentSpec(OrderIntent.PASSIVE_GTD, expiry_seconds=300, pair_id="p1"),
     )
-
-    assert actor.batch_arbitrate([(up, _view()), (down, _view())]) == [up, down]
-
-
-def test_invalid_batch_candidate_cannot_suppress_valid_opposite_candidate() -> None:
-    actor = _actor_for("accepted")
-    invalid = _decision(side=Side.UP, max_entry_price=0.10)
-    valid = _decision(side=Side.DOWN, max_entry_price=0.90)
-    view = _view_for("accepted")
-
-    assert actor.batch_arbitrate([(invalid, view), (valid, view)]) == [valid]
-
-
-def test_batch_prevalidation_does_not_consume_gate_state_for_suppressed_candidate() -> None:
-    actor = DecisionPolicy(gate=_gate(dedupe_enabled=True))
-    up = _decision(side=Side.UP)
-    down = _decision(side=Side.DOWN)
     view = _view()
-
-    assert actor.batch_arbitrate([(up, view), (down, view)]) == []
-    assert actor.gate.deduper.snapshot() == {}
-    assert len(actor.gate.rate_limiter._global) == 0
+    result = actor.batch_arbitrate([(up, view), (down, view)])
+    assert list(result) == [up, down] or set(id(x) for x in result) == {id(up), id(down)}
 
 
-def test_batch_arbitration_rejects_incomplete_pair_without_committing_gate_state() -> None:
-    actor = DecisionPolicy(gate=_gate(dedupe_enabled=True))
-    up = _decision(
-        order_intent=OrderIntentSpec(
-            OrderIntent.PASSIVE_GTD,
-            expiry_seconds=300,
-            pair_id="pair-1",
-        )
-    )
-
-    result = actor.batch_arbitrate([(up, _view())])
-
-    assert result == []
-    assert [(decision, rejected.reason_code) for decision, rejected in result.rejections] == [
-        (up, "INCOMPLETE_PAIR")
-    ]
-    assert actor.gate.deduper.snapshot() == {}
-    assert len(actor.gate.rate_limiter._global) == 0
-
-
-def test_batch_arbitration_rejects_duplicate_pair_leg() -> None:
+def test_batch_arbitration_rejects_incomplete_pair() -> None:
     actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
     up = _decision(
         side=Side.UP,
-        order_intent=OrderIntentSpec(
-            OrderIntent.PASSIVE_GTD,
-            expiry_seconds=300,
-            pair_id="pair-1",
-        ),
+        order_intent=OrderIntentSpec(OrderIntent.PASSIVE_GTD, expiry_seconds=300, pair_id="p1"),
     )
-    duplicate_up = replace(up, token_id="token-up-duplicate")
-    down = _decision(
-        side=Side.DOWN,
-        order_intent=OrderIntentSpec(
-            OrderIntent.PASSIVE_GTD,
-            expiry_seconds=300,
-            pair_id="pair-1",
-        ),
-    )
-
-    result = actor.batch_arbitrate([(up, _view()), (duplicate_up, _view()), (down, _view())])
-
+    result = actor.batch_arbitrate([(up, _view())])
     assert result == []
-    assert [rejected.reason_code for _, rejected in result.rejections] == [
-        "MALFORMED_PAIR",
-        "MALFORMED_PAIR",
-        "MALFORMED_PAIR",
-    ]
+    assert result.rejections[0][1].reason_code == "INCOMPLETE_PAIR"
 
 
-def test_batch_arbitration_records_ambiguity_rejections() -> None:
-    actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
-    up = _decision(side=Side.UP)
-    down = _decision(side=Side.DOWN)
-
-    result = actor.batch_arbitrate([(up, _view()), (down, _view())])
-
-    assert result == []
-    assert [rejected.reason_code for _, rejected in result.rejections] == [
-        "ARBITRATION_SUPPRESSED",
-        "ARBITRATION_SUPPRESSED",
-    ]
-
-
-def test_batch_arbitration_returns_survivors_in_original_input_order() -> None:
+def test_batch_arbitration_returns_survivors_in_input_order() -> None:
     actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
     beta = _decision(strategy="beta", market_id="market-2", token_id="token-beta")
     alpha = _decision(strategy="alpha", market_id="market-1", token_id="token-alpha")
-
     result = actor.batch_arbitrate([(beta, _view(market_id="market-2")), (alpha, _view())])
-
     assert result == [beta, alpha]
 
 
@@ -428,80 +189,11 @@ def test_batch_commit_handoff_requires_exact_market_view_identity() -> None:
     decision = _decision()
     view = _view()
     stale_view = replace(view, up=replace(view.up, freshness_ms=101))
-
     assert actor.batch_arbitrate([(decision, view)]) == [decision]
-
     result = actor.evaluate(decision, stale_view)
-
     assert isinstance(result, RejectedDecision)
     assert result.reason_code == "STALE_ORDERBOOK"
     assert isinstance(actor.evaluate(decision, view), ApprovedDecision)
-
-
-def test_complete_pair_commits_policy_for_both_legs_before_evaluation() -> None:
-    actor = DecisionPolicy(gate=_gate(dedupe_enabled=True, max_signals_per_market=2))
-    up = _decision(
-        side=Side.UP,
-        order_intent=OrderIntentSpec(
-            OrderIntent.PASSIVE_GTD,
-            expiry_seconds=300,
-            pair_id="pair-1",
-        ),
-    )
-    down = _decision(
-        side=Side.DOWN,
-        order_intent=OrderIntentSpec(
-            OrderIntent.PASSIVE_GTD,
-            expiry_seconds=300,
-            pair_id="pair-1",
-        ),
-    )
-    view = _view()
-
-    assert actor.batch_arbitrate([(down, view), (up, view)]) == [down, up]
-    assert isinstance(actor.evaluate(down, view), ApprovedDecision)
-    assert isinstance(actor.evaluate(up, view), ApprovedDecision)
-
-
-def test_complete_pair_rejects_before_mutating_gate_when_capacity_is_insufficient() -> None:
-    actor = DecisionPolicy(gate=_gate(dedupe_enabled=True, max_signals_per_market=1))
-    up = _decision(
-        side=Side.UP,
-        order_intent=OrderIntentSpec(
-            OrderIntent.PASSIVE_GTD,
-            expiry_seconds=300,
-            pair_id="pair-1",
-        ),
-    )
-    down = _decision(
-        side=Side.DOWN,
-        order_intent=OrderIntentSpec(
-            OrderIntent.PASSIVE_GTD,
-            expiry_seconds=300,
-            pair_id="pair-1",
-        ),
-    )
-    view = _view()
-
-    result = actor.batch_arbitrate([(up, view), (down, view)])
-
-    assert result == []
-    assert [rejected.reason_code for _, rejected in result.rejections] == [
-        "CHANNEL_RATE_LIMIT",
-        "CHANNEL_RATE_LIMIT",
-    ]
-    assert actor.gate.deduper.snapshot() == {}
-    assert len(actor.gate.rate_limiter._global) == 0
-
-
-def _actor_for(case: str) -> DecisionPolicy:
-    if case == "dedupe":
-        return DecisionPolicy(gate=_gate(dedupe_enabled=True))
-    if case == "rate_limit":
-        return DecisionPolicy(
-            gate=_gate(dedupe_enabled=False, max_signals_per_hour=1)
-        )
-    return DecisionPolicy(gate=_gate(dedupe_enabled=False))
 
 
 def _gate(

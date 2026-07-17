@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, asyncio, logging, sys, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, types
+Output: test_native_runtime_rejects_spot_dependent_strategy_without_spot_ingress, test_native_runtime_rejects_unreachable_interactive_control, test_prepare_runtime_builds_context_without_python_credential_gate, test_shared_registration_uses_rotation_actor_and_one_strategy, test_shared_registration_adds_one_strategy_per_enabled_alpha, test_shared_registration_does_not_create_shadow_strategy_when_none_enabled, test_backtest_router_uses_native_builder_with_shared_registration, test_live_router_returns_native_node_and_registers_importable_components, test_build_live_node_rejects_backtest_mode, test_real_backtest_materializes_importable_native_components
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 import asyncio
@@ -127,33 +136,38 @@ def test_native_runtime_rejects_unreachable_interactive_control() -> None:
 
 
 @pytest.mark.anyio
-async def test_prepare_runtime_checks_live_credentials_before_context_build(
+async def test_prepare_runtime_builds_context_without_python_credential_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from polysignal_lab.nautilus_runtime import node as node_module
 
     settings = Settings()
-    for name in (
-        "POLYMARKET_API_KEY",
-        "POLYMARKET_API_SECRET",
-        "POLYMARKET_PASSPHRASE",
-        "POLYMARKET_PK",
-        "POLYMARKET_FUNDER",
-    ):
-        monkeypatch.setenv(name, "")
+    context = SimpleNamespace(
+        settings=settings,
+        health=SimpleNamespace(),
+        persistence=SimpleNamespace(
+            insert_system_event=lambda _payload: None,
+            insert_signal=lambda _payload: None,
+            insert_rejected_signal=lambda _payload: None,
+            insert_report_result=lambda _payload: None,
+            append_log=lambda _stream, _payload: None,
+        ),
+        publisher=SimpleNamespace(send=lambda *_args: None),
+        publish_signal_once=lambda *_args: None,
+        logger=logging.getLogger("test_nautilus_node"),
+    )
     monkeypatch.setattr(
         node_module,
         "build_nautilus_runtime_context",
-        lambda _settings: (_ for _ in ()).throw(
-            AssertionError("context must not be built before credential validation")
-        ),
+        lambda _settings: context,
     )
 
-    with pytest.raises(RuntimeError, match="POLYMARKET_API_KEY"):
-        await _prepare_nautilus_runtime_context(settings)
+    prepared, _observability = await _prepare_nautilus_runtime_context(settings)
+
+    assert prepared is context
 
 
-def test_shared_registration_uses_two_importable_actors_and_one_strategy() -> None:
+def test_shared_registration_uses_rotation_actor_and_one_strategy() -> None:
     settings = _settings_with_strategy()
     runtime = _RecordingRuntime()
     market = _market()
@@ -168,7 +182,6 @@ def test_shared_registration_uses_two_importable_actors_and_one_strategy() -> No
     assert names == ("one_cent_buy",)
     assert [getattr(config, "actor_path") for config in runtime.actor_configs] == [
         "polysignal_lab.nautilus_runtime.market_rotation:MarketRotationActor",
-        "polysignal_lab.nautilus_runtime.decision_policy_actor:DecisionPolicyActor",
     ]
     assert [getattr(config, "strategy_path") for config in runtime.strategy_configs] == [
         "polysignal_lab.nautilus_runtime.native_strategy:PolySignalNativeStrategy",
@@ -176,6 +189,27 @@ def test_shared_registration_uses_two_importable_actors_and_one_strategy() -> No
     strategy_payload = cast(dict[str, object], getattr(runtime.strategy_configs[0], "config"))
     assert strategy_payload["condition_ids"] == [market.condition_id]
     assert strategy_payload["strategy_names"] == ["one_cent_buy"]
+    assert strategy_payload["strategy_name"] == "one_cent_buy"
+    assert strategy_payload["strategy_id"] == "PolySignal-one_cent_buy"
+
+
+def test_shared_registration_adds_one_strategy_per_enabled_alpha() -> None:
+    settings = Settings()
+    settings.strategies.set_explicit_strategy_names(("one_cent_buy", "ptb_diff"))
+    runtime = _RecordingRuntime()
+
+    names = register_runtime_components(runtime, settings)
+
+    assert names == ("one_cent_buy", "ptb_diff")
+    assert len(runtime.strategy_configs) == 2
+    payloads = [
+        cast(dict[str, object], getattr(cfg, "config")) for cfg in runtime.strategy_configs
+    ]
+    assert [p["strategy_name"] for p in payloads] == ["one_cent_buy", "ptb_diff"]
+    assert [p["strategy_id"] for p in payloads] == [
+        "PolySignal-one_cent_buy",
+        "PolySignal-ptb_diff",
+    ]
 
 
 def test_shared_registration_does_not_create_shadow_strategy_when_none_enabled() -> None:
@@ -185,7 +219,7 @@ def test_shared_registration_does_not_create_shadow_strategy_when_none_enabled()
     names = register_runtime_components(runtime, settings)
 
     assert names == ()
-    assert len(runtime.actor_configs) == 2
+    assert len(runtime.actor_configs) == 1
     assert runtime.strategy_configs == []
 
 
@@ -244,7 +278,7 @@ def test_live_router_returns_native_node_and_registers_importable_components(
     result = build_runtime_node(settings)
 
     assert result is native_node
-    assert len(native_node.actor_configs) == 2
+    assert len(native_node.actor_configs) == 1
     assert len(native_node.strategy_configs) == 1
     assert not hasattr(result, "components")
     assert not hasattr(result, "trader")
@@ -317,10 +351,6 @@ async def test_prepare_runtime_does_not_run_external_market_discovery(
         publisher=SimpleNamespace(send=lambda *_args: None),
         publish_signal_once=lambda *_args: None,
         logger=logging.getLogger("test_nautilus_node"),
-    )
-    monkeypatch.setattr(
-        "polysignal_lab.nautilus_runtime.live_node.validate_polymarket_market_data_credentials",
-        lambda: None,
     )
     monkeypatch.setattr(
         node_module,

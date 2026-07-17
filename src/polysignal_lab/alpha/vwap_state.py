@@ -1,17 +1,16 @@
 """
-Input: collections, polysignal_lab.alpha.vwap_trade_history, polysignal_lab.domain.enums
-Output: VWAP_STATE_VERSION, encode_vwap_state, decode_vwap_state, restore_vwap_state_fields
+Input: __future__, __future__.annotations, typing, typing.Mapping
+Output: encode_vwap_state, decode_vwap_state, restore_vwap_state_fields
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
 
+
+
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Mapping
-
-from polysignal_lab.alpha.vwap_trade_history import TradeHistory
 
 VWAP_STATE_VERSION = 1
 
@@ -32,40 +31,13 @@ def decode_vwap_state(payload: Mapping[str, object]) -> dict[str, object]:
     return dict(payload)
 
 
-def restore_vwap_state_fields(
-    payload: Mapping[str, object],
-) -> tuple[
-    TradeHistory,
-    dict[str, tuple[float, float, str | None, float | None]],
-    defaultdict[str, set[tuple[float, float, float]]],
-]:
+def restore_vwap_state_fields(payload: Mapping[str, object]) -> dict[str, object]:
+    """Decode VWAP payload and drop legacy local trade-ledger fields."""
     decoded = decode_vwap_state(payload)
-
-    trades_raw = decoded.get("trades", {}) or {}
-    if not isinstance(trades_raw, Mapping):
-        trades_raw = {}
-    new_trades = TradeHistory()
-    for key, lst in trades_raw.items():
-        for trade in lst:
-            new_trades.push(
-                str(key), float(trade["price"]), float(trade["size"]), float(trade["timestamp"])
-            )
-
-    sigs_raw = decoded.get("last_trade_signatures", {}) or {}
-    if not isinstance(sigs_raw, Mapping):
-        sigs_raw = {}
-    last_trade_signatures = {str(key): tuple(value) for key, value in sigs_raw.items()}
-
-    seen_raw = decoded.get("seen_trade_signatures", {}) or {}
-    if not isinstance(seen_raw, Mapping):
-        seen_raw = {}
-    seen_trade_signatures = defaultdict(
-        set,
-        {str(key): {tuple(sig) for sig in value} for key, value in seen_raw.items()},
-    )
-
-    return (
-        new_trades,
-        last_trade_signatures,
-        seen_trade_signatures,
-    )
+    # Intentionally ignore trades / signature bags: Cache owns trade truth.
+    decoded.pop("trades", None)
+    decoded.pop("last_trade_signatures", None)
+    decoded.pop("seen_trade_signatures", None)
+    decoded.pop("can_enter", None)
+    decoded.pop("pending_hedges", None)
+    return decoded

@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.FreshnessView, polysignal_lab.alpha.types.MarketView, polysignal_lab.domain.freshness, polysignal_lab.nautilus_runtime.decision_policy
-Output: test_evaluate_condition_does_not_run_custom_exit_scan, test_native_exit_runs_when_opposite_book_exceeds_trade_freshness, test_native_strategy_has_no_custom_exit_evaluation_api, test_reduce_only_fill_records_early_exit_paper_result
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, typing, typing.Any, polysignal_lab.alpha.types
+Output: test_evaluate_condition_does_not_run_custom_exit_scan, test_native_exit_runs_when_opposite_book_exceeds_trade_freshness, test_native_exit_failure_falls_back_to_alpha_core, test_native_strategy_has_no_custom_exit_evaluation_api, test_reduce_only_fill_records_early_exit_paper_result, test_reduce_only_fill_notifies_paper_result_after_durable_record, test_reduce_only_fill_durable_when_report_result_notifier_raises, test_native_exit_uses_per_position_take_profit_threshold, test_native_exit_flip_stop_uses_stamped_stop_price, _AllowAllDecisionPolicy
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -30,7 +32,6 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicy,
     candidate_from_decision,
 )
-from polysignal_lab.nautilus_runtime.decision_policy_actor import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
 
@@ -49,15 +50,11 @@ class _AllowAllDecisionPolicy(DecisionPolicy):
         return ApprovedDecision(signal=candidate_from_decision(decision, view))
 
 
-def _wire_decision_policy_actor(
+def _attach_decision_policy(
     strategy: PolySignalNativeStrategy,
-) -> DecisionPolicyActor:
-    actor = DecisionPolicyActor(policy=_AllowAllDecisionPolicy())
-    actor_endpoint: Any = actor
-    strategy_endpoint: Any = strategy
-    actor_endpoint.publish_data = lambda _data_type, data: strategy.on_data(data)
-    strategy_endpoint.publish_data = lambda _data_type, data: actor.on_data(data)
-    return actor
+) -> DecisionPolicy:
+    strategy.policy = _AllowAllDecisionPolicy()
+    return strategy.policy
 
 
 def _native_strategy() -> PolySignalNativeStrategy:
@@ -229,10 +226,10 @@ def test_native_exit_runs_when_opposite_book_exceeds_trade_freshness() -> None:
             max_hold_time_sec=900,
         ),
     )
-    strategy.cache = Cache()
-    strategy.order_factory = OrderFactory()
+    strategy._cache_override = Cache()
+    strategy._order_factory_override = OrderFactory()
     strategy.submitted = []
-    _policy_actor = _wire_decision_policy_actor(strategy)
+    _policy = _attach_decision_policy(strategy)
 
     strategy.evaluate_condition("condition-1", created_at=now)
 
@@ -327,6 +324,14 @@ def test_reduce_only_fill_records_early_exit_paper_result() -> None:
                 "position_id=position-1",
                 "market_id=mkt-1",
                 "condition_id=condition-1",
+                "entry_price=0.40",
+                "position_quantity=10.0",
+                "stake_usdc=4.0",
+                "side=UP",
+                "asset=BTC",
+                "timeframe=5m",
+                "market_slug=btc-updown-5m",
+                "opened_at=2026-07-06T12:00:00+00:00",
             ),
             ts_event=datetime(2026, 7, 6, 12, 1, tzinfo=UTC),
             side=Side.UP,
@@ -398,6 +403,14 @@ def test_reduce_only_fill_notifies_paper_result_after_durable_record() -> None:
                 "position_id=position-2",
                 "market_id=mkt-1",
                 "condition_id=condition-1",
+                "entry_price=0.40",
+                "position_quantity=8.0",
+                "stake_usdc=3.2",
+                "side=UP",
+                "asset=BTC",
+                "timeframe=5m",
+                "market_slug=btc-updown-5m",
+                "opened_at=2026-07-06T12:00:00+00:00",
             ),
             ts_event=datetime(2026, 7, 6, 12, 2, tzinfo=UTC),
             side=Side.UP,
@@ -464,6 +477,14 @@ def test_reduce_only_fill_durable_when_report_result_notifier_raises() -> None:
                 "position_id=position-3",
                 "market_id=mkt-1",
                 "condition_id=condition-1",
+                "entry_price=0.40",
+                "position_quantity=5.0",
+                "stake_usdc=2.0",
+                "side=UP",
+                "asset=BTC",
+                "timeframe=5m",
+                "market_slug=btc-updown-5m",
+                "opened_at=2026-07-06T12:00:00+00:00",
             ),
             ts_event=datetime(2026, 7, 6, 12, 5, tzinfo=UTC),
             side=Side.UP,
@@ -605,10 +626,10 @@ def test_native_exit_uses_per_position_take_profit_threshold() -> None:
             max_hold_time_sec=900,
         ),
     )
-    strategy.cache = Cache()
-    strategy.order_factory = OrderFactory()
+    strategy._cache_override = Cache()
+    strategy._order_factory_override = OrderFactory()
     strategy.submitted = []
-    _policy_actor = _wire_decision_policy_actor(strategy)
+    _policy = _attach_decision_policy(strategy)
     strategy.evaluate_condition("condition-1", created_at=now)
 
     assert len(strategy.submitted) == 1
@@ -755,10 +776,10 @@ def test_native_exit_flip_stop_uses_stamped_stop_price() -> None:
             max_hold_time_sec=900,
         ),
     )
-    strategy.cache = Cache()
-    strategy.order_factory = OrderFactory()
+    strategy._cache_override = Cache()
+    strategy._order_factory_override = OrderFactory()
     strategy.submitted = []
-    _policy_actor = _wire_decision_policy_actor(strategy)
+    _policy = _attach_decision_policy(strategy)
     strategy.evaluate_condition("condition-1", created_at=now)
 
     assert len(strategy.submitted) == 1

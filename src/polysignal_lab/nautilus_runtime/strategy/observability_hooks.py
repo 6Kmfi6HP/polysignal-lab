@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Mapping, sqlite3, typing, typing.Protocol, polysignal_lab.alpha.types, polysignal_lab.domain.signal, polysignal_lab.nautilus_runtime.strategy.event_projection, polysignal_lab.nautilus_runtime.strategy.helpers
-Output: record_signal, notify_accepted_signal, record_decision, record_rejected, record_nautilus_order, record_nautilus_fill, record_nautilus_position, record_observability
+Input: __future__, __future__.annotations, sqlite3, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.Protocol, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
+Output: record_observability, record_signal, notify_accepted_signal, record_decision, record_rejected, record_nautilus_order, record_nautilus_fill, record_nautilus_position, _ObservabilityStrategy
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -16,10 +18,6 @@ from typing import Protocol
 
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.nautilus_runtime.strategy.event_projection import (
-    project_nautilus_fill_event,
-    project_nautilus_order_event,
-)
 from polysignal_lab.nautilus_runtime.strategy.helpers import _Observability
 
 
@@ -91,9 +89,7 @@ def record_nautilus_order(
 ) -> None:
     record_observability(
         strategy,
-        lambda obs: obs.record_nautilus_order_event(
-            project_nautilus_order_event(event, metrics)
-        ),
+        lambda obs: obs.record_nautilus_order_event(event, metrics),
     )
 
 
@@ -104,9 +100,7 @@ def record_nautilus_fill(
 ) -> None:
     record_observability(
         strategy,
-        lambda obs: obs.record_nautilus_fill_event(
-            project_nautilus_fill_event(event, metrics)
-        ),
+        lambda obs: obs.record_nautilus_fill_event(event, metrics),
     )
 
 

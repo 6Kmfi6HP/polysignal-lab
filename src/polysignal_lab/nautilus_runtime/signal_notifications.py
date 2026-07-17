@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, asyncio, logging, threading, collections.abc, collections.abc.Awaitable, collections.abc.Callable, contextlib, contextlib.suppress
-Output: outbound signal/report notifications and runtime health shutdown
+Input: __future__, __future__.annotations, asyncio, logging, queue, threading, collections.abc, collections.abc.Awaitable, collections.abc.Callable, collections.abc.Mapping
+Output: _AcceptedSignalJob, _ReportResultJob, _PublishResultLike, _AcceptedSignalPublisher
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -8,22 +8,39 @@ Pos: Application code
 
 
 
-
-
-
-
 from __future__ import annotations
 
 import asyncio
 import logging
+import queue
 import threading
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Protocol, cast
 
 from polysignal_lab.app import scheduler_health
 from polysignal_lab.domain.signal import SignalCandidate
 
 logger = logging.getLogger("polysignal_lab.nautilus_runtime.signal_notifications")
+
+# Single process-wide outbox: Strategy callbacks only put(); one worker drains.
+_OUTBOX: queue.SimpleQueue[object] = queue.SimpleQueue()
+_WORKER_STARTED = False
+_WORKER_LOCK = threading.Lock()
+_STOP = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _AcceptedSignalJob:
+    services: object
+    signal: SignalCandidate
+    stake_usdc: float
+
+
+@dataclass(frozen=True, slots=True)
+class _ReportResultJob:
+    services: object
+    result: Mapping[str, object]
 
 
 class _PublishResultLike(Protocol):
@@ -62,6 +79,36 @@ async def _publish_accepted_signal_once(
     return publish.as_dict()
 
 
+def _ensure_outbox_worker() -> None:
+    global _WORKER_STARTED
+    with _WORKER_LOCK:
+        if _WORKER_STARTED:
+            return
+        thread = threading.Thread(
+            target=_outbox_worker_loop,
+            name="polysignal-notify-outbox",
+            daemon=True,
+        )
+        thread.start()
+        _WORKER_STARTED = True
+
+
+def _outbox_worker_loop() -> None:
+    while True:
+        job = _OUTBOX.get()
+        if job is _STOP:
+            return
+        try:
+            if isinstance(job, _AcceptedSignalJob):
+                _publish_accepted_signal_in_background(
+                    job.services, job.signal, job.stake_usdc
+                )
+            elif isinstance(job, _ReportResultJob):
+                _publish_report_result_in_background(job.services, job.result)
+        except Exception:
+            logger.exception("notify outbox worker failed")
+
+
 def _publish_accepted_signal_in_background(
     services: object,
     signal: SignalCandidate,
@@ -87,12 +134,8 @@ def _notify_accepted_signal(
         return
     if not getattr(getattr(services, "settings").telegram, "send_signals", False):
         return
-    thread = threading.Thread(
-        target=_publish_accepted_signal_in_background,
-        args=(services, signal, stake_usdc),
-        daemon=True,
-    )
-    thread.start()
+    _ensure_outbox_worker()
+    _OUTBOX.put(_AcceptedSignalJob(services, signal, stake_usdc))
 
 
 async def _publish_report_result_once(
@@ -168,9 +211,5 @@ def _notify_report_result(
         return
     if not getattr(getattr(services, "settings").telegram, "send_report_results", False):
         return
-    thread = threading.Thread(
-        target=_publish_report_result_in_background,
-        args=(services, dict(result)),
-        daemon=True,
-    )
-    thread.start()
+    _ensure_outbox_worker()
+    _OUTBOX.put(_ReportResultJob(services, dict(result)))

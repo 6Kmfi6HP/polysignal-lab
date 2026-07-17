@@ -1,10 +1,12 @@
 """
 Input: __future__, __future__.annotations, pathlib, pathlib.Path, polysignal_lab.observability.safety, polysignal_lab.observability.safety.scan
-Output: find_forbidden_sdk_imports, test_polymarket_sdk_imports_are_adapter_only, test_polymarket_sdk_import_allowlist_accepts_absolute_adapter_path, test_forbidden_sdk_import_fixture_is_detected, test_safety_scan_reports_deliberate_forbidden_fixture_directory, test_safety_scan_reports_deliberate_forbidden_fixture_file, test_safety_scan_repo_root_exempts_only_deliberate_fixture_path, test_safety_scan_skips_agent_worktrees_but_not_source, test_safety_scan_checks_hidden_claude_dirs_outside_agent_worktrees, test_safety_scan_blocks_create_task_in_nautilus_actor_fallback_paths, test_safety_scan_detects_aliased_legacy_imports_in_guarded_paths, test_safety_scan_blocks_relative_legacy_imports_in_guarded_paths, test_safety_scan_blocks_package_legacy_imports_in_decision_paths
+Output: find_forbidden_sdk_imports, test_polymarket_sdk_imports_are_adapter_only, test_polymarket_sdk_import_allowlist_accepts_absolute_adapter_path, test_forbidden_sdk_import_fixture_is_detected, test_safety_scan_reports_deliberate_forbidden_fixture_directory, test_safety_scan_reports_deliberate_forbidden_fixture_file, test_safety_scan_repo_root_exempts_only_deliberate_fixture_path, test_safety_scan_skips_agent_worktrees_but_not_source, test_safety_scan_checks_hidden_claude_dirs_outside_agent_worktrees, test_safety_scan_blocks_create_task_in_nautilus_actor_fallback_paths
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -202,6 +204,61 @@ def test_safety_scan_blocks_relative_legacy_imports_in_guarded_paths(
             "from ..data.polymarket_clob_rest import",
         ),
     ]
+
+
+def test_safety_scan_blocks_decision_policy_actor_and_bridge_residue(
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / "src" / "polysignal_lab" / "nautilus_runtime"
+    runtime_dir.mkdir(parents=True)
+    source = runtime_dir / "dual_path_residue.py"
+    source.write_text(
+        "from polysignal_lab.nautilus_bridge.policy import DecisionPolicyActor\n"
+        "from polysignal_lab.nautilus_runtime.decision_policy_actor import X\n"
+        "import polysignal_lab.nautilus_bridge as bridge\n"
+        "class DecisionPolicyActor: ...\n"
+        "MatchingEngine()\n",
+        encoding="utf-8",
+    )
+    project_dir = tmp_path / "src" / "polysignal_lab" / "app"
+    project_dir.mkdir(parents=True)
+    project_source = project_dir / "paper_residue.py"
+    project_source.write_text(
+        "from polysignal_lab.domain.paper_order import PaperOrder\n"
+        "PaperFillNotifier()\n"
+        "shadow_wallet = {}\n",
+        encoding="utf-8",
+    )
+
+    findings = set(scan(tmp_path))
+    assert (
+        "src/polysignal_lab/nautilus_runtime/dual_path_residue.py",
+        "DecisionPolicyActor",
+    ) in findings
+    assert (
+        "src/polysignal_lab/nautilus_runtime/dual_path_residue.py",
+        "from polysignal_lab.nautilus_bridge",
+    ) in findings or any(
+        "nautilus_bridge" in symbol
+        for path, symbol in findings
+        if path.endswith("dual_path_residue.py")
+    )
+    assert (
+        "src/polysignal_lab/nautilus_runtime/dual_path_residue.py",
+        "MatchingEngine(",
+    ) in findings
+    assert (
+        "src/polysignal_lab/app/paper_residue.py",
+        "from polysignal_lab.domain.paper_order import",
+    ) in findings
+    assert (
+        "src/polysignal_lab/app/paper_residue.py",
+        "PaperFillNotifier",
+    ) in findings
+    assert (
+        "src/polysignal_lab/app/paper_residue.py",
+        "shadow_wallet",
+    ) in findings
 
 
 def test_safety_scan_blocks_package_legacy_imports_in_decision_paths(

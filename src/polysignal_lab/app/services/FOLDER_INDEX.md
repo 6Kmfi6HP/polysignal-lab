@@ -4,8 +4,8 @@
 - Business logic layer
 
 **Files**:
-- `publish_service.py` - Delivers signals, results, reports, and revision-aware corrections
-- `persistence_service.py` - Exposes persistence operations and enforces per-stream telemetry retention
+- `publish_service.py` - Exports PublishService
+- `persistence_service.py` - Exports telemetry_retention_policy and 2 more
 - `market_universe_service.py` - Exports token_ids_for_markets and 1 more
 - `__init__.py` - Service Layer - Business logic
 

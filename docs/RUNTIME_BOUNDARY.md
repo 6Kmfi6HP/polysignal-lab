@@ -1,8 +1,9 @@
 # Runtime Boundary
 
-> Living document. Runtime ownership, safe composition, and reporting constraints after the native migration.
+> Living document. **How the runtime is composed and constrained** after the native migration.
 >
-> Companion: [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md)
+> Ownership and quality gates: [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md).
+> Capability evidence: [`NAUTILUS_CAPABILITY_MATRIX.md`](NAUTILUS_CAPABILITY_MATRIX.md).
 >
 > Historical migration/review notes live under `docs/archive/` and are not current requirements.
 
@@ -16,8 +17,9 @@
 
 The default is `sandbox`. `live` requires `execution_mode=live`,
 `allow_live_polymarket_execution=true`,
-`safety.allow_live_market_actions=true`, complete credentials, and successful
-configuration validation. Any missing condition fails before node construction.
+`safety.allow_live_market_actions=true`, and successful configuration validation.
+Any missing condition fails before node construction. Credential resolution is
+owned by the Polymarket adapter (Rust); Python does not inject secrets.
 
 All modes register the same `PolySignalNativeStrategy` and frozen,
 JSON-serializable `PolySignalStrategyConfig`; mode differences end at node,
@@ -32,13 +34,21 @@ data client, execution client, and historical input composition.
 - MarketView books and positions are Cache projections and fail closed when absent.
 - RTDS is a managed `LiveDataClient`; MarketRotation publishes only immutable
   universe, metadata, and price-to-beat CustomData.
-- Candidate and approval traffic uses immutable native Signal messages between
-  the Strategy and the sole `DecisionPolicyActor` owner.
-- All decision timers and event timestamps come from Nautilus Clock.
+- Decision evaluation is in-process on the Strategy via `SignalGate` (see
+  Architecture Ownership); there is no candidate/approval Signal bus and no
+  PolySignal-owned account/exposure ledger.
+- All decision timers and trading event timestamps come from Nautilus Clock.
+  Report-only projection stamps (e.g. `report_results.closed_at`) may use wall
+  clock but must never feed trading state.
+
+## Registration
+
+`runtime_registration` creates one `MarketRotationActor` and one
+`PolySignalNativeStrategy` via importable config. No registration global, staged
+object copy, or local MessageBus. Native Signal pub/sub remains a verified engine
+capability but is **not** used for candidate/approval traffic.
 
 ## Forbid list (live / decision / trading paths)
-
-Runtime, bridge decision wiring, and signal-policy code must not reattach:
 
 | Surface | Why |
 |---|---|
@@ -48,11 +58,13 @@ Runtime, bridge decision wiring, and signal-policy code must not reattach:
 | Fabricated settlement fills / `PositionClosed` / Portfolio mutation | No public sandbox/live settlement authority |
 | Ungated live Polymarket execution client factories | Live must remain fail closed |
 | Dynamic runtime class factories / reverse instrument registries | Ownership dilution |
+| `DecisionPolicyActor` / Strategy↔Actor candidate Signal bus | Dual decision path |
+| Local paper Account / Exposure / Position-limit gate | Second RiskEngine |
 
-Enforcement: `scripts/safety_scan.py`, `tests/test_safety.py`, `tests/test_nautilus_platform_boundary.py`, `tests/test_nautilus_safety_boundary.py`.
+Enforcement: `scripts/safety_scan.py`, `tests/test_safety.py`,
+`tests/test_nautilus_platform_boundary.py`, `tests/test_nautilus_safety_boundary.py`.
 
-Migration quality gates (pytest, safety, basedpyright baseline, live-off default)
-are defined in [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md#quality-gates-native-migration-complete).
+Quality gates: [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md#quality-gates-native-migration-complete).
 
 ## Sandbox defaults
 
@@ -60,7 +72,7 @@ are defined in [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md#quality-g
 - Pre-trade project constraints may read Cache open state; they do not invent a portfolio ledger.
 - Reduce-only exits derive from Cache positions.
 
-## Exit ownership (accepted)
+## Exit ownership
 
 - `NativeExitPolicy` reads Nautilus Cache open positions and submits native exits.
 - Exits submit **reduce-only** orders via `order_factory` + `submit_order` only.
@@ -81,19 +93,11 @@ adapter has resolution data and polling but no public payout, redeem, or settle
 authority. Gamma, WS, chain, or `InstrumentClose` observations must not
 synthesize fills, positions, Portfolio, Account, or Cache mutation.
 
-The pyo3 `BacktestEngine` is narrower and has a verified native
+The pyo3 `BacktestEngine` has a verified native
 `InstrumentClose(CONTRACT_EXPIRED)` path: its simulated matching engine creates
 the expiration order/fill and updates Position, Cache, Portfolio, and Account.
 PolySignal may replay that data event in backtest, but must not reproduce the
 mutation itself.
-
-## Registration and policy ownership
-
-The latest pyo3 API provides native Signal publish/subscribe. Importable config
-registration creates one `DecisionPolicyActor` and one Strategy instance; no
-registration global, staged object copy, or local MessageBus remains. Candidate
-batches are immutable and the Actor publishes immutable approval/rejection
-results. See [`NAUTILUS_CAPABILITY_MATRIX.md`](NAUTILUS_CAPABILITY_MATRIX.md).
 
 ## Reporting boundary
 

@@ -1,10 +1,12 @@
 """
-Input: __future__, dataclasses, datetime, math, polysignal_lab.alpha.types, polysignal_lab.domain.enums, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.projections, polysignal_lab.utils
-Output: NativeExitPolicy
-Pos: Native strategy risk-exit policy — sole native exit authority (not contingent brackets)
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, math
+Output: thresholds_from_metrics, PositionExitThresholds, NativeExitPolicy
+Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -36,7 +38,14 @@ class PositionExitThresholds:
 
 @dataclass(frozen=True, slots=True)
 class NativeExitPolicy:
-    """Generate reduce-only decisions from native open positions and market views."""
+    """Software exit policy for Polymarket binary markets.
+
+    Polymarket's Nautilus adapter only accepts MARKET/LIMIT and denies
+    ``reduce_only`` plus stop/bracket types. Venue contingent exits are therefore
+    unavailable; this policy watches Cache positions + book and emits SELL
+    limit decisions for TP/SL/max-hold. Prefer OrderFactory contingent orders
+    only if/when the venue adapter gains native support.
+    """
 
     mode: str
     take_profit_enabled: bool

@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, pytest, polysignal_lab.alpha.types
-Output: test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data, test_each_wrapper_preserves_custom_data_names, test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved, test_stateful_core_round_trips_through_shared_state_codec
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, typing, typing.Any, pytest, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(
+Output: test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data, test_each_wrapper_preserves_custom_data_names, test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved, test_stateful_core_round_trips_through_shared_state_codec, FakeAssembler, FakeCore, FakePolicy
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -30,17 +32,16 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicy,
     RejectedDecision,
 )
-from polysignal_lab.nautilus_runtime.decision_policy_actor import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
-from polysignal_lab.nautilus_runtime.strategies import DEFAULT_DATA_NAMES as COMPAT_DATA_NAMES
 
-
-REQUIRED_DATA_NAMES = {
+DEFAULT_DATA_NAMES = (
     "order_book_deltas",
     "order_book_depth",
     "spot_prices",
     "price_to_beat",
-}
+)
+
+REQUIRED_DATA_NAMES = set(DEFAULT_DATA_NAMES)
 
 
 WRAPPERS = [
@@ -122,16 +123,12 @@ class FakePolicy(DecisionPolicy):
         return 60_000.0
 
 
-def _wire_decision_policy_actor(
+def _attach_decision_policy(
     strategy: PolySignalNativeStrategy,
     policy: FakePolicy,
-) -> DecisionPolicyActor:
-    actor = DecisionPolicyActor(policy=policy)
-    actor_endpoint: Any = actor
-    strategy_endpoint: Any = strategy
-    actor_endpoint.publish_data = lambda _data_type, data: strategy.on_data(data)
-    strategy_endpoint.publish_data = lambda _data_type, data: actor.on_data(data)
-    return actor
+) -> DecisionPolicy:
+    strategy.policy = policy
+    return strategy.policy
 
 
 def _view() -> MarketView:
@@ -240,7 +237,7 @@ def test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data(
         assembler=FakeAssembler(None),
         condition_ids=("condition-btc-5m",),
         strategy_name=strategy_name,
-        data_names=COMPAT_DATA_NAMES,
+        data_names=DEFAULT_DATA_NAMES,
         registry=MarketCatalog(),
     )
     assert REQUIRED_DATA_NAMES.issubset(set(strategy.data_names))
@@ -284,7 +281,7 @@ def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved
         fixed_stake_usdc=10.0,
         registry=MarketCatalog(),
     )
-    _policy_actor = _wire_decision_policy_actor(strategy, policy)
+    _policy = _attach_decision_policy(strategy, policy)
 
     def capture_submit(_strategy, _approved, **kwargs):
         order = FakeOrderFactory().limit(instrument_id="up-token", **kwargs)

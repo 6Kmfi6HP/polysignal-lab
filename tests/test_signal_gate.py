@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, polysignal_lab.config, polysignal_lab.signal_layer.gate
-Output: signal gate freshness and reduce-only tests on MarketView
+Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.FreshnessView, polysignal_lab.alpha.types.MarketView, polysignal_lab.config, polysignal_lab.config.BinanceDataConfig, polysignal_lab.config.PolymarketDataConfig
+Output: test_signal_gate_records_prd_reason_details, test_signal_gate_does_not_apply_channel_rate_limit, test_signal_candidate_carries_freshness_policy, test_gate_rejects_strategy_policy_stale_orderbook_with_details, test_gate_uses_strictest_threshold_when_global_is_lower, test_gate_uses_global_threshold_when_strategy_has_no_policy, test_gate_distinguishes_missing_orderbook_from_stale_orderbook, test_gate_distinguishes_missing_spot_from_stale_spot, test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason, test_ptb_diff_stale_spot_candidate_is_rejected_by_gate
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -50,26 +52,10 @@ async def test_signal_gate_records_prd_reason_details(market_view, settings) -> 
     assert decision.rejected.details["confidence"] == signal.confidence
 
 
-async def test_signal_deduper_prevents_duplicate_channel_publish(
+async def test_signal_gate_does_not_apply_channel_rate_limit(
     market_view, settings
 ) -> None:
-    signal = await _ptb_signal(market_view, settings)
-    config = settings.signal.model_copy(update={"max_signals_per_hour": 10})
-    gate = SignalGate(config, settings.data.polymarket, settings.data.binance)
-
-    first = gate.evaluate(signal, market_view)
-    second = gate.evaluate(signal, market_view)
-
-    assert first.accepted is True
-    assert second.accepted is False
-    assert second.rejected is not None
-    assert second.rejected.reason_code == "DUPLICATE_SIGNAL"
-    assert second.rejected.details["dedupe_key"] == signal.dedupe_key
-
-
-async def test_signal_rate_limiter_rejects_after_channel_limit(
-    market_view, settings
-) -> None:
+    """Submit-rate limits belong to Nautilus RiskEngine, not SignalGate."""
     signal = await _ptb_signal(market_view, settings)
     config = SignalConfig(
         min_confidence_to_publish=settings.signal.min_confidence_to_publish,
@@ -83,10 +69,8 @@ async def test_signal_rate_limiter_rejects_after_channel_limit(
     second = gate.evaluate(signal, market_view)
 
     assert first.accepted is True
-    assert second.accepted is False
-    assert second.rejected is not None
-    assert second.rejected.reason_code == "CHANNEL_RATE_LIMIT"
-    assert second.rejected.details["market_id"] == signal.market_id
+    assert second.accepted is True
+    assert second.rejected is None
 
 
 def test_signal_candidate_carries_freshness_policy() -> None:
@@ -385,9 +369,8 @@ def test_reduce_only_exit_survives_entry_batch_rejection() -> None:
     assert gate.evaluate(entry, view).accepted is True
     decisions = gate.commit([entry, close])
 
-    assert decisions[0].accepted is False
-    assert decisions[0].rejected is not None
-    assert decisions[0].rejected.reason_code == "DUPLICATE_SIGNAL"
+    assert decisions[0].accepted is True
+    assert decisions[0].signal == entry
     assert decisions[1].accepted is True
     assert decisions[1].signal == close
 

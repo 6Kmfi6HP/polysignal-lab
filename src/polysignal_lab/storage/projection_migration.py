@@ -1,10 +1,12 @@
 """
-Input: __future__, json, sqlite3, collections.abc, typing
-Output: migrate_legacy_tables_to_reporting, PROJECTION_SCHEMA_VERSION
-Pos: One-shot migration from legacy trading-state tables to reporting-only schema
+Input: __future__, __future__.annotations, json, sqlite3, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.Any, polysignal_lab.storage.event_projection
+Output: migrate_legacy_tables_to_reporting
+Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

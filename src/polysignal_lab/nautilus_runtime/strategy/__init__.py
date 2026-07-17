@@ -10,12 +10,13 @@ Pos: Application code
 
 
 
+
+
 from polysignal_lab.nautilus_runtime.strategy.helpers import (  # noqa: F401
     DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
     DEFAULT_NATIVE_DATA_NAMES,
     EVALUATION_HEARTBEAT_INTERVAL,
     EVALUATION_HEARTBEAT_TIMER_NAME,
-    L1_RAW_DELTA_FALLBACK_PHASE,
     MISSING_PROJECTIONS_ERROR,
     DataBoundaryClassification,
     _Assembler,
@@ -32,7 +33,6 @@ __all__ = [
     "DEFAULT_NATIVE_DATA_NAMES",
     "EVALUATION_HEARTBEAT_INTERVAL",
     "EVALUATION_HEARTBEAT_TIMER_NAME",
-    "L1_RAW_DELTA_FALLBACK_PHASE",
     "MISSING_PROJECTIONS_ERROR",
     "DataBoundaryClassification",
     "InstrumentSubscriptionManager",

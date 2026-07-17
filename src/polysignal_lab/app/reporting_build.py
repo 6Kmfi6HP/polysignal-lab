@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, asyncio, sqlite3, polysignal_lab.app.reporting_equity, polysignal_lab.app.reporting_sources, polysignal_lab.app.reporting_types, polysignal_lab.app.scheduler_health, polysignal_lab.domain.reporting_result, polysignal_lab.reporting.daily_report
-Output: _build_daily_report_from_inputs
+Input: __future__, __future__.annotations, asyncio, sqlite3, polysignal_lab.app, polysignal_lab.app.scheduler_health, polysignal_lab.app.reporting_equity, polysignal_lab.app.reporting_equity.(, polysignal_lab.app.reporting_sources, polysignal_lab.app.reporting_sources.(
+Output: None
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

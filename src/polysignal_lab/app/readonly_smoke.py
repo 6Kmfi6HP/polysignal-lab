@@ -1,10 +1,12 @@
 """
-Input: __future__, json, datetime, pathlib, httpx, polysignal_lab.app.readonly_smoke_public, polysignal_lab.app.readonly_smoke_types, polysignal_lab.data.polymarket_market_discovery
+Input: __future__, __future__.annotations, json, datetime, datetime.UTC, datetime.datetime, pathlib, pathlib.Path, httpx, polysignal_lab.app.readonly_smoke_public
 Output: collect_readonly_smoke, write_evidence
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

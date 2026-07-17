@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, zoneinfo, zoneinfo.ZoneInfo, zoneinfo.ZoneInfoNotFoundError, polysignal_lab.app.reporting_build, polysignal_lab.app.reporting_equity, polysignal_lab.app.reporting_sources, polysignal_lab.app.reporting_types, polysignal_lab.domain.reporting_result
-Output: generate_daily_report, DailyReportInputs
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, zoneinfo, zoneinfo.ZoneInfo, zoneinfo.ZoneInfoNotFoundError, polysignal_lab.app.reporting_build, polysignal_lab.app.reporting_build.(
+Output: generate_daily_report
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

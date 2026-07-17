@@ -1,10 +1,12 @@
 """
 Input: __future__, __future__.annotations, os, pathlib, pathlib.Path, typing, typing.Final, typing.Literal, yaml, pydantic
-Output: load_settings, SecurityConfigError, AppConfig, SafetyConfig, TelegramConfig, MarketConfig, PolymarketDataConfig, BinanceDataConfig, DataConfig
+Output: load_settings, SecurityConfigError, AppConfig, SafetyConfig, TelegramConfig, MarketConfig, PolymarketDataConfig, BinanceDataConfig, DataConfig, SignalConfig
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, typing, typing.Any, typing.Mapping, typing.Protocol
-Output: immutable market, Cache trading, decision, and lifecycle event types
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, types, types.MappingProxyType, typing
+Output: SideBookView, SpotView, TradeView, FreshnessView, CachedOrderView, CachedPositionView, TradingStateView, MarketView, OrderIntentSpec, AlphaDecision
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -12,13 +12,22 @@ Pos: Application code
 
 
 
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Any, Mapping, Protocol, Sequence
 
 from polysignal_lab.domain.enums import OrderIntent, Side
+
+
+def _freeze_mapping(value: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    if value is None:
+        return MappingProxyType({})
+    return MappingProxyType(dict(value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,6 +350,10 @@ class AlphaDecision:
     order_intent: OrderIntentSpec | None = None
     hedge_leg: bool = False
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+        object.__setattr__(self, "metrics", _freeze_mapping(self.metrics))
+
 
 class AlphaCore(Protocol):
     def evaluate(self, view: MarketView) -> list[AlphaDecision]: ...
@@ -354,38 +367,6 @@ class MarketGroupView:
     views_by_condition_id: Mapping[str, MarketView]
     max_source_skew_ms: int
     metrics: Mapping[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class AlphaOrderEvent:
-    strategy: str
-    market_id: str
-    condition_id: str
-    token_id: str
-    side: Side
-    order_id: str
-    client_order_id: str | None
-    reason: str | None
-    ts_event: datetime
-    metrics: Mapping[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class AlphaFillEvent(AlphaOrderEvent):
-    fill_price: float
-    shares: float
-    liquidity_side: str | None
-
-
-class StatefulAlphaCore(AlphaCore, Protocol):
-    def on_order_submitted(self, event: AlphaOrderEvent) -> None: ...
-    def on_order_accepted(self, event: AlphaOrderEvent) -> None: ...
-    def on_order_rejected(self, event: AlphaOrderEvent) -> None: ...
-    def on_order_canceled(self, event: AlphaOrderEvent) -> None: ...
-    def on_order_expired(self, event: AlphaOrderEvent) -> None: ...
-    def on_order_filled(self, event: AlphaFillEvent) -> list[AlphaDecision]: ...
-    def save_state(self) -> Mapping[str, object]: ...
-    def load_state(self, payload: Mapping[str, object]) -> None: ...
 
 
 class GroupAlphaCore(Protocol):

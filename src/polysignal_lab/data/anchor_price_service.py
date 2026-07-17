@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone, typing, typing.Protocol
-Output: window_for_market, AnchorWindow, AnchorPriceStore, capture_anchor_price, AnchorPriceService
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone
+Output: window_for_market, capture_anchor_price, AnchorWindow, AnchorPriceStore, AnchorPriceService
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

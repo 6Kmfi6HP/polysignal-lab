@@ -31,27 +31,24 @@ Auto-generated project index maintained by the Fractal Multi-level Index System.
       ├── _authenticated/ (7 files)
         ├── errors/ (1 files)
     ├── test-utils/ (4 files)
-├── scripts/ (6 files)
+├── scripts/ (4 files)
   ├── archive/ (2 files)
   ├── polysignal_lab/ (4 files)
-    ├── alpha/ (16 files)
+    ├── alpha/ (20 files)
     ├── app/ (15 files)
-      ├── services/ (10 files)
+      ├── services/ (4 files)
     ├── dashboard/ (3 files)
-    ├── data/ (13 files)
-    ├── domain/ (15 files)
-    ├── nautilus_bridge/ (5 files)
-      ├── strategies/ (1 files)
-    ├── nautilus_runtime/ (29 files)
-      ├── strategies/ (3 files)
-      ├── strategy/ (3 files)
+    ├── data/ (7 files)
+      ├── provider/ (2 files)
+    ├── domain/ (11 files)
+    ├── nautilus_runtime/ (40 files)
+      ├── strategy/ (15 files)
     ├── observability/ (6 files)
+    ├── publish/ (5 files)
     ├── reporting/ (6 files)
-    ├── publish/ (4 files)
-    ├── signal_layer/ (7 files)
-    ├── storage/ (5 files)
-    ├── strategies/ (20 files)
-├── tests/ (107 files)
+    ├── signal_layer/ (3 files)
+    ├── storage/ (7 files)
+├── tests/ (91 files)
   ├── fixtures/ (1 files)
 ```
 
@@ -236,8 +233,8 @@ graph TD
 
 ## 📊 Statistics
 
-- Total folders: 46
-- Total files: 388
+- Total folders: 43
+- Total files: 361
 
 ---
 

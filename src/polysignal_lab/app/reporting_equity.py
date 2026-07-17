@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, math, typing, typing.Protocol, typing.TypeGuard, typing.cast, typing.runtime_checkable, polysignal_lab.domain.reporting_result
-Output: _report_equity_inputs, _report_equity_inputs_from_nautilus_cache
+Input: __future__, __future__.annotations, math, typing, typing.Any, typing.Protocol, typing.TypeGuard, typing.cast, typing.runtime_checkable, polysignal_lab.domain.reporting_result
+Output: _NautilusReportingCache
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

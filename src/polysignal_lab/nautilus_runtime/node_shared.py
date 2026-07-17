@@ -1,14 +1,12 @@
 """
-Shared helpers for Nautilus runtime node files (node.py, node_lifecycle.py).
-
-Extracted from duplicate definitions to eliminate Type-2 rename clones flagged by pyscn.
-
-Input: signal, collections.abc
-Output: _rebind_market_discovery_client, _install_sync_os_signal_handlers
+Input: __future__, __future__.annotations, signal, collections.abc, collections.abc.Callable, polysignal_lab.nautilus_runtime.node_signals, polysignal_lab.nautilus_runtime.node_signals.(
+Output: None
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

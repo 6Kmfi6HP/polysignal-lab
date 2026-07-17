@@ -1,10 +1,12 @@
 """
-Input: __future__, typing, httpx, pydantic, polysignal_lab.config, polysignal_lab.data.market_discovery_helpers, polysignal_lab.domain.market, polysignal_lab.utils
-Output: MarketDiscovery
+Input: __future__, __future__.annotations, typing, typing.Final, typing.Protocol, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.config
+Output: _JsonResponse, _AsyncJsonClient, _HttpxJsonResponse, _HttpxAsyncJsonClient, MarketDiscovery
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -24,6 +26,7 @@ from polysignal_lab.data.market_discovery_helpers import (
     build_current_slot_slugs,
     gamma_events_from_json,
     gamma_events_query_params,
+    gamma_markets_slug_query_params,
     paginate_gamma_events,
     parse_gamma_markets,
     paginate_gamma_events_async,
@@ -32,7 +35,6 @@ from polysignal_lab.domain.market import Market
 from polysignal_lab.utils import utc_now
 
 JsonObject = dict[str, JsonValue]
-GAMMA_PAGE_LIMIT: Final = 200
 JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
 
 
@@ -66,6 +68,16 @@ class _HttpxAsyncJsonClient:
 
 
 class MarketDiscovery:
+    """Discover active crypto-updown markets for rotation/reporting.
+
+    Ownership split (deliberate, not dual transport):
+    - /events list + slug event lookup: project business path (official
+      ``gamma_markets`` only implements /markets filters).
+    - /markets?slug=... fallback query params: official
+      ``build_markets_query`` via ``gamma_markets_slug_query_params``.
+    - client-side parse/filter: ``parse_gamma_markets`` (asset/timeframe/window).
+    """
+
     def __init__(
         self,
         config: PolymarketDataConfig,
@@ -263,7 +275,7 @@ class MarketDiscovery:
         try:
             payload = await self._request_async(
                 f"{self.config.gamma_base_url}/markets",
-                params={"slug": slug},
+                params=gamma_markets_slug_query_params(slug),
             )
         except (httpx.HTTPError, TypeError, ValueError):
             return None
@@ -284,7 +296,7 @@ class MarketDiscovery:
         try:
             payload = self._request_sync(
                 f"{self.config.gamma_base_url}/markets",
-                params={"slug": slug},
+                params=gamma_markets_slug_query_params(slug),
                 sync_client=client,
             )
         except (httpx.HTTPError, TypeError, ValueError):

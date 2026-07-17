@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, pytest, polysignal_lab.nautilus_runtime.state
-Output: state schema v2 encode/decode and migration tests
+Input: __future__, __future__.annotations, pytest, polysignal_lab.nautilus_runtime.state, polysignal_lab.nautilus_runtime.state.(
+Output: test_state_key_uses_polysignal_strategy_version_format, test_encode_decode_state_round_trip_json_bytes, test_decode_missing_state_returns_empty_payload_with_reason, test_decode_unknown_version_fails_closed, test_decode_mixed_current_and_future_versions_fails_closed, test_decode_rejects_legacy_trading_state, test_save_strategy_state_wraps_alpha_only
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.market_view_from_snapshot, polysignal_lab.alpha.state, polysignal_lab.alpha.state.restore_utc_datetime, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
-Output: test_vwap_core_matches_legacy_candidate, test_vwap_entry_guard_not_consumed_until_acceptance, test_vwap_core_accepts_trade_view_events, test_vwap_core_skips_entry_when_favorite_ask_missing, test_vwap_on_order_rejected_reverts_pending_samples, test_vwap_on_order_rejected_reverts_trade_view_samples, test_vwap_on_order_filled_taker_creates_hedge_decision, test_vwap_on_order_expired_gtd_clears_pending_hedge, test_vwap_evaluate_prunes_old_trade_history_and_dedupe_state, test_vwap_core_state_roundtrip
+Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, datetime, datetime.timedelta, polysignal_lab.alpha.state, polysignal_lab.alpha.state.restore_utc_datetime, polysignal_lab.alpha.types, polysignal_lab.alpha.types.TradeView
+Output: test_vwap_entry_guard_not_consumed_until_acceptance, test_vwap_core_accepts_trade_view_events, test_vwap_core_skips_entry_when_favorite_ask_missing, test_vwap_cache_position_creates_hedge_decision, test_vwap_active_hedge_order_prevents_reverse_hedge, test_vwap_evaluate_requires_projected_trades, test_vwap_core_state_roundtrip_is_empty, test_vwap_duplicate_trade_view_payload_is_stateless, test_vwap_state_round_trip_excludes_trading_state
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -8,18 +8,13 @@ Pos: Test Layer - Unit/Integration tests
 
 
 
-
-
-
-
-
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 
 from polysignal_lab.alpha.state import restore_utc_datetime
 from polysignal_lab.alpha.types import TradeView
-from polysignal_lab.alpha.vwap_trade_history import TradeHistory
 from polysignal_lab.alpha.vwap_momentum_core import VWAPMomentumAlphaCore
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.strategy_config import VWAPMomentumConfig
@@ -44,73 +39,62 @@ def _fast_config(**updates) -> VWAPMomentumConfig:
     return VWAPMomentumConfig(**base)
 
 
-def _snapshot():
-    # up_ask=0.60 → last_trade_price mid ≈ 0.585; down_ask=0.40 → mid ≈ 0.385.
-    return sample_market_view(up_ask=0.60, down_ask=0.40, seconds_to_close=120)
-
-
-def _seed_band(owner: VWAPMomentumAlphaCore, market_id: str, now_ts: float) -> None:
-    """Seed a single trade per side in the momentum band (now - 5s)."""
-    owner.trades.push(f"{market_id}:{Side.UP.value}", 0.50, 1.0, now_ts - 5.0)
-    owner.trades.push(f"{market_id}:{Side.DOWN.value}", 0.40, 1.0, now_ts - 5.0)
-
-
-# ---------------------------------------------------------------------------
-# Entry guard: consumed only on acceptance
-# ---------------------------------------------------------------------------
+def _snapshot_with_trades():
+    """MarketView whose trades come only from Cache-style TradeView projection."""
+    base = sample_market_view(up_ask=0.60, down_ask=0.40, seconds_to_close=120)
+    now = base.created_at
+    band_ts = now - timedelta(seconds=5)
+    return replace(
+        base,
+        up_trades=(
+            TradeView(price=0.50, size=1.0, side=Side.UP.value, ts=band_ts),
+            TradeView(price=0.60, size=1.0, side=Side.UP.value, ts=now),
+        ),
+        down_trades=(
+            TradeView(price=0.40, size=1.0, side=Side.DOWN.value, ts=band_ts),
+            TradeView(price=0.40, size=1.0, side=Side.DOWN.value, ts=now),
+        ),
+    )
 
 
 def test_vwap_entry_guard_not_consumed_until_acceptance() -> None:
     config = _fast_config()
     core = VWAPMomentumAlphaCore(config)
-    snapshot = _snapshot()
-    market_id = snapshot.market_id
-    _seed_band(core, market_id, snapshot.created_at.timestamp())
+    snapshot = _snapshot_with_trades()
 
     first = evaluate_core(core, snapshot)
     assert len(first) == 1
 
-    # Repeated candidate generation must NOT consume the entry guard.
     second = evaluate_core(core, snapshot)
     assert len(second) == 1
     cached = with_active_order(snapshot, "vwap_momentum", side=first[0].side)
     assert evaluate_core(core, cached) == []
 
 
-
 def test_vwap_core_accepts_trade_view_events() -> None:
     config = _fast_config()
     core = VWAPMomentumAlphaCore(config)
-    snapshot = _snapshot()
-    trade_ts = snapshot.created_at
-    snapshot = replace(
-        snapshot,
-        up_trades=(TradeView(price=0.60, size=2.0, side=Side.UP.value, ts=trade_ts),),
-        down_trades=(TradeView(price=0.42, size=1.0, side=Side.DOWN.value, ts=trade_ts),),
-    )
-    now_ts = snapshot.created_at.timestamp()
-    _seed_band(core, snapshot.market_id, now_ts)
+    snapshot = _snapshot_with_trades()
 
     decisions = evaluate_core(core, snapshot)
 
     assert len(decisions) == 1
     assert decisions[0].side == Side.UP
-    assert core.trades.latest_price(f"{snapshot.market_id}:{Side.UP.value}") == 0.60
+    assert decisions[0].metrics["fav_price"] == 0.60
 
 
 def test_vwap_core_skips_entry_when_favorite_ask_missing() -> None:
     config = _fast_config()
     core = VWAPMomentumAlphaCore(config)
-    snapshot = _snapshot()
-    _seed_band(core, snapshot.market_id, snapshot.created_at.timestamp())
-    view = replace(snapshot, up=replace(snapshot.up, best_ask=None))
-
+    base = _snapshot_with_trades()
+    view = replace(base, up=replace(base.up, best_ask=None))
     assert core.evaluate(view) == []
+
 
 def test_vwap_cache_position_creates_hedge_decision() -> None:
     config = _fast_config(hedge_enabled=True, hedge_price=0.02, hedge_expiry_seconds=3600)
     core = VWAPMomentumAlphaCore(config)
-    view = _snapshot()
+    view = _snapshot_with_trades()
     cached = with_open_position(
         view,
         "vwap_momentum",
@@ -141,7 +125,7 @@ def test_vwap_active_hedge_order_prevents_reverse_hedge() -> None:
     config = _fast_config(hedge_enabled=True, hedge_price=0.02, hedge_expiry_seconds=3600)
     core = VWAPMomentumAlphaCore(config)
     view = with_open_position(
-        _snapshot(),
+        _snapshot_with_trades(),
         "vwap_momentum",
         side=Side.UP,
         quantity=10.0,
@@ -155,82 +139,38 @@ def test_vwap_active_hedge_order_prevents_reverse_hedge() -> None:
     assert core.evaluate(cached) == []
 
 
-def test_vwap_evaluate_prunes_old_trade_history_and_dedupe_state() -> None:
-    config = _fast_config(vwap_window_sec=5, momentum_window_sec=5)
-    core = VWAPMomentumAlphaCore(config)
-    snapshot = _snapshot()
-    market_id = snapshot.market_id
-    now_ts = snapshot.created_at.timestamp()
-    up_key = f"{market_id}:{Side.UP.value}"
-    down_key = f"{market_id}:{Side.DOWN.value}"
-
-    core.trades.push(up_key, 0.49, 1.0, now_ts - 500.0)
-    core.trades.push(down_key, 0.39, 1.0, now_ts - 500.0)
-    core._seen_trade_signatures[up_key].add((0.49, 1.0, now_ts - 500.0))
-    core._seen_trade_signatures[down_key].add((0.39, 1.0, now_ts - 500.0))
-    _seed_band(core, market_id, now_ts)
-
-    decisions = evaluate_core(core, snapshot)
-
-    assert len(decisions) == 1
-    assert min(trade.timestamp for trade in core.trades._trades[up_key]) >= now_ts - 6.5
-    assert min(trade.timestamp for trade in core.trades._trades[down_key]) >= now_ts - 6.5
-    assert (0.49, 1.0, now_ts - 500.0) not in core._seen_trade_signatures[up_key]
-    assert (0.39, 1.0, now_ts - 500.0) not in core._seen_trade_signatures[down_key]
-
-
-# ---------------------------------------------------------------------------
-# State round-trip
-# ---------------------------------------------------------------------------
-
-
-def test_vwap_core_state_roundtrip() -> None:
-    from datetime import UTC, datetime
-
+def test_vwap_evaluate_requires_projected_trades() -> None:
     config = _fast_config()
     core = VWAPMomentumAlphaCore(config)
-    market_id = "btc-5m-rt"
-    up_key = f"{market_id}:{Side.UP.value}"
+    # No up/down trades projected from Cache → no local book-trade fallback.
+    snapshot = sample_market_view(up_ask=0.60, down_ask=0.40, seconds_to_close=120)
+    assert evaluate_core(core, snapshot) == []
 
-    core.trades.push(up_key, 0.55, 2.0, 1000.0)
-    core.trades.push(up_key, 0.60, 1.0, 1001.0)
-    core._last_trade_signatures[up_key] = (0.60, 1.0, None, 1001.0)
-    core._seen_trade_signatures[up_key].add((0.55, 2.0, 1000.0))
 
+def test_vwap_core_state_roundtrip_is_empty() -> None:
+    config = _fast_config()
+    core = VWAPMomentumAlphaCore(config)
     payload = core.save_state()
 
     fresh = VWAPMomentumAlphaCore(config)
-    fresh.load_state(payload)
-
-    assert fresh.trades.latest_price(up_key) == 0.60
-    assert fresh.trades.vwap(up_key, config.vwap_window_sec, 1001.0) == (0.55 * 2.0 + 0.60) / 3.0
-    assert fresh._last_trade_signatures[up_key] == (0.60, 1.0, None, 1001.0)
-    assert fresh._seen_trade_signatures[up_key] == {(0.55, 2.0, 1000.0)}
-    # restore_utc_datetime is exercised by the round-trip indirectly (datetimes
-    # are not stored by TradeHistory, but the helper remains importable).
+    fresh.load_state(
+        {
+            "trades": {"btc:UP": [{"price": 0.55, "size": 1.0, "timestamp": 1.0}]},
+            "last_trade_signatures": {},
+            "seen_trade_signatures": {},
+        }
+    )
+    assert fresh.save_state() == payload
     assert restore_utc_datetime("2026-06-25T00:00:00+00:00").tzinfo is not None
-    assert datetime.now(UTC).tzinfo is not None
-    # TradeHistory is exported from the alpha package.
-    from polysignal_lab.alpha import TradeHistory as ExportedTradeHistory
-
-    assert ExportedTradeHistory is TradeHistory
 
 
-def test_vwap_duplicate_trade_does_not_change_signal_inputs() -> None:
+def test_vwap_duplicate_trade_view_payload_is_stateless() -> None:
     config = _fast_config()
     core = VWAPMomentumAlphaCore(config)
-    snapshot = _snapshot()
-    trade_ts = snapshot.created_at
-    snapshot = replace(
-        snapshot,
-        up_trades=(TradeView(price=0.60, size=2.0, side=Side.UP.value, ts=trade_ts),),
-        down_trades=(TradeView(price=0.42, size=1.0, side=Side.DOWN.value, ts=trade_ts),),
-    )
-    _seed_band(core, snapshot.market_id, snapshot.created_at.timestamp())
+    snapshot = _snapshot_with_trades()
 
     first = evaluate_core(core, snapshot)
     second = evaluate_core(core, snapshot)
-
     assert second == first
 
 
@@ -243,3 +183,4 @@ def test_vwap_state_round_trip_excludes_trading_state() -> None:
     assert restored.save_state() == core.save_state()
     assert "can_enter" not in restored.save_state()
     assert "pending_hedges" not in restored.save_state()
+    assert "trades" not in restored.save_state()

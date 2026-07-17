@@ -12,6 +12,8 @@
 
 
 
+
+
 import type { ReactNode } from 'react'
 import { SearchProvider } from '@/context/search-provider'
 import { ThemeProvider } from '@/context/theme-provider'

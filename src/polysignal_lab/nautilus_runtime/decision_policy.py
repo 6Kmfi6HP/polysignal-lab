@@ -1,15 +1,10 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, dataclasses, dataclasses.dataclass, typing, typing.cast, polysignal_lab.alpha.types
-Output: ApprovedDecision, RejectedDecision, candidate_from_decision, DecisionPolicy
+Output: decision_policy_from_settings, candidate_from_decision, ApprovedDecision, RejectedDecision, BatchArbitrationResult, DecisionPolicy
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
-
-
-
-
-
 
 
 
@@ -24,22 +19,24 @@ from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, Signa
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.signal_layer.arbiter import SignalArbiter
-from polysignal_lab.signal_layer.consensus import ConsensusEngine
 from polysignal_lab.signal_layer.gate import SignalGate
 
-def _string_tuple_mapping(raw: object) -> dict[str, tuple[str, ...]]:
-    if not isinstance(raw, Mapping):
-        return {}
-    raw_mapping = cast(Mapping[object, object], raw)
-    coerced: dict[str, tuple[str, ...]] = {}
-    for name, deps in raw_mapping.items():
-        if isinstance(deps, str):
-            coerced[str(name)] = (deps,)
-            continue
-        if isinstance(deps, Iterable):
-            coerced[str(name)] = tuple(str(dep) for dep in deps)
-    return coerced
+
+def decision_policy_from_settings(settings: object) -> DecisionPolicy:
+    """Per-Strategy gate only — RiskEngine owns account/exposure risk."""
+    signal = getattr(settings, "signal", SignalConfig())
+    data = getattr(settings, "data", None)
+    poly = (
+        getattr(data, "polymarket", PolymarketDataConfig())
+        if data is not None
+        else PolymarketDataConfig()
+    )
+    binance = (
+        getattr(data, "binance", BinanceDataConfig())
+        if data is not None
+        else BinanceDataConfig()
+    )
+    return DecisionPolicy(gate=SignalGate(signal, poly, binance))
 
 
 def candidate_from_decision(decision: AlphaDecision, view: MarketView) -> SignalCandidate:
@@ -59,8 +56,8 @@ def candidate_from_decision(decision: AlphaDecision, view: MarketView) -> Signal
         data_freshness_ms=decision.data_freshness_ms,
         reason_codes=list(decision.reason_codes),
         metrics=dict(decision.metrics),
-        created_at=view.created_at,
-        snapshot_id=view.view_id,
+        created_at=getattr(view, "created_at", None),
+        snapshot_id=str(getattr(view, "view_id", "") or ""),
         order_intent=decision.order_intent.intent if decision.order_intent else None,
         expiry_seconds=decision.order_intent.expiry_seconds if decision.order_intent else None,
         pair_id=decision.order_intent.pair_id if decision.order_intent else None,
@@ -72,7 +69,6 @@ def candidate_from_decision(decision: AlphaDecision, view: MarketView) -> Signal
 @dataclass(frozen=True, slots=True)
 class ApprovedDecision:
     signal: SignalCandidate
-    consensus: SignalCandidate | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +79,8 @@ class RejectedDecision:
 
 
 class BatchArbitrationResult(list[AlphaDecision]):
+    """Survivors after pair-completeness + per-decision gate (no multi-alpha arbiter)."""
+
     def __init__(
         self,
         survivors: Iterable[AlphaDecision] = (),
@@ -92,52 +90,27 @@ class BatchArbitrationResult(list[AlphaDecision]):
         self.rejections = tuple(rejections)
 
 
-_BatchEntry = tuple[AlphaDecision, MarketView, SignalCandidate]
-_PreparedBatchEntry = tuple[
-    AlphaDecision, MarketView, SignalCandidate | None, RejectedDecision | None
-]
-
-
 class DecisionPolicy:
-    """Decision gate, arbitration, and consensus for signal evaluation.
-
-    Runs before Nautilus order submission; Nautilus RiskEngine still owns
-    account, exposure, and execution-side risk checks.
-
-    Owns the active SignalGate/SignalArbiter/ConsensusEngine instances.
-    These are the single source of truth — no parallel instances exist elsewhere.
-    """
+    """SignalGate + optional manual disable; no SignalArbiter/ConsensusEngine."""
 
     def __init__(
         self,
         *,
         gate: SignalGate | None = None,
-        arbiter: SignalArbiter | None = None,
-        consensus: ConsensusEngine | None = None,
         disabled_strategies: Iterable[str] = (),
-        dependencies: Mapping[str, Iterable[str]] | None = None,
         strategy_freshness_policies: Mapping[str, FreshnessPolicy] | None = None,
     ) -> None:
         signal_config = SignalConfig()
-        # Gate/consensus/arbiter default-constructed here; callers may pass
-        # instances via parameters for testing or custom wiring.
-        self.gate: SignalGate = gate or SignalGate(signal_config, PolymarketDataConfig(), BinanceDataConfig())
-        self.arbiter: SignalArbiter = arbiter or SignalArbiter()
-        self.consensus: ConsensusEngine = consensus or ConsensusEngine(
-            window_sec=signal_config.consensus_window_sec,
-            enabled=signal_config.consensus_enabled,
+        self.gate: SignalGate = gate or SignalGate(
+            signal_config, PolymarketDataConfig(), BinanceDataConfig()
         )
         self.disabled_strategies: set[str] = set(disabled_strategies)
-        self.strategy_dependencies: dict[str, tuple[str, ...]] = {
-            name: tuple(deps) for name, deps in (dependencies or {}).items()
-        }
-        self.strategy_freshness_policies: dict[str, FreshnessPolicy] = dict(strategy_freshness_policies or {})
-        self._batch_approved: dict[
-            int, tuple[AlphaDecision, MarketView, SignalCandidate]
-        ] = {}
+        self.strategy_freshness_policies: dict[str, FreshnessPolicy] = dict(
+            strategy_freshness_policies or {}
+        )
+        self._batch_approved: dict[int, tuple[AlphaDecision, MarketView, SignalCandidate]] = {}
 
     def orderbook_readiness_threshold_ms(self) -> float:
-        """Return shared data-plane freshness, not a strategy trade threshold."""
         return float(self.gate.poly_config.max_book_staleness_ms)
 
     def orderbook_trade_threshold_ms(self, strategy: str) -> float:
@@ -152,25 +125,12 @@ class DecisionPolicy:
             self.disabled_strategies.add(name)
 
     def save_state(self) -> dict[str, object]:
-        return {
-            "disabled_strategies": sorted(self.disabled_strategies),
-            "strategy_dependencies": {
-                name: list(deps)
-                for name, deps in sorted(self.strategy_dependencies.items())
-            },
-        }
+        return {"disabled_strategies": sorted(self.disabled_strategies)}
 
     def load_state(self, payload: Mapping[str, object]) -> None:
         disabled = payload.get("disabled_strategies", ()) or ()
-        dependencies = _string_tuple_mapping(payload.get("strategy_dependencies", {}))
-        saved_disabled = (
-            {str(name) for name in cast(Iterable[object], disabled)}
-            if isinstance(disabled, Iterable) and not isinstance(disabled, (str, bytes))
-            else set()
-        )
-        self.disabled_strategies = self.disabled_strategies | saved_disabled
-        if dependencies:
-            self.strategy_dependencies = {**self.strategy_dependencies, **dependencies}
+        if isinstance(disabled, Iterable) and not isinstance(disabled, (str, bytes)):
+            self.disabled_strategies |= {str(name) for name in cast(Iterable[object], disabled)}
 
     def decide(
         self, decision: AlphaDecision, view: MarketView
@@ -183,27 +143,13 @@ class DecisionPolicy:
         handoff = self._batch_approved.get(id(decision))
         if handoff is not None and handoff[0] is decision and handoff[1] is view:
             _ = self._batch_approved.pop(id(decision))
-            signal = handoff[2]
-            return ApprovedDecision(signal=signal, consensus=self.consensus.add(signal))
-        skip_reason = self._skip_reason_for(decision.strategy)
-        if skip_reason is not None:
-            return RejectedDecision(reason_code=skip_reason, detail={})
-
-        candidate = self._candidate_from_decision(decision, view)
-        if not self._arbiter_keeps(candidate):
-            return RejectedDecision(
-                reason_code="ARBITRATION_SUPPRESSED",
-                detail={
-                    "strategy": candidate.strategy,
-                    "conflict_policy": getattr(self.arbiter, "conflict_policy", None),
-                },
-                candidate=candidate,
-            )
-
+            return ApprovedDecision(signal=handoff[2])
+        if decision.strategy in self.disabled_strategies:
+            return RejectedDecision(reason_code="manual_disabled", detail={})
+        candidate = candidate_from_decision(decision, view)
         gate_decision = self.gate.evaluate(candidate, view)
         if gate_decision.accepted:
-            signal = gate_decision.signal or candidate
-            return ApprovedDecision(signal=signal, consensus=self.consensus.add(signal))
+            return ApprovedDecision(signal=gate_decision.signal or candidate)
         if gate_decision.rejected is not None:
             rejected = gate_decision.rejected
             return RejectedDecision(
@@ -212,231 +158,112 @@ class DecisionPolicy:
                 candidate=rejected.candidate,
             )
         return RejectedDecision(reason_code="GATE_REJECTED", detail={}, candidate=candidate)
-
-    def _skip_reason_for(self, name: str) -> str | None:
-        if name in self.disabled_strategies:
-            return "manual_disabled"
-        for dependency in self.strategy_dependencies.get(name, ()):
-            if dependency in self.disabled_strategies:
-                return f"dependency_disabled:{dependency}"
-        return None
-
-    def _arbiter_keeps(self, candidate: SignalCandidate) -> bool:
-        kept = self.arbiter.arbitrate(
-            [candidate],
-            strategy_priorities={candidate.strategy: 0},
-            strategy_config_indexes={candidate.strategy: 0},
-            market_config_indexes={candidate.market_id: 0},
-        )
-        return any(id(item) == id(candidate) for item in kept)
 
     def batch_arbitrate(
         self,
         decisions: list[tuple[AlphaDecision, MarketView]],
     ) -> BatchArbitrationResult:
-        """Commit only complete, prevalidated batch survivors in stable order."""
+        """Pair-completeness for hedge legs; then gate each survivor."""
         self._batch_approved.clear()
-        prepared, pairs, rejections = self._prepare_batch(decisions)
-        paired, pair_rejections = self._eligible_pair_entries(pairs)
-        rejections.extend(pair_rejections)
-        unpaired = self._eligible_unpaired(prepared)
-        kept_ids = self._arbitrated_candidate_ids(unpaired)
-        rejections.extend(self._suppressed_rejections(unpaired, kept_ids))
-        committed, gate_rejections = self._commit_eligible(paired, unpaired, kept_ids)
+        unpaired, rejections = self._partition_batch(decisions)
+        committed, gate_rejections = self._gate_batch(unpaired)
         rejections.extend(gate_rejections)
-        committed.sort(key=self._candidate_sort_key)
         self._batch_approved = {
             id(decision): (decision, view, candidate)
             for decision, view, candidate in committed
         }
-        committed_ids = {id(decision) for decision, _, _ in committed}
-        survivors = [decision for decision, _ in decisions if id(decision) in committed_ids]
-        return BatchArbitrationResult(survivors, rejections)
+        return BatchArbitrationResult(
+            [decision for decision, _, _ in committed],
+            rejections,
+        )
 
-    def _prepare_batch(
-        self, decisions: list[tuple[AlphaDecision, MarketView]]
+    def _partition_batch(
+        self,
+        decisions: list[tuple[AlphaDecision, MarketView]],
     ) -> tuple[
-        list[_PreparedBatchEntry],
-        dict[str, list[_PreparedBatchEntry]],
+        list[tuple[AlphaDecision, MarketView, SignalCandidate]],
         list[tuple[AlphaDecision, RejectedDecision]],
     ]:
-        prepared: list[_PreparedBatchEntry] = []
-        pairs: dict[str, list[_PreparedBatchEntry]] = {}
         rejections: list[tuple[AlphaDecision, RejectedDecision]] = []
+        unpaired: list[tuple[AlphaDecision, MarketView, SignalCandidate]] = []
+        pairs: dict[
+            str, list[tuple[AlphaDecision, MarketView, SignalCandidate]]
+        ] = {}
         for decision, view in decisions:
-            result = self._batch_candidate(decision, view)
-            candidate = result if isinstance(result, SignalCandidate) else None
-            rejection = result if isinstance(result, RejectedDecision) else None
-            entry = (decision, view, candidate, rejection)
-            prepared.append(entry)
+            if decision.strategy in self.disabled_strategies:
+                rejections.append(
+                    (decision, RejectedDecision(reason_code="manual_disabled", detail={}))
+                )
+                continue
+            candidate = candidate_from_decision(decision, view)
             pair_id = decision.order_intent.pair_id if decision.order_intent else None
             if pair_id:
-                pairs.setdefault(pair_id, []).append(entry)
-            elif rejection is not None:
-                rejections.append((decision, rejection))
-        return prepared, pairs, rejections
-
-    @staticmethod
-    def _eligible_pair_entries(
-        pairs: dict[str, list[_PreparedBatchEntry]],
-    ) -> tuple[list[_BatchEntry], list[tuple[AlphaDecision, RejectedDecision]]]:
-        eligible: list[_BatchEntry] = []
-        rejections: list[tuple[AlphaDecision, RejectedDecision]] = []
+                pairs.setdefault(pair_id, []).append((decision, view, candidate))
+            else:
+                unpaired.append((decision, view, candidate))
         for members in pairs.values():
-            candidates = [candidate for _, _, candidate, _ in members if candidate is not None]
-            malformed = len(members) > 2 or (
-                len(candidates) == 2
-                and {candidate.side for candidate in candidates} != {Side.UP, Side.DOWN}
-            )
-            if not malformed and len(candidates) == 2:
-                eligible.extend(
-                    (decision, view, candidate)
-                    for decision, view, candidate, _ in members
-                    if candidate is not None
-                )
-                continue
-            reason_code = "MALFORMED_PAIR" if malformed else "INCOMPLETE_PAIR"
-            rejections.extend(
+            self._resolve_pair_group(members, unpaired=unpaired, rejections=rejections)
+        return unpaired, rejections
+
+    def _resolve_pair_group(
+        self,
+        members: list[tuple[AlphaDecision, MarketView, SignalCandidate]],
+        *,
+        unpaired: list[tuple[AlphaDecision, MarketView, SignalCandidate]],
+        rejections: list[tuple[AlphaDecision, RejectedDecision]],
+    ) -> None:
+        candidates = [c for _, _, c in members]
+        malformed = len(members) > 2 or (
+            len(candidates) == 2
+            and {c.side for c in candidates} != {Side.UP, Side.DOWN}
+        )
+        if not malformed and len(candidates) == 2:
+            unpaired.extend(members)
+            return
+        reason = "MALFORMED_PAIR" if malformed else "INCOMPLETE_PAIR"
+        for decision, _, candidate in members:
+            rejections.append(
                 (
                     decision,
-                    rejection
-                    or RejectedDecision(reason_code=reason_code, detail={}, candidate=candidate),
+                    RejectedDecision(reason_code=reason, detail={}, candidate=candidate),
                 )
-                for decision, _, candidate, rejection in members
             )
-        return eligible, rejections
 
-    @staticmethod
-    def _eligible_unpaired(prepared: list[_PreparedBatchEntry]) -> list[_BatchEntry]:
-        return sorted(
-            (
-                (decision, view, candidate)
-                for decision, view, candidate, rejection in prepared
-                if candidate is not None
-                and rejection is None
-                and not (decision.order_intent and decision.order_intent.pair_id)
-            ),
-            key=DecisionPolicy._candidate_sort_key,
-        )
-
-    def _arbitrated_candidate_ids(self, unpaired: list[_BatchEntry]) -> set[int]:
-        candidates = [candidate for _, _, candidate in unpaired]
-        return {
-            id(candidate)
-            for candidate in self.arbiter.arbitrate(
-                candidates,
-                strategy_priorities={candidate.strategy: 0 for candidate in candidates},
-                strategy_config_indexes={candidate.strategy: 0 for candidate in candidates},
-                market_config_indexes={candidate.market_id: 0 for candidate in candidates},
-            )
-        }
-
-    def _suppressed_rejections(
-        self, unpaired: list[_BatchEntry], kept_ids: set[int]
-    ) -> list[tuple[AlphaDecision, RejectedDecision]]:
-        return [
-            (
-                decision,
-                RejectedDecision(
-                    reason_code="ARBITRATION_SUPPRESSED",
-                    detail={
-                        "strategy": candidate.strategy,
-                        "conflict_policy": getattr(self.arbiter, "conflict_policy", None),
-                    },
-                    candidate=candidate,
-                ),
-            )
-            for decision, _, candidate in unpaired
-            if id(candidate) not in kept_ids
-        ]
-
-    def _commit_eligible(
+    def _gate_batch(
         self,
-        paired: list[_BatchEntry],
-        unpaired: list[_BatchEntry],
-        kept_ids: set[int],
-    ) -> tuple[list[_BatchEntry], list[tuple[AlphaDecision, RejectedDecision]]]:
-        committed: list[_BatchEntry] = []
-        rejections: list[tuple[AlphaDecision, RejectedDecision]] = []
-        for group in self._commit_groups(paired, unpaired, kept_ids):
-            gate_results = self.gate.commit([candidate for _, _, candidate in group])
-            if all(result.accepted for result in gate_results):
-                committed.extend(group)
-                continue
-            rejections.extend(
-                (decision, self._rejected_gate_decision(result, candidate))
-                for (decision, _, candidate), result in zip(group, gate_results, strict=True)
-            )
-        return committed, rejections
-
-    @staticmethod
-    def _candidate_sort_key(
-        item: tuple[AlphaDecision, MarketView, SignalCandidate]
-    ) -> tuple[str, str, str, str]:
-        candidate = item[2]
-        return (
-            candidate.strategy,
-            candidate.market_id,
-            candidate.token_id,
-            candidate.side.value,
-        )
-
-    @staticmethod
-    def _commit_groups(
-        paired: list[tuple[AlphaDecision, MarketView, SignalCandidate]],
         unpaired: list[tuple[AlphaDecision, MarketView, SignalCandidate]],
-        kept_ids: set[int],
-    ) -> list[list[tuple[AlphaDecision, MarketView, SignalCandidate]]]:
-        pairs_by_id: dict[str, list[tuple[AlphaDecision, MarketView, SignalCandidate]]] = {}
-        for entry in paired:
-            pair_id = entry[2].pair_id
-            if pair_id is not None:
-                pairs_by_id.setdefault(pair_id, []).append(entry)
-        pair_groups = [
-            sorted(group, key=DecisionPolicy._candidate_sort_key)
-            for _, group in sorted(pairs_by_id.items())
-        ]
-        return pair_groups + [
-            [entry] for entry in unpaired if id(entry[2]) in kept_ids
-        ]
-
-    @staticmethod
-    def _rejected_gate_decision(
-        gate_decision: object, candidate: SignalCandidate
-    ) -> RejectedDecision:
-        rejected = getattr(gate_decision, "rejected", None)
-        if rejected is None:
-            return RejectedDecision(reason_code="GATE_REJECTED", detail={}, candidate=candidate)
-        return RejectedDecision(
-            reason_code=rejected.reason_code,
-            detail=dict(rejected.details),
-            candidate=rejected.candidate,
-        )
-
-    def _batch_candidate(
-        self, decision: AlphaDecision, view: MarketView
-    ) -> SignalCandidate | RejectedDecision:
-        skip_reason = self._skip_reason_for(decision.strategy)
-        if skip_reason is not None:
-            return RejectedDecision(reason_code=skip_reason, detail={})
-        candidate = self._candidate_from_decision(decision, view)
-        gate_decision = self.gate.prevalidate(candidate, view)
-        if gate_decision.accepted:
-            return gate_decision.signal or candidate
-        if gate_decision.rejected is not None:
-            rejected = gate_decision.rejected
-            return RejectedDecision(
-                reason_code=rejected.reason_code,
-                detail=dict(rejected.details),
-                candidate=rejected.candidate,
-            )
-        return RejectedDecision(reason_code="GATE_REJECTED", detail={}, candidate=candidate)
-
-    def _candidate_from_decision(
-        self, decision: AlphaDecision, view: MarketView
-    ) -> SignalCandidate:
-        candidate = candidate_from_decision(decision, view)
-        policy = self.strategy_freshness_policies.get(decision.strategy)
-        if policy is None:
-            return candidate
-        return candidate.model_copy(update={"freshness_policy": policy})
+    ) -> tuple[
+        list[tuple[AlphaDecision, MarketView, SignalCandidate]],
+        list[tuple[AlphaDecision, RejectedDecision]],
+    ]:
+        committed: list[tuple[AlphaDecision, MarketView, SignalCandidate]] = []
+        rejections: list[tuple[AlphaDecision, RejectedDecision]] = []
+        for decision, view, candidate in unpaired:
+            gate_decision = self.gate.evaluate(candidate, view)
+            if gate_decision.accepted:
+                committed.append((decision, view, gate_decision.signal or candidate))
+                continue
+            if gate_decision.rejected is not None:
+                rejected = gate_decision.rejected
+                rejections.append(
+                    (
+                        decision,
+                        RejectedDecision(
+                            reason_code=rejected.reason_code,
+                            detail=dict(rejected.details),
+                            candidate=rejected.candidate,
+                        ),
+                    )
+                )
+            else:
+                rejections.append(
+                    (
+                        decision,
+                        RejectedDecision(
+                            reason_code="GATE_REJECTED",
+                            detail={},
+                            candidate=candidate,
+                        ),
+                    )
+                )
+        return committed, rejections

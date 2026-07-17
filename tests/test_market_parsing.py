@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, pydantic, pydantic.JsonValue, polysignal_lab.domain.market
-Output: gamma market parsing resolution tests
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, pydantic, pydantic.JsonValue, polysignal_lab.domain.enums, polysignal_lab.domain.enums.MarketStatus, polysignal_lab.domain.enums.Side
+Output: test_gamma_resolved_payload_sets_resolved_outcome, test_gamma_payload_uses_nautilus_parser_for_binary_option_tokens, test_gamma_crypto_payload_prefers_event_window_over_listing_start_date, test_gamma_down_resolution_can_be_parsed_from_winning_token_id, test_gamma_void_resolution_is_cancelled_without_winning_side, test_gamma_malformed_official_resolution_stays_unknown, test_gamma_uma_resolved_outcome_prices_sets_resolved_outcome, test_gamma_half_half_outcome_prices_resolved_without_side_winner
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -38,7 +40,8 @@ def _gamma_payload(outcome: JsonValue = "Up") -> dict[str, JsonValue]:
         "priceToBeat": "105150.25",
         "resolutionSource": "gamma",
         "outcomes": '["Up", "Down"]',
-        "clobTokenIds": '["token-up", "token-down"]',
+        # Numeric token ids: NT instrument_id is `{condition_id}-{token_id}` (no extra hyphens).
+        "clobTokenIds": '["111", "222"]',
         "winning_outcome": outcome,
     }
 
@@ -55,8 +58,8 @@ def test_gamma_resolved_payload_sets_resolved_outcome() -> None:
     assert market.price_to_beat == 105150.25
     assert market.resolution_source == "gamma"
     assert market.resolved_outcome == Side.UP
-    assert market.token_for(Side.UP).token_id == "token-up"
-    assert market.token_for(Side.DOWN).token_id == "token-down"
+    assert market.token_for(Side.UP).token_id == "111"
+    assert market.token_for(Side.DOWN).token_id == "222"
 
 
 def test_gamma_payload_uses_nautilus_parser_for_binary_option_tokens(monkeypatch) -> None:
@@ -73,9 +76,11 @@ def test_gamma_payload_uses_nautilus_parser_for_binary_option_tokens(monkeypatch
         seen.append((market_info, token_id, outcome))
         return type("ParsedBinaryOption", (), {"outcome": f"Parsed {outcome}"})()
 
+    import polysignal_lab.data.provider.gamma_market as gamma_market
+
     monkeypatch.setattr(
-        market_module,
-        "_parse_nautilus_polymarket_instrument",
+        gamma_market,
+        "parse_nautilus_polymarket_instrument",
         parse_binary_option,
     )
 
@@ -108,7 +113,7 @@ def test_gamma_crypto_payload_prefers_event_window_over_listing_start_date() -> 
 
 def test_gamma_down_resolution_can_be_parsed_from_winning_token_id() -> None:
     payload = _gamma_payload(outcome=None)
-    payload["winning_asset_id"] = "token-down"
+    payload["winning_asset_id"] = "222"
 
     market = Market.from_gamma(payload, asset="BTC", timeframe="5m")
 

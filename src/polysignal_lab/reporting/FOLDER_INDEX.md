@@ -1,14 +1,14 @@
 ## 📁 reporting/
 
 **Architecture**:
-- Read-only reporting projections
+- Application code
 
 **Files**:
-- `daily_report.py` - Builds daily reports from native event projections
-- `aggregates.py` - Computes reporting aggregates
-- `rejections.py` - Normalizes native rejection reasons
-- `strategy_stats.py` - Builds strategy leaderboard rows
-- `exit_result.py` - Builds immutable exit result projections
-- `__init__.py` - Reporting package exports
+- `strategy_stats.py` - Exports build_strategy_leaderboard_rows
+- `rejections.py` - Exports normalize_reject_reason and 1 more
+- `exit_result.py` - Exports fee_fields_v1 and 3 more
+- `daily_report.py` - Exports DailyReportService
+- `aggregates.py` - Exports calibration_breakdown and 4 more
+- `__init__.py` - Application code
 
 🔄 **Self-reference**: When files in this folder change, update this index and PROJECT_INDEX.md

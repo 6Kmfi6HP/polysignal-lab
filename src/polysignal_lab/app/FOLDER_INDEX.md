@@ -5,18 +5,19 @@
 
 **Files**:
 - `scheduler_shared.py` - Application code
-- `reporting_storage.py` - Exports report result storage operations
-- `reporting_types.py` - Defines daily report inputs, including telemetry completeness reasons
-- `reporting_sources.py` - Collects creation-day durable order state, native fills, and explicit projection loss
-- `reporting_equity.py` - Exports report equity inputs
-- `reporting_build.py` - Builds reports with explicit telemetry completeness
-- `reporting.py` - Exports generate_daily_report and 1 more
-- `scheduler_health.py` - Persists runtime health through the retention-aware service boundary
+- `scheduler_health.py` - Exports note_storage_success and 4 more
+- `reporting_types.py` - Exports _ReportPersistence and 11 more
+- `reporting_storage.py` - Exports delete_report_result_rows and 1 more
+- `reporting_sources.py` - Application code
+- `reporting_projection.py` - Exports report_result_from_projection
+- `reporting_equity.py` - Exports _NautilusReportingCache
+- `reporting_build.py` - Application code
+- `reporting.py` - Exports generate_daily_report
 - `readonly_smoke_types.py` - Exports ReadonlySmokeRequest and 9 more
-- `readonly_smoke.py` - Exports collect_readonly_smoke and write_evidence
+- `readonly_smoke_runtime.py` - Application code
 - `readonly_smoke_public.py` - Exports make_public_client and 11 more
 - `readonly_smoke.py` - Exports collect_readonly_smoke and 1 more
-- `main.py` - Exports build_parser and 7 more
+- `main.py` - Exports build_parser and 6 more
 - `__init__.py` - Application code
 
 🔄 **Self-reference**: When files in this folder change, update this index and PROJECT_INDEX.md

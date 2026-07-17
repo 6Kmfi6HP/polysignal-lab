@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, typing, typing.Any, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.AlphaFillEvent
+Input: __future__, __future__.annotations, datetime, datetime.datetime, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent
 Output: PreOrderMarketAlphaCore
 Pos: Application code
 
@@ -11,10 +11,11 @@ Pos: Application code
 
 
 
+
+
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from polysignal_lab.alpha.helpers import (
     HedgeDecisionContext,
@@ -32,7 +33,7 @@ from polysignal_lab.alpha.types import (
     MarketView,
     OrderIntentSpec,
 )
-from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.enums import OrderIntent
 
 
 class PreOrderMarketAlphaCore:
@@ -76,22 +77,25 @@ class PreOrderMarketAlphaCore:
                 if ask is not None and price >= ask:
                     continue
                 cost = binary_pair_effective_cost(price, price)
-                decision = self._decision(
+                decision = build_order_decision(
+                    self.name,
                     view,
                     side,
-                    confidence=0.55,
-                    max_entry_price=price,
-                    reason_codes=("PRE_ORDER_BID", f"PRICE_{price}"),
-                    metrics={
-                        "pair_cost": round(cost, 4),
-                        "expiry_after_open": round(self.config.seconds_after_open_expiry),
-                        "pre_order_shares": shares,
-                        "expiry_ts": view.start_ts.timestamp() + self.config.seconds_after_open_expiry,
-                    },
-                    order_intent=OrderIntentSpec(
-                        OrderIntent.PASSIVE_GTD,
-                        expiry_seconds=max(1, int(view.start_ts.timestamp() + self.config.seconds_after_open_expiry - now.timestamp())),
-                        pair_id=f"{view.market_id}:pre",
+                    OrderDecisionSpec(
+                        confidence=0.55,
+                        max_entry_price=price,
+                        reason_codes=("PRE_ORDER_BID", f"PRICE_{price}"),
+                        metrics={
+                            "pair_cost": round(cost, 4),
+                            "expiry_after_open": round(self.config.seconds_after_open_expiry),
+                            "pre_order_shares": shares,
+                            "expiry_ts": view.start_ts.timestamp() + self.config.seconds_after_open_expiry,
+                        },
+                        order_intent=OrderIntentSpec(
+                            OrderIntent.PASSIVE_GTD,
+                            expiry_seconds=max(1, int(view.start_ts.timestamp() + self.config.seconds_after_open_expiry - now.timestamp())),
+                            pair_id=f"{view.market_id}:pre",
+                        ),
                     ),
                 )
                 if decision:
@@ -124,17 +128,4 @@ class PreOrderMarketAlphaCore:
         )
         return [decision] if decision else []
 
-    def _decision(self, view: MarketView, side: Side, *, confidence: float, max_entry_price: float, reason_codes: tuple[str, ...], metrics: dict[str, Any], order_intent: OrderIntentSpec, hedge_leg: bool = False) -> AlphaDecision | None:
-        return build_order_decision(
-            self.name,
-            view,
-            side,
-            OrderDecisionSpec(
-                confidence=confidence,
-                max_entry_price=max_entry_price,
-                reason_codes=reason_codes,
-                metrics=metrics,
-                order_intent=order_intent,
-                hedge_leg=hedge_leg,
-            ),
-        )
+

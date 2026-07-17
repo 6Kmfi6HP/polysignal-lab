@@ -1,10 +1,12 @@
 """
-Input: polysignal_lab.nautilus_runtime.custom_data_types, polysignal_lab.nautilus_runtime.market_catalog
-Output: custom data routing helpers for PolySignalNativeStrategy
+Input: __future__, __future__.annotations, typing, typing.Callable, typing.Protocol, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.market_catalog.MarketCatalog, polysignal_lab.nautilus_runtime.market_catalog.MarketPairMeta, polysignal_lab.nautilus_runtime.custom_data_state, polysignal_lab.nautilus_runtime.custom_data_state.StrategyCustomDataState
+Output: route_strategy_data, handle_custom_data, handle_market_metadata, handle_market_universe, handle_generic_data, _CustomDataStrategy, _SubscriptionManagerLike
 Pos: Application code
 
-Self-reference: When this file changes, update this header
+🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -101,6 +103,7 @@ def handle_custom_data(
 
 
 def handle_market_metadata(strategy: _CustomDataStrategy, data: PolySignalMarketMetaData) -> bool:
+    """Catalog registration for business keys (not Gamma discovery transport)."""
     registry = strategy._require_registry()
     registry.register(MarketPairMeta.from_metadata(data))
     strategy._refresh_asset_conditions()
@@ -113,6 +116,7 @@ def handle_market_universe(
     strategy: _CustomDataStrategy,
     data: PolySignalMarketUniverseData,
 ) -> bool:
+    """Active-set update for condition_ids (discovery worker removed)."""
     if strategy._market_epoch is not None and data.epoch <= strategy._market_epoch:
         return True
     strategy._market_epoch = data.epoch
@@ -136,6 +140,5 @@ def handle_market_universe(
 
 
 def handle_generic_data(strategy: _CustomDataStrategy, data: object) -> None:
-    """Drop unknown payloads; MarketView assembly is Cache + typed CustomData only."""
     _ = data
     strategy._note_runtime_progress("dropped_frame")

@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, collections, collections.Counter, collections.defaultdict, datetime, datetime.date, typing, typing.Any, typing.Iterable
-Output: normalize_reject_reason, is_rejected_order_payload, DailyReportService
+Input: __future__, __future__.annotations, collections, collections.Counter, collections.defaultdict, datetime, datetime.date, collections.abc, collections.abc.Iterable, collections.abc.Mapping
+Output: DailyReportService
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

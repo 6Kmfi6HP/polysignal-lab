@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, asyncio, types, types.SimpleNamespace, pytest, polysignal_lab.config, polysignal_lab.nautilus_runtime.live_node
-Output: LiveNode runtime unit tests
+Input: __future__, __future__.annotations, asyncio, pathlib, pathlib.Path, types, types.SimpleNamespace, typing, typing.cast, pytest
+Output: test_live_node_exposes_expected_client_ids, test_load_live_runtime_symbols_matches_livenode_api, test_live_polymarket_execution_is_rejected, test_build_sandbox_live_node_uses_polymarket_data_and_sandbox_exec, test_build_sandbox_live_node_uses_official_rtds_via_polymarket_config, test_build_polymarket_data_client_config_uses_dynamic_loading_without_bulk_refresh, test_build_sandbox_live_node_bounds_cache_config, test_build_sandbox_exec_client_config_uses_paper_venue, test_build_exec_engine_config_disables_reconciliation_for_sandbox, test_build_exec_engine_config_enables_reconciliation_for_live
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -27,7 +29,6 @@ from polysignal_lab.nautilus_runtime.live_node import (
     build_sandbox_live_node,
     build_polymarket_data_client_config,
     build_sandbox_exec_client_config,
-    validate_polymarket_market_data_credentials,
 )
 from polysignal_lab.nautilus_runtime.node import run_nautilus_cli_async
 
@@ -89,6 +90,10 @@ class FakeLiveNodeBuilder:
 
     def with_exec_engine_config(self, config: object) -> FakeLiveNodeBuilder:
         self.kwargs["exec_engine"] = config
+        return self
+
+    def with_risk_engine_config(self, config: object) -> FakeLiveNodeBuilder:
+        self.kwargs["risk_engine"] = config
         return self
 
     def with_load_state(self, enabled: bool) -> FakeLiveNodeBuilder:
@@ -192,53 +197,7 @@ def test_live_polymarket_execution_is_rejected() -> None:
         assert_no_live_polymarket_execution(config)
 
 
-def test_polymarket_market_data_credentials_fail_closed() -> None:
-    with pytest.raises(RuntimeError, match="POLYMARKET_API_KEY") as exc_info:
-        validate_polymarket_market_data_credentials({})
 
-    message = str(exc_info.value)
-    assert "POLYMARKET_API_SECRET" in message
-    assert "POLYMARKET_PASSPHRASE" in message
-    assert "POLYMARKET_PK" in message
-    assert "POLYMARKET_FUNDER" in message
-    assert "secret-value" not in message
-
-
-def test_polymarket_market_data_credentials_accept_nonempty_values() -> None:
-    validate_polymarket_market_data_credentials(
-        {
-            "POLYMARKET_API_KEY": "key",
-            "POLYMARKET_API_SECRET": "secret",
-            "POLYMARKET_PASSPHRASE": "passphrase",
-            "POLYMARKET_PK": "private-key",
-            "POLYMARKET_FUNDER": "funder",
-        }
-    )
-
-
-def test_build_sandbox_live_node_rejects_real_polymarket_factory_without_credentials(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patch_live_node_fakes(monkeypatch)
-
-    class RealLikePolymarketFactory:
-        def __call__(self) -> object:
-            return self
-
-    RealLikePolymarketFactory.__module__ = "nautilus_trader.core.nautilus_pyo3.polymarket"
-    monkeypatch.setattr(
-        live_node,
-        "PolymarketDataClientFactory",
-        RealLikePolymarketFactory,
-    )
-    for name in live_node.POLYMARKET_MARKET_DATA_CREDENTIALS:
-        monkeypatch.delenv(name, raising=False)
-
-    with pytest.raises(RuntimeError, match="POLYMARKET_API_KEY"):
-        build_sandbox_live_node(
-            Settings(),
-            instrument_config=SimpleNamespace(load_ids=frozenset()),
-        )
 
 
 def test_build_sandbox_live_node_uses_polymarket_data_and_sandbox_exec(
@@ -370,21 +329,21 @@ def test_live_execution_node_fails_closed_without_safety_unlock() -> None:
         build_live_execution_node(settings, instrument_config=SimpleNamespace())
 
 
-def test_live_execution_node_fails_closed_without_credentials() -> None:
-    settings = Settings.model_validate(
-        {
-            "safety": {"allow_live_market_actions": True},
-            "runtime": {
-                "nautilus": {
-                    "execution_mode": "live",
-                    "allow_live_polymarket_execution": True,
-                }
-            },
-        }
-    )
 
-    with pytest.raises(RuntimeError, match="requires credentials"):
-        build_live_execution_node(settings, instrument_config=SimpleNamespace())
+def test_live_execution_node_fails_closed_without_live_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_live_node_fakes(monkeypatch)
+    settings = Settings()
+    settings.runtime.nautilus.execution_mode = "live"
+    settings.runtime.nautilus.allow_live_polymarket_execution = False
+    settings.safety.allow_live_market_actions = True
+
+    with pytest.raises(RuntimeError, match="allow_live_polymarket_execution"):
+        build_live_execution_node(
+            settings,
+            instrument_config=SimpleNamespace(load_ids=frozenset()),
+        )
 
 
 def test_live_execution_node_registers_official_factory_only_after_all_gates(
@@ -482,3 +441,15 @@ async def test_run_nautilus_cli_async_starts_and_stops_observability_writer(
     assert calls[0] == "start"
     assert "stop" in calls
     assert calls.index("stop") > calls.index("start")
+
+
+def test_build_risk_engine_config_is_fail_closed() -> None:
+    from polysignal_lab.config import Settings
+    from polysignal_lab.nautilus_runtime.live_node import build_risk_engine_config
+
+    settings = Settings()
+    cfg = build_risk_engine_config(settings)
+    # pyo3 LiveRiskEngineConfig exposes fields via Debug, not Python attrs.
+    text = str(cfg).lower()
+    assert "bypass: false" in text
+    assert "max_order_submit_rate" in text

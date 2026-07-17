@@ -1,10 +1,12 @@
 """
 Input: __future__, __future__.annotations, json, os, subprocess, sys, pathlib, pathlib.Path, types, types.ModuleType
-Output: CLI runtime mode tests without scheduler/--dashboard aliases
+Output: test_cli_help_lists_supported_runtime_modes_without_removed_alias, test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given, test_main_uses_nautilus_when_no_mode_is_given, test_main_selects_explicit_nautilus_trading_mode, test_main_import_does_not_load_legacy_scheduler_stack, test_scheduler_mode_is_rejected, test_dashboard_flag_is_rejected, test_smoke_flags_require_explicit_smoke_mode, test_explicit_smoke_writes_bounded_evidence, _FakeSettings
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

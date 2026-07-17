@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, json, re, collections.abc, datetime, datetime.timedelta, typing, pydantic
-Output: gamma_events_from_json, json_list, timeframe_seconds, gamma_events_query_params, paginate_gamma_events, build_current_slot_slugs, flatten_gamma_markets, parse_gamma_markets, match_crypto_updown, infer_outcome_tokens, is_allowed_active_market, is_allowed_window
-Pos: Application code — testable helpers for MarketDiscovery
+Input: __future__, __future__.annotations, json, re, collections.abc, collections.abc.Awaitable, collections.abc.Callable, datetime, datetime.datetime, datetime.timedelta
+Output: gamma_events_from_json, json_list, timeframe_seconds, gamma_events_query_params, gamma_markets_slug_query_params, paginate_gamma_events, paginate_gamma_events_async, build_current_slot_slugs, flatten_gamma_markets, parse_gamma_markets
+Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 
@@ -21,7 +23,9 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market, OutcomeToken
 
 JsonObject = dict[str, JsonValue]
-GAMMA_PAGE_LIMIT: Final = 200
+# Match Nautilus Polymarket gamma_markets page cap. Requesting >100 makes the
+# "len(page) < limit" stop condition trip after page one under silent server caps.
+GAMMA_PAGE_LIMIT: Final = 100
 
 
 def gamma_events_from_json(payload: JsonValue) -> list[JsonObject]:
@@ -56,6 +60,11 @@ def timeframe_seconds(timeframe: str) -> int | None:
 
 
 def gamma_events_query_params(market_config: MarketConfig, offset: int) -> dict[str, str]:
+    """Build /events query params for crypto-updown discovery.
+
+    /events is project-owned business transport (official gamma_markets only
+    covers /markets). Pagination limit still follows the official 100-item cap.
+    """
     return {
         "active": str(market_config.active_only).lower(),
         "closed": str(market_config.closed).lower(),
@@ -64,6 +73,16 @@ def gamma_events_query_params(market_config: MarketConfig, offset: int) -> dict[
         "limit": str(GAMMA_PAGE_LIMIT),
         "offset": str(offset),
     }
+
+
+def gamma_markets_slug_query_params(slug: str) -> dict[str, str]:
+    """Build /markets?slug=... params via official Nautilus gamma helper."""
+    from nautilus_trader.adapters.polymarket.common.gamma_markets import (
+        build_markets_query,
+    )
+
+    raw = build_markets_query({"slug": slug})
+    return {str(key): str(value) for key, value in raw.items()}
 
 
 def paginate_gamma_events(

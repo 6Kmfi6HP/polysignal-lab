@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, factories, factories.sample_report_result, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.reporting_models
+Output: test_daily_report_ignores_boolean_execution_depth, test_daily_report_handles_non_string_reject_reason, test_daily_report_preserves_native_reject_reason, test_daily_report_counts_cancelled_rejects_with_reasons, test_daily_report_ignores_boolean_trade_result_numbers, test_strategy_leaderboard_ignores_boolean_trade_result_numbers, test_report_numeric_accessors_ignore_booleans, test_confidence_bucket_ignores_boolean_confidence, test_confidence_bucket_ignores_non_numeric_confidence, test_report_numeric_accessors_ignore_non_finite_values
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 from datetime import date

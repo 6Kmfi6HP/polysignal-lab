@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, json, typing, typing.Any, typing.Protocol, polysignal_lab.alpha.types
+Input: __future__, __future__.annotations, json, typing, typing.Any, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.domain.signal, polysignal_lab.domain.signal.SignalCandidate
 Output: normalize_candidate, normalize_decision
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

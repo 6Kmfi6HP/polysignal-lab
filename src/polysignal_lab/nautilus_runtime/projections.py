@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, inspect, inspect.Parameter, math
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, inspect, inspect.Parameter
 Output: project_order_event, project_fill_event, project_position, project_account, project_portfolio_snapshot
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -21,20 +23,26 @@ import math
 from typing import SupportsFloat, cast
 
 
-def project_order_event(event: object) -> dict[str, object]:
+def project_order_event(
+    event: object,
+    *,
+    metrics: Mapping[str, object] | None = None,
+) -> dict[str, object]:
     tags = _tags(getattr(event, "tags", None))
-    metrics = _metrics(event)
-    signal_id = tags.get("signal_id", str(metrics.get("signal_id") or ""))
-    order_intent = tags.get("order_intent", str(metrics.get("order_intent") or ""))
+    merged_metrics = _metrics(event)
+    if metrics is not None:
+        merged_metrics.update(dict(metrics))
+    signal_id = tags.get("signal_id", str(merged_metrics.get("signal_id") or ""))
+    order_intent = tags.get("order_intent", str(merged_metrics.get("order_intent") or ""))
     if order_intent:
-        metrics.setdefault("order_intent", order_intent)
+        merged_metrics.setdefault("order_intent", order_intent)
     client_order_id = _text_attr(event, "client_order_id")
     return {
-        "event_id": _text_attr(event, "event_id"),
+        "event_id": _text_attr(event, "event_id") or _text_attr(event, "id"),
         "report_order_id": client_order_id,
         "client_order_id": client_order_id,
         "instrument_id": _text_attr(event, "instrument_id"),
-        "side": _text_attr(event, "order_side"),
+        "side": _text_attr(event, "order_side") or _text_attr(event, "side"),
         "order_type": _text_attr(event, "order_type"),
         "time_in_force": _text_attr(event, "time_in_force"),
         "order_intent": order_intent or "default",
@@ -46,21 +54,37 @@ def project_order_event(event: object) -> dict[str, object]:
         "condition_id": tags.get("condition_id", ""),
         "market_id": tags.get("market_id", ""),
         "signal_id": signal_id,
-        "metrics": metrics,
+        "metrics": merged_metrics,
         "ts": _timestamp_text(event, "ts_event", "timestamp"),
     }
 
 
-def project_fill_event(event: object) -> dict[str, object]:
-    metrics = _metrics(event)
+def project_fill_event(
+    event: object,
+    *,
+    metrics: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    merged_metrics = _metrics(event)
+    if metrics is not None:
+        merged_metrics.update(dict(metrics))
     tags = _tags(getattr(event, "tags", None))
-    signal_id = tags.get("signal_id", str(metrics.get("signal_id") or ""))
+    signal_id = tags.get("signal_id", str(merged_metrics.get("signal_id") or ""))
     quantity = _float_attr(event, "last_qty")
+    if quantity == 0.0:
+        quantity = _float_attr(event, "shares") or _float_attr(event, "quantity")
     price = _float_attr(event, "last_px")
+    if price == 0.0:
+        price = _float_attr(event, "fill_price") or _float_attr(event, "price")
+    if price <= 0.0:
+        raise ValueError("missing positive fill price; refusing fabricated execution truth")
     trade_id = _text_attr(event, "trade_id") or _text_attr(event, "fill_id")
     client_order_id = _text_attr(event, "client_order_id")
+    leaves_qty = _optional_float_attr(event, "leaves_qty")
+    filled_qty = _optional_float_attr(event, "filled_qty")
+    order_qty = _optional_float_attr(event, "order_quantity")
+    order_status = _text_attr(event, "order_status") or _text_attr(event, "status")
     return {
-        "event_id": _text_attr(event, "event_id"),
+        "event_id": _text_attr(event, "event_id") or _text_attr(event, "id"),
         "report_fill_id": trade_id,
         "report_order_id": client_order_id,
         "client_order_id": client_order_id,
@@ -70,8 +94,12 @@ def project_fill_event(event: object) -> dict[str, object]:
         "price": price,
         "notional": quantity * price,
         "liquidity_side": _text_attr(event, "liquidity_side"),
+        "leaves_qty": leaves_qty,
+        "filled_qty": filled_qty,
+        "order_quantity": order_qty,
+        "order_status": order_status,
         "signal_id": signal_id,
-        "metrics": metrics,
+        "metrics": merged_metrics,
         "ts": _timestamp_text(event, "ts_event", "timestamp"),
     }
 

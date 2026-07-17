@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, polysignal_lab.alpha.dump_hedge_core, polysignal_lab.alpha.dump_hedge_core.DumpHedgeAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaFillEvent, polysignal_lab.alpha.types.AlphaOrderEvent, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side
-Output: test_dump_candidate_generation_does_not_consume_dump_guard, test_dump_hedge_uses_fill_event_for_position_state
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, polysignal_lab.alpha.dump_hedge_core, polysignal_lab.alpha.dump_hedge_core.DumpHedgeAlphaCore, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side
+Output: test_dump_detection_uses_fixed_view_time_when_wall_clock_is_unavailable, test_dump_candidate_generation_does_not_consume_dump_guard, test_dump_hedge_uses_cache_position_projection
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

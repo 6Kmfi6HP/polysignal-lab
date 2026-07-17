@@ -1,10 +1,12 @@
 """
-Input: __future__, collections.abc, nautilus_trader.core.nautilus_pyo3
-Output: ContractProbeStrategy — shared pyo3 Strategy for backtest/live sandbox contracts
-Pos: Test Layer - Acceptance harness (same Strategy class in both engines)
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, typing, typing.Any, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3
+Output: ContractProbeConfig, ContractProbeStrategy
+Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

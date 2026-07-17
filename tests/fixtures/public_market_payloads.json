@@ -101,7 +101,7 @@
           "active": true,
           "closed": false,
           "outcomes": "[\"Up\", \"Down\"]",
-          "clobTokenIds": "[\"token-up\", \"token-down\"]"
+          "clobTokenIds": "[\"111\", \"222\"]"
         }
       ]
     },

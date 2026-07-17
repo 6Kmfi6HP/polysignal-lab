@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.timedelta, typing, typing.Final, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.PTBDiffAlphaCore
-Output: test_ptb_alpha_core_matches_equivalent_up_input, test_ptb_alpha_core_matches_equivalent_down_input, test_ptb_alpha_core_rejects_missing_verified_anchor_source, test_ptb_alpha_core_rejects_missing_market_data
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, dataclasses.replace, typing, typing.Final, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.PTBDiffAlphaCore, polysignal_lab.alpha.types
+Output: test_ptb_alpha_core_matches_equivalent_up_input, test_ptb_alpha_core_matches_equivalent_down_input, test_ptb_alpha_core_rejects_missing_verified_anchor_source, test_ptb_alpha_core_rejects_missing_market_data, test_ptb_core_consumes_market_view_directly, CoreScenario
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, logging, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, typing, typing.Protocol, nautilus_trader.common.actor, polysignal_lab.nautilus_runtime.market_discovery_worker
-Output: _MarketUniverse, _Health, MarketRotationActor
+Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, typing, typing.Protocol
+Output: _Health, MarketRotationActor
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -8,53 +8,38 @@ Pos: Application code
 
 
 
-
-
-
-
 from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Protocol, cast
 
 from nautilus_trader.core.nautilus_pyo3 import DataActor
 
 from polysignal_lab.config import Settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
-from polysignal_lab.data.polymarket_market_discovery import MarketDiscovery
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatProvider
-from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.spot import SpotPrice
-from polysignal_lab.nautilus_runtime.spot_anchor_state import SpotAnchorState
-from polysignal_lab.nautilus_runtime.state import JsonValue, decode_state, encode_state
+from polysignal_lab.nautilus_runtime.custom_data_publisher import (
+    CustomDataPublisher,
+    timestamp_ns,
+)
 from polysignal_lab.nautilus_runtime.custom_data_types import (
-    PolySignalMarketUniverseData,
     custom_data_type,
     is_polymarket_rtds_crypto_price,
     polymarket_rtds_crypto_price_type,
     polymarket_rtds_spot_identity,
     unwrap_custom_data,
 )
-from polysignal_lab.nautilus_runtime.market_discovery_worker import (
-    MarketDiscoveryResult,
-    MarketDiscoveryWorker,
-)
-from polysignal_lab.nautilus_runtime.custom_data_publisher import (
-    CustomDataPublisher,
-    market_metadata,
-    timestamp_ns,
-)
+from polysignal_lab.nautilus_runtime.spot_anchor_state import SpotAnchorState
+from polysignal_lab.nautilus_runtime.state import JsonValue, decode_state, encode_state
 
 logger = logging.getLogger("polysignal_lab.nautilus.market_rotation")
 
-REFRESH_TIMER_NAME = "market_rotation_refresh"
-REFRESH_POLL_INTERVAL = timedelta(seconds=1)
-
-
 _PriceToBeatSignature = tuple[float, str, bool, bool, str | None]
+_ROTATION_ACTOR_ID = "PolySignal-MarketRotation"
 
 
 def _data_datetime(value: object, *, fallback: datetime) -> datetime:
@@ -67,22 +52,6 @@ def _data_datetime(value: object, *, fallback: datetime) -> datetime:
     return datetime.fromtimestamp(timestamp_ns_value / 1_000_000_000, UTC)
 
 
-def _build_discovery_worker(
-    settings: Settings,
-    startup_markets: tuple[Market, ...],
-) -> MarketDiscoveryWorker:
-    if settings.runtime.nautilus.execution_mode == "backtest":
-        return MarketDiscoveryWorker(lambda: startup_markets)
-    discovery = MarketDiscovery(settings.data.polymarket, settings.markets)
-    rotation = settings.runtime.nautilus.market_rotation
-    return MarketDiscoveryWorker(
-        lambda: discovery.discover_sync(
-            include_next_periods=rotation.include_next_periods,
-            stale_grace_sec=rotation.stale_grace_sec,
-        )
-    )
-
-
 class _Health(Protocol):
     def mark_ok(self, name: str, **metrics: object) -> None: ...
     def mark_degraded(
@@ -91,14 +60,12 @@ class _Health(Protocol):
         error: str | None = None,
         **metrics: object,
     ) -> None: ...
-
     def mark_down(self, name: str, error: str | None = None, **metrics: object) -> None: ...
 
 
-_ROTATION_ACTOR_ID = "PolySignal-MarketRotation"
-
-
 class MarketRotationActor(DataActor):
+    """PTB + spot anchor actor. Market discovery is owned by official InstrumentProvider."""
+
     state_name = "market_rotation"
 
     def __new__(cls, *args: object, **kwargs: object):
@@ -110,7 +77,7 @@ class MarketRotationActor(DataActor):
         *,
         settings: Settings | None = None,
         startup_markets: tuple[Market, ...] = (),
-        discovery_worker: MarketDiscoveryWorker | None = None,
+        discovery_worker: object | None = None,
         anchor_store: AnchorPriceStore | None = None,
         health: _Health | None = None,
     ) -> None:
@@ -119,6 +86,7 @@ class MarketRotationActor(DataActor):
             MarketRotationActorConfig,
         )
 
+        _ = discovery_worker  # removed; official provider owns instrument discovery
         if isinstance(config, MarketRotationActorConfig) and settings is None:
             settings = config.settings()
             startup_markets = config.markets()
@@ -135,23 +103,19 @@ class MarketRotationActor(DataActor):
             )
         self.settings: Settings = settings
         self.health: _Health | None = health
-        self._discovery_worker = discovery_worker or _build_discovery_worker(
-            settings,
-            startup_markets,
-        )
         self.publisher: CustomDataPublisher = CustomDataPublisher(publisher=self)
-        # Spot history lives only inside SpotAnchorState (Actor-local).
         self._spot_state = SpotAnchorState(anchor_store)
-        self.ptb_provider: PriceToBeatProvider = PriceToBeatProvider(anchor_store=anchor_store)
-        self._active_by_condition: dict[str, Market] = _markets_by_condition(startup_markets)
+        self.ptb_provider: PriceToBeatProvider = PriceToBeatProvider(
+            anchor_store=anchor_store
+        )
+        self._active_by_condition: dict[str, Market] = _markets_by_condition(
+            startup_markets
+        )
         self._epoch: int = 0
-        self._requested_epoch: int = self._epoch
-        self._next_discovery_request_ns: int = 0
         self._last_published_ptb: dict[str, _PriceToBeatSignature] = {}
         self._loaded_from_state: bool = False
 
     def publish_data(self, data_type: object, data: object) -> None:
-        # Calls Actor.publish_data via MRO — Actor is now a direct base class.
         super().publish_data(data_type, data)
 
     def _framework_now(self) -> datetime:
@@ -164,7 +128,6 @@ class MarketRotationActor(DataActor):
                     return datetime.fromtimestamp(value / 1_000_000_000, UTC)
         except (NotImplementedError, RuntimeError, AttributeError):
             pass
-
         if getattr(self, "trader_id", None) is None:
             return datetime(1970, 1, 1, tzinfo=UTC)
         raise RuntimeError("Nautilus actor clock timestamp_ns is unavailable")
@@ -174,28 +137,20 @@ class MarketRotationActor(DataActor):
             self.subscribe_data(custom_data_type(polymarket_rtds_crypto_price_type()))
         if self._epoch == 0:
             self._epoch = 1
-            self._requested_epoch = max(self._requested_epoch, self._epoch)
-        self._replay_active_runtime(phase="startup" if not self._loaded_from_state else "reload")
-        if (
-            self.settings.runtime.nautilus.market_rotation.enabled
-            and self.settings.runtime.nautilus.execution_mode != "backtest"
-        ):
-            interval = max(int(self.settings.runtime.nautilus.market_rotation.interval_sec), 1)
-            next_epoch = max(self._epoch, self._requested_epoch) + 1
-            if self._discovery_worker.request(next_epoch):
-                self._requested_epoch = next_epoch
-            self._next_discovery_request_ns = (
-                timestamp_ns(self._framework_now()) + interval * 1_000_000_000
-            )
-            clock = getattr(self, "clock", None)
-            set_timer = getattr(clock, "set_timer", None)
-            if not callable(set_timer):
-                raise RuntimeError("Nautilus actor clock is required for market rotation")
-            _ = set_timer(
-                REFRESH_TIMER_NAME,
-                REFRESH_POLL_INTERVAL,
-                callback=self._on_refresh_timer,
-            )
+        self._publish_price_to_beat_batch_sync(self.active_markets())
+        self._mark_ok(
+            active_count=len(self._active_by_condition),
+            epoch=self._epoch,
+            phase="startup" if not self._loaded_from_state else "reload",
+        )
+        logger.info(
+            "market_rotation phase=startup epoch=%s active=%s discovery=disabled",
+            self._epoch,
+            len(self._active_by_condition),
+        )
+
+    def on_stop(self) -> None:
+        return
 
     def on_save(self) -> dict[str, bytes]:
         payload: dict[str, JsonValue] = {
@@ -219,182 +174,8 @@ class MarketRotationActor(DataActor):
         epoch = payload.get("epoch")
         if isinstance(epoch, int) and epoch >= 0:
             self._epoch = epoch
-            self._requested_epoch = max(self._requested_epoch, self._epoch)
         self._last_published_ptb.clear()
         self._loaded_from_state = True
-
-    def _replay_active_runtime(self, *, phase: str) -> None:
-        markets = self.active_markets()
-        self._publish_market_universe(
-            epoch=self._epoch,
-            markets=markets,
-            entered_condition_ids=tuple(self._active_by_condition),
-            exited_condition_ids=(),
-        )
-        now = self._framework_now()
-        for market in markets:
-            self.publisher.publish_market_metadata(market_metadata(market, timestamp=now))
-        self._last_published_ptb.clear()
-        self._publish_price_to_beat_batch_sync(markets)
-        self._mark_ok(
-            active_count=len(self._active_by_condition),
-            entered_count=len(self._active_by_condition),
-            exited_count=0,
-            epoch=self._epoch,
-            phase=phase,
-        )
-        logger.info(
-            "market_rotation phase=%s epoch=%s active=%s replay=1",
-            phase,
-            self._epoch,
-            len(self._active_by_condition),
-        )
-
-    def on_stop(self) -> None:
-        try:
-            clock = getattr(self, "clock", None)
-            cancel_timer = getattr(clock, "cancel_timer", None)
-            if callable(cancel_timer):
-                _ = cancel_timer(REFRESH_TIMER_NAME)
-        finally:
-            self._discovery_worker.close()
-
-    def _apply_refreshed_markets(
-        self,
-        refreshed_markets: tuple[Market, ...],
-        *,
-        epoch: int | None = None,
-    ) -> tuple[Market, ...]:
-        current = _markets_by_condition(refreshed_markets)
-        previous = self._active_by_condition
-        if _universe_signature(current) == _universe_signature(previous):
-            return self._finish_unchanged_refresh(current, epoch=epoch)
-
-        entered_condition_ids = tuple(
-            condition_id for condition_id in current if condition_id not in previous
-        )
-        exited_condition_ids = tuple(
-            condition_id for condition_id in previous if condition_id not in current
-        )
-        next_epoch = self._epoch + 1 if epoch is None else epoch
-        self._publish_market_universe(
-            epoch=next_epoch,
-            markets=tuple(current.values()),
-            entered_condition_ids=entered_condition_ids,
-            exited_condition_ids=exited_condition_ids,
-        )
-        self._publish_entered_market_metadata(current, entered_condition_ids)
-        self._clear_exited_price_to_beat(exited_condition_ids)
-        self._active_by_condition = current
-        self._epoch = next_epoch
-        self._mark_ok(
-            active_count=len(current),
-            entered_count=len(entered_condition_ids),
-            exited_count=len(exited_condition_ids),
-            epoch=self._epoch,
-            phase="refresh",
-        )
-        logger.info(
-            "market_rotation phase=refresh epoch=%s active=%s entered=%s exited=%s",
-            self._epoch,
-            len(current),
-            len(entered_condition_ids),
-            len(exited_condition_ids),
-        )
-        return tuple(current.values())
-
-    def _finish_unchanged_refresh(
-        self,
-        current: dict[str, Market],
-        *,
-        epoch: int | None = None,
-    ) -> tuple[Market, ...]:
-        self._active_by_condition = current
-        if epoch is not None:
-            self._epoch = epoch
-        markets = tuple(current.values())
-        self._publish_market_universe(
-            epoch=self._epoch,
-            markets=markets,
-            entered_condition_ids=(),
-            exited_condition_ids=(),
-        )
-        now = self._framework_now()
-        for market in markets:
-            self.publisher.publish_market_metadata(
-                market_metadata(market, timestamp=now)
-            )
-        self._mark_ok(
-            active_count=len(current),
-            entered_count=0,
-            exited_count=0,
-            epoch=self._epoch,
-            phase="refresh",
-        )
-        logger.info(
-            "market_rotation phase=refresh epoch=%s active=%s entered=0 exited=0",
-            self._epoch,
-            len(current),
-        )
-        return tuple(current.values())
-
-    def _publish_entered_market_metadata(
-        self,
-        current: dict[str, Market],
-        entered_condition_ids: tuple[str, ...],
-    ) -> None:
-        for condition_id in entered_condition_ids:
-            self.publisher.publish_market_metadata(
-                market_metadata(current[condition_id], timestamp=self._framework_now())
-            )
-
-    def _clear_exited_price_to_beat(
-        self,
-        exited_condition_ids: tuple[str, ...],
-    ) -> None:
-        for condition_id in exited_condition_ids:
-            _ = self._last_published_ptb.pop(condition_id, None)
-
-    def _on_refresh_timer(self, _event: object = None) -> None:
-        result = self._discovery_worker.take_result()
-        if result is not None:
-            self._requested_epoch = max(self._requested_epoch, result.epoch)
-            self._apply_discovery_result(result)
-
-        now_ns = timestamp_ns(self._framework_now())
-        if now_ns < self._next_discovery_request_ns:
-            return
-        next_epoch = max(self._epoch, self._requested_epoch) + 1
-        if self._discovery_worker.request(next_epoch):
-            self._requested_epoch = next_epoch
-            interval = max(
-                int(self.settings.runtime.nautilus.market_rotation.interval_sec),
-                1,
-            )
-            self._next_discovery_request_ns = now_ns + interval * 1_000_000_000
-
-    def _apply_discovery_result(self, result: MarketDiscoveryResult) -> None:
-        if result.epoch <= self._epoch:
-            return
-        if result.error is not None:
-            self._mark_degraded(
-                error=result.error,
-                phase="market_discovery",
-                result_epoch=result.epoch,
-            )
-            return
-        try:
-            markets = self._apply_refreshed_markets(
-                result.markets,
-                epoch=result.epoch,
-            )
-            self._publish_price_to_beat_batch_sync(markets)
-        except Exception as exc:
-            logger.exception(
-                "market_rotation phase=refresh_apply failed result_epoch=%s",
-                result.epoch,
-            )
-            self._mark_down(exc, phase="refresh_apply", result_epoch=result.epoch)
 
     def on_data(self, data: object) -> None:
         payload = unwrap_custom_data(data)
@@ -466,47 +247,9 @@ class MarketRotationActor(DataActor):
                 self._publish_price_to_beat_sync(market)
             except Exception:
                 logger.exception(
-                    "market_rotation phase=refresh_ptb failed epoch=%s condition_id=%s",
-                    self._epoch,
+                    "market_rotation phase=ptb failed condition_id=%s",
                     market.condition_id,
                 )
-
-    def _publish_market_universe(
-        self,
-        *,
-        epoch: int,
-        markets: tuple[Market, ...],
-        entered_condition_ids: tuple[str, ...],
-        exited_condition_ids: tuple[str, ...],
-    ) -> None:
-        active_by_condition = _markets_by_condition(markets)
-        now = self._framework_now()
-        self.publisher.publish_market_universe(
-            PolySignalMarketUniverseData(
-                epoch=epoch,
-                active_condition_ids=tuple(active_by_condition),
-                entered_condition_ids=entered_condition_ids,
-                exited_condition_ids=exited_condition_ids,
-                condition_to_up_token={
-                    condition_id: market.token_for(Side.UP).token_id
-                    for condition_id, market in active_by_condition.items()
-                },
-                condition_to_down_token={
-                    condition_id: market.token_for(Side.DOWN).token_id
-                    for condition_id, market in active_by_condition.items()
-                },
-                condition_to_asset={
-                    condition_id: market.asset
-                    for condition_id, market in active_by_condition.items()
-                },
-                condition_to_timeframe={
-                    condition_id: market.timeframe
-                    for condition_id, market in active_by_condition.items()
-                },
-                ts_event=timestamp_ns(now),
-                ts_init=timestamp_ns(now),
-            )
-        )
 
     def _mark_ok(self, **metrics: object) -> None:
         if self.health is not None:
@@ -521,35 +264,14 @@ class MarketRotationActor(DataActor):
                 **metrics,
             )
 
-
     def _mark_down(self, exc: Exception, **metrics: object) -> None:
         if self.health is not None:
-            self.health.mark_down("market_rotation", str(exc), epoch=self._epoch, **metrics)
+            self.health.mark_down(
+                "market_rotation", str(exc), epoch=self._epoch, **metrics
+            )
 
 
-
-
-def _markets_by_condition(markets: tuple[Market, ...] | list[Market]) -> dict[str, Market]:
+def _markets_by_condition(
+    markets: tuple[Market, ...] | list[Market],
+) -> dict[str, Market]:
     return {market.condition_id: market for market in markets if market.condition_id}
-
-
-def _universe_signature(markets_by_condition: dict[str, Market]) -> tuple[
-    tuple[str, ...],
-    dict[str, str],
-    dict[str, str],
-    dict[str, str],
-    dict[str, str],
-]:
-    return (
-        tuple(sorted(markets_by_condition)),
-        {
-            condition_id: market.token_for(Side.UP).token_id
-            for condition_id, market in markets_by_condition.items()
-        },
-        {
-            condition_id: market.token_for(Side.DOWN).token_id
-            for condition_id, market in markets_by_condition.items()
-        },
-        {condition_id: market.asset for condition_id, market in markets_by_condition.items()},
-        {condition_id: market.timeframe for condition_id, market in markets_by_condition.items()},
-    )

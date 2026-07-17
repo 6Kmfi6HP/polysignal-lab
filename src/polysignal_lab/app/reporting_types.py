@@ -1,10 +1,12 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.date, typing, typing.Any, typing.Protocol, polysignal_lab.domain.reporting_result
-Output: DailyReportInputs, _ReportScheduler, _ReportPersistence, _ReportLogger
+Output: _ReportPersistence, _ReportLogger, _TradingSettings, _PolymarketSettings, _DataSettings, _TelegramSettings, _AppSettings, _ReportSettings, _PublishResult, _DailyReportPublisher
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

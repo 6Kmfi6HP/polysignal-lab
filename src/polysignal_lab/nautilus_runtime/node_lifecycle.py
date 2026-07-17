@@ -1,10 +1,12 @@
 """
-Input: __future__, asyncio, inspect, logging, contextlib, collections.abc, typing
-Output: CLI lifecycle helpers for the native node and external notifications
+Input: __future__, __future__.annotations, asyncio, inspect, logging, collections.abc, collections.abc.Callable, collections.abc.Sequence, contextlib, contextlib.suppress
+Output: None
 Pos: Application code
 
-Self-reference: When this file changes, update this header
+🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 from __future__ import annotations
 

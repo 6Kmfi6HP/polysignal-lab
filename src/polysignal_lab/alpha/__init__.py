@@ -1,10 +1,12 @@
 """
-Input: polysignal_lab.alpha core modules, state, types, vwap_trade_history
-Output: production alpha cores, MarketView types, and state helpers
+Input: polysignal_lab.alpha.binary_momentum_core, polysignal_lab.alpha.binary_momentum_core.BinaryMomentumAlphaCore, polysignal_lab.alpha.cross_market_core, polysignal_lab.alpha.cross_market_core.CrossMarketAlphaCore, polysignal_lab.alpha.dump_hedge_core, polysignal_lab.alpha.dump_hedge_core.DumpHedgeAlphaCore, polysignal_lab.alpha.fibonacci_core, polysignal_lab.alpha.fibonacci_core.FibonacciAlphaCore, polysignal_lab.alpha.fibonacci_core.FibonacciCalculator, polysignal_lab.alpha.fibonacci_core.ZigZagDetector
+Output: None
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -25,13 +27,18 @@ from polysignal_lab.alpha.pre_order_market_core import PreOrderMarketAlphaCore
 from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
 from polysignal_lab.alpha.skew_mean_reversion_core import SkewMeanReversionAlphaCore
 from polysignal_lab.alpha.vwap_momentum_core import VWAPMomentumAlphaCore
-from polysignal_lab.alpha.vwap_trade_history import TradeHistory
+from polysignal_lab.alpha.vwap_trade_history import (
+    TradeSample,
+    latest_price,
+    momentum,
+    samples_from_trade_views,
+    trades_in_window,
+    vwap,
+)
 from polysignal_lab.alpha.state import json_safe_state, restore_utc_datetime
 from polysignal_lab.alpha.types import (
     AlphaCore,
     AlphaDecision,
-    AlphaFillEvent,
-    AlphaOrderEvent,
     CachedOrderView,
     CachedPositionView,
     FreshnessView,
@@ -41,7 +48,6 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
     SideBookView,
     SpotView,
-    StatefulAlphaCore,
     TradeView,
     TradingStateView,
 )
@@ -49,8 +55,6 @@ from polysignal_lab.alpha.types import (
 __all__ = [
     "AlphaCore",
     "AlphaDecision",
-    "AlphaFillEvent",
-    "AlphaOrderEvent",
     "CachedOrderView",
     "CachedPositionView",
     "BinaryMomentumAlphaCore",
@@ -73,12 +77,16 @@ __all__ = [
     "SideBookView",
     "SkewMeanReversionAlphaCore",
     "SpotView",
-    "StatefulAlphaCore",
-    "TradeHistory",
+    "TradeSample",
     "TradeView",
     "TradingStateView",
     "VWAPMomentumAlphaCore",
     "ZigZagDetector",
     "json_safe_state",
+    "latest_price",
+    "momentum",
     "restore_utc_datetime",
+    "samples_from_trade_views",
+    "trades_in_window",
+    "vwap",
 ]

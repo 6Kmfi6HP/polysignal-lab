@@ -1,15 +1,10 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, dataclasses.field, datetime, datetime.datetime, datetime.timezone, threading, threading.Lock
-Output: parse_source_timestamp, MarketRegistry, SpotRegistry
+Output: parse_source_timestamp, append_spot_history, MarketRegistry, SpotRegistry
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
-
-
-
-
-
 
 
 
@@ -22,6 +17,8 @@ from typing import Any
 
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.spot import SpotPrice
+
+SPOT_HISTORY_LIMIT = 512
 
 
 def parse_source_timestamp(ts_val: Any) -> datetime | None:
@@ -37,6 +34,20 @@ def parse_source_timestamp(ts_val: Any) -> datetime | None:
             return datetime.fromisoformat(str(ts_val).replace("Z", "+00:00"))
         except ValueError:
             return None
+
+
+def append_spot_history(
+    history_by_asset: dict[str, list[SpotPrice]],
+    spot: SpotPrice,
+    *,
+    limit: int = SPOT_HISTORY_LIMIT,
+) -> list[SpotPrice]:
+    """Append a spot sample and truncate to the shared history window."""
+    asset = spot.asset.upper()
+    history = history_by_asset.setdefault(asset, [])
+    history.append(spot)
+    del history[:-limit]
+    return history
 
 
 @dataclass
@@ -82,7 +93,11 @@ class MarketRegistry:
 
 @dataclass
 class SpotRegistry:
-    """Actor-local spot history for SpotAnchorState (not trading book truth)."""
+    """Thread-safe spot history for AnchorPriceService / reporting paths.
+
+    Runtime trading anchor capture uses ``SpotAnchorState`` with the same
+    ``append_spot_history`` helper so history truncation stays single-source.
+    """
 
     spots: dict[str, SpotPrice] = field(default_factory=dict)
     history: dict[str, list[SpotPrice]] = field(default_factory=dict)
@@ -92,8 +107,7 @@ class SpotRegistry:
         asset = spot.asset.upper()
         with self._lock:
             self.spots[asset] = spot
-            self.history.setdefault(asset, []).append(spot)
-            self.history[asset] = self.history[asset][-512:]
+            append_spot_history(self.history, spot)
 
     def get(self, asset: str) -> SpotPrice | None:
         with self._lock:

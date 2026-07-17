@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.replace, datetime, datetime.datetime, datetime.timezone, types, types.SimpleNamespace, polysignal_lab.alpha.cross_market_core
-Output: test_group_assembler_rejects_excessive_skew, test_group_assembler_rejects_equally_stale_views, test_group_assembler_rejects_missing_freshness, test_group_assembler_honors_per_call_age_limit, test_group_assembler_accepts_acceptable_skew, test_cross_market_pair_id_reaches_native_order_tags, test_cross_market_decisions_use_native_decision_pipeline, test_cross_market_leg_failure_marks_basket, test_cross_market_state_roundtrip, AllowAllPolicy
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.replace, datetime, datetime.datetime, datetime.timezone, types
+Output: test_group_assembler_rejects_excessive_skew, test_group_assembler_rejects_equally_stale_views, test_group_assembler_rejects_missing_freshness, test_group_assembler_honors_per_call_age_limit, test_group_assembler_accepts_acceptable_skew, test_cross_market_pair_id_reaches_native_order_tags, test_cross_market_decisions_use_strategy_owned_policy_result_handler, test_cross_market_core_has_no_shadow_basket_state, test_cross_market_state_excludes_order_and_fill_state, AllowAllPolicy
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -38,8 +40,6 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
 )
 from polysignal_lab.nautilus_runtime.group_views import MarketGroupViewAssembler
 from polysignal_lab.nautilus_runtime.native_order import submit_approved_decision
-from polysignal_lab.nautilus_runtime.decision_messages import DecisionCandidateData
-from polysignal_lab.nautilus_runtime.decision_policy_actor import DecisionPolicyActor
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
     DecisionPipelineState,
     DecisionResultHandler,
@@ -294,8 +294,12 @@ def test_cross_market_pair_id_reaches_native_order_tags() -> None:
 
     class RecordingStrategy:
         def __init__(self) -> None:
-            self.order_factory = RecordingOrderFactory()
+            self._order_factory_override = RecordingOrderFactory()
             self.submitted: list[SimpleNamespace] = []
+
+        @property
+        def order_factory(self) -> RecordingOrderFactory:
+            return self._order_factory_override
 
         def submit_order(self, order: SimpleNamespace) -> None:
             self.submitted.append(order)
@@ -316,7 +320,7 @@ def test_cross_market_pair_id_reaches_native_order_tags() -> None:
     assert "pair_id=btc-eth-rel" in order.tags
 
 
-def test_cross_market_decisions_use_policy_actor_result_handler() -> None:
+def test_cross_market_decisions_use_strategy_owned_policy_result_handler() -> None:
     # Given
     group = _group()
     decisions = tuple(_core().evaluate_group(group))
@@ -326,28 +330,20 @@ def test_cross_market_decisions_use_policy_actor_result_handler() -> None:
         is_signal_submitted=lambda _dedupe_key: False,
     )
     sink = _RecordingSink(submitted)
-    actor = DecisionPolicyActor(policy=AllowAllPolicy())
-    requests = tuple(
-        DecisionCandidateData.from_domain(
-            request_id=f"request-{index}",
-            batch_id="cross-market",
-            batch_index=index,
-            batch_size=len(decisions),
-            decision=decision,
-            view=group.views_by_condition_id[decision.condition_id],
-            ts_event=1,
-            ts_init=1,
-        )
-        for index, decision in enumerate(decisions)
-    )
+    policy = AllowAllPolicy()
+    pairs = [
+        (decision, group.views_by_condition_id[decision.condition_id])
+        for decision in decisions
+    ]
 
     # When
-    for decision, result in zip(decisions, actor.evaluate_batch(requests), strict=True):
-        view = group.views_by_condition_id[decision.condition_id]
-        signal = result.signal()
-        assert signal is not None
+    arbitration = policy.batch_arbitrate(pairs)
+    survivor_ids = {id(decision) for decision in arbitration}
+    for decision, view in pairs:
+        assert id(decision) in survivor_ids
+        result = policy.decide(decision, view)
         handler.handle_result(
-            ApprovedDecision(signal=signal),
+            result,
             decision,
             view,
             state=state,

@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, types, types.SimpleNamespace, pytest, telegram.ext, telegram.ext.CallbackQueryHandler, telegram.ext.CommandHandler, polysignal_lab.publish.telegram_bot, polysignal_lab.publish.telegram_bot.TelegramBotService
+Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timezone, types, types.SimpleNamespace, pytest, telegram.ext
 Output: test_telegram_bot_registers_ptb_handlers, test_telegram_bot_start_uses_embedded_ptb_lifecycle, test_telegram_bot_start_polling_uses_drop_pending_updates, test_telegram_bot_stop_uses_ptb_shutdown_order, test_telegram_bot_rejects_group_chat, test_telegram_bot_rejects_private_chat_not_in_allowlist, test_telegram_bot_uses_ptb_inline_keyboard_markup, test_telegram_bot_callback_always_answers, test_telegram_bot_callback_answers_before_rendering, test_telegram_bot_status_replies_before_rendering
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -25,8 +27,8 @@ from factories import sample_report_result
 from polysignal_lab.config import TelegramConfig
 from polysignal_lab.data.state import MarketRegistry
 from polysignal_lab.domain.enums import PositionStatus, Side
+from polysignal_lab.alpha.types import SideBookView
 from polysignal_lab.domain.market import Market, OutcomeToken
-from polysignal_lab.domain.orderbook import BookLevel, OrderBook
 from polysignal_lab.domain.reporting_result import DailyReport
 from polysignal_lab.publish.telegram_bot import TelegramBotService
 from polysignal_lab.signal_layer.formatter import MessageFormatter
@@ -35,12 +37,12 @@ from telegram import InlineKeyboardMarkup
 
 class _FakeBooks:
     def __init__(self) -> None:
-        self._books: dict[str, OrderBook] = {}
+        self._books: dict[str, SideBookView] = {}
 
-    def update(self, book: OrderBook) -> None:
+    def update(self, book: SideBookView) -> None:
         self._books[book.token_id] = book
 
-    def get(self, token_id: str) -> OrderBook | None:
+    def get(self, token_id: str) -> SideBookView | None:
         return self._books.get(token_id)
 
 
@@ -487,10 +489,13 @@ def test_telegram_bot_positions_marks_live_book_when_available() -> None:
     persistence.positions = [position]
     service = _formatting_service(persistence)
     service.books.update(
-        OrderBook(
+        SideBookView(
             token_id="token-up",
-            bids=[BookLevel(price=0.71, size=100)],
-            asks=[BookLevel(price=0.72, size=100)],
+            best_bid=0.71,
+            best_ask=0.72,
+            spread=0.01,
+            freshness_ms=0,
+            ask_levels=((0.72, 100.0),),
         )
     )
 
@@ -565,10 +570,13 @@ def test_telegram_bot_positions_accepts_projected_nautilus_rows() -> None:
         ]
     )
     service.books.update(
-        OrderBook(
+        SideBookView(
             token_id="token-up",
-            bids=[BookLevel(price=0.71, size=100)],
-            asks=[BookLevel(price=0.72, size=100)],
+            best_bid=0.71,
+            best_ask=0.72,
+            spread=0.01,
+            freshness_ms=0,
+            ask_levels=((0.72, 100.0),),
         )
     )
 

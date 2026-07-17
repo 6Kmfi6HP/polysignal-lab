@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Callable, dataclasses, dataclasses.dataclass, dataclasses.field, polysignal_lab.config, polysignal_lab.config.BinanceDataConfig
-Output: GateDecision, GateRejection, SignalGate
+Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Callable, collections.abc.Mapping, dataclasses, dataclasses.dataclass, dataclasses.field, datetime
+Output: GateDecision, GateRejection, _FreshnessCheckSpec, SignalGate
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -19,21 +21,18 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from threading import Lock
 
 from polysignal_lab.alpha.types import MarketView, SideBookView, SpotView
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
-from polysignal_lab.signal_layer.deduper import SignalDeduper
-from polysignal_lab.signal_layer.rate_limit import ChannelRateLimiter
 
 
 _UNKNOWN_LAG_MS = 10**12
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class GateDecision:
     accepted: bool
     signal: SignalCandidate | None = None
@@ -101,15 +100,10 @@ class SignalGate:
         signal_config: SignalConfig,
         poly_config: PolymarketDataConfig,
         binance_config: BinanceDataConfig,
-        deduper: SignalDeduper | None = None,
-        rate_limiter: ChannelRateLimiter | None = None,
     ) -> None:
         self.signal_config = signal_config
         self.poly_config = poly_config
         self.binance_config = binance_config
-        self.deduper = deduper or SignalDeduper(signal_config.dedupe_ttl_sec)
-        self.rate_limiter = rate_limiter or ChannelRateLimiter(signal_config.max_signals_per_hour, signal_config.max_signals_per_market)
-        self._commit_lock = Lock()
 
     def evaluate(self, candidate: SignalCandidate, view: MarketView) -> GateDecision:
         prevalidated = self.prevalidate(candidate, view)
@@ -118,61 +112,8 @@ class SignalGate:
         return self.commit([candidate])[0]
 
     def commit(self, candidates: list[SignalCandidate]) -> list[GateDecision]:
-        """Atomically reserve stateful gate capacity for an eligible candidate unit."""
-        with self._commit_lock:
-            stateful_candidates = [candidate for candidate in candidates if not candidate.reduce_only]
-            duplicate = next(
-                (
-                    candidate
-                    for candidate in stateful_candidates
-                    if self.signal_config.dedupe_enabled
-                    and self.deduper.contains(candidate)
-                ),
-                None,
-            )
-            if duplicate is not None:
-                return self._commit_rejections(candidates, "DUPLICATE_SIGNAL", duplicate)
-            if len({candidate.dedupe_key for candidate in stateful_candidates}) != len(stateful_candidates):
-                return self._commit_rejections(candidates, "DUPLICATE_SIGNAL", stateful_candidates[0])
-            entry_candidates = stateful_candidates
-            if entry_candidates and not self.rate_limiter.can_allow(
-                [candidate.market_id for candidate in entry_candidates],
-                now=max(candidate.created_at.timestamp() for candidate in entry_candidates),
-            ):
-                return self._commit_rejections(candidates, "CHANNEL_RATE_LIMIT", entry_candidates[0])
-            for candidate in stateful_candidates:
-                if self.signal_config.dedupe_enabled and self.deduper.is_duplicate(candidate):
-                    return self._commit_rejections(candidates, "DUPLICATE_SIGNAL", candidate)
-                if not self.rate_limiter.allow(
-                    candidate.market_id,
-                    now=candidate.created_at.timestamp(),
-                ):
-                    return self._commit_rejections(candidates, "CHANNEL_RATE_LIMIT", candidate)
+        """Accept prevalidated candidates; RiskEngine and Cache own stateful checks."""
         return [GateDecision(True, signal=candidate) for candidate in candidates]
-
-    def _commit_rejections(
-        self,
-        candidates: list[SignalCandidate],
-        reason_code: str,
-        source: SignalCandidate,
-    ) -> list[GateDecision]:
-        return [
-            GateDecision(True, signal=candidate)
-            if candidate.reduce_only
-            else GateDecision(
-                False,
-                rejected=RejectedSignal(
-                    candidate=candidate,
-                    gate_name="commit",
-                    reason_code=reason_code,
-                    details=self._rejection_details(
-                        candidate,
-                        GateRejection(reason_code, {"source_signal_id": source.signal_id}),
-                    ),
-                ),
-            )
-            for candidate in candidates
-        ]
 
     def prevalidate(
         self, candidate: SignalCandidate, view: MarketView
@@ -423,19 +364,3 @@ class SignalGate:
             else GateRejection("CONFIDENCE_TOO_LOW")
         )
 
-    def _dedupe(self, candidate: SignalCandidate, view: MarketView) -> GateRejection | None:
-        if candidate.reduce_only:
-            return None
-        if self.signal_config.dedupe_enabled and self.deduper.is_duplicate(candidate):
-            return GateRejection("DUPLICATE_SIGNAL")
-        return None
-
-    def _rate_limit(self, candidate: SignalCandidate, view: MarketView) -> GateRejection | None:
-        if candidate.reduce_only:
-            return None
-        if not self.rate_limiter.allow(
-            candidate.market_id,
-            now=candidate.created_at.timestamp(),
-        ):
-            return GateRejection("CHANNEL_RATE_LIMIT")
-        return None

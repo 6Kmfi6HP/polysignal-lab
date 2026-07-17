@@ -1,10 +1,12 @@
 """
-Input: __future__, json, datetime, sqlite3, dataclasses, collections.abc, pathlib, threading, typing, polysignal_lab.domain, polysignal_lab.reporting, polysignal_lab.storage, polysignal_lab.utils
-Output: DuplicateRecordError, MalformedSQLitePayloadError, SQLiteStore
+Input: __future__, __future__.annotations, json, datetime, datetime.datetime, datetime.timedelta, math, sqlite3, dataclasses, dataclasses.dataclass
+Output: DuplicateRecordError, MalformedSQLitePayloadError, UnknownSQLiteTableError, SQLiteStore
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -1729,7 +1731,8 @@ class SQLiteStore:
             payload["quantity"] = fill.get("shares")
         if fill.get("stake_usdc") is not None:
             payload["stake_usdc"] = fill.get("stake_usdc")
-        payload["status"] = "FILLED"
+        status = self._order_status_after_fill(event, fill, existing_payload=payload)
+        payload["status"] = status
         payload.pop("_projection_invalid", None)
         payload["report_order_id"] = order_id
         self._conn.execute(
@@ -1751,13 +1754,62 @@ class SQLiteStore:
                )""",
             (
                 order_id,
-                "FILLED",
+                status,
                 source_event_at,
                 source_event_at,
                 source_event_id,
                 self._json(payload),
             ),
         )
+
+    @staticmethod
+    def _order_status_after_fill(
+        event: Mapping[str, Any],
+        fill: Mapping[str, Any],
+        *,
+        existing_payload: Mapping[str, Any],
+    ) -> str:
+        """Distinguish partial vs full fills — never claim FILLED unconditionally."""
+        for key in ("order_status", "status"):
+            raw = event.get(key)
+            if raw is None or str(raw).strip() == "":
+                continue
+            text = str(raw).upper().replace(" ", "_")
+            if text in {"PARTIAL", "PARTIALLY_FILLED"}:
+                return "PARTIALLY_FILLED"
+            if text == "FILLED":
+                return "FILLED"
+        leaves = event.get("leaves_qty")
+        if leaves is not None:
+            try:
+                if float(leaves) > 1e-12:
+                    return "PARTIALLY_FILLED"
+                return "FILLED"
+            except (TypeError, ValueError):
+                pass
+        filled_qty = event.get("filled_qty")
+        order_qty = event.get("order_quantity")
+        if filled_qty is not None and order_qty is not None:
+            try:
+                if float(filled_qty) + 1e-12 < float(order_qty):
+                    return "PARTIALLY_FILLED"
+                return "FILLED"
+            except (TypeError, ValueError):
+                pass
+        metrics = event.get("metrics")
+        contracts: object | None = None
+        if isinstance(metrics, Mapping):
+            contracts = metrics.get("contracts")
+        if contracts is None:
+            contracts = existing_payload.get("shares") or existing_payload.get("quantity")
+        last_qty = fill.get("shares") or event.get("quantity")
+        if contracts is not None and last_qty is not None:
+            try:
+                if float(last_qty) + 1e-12 < float(contracts):
+                    return "PARTIALLY_FILLED"
+            except (TypeError, ValueError):
+                pass
+        return "FILLED"
 
     @staticmethod
     def _report_state_event_at(
@@ -1786,26 +1838,37 @@ class SQLiteStore:
         report_result_id: str,
         publish_id: str | None,
     ) -> None:
-        with self._lock, self._conn:
-            self._conn.execute(
-                "DELETE FROM report_results WHERE report_result_id = ?",
-                (report_result_id,),
-            )
-            if publish_id is not None:
-                self._conn.execute(
-                    "DELETE FROM telegram_publishes WHERE publish_id = ?",
-                    (publish_id,),
-                )
+        self._delete_row_and_optional_publish(
+            table="report_results",
+            id_column="report_result_id",
+            record_id=report_result_id,
+            publish_id=publish_id,
+        )
 
     def delete_daily_report_rows(
         self,
         report_id: str,
         publish_id: str | None,
     ) -> None:
+        self._delete_row_and_optional_publish(
+            table="daily_reports",
+            id_column="report_id",
+            record_id=report_id,
+            publish_id=publish_id,
+        )
+
+    def _delete_row_and_optional_publish(
+        self,
+        *,
+        table: str,
+        id_column: str,
+        record_id: str,
+        publish_id: str | None,
+    ) -> None:
         with self._lock, self._conn:
             self._conn.execute(
-                "DELETE FROM daily_reports WHERE report_id = ?",
-                (report_id,),
+                f"DELETE FROM {table} WHERE {id_column} = ?",
+                (record_id,),
             )
             if publish_id is not None:
                 self._conn.execute(
@@ -1969,11 +2032,20 @@ class SQLiteStore:
     def report_result_rows(self, limit: int) -> list[dict[str, Any]]:
         return self.query_json("report_results", limit=limit)
 
-    def daily_reports(self, limit: int) -> list[dict[str, Any]]:
-        return self.query_daily_reports(limit=limit)
+    def daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self.query_json(
+            "daily_reports",
+            where="ORDER BY report_date DESC, revision DESC, created_at DESC",
+            limit=limit,
+        )
 
-    def strategy_leaderboard(self, limit: int) -> list[dict[str, Any]]:
-        return self.query_strategy_leaderboard(limit=limit)
+    def strategy_leaderboard(self, limit: int = 500) -> list[dict[str, Any]]:
+        results = self.query_json(
+            "report_results",
+            where="ORDER BY closed_at DESC",
+            limit=50_000,
+        )
+        return build_strategy_leaderboard_rows(results)[:limit]
 
     def counts(self) -> dict[str, int]:
         with self._lock:
@@ -2009,21 +2081,6 @@ class SQLiteStore:
             for row in self.report_position_rows(PositionStatus.CLOSED.value, 100_000)
             if _valid_position_event(row)
         ]
-
-    def query_daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
-        return self.query_json(
-            "daily_reports",
-            where="ORDER BY report_date DESC, revision DESC, created_at DESC",
-            limit=limit,
-        )
-
-    def query_strategy_leaderboard(self, limit: int = 500) -> list[dict[str, Any]]:
-        results = self.query_json(
-            "report_results",
-            where="ORDER BY closed_at DESC",
-            limit=50_000,
-        )
-        return build_strategy_leaderboard_rows(results)[:limit]
 
     def _insert_idempotent(
         self,

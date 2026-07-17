@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, html, collections.abc, collections.abc.Callable, datetime, datetime.datetime, datetime.timezone, telegram, typing, typing.Any, typing.Literal, polysignal_lab.storage.event_projection.normalize_report_position
-Output: main_keyboard, back_keyboard, leaderboard_keyboard, strategies_keyboard, toggle_callback_for, safe_text, parse_time, format_age, truncate_text, position_display_payload, row_float
+Input: __future__, __future__.annotations, html, collections.abc, collections.abc.Callable, datetime, datetime.datetime, datetime.timezone, typing, typing.Any
+Output: toggle_callback_for, main_keyboard, leaderboard_keyboard, back_keyboard, strategies_keyboard, safe_text, parse_time, format_age, truncate_text, position_display_payload
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

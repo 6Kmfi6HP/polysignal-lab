@@ -1,3 +1,12 @@
+"""
+Input: __future__, __future__.annotations, types, types.SimpleNamespace, typing, typing.Any, typing.cast, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3, nautilus_trader.core.nautilus_pyo3.PolymarketRtdsCryptoPrice
+Output: test_custom_data_publisher_publishes_price_to_beat_as_pyo3_custom_data, test_custom_data_publisher_publishes_market_metadata_without_shadow_state, test_market_rotation_actor_accepts_managed_rtds_source, test_market_rotation_actor_subscribes_to_managed_rtds_spot, test_market_rotation_actor_does_not_construct_legacy_rtds_feed, test_pyo3_engine_routes_rtds_custom_data_by_data_type, FakePublisher, _NoopWorker
+Pos: Test Layer - Unit/Integration tests
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 from __future__ import annotations
 
 from types import SimpleNamespace

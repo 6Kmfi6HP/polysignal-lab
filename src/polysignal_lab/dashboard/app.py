@@ -1,10 +1,12 @@
 """
-Input: __future__, datetime, math, typing, fastapi, polysignal_lab.dashboard.reporting_read, polysignal_lab.domain.market, polysignal_lab.storage.event_projection
+Input: __future__, __future__.annotations, math, datetime, datetime.UTC, datetime.datetime, typing, typing.Any, typing.TypeAlias, fastapi
 Output: create_dashboard_app
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

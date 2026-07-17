@@ -6,14 +6,36 @@
 |------|------|
 | 产品名称 | PolySignal Lab |
 | 产品类型 | Polymarket 短周期信号 + 模拟交易验证系统 |
-| 当前阶段 | PRD |
-| 开发范围 | 只读行情、策略信号、Telegram 发布、简单模拟交易、胜负统计 |
-| 明确不做 | 不真实下单、不签名、不接触钱包密钥、不托管资金、不自动链上领取 |
+| 当前阶段 | PRD（产品需求；**架构真相以活文档为准**） |
+| 开发范围 | 只读行情、策略信号、Telegram 发布、Nautilus sandbox 纸面验证、胜负统计（报表） |
+| 明确不做（默认产品） | 默认不注册 live 执行、不自建 signing/CLOB 客户端、不接触钱包密钥、不托管资金、不自动链上领取；sandbox `submit_order` 允许；gated live 仅官方 adapter |
 | 核心目标 | 将 3 个独立 Polymarket 机器人重构为一个统一信号与模拟验证系统 |
+
+架构 / 运行时边界（本 PRD 不重复维护）：
+
+- [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md) — 三真相与所有权
+- [`RUNTIME_BOUNDARY.md`](RUNTIME_BOUNDARY.md) — 模式、禁止面、退出/结算/报表边界
+- [`NAUTILUS_CAPABILITY_MATRIX.md`](NAUTILUS_CAPABILITY_MATRIX.md) — 已验证包能力
+- [`nautilus_reference/developer_guide/design_principles.md`](nautilus_reference/developer_guide/design_principles.md) — Nautilus 消息不可变等设计不变量
+
+### 1.1 与 NautilusTrader 设计对齐（禁止违反）
+
+本产品运行在 Nautilus 之上；PRD 不得要求下列反模式：
+
+| 不变量 | PRD / 实现要求 |
+|--------|----------------|
+| **消息不可变** | `AlphaDecision` / `SignalCandidate` / `GateDecision` / CustomData / native events 一经产生不得就地改写（含 `metrics` / `reason_codes` 等容器字段）；需要新事实就发新消息或写本地派生状态（见 Nautilus [design_principles](nautilus_reference/developer_guide/design_principles.md) / [message integrity](https://nautilustrader.io/docs/latest/concepts/message_bus/#message-integrity)） |
+| **Cache / Portfolio / Account 是交易真相** | 不得用 SQLite/`report_*`/JSONL 恢复或驱动持仓、余额、敞口；报表 PnL 的 shares/entry/stake 读 Cache 投影 |
+| **RiskEngine 拥有账户/敞口风险** | `submit_order` 进入 RiskEngine（见 [Strategies](https://nautilustrader.io/docs/latest/concepts/strategies)）；不得再实现第二套 paper Account/Exposure/Position-limit gate；`SignalGate` 只做业务资格检查 |
+| **Strategy 是回调宿主** | 多步逻辑在 `nautilus_runtime/strategy/*`；下单只经 `order_factory` + `submit_order` |
+| **Adapter 拥有 venue I/O** | 不得自建 CLOB/book/signing 第二真相；spot 仅 managed RTDS `LiveDataClient`（见 [adapters](nautilus_reference/developer_guide/adapters.md)） |
+| **无第二决策总线** | `DecisionPolicy` 为 Strategy 内纯逻辑（当前为 **gate-only**）；禁止 `DecisionPolicyActor` / candidate Signal 总线 |
+| **时间来自 Nautilus Clock** | 决策定时器与交易事件时间戳用引擎 Clock；报表层 `report_results.closed_at` 等投影戳允许墙钟，但不得回写交易状态（见 [`RUNTIME_BOUNDARY.md`](RUNTIME_BOUNDARY.md)） |
+| **结算不得伪造 native 生命周期** | sandbox/live 的 WIN/LOSS 只写 `report_results`；不得合成 fill / `PositionClosed` / Portfolio·Account 突变 |
 
 ## 2. 一句话定义
 
-PolySignal Lab 是一个只读 Polymarket 短周期市场信号系统。它把 VWAP Momentum、Late Consensus、PTB Diff 三类策略统一成信号模块，将信号发送到 Telegram 频道，同时用虚拟资金做简单模拟交易，用于记录每条信号的纸面输赢、胜率、资金曲线和策略质量。
+PolySignal Lab 是一个默认 sandbox 的 Polymarket 短周期信号与纸面验证系统。它把 VWAP Momentum、Late Consensus、PTB Diff 等策略统一为 AlphaCore，经 Strategy 内 `SignalGate` 后发往 Telegram，并用 Nautilus sandbox（Cache / Portfolio / Account 为交易真相）记录若执行后的纸面输赢；结算只写 `report_results`，不伪造 native payout。
 
 ## 3. 背景
 
@@ -26,7 +48,7 @@ PolySignal Lab 是一个只读 Polymarket 短周期市场信号系统。它把 V
 新项目不复用这些 bot 的真实执行逻辑，而是抽象其策略原理，统一变成：
 
 ```
-Public Market Data → Nautilus Strategy Callback → Signal Gate → Telegram → Nautilus Sandbox Paper Execution → Win/Loss Report
+Public Market Data → Nautilus Strategy Callback → Signal Gate → Telegram → Nautilus Sandbox (Cache) → report-only Win/Loss
 ```
 
 ## 4. 产品目标
@@ -36,25 +58,25 @@ Public Market Data → Nautilus Strategy Callback → Signal Gate → Telegram �
 | 目标 | 说明 |
 |------|------|
 | 统一三套策略 | 3 个机器人不再各自运行 runtime，而是变成统一策略模块 |
-| 只读安全 | 不读取私钥，不创建订单，不调用真实交易 API |
+| 默认安全边界 | 不读私钥；默认不注册 live 执行；sandbox 经 `order_factory`/`submit_order` 验证 |
 | Telegram 信号 | 每条可交易信号发送到 Telegram 频道 |
-| Nautilus 纸面验证 | 每条通过 gate 的信号可由 Nautilus sandbox 生成虚拟 order/fill/position |
-| 知道输赢 | 市场结束后计算每笔纸面持仓是否盈利 |
+| Nautilus 纸面验证 | 每条通过 gate 的信号可由 sandbox 生成 native order/fill/position（Cache 真相） |
+| 知道输赢 | 市场结束后以 **report-only** 写入 `report_results`（不伪造 native payout） |
 | 可审计 | 每条信号、Nautilus order/fill/position 投影、结算结果都落日志 |
-| 可复盘 | 支持按策略、资产、周期统计胜率和 PnL |
+| 可复盘 | 支持按策略、资产、周期统计胜率和 PnL（报表层） |
 | 可扩展 | 后续可加入新策略、Discord、Webhook、dashboard |
 
 ### 4.2 非目标
 
 | 非目标 | 说明 |
 |--------|------|
-| 真实交易 | 不真实买卖 Polymarket token |
-| 钱包管理 | 不读取钱包密钥环境变量，不创建 Polymarket API key |
-| 自动链上领取 | 不做链上领取 |
-| 自动平仓 | 第一版不做真实 sell；paper mode 可做虚拟 exit |
+| 默认 live 交易 | 默认配置不买卖真实 Polymarket token；live 仅双开关 + 校验后才可注册（非默认产品承诺） |
+| 钱包管理 | 不读取钱包密钥环境变量；凭证解析归 Polymarket adapter（Rust），Python 不注入 secrets |
+| 自动链上领取 | 不做链上领取 / redeem |
+| Venue contingent / bracket 平仓 | 不做 venue 级 contingent/bracket 子单；sandbox 可由 `NativeExitPolicy` 经原生 `submit_order` 做 paper exit。live 若启用，exit 仍走官方 ExecutionClient，且不得依赖 reduce-only（adapter 不支持） |
 | 盈利承诺 | 只统计纸面验证结果，不承诺实盘可复制 |
-| 复杂回测 | 第一版只做实时 Nautilus paper validation，不做完整历史 replay |
-| 付费频道 | 第一版不做会员、订阅、支付 |
+| 完整历史回测产品化 | 当前默认是实时 sandbox 验证；`BacktestEngine` 路径存在但不作为 V1 产品承诺 |
+| 付费频道 | 不做会员、订阅、支付 |
 
 ## 5. 项目名称
 
@@ -80,30 +102,31 @@ Public Market Data → Nautilus Strategy Callback → Signal Gate → Telegram �
 
 | 能力 | 是否允许 |
 |------|----------|
-| 读取 Polymarket market data | 允许 |
-| 读取 Binance spot | 允许 |
+| 读取 Polymarket market data（Nautilus DataEngine / Cache） | 允许 |
+| 读取 Polymarket RTDS spot（managed `LiveDataClient` → CustomData） | 允许 |
 | 计算信号 | 允许 |
 | Telegram 发消息 | 允许 |
-| 虚拟资金模拟 | 允许 |
-| 记录 paper orders | 允许 |
-| 统计 paper win/loss | 允许 |
-| 生成日报 | 允许 |
+| Nautilus sandbox 纸面模拟 | 允许 |
+| 记录 report 投影（orders/fills/positions/results） | 允许 |
+| 统计 paper win/loss（report-only） | 允许 |
+| 生成日报 / 只读 dashboard | 允许 |
 
 ### 7.2 禁止能力
 
+默认产品（`execution_mode=sandbox`）下全部禁止。gated `live` 仅在 Runtime Boundary 双开关 + 校验通过后才可注册官方 execution factory；**不得**自建第二套 CLOB/signing/wallet 路径。
+
 | 能力 | 是否禁止 |
 |------|----------|
-| 读取钱包私钥 | 禁止 |
-| 创建真实 Polymarket 订单 | 禁止 |
-| 取消真实订单 | 禁止 |
-| 签名 EIP-712 order | 禁止 |
-| 自动链上领取 | 禁止 |
-| 自动转账 | 禁止 |
+| 读取钱包私钥 / Python 注入 secrets | 禁止（凭证归 Polymarket adapter Rust） |
+| 默认配置下创建/取消真实 Polymarket 订单 | 禁止（live 未授权时 fail-closed） |
+| 自建 EIP-712 signing / 私有 CLOB 客户端 | 禁止（仅官方 adapter 执行面） |
+| 自动链上领取 / redeem / 自动转账 | 禁止 |
 | CEX 真实下单 | 禁止 |
+| 本地 paper matching / wallet ledger | 禁止（sandbox 成交真相属 Nautilus） |
 
 ## 8. 产品形态
 
-PolySignal Lab 是一个后台常驻服务，第一版不要求完整 Web UI。
+PolySignal Lab 是一个后台常驻服务；另有只读 Dashboard API（非交易控制面）。
 
 ```
 ┌────────────────────────────┐
@@ -112,21 +135,21 @@ PolySignal Lab 是一个后台常驻服务，第一版不要求完整 Web UI。
 └──────────────┬─────────────┘
                ↓
 ┌────────────────────────────┐
-│ Nautilus TradingNode     │
-│ - DataEngine callbacks   │
-│ - Strategy lifecycle     │
+│ Nautilus LiveNode (sandbox) │
+│ - DataEngine / Cache        │
+│ - Strategy lifecycle        │
 └──────────────┬─────────────┘
                ↓
 ┌────────────────────────────┐
 │ PolySignal Alpha Cores      │
 │ - VWAP Momentum             │
 │ - Late Consensus            │
-│ - PTB Diff                  │
+│ - PTB Diff (+ more)         │
 └──────────────┬─────────────┘
                ↓
 ┌────────────────────────────┐
-│ DecisionPolicyActor         │
-│ Gate / dedupe / consensus   │
+│ DecisionPolicy (in-process) │
+│ SignalGate (business quals) │
 └──────────────┬─────────────┘
                ↓
 ┌──────────────┴─────────────┐
@@ -145,17 +168,17 @@ Signal Channel                Nautilus Cache / Portfolio Projection
 1. 读取配置文件。
 2. 校验 Telegram bot token 和 channel id。
 3. 加载启用资产、周期、策略。
-4. 初始化 Nautilus `TradingNode` / `TradingNodeConfig` paper runtime，并注册 data/exec client factories。
-5. 发现当前 Polymarket crypto Up/Down 市场。
-6. Nautilus data path 接收 Polymarket market data。
-7. Nautilus `CustomData` callbacks 接收 spot、price-to-beat、market metadata；managed RTDS spot data client 负责现货 ingress。
-8. Nautilus strategy callbacks 构造 market view 并运行 alpha core。
-9. 信号通过 `DecisionPolicyActor` 的 gate / dedupe / consensus。
+4. 组装 Nautilus `LiveNode`（sandbox 默认）：官方 Polymarket data factory + sandbox execution；注册 `MarketRotationActor` 与 `PolySignalNativeStrategy`。
+5. `MarketRotationActor` / discovery worker 发现当前 crypto Up/Down 市场并发布 universe/metadata/PTB CustomData。
+6. Nautilus data path 接收 Polymarket market data 写入 Cache。
+7. Managed RTDS `LiveDataClient` 提供 spot CustomData；Strategy 订阅 CustomData（spot / PTB / metadata）。
+8. Strategy callbacks 经 `MarketViewAssembler` 构造 market view 并运行 alpha core。
+9. 信号通过 Strategy 内 in-process `DecisionPolicy`（`SignalGate` 业务资格；账户/敞口由 RiskEngine）。
 10. 通过 gate 后发送 Telegram。
-11. Strategy wrapper 通过 Nautilus order factory / `submit_order` 提交 paper order。
-12. Nautilus sandbox 生成 paper fills / positions / account state。
-13. 市场结束后结算 paper position projection。
-14. 更新胜率、PnL、资金曲线。
+11. Strategy 经 `native_order`（`order_factory` + `submit_order`）提交 sandbox order。
+12. Nautilus sandbox 生成 fills / positions / account state（Cache / Portfolio 为真相）。
+13. 市场结束后以 **report-only** 方式写入 `report_results` 投影（不伪造 native payout / PositionClosed）。
+14. 更新胜率、PnL、资金曲线（报表层）。
 
 ### 9.2 信号流程
 
@@ -163,23 +186,22 @@ Signal Channel                Nautilus Cache / Portfolio Projection
 Nautilus Data / Custom Data Callback
   → PolySignal AlphaCore.evaluate()
   → AlphaDecision
-  → DecisionPolicyActor
+  → DecisionPolicy / SignalGate (in-process on PolySignalNativeStrategy)
   → TelegramMessage
   → Nautilus native order
   → Nautilus sandbox fill / position
-  → SettlementResolver / `_settlement_check` position projection
+  → report-only settlement projection
 ```
 
 ### 9.3 纸面交易流程
 
-1. 通过 gate 的信号由 Nautilus strategy wrapper 映射为 Nautilus native order 参数。
-2. Strategy wrapper 调用 Nautilus `order_factory.limit(...)` 和 `submit_order(...)`。
+1. 通过 gate 的信号由 Strategy 映射为 Nautilus native order 参数。
+2. Strategy 调用 Nautilus `order_factory.limit(...)` 和 `submit_order(...)`。
 3. Nautilus sandbox 根据当前 instrument、book、trade 数据处理 paper order。
-4. 订单状态、成交、持仓、账户状态来自 Nautilus cache/portfolio。
-5. PolySignal 将 Nautilus events/projected cache rows 写入 SQLite/JSONL、Telegram、日报和 dashboard。
-6. 市场结束后的 win/loss 计算只读取 Nautilus position projection 和 Polymarket outcome resolution，不维护本地 PaperWallet。
-7. 写入 PaperTradeResult projection。
-8. 更新统计报表。
+4. 订单状态、成交、持仓、账户状态来自 Nautilus Cache/Portfolio。
+5. PolySignal 将事件投影写入 SQLite `report_*` / JSONL、Telegram、日报和 dashboard。
+6. 市场结束后的 win/loss 只读 Nautilus position projection 与 resolution evidence（report-only；不伪造 native payout）。
+7. 写入 `report_results` 投影并更新统计报表。
 
 ## 10. 策略模块
 
@@ -200,10 +222,10 @@ Nautilus Data / Custom Data Callback
 
 | 输入 | 来源 |
 |------|------|
-| UP / DOWN best bid ask | Polymarket CLOB |
-| last trade price | Polymarket CLOB |
-| orderbook depth | Polymarket CLOB |
-| BTC spot | Nautilus `CustomData` spot payload；checked-in default disables actor-owned `polymarket_rtds` until a managed Nautilus data-client lifecycle exists |
+| UP / DOWN best bid ask | Nautilus Cache（Polymarket DataClient） |
+| last trade price | Nautilus Cache trades 投影 |
+| orderbook depth | Nautilus Cache book 投影 |
+| BTC spot | Nautilus Cache/`CustomData`；checked-in config 使用 managed RTDS（`runtime.nautilus.spot_data.source: polymarket_rtds`） |
 | market start / end | Polymarket metadata |
 
 **指标：**
@@ -220,8 +242,8 @@ Nautilus Data / Custom Data Callback
 **触发规则：**
 
 必须满足：
-- 当前 market active、未 closed、CLOB order book enabled、accepting_orders=true。
-- 当前 orderbook fresh，且 UP / DOWN token ids 可映射到 WebSocket asset ids。
+- 当前 market active、未 closed、order book enabled、accepting_orders=true（元数据；book 真相仍在 Nautilus Cache）。
+- Cache book fresh，且 UP / DOWN token ids 可经 `MarketCatalog` 映射到 Nautilus instrument id。
 - 当前处于允许入场窗口。
 - target ask 在允许价格区间内。
 - VWAP deviation 达标。
@@ -246,12 +268,12 @@ Nautilus Data / Custom Data Callback
 
 | 输入 | 来源 |
 |------|------|
-| UP / DOWN ask | Polymarket CLOB |
-| best bid ask | Polymarket CLOB |
+| UP / DOWN ask | Nautilus Cache book 投影 |
+| best bid ask | Nautilus Cache book 投影 |
 | ask sum | Derived |
 | ask skew | Derived |
 | spread | Derived |
-| asset spot movement | Nautilus `CustomData` spot payload；actor-owned RTDS source is disabled by default and explicit `polymarket_rtds` is fail-fast |
+| asset spot movement | Nautilus Cache/`CustomData` via managed RTDS（`spot_data.source: polymarket_rtds`） |
 | seconds_to_close | Derived |
 
 **触发规则：**
@@ -282,9 +304,9 @@ Nautilus Data / Custom Data Callback
 
 | 输入 | 来源 |
 |------|------|
-| BTC spot price | Nautilus `CustomData` spot payload；actor-owned RTDS source is disabled by default and explicit `polymarket_rtds` is fail-fast |
+| BTC spot price | Nautilus Cache/`CustomData` via managed RTDS（`spot_data.source: polymarket_rtds`） |
 | price_to_beat | 本地 market window anchor；若使用 Polymarket price-to-beat endpoint，必须标记为未正式 API ref 依赖 |
-| UP / DOWN implied price | Polymarket CLOB |
+| UP / DOWN implied price | Nautilus Cache book 投影 |
 | seconds_to_close | Derived |
 | trigger rows | Config |
 
@@ -306,7 +328,7 @@ BUY_DOWN：
 
 ## 11. 统一信号模型
 
-所有策略输出统一 SignalCandidate。
+所有策略输出统一不可变 `AlphaDecision` → `SignalCandidate`（构造新对象，不改写已发出的候选）。
 
 ```json
 {
@@ -413,27 +435,27 @@ Nautilus 纸面验证系统用于回答：
 
 | 原则 | 说明 |
 |------|------|
-| 真实公开行情 | 使用 Polymarket public market data 和 Nautilus `CustomData` spot/PTB/market metadata payloads |
-| Nautilus 纸面账户 | 使用 Nautilus sandbox/cache/portfolio state，不接触真实资金 |
-| 可解释成交 | 每笔 paper fill 必须能追溯到 Nautilus order/fill/position 投影 |
+| 真实公开行情 | 使用 Polymarket DataClient → Cache 与 managed RTDS/`CustomData`，无第二 book 真相 |
+| Nautilus 纸面账户 | 使用 sandbox Cache/Portfolio/Account，不接触真实资金；不自建 paper wallet |
+| RiskEngine 拥有风险 | 账户/名义/速率约束不在 `SignalGate` 复刻 |
+| 可解释成交 | 每笔 paper fill 必须能追溯到 Nautilus order/fill/position 事件 |
+| 报表只读 | `report_*` 可复盘，但不可恢复或驱动交易状态 |
 | 保守标注 | 不承诺 paper result 可复制到真实交易 |
-| 可复盘 | 所有 paper order / fill / result 投影都写日志 |
-| 可关闭 | paper validation 可配置关闭，只保留信号 |
 
 ### 13.3 Nautilus Paper Account Projection
 
+账户/余额真相来自 Nautilus Cache / Portfolio / Account（sandbox 起始资金由 `trading.starting_balance_usdc` 注入引擎）。**不在 PolySignal 内维护第二套 paper wallet 或 exposure ledger。**
+
 ```yaml
-paper_trading:
-  enabled: true
+trading:
   starting_balance_usdc: 1000.0
   stake_mode: fixed
   fixed_stake_usdc: 10.0
-  max_open_positions: 10
-  max_market_exposure_usdc: 30.0
-  max_strategy_exposure_usdc: 100.0
+  exit_model:
+    mode: hold_to_resolution_with_optional_tp_sl
 ```
 
-字段名中的 `usdc` 表示 paper USD-equivalent accounting，不表示真实 Polymarket 钱包余额。Polymarket 外部抵押/赎回术语以官方 docs 的 pUSD 为准；paper 报表必须标注为 synthetic paper accounting。
+字段名中的 `usdc` 表示 paper USD-equivalent accounting，不表示真实 Polymarket 钱包余额。账户不足、名义上限等由 **Nautilus RiskEngine / ExecutionEngine** 拒绝，不以本地 gate 复刻。
 
 账户投影字段：
 
@@ -453,11 +475,11 @@ paper_trading:
 
 ### 13.4 Nautilus Paper Order Projection
 
-Paper order 是 Nautilus strategy wrapper 通过 order factory / `submit_order` 提交的虚拟订单投影。
+Paper order 是 `PolySignalNativeStrategy` 经 `order_factory` / `submit_order` 提交后、由 Cache 事件投影到 `report_orders` 的只读行（非交易真相）。
 
 ```json
 {
-  "paper_order_id": "nautilus_order_20260621_0001",
+  "report_order_id": "nautilus_order_20260621_0001",
   "signal_id": "20260621-BTC-5m-UP-ptb_diff-0001",
   "asset": "BTC",
   "timeframe": "5m",
@@ -477,10 +499,10 @@ Paper order 是 Nautilus strategy wrapper 通过 order factory / `submit_order` 
 
 默认 runtime 使用 Nautilus sandbox paper execution。PolySignal 不再把本地简化成交模型作为默认成交真相。
 
-1. Strategy wrapper 将 approved decision 映射为 Nautilus native paper order。
+1. Strategy 经 `native_order` 将 approved decision 映射为 Nautilus native paper order。
 2. Nautilus sandbox 根据当前 instrument、book、trade 数据处理 order。
-3. 订单状态、成交、持仓、账户状态来自 Nautilus cache/portfolio。
-4. PolySignal 将 Nautilus events/projected cache rows 写入 SQLite/JSONL、Telegram、日报和 dashboard。
+3. 订单状态、成交、持仓、账户状态来自 Nautilus Cache/Portfolio。
+4. PolySignal 将事件投影写入 SQLite `report_*` / JSONL、Telegram、日报和 dashboard。
 5. 如果数据过旧、instrument 缺失或 policy 不通过，则记录 rejected decision / rejected order projection。
 6. V1 paper PnL 默认 fee-free，必须写入 `fee_model=ignored_v1`；如果启用 Polymarket fee parity，则用 CLOB market fee schedule 计算 taker fee。
 
@@ -488,36 +510,33 @@ Paper order 是 Nautilus strategy wrapper 通过 order factory / `submit_order` 
 
 ```yaml
 runtime:
-  engine: nautilus
   nautilus:
-    execution_mode: paper_sandbox
+    execution_mode: sandbox
     allow_live_polymarket_execution: false
-    sidecar:
-      spot_source: polymarket_rtds
-      price_to_beat_source: anchor_or_gamma
+    spot_data:
+      source: polymarket_rtds
 ```
 
-Checked-in runtime uses the Nautilus-managed RTDS `LiveDataClient` for spot ingress. Setting `spot_source: disabled` while enabling a spot-dependent native strategy fails fast; it does not silently fall back to an actor-owned sidecar.
+Checked-in config uses the Nautilus-managed RTDS `LiveDataClient` for spot ingress (`spot_data.source: polymarket_rtds`). Setting `source: disabled` while enabling a spot-dependent strategy fails fast; MarketRotation must not republish spot as a second truth.
 
-**成交拒绝原因示例：**
+**拒绝责任划分（禁止混写为“paper policy gate”）：**
 
-| 原因 | 说明 |
+| 原因 / 类别 | 所有者 |
 |------|------|
-| ASK_ABOVE_MAX_ENTRY | ask 已超过信号最高价 |
-| INSUFFICIENT_DEPTH | orderbook depth 不足 |
-| STALE_ORDERBOOK | orderbook 过旧 |
-| ACCOUNT_INSUFFICIENT_CASH | Nautilus paper account 余额不足 |
-| EXPOSURE_LIMIT_REACHED | 达到 paper exposure 限制 |
+| `STALE_ORDERBOOK` / `ASK_ABOVE_MAX_ENTRY` / freshness / spread / confidence 等 | `SignalGate`（业务资格） |
+| 账户余额不足、submit/modify rate、`max_notional_per_order` | **Nautilus RiskEngine** |
+| sandbox matching 拒单（深度/价格不可成交等） | **Nautilus ExecutionEngine / sandbox** |
+| 映射失败 / in-flight 重复提交 | Strategy pipeline（非第二账户账本） |
 
-### 13.6 Paper Position Projection
+### 13.6 Report Position Projection
 
-Nautilus fill 后创建 position projection。
+Nautilus fill 后，将 Cache position **投影**到 `report_positions`（只读报表行，非交易真相）。
 
 ```json
 {
-  "paper_position_id": "pp_20260621_0001",
+  "report_position_id": "pp_20260621_0001",
   "signal_id": "20260621-BTC-5m-UP-ptb_diff-0001",
-  "paper_order_id": "po_20260621_0001",
+  "report_order_id": "po_20260621_0001",
   "asset": "BTC",
   "timeframe": "5m",
   "market_id": "string",
@@ -532,31 +551,35 @@ Nautilus fill 后创建 position projection。
 
 ### 13.7 Exit / Settlement Model
 
-第一版默认使用"持有到结算"。
+默认模式：**Hold To Resolution**，sandbox/live 下结算为 **`native_settlement_mode=report_only`**。
 
-**默认模式：Hold To Resolution**
-
-| 结果 | 结算 |
+| 结果 | 报表层记账（写入 `report_results`） |
 |------|------|
-| 预测正确 | 每 share 兑付 1.00 paper USD-equivalent |
-| 预测错误 | 每 share 兑付 0.00 paper USD-equivalent |
+| 预测正确 | `outcome_value=1.0` → `settlement_value = shares` |
+| 预测错误 | `outcome_value=0.0` → `settlement_value = 0` |
 
-**PnL 计算：**
+约束（禁止违反 Nautilus 所有权）：
+- 上述公式只生成 **报表行**；不得合成 fill、`PositionClosed`，不得改写 Cache / Portfolio / Account。
+- 开仓数量、均价、是否仍 open 一律读 Nautilus Cache 投影。
+- backtest 可 replay 原生 `InstrumentClose`；PolySignal 不得在 sandbox/live 自行复刻该突变。
+
+**PnL 计算（report-only；数量/均价来自 Cache 投影，禁止用 stake/price 自造持仓）：**
 
 ```
-shares = stake_usdc / entry_price
-entry_fee = 0.0  # V1 fee_model=ignored_v1
+shares      = Cache position projection.shares|quantity
+entry_price = Cache position projection.entry_price|avg_entry_price
+stake_usdc  = Cache position projection.stake_usdc   # 缺失时才可派生 entry_price * shares
+entry_fee   = 0.0  # V1 fee_model=ignored_v1
 settlement_value = shares * outcome_value
 pnl = settlement_value - stake_usdc - entry_fee
 roi = pnl / stake_usdc
 ```
 
 其中：
-- outcome_value = 1.0 if side wins else 0.0
-- outcome_value = 0.0 if side loses
+- outcome_value = 1.0 if side wins else 0.0（仅报表字段）
 - 如果开启 fee parity，entry_fee 必须按 Polymarket market fee schedule 计算并写入 result。
 
-**胜负判断：**
+**胜负判断（写入 `report_results.result`，不改 native Position 状态机）：**
 
 | 条件 | 结果 |
 |------|------|
@@ -569,10 +592,10 @@ roi = pnl / stake_usdc
 
 ### 13.8 Paper TP/SL（已交付）
 
-默认由 `NativeExitPolicy` 在 Nautilus Cache 持仓上评估；触发后提交 **reduce-only** paper sell，并写入 `paper_trade_results`。
+默认由 `NativeExitPolicy` 在 Nautilus Cache 持仓上评估，再经 `order_factory` + `submit_order` 发出原生 exit order；结果投影写入 `report_results`。sandbox 可使用 reduce-only；**Polymarket live adapter 不支持 reduce-only / contingent bracket**——不得把 venue 级 TP/SL 子单当作产品承诺。
 
 ```yaml
-paper_trading:
+trading:
   exit_model:
     mode: hold_to_resolution_with_optional_tp_sl
     take_profit_enabled: true
@@ -583,15 +606,16 @@ paper_trading:
 ```
 
 架构约束：
-- 不使用 Nautilus contingent / bracket 子单（sandbox `support_contingent_orders=false`）。
-- 只影响 paper result，不发送真实卖单。
+- 不使用 venue contingent / bracket 子单（sandbox `support_contingent_orders=false`）。
+- Exit 决策读 Cache 持仓，经原生 `submit_order`；live Polymarket 不得依赖 reduce-only。
+- 只影响 paper / report 结果，默认不发送真实卖单。
 - V1 fee：`fee_model=ignored_v1`，`entry_fee=0.0`。
 
-### 13.9 Paper Trade Result
+### 13.9 Report Result（`report_results`）
 
 ```json
 {
-  "paper_trade_id": "pt_20260621_0001",
+  "report_result_id": "pt_20260621_0001",
   "signal_id": "20260621-BTC-5m-UP-ptb_diff-0001",
   "strategy": "ptb_diff",
   "asset": "BTC",
@@ -619,14 +643,14 @@ paper_trading:
 | 指标 | 说明 |
 |------|------|
 | total_signals | 总信号数 |
-| paper_orders | paper order 数 |
-| paper_fills | paper 成交数 |
-| rejected_paper_orders | paper 拒绝数 |
-| open_positions | 当前虚拟持仓 |
-| closed_positions | 已结算持仓 |
-| win_count | 赢的次数 |
-| loss_count | 输的次数 |
-| void_count | void 次数 |
+| report_orders | 投影到 `report_orders` 的 paper order 数 |
+| report_fills | 投影到 `report_fills` 的成交数 |
+| rejected_orders | 被拒绝的 order/decision 投影数 |
+| open_positions | Cache 当前 open 持仓投影数 |
+| closed_positions | 已写入 `report_results` 的已结算笔数 |
+| win_count | 赢的次数（`report_results`） |
+| loss_count | 输的次数（`report_results`） |
+| void_count | void 次数（`report_results`） |
 | win_rate | win / closed |
 | total_pnl_usdc | 累计模拟 PnL |
 | average_roi | 平均 ROI |
@@ -674,8 +698,9 @@ logs/
   nautilus_orders.jsonl
   nautilus_fills.jsonl
   nautilus_positions.jsonl
-  paper_trade_results.jsonl   # 历史 PRD 名 paper_results.jsonl 已废弃
-  telegram_publishes.jsonl    # 历史 PRD 名 telegram_publish.jsonl 已废弃
+  nautilus_decisions.jsonl
+  report_results.jsonl        # settlements / early-exit 结果投影
+  telegram_publishes.jsonl
   daily_reports.jsonl
   system_events.jsonl         # 可选 / best-effort telemetry
 ```
@@ -688,10 +713,10 @@ Runtime state 以 Nautilus Cache/Portfolio 为准；`state/` 下保留 heartbeat
 |----|------|
 | signals | 所有通过 gate 的信号 |
 | rejected_signals | 被拒绝信号 |
-| paper_trade_results | 纸面验证结果（含 resolution 与 early TP/SL exit） |
-| paper_wallet_snapshots | Nautilus account/portfolio projection 快照 |
-| paper_order_states | order 最新生命周期状态（current-state projection） |
-| paper_position_states | position 最新生命周期状态（current-state projection） |
+| strategy_status | 策略启用/状态投影 |
+| report_results | 纸面验证结果（resolution 与 early exit） |
+| report_account_snapshots | Nautilus account/portfolio 投影快照 |
+| report_orders / report_fills / report_positions | order/fill/position 当前状态投影 |
 | daily_reports | 每日报告（可 revision） |
 | report_publish_outbox | 日报 Telegram 投递 outbox |
 | system_events | Nautilus order/fill/position 等审计事件 |
@@ -699,209 +724,41 @@ Runtime state 以 Nautilus Cache/Portfolio 为准；`state/` 下保留 heartbeat
 | markets | 市场元数据缓存 |
 | anchor_prices | price-to-beat anchor 缓存 |
 
-历史 PRD 中的独立 `paper_orders` / `paper_fills` / `paper_positions` 表已收敛为 `system_events` 事件流 + `paper_*_states` 当前状态投影。
+历史 `paper_*` 表名经 `projection_migration` 收敛为 `report_*`。报表存储是 disposable 投影，不可恢复交易状态（见 [`RUNTIME_BOUNDARY.md`](RUNTIME_BOUNDARY.md)）。
 
 ## 16. 架构设计
 
-### 16.1 目录结构
+产品级数据流见 §8–§9。**所有权、禁止面、注册面、结算模式不以本节为权威**，统一见：
 
-```
-polysignal-lab/
-  config/
-    signal_bot.yaml
-
-  src/polysignal_lab/
-    app/
-      main.py
-      _settlement_check.py
-      scheduler_health.py
-      scheduler_reporting.py
-      scheduler_reporting_storage.py
-      scheduler_shared.py
-      readonly_smoke.py
-      readonly_smoke_public.py
-      readonly_smoke_runtime.py
-      readonly_smoke_types.py
-      services/
-        market_universe_service.py
-        persistence_service.py
-        publish_service.py
-
-    alpha/
-      vwap_momentum_core.py
-      late_consensus_core.py
-      ptb_diff_core.py
-      binary_momentum_core.py
-      cross_market_core.py
-      dump_hedge_core.py
-      fibonacci_core.py
-      low_side_dual_reversion_core.py
-      mid_price_sizing_core.py
-      ninety_nine_cent_sniper_core.py
-      one_cent_buy_core.py
-      pre_order_market_core.py
-      skew_mean_reversion_core.py
-      types.py
-      state.py
-
-    config.py
-    healthcheck.py
-
-    data/
-      polymarket_market_discovery.py
-      binance_spot_ws.py
-      market_snapshot.py
-      market_discovery_helpers.py
-      anchor_price_service.py
-      book_reconciliation.py
-      ctf_resolution_client.py
-      gamma_resolution_client.py
-      price_to_beat_provider.py
-      public_market_data_client.py
-      rate_limiter.py
-      spot_tick.py
-      state.py
-
-    domain/
-      market.py
-      orderbook.py
-      signal.py
-      paper_order.py
-      paper_position.py
-      paper_result.py
-      anchor_price.py
-      enums.py
-      freshness.py
-      snapshot.py
-      snapshot_batch.py
-      spot.py
-      strategy_config.py
-      strategy_readiness.py
-      trade.py
-
-    nautilus_bridge/
-      market_catalog.py
-      market_view_assembler.py
-      instrument_mapping.py
-      state.py
-
-    nautilus_runtime/
-      node.py
-      live_node.py
-      native_strategy.py
-      native_order.py
-      cache_reader.py
-      cache_market_data.py
-      decision_policy.py
-      decision_policy_actor.py
-      observability.py
-      node_builder.py
-      node_cache_projection.py
-      node_cli.py
-      node_crash.py
-      node_lifecycle.py
-      node_probes.py
-      node_shared.py
-      node_sidecar.py
-      node_signals.py
-      node_trader_registration.py
-      market_data.py
-      market_rotation.py
-      strategy_builder.py
-      strategy_schedule.py
-      custom_data_state.py
-      custom_data_types.py
-      group_views.py
-      observability_persistence.py
-      order_mapping.py
-      order_plan.py
-      projection_recorder.py
-      projections.py
-      runtime_context_factory.py
-      sidecar_data.py
-      signal_sidecar.py
-      telemetry_writer.py
-      strategy/
-        custom_data_handlers.py
-        data_boundary.py
-        decision_pipeline.py
-        event_handlers.py
-        event_projection.py
-        helpers.py
-        subscriptions.py
-      strategies/
-        cross_market_bot.py
-
-    observability/
-      logger.py
-      health.py
-      metrics.py
-      runtime_health.py
-      safety.py
-
-    paper/
-      settlement_resolver.py
-      settlement_sources.py
-      report.py
-      strategy_stats.py
-
-    publish/
-      telegram_publisher.py
-      telegram_bot.py
-      telegram_qa.py
-
-    signal_layer/
-      gate.py
-      deduper.py
-      consensus.py
-      arbiter.py
-      formatter.py
-      rate_limit.py
-
-    storage/
-      jsonl_store.py
-      sqlite_store.py
-      sqlite_schema.py
-      state_store.py
-
-    dashboard/
-      app.py
-
-    utils.py
-
-  tests/
-  logs/  (generated)
-  state/  (generated)
-  data/  (generated)
-```
-
-### 16.2 主要模块职责
-
-| 模块 | 职责 |
+| 文档 | 内容 |
 |------|------|
-| app/main.py | CLI 入口, runtime mode 分派 |
-| AlphaCore (alpha/) | 产生 engine-agnostic AlphaDecision |
-| Nautilus TradingNode | 拥有 strategy lifecycle、DataEngine/ExecutionEngine、cache、portfolio 和 paper order lifecycle |
-| PolySignalNativeStrategy | 在 Nautilus callbacks 中运行 alpha core, 处理 order/fill/position events |
-| DecisionPolicyActor | gate / dedupe / consensus / arbiter 检查 |
-| NautilusDecisionPolicyActor | DecisionPolicyActor 的 Nautilus Actor 生命周期封装 |
-| NautilusSandboxExecution | 处理 paper orders, fills, positions, account state |
-| NautilusCacheReader | 只读投影 Nautilus orders/fills/positions/account/portfolio |
-| NautilusProjectionRecorder | 将 Nautilus events 持久化到 SQLite system_events |
-| MarketCatalog (nautilus_bridge/) | 业务 key 查找, condition/token 映射 |
-| MarketViewAssembler | 从 cache 投影 + custom data 组装只读 market view |
-| TelegramPublisher | 发送信号, 结果, 日报 |
-| SignalGate (signal_layer/) | 市场活跃, 时间窗口, 新鲜度, spread, 去重, 频控 |
-| SettlementResolver / `_settlement_check` | 从 Nautilus open position projection 和 Polymarket resolution evidence 生成 PaperTradeResult projection；不伪造 native payout 或 PositionClosed |
-| Dashboard API | FastAPI 只读 JSON API + HTML 首页 |
-| Storage | SQLite + JSONL + state |
+| [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md) | 三真相、依赖方向、质量门 |
+| [`RUNTIME_BOUNDARY.md`](RUNTIME_BOUNDARY.md) | sandbox/live/backtest、forbid list、exit/settlement/reporting |
+| [`NAUTILUS_CAPABILITY_MATRIX.md`](NAUTILUS_CAPABILITY_MATRIX.md) | 已验证 Nautilus 能力 |
+| [`STRATEGY_INDICATOR_FLOW.md`](STRATEGY_INDICATOR_FLOW.md) | 指标/行情进入 Strategy 的链路 |
+
+包级布局（文件清单以源码与各目录 `FOLDER_INDEX.md` 为准，PRD 不维护完整树）：
+
+```
+src/polysignal_lab/
+  app/                 # CLI / reporting / services
+  alpha/               # 纯 AlphaCore
+  nautilus_runtime/    # Node、Strategy 宿主、Cache 投影、DecisionPolicy、MarketRotation
+  signal_layer/        # SignalGate / formatter（业务资格；非 RiskEngine）
+  domain/              # Market、Side、OrderIntent、reporting models
+  data/                # discovery / PTB / rate limit（非 live book 真相）
+  storage/             # SQLite report_* + JSONL
+  reporting/           # 日报与聚合
+  publish/             # Telegram
+  observability/       # health / metrics / safety scan
+  dashboard/           # 只读 API
+```
 
 ## 17. 配置设计
 
 ```yaml
 app:
   name: PolySignal Lab
-  mode: signal_plus_paper
   timezone: Asia/Bangkok
   log_level: INFO
 
@@ -910,7 +767,7 @@ telegram:
   bot_token_env: TELEGRAM_BOT_TOKEN
   channel_id_env: TELEGRAM_CHANNEL_ID
   send_signals: true
-  send_paper_results: true
+  send_report_results: true
   send_daily_report: true
 
 markets:
@@ -920,30 +777,23 @@ markets:
 
 data:
   polymarket:
-    use_market_ws: true
-    max_book_staleness_ms: 1500
+    max_book_staleness_ms: 60000
+    # live books come from Nautilus Polymarket DataClient → Cache（非独立 CLOB WS 真相）
 
 runtime:
   nautilus:
-    sidecar:
-      spot_source: polymarket_rtds
-      price_to_beat_source: anchor_or_gamma
+    execution_mode: sandbox
+    allow_live_polymarket_execution: false
+    spot_data:
+      source: polymarket_rtds
 
 signal:
   min_confidence_to_publish: 0.50
-  dedupe_enabled: true
-  consensus_enabled: true
-  max_signals_per_market: 3
-  max_signals_per_hour: 60
 
-paper_trading:
-  enabled: true
+trading:
   starting_balance_usdc: 1000.0
   stake_mode: fixed
   fixed_stake_usdc: 10.0
-  max_open_positions: 10
-  max_market_exposure_usdc: 30.0
-  max_strategy_exposure_usdc: 100.0
   exit_model:
     mode: hold_to_resolution_with_optional_tp_sl
     take_profit_enabled: true
@@ -999,45 +849,35 @@ strategies:
 
 ## 18. Signal Gate
 
-每条信号必须经过 gate。
+每条信号必须经过 Strategy 内 `SignalGate`（顺序与拒绝码见 [`SIGNAL_GATE_RULES.md`](SIGNAL_GATE_RULES.md)）。产品级摘要：**市场活跃、时间窗、book/spot 新鲜度、价差、max entry、GTD expiry、confidence**。
 
-| Gate | 拒绝原因 |
-|------|----------|
-| Market Active Gate | MARKET_NOT_ACTIVE |
-| Market Closed Gate | MARKET_CLOSED |
-| Order Book Enabled Gate | ORDER_BOOK_NOT_ENABLED |
-| Accepting Orders Gate | MARKET_NOT_ACCEPTING_ORDERS |
-| Token Mapping Gate | CLOB_TOKEN_IDS_MISSING |
-| Book Freshness Gate | STALE_ORDERBOOK |
-| Spot Freshness Gate | STALE_SPOT_PRICE |
-| Spread Gate | SPREAD_TOO_WIDE |
-| Max Entry Gate | ASK_ABOVE_MAX_ENTRY |
-| Confidence Gate | CONFIDENCE_TOO_LOW |
-| Dedupe Gate | DUPLICATE_SIGNAL |
-| Rate Limit Gate | CHANNEL_RATE_LIMIT |
+`SignalGate` **不是** RiskEngine：不做账户余额、敞口、持仓上限。配置里若仍残留 `dedupe_*` / `consensus_*` / `max_signals_*` 字段，不得解释为第二套运行时决策总线；跨策略 arbiter/consensus 已移除。
 
-## 19. Paper Policy Gates
+## 19. 下单前风险与成交（Nautilus 拥有）
 
-每条 approved signal 进入 Nautilus order submission 前还要经过 paper policy gates。
+Approved 候选提交后：
 
-| Gate | 拒绝原因 |
-|------|----------|
-| Account Gate | ACCOUNT_INSUFFICIENT_CASH |
-| Exposure Gate | EXPOSURE_LIMIT_REACHED |
-| Depth Gate | INSUFFICIENT_DEPTH |
-| Price Gate | ASK_ABOVE_MAX_ENTRY |
-| Position Limit Gate | MAX_OPEN_POSITIONS_REACHED |
+1. Strategy 仅做 `order_factory` + `submit_order` 映射。
+2. **RiskEngine** 执行账户/名义/速率类约束（见 `LiveRiskEngineConfig`；官方路径：无 emulation 时 `SubmitOrder` → RiskEngine）。
+3. **ExecutionEngine / sandbox** 决定是否成交；拒单与 fill 进入 Cache。
+4. PolySignal 只投影到 `report_*`，不得本地重算一条并行 exposure 真相。
+
+Telegram 发布发生在 gate 通过之后、RiskEngine 裁决之前或并行——**信号 ≠ 成交**；余额不足等仍由 RiskEngine 拒绝，不得在 `SignalGate` 预判账户。
 
 ## 20. 胜负判断
 
-### 20.1 市场结算来源
+### 20.1 市场结算来源（report-only evidence）
+
+以下来源只用于写入 `report_results`，**不得**合成 fill、`PositionClosed`，不得改写 Cache / Portfolio / Account：
 
 优先级：
-1. Polymarket market WebSocket `market_resolved.winning_asset_id` / `winning_outcome`。
-2. CLOB / public market token metadata 中的 `tokens[].winner`。
+1. Polymarket resolution / market-resolved evidence（adapter 或只读 public metadata）中的 `winning_asset_id` / `winning_outcome`。
+2. Public market token metadata 中的 `tokens[].winner`。
 3. UMA / Gamma resolution status 只作为 lifecycle/status 信号；除非官方 schema 明确提供 winner 字段，否则不得用它直接推断 WIN/LOSS。
-4. 本地 market close 后轮询上述 winner source。
+4. market close 后轮询上述 winner source。
 5. 如果无法确认，则标记 UNKNOWN。
+
+不得把独立 CLOB/WS 客户端当作 live book 或交易真相；结算证据路径与 DataEngine book 路径分离。
 
 ### 20.2 结果状态
 
@@ -1048,10 +888,12 @@ strategies:
 | VOID | 市场取消、无效、无法正常结算 |
 | UNKNOWN | 暂时无法确认结果 |
 
-### 20.3 二元市场 PnL
+### 20.3 二元市场 PnL（report-only）
+
+与 §13.7 相同：`shares` / `entry_price` / `stake_usdc` **必须**来自 Nautilus Cache position 投影（见 `report_result_from_projection`），不得用 `stake / entry_price` 发明持仓规模。
 
 ```
-shares = stake_usdc / entry_price
+shares, entry_price, stake_usdc  ← Cache position projection
 entry_fee = 0.0  # V1 fee_model=ignored_v1
 
 if WIN:
@@ -1063,14 +905,18 @@ pnl = settlement_value - stake_usdc - entry_fee
 roi = pnl / stake_usdc
 ```
 
+该计算只写入 `report_results`；sandbox/live 下不得据此改写 Nautilus Account / Portfolio / Position。
+
 ## 21. Telegram 发布规则
+
+Telegram 只消费 Reporting 投影，不得回写交易状态。
 
 | 事件 | 默认是否发送 |
 |------|-------------|
 | BUY_UP / BUY_DOWN signal | 是 |
-| Paper fill | 可选，默认否 |
-| Paper rejected | 否 |
-| Paper result | 是 |
+| Fill 投影（`report_fills`） | 可选，默认否 |
+| Rejected decision/order 投影 | 否 |
+| Result 投影（`report_results`） | 是 |
 | Daily report | 是 |
 | Debug | 否 |
 | Watch signal | 否 |
@@ -1080,8 +926,8 @@ roi = pnl / stake_usdc
 | 要求 | 标准 |
 |------|------|
 | 无钱包密钥 | 配置和环境变量不得包含私钥 |
-| 无真实交易客户端 | 不创建需认证的 Polymarket/CLOB 交易客户端 |
-| 无真实交易方法 | 不调用 authenticated Polymarket/CLOB create/post/cancel order、EIP-712 signing 或 live execution API；允许 Nautilus sandbox 内部 `order_factory` / `submit_order` |
+| 无真实交易客户端（默认） | 默认 `execution_mode=sandbox`，不注册 live Polymarket execution factory |
+| 无真实交易方法（默认） | 不调用 authenticated create/post/cancel、EIP-712 signing；sandbox 允许 `order_factory` / `submit_order`。live 仅在双开关 + 配置校验通过后才可注册（见 Runtime Boundary） |
 | Telegram token 脱敏 | 日志不得输出完整 bot token |
 | Paper 明确标注 | 所有结果必须写明 paper only |
 | 信号非建议声明 | Telegram 消息必须写明不是收益保证 |
@@ -1094,46 +940,46 @@ roi = pnl / stake_usdc
 |------|--------|------|
 | AC-001 | 能启动服务 | 无钱包密钥也可启动 |
 | AC-002 | 能发现市场 | 当前 BTC 5m/15m market cache 包含 active、未 closed、enableOrderBook、accepting_orders、UP/DOWN token ids |
-| AC-003 | 能接收 orderbook | 通过 UP/DOWN asset ids 订阅后 best bid ask 持续更新 |
-| AC-004 | 能处理 spot 边界 | 默认 actor-owned RTDS spot source 为 disabled；显式 `polymarket_rtds` 配置 fail fast，直到 Nautilus-managed data-client lifecycle 存在 |
+| AC-003 | 能接收 orderbook | 经 Nautilus DataClient → Cache；UP/DOWN best bid/ask 可持续投影到 MarketView |
+| AC-004 | 能处理 spot 边界 | checked-in `spot_data.source=polymarket_rtds` 经 managed RTDS 入 Cache；`disabled` + 依赖 spot 的策略 fail-fast；MarketRotation 不二次发布 spot |
 | AC-005 | 能生成信号 | 至少一个策略可输出 SignalCandidate |
 | AC-006 | 能发送 Telegram | 频道收到格式化信号 |
-| AC-007 | 能创建 paper order | 信号发布后生成 paper order |
-| AC-008 | 能模拟成交 | 符合 fill model 时生成 paper fill |
-| AC-009 | 能创建 position | 成交后 open position 存在 |
-| AC-010 | 能结算胜负 | market resolved 后 position 转 WIN/LOSS/VOID |
-| AC-011 | 能统计胜率 | 日报包含 win rate |
-| AC-012 | 能统计 PnL | 日报包含 paper PnL 和 equity |
+| AC-007 | 能创建 paper order | 信号发布后经 `submit_order` 进入 sandbox；Cache 有 order |
+| AC-008 | 能模拟成交 | sandbox 成交后 Cache fill/position 更新，并投影到 `report_*` |
+| AC-009 | 能创建 position | 成交后 Cache open position 存在 |
+| AC-010 | 能结算胜负 | market resolved 后写入 `report_results`（WIN/LOSS/VOID）；**不**伪造 native PositionClosed |
+| AC-011 | 能统计胜率 | 日报包含 win rate（来自 `report_results`） |
+| AC-012 | 能统计 PnL | 日报包含 paper PnL 和 equity（报表层） |
 
 ### 23.2 安全验收
 
 | 编号 | 验收项 | 标准 |
 |------|--------|------|
-| SEC-001 | 不存在真实下单路径 | 搜索不到 authenticated Polymarket/CLOB create/post order、EIP-712 signing 或 live execution client registration；允许 Nautilus sandbox `submit_order` |
-| SEC-002 | 不存在真实取消订单路径 | 搜索不到 authenticated Polymarket/CLOB cancel order 调用 |
+| SEC-001 | 默认无真实下单路径 | 默认配置不注册 live execution；sandbox `submit_order` 允许；live 路径 fail-closed（双开关） |
+| SEC-002 | 无 Python 自建取消订单路径 | 默认不注册 live；源码无绕过 adapter 的 authenticated CLOB cancel 客户端 |
 | SEC-003 | 不存在钱包密钥 | 配置 schema 拒绝钱包密钥 |
 | SEC-004 | 不存在链上领取模块 | 无链上领取模块 |
-| SEC-005 | 不存在真实 sell | 无真实 sell execution |
+| SEC-005 | 默认无真实 sell | 默认 sandbox：无真实 venue sell；sandbox exit 仅经 `order_factory`/`submit_order`；gated live 若启用，sell/exit 仅官方 ExecutionClient 且不得依赖 reduce-only |
 | SEC-006 | Telegram token 不泄露 | 日志脱敏 |
 
 ### 23.3 Nautilus paper 验收
 
 | 编号 | 验收项 | 标准 |
 |------|--------|------|
-| SIM-001 | Nautilus account 正确变化 | fill 后 account/portfolio projection 更新 |
-| SIM-002 | shares 计算正确 | fills/positions projection 中 shares 与 fill price 一致 |
-| SIM-003 | WIN 结算正确 | settlement = shares |
-| SIM-004 | LOSS 结算正确 | settlement = 0 |
-| SIM-005 | PnL 正确 | pnl = settlement - stake - entry_fee |
+| SIM-001 | Nautilus account 正确变化 | fill 后 Cache account/portfolio 更新；`report_account_snapshots` 投影 |
+| SIM-002 | shares 来自 Cache | `report_results.shares` 等于 Cache position projection（非 `stake/entry` 自造） |
+| SIM-003 | WIN 结算正确（报表） | `report_results.settlement_value = shares`；不改 Account |
+| SIM-004 | LOSS 结算正确（报表） | `report_results.settlement_value = 0`；不改 Account |
+| SIM-005 | PnL 正确（报表） | `report_results.pnl = settlement - stake - entry_fee`（inputs 来自 Cache 投影） |
 | SIM-006 | fee model 明确 | V1 写入 `fee_model=ignored_v1` 与 `entry_fee=0.0`；fee parity 仍为后续可选增强 |
-| SIM-007 | stale book 不成交 | stale 时 paper order rejected |
-| SIM-008 | ask 超价不成交 | ask > max_entry_price 时 rejected |
-| SIM-009 | 余额不足不成交 | account cash 不足时 rejected |
-| SIM-010 | 结果写入日志 | `paper_trade_results`（SQLite + JSONL）有完整记录 |
+| SIM-007 | stale book 不成交 | `SignalGate` 拒绝 `STALE_ORDERBOOK`；不进入 `submit_order` |
+| SIM-008 | ask 超价不成交 | `SignalGate` 拒绝 `ASK_ABOVE_MAX_ENTRY` |
+| SIM-009 | 余额不足不成交 | **RiskEngine** 拒绝；非本地 Account gate |
+| SIM-010 | 结果写入日志 | `report_results`（SQLite + JSONL）有完整记录 |
 
 ## 24. 实施阶段（已完成）
 
-> 以下所有阶段均已完成并交付。详细的当前架构见 `docs/PROJECT_ARCHITECTURE_VISUAL.md`。
+> 以下阶段为历史交付叙事（部分命名已过时）。**当前架构真相**见 [`ARCHITECTURE_OWNERSHIP.md`](ARCHITECTURE_OWNERSHIP.md)、[`RUNTIME_BOUNDARY.md`](RUNTIME_BOUNDARY.md)。
 
 ### Phase 1：项目骨架与安全边界 ✅
 
@@ -1148,9 +994,9 @@ roi = pnl / stake_usdc
 
 交付：
 - Polymarket market discovery。
-- Polymarket market WebSocket。
-- Binance spot feed。
-- Normalized market snapshot。
+- Polymarket market data via Nautilus DataClient / Cache。
+- Spot via managed Polymarket RTDS `LiveDataClient`（非 Binance 直连）。
+- `MarketView` 投影（取代独立 MarketSnapshot 真相）。
 
 ### Phase 3：策略信号层 ✅
 
@@ -1158,8 +1004,8 @@ roi = pnl / stake_usdc
 - VWAP Momentum core。
 - PTB Diff core。
 - Late Consensus core。
-- Signal gate。
-- Dedupe。
+- Signal gate（业务资格）。
+- ~~Dedupe / rate-limit gate~~（已从 `SignalGate` 移除；不得再当作第二决策总线）。
 
 ### Phase 4：Telegram 信号层 ✅
 
@@ -1167,17 +1013,17 @@ roi = pnl / stake_usdc
 - Signal formatter。
 - Telegram publisher。
 - Signal publish log。
-- Rate limit。
+- ~~Gate 内 channel rate limit~~（已移除；发布侧保留产品节奏控制，非 RiskEngine）。
 
 ### Phase 5：Nautilus Paper Runtime ✅
 
 交付：
-- Nautilus `TradingNode` / `TradingNodeConfig` runtime。
-- Nautilus native order submission。
+- Nautilus `LiveNode` + sandbox execution（默认）。
+- Nautilus native order submission（`order_factory` / `submit_order`）。
 - Nautilus sandbox paper execution。
-- Nautilus order/fill/position/account projections。
-- Hold-to-resolution settlement。
-- Paper result log。
+- Nautilus order/fill/position/account Cache 投影 + `report_*` 存储。
+- Hold-to-resolution **report-only** settlement。
+- `report_results` 日志 / SQLite。
 
 ### Phase 6：统计与日报 ✅
 
@@ -1196,7 +1042,7 @@ roi = pnl / stake_usdc
 - ✅ 项目名：PolySignal Lab。
 - ✅ BTC 5m / 15m market discovery。
 - ✅ Polymarket market data。
-- ✅ Binance BTC spot。
+- ✅ Polymarket RTDS BTC spot（managed LiveDataClient）。
 - ✅ VWAP Momentum。
 - ✅ PTB Diff。
 - ✅ Telegram signal。
@@ -1209,53 +1055,54 @@ roi = pnl / stake_usdc
 
 **第一版暂缓（后已交付）：**
 - ✅ ETH / SOL / XRP — 已增加多资产支持。
-- ✅ Late Consensus — 已实现。
-- ✅ Consensus signal — 已实现。
-- ✅ SQLite — 已实现 canonical storage。
-- ✅ Web dashboard — 已实现。
+- ✅ Late Consensus（策略 alpha）— 已实现。
+- ❌ 跨策略 Consensus / Arbiter 总线 — **已移除**；不得再当作产品能力。
+- ✅ SQLite — 已实现 canonical `report_*` storage。
+- ✅ Web dashboard — 已实现（只读）。
 - ✅ Daily report — 已实现。
-- ✅ TP/SL paper exit — `NativeExitPolicy` + `paper_trading.exit_model`（reduce-only submit_order；非 Nautilus bracket）。
-- ⏳ 历史 replay — 不在当前范围。
+- ✅ TP/SL paper exit — `NativeExitPolicy` + `trading.exit_model`（sandbox 可 reduce-only；非 venue bracket）。
+- ⏳ 历史 replay 产品化 — 不在当前默认范围。
 - ⏳ 付费频道 — 不适用。
 
 ## 26. 第二版范围（大部分已完成）
 
 > 第二版项已在迁移至 Nautilus Runtime 和最终合规修复过程中交付。
 
-- ✅ Late Consensus — 已交付。
+- ✅ Late Consensus（策略 alpha）— 已交付。
 - ✅ 多资产 BTC / ETH / SOL / XRP — 已交付。
-- ✅ Consensus signal — 已交付。
+- ❌ 跨策略 Consensus / Arbiter 总线 — **已移除**（与 Nautilus 单决策路径对齐）。
 - ✅ SQLite — 已交付。
 - ✅ Daily report — 已交付。
-- ✅ Paper TP/SL — `NativeExitPolicy` 已交付；early exit 写入 `paper_trade_results`（`exit_mode` = TAKE_PROFIT / STOP_LOSS / MAX_HOLD_TIME）。策略 YAML 中的 per-strategy exit 字段为 advisory metadata，全局阈值以 `paper_trading.exit_model` 为准。
-- ✅ Dashboard — 已交付。
+- ✅ Paper TP/SL — `NativeExitPolicy` 已交付；early exit 写入 `report_results`（`exit_mode` = TAKE_PROFIT / STOP_LOSS / MAX_HOLD_TIME）。全局阈值以 `trading.exit_model` 为准；非 venue bracket。
+- ✅ Dashboard — 已交付（只读）。
 - ✅ Strategy leaderboard — 已交付。
 
 ### 当前额外交付项（超出原始第二版范围）
 
 - 13+ AlphaCore 策略实现（超过原始 3 个）。
-- Nautilus L1/L2 market data 订阅。
-- Polymarket resolution 预言机集成（CTF + Gamma）。
-- Nautilus 可观测性 Actor（system_events、telemetry）。
-- 调度器健康检查和自动化报告。
-- 生产级容器化（Docker Compose 多阶段构建）。
-- 安全扫描和合规性 CI/CD。
+- Nautilus L1/L2 market data 订阅（Cache 真相）。
+- Resolution evidence via Gamma / public market metadata（report-only；无 redeem/payout 权限）。
+- Observability / telemetry（`system_events`、JSONL best-effort）。
+- 健康检查与自动化日报。
+- 生产级容器化（Docker Compose）。
+- 安全扫描（`polysignal-safety-scan`）与合规 CI。
+- Strategy 内 in-process `DecisionPolicy` / `SignalGate`（gate-only；账户风险归 RiskEngine）。
 
 ## 27. 成功指标
 
 | 指标 | 目标 |
 |------|------|
-| 真实下单路径 | 0 |
+| 默认配置真实 live 下单路径 | 0（未满足双开关前不得注册 live factory） |
 | 钱包密钥使用 | 0 |
 | Telegram 信号成功率 | >= 99% |
-| paper order 创建率 | >= 95% |
+| paper order 创建率（sandbox submit） | >= 95% |
 | stale paper fill | 0 |
-| paper result 可结算率 | >= 95% |
+| paper result 可结算率（`report_results`） | >= 95% |
 | signal log 完整率 | 100% |
 | paper result log 完整率 | 100% |
-| 重复信号率 | < 2% |
+| 重复 in-flight 提交率 | 由 Strategy pipeline 抑制 |
 | 每日统计生成率 | 100% |
 
 ## 28. 最终产品定义
 
-PolySignal Lab 是一个非托管、只读、安全边界清晰的 Polymarket 短周期信号与模拟验证系统。它不会替用户下单，只会从实时市场数据中生成结构化信号，发送到 Telegram，并用虚拟资金记录这些信号如果被执行后的纸面输赢。系统的核心价值不是自动交易，而是把策略信号、人工参考、paper PnL、胜率统计和策略淘汰机制统一在一个可审计框架中。
+PolySignal Lab 是一个非托管、默认 sandbox、安全边界清晰的 Polymarket 短周期信号与模拟验证系统。默认配置不会替用户在真实 venue 下单；它从 Nautilus Cache / CustomData 生成结构化信号，发送到 Telegram，并用 sandbox Cache/Portfolio 记录这些信号若被执行后的纸面输赢，结算结果以 **report-only** 写入报表层。系统的核心价值不是自动交易，而是把策略信号、人工参考、paper PnL、胜率统计和策略淘汰机制统一在一个可审计、且不违反 Nautilus 交易真相所有权的框架中。

@@ -12,6 +12,8 @@
 
 
 
+
+
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'

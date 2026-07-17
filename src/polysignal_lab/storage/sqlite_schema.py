@@ -1,10 +1,12 @@
 """
 Input: __future__, __future__.annotations, sqlite3, dataclasses, dataclasses.dataclass, typing, typing.Final
-Output: TABLE_DDL_STATEMENTS, INDEX_DDL_STATEMENTS, REQUIRED_COLUMNS, ALLOWED_TABLES, COUNT_TABLES, PROJECTION_SCHEMA_VERSION, validate_sqlite_schema, SchemaValidationError
+Output: validate_sqlite_schema, SchemaValidationError
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 

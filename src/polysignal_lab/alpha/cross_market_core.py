@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, enum, enum.StrEnum, typing, typing.Any, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, enum, enum.StrEnum, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
 Output: RelationType, MarketRelation, CrossMarketAlphaCore
 Pos: Application code
 
@@ -12,11 +12,12 @@ Pos: Application code
 
 
 
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
 
 from polysignal_lab.alpha.helpers import (
     OrderDecisionSpec,
@@ -61,17 +62,9 @@ class CrossMarketAlphaCore:
         return sum(leg_prices) + len(leg_prices) * self.config.fee_rate
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
-        if not self.config.enabled:
-            return []
-        if view.asset not in [asset.upper() for asset in self.config.assets]:
-            return []
-        if view.timeframe not in self.config.timeframes:
-            return []
-        rel_indices = self._market_to_relations.get(view.condition_id, [])
-        decisions: list[AlphaDecision] = []
-        for idx in rel_indices:
-            decisions.extend(self._evaluate_relation(view, self._relations[idx], view.condition_id))
-        return decisions
+        """Cross-market requires evaluate_group; single-market leg fabrication removed."""
+        _ = view
+        return []
 
     def evaluate_group(self, view: MarketGroupView) -> list[AlphaDecision]:
         if not self.config.enabled:
@@ -110,104 +103,28 @@ class CrossMarketAlphaCore:
         n_legs = len(views)
         leg_price_map = {condition_id: round(price, 4) for condition_id, price in zip(rel.condition_ids, leg_exec_prices, strict=True)}
         for leg_index, view in enumerate(views):
-            decision = self._decision(
+            decision = build_order_decision(
+                self.name,
                 view,
                 rel.sides[leg_index],
-                confidence=confidence,
-                max_entry_price=leg_exec_prices[leg_index],
-                reason_codes=(relation_code, f"COST_{cost:.4f}", f"LEG_{leg_index}_OF_{n_legs}"),
-                metrics={
-                    "relation_id": rel.relation_id,
-                    "relation_type": rel.rel_type.value,
-                    "leg_index": leg_index,
-                    "n_legs": n_legs,
-                    "estimated_pair_cost": round(cost, 4),
-                    "min_edge": self.config.min_edge,
-                    "leg_exec_price": leg_exec_prices[leg_index],
-                    "leg_exec_prices": leg_price_map,
-                },
-                pair_id=rel.relation_id,
-            )
-            if decision is not None:
-                decisions.append(decision)
-        return decisions
-
-    def _evaluate_relation(self, view: MarketView, rel: MarketRelation, triggered_condition_id: str) -> list[AlphaDecision]:
-        try:
-            leg_index = rel.condition_ids.index(triggered_condition_id)
-        except ValueError:
-            return []
-        target_side = rel.sides[leg_index]
-        target_book = view.book_for(target_side)
-        if target_book.best_ask is None:
-            return []
-        exec_price = depth_weighted_ask(target_book, self.config.min_depth_shares)
-        if exec_price is None:
-            return []
-
-        cost_valid = False
-        reason_codes: tuple[str, ...] = ()
-        metrics: dict[str, Any] = {}
-        if rel.rel_type == RelationType.EXHAUSTIVE_MUTUALLY_EXCLUSIVE:
-            n_legs = len(rel.condition_ids)
-            threshold = (1.0 - self.config.min_edge) / n_legs
-            if exec_price <= threshold:
-                cost = sum(exec_price for _ in range(n_legs)) + n_legs * self.config.fee_rate
-                if cost < 1.0:
-                    cost_valid = True
-                    reason_codes = ("EXHAUSTIVE_MUTUALLY_EXCLUSIVE", f"COST_{cost:.4f}", f"THRESHOLD_{threshold:.4f}", f"LEG_{leg_index}_OF_{n_legs}")
-                    metrics = {
+                OrderDecisionSpec(
+                    confidence=confidence,
+                    max_entry_price=leg_exec_prices[leg_index],
+                    reason_codes=(relation_code, f"COST_{cost:.4f}", f"LEG_{leg_index}_OF_{n_legs}"),
+                    metrics={
                         "relation_id": rel.relation_id,
                         "relation_type": rel.rel_type.value,
                         "leg_index": leg_index,
                         "n_legs": n_legs,
                         "estimated_pair_cost": round(cost, 4),
                         "min_edge": self.config.min_edge,
-                        "leg_exec_price": exec_price,
-                        "threshold": round(threshold, 4),
-                    }
-        elif rel.rel_type == RelationType.INCLUSION and len(rel.condition_ids) >= 2:
-            if exec_price <= (1.0 - self.config.min_edge) * 0.5:
-                est_cost = 2.0 * exec_price + 2.0 * self.config.fee_rate
-                if est_cost < 1.0:
-                    cost_valid = True
-                    role = "INCLUSION_A" if leg_index == 0 else "INCLUSION_B"
-                    reason_codes = (f"INCLUSION_{'A' if leg_index == 0 else 'B'}", f"COST_{est_cost:.4f}")
-                    metrics = {
-                        "relation_id": rel.relation_id,
-                        "relation_type": rel.rel_type.value,
-                        "leg_index": leg_index,
-                        "estimated_pair_cost": round(est_cost, 4),
-                        "min_edge": self.config.min_edge,
-                        "leg_exec_price": exec_price,
-                        "role": role,
-                    }
-        if not cost_valid:
-            return []
-
-        confidence = min(0.90, 0.60 + (1.0 - metrics.get("estimated_pair_cost", 1.0)) * 2.0)
-        decision = self._decision(
-            view,
-            target_side,
-            confidence=confidence,
-            max_entry_price=exec_price,
-            reason_codes=reason_codes,
-            metrics=metrics,
-            pair_id=rel.relation_id,
-        )
-        return [] if decision is None else [decision]
-
-    def _decision(self, view: MarketView, side: Side, *, confidence: float, max_entry_price: float, reason_codes: tuple[str, ...], metrics: dict[str, Any], pair_id: str) -> AlphaDecision | None:
-        return build_order_decision(
-            self.name,
-            view,
-            side,
-            OrderDecisionSpec(
-                confidence=confidence,
-                max_entry_price=max_entry_price,
-                reason_codes=reason_codes,
-                metrics=metrics,
-                order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK, pair_id=pair_id),
-                fallback_to_max_entry=True,
-            ),
-        )
+                        "leg_exec_price": leg_exec_prices[leg_index],
+                        "leg_exec_prices": leg_price_map,
+                    },
+                    order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK, pair_id=rel.relation_id),
+                    fallback_to_max_entry=True,
+                ),
+            )
+            if decision is not None:
+                decisions.append(decision)
+        return decisions

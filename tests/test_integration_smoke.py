@@ -1,10 +1,12 @@
 """
-Input: __future__, json, datetime, pathlib, unittest.mock, httpx, pydantic, polysignal_lab.app, polysignal_lab.config, polysignal_lab.data.polymarket_market_discovery
+Input: __future__, __future__.annotations, json, datetime, datetime.UTC, datetime.datetime, pathlib, pathlib.Path, unittest.mock, unittest.mock.patch
 Output: test_readonly_smoke_matches_production_gamma_filtering, test_fake_public_api_outage_degrades_without_unhandled_exception, test_health_snapshot_syncs_before_client_cleanup, test_failure_count_counts_only_down_health_snapshot
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
@@ -69,7 +71,7 @@ async def test_readonly_smoke_matches_production_gamma_filtering(
                     else []
                 )
                 return httpx.Response(200, json=payload, request=request)
-            if host == "clob.polymarket.com" and token_id in {"token-up", "token-down"}:
+            if host == "clob.polymarket.com" and token_id in {"111", "222"}:
                 return httpx.Response(200, json=_book_payload(token_id), request=request)
             if host == "clob.polymarket.com":
                 return httpx.Response(404, json={"error": "not found"}, request=request)

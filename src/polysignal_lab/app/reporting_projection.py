@@ -1,4 +1,12 @@
-"""Pure conversion of a closed position projection into a report result."""
+"""
+Input: __future__, __future__.annotations, math, datetime, datetime.datetime, typing, typing.Any, typing.cast, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode
+Output: report_result_from_projection
+Pos: Application code
+
+🔄 Self-reference: When this file changes, update this header
+"""
+
+
 
 from __future__ import annotations
 

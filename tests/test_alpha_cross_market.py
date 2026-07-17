@@ -1,10 +1,12 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, polysignal_lab.alpha.cross_market_core
-Output: test_cross_market_group_core_emits_expected_candidates, test_cross_market_group_walks_ask_depth_before_emitting, test_cross_market_leg_failure_marks_basket_failed
+Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, polysignal_lab.alpha.cross_market_core, polysignal_lab.alpha.cross_market_core.CrossMarketAlphaCore, polysignal_lab.alpha.cross_market_core.RelationType, polysignal_lab.alpha.types, polysignal_lab.alpha.types.MarketGroupView
+Output: test_cross_market_group_core_emits_expected_candidates, test_cross_market_group_walks_ask_depth_before_emitting, test_cross_market_workflow_is_expressed_only_by_pair_id
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
 """
+
+
 
 
 
