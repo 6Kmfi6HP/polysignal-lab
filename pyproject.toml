@@ -7,7 +7,7 @@ name = "polysignal-lab"
 version = "1.0.0"
 description = "Read-only Polymarket short-cycle signal and paper trading validation system"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "PolySignal Lab" }]
 dependencies = [
@@ -20,13 +20,21 @@ dependencies = [
   "fastapi>=0.111",
   "uvicorn>=0.30",
   "py-clob-client-v2>=0.1.0",
-  "python-telegram-bot[rate-limiter]>=22.5"
+  "python-telegram-bot[rate-limiter]>=22.5",
+  "nautilus_trader[polymarket]==1.231.0.dev20260716+16604",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pre-commit>=4.6.0", "httpx2>=2.4"]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "pre-commit>=4.6.0",
+  "httpx2>=2.4",
+  "basedpyright>=1.39.8",
+  "ruff>=0.15.18",
+]
 nautilus = [
-  "nautilus_trader[polymarket]==1.229.0; python_version >= '3.12'",
+  "nautilus_trader[polymarket]==1.231.0.dev20260716+16604",
 ]
 [project.scripts]
 polysignal-lab = "polysignal_lab.app.main:main"
@@ -45,11 +53,23 @@ asyncio_mode = "auto"
 [tool.hatch.metadata]
 allow-direct-references = true
 
+[[tool.uv.index]]
+name = "nautechsystems"
+url = "https://packages.nautechsystems.io/simple"
+explicit = true
+
+[tool.uv.sources]
+nautilus-trader = { index = "nautechsystems" }
+
 [tool.basedpyright]
 include = ["src", "tests"]
-pythonVersion = "3.11"
+pythonVersion = "3.12"
 failOnWarnings = false
 reportMissingTypeStubs = false
+# Known debt snapshot (pyo3 stubs + test fakes). Gate is "no new errors":
+#   basedpyright                 # must exit 0
+#   basedpyright --writebaseline # only when intentionally accepting new debt
+baselineFile = ".basedpyright/baseline.json"
 executionEnvironments = [
     { root = "src", extraPaths = ["src"] },
     { root = "tests", extraPaths = ["src"] },
