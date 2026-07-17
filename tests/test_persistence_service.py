@@ -24,12 +24,12 @@ class _CleanupStore:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str | None]] = []
 
-    def delete_paper_result_rows(
+    def delete_report_result_rows(
         self,
-        paper_trade_id: str,
+        report_result_id: str,
         publish_id: str | None,
     ) -> None:
-        self.calls.append(("paper", paper_trade_id, publish_id))
+        self.calls.append(("paper", report_result_id, publish_id))
 
     def delete_daily_report_rows(
         self,
@@ -47,7 +47,7 @@ def test_persistence_service_uses_public_cleanup_transactions() -> None:
         state=cast(StateStore, object()),
     )
 
-    service.delete_paper_result_rows("trade-1", "publish-1")
+    service.delete_report_result_rows("trade-1", "publish-1")
     service.delete_daily_report_rows("report-1", None)
 
     assert store.calls == [

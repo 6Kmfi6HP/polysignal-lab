@@ -30,7 +30,7 @@ from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 from polysignal_lab.utils import mask_secret, redact_text, utc_iso
 
 
-DEFAULT_MESSAGE = "<b>PolySignal Lab</b>\nTelegram QA send · Mode: Paper"
+DEFAULT_MESSAGE = "<b>PolySignal Lab</b>\nTelegram QA send · Mode: Sandbox"
 
 
 class TelegramQaEvidence(TypedDict):
@@ -90,7 +90,7 @@ def build_config(options: TelegramQaOptions) -> TelegramConfig:
         dry_run=not options.live,
         send_signals=True,
         send_consensus_signals=False,
-        send_paper_results=False,
+        send_report_results=False,
         send_daily_report=False,
         max_message_chars=options.max_chars,
         retry_attempts=options.retry_attempts,

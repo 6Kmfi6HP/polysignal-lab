@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, zoneinfo, zoneinfo.ZoneInfo, zoneinfo.ZoneInfoNotFoundError, polysignal_lab.app.scheduler_reporting_build, polysignal_lab.app.scheduler_reporting_equity, polysignal_lab.app.scheduler_reporting_sources, polysignal_lab.app.scheduler_reporting_types, polysignal_lab.domain.paper_result
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, zoneinfo, zoneinfo.ZoneInfo, zoneinfo.ZoneInfoNotFoundError, polysignal_lab.app.reporting_build, polysignal_lab.app.reporting_equity, polysignal_lab.app.reporting_sources, polysignal_lab.app.reporting_types, polysignal_lab.domain.reporting_result
 Output: generate_daily_report, DailyReportInputs
 Pos: Application code
 
@@ -11,14 +11,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from polysignal_lab.app.scheduler_reporting_build import (
+from polysignal_lab.app.reporting_build import (
     _build_daily_report_from_inputs,
     _retry_pending_daily_report_publishes,
 )
-from polysignal_lab.app.scheduler_reporting_equity import _report_equity_inputs
-from polysignal_lab.app.scheduler_reporting_sources import _collect_daily_report_inputs
-from polysignal_lab.app.scheduler_reporting_types import DailyReportInputs, _ReportScheduler
-from polysignal_lab.domain.paper_result import DailyReport
+from polysignal_lab.app.reporting_equity import _report_equity_inputs
+from polysignal_lab.app.reporting_sources import _collect_daily_report_inputs
+from polysignal_lab.app.reporting_types import DailyReportInputs, _ReportScheduler
+from polysignal_lab.domain.reporting_result import DailyReport
 
 
 __all__ = [

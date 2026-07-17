@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, concurrent.futures, concurrent.futures.ThreadPoolExecutor, datetime, datetime.date, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path, threading, threading.Barrier, types, types.SimpleNamespace, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.app.scheduler_reporting_build, polysignal_lab.dashboard.app
+Input: __future__, __future__.annotations, concurrent.futures, concurrent.futures.ThreadPoolExecutor, datetime, datetime.date, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib, pathlib.Path, threading, threading.Barrier, types, types.SimpleNamespace, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.app.reporting_build, polysignal_lab.dashboard.app
 Output: test_formatter_signal_message_within_limit, test_telegram_dry_run_publish, test_formatter_nautilus_fill_message_is_compact, test_jsonl_and_state_store, test_jsonl_and_state_restore_required_streams, test_sqlite_store_and_dashboard, test_schema_rejects_missing_required_columns, test_sqlite_anchor_prices_survive_reopen, test_sqlite_verified_anchor_survives_later_unverified_upsert, test_sqlite_store_persists_strategy_status_rows, test_daily_report_claim_and_delivery_lease_are_atomic_across_connections, test_daily_report_publish_authorization_rejects_expired_lease, test_daily_report_publish_retry_updates_failed_publish_record, test_daily_report_publish_failure_does_not_downgrade_success, test_new_daily_report_revision_supersedes_delivering_publish, test_new_daily_report_revision_does_not_revoke_authorized_publish, test_new_daily_report_revision_failed_publish_becomes_superseded, test_new_daily_report_revision_waits_for_authorized_publish, test_new_daily_report_revision_reclaims_expired_waiting_lease, test_new_daily_report_revision_fences_expired_sending_completion, test_new_daily_report_revision_without_publish_supersedes_delivering_publish, test_pending_daily_report_publishes_supersedes_stale_nonterminal_rows, test_pending_daily_report_publishes_excludes_stale_revision, test_publish_report_skips_intent_superseded_before_delivery, test_publish_report_exception_preserves_sending_lease, test_publish_report_logs_effective_success_result
 Pos: Test Layer - Unit/Integration tests
 
@@ -23,14 +23,14 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from factories import sample_paper_trade_result
+from factories import sample_report_result
 from polysignal_lab.dashboard.app import create_dashboard_app
-from polysignal_lab.app.scheduler_reporting_build import _publish_report
+from polysignal_lab.app.reporting_build import _publish_report
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
-from polysignal_lab.domain.paper_result import DailyReport
+from polysignal_lab.domain.reporting_result import DailyReport
 from polysignal_lab.domain.strategy_readiness import StrategyMarketStatus
-from polysignal_lab.paper.report import PaperReportService
+from polysignal_lab.reporting.daily_report import DailyReportService
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.storage import sqlite_store as sqlite_store_module
@@ -38,13 +38,13 @@ from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import DuplicateRecordError, SQLiteStore
 from polysignal_lab.storage.sqlite_schema import SchemaValidationError
 from polysignal_lab.storage.state_store import StateStore
-from signal_helpers import ptb_signal_from_snapshot
+from signal_helpers import ptb_signal_from_view
 from factories import sample_storage_lifecycle
 
 
-async def test_formatter_signal_message_within_limit(snapshot, settings):
+async def test_formatter_signal_message_within_limit(market_view, settings):
     # Given: a PRD signal candidate.
-    sig = ptb_signal_from_snapshot(snapshot, settings)
+    sig = ptb_signal_from_view(market_view, settings)
 
     # When: the Telegram signal message is formatted.
     message = MessageFormatter(max_chars=4096).signal_message(sig, 10.0)
@@ -61,7 +61,7 @@ async def test_formatter_signal_message_within_limit(snapshot, settings):
     assert "Conf   " in message
     assert "Close  " in message
     assert "<b>Why</b>" in message
-    assert "Mode: Paper" in message
+    assert "Mode: Sandbox" in message
     assert "ID: <code>" in message
     for removed in (
         "Risk:",
@@ -97,7 +97,7 @@ def test_formatter_nautilus_fill_message_is_compact() -> None:
         "signal_id": "sig-fill-1",
         "order_id": "order-1",
         "client_order_id": "client-1",
-        "paper_fill_id": "trade-1",
+        "report_fill_id": "trade-1",
     }
 
     message = MessageFormatter(max_chars=4096).nautilus_fill_message(fill)
@@ -109,7 +109,7 @@ def test_formatter_nautilus_fill_message_is_compact() -> None:
     assert "Fill   0.5000" in message
     assert "Shares 10.0000" in message
     assert "Stake  5.00 USDC" in message
-    assert "Mode: Paper" in message
+    assert "Mode: Sandbox" in message
     assert "Order  <code>client-1</code>" in message
     assert "FillID <code>trade-1</code>" in message
 
@@ -119,48 +119,45 @@ def test_jsonl_and_state_store(tmp_path):
     state = StateStore(tmp_path / "state")
     logs.append("signals", {"signal_id": "s1"})
     assert logs.read_all("signals")[0]["signal_id"] == "s1"
-    state.write("paper_wallet", {"cash": 10})
-    assert state.read("paper_wallet")["cash"] == 10
+    state.write("telegram_disabled_strategies", ["late_consensus"])
+    assert state.read("telegram_disabled_strategies") == ["late_consensus"]
 
 
-def test_jsonl_and_state_restore_required_streams(tmp_path):
+def test_jsonl_and_state_restore_reporting_streams(tmp_path):
     # Given: the PRD audit streams and state files persisted under a temp root.
     logs = JSONLStore(tmp_path / "logs")
     state = StateStore(tmp_path / "state")
     streams = [
         "signals",
         "rejected_signals",
-        "paper_orders",
-        "paper_fills",
-        "paper_positions",
-        "paper_trade_results",
-        "paper_wallet_snapshots",
+        "report_orders",
+        "report_fills",
+        "report_positions",
+        "report_results",
+        "report_account_snapshots",
         "daily_reports",
         "telegram_publishes",
         "system_events",
     ]
     for stream in streams:
         logs.append(stream, {"stream": stream, "id": f"{stream}-1"})
-    state.write("paper_wallet", {"cash_balance": 990.0, "equity": 1012.0})
-    state.write("open_positions", [{"paper_position_id": "pos1", "status": "OPEN"}])
+    state.write("telegram_disabled_strategies", ["late_consensus"])
 
     # When: persisted JSONL/state is restored from disk.
     restored_streams = {stream: logs.read_all(stream)[0]["stream"] for stream in streams}
-    wallet = state.read("paper_wallet")
-    positions = state.read("open_positions")
+    disabled = state.read("telegram_disabled_strategies")
     (tmp_path / "logs" / "broken.jsonl").write_text("{broken\n", encoding="utf-8")
 
     # Then: every PRD stream is present and malformed JSON is not silently accepted.
     assert restored_streams == {stream: stream for stream in streams}
-    assert wallet["cash_balance"] == 990.0
-    assert positions[0]["paper_position_id"] == "pos1"
+    assert disabled == ["late_consensus"]
     with pytest.raises(ValueError):
         logs.read_all("broken")
 
 
-async def test_sqlite_store_and_dashboard(tmp_path, snapshot, settings):
+async def test_sqlite_store_and_dashboard(tmp_path, market_view, settings):
     store = SQLiteStore(tmp_path / "db.sqlite3")
-    sig = ptb_signal_from_snapshot(snapshot, settings)
+    sig = ptb_signal_from_view(market_view, settings)
     store.insert_signal(sig)
     assert store.counts()["signals"] == 1
     app = create_dashboard_app(store)
@@ -187,14 +184,14 @@ def _daily_report_for_publish(
     *,
     ending_equity: float = 1000.0,
 ) -> DailyReport:
-    return PaperReportService().build_daily_report(
+    return DailyReportService().build_daily_report(
         report_date=date(2026, 7, 15),
         starting_equity=1000.0,
         ending_equity=ending_equity,
         total_signals=1,
-        paper_orders=0,
-        paper_fills=0,
-        rejected_paper_orders=0,
+        order_count=0,
+        fill_count=0,
+        rejected_order_count=0,
         open_positions=0,
         results=[],
     )
@@ -218,14 +215,14 @@ def test_daily_report_claim_and_delivery_lease_are_atomic_across_connections(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db_path = tmp_path / "reports.sqlite3"
-    base_report = PaperReportService().build_daily_report(
+    base_report = DailyReportService().build_daily_report(
         report_date=date(2026, 7, 13),
         starting_equity=1000.0,
         ending_equity=1005.0,
         total_signals=1,
-        paper_orders=1,
-        paper_fills=1,
-        rejected_paper_orders=0,
+        order_count=1,
+        fill_count=1,
+        rejected_order_count=0,
         open_positions=0,
         results=[],
     )
@@ -1407,10 +1404,10 @@ def test_sqlite_store_persists_strategy_status_rows(tmp_path) -> None:
     ]
 
 
-def test_duplicate_ids_are_idempotent_or_reported(tmp_path, snapshot, settings):
+def test_duplicate_ids_are_idempotent_or_reported(tmp_path, market_view, settings):
     # Given: a SQLite store with one full PRD audit lifecycle persisted.
     store = SQLiteStore(tmp_path / "db.sqlite3")
-    sig = ptb_signal_from_snapshot(snapshot, settings)
+    sig = ptb_signal_from_view(market_view, settings)
     lifecycle = sample_storage_lifecycle(sig)
 
     # When: the same payloads are inserted twice and one conflicting duplicate is inserted.
@@ -1440,9 +1437,9 @@ def test_duplicate_ids_are_idempotent_or_reported(tmp_path, snapshot, settings):
         **lifecycle.position,
         "ts": lifecycle.position["opened_at"],
     })
-    store.insert_paper_trade_result(lifecycle.result)
-    store.insert_paper_trade_result(lifecycle.result)
-    store.insert_wallet_snapshot(lifecycle.wallet)
+    store.insert_report_result(lifecycle.result)
+    store.insert_report_result(lifecycle.result)
+    store.insert_report_account_snapshot(lifecycle.account_snapshot)
     store.insert_daily_report(lifecycle.report)
     store.insert_daily_report(lifecycle.report)
     store.insert_telegram_publish(lifecycle.publish)
@@ -1454,37 +1451,37 @@ def test_duplicate_ids_are_idempotent_or_reported(tmp_path, snapshot, settings):
     # Then: duplicates are idempotent by ID, and conflicting payload reuse is explicit.
     assert store.counts()["signals"] == 1
     assert store.counts()["rejected_signals"] == 1
-    assert store.counts()["paper_trade_results"] == 1
+    assert store.counts()["report_results"] == 1
     assert store.counts()["daily_reports"] == 1
     assert store.counts()["telegram_publishes"] == 1
     assert store.counts()["system_events"] == 4
-    assert store.query_json("paper_wallet_snapshots")[0]["cash_balance"] == 990.0
+    assert store.query_json("report_account_snapshots")[0]["cash_balance"] == 990.0
     with pytest.raises(DuplicateRecordError, match=sig.signal_id):
         store.insert_signal(conflicting_signal)
 
 
 def test_report_calculates_daily_metrics(settings):
-    report = PaperReportService().build_daily_report(
+    report = DailyReportService().build_daily_report(
         report_date=date(2026, 6, 21),
         starting_equity=1000,
         ending_equity=1010,
         total_signals=2,
-        paper_orders=2,
-        paper_fills=2,
-        rejected_paper_orders=0,
+        order_count=2,
+        fill_count=2,
+        rejected_order_count=0,
         open_positions=0,
         results=[],
     )
-    assert report.paper_pnl == 10
+    assert report.net_pnl == 10
     assert report.total_signals == 2
     assert report.win_rate == 0
 
 
 def test_formatter_result_and_daily_messages_are_paper_only() -> None:
     # Given: paper result and daily report domain records.
-    result = sample_paper_trade_result(
+    result = sample_report_result(
         signal_id="sig1",
-        paper_position_id="pos1",
+        report_position_id="pos1",
         strategy="ptb_diff",
         asset="BTC",
         timeframe="5m",
@@ -1506,12 +1503,12 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
         report_date=date(2026, 6, 21),
         starting_equity=1000.0,
         ending_equity=1006.13,
-        paper_pnl=6.13,
-        paper_roi=0.00613,
+        net_pnl=6.13,
+        return_rate=0.00613,
         total_signals=1,
-        paper_orders=1,
-        paper_fills=1,
-        rejected_paper_orders=0,
+        order_count=1,
+        fill_count=1,
+        rejected_order_count=0,
         open_positions=0,
         closed_positions=1,
         win_count=1,
@@ -1522,7 +1519,7 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
         average_roi=0.6129,
         max_drawdown=0.0,
         profit_factor=None,
-        paper_rejects_by_reason={"PAPER_ENTRY_PRICE_MOVED": 1},
+        rejects_by_reason={"ENTRY_PRICE_MOVED": 1},
         average_execution_staleness_ms=25.0,
         strategy_breakdown={"ptb_diff": {"closed_positions": 1}},
     )
@@ -1543,7 +1540,7 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
     assert "PnL    " in result_message
     assert "ROI    " in result_message
     assert "Settle " in result_message
-    assert "Mode: Paper" in result_message
+    assert "Mode: Sandbox" in result_message
     assert "ID: <code>" in result_message
     for removed in (
         "Note:",
@@ -1554,7 +1551,7 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
         assert removed not in result_message
 
     # Then: daily messages use the compact report layout and no stale disclaimers.
-    assert daily_message.startswith("<b>📊 Daily Paper Report</b>")
+    assert daily_message.startswith("<b>📊 Daily Trading Report</b>")
     assert "Equity  " in daily_message
     assert " → " in daily_message
     assert "PnL     " in daily_message
@@ -1564,7 +1561,7 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
     assert "Rejects " in daily_message
     assert "ExecLag " in daily_message
     assert "Telemetry COMPLETE" in daily_message
-    assert "PAPER_ENTRY_PRICE_MOVED" in daily_message
+    assert "ENTRY_PRICE_MOVED" in daily_message
     assert "Filled  " in daily_message
     assert "Closed  " in daily_message
     assert "W/L     " in daily_message
@@ -1580,9 +1577,9 @@ def test_formatter_result_and_daily_messages_are_paper_only() -> None:
         assert removed not in daily_message
 
 
-async def test_formatter_truncates_long_signal_message(snapshot, settings) -> None:
+async def test_formatter_truncates_long_signal_message(market_view, settings) -> None:
     # Given: a signal whose reasons would exceed a short Telegram message limit.
-    sig = ptb_signal_from_snapshot(snapshot, settings).model_copy(
+    sig = ptb_signal_from_view(market_view, settings).model_copy(
         update={"reason_codes": [f"reason-{index}" for index in range(30)]}
     )
 

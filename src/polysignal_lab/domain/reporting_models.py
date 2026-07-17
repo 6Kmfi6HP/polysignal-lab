@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, datetime, datetime.date, datetime.datetime, typing, typing.Any, pydantic, pydantic.BaseModel, pydantic.Field, polysignal_lab.utils
-Output: PaperWalletSnapshotRow, DailyReportRow, EquitySource, daily_report_row, wallet_float, report_float, report_text, report_date_text, report_nested_mapping, PaperWalletSnapshot, DailyReport
+Output: ReportAccountSnapshotRow, DailyReportRow, EquitySource, daily_report_row, account_float, report_float, report_text, report_date_text, report_nested_mapping, ReportAccountSnapshot, DailyReport
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -21,13 +21,12 @@ from polysignal_lab.utils import new_id, utc_now
 EquitySource = Literal["portfolio", "account_balance", "starting_balance"]
 
 
-class PaperWalletSnapshotRow(TypedDict, total=False):
+class ReportAccountSnapshotRow(TypedDict, total=False):
     schema_version: int
-    wallet_id: str
+    account_id: str
     currency: str
     starting_balance: float
     cash_balance: float
-    reserved_balance: float
     realized_pnl: float
     unrealized_pnl: float
     equity: float
@@ -44,21 +43,21 @@ class DailyReportRow(TypedDict, total=False):
     ending_equity: float
     equity_currency: str
     equity_source: EquitySource | None
-    paper_pnl: float
-    paper_roi: float
+    net_pnl: float
+    return_rate: float
     total_signals: int
-    paper_orders: int
-    paper_fills: int
-    rejected_paper_orders: int
-    stale_paper_fills: int
-    paper_attempts_by_intent: dict[str, int]
-    paper_fills_by_intent: dict[str, int]
-    paper_partial_fills_by_intent: dict[str, int]
-    paper_rejects_by_reason: dict[str, int]
-    paper_rejects_by_original_reason: dict[str, int]
+    order_count: int
+    fill_count: int
+    rejected_order_count: int
+    stale_fill_count: int
+    order_attempts_by_intent: dict[str, int]
+    fills_by_intent: dict[str, int]
+    partial_fills_by_intent: dict[str, int]
+    rejects_by_reason: dict[str, int]
+    rejects_by_original_reason: dict[str, int]
     average_execution_staleness_ms: float | None
     average_executable_depth_usdc: float | None
-    paper_execution_assumptions: dict[str, Any]
+    execution_assumptions: dict[str, Any]
     telemetry_status: str
     telemetry_incomplete_reasons: list[str]
     open_positions: int
@@ -84,7 +83,7 @@ def _row_value(row: Mapping[str, Any] | Any, key: str, default: Any = None) -> A
     return getattr(row, key, default)
 
 
-def wallet_float(row: Mapping[str, Any] | Any, key: str, default: float = 0.0) -> float:
+def account_float(row: Mapping[str, Any] | Any, key: str, default: float = 0.0) -> float:
     value = _row_value(row, key, default)
     if isinstance(value, bool):
         return default
@@ -98,7 +97,7 @@ def wallet_float(row: Mapping[str, Any] | Any, key: str, default: float = 0.0) -
 
 
 def report_float(row: Mapping[str, Any] | Any, key: str, default: float = 0.0) -> float:
-    return wallet_float(row, key, default)
+    return account_float(row, key, default)
 
 
 def report_text(row: Mapping[str, Any] | Any, key: str, default: str = "") -> str:
@@ -129,13 +128,12 @@ def daily_report_row(report: DailyReport) -> DailyReportRow:
     return DailyReportRow(**report.model_dump(mode="json"))
 
 
-class PaperWalletSnapshot(BaseModel):
+class ReportAccountSnapshot(BaseModel):
     schema_version: int = 1
-    wallet_id: str = "default"
+    account_id: str = "default"
     currency: str = "USDC"
     starting_balance: float
     cash_balance: float
-    reserved_balance: float = 0.0
     realized_pnl: float = 0.0
     unrealized_pnl: float = 0.0
     equity: float
@@ -152,21 +150,21 @@ class DailyReport(BaseModel):
     ending_equity: float
     equity_currency: str = "USDC"
     equity_source: EquitySource | None = None
-    paper_pnl: float
-    paper_roi: float
+    net_pnl: float
+    return_rate: float
     total_signals: int
-    paper_orders: int
-    paper_fills: int
-    rejected_paper_orders: int
-    stale_paper_fills: int = 0
-    paper_attempts_by_intent: dict[str, int] = Field(default_factory=dict)
-    paper_fills_by_intent: dict[str, int] = Field(default_factory=dict)
-    paper_partial_fills_by_intent: dict[str, int] = Field(default_factory=dict)
-    paper_rejects_by_reason: dict[str, int] = Field(default_factory=dict)
-    paper_rejects_by_original_reason: dict[str, int] = Field(default_factory=dict)
+    order_count: int
+    fill_count: int
+    rejected_order_count: int
+    stale_fill_count: int = 0
+    order_attempts_by_intent: dict[str, int] = Field(default_factory=dict)
+    fills_by_intent: dict[str, int] = Field(default_factory=dict)
+    partial_fills_by_intent: dict[str, int] = Field(default_factory=dict)
+    rejects_by_reason: dict[str, int] = Field(default_factory=dict)
+    rejects_by_original_reason: dict[str, int] = Field(default_factory=dict)
     average_execution_staleness_ms: float | None = None
     average_executable_depth_usdc: float | None = None
-    paper_execution_assumptions: dict[str, Any] = Field(default_factory=dict)
+    execution_assumptions: dict[str, Any] = Field(default_factory=dict)
     telemetry_status: Literal["complete", "incomplete"] = "complete"
     telemetry_incomplete_reasons: list[str] = Field(default_factory=list)
     open_positions: int

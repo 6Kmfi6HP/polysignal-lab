@@ -14,19 +14,34 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 from telegram.ext import CallbackQueryHandler, CommandHandler
 
-from factories import sample_paper_trade_result
+from factories import sample_report_result
 
 from polysignal_lab.config import TelegramConfig
-from polysignal_lab.data.state import MarketRegistry, OrderBookRegistry
+from polysignal_lab.data.state import MarketRegistry
+from polysignal_lab.domain.enums import PositionStatus, Side
+from polysignal_lab.domain.market import Market, OutcomeToken
+from polysignal_lab.domain.orderbook import BookLevel, OrderBook
+from polysignal_lab.domain.reporting_result import DailyReport
 from polysignal_lab.publish.telegram_bot import TelegramBotService
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 from telegram import InlineKeyboardMarkup
+
+
+class _FakeBooks:
+    def __init__(self) -> None:
+        self._books: dict[str, OrderBook] = {}
+
+    def update(self, book: OrderBook) -> None:
+        self._books[book.token_id] = book
+
+    def get(self, token_id: str) -> OrderBook | None:
+        return self._books.get(token_id)
 
 
 class _FakeUpdater:
@@ -76,16 +91,16 @@ class _FakePersistence:
     def counts(self) -> dict[str, int]:
         return {}
 
-    def restore_open_positions(self) -> list[dict[str, object]]:
+    def query_report_open_positions(self) -> list[dict[str, object]]:
         return []
 
-    def restore_latest_wallet_snapshot(self) -> dict[str, object] | None:
+    def query_latest_report_account_snapshot(self) -> dict[str, object] | None:
         return None
 
-    def restore_latest_system_event(self, event_type: str) -> dict[str, object] | None:
+    def query_latest_system_event(self, event_type: str) -> dict[str, object] | None:
         return None
 
-    def restore_daily_reports(self, limit: int = 100) -> list[dict[str, object]]:
+    def query_daily_reports(self, limit: int = 100) -> list[dict[str, object]]:
         return []
 
     def query_json(self, table: str, limit: int = 100, where: str = "", params=()) -> list[dict[str, object]]:
@@ -130,7 +145,7 @@ def _service(
         persistence=_FakePersistence(),
         strategy_control=control,
         strategy_names=strategy_names or [],
-        books=OrderBookRegistry(),
+        books=_FakeBooks(),
         markets=MarketRegistry(),
         formatter=MessageFormatter(),
         application=application,
@@ -349,14 +364,6 @@ async def test_telegram_bot_interactive_dry_run_logs_no_send(caplog: pytest.LogC
     assert update.effective_message.replies == []
     assert "telegram interactive_dry_run reply" in caplog.text
     assert service.health()["metrics"]["send_success"] == 0
-from datetime import date, datetime, timezone
-
-from polysignal_lab.domain.enums import PositionStatus, Side
-from polysignal_lab.domain.market import Market, OutcomeToken
-from polysignal_lab.domain.orderbook import BookLevel, OrderBook
-from polysignal_lab.domain.paper_result import DailyReport
-
-
 class _FakeStrategyControl:
     def __init__(self, disabled: list[str] | None = None) -> None:
         self.disabled = set(disabled or [])
@@ -394,20 +401,20 @@ class _FormattingPersistence(_FakePersistence):
     def counts(self) -> dict[str, int]:
         return self.table_counts
 
-    def restore_open_positions(self) -> list[dict[str, object]]:
+    def query_report_open_positions(self) -> list[dict[str, object]]:
         return self.positions
 
-    def restore_latest_wallet_snapshot(self) -> dict[str, object] | None:
+    def query_latest_report_account_snapshot(self) -> dict[str, object] | None:
         return self.wallet
 
-    def restore_latest_system_event(self, event_type: str) -> dict[str, object] | None:
+    def query_latest_system_event(self, event_type: str) -> dict[str, object] | None:
         assert event_type == "health_snapshot"
         return self.health_event
 
-    def restore_daily_reports(self, limit: int = 100) -> list[dict[str, object]]:
+    def query_daily_reports(self, limit: int = 100) -> list[dict[str, object]]:
         return self.reports[:limit]
 
-    def restore_closed_trade_results(
+    def query_closed_trade_results(
         self,
         *,
         since: datetime | None = None,
@@ -435,7 +442,7 @@ class _FormattingPersistence(_FakePersistence):
             return self.signals[:limit]
         if table == "rejected_signals":
             return self.rejected[:limit]
-        if table == "paper_trade_results":
+        if table == "report_results":
             return self.trade_results[:limit]
         raise AssertionError(table)
 
@@ -451,7 +458,7 @@ def _formatting_service(
         persistence=persistence,
         strategy_control=strategy_control or _FakeStrategyControl(),
         strategy_names=strategy_names or [],
-        books=OrderBookRegistry(),
+        books=_FakeBooks(),
         markets=MarketRegistry(),
         formatter=MessageFormatter(),
     )
@@ -460,10 +467,10 @@ def _formatting_service(
 def test_telegram_bot_positions_marks_live_book_when_available() -> None:
     persistence = _FormattingPersistence()
     position = {
-        "paper_position_id": "pp-1",
+        "report_position_id": "pp-1",
         "signal_id": "sig_1",
-        "paper_order_id": "po_1",
-        "paper_fill_id": "pf_1",
+        "report_order_id": "po_1",
+        "report_fill_id": "pf_1",
         "strategy": "vwap_momentum",
         "asset": "BTC",
         "timeframe": "15m",
@@ -501,10 +508,10 @@ def test_telegram_bot_positions_marks_live_book_when_available() -> None:
 def test_telegram_bot_positions_shows_mark_na_without_live_book() -> None:
     persistence = _FormattingPersistence()
     position = {
-        "paper_position_id": "pp-2",
+        "report_position_id": "pp-2",
         "signal_id": "sig_1",
-        "paper_order_id": "po_1",
-        "paper_fill_id": "pf_1",
+        "report_order_id": "po_1",
+        "report_fill_id": "pf_1",
         "strategy": "vwap_momentum",
         "asset": "BTC",
         "timeframe": "15m",
@@ -593,7 +600,7 @@ def test_telegram_bot_positions_skips_rows_without_side() -> None:
 
     text = service._format_positions()
 
-    assert text == "暂无 open paper positions。"
+    assert text == "暂无 open positions。"
     assert "· UP" not in text
 
 
@@ -642,12 +649,12 @@ def test_telegram_bot_daily_validates_payload_before_formatter() -> None:
         report_date=date(2026, 6, 24),
         starting_equity=1000.0,
         ending_equity=1005.0,
-        paper_pnl=5.0,
-        paper_roi=0.005,
+        net_pnl=5.0,
+        return_rate=0.005,
         total_signals=2,
-        paper_orders=2,
-        paper_fills=1,
-        rejected_paper_orders=1,
+        order_count=2,
+        fill_count=1,
+        rejected_order_count=1,
         open_positions=1,
         closed_positions=1,
         win_count=1,
@@ -664,7 +671,7 @@ def test_telegram_bot_daily_validates_payload_before_formatter() -> None:
 
     text = service._format_daily()
 
-    assert "<b>📊 Daily Paper Report</b>" in text
+    assert "<b>📊 Daily Trading Report</b>" in text
     assert "2026-06-24" in text
 
 
@@ -687,7 +694,7 @@ def test_telegram_bot_status_includes_health_wallet_counts_and_disabled_strategi
     assert "🟢 PolySignal Lab: ok" in text
     assert "Markets     2 tracked" in text
     assert "Positions   3 open" in text
-    assert "Wallet      987.50 USDC equity" in text
+    assert "Account     987.50 USDC equity" in text
     assert "Signals     142 accepted / 91 rejected" in text
     assert "Strategies  1/2 enabled" in text
 
@@ -757,9 +764,9 @@ def test_telegram_bot_leaderboard_all_time() -> None:
     from polysignal_lab.domain.enums import TradeResultStatus
 
     persistence = _FormattingPersistence()
-    result = sample_paper_trade_result(
+    result = sample_report_result(
         signal_id="sig-1",
-        paper_position_id="pos-1",
+        report_position_id="pos-1",
         market_id="m-1",
         market_slug="btc-5m",
         outcome_value=1.0,
@@ -784,9 +791,9 @@ def test_telegram_bot_leaderboard_today_filters_by_closed_at(monkeypatch: pytest
     from polysignal_lab.domain.enums import TradeResultStatus
 
     persistence = _FormattingPersistence()
-    today_result = sample_paper_trade_result(
+    today_result = sample_report_result(
         signal_id="sig-today",
-        paper_position_id="pos-today",
+        report_position_id="pos-today",
         market_id="m-1",
         market_slug="btc-5m",
         outcome_value=1.0,
@@ -797,9 +804,9 @@ def test_telegram_bot_leaderboard_today_filters_by_closed_at(monkeypatch: pytest
         opened_at=datetime(2026, 7, 5, 1, 0, tzinfo=timezone.utc).isoformat(),
         closed_at=datetime(2026, 7, 5, 2, 0, tzinfo=timezone.utc).isoformat(),
     )
-    old_result = sample_paper_trade_result(
+    old_result = sample_report_result(
         signal_id="sig-old",
-        paper_position_id="pos-old",
+        report_position_id="pos-old",
         strategy="vwap_momentum",
         market_id="m-2",
         market_slug="btc-5m",

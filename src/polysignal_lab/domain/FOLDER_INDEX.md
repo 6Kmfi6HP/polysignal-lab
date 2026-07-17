@@ -6,11 +6,9 @@
 **Files**:
 - `trade.py` - Exports Trade
 - `spot.py` - Exports SpotPrice
-- `snapshot_batch.py` - Exports SnapshotBatch and 1 more
-- `snapshot.py` - Exports FreshnessState and 1 more
 - `signal.py` - Exports SignalCandidate and 1 more
-- `paper_report.py` - Defines reports, wallet snapshots, and telemetry completeness fields
-- `paper_result.py` - Exports PaperTradeResultRow and trade-result helpers
+- `reporting_models.py` - Defines report account snapshots, daily reports, and telemetry fields
+- `reporting_result.py` - Exports canonical ReportResultRow and report helpers
 - `orderbook.py` - Exports BookLevel and 1 more
 - `market.py` - Exports OutcomeToken and 1 more
 - `freshness.py` - Exports FreshnessPolicy

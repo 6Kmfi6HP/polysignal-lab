@@ -1,6 +1,5 @@
-# noqa: SIZE_OK  — dashboard route module; split is outside this safety fix
 """
-Input: __future__, datetime, math, typing, fastapi, polysignal_lab.dashboard.reporting_read, polysignal_lab.domain.market, polysignal_lab.paper.event_projection
+Input: __future__, datetime, math, typing, fastapi, polysignal_lab.dashboard.reporting_read, polysignal_lab.domain.market, polysignal_lab.storage.event_projection
 Output: create_dashboard_app
 Pos: Application code
 
@@ -27,10 +26,10 @@ from polysignal_lab.dashboard.reporting_read import (
     RuntimeHealthRead,
 )
 from polysignal_lab.domain.market import Market
-from polysignal_lab.paper.event_projection import (
-    normalize_paper_order,
-    normalize_paper_position,
-    paper_token_id,
+from polysignal_lab.storage.event_projection import (
+    normalize_report_order,
+    normalize_report_position,
+    report_token_id,
 )
 
 JsonValue: TypeAlias = Any
@@ -250,7 +249,7 @@ def _market_for_row(
         market = by_id.get(market_id)
         if market is not None:
             return market
-    token_id = paper_token_id(row)
+    token_id = report_token_id(row)
     if token_id:
         return by_token.get(token_id)
     return None
@@ -279,11 +278,11 @@ def _valid_timestamp(value: JsonValue) -> bool:
 
 
 def _valid_order_payload(payload: dict[str, JsonValue]) -> bool:
-    return bool(payload.get("paper_order_id")) and bool(payload.get("status"))
+    return bool(payload.get("report_order_id")) and bool(payload.get("status"))
 
 
 def _valid_position_payload(payload: dict[str, JsonValue]) -> bool:
-    if not bool(payload.get("paper_position_id")):
+    if not bool(payload.get("report_position_id")):
         return False
     if payload.get("side") not in {"UP", "DOWN"}:
         return False
@@ -343,12 +342,12 @@ def create_dashboard_app(
     async def strategy_status(limit: int = 100) -> list[dict[str, JsonValue]]:
         return strategy_status_rows(limit)
 
-    @app.get("/api/paper-orders", response_model=None)
-    async def paper_orders(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
-        rows = reporting.paper_order_rows(status, _bounded_limit(limit))
+    @app.get("/api/report-orders", response_model=None)
+    async def order_count(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
+        rows = reporting.report_order_rows(status, _bounded_limit(limit))
         by_id, by_token = _market_lookup(reporting)
         payloads = [
-            normalize_paper_order(
+            normalize_report_order(
                 row,
                 market=_market_for_row(row, by_id=by_id, by_token=by_token),
             )
@@ -358,10 +357,10 @@ def create_dashboard_app(
 
     @app.get("/api/positions", response_model=None)
     async def positions(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
-        rows = reporting.paper_position_rows(status, _bounded_limit(limit))
+        rows = reporting.report_position_rows(status, _bounded_limit(limit))
         by_id, by_token = _market_lookup(reporting)
         payloads = [
-            normalize_paper_position(
+            normalize_report_position(
                 row,
                 market=_market_for_row(row, by_id=by_id, by_token=by_token),
             )
@@ -371,7 +370,7 @@ def create_dashboard_app(
 
     @app.get("/api/trades", response_model=None)
     async def trades(limit: int = 100) -> list[dict[str, JsonValue]]:
-        return reporting.paper_trade_result_rows(_bounded_limit(limit))
+        return reporting.report_result_rows(_bounded_limit(limit))
 
     @app.get("/api/leaderboard", response_model=None)
     async def leaderboard(limit: int = 100) -> dict[str, JsonValue]:

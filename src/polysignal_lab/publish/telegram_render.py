@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, html, collections.abc, collections.abc.Callable, datetime, datetime.datetime, datetime.timezone, telegram, typing, typing.Any, typing.Literal, polysignal_lab.paper.event_projection.normalize_paper_position
+Input: __future__, __future__.annotations, html, collections.abc, collections.abc.Callable, datetime, datetime.datetime, datetime.timezone, telegram, typing, typing.Any, typing.Literal, polysignal_lab.storage.event_projection.normalize_report_position
 Output: main_keyboard, back_keyboard, leaderboard_keyboard, strategies_keyboard, toggle_callback_for, safe_text, parse_time, format_age, truncate_text, position_display_payload, row_float
 Pos: Application code
 
@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from polysignal_lab.paper.event_projection import normalize_paper_position
+from polysignal_lab.storage.event_projection import normalize_report_position
 
 
 def toggle_callback_for(name: str) -> str | None:
@@ -115,8 +115,7 @@ def position_display_payload(
     *,
     market: object | None = None,
 ) -> dict[str, Any]:
-    """Normalize open-position rows for Telegram display without PaperPosition."""
-    payload = normalize_paper_position(row, market=market)
+    payload = normalize_report_position(row, market=market)
     return {
         **payload,
         "entry_price": row_float(payload, "entry_price") or 0.0,

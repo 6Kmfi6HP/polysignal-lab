@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, sqlite3, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.DailyReport
-Output: delete_paper_result_rows, delete_daily_report_rows
+Input: __future__, __future__.annotations, sqlite3, polysignal_lab.domain.reporting_result, polysignal_lab.domain.reporting_result.DailyReport
+Output: delete_report_result_rows, delete_daily_report_rows
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -12,24 +12,24 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
-from polysignal_lab.domain.paper_result import DailyReport
+from polysignal_lab.domain.reporting_result import DailyReport
 
 
-def delete_paper_result_rows(
+def delete_report_result_rows(
     scheduler: Any,
     result: Mapping[str, Any],
     publish_payload: dict[str, str | None] | None,
 ) -> None:
-    paper_trade_id = str(result.get("paper_trade_id") or "")
+    report_result_id = str(result.get("report_result_id") or "")
     try:
-        scheduler.persistence.delete_paper_result_rows(
-            paper_trade_id,
+        scheduler.persistence.delete_report_result_rows(
+            report_result_id,
             publish_payload["publish_id"] if publish_payload is not None else None,
         )
     except sqlite3.Error:
         scheduler.logger.exception(
-            "Failed to clean up partial paper result persistence for %s",
-            paper_trade_id,
+            "Failed to clean up partial report result persistence for %s",
+            report_result_id,
         )
 
 

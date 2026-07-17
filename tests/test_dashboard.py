@@ -1,4 +1,3 @@
-# noqa: SIZE_OK  — dashboard integration coverage file
 """
 Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timezone, pytest, fastapi.testclient, fastapi.testclient.TestClient, polysignal_lab.dashboard.app
 Output: test_dashboard_uses_injected_reporting_read_port, test_dashboard_readonly_endpoints_return_stored_data, test_dashboard_positions_returns_latest_metadata_first, test_dashboard_reduces_order_and_position_lifecycle_to_current_state, test_dashboard_health_reports_missing_runtime_as_unknown, test_dashboard_health_reports_stale_runtime_as_degraded, test_dashboard_health_keeps_fresh_runtime_ok_when_storage_fails, test_dashboard_health_ignores_superseded_runtime_snapshot_status, test_dashboard_health_returns_component_snapshot_from_system_events, test_dashboard_exposes_paper_execution_quality, test_leaderboard_uses_closed_trade_results_not_report_snapshots, test_leaderboard_recomputes_calibration_status_after_aggregation, test_dashboard_exposes_bounded_strategy_status_rows, test_dashboard_rejects_write_methods
@@ -30,17 +29,17 @@ from polysignal_lab.dashboard.reporting_read import (
 )
 from polysignal_lab.domain.enums import PositionStatus, Side
 from polysignal_lab.domain.market import Market, OutcomeToken
-from polysignal_lab.domain.paper_result import DailyReport
+from polysignal_lab.domain.reporting_result import DailyReport
 from polysignal_lab.observability.runtime_health import write_runtime_heartbeat
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.domain.strategy_readiness import StrategyMarketStatus
-from signal_helpers import ptb_signal_from_snapshot
-from factories import sample_paper_trade_result, sample_storage_lifecycle
+from signal_helpers import ptb_signal_from_view
+from factories import sample_report_result, sample_storage_lifecycle
 
 
-def _client_with_store(tmp_path, snapshot, settings) -> tuple[TestClient, SQLiteStore]:
+def _client_with_store(tmp_path, market_view, settings) -> tuple[TestClient, SQLiteStore]:
     store = SQLiteStore(tmp_path / "dashboard.sqlite3")
-    signal = ptb_signal_from_snapshot(snapshot, settings)
+    signal = ptb_signal_from_view(market_view, settings)
     lifecycle = sample_storage_lifecycle(signal)
     rejected = lifecycle.rejected.model_copy(
         update={
@@ -71,8 +70,8 @@ def _client_with_store(tmp_path, snapshot, settings) -> tuple[TestClient, SQLite
         "created_at": str(lifecycle.fill["created_at"]),
         **lifecycle.fill,
     })
-    store.insert_paper_trade_result(lifecycle.result)
-    store.insert_wallet_snapshot(lifecycle.wallet)
+    store.insert_report_result(lifecycle.result)
+    store.insert_report_account_snapshot(lifecycle.account_snapshot)
     store.insert_daily_report(lifecycle.report)
     store.insert_telegram_publish(lifecycle.publish)
     store.insert_system_event(lifecycle.event)
@@ -113,9 +112,9 @@ def test_dashboard_uses_injected_reporting_read_port() -> None:
     reporting.signal_rows.assert_called_once_with(7)
 
 
-async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapshot, settings) -> None:
+async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, market_view, settings) -> None:
     # Given: a temp SQLite dashboard store populated through the public storage API.
-    client, store = _client_with_store(tmp_path, snapshot, settings)
+    client, store = _client_with_store(tmp_path, market_view, settings)
     signal = store.query_json("signals")[0]
 
     # When: every read-only dashboard endpoint is requested.
@@ -135,15 +134,15 @@ async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapsho
     assert isinstance(health.json()["recent_system_events"], list)
     assert overview.status_code == 200
     assert overview.json()["latest_report"]["report_id"] == "dr-1"
-    assert overview.json()["counts"]["paper_trade_results"] == 1
+    assert overview.json()["counts"]["report_results"] == 1
     assert signals.json()[0]["signal_id"] == signal["signal_id"]
     assert rejected.json()[0]["candidate"]["signal_id"] == signal["signal_id"]
     assert rejected.json()[0]["reason_code"] == "STALE_SPOT_PRICE"
     assert rejected.json()[0]["details"]["lag_ms"] == 3_000
     assert rejected.json()[0]["details"]["threshold_ms"] == 2_000
     assert rejected.json()[0]["details"]["policy_source"] == "strategy_and_global"
-    assert positions.json()[0]["paper_position_id"] == "pp-1"
-    assert trades.json()[0]["paper_trade_id"] == "pt-1"
+    assert positions.json()[0]["report_position_id"] == "pp-1"
+    assert trades.json()[0]["report_result_id"] == "pt-1"
     assert root.status_code == 404
 
 
@@ -151,11 +150,11 @@ async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, snapsho
 async def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "dashboard-positions.sqlite3")
     old = {
-        "paper_position_id": "old-pos",
+        "report_position_id": "old-pos",
         "position_id": "old-pos",
         "signal_id": "",
-        "paper_order_id": "old-order",
-        "paper_fill_id": "old-fill",
+        "report_order_id": "old-order",
+        "report_fill_id": "old-fill",
         "strategy": "late_consensus",
         "asset": "",
         "timeframe": "",
@@ -171,11 +170,11 @@ async def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> No
         "is_closed": False,
     }
     latest = {
-        "paper_position_id": "latest-pos",
+        "report_position_id": "latest-pos",
         "position_id": "latest-pos",
         "signal_id": "sig-latest",
-        "paper_order_id": "latest-order",
-        "paper_fill_id": "latest-fill",
+        "report_order_id": "latest-order",
+        "report_fill_id": "latest-fill",
         "strategy": "late_consensus",
         "asset": "BTC",
         "timeframe": "5m",
@@ -192,7 +191,7 @@ async def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> No
     }
     for pos in (old, latest):
         store.insert_system_event({
-            "event_id": f"evt-{pos['paper_position_id']}",
+            "event_id": f"evt-{pos['report_position_id']}",
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": pos["opened_at"],
@@ -203,7 +202,7 @@ async def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> No
 
     assert response.status_code == 200
     rows = response.json()
-    assert rows[0]["paper_position_id"] == "latest-pos"
+    assert rows[0]["report_position_id"] == "latest-pos"
     assert rows[0]["status"] == "OPEN"
     assert rows[0]["is_closed"] is False
     assert rows[0]["position_id"] == "latest-pos"
@@ -221,7 +220,7 @@ async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(t
             "event_type": "nautilus_order",
             "severity": "info",
             "created_at": closed_at,
-            "paper_order_id": order_id,
+            "report_order_id": order_id,
             "status": "FILLED",
             "ts": "not-a-date",
         },
@@ -230,7 +229,7 @@ async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(t
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": closed_at,
-            "paper_position_id": position_id,
+            "report_position_id": position_id,
             "side": Side.UP.value,
             "entry_price": 0.5,
             "shares": 20.0,
@@ -246,7 +245,7 @@ async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(t
             "event_type": "nautilus_order",
             "severity": "info",
             "created_at": opened_at,
-            "paper_order_id": order_id,
+            "report_order_id": order_id,
             "status": "ACCEPTED",
             "ts": opened_at,
         },
@@ -255,7 +254,7 @@ async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(t
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": opened_at,
-            "paper_position_id": position_id,
+            "report_position_id": position_id,
             "side": Side.UP.value,
             "entry_price": 0.5,
             "shares": 20.0,
@@ -269,10 +268,10 @@ async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(t
     for event in events:
         store.insert_system_event(event)
 
-    orders = await _dashboard_get(store, "/api/paper-orders")
+    orders = await _dashboard_get(store, "/api/report-orders")
     resting_orders = await _dashboard_get(
         store,
-        "/api/paper-orders",
+        "/api/report-orders",
         params={"status": "resting"},
     )
     positions = await _dashboard_get(store, "/api/positions")
@@ -284,12 +283,12 @@ async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(t
 
     assert orders.status_code == 200
     assert len(orders.json()) == 1
-    assert orders.json()[0]["paper_order_id"] == order_id
+    assert orders.json()[0]["report_order_id"] == order_id
     assert orders.json()[0]["status"] == "FILLED"
     assert resting_orders.json() == []
     assert positions.status_code == 200
     assert len(positions.json()) == 1
-    assert positions.json()[0]["paper_position_id"] == position_id
+    assert positions.json()[0]["report_position_id"] == position_id
     assert positions.json()[0]["status"] == "CLOSED"
     assert positions.json()[0]["is_closed"] is True
     assert open_positions.json() == []
@@ -300,12 +299,12 @@ async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(t
             "event_type": "nautilus_order",
             "severity": "info",
             "created_at": "2026-07-13T12:10:00+00:00",
-            "paper_order_id": order_id,
+            "report_order_id": order_id,
             "status": "UNKNOWN",
             "ts": "2026-07-13T12:10:00+00:00",
         }
     )
-    invalid_orders = await _dashboard_get(store, "/api/paper-orders")
+    invalid_orders = await _dashboard_get(store, "/api/report-orders")
 
     assert invalid_orders.json() == []
     assert store.counts()["system_events"] == 5
@@ -356,8 +355,8 @@ async def test_dashboard_positions_normalize_nautilus_rows_with_market_lookup(tm
 
     assert response.status_code == 200
     row = response.json()[0]
-    assert row["paper_position_id"] == "P-001"
-    assert row["paper_order_id"] == "C-001"
+    assert row["report_position_id"] == "P-001"
+    assert row["report_order_id"] == "C-001"
     assert row["market_id"] == "btc-15m"
     assert row["market_slug"] == "btc-updown-15m"
     assert row["asset"] == "BTC"
@@ -564,7 +563,7 @@ async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
     # Given: a rejected paper order and daily report with paper execution aggregates.
     store = SQLiteStore(tmp_path / "db.sqlite3")
     order = {
-        "paper_order_id": "po-rejected-dashboard",
+        "report_order_id": "po-rejected-dashboard",
         "signal_id": "sig-dashboard",
         "created_at": datetime(2026, 6, 22, tzinfo=timezone.utc).isoformat(),
         "asset": "BTC",
@@ -578,22 +577,22 @@ async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
         "reference_price": 0.50,
         "stake_usdc": 10.0,
         "status": "REJECTED",
-        "reject_reason": "PAPER_ENTRY_PRICE_MOVED",
+        "reject_reason": "ENTRY_PRICE_MOVED",
         "metrics": {
-            "paper_normalized_reason": "PAPER_ENTRY_PRICE_MOVED",
-            "paper_original_reason": "ASK_ABOVE_MAX_ENTRY",
+            "normalized_reason": "ENTRY_PRICE_MOVED",
+            "original_reason": "ASK_ABOVE_MAX_ENTRY",
         },
     }
     report = DailyReport(
         report_date=date(2026, 6, 22),
         starting_equity=1000.0,
         ending_equity=1000.0,
-        paper_pnl=0.0,
-        paper_roi=0.0,
+        net_pnl=0.0,
+        return_rate=0.0,
         total_signals=1,
-        paper_orders=1,
-        paper_fills=0,
-        rejected_paper_orders=1,
+        order_count=1,
+        fill_count=0,
+        rejected_order_count=1,
         open_positions=0,
         closed_positions=0,
         win_count=0,
@@ -604,7 +603,7 @@ async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
         average_roi=0.0,
         max_drawdown=0.0,
         profit_factor=None,
-        paper_rejects_by_reason={"PAPER_ENTRY_PRICE_MOVED": 1},
+        rejects_by_reason={"ENTRY_PRICE_MOVED": 1},
         average_execution_staleness_ms=25.0,
     )
     store.insert_system_event({
@@ -612,8 +611,8 @@ async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
         "event_type": "nautilus_order",
         "severity": "info",
         "created_at": order["created_at"],
-        "paper_order_id": order["paper_order_id"],
-        "client_order_id": order["paper_order_id"],
+        "report_order_id": order["report_order_id"],
+        "client_order_id": order["report_order_id"],
         "status": order["status"],
         "reject_reason": order["reject_reason"],
         "strategy": order["strategy"],
@@ -623,19 +622,19 @@ async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
     })
     store.insert_daily_report(report)
     # When: paper execution quality surfaces are read from the dashboard API.
-    orders = await _dashboard_get(store, "/api/paper-orders", params={"status": "rejected"})
+    orders = await _dashboard_get(store, "/api/report-orders", params={"status": "rejected"})
     overview = await _dashboard_get(store, "/api/overview")
 
     # Then: paper order rows and latest report aggregates expose them.
     assert orders.status_code == 200
     assert overview.status_code == 200
-    assert orders.json()[0]["reject_reason"] == "PAPER_ENTRY_PRICE_MOVED"
-    assert overview.json()["latest_report"]["paper_rejects_by_reason"] == {
-        "PAPER_ENTRY_PRICE_MOVED": 1
+    assert orders.json()[0]["reject_reason"] == "ENTRY_PRICE_MOVED"
+    assert overview.json()["latest_report"]["rejects_by_reason"] == {
+        "ENTRY_PRICE_MOVED": 1
     }
 
 
-async def test_dashboard_paper_orders_normalize_nautilus_rows() -> None:
+async def test_dashboard_order_count_normalize_nautilus_rows() -> None:
     store = SQLiteStore(":memory:")
     store.insert_system_event(
         {
@@ -667,11 +666,11 @@ async def test_dashboard_paper_orders_normalize_nautilus_rows() -> None:
             "ts": "2026-06-26T00:00:00+00:00",
         }
     )
-    response = await _dashboard_get(store, "/api/paper-orders")
+    response = await _dashboard_get(store, "/api/report-orders")
 
     assert response.status_code == 200
     row = response.json()[0]
-    assert row["paper_order_id"] == "C-001"
+    assert row["report_order_id"] == "C-001"
     assert row["asset"] == "BTC"
     assert row["timeframe"] == "15m"
     assert row["token_id"] == "down-token"
@@ -693,7 +692,7 @@ async def test_dashboard_excludes_invalid_nautilus_projection_rows() -> None:
             "event_type": "nautilus_order",
             "severity": "info",
             "created_at": event_time,
-            "paper_order_id": "C-invalid",
+            "report_order_id": "C-invalid",
             "status": "UNRECOGNIZED",
             "ts": event_time,
         }
@@ -704,7 +703,7 @@ async def test_dashboard_excludes_invalid_nautilus_projection_rows() -> None:
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": event_time,
-            "paper_position_id": "pos-invalid",
+            "report_position_id": "pos-invalid",
             "market_id": "market-invalid",
             "token_id": "token-invalid",
             "status": "BROKEN",
@@ -716,7 +715,7 @@ async def test_dashboard_excludes_invalid_nautilus_projection_rows() -> None:
         }
     )
 
-    orders = await _dashboard_get(store, "/api/paper-orders")
+    orders = await _dashboard_get(store, "/api/report-orders")
     positions = await _dashboard_get(store, "/api/positions")
 
     assert orders.status_code == 200
@@ -734,7 +733,7 @@ async def test_dashboard_excludes_incomplete_open_position_rows() -> None:
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": event_time,
-            "paper_position_id": "pos-incomplete-dashboard",
+            "report_position_id": "pos-incomplete-dashboard",
             "market_id": "market-incomplete",
             "token_id": "token-incomplete",
             "status": PositionStatus.OPEN.value,
@@ -745,7 +744,7 @@ async def test_dashboard_excludes_incomplete_open_position_rows() -> None:
 
     positions = await _dashboard_get(store, "/api/positions")
 
-    assert store.restore_open_positions() == []
+    assert store.query_report_open_positions() == []
     assert positions.status_code == 200
     assert positions.json() == []
 
@@ -760,7 +759,7 @@ async def test_dashboard_excludes_open_position_with_invalid_opened_at() -> None
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": event_time,
-            "paper_position_id": "pos-invalid-opened-at-dashboard",
+            "report_position_id": "pos-invalid-opened-at-dashboard",
             "market_id": "market-invalid-opened-at",
             "token_id": "token-invalid-opened-at",
             "side": Side.UP.value,
@@ -791,7 +790,7 @@ async def test_dashboard_excludes_open_position_without_resolvable_side() -> Non
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": event_time,
-            "paper_position_id": "pos-no-side-dashboard",
+            "report_position_id": "pos-no-side-dashboard",
             "market_id": "market-missing",
             "token_id": "token-missing",
             "status": PositionStatus.OPEN.value,
@@ -812,20 +811,20 @@ async def test_dashboard_excludes_open_position_without_resolvable_side() -> Non
 
 async def test_leaderboard_uses_closed_trade_results_not_report_snapshots(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "dashboard-leaderboard.sqlite3")
-    store.insert_paper_trade_result(
-        sample_paper_trade_result(
-            paper_trade_id="pt-leaderboard-win",
-            paper_position_id="pos-leaderboard-win",
+    store.insert_report_result(
+        sample_report_result(
+            report_result_id="pt-leaderboard-win",
+            report_position_id="pos-leaderboard-win",
             strategy="late_consensus",
             pnl_usdc=6.0,
             roi=0.6,
             result="WIN",
         )
     )
-    store.insert_paper_trade_result(
-        sample_paper_trade_result(
-            paper_trade_id="pt-leaderboard-void",
-            paper_position_id="pos-leaderboard-void",
+    store.insert_report_result(
+        sample_report_result(
+            report_result_id="pt-leaderboard-void",
+            report_position_id="pos-leaderboard-void",
             strategy="late_consensus",
             pnl_usdc=-1.0,
             roi=-0.1,
@@ -837,12 +836,12 @@ async def test_leaderboard_uses_closed_trade_results_not_report_snapshots(tmp_pa
         report_date=date(2026, 6, 22),
         starting_equity=1000.0,
         ending_equity=1099.0,
-        paper_pnl=99.0,
-        paper_roi=0.099,
+        net_pnl=99.0,
+        return_rate=0.099,
         total_signals=99,
-        paper_orders=99,
-        paper_fills=99,
-        rejected_paper_orders=0,
+        order_count=99,
+        fill_count=99,
+        rejected_order_count=0,
         open_positions=0,
         closed_positions=99,
         win_count=99,
@@ -907,12 +906,12 @@ async def test_leaderboard_recomputes_calibration_status_after_aggregation(tmp_p
         report_date=date(2026, 6, 22),
         starting_equity=1000.0,
         ending_equity=1002.0,
-        paper_pnl=2.0,
-        paper_roi=0.002,
+        net_pnl=2.0,
+        return_rate=0.002,
         total_signals=15,
-        paper_orders=15,
-        paper_fills=15,
-        rejected_paper_orders=0,
+        order_count=15,
+        fill_count=15,
+        rejected_order_count=0,
         open_positions=0,
         closed_positions=15,
         win_count=8,
@@ -943,12 +942,12 @@ async def test_leaderboard_recomputes_calibration_status_after_aggregation(tmp_p
         report_date=date(2026, 6, 23),
         starting_equity=1002.0,
         ending_equity=1006.0,
-        paper_pnl=4.0,
-        paper_roi=0.004,
+        net_pnl=4.0,
+        return_rate=0.004,
         total_signals=15,
-        paper_orders=15,
-        paper_fills=15,
-        rejected_paper_orders=0,
+        order_count=15,
+        fill_count=15,
+        rejected_order_count=0,
         open_positions=0,
         closed_positions=15,
         win_count=7,
@@ -1049,15 +1048,15 @@ def test_dashboard_exposes_bounded_strategy_status_rows(tmp_path) -> None:
     ]
 
 
-async def test_dashboard_rejects_write_methods(tmp_path, snapshot, settings) -> None:
+async def test_dashboard_rejects_write_methods(tmp_path, market_view, settings) -> None:
     # Given: the dashboard app exposes only read routes.
-    client, _store = _client_with_store(tmp_path, snapshot, settings)
+    client, _store = _client_with_store(tmp_path, market_view, settings)
     read_paths = (
         "/health",
         "/api/overview",
         "/api/signals",
         "/api/rejected-signals",
-        "/api/paper-orders",
+        "/api/report-orders",
         "/api/positions",
         "/api/trades",
         "/api/leaderboard",

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, sqlite3, dataclasses, dataclasses.dataclass, typing, typing.Final
-Output: TABLE_DDL_STATEMENTS, INDEX_DDL_STATEMENTS, REQUIRED_COLUMNS, ALLOWED_TABLES, COUNT_TABLES, validate_sqlite_schema, SchemaValidationError
+Output: TABLE_DDL_STATEMENTS, INDEX_DDL_STATEMENTS, REQUIRED_COLUMNS, ALLOWED_TABLES, COUNT_TABLES, PROJECTION_SCHEMA_VERSION, validate_sqlite_schema, SchemaValidationError
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -67,10 +67,9 @@ TABLE_DDL_STATEMENTS: Final = [
         payload_json TEXT NOT NULL
     )
     """,
-    # Application-local settlement audit (WIN/LOSS/VOID); not Nautilus order/position shadow storage.
     """
-    CREATE TABLE IF NOT EXISTS paper_trade_results (
-        paper_trade_id TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS report_results (
+        report_result_id TEXT PRIMARY KEY,
         signal_id TEXT NOT NULL,
         strategy TEXT NOT NULL,
         asset TEXT NOT NULL,
@@ -83,11 +82,10 @@ TABLE_DDL_STATEMENTS: Final = [
         payload_json TEXT NOT NULL
     )
     """,
-    # Application-local portfolio projection snapshots for restore/reporting; runtime state lives in Nautilus cache.
     """
-    CREATE TABLE IF NOT EXISTS paper_wallet_snapshots (
+    CREATE TABLE IF NOT EXISTS report_account_snapshots (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        wallet_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
         equity REAL NOT NULL,
         cash_balance REAL NOT NULL,
         realized_pnl REAL NOT NULL,
@@ -146,10 +144,9 @@ TABLE_DDL_STATEMENTS: Final = [
         payload_json TEXT NOT NULL
     )
     """,
-    # Reporting-only current state; native execution state remains owned by Nautilus.
     """
-    CREATE TABLE IF NOT EXISTS paper_order_states (
-        paper_order_id TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS report_orders (
+        report_order_id TEXT PRIMARY KEY,
         status TEXT NOT NULL,
         created_event_at TEXT NOT NULL,
         source_event_at TEXT NOT NULL,
@@ -158,8 +155,17 @@ TABLE_DDL_STATEMENTS: Final = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS paper_position_states (
-        paper_position_id TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS report_fills (
+        report_fill_id TEXT PRIMARY KEY,
+        report_order_id TEXT NOT NULL,
+        source_event_at TEXT NOT NULL,
+        source_event_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS report_positions (
+        report_position_id TEXT PRIMARY KEY,
         status TEXT NOT NULL,
         source_event_at TEXT NOT NULL,
         source_event_id TEXT NOT NULL,
@@ -188,13 +194,14 @@ INDEX_DDL_STATEMENTS: Final = [
     "CREATE INDEX IF NOT EXISTS idx_markets_asset_tf_end ON markets(asset,timeframe,end_ts)",
     "CREATE INDEX IF NOT EXISTS idx_signals_strategy_asset ON signals(strategy,asset,timeframe,created_at)",
     "CREATE INDEX IF NOT EXISTS idx_strategy_status_strategy_asset ON strategy_status(strategy,asset,timeframe,created_at)",
-    "CREATE INDEX IF NOT EXISTS idx_results_strategy_asset ON paper_trade_results(strategy,asset,timeframe,closed_at)",
+    "CREATE INDEX IF NOT EXISTS idx_report_results_strategy_asset ON report_results(strategy,asset,timeframe,closed_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_reports_date_revision ON daily_reports(report_date,revision)",
     "CREATE INDEX IF NOT EXISTS idx_report_publish_outbox_status ON report_publish_outbox(status,lease_until)",
     "CREATE INDEX IF NOT EXISTS idx_system_events_type_created ON system_events(event_type,created_at DESC,event_id DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_paper_order_states_status ON paper_order_states(status,source_event_at)",
-    "CREATE INDEX IF NOT EXISTS idx_paper_order_states_created ON paper_order_states(created_event_at,paper_order_id)",
-    "CREATE INDEX IF NOT EXISTS idx_paper_position_states_status ON paper_position_states(status,source_event_at)",
+    "CREATE INDEX IF NOT EXISTS idx_report_orders_status ON report_orders(status,source_event_at)",
+    "CREATE INDEX IF NOT EXISTS idx_report_orders_created ON report_orders(created_event_at,report_order_id)",
+    "CREATE INDEX IF NOT EXISTS idx_report_fills_order ON report_fills(report_order_id,source_event_at)",
+    "CREATE INDEX IF NOT EXISTS idx_report_positions_status ON report_positions(status,source_event_at)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_anchor_prices_market ON anchor_prices(asset,timeframe,market_slug)",
 ]
 
@@ -203,14 +210,15 @@ REQUIRED_COLUMNS: Final[dict[str, frozenset[str]]] = {
     "signals": frozenset({"signal_id", "strategy", "asset", "timeframe", "market_id", "side", "confidence", "created_at", "payload_json"}),
     "rejected_signals": frozenset({"rejected_id", "signal_id", "reason_code", "gate_name", "rejected_at", "payload_json"}),
     "strategy_status": frozenset({"status_id", "strategy", "asset", "timeframe", "status", "created_at", "payload_json"}),
-    "paper_trade_results": frozenset({"paper_trade_id", "signal_id", "strategy", "asset", "timeframe", "market_id", "result", "pnl_usdc", "roi", "closed_at", "payload_json"}),
-    "paper_wallet_snapshots": frozenset({"id", "wallet_id", "equity", "cash_balance", "realized_pnl", "open_position_count", "created_at", "payload_json"}),
+    "report_account_snapshots": frozenset({"id", "account_id", "equity", "cash_balance", "realized_pnl", "open_position_count", "created_at", "payload_json"}),
     "daily_reports": frozenset({"report_id", "report_date", "revision", "total_signals", "total_pnl_usdc", "win_rate", "created_at", "payload_json"}),
     "report_publish_outbox": frozenset({"intent_id", "idempotency_key", "report_id", "report_date", "revision", "status", "attempt_count", "lease_until", "publish_id", "last_error", "created_at", "updated_at", "payload_json"}),
     "telegram_publishes": frozenset({"publish_id", "message_type", "status", "payload_json"}),
     "system_events": frozenset({"event_id", "event_type", "severity", "created_at", "payload_json"}),
-    "paper_order_states": frozenset({"paper_order_id", "status", "created_event_at", "source_event_at", "source_event_id", "payload_json"}),
-    "paper_position_states": frozenset({"paper_position_id", "status", "source_event_at", "source_event_id", "payload_json"}),
+    "report_orders": frozenset({"report_order_id", "status", "created_event_at", "source_event_at", "source_event_id", "payload_json"}),
+    "report_fills": frozenset({"report_fill_id", "report_order_id", "source_event_at", "source_event_id", "payload_json"}),
+    "report_positions": frozenset({"report_position_id", "status", "source_event_at", "source_event_id", "payload_json"}),
+    "report_results": frozenset({"report_result_id", "signal_id", "strategy", "asset", "timeframe", "market_id", "result", "pnl_usdc", "roi", "closed_at", "payload_json"}),
     "anchor_prices": frozenset(
         {
             "anchor_id",
@@ -232,16 +240,19 @@ COUNT_TABLES: Final = (
     "signals",
     "rejected_signals",
     "strategy_status",
-    "paper_trade_results",
-    "paper_wallet_snapshots",
+    "report_results",
+    "report_account_snapshots",
     "daily_reports",
     "report_publish_outbox",
     "telegram_publishes",
     "system_events",
-    "paper_order_states",
-    "paper_position_states",
+    "report_orders",
+    "report_fills",
+    "report_positions",
     "anchor_prices",
 )
+
+PROJECTION_SCHEMA_VERSION: Final = 6
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, asyncio, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.Any, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.parse_paper_trade_result_row, polysignal_lab.paper.event_projection.normalize_paper_fill
+Input: __future__, __future__.annotations, asyncio, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.Any, polysignal_lab.domain.reporting_result, polysignal_lab.domain.reporting_result.parse_report_result_row, polysignal_lab.storage.event_projection.normalize_report_fill
 Output: PublishService
 Pos: Service Layer - Business logic
 
@@ -17,8 +17,8 @@ import asyncio
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from polysignal_lab.domain.paper_result import parse_paper_trade_result_row
-from polysignal_lab.paper.event_projection import normalize_paper_fill
+from polysignal_lab.domain.reporting_result import parse_report_result_row
+from polysignal_lab.storage.event_projection import normalize_report_fill
 
 
 class PublishService:
@@ -57,12 +57,12 @@ class PublishService:
         self._persist_publish(publish)
         return publish
 
-    async def publish_paper_result(self, result: Mapping[str, object]) -> Any:
-        payload = parse_paper_trade_result_row(result)
+    async def publish_report_result(self, result: Mapping[str, object]) -> Any:
+        payload = parse_report_result_row(result)
         message = self.formatter.result_message(payload)
         signal_id = payload.get("signal_id")
         publish = await asyncio.wait_for(
-            self.publisher.send(message, "paper_result", str(signal_id) if signal_id else None),
+            self.publisher.send(message, "report_result", str(signal_id) if signal_id else None),
             timeout=self.timeout_sec,
         )
         self._persist_publish(publish)
@@ -97,15 +97,15 @@ class PublishService:
         self._persist_publish(publish)
         return publish
 
-    async def publish_nautilus_paper_fill(self, fill: Mapping[str, object]) -> Any:
+    async def publish_nautilus_fill(self, fill: Mapping[str, object]) -> Any:
         market = self.market_lookup(fill) if self.market_lookup is not None else None
-        payload = normalize_paper_fill(fill, market=market)
+        payload = normalize_report_fill(fill, market=market)
         message = self.formatter.nautilus_fill_message(payload)
         signal_id = payload.get("signal_id")
         publish = await asyncio.wait_for(
             self.publisher.send(
                 message,
-                "nautilus_paper_fill",
+                "nautilus_fill",
                 str(signal_id) if isinstance(signal_id, str) and signal_id else None,
             ),
             timeout=self.timeout_sec,

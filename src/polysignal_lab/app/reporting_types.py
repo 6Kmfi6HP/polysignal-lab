@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.date, typing, typing.Any, typing.Protocol, polysignal_lab.domain.paper_result
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.date, typing, typing.Any, typing.Protocol, polysignal_lab.domain.reporting_result
 Output: DailyReportInputs, _ReportScheduler, _ReportPersistence, _ReportLogger
 Pos: Application code
 
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Protocol
 
-from polysignal_lab.domain.paper_result import DailyReport
+from polysignal_lab.domain.reporting_result import DailyReport
 from polysignal_lab.storage.sqlite_store import DailyReportPublishAuthorization
 
 
@@ -70,7 +70,7 @@ class _ReportLogger(Protocol):
     def info(self, msg: str, *args: Any) -> None: ...
 
 
-class _PaperTradingSettings(Protocol):
+class _TradingSettings(Protocol):
     starting_balance_usdc: float
 
 
@@ -92,7 +92,7 @@ class _AppSettings(Protocol):
 
 
 class _ReportSettings(Protocol):
-    paper_trading: _PaperTradingSettings
+    trading: _TradingSettings
     data: _DataSettings
     telegram: _TelegramSettings
     app: _AppSettings

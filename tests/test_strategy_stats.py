@@ -17,10 +17,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from factories import sample_paper_trade_result
+from factories import sample_report_result
 
 from polysignal_lab.domain.enums import TradeResultStatus
-from polysignal_lab.paper.strategy_stats import build_strategy_leaderboard_rows
+from polysignal_lab.reporting.strategy_stats import build_strategy_leaderboard_rows
 
 
 def _trade(
@@ -31,9 +31,9 @@ def _trade(
     roi: float = 0.1,
     signal_id: str = "sig-1",
 ) -> dict[str, Any]:
-    return sample_paper_trade_result(
+    return sample_report_result(
         signal_id=signal_id,
-        paper_position_id=f"pos-{signal_id}",
+        report_position_id=f"pos-{signal_id}",
         strategy=strategy,
         market_id=f"market-{signal_id}",
         market_slug=f"market-{signal_id}",

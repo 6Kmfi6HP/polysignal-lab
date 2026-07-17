@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, typing, typing.Protocol, typing.TypeGuard, typing.cast, typing.runtime_checkable, polysignal_lab.app._settlement_check, polysignal_lab.domain.paper_result
+Input: __future__, __future__.annotations, math, typing, typing.Protocol, typing.TypeGuard, typing.cast, typing.runtime_checkable, polysignal_lab.domain.reporting_result
 Output: _report_equity_inputs, _report_equity_inputs_from_nautilus_cache
 Pos: Application code
 
@@ -8,10 +8,23 @@ Pos: Application code
 
 from __future__ import annotations
 
+import math
 from typing import Any, Protocol, TypeGuard, cast, runtime_checkable
 
-from polysignal_lab.app._settlement_check import _projection_float
-from polysignal_lab.domain.paper_result import EquitySource
+from polysignal_lab.domain.reporting_result import EquitySource
+
+
+def _projection_float(source: dict[str, object] | None, key: str) -> float | None:
+    if not isinstance(source, dict):
+        return None
+    value = source.get(key)
+    if not isinstance(value, (int, float, str)):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 @runtime_checkable
@@ -40,8 +53,8 @@ def _report_equity_inputs(
     scheduler: Any,
 ) -> tuple[float, float, int, EquitySource]:
     settings = getattr(scheduler, "settings", None)
-    paper_trading = getattr(settings, "paper_trading", None)
-    starting_equity = float(getattr(paper_trading, "starting_balance_usdc", 0.0))
+    trading = getattr(settings, "trading", None)
+    starting_equity = float(getattr(trading, "starting_balance_usdc", 0.0))
     nautilus_cache = getattr(scheduler, "nautilus_cache", None)
     if not _is_nautilus_reporting_cache(nautilus_cache):
         return starting_equity, starting_equity, 0, "starting_balance"

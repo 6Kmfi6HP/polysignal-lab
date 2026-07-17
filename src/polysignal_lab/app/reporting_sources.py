@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.date, datetime.datetime, datetime.time, datetime.timedelta, datetime.timezone, math.isfinite, typing, typing.Any, typing.cast, zoneinfo, zoneinfo.ZoneInfo, polysignal_lab.app.scheduler_reporting_types
-Output: _collect_daily_report_inputs, _fill_payloads_with_order_intents, _paper_order_metrics
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.date, datetime.datetime, datetime.time, datetime.timedelta, datetime.timezone, math.isfinite, typing, typing.Any, typing.cast, zoneinfo, zoneinfo.ZoneInfo, polysignal_lab.app.reporting_types
+Output: _collect_daily_report_inputs, _fill_payloads_with_order_intents, _order_metrics
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -13,8 +13,8 @@ from math import isfinite
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from polysignal_lab.app.scheduler_reporting_types import DailyReportInputs, _ReportScheduler
-from polysignal_lab.paper.report_rejections import is_rejected_paper_order_payload
+from polysignal_lab.app.reporting_types import DailyReportInputs, _ReportScheduler
+from polysignal_lab.reporting.rejections import is_rejected_order_payload
 from polysignal_lab.utils import parse_dt
 
 
@@ -22,14 +22,14 @@ def _utc_text_bound(dt: datetime) -> str:
     return dt.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def _paper_order_metrics(order: dict[str, Any]) -> dict[str, Any]:
+def _order_metrics(order: dict[str, Any]) -> dict[str, Any]:
     metrics_payload = order.get("metrics")
     return metrics_payload if isinstance(metrics_payload, dict) else {}
 
 
-def _paper_terminal_at(order: dict[str, Any]) -> datetime | None:
-    metrics = _paper_order_metrics(order)
-    terminal_raw = metrics.get("paper_terminal_at") or metrics.get("paper_cancelled_at")
+def _order_terminal_at(order: dict[str, Any]) -> datetime | None:
+    metrics = _order_metrics(order)
+    terminal_raw = metrics.get("terminal_at") or metrics.get("cancelled_at")
     if terminal_raw is not None and not isinstance(terminal_raw, (str, datetime)):
         terminal_raw = str(terminal_raw)
     try:
@@ -43,10 +43,10 @@ def _paper_terminal_at(order: dict[str, Any]) -> datetime | None:
     return terminal_at.astimezone(UTC)
 
 
-def _paper_order_intent(order: dict[str, Any]) -> str:
-    metrics = _paper_order_metrics(order)
+def _order_intent(order: dict[str, Any]) -> str:
+    metrics = _order_metrics(order)
     return str(
-        metrics.get("paper_order_intent")
+        metrics.get("order_intent")
         or order.get("order_intent")
         or "default"
     )
@@ -58,16 +58,16 @@ def _fill_payloads_with_order_intents(
     orders: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     today_order_ids = {
-        str(order.get("paper_order_id") or "")
+        str(order.get("report_order_id") or "")
         for order in orders
-        if order.get("paper_order_id")
+        if order.get("report_order_id")
     }
     missing_order_ids = tuple(
         sorted(
             {
-                str(fill.get("paper_order_id") or "")
+                str(fill.get("report_order_id") or "")
                 for fill in fills
-                if fill.get("paper_order_id")
+                if fill.get("report_order_id")
             }
             - today_order_ids
         )
@@ -77,27 +77,27 @@ def _fill_payloads_with_order_intents(
 
     placeholders = ",".join("?" for _ in missing_order_ids)
     fill_orders = scheduler.persistence.query_json(
-        "paper_order_states",
-        where=f"WHERE paper_order_id IN ({placeholders})",
+        "report_orders",
+        where=f"WHERE report_order_id IN ({placeholders})",
         params=missing_order_ids,
         limit=len(missing_order_ids),
     )
     orders_by_id = {
-        str(order.get("paper_order_id") or ""): order
+        str(order.get("report_order_id") or ""): order
         for order in fill_orders
-        if order.get("paper_order_id")
+        if order.get("report_order_id")
     }
     if not orders_by_id:
         return fills
 
     enriched: list[dict[str, Any]] = []
     for fill in fills:
-        order = orders_by_id.get(str(fill.get("paper_order_id") or ""))
+        order = orders_by_id.get(str(fill.get("report_order_id") or ""))
         if order is None:
             enriched.append(fill)
             continue
         enriched_fill = dict(fill)
-        enriched_fill.setdefault("order_intent", _paper_order_intent(order))
+        enriched_fill.setdefault("order_intent", _order_intent(order))
         enriched.append(enriched_fill)
     return enriched
 
@@ -119,7 +119,7 @@ def _nautilus_system_event_rows(
 
 
 def _valid_fill_projection(row: dict[str, Any]) -> bool:
-    if not row.get("paper_fill_id") or not row.get("paper_order_id"):
+    if not row.get("report_fill_id") or not row.get("report_order_id"):
         return False
     quantity = row.get("quantity")
     price = row.get("price")
@@ -215,18 +215,18 @@ def _telemetry_incomplete_reasons(
     reasons = [fill_source_reason] if fill_source_reason else []
     if invalid_fill_projections > 0:
         reasons.append(
-            f"paper_fill_projection_invalid:{invalid_fill_projections}"
+            f"report_fill_projection_invalid:{invalid_fill_projections}"
         )
     if invalid_order_projections > 0:
         reasons.append(
-            f"paper_order_projection_invalid:{invalid_order_projections}"
+            f"report_order_projection_invalid:{invalid_order_projections}"
         )
     if inferred_order_creation_times > 0:
         reasons.append(
-            f"paper_order_creation_time_inferred:{inferred_order_creation_times}"
+            f"report_order_creation_time_inferred:{inferred_order_creation_times}"
         )
     if order_projection_truncated:
-        reasons.append("paper_order_projection_truncated")
+        reasons.append("report_order_projection_truncated")
 
     health = getattr(scheduler, "health", None)
     components = getattr(health, "components", None)
@@ -276,10 +276,12 @@ def _collect_daily_report_inputs(
     day_created_where = "WHERE created_at >= ? AND created_at < ?"
     day_closed_where = "WHERE closed_at >= ? AND closed_at < ?"
 
+    # TODO: derive resolution results from InstrumentClose-derived closed-position
+    # projections when the native projection schema exposes the payout value.
     trade_results = cast(
         list[dict[str, Any]],
         scheduler.persistence.query_json(
-            "paper_trade_results",
+            "report_results",
             where=day_closed_where,
             params=day_params,
         ),
@@ -325,24 +327,24 @@ def _collect_daily_report_inputs(
                 fallback_fills.append(fill)
         if fallback_fills:
             today_fills_raw = fallback_fills
-            fill_source_reason = "paper_fills_best_effort_fallback"
+            fill_source_reason = "fill_count_best_effort_fallback"
         elif not native_fills_available:
-            fill_source_reason = "paper_fill_projection_unavailable"
+            fill_source_reason = "report_fill_projection_unavailable"
 
     today_order_states = scheduler.persistence.query_json(
-        "paper_order_states",
+        "report_orders",
         where=(
             "WHERE created_event_at >= ? AND created_event_at < ? "
-            "ORDER BY created_event_at,paper_order_id"
+            "ORDER BY created_event_at,report_order_id"
         ),
         params=day_params,
         limit=10_001,
     )
     invalid_updated_order_states = scheduler.persistence.query_json(
-        "paper_order_states",
+        "report_orders",
         where=(
             "WHERE source_event_at >= ? AND source_event_at < ? "
-            "AND status='INVALID' ORDER BY source_event_at,paper_order_id"
+            "AND status='INVALID' ORDER BY source_event_at,report_order_id"
         ),
         params=day_params,
         limit=10_001,
@@ -359,10 +361,10 @@ def _collect_daily_report_inputs(
         if order.get("_creation_event_at_inferred") is True
     )
     invalid_order_ids = {
-        str(order.get("paper_order_id"))
+        str(order.get("report_order_id") or "")
         for order in today_order_states + invalid_updated_order_states
         if order.get("_projection_invalid") is True
-        and order.get("paper_order_id")
+        and order.get("report_order_id")
     }
     invalid_order_projections = len(invalid_order_ids)
     today_orders_raw = [
@@ -373,7 +375,7 @@ def _collect_daily_report_inputs(
     today_reject_orders_raw = [
         order
         for order in today_orders_raw
-        if is_rejected_paper_order_payload(order, _paper_order_metrics(order))
+        if is_rejected_order_payload(order, _order_metrics(order))
     ]
     today_signals_raw = scheduler.persistence.query_json(
         "signals",

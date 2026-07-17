@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.date, factories, factories.MarketFactoryConfig, factories.sample_market, polysignal_lab.app.scheduler_reporting, polysignal_lab.app.scheduler_reporting._paper_trade_result_from_projection, polysignal_lab.domain.enums
+Input: __future__, __future__.annotations, datetime, datetime.date, factories, factories.MarketFactoryConfig, factories.sample_market, polysignal_lab.app.reporting_projection, polysignal_lab.domain.enums
 Output: test_calibration_buckets_use_signal_confidence_from_paper_flow
 Pos: Test Layer - Unit/Integration tests
 
@@ -18,16 +18,16 @@ from datetime import date
 
 from factories import MarketFactoryConfig, sample_market
 
-from polysignal_lab.app._settlement_check import _paper_trade_result_from_projection
+from polysignal_lab.app.reporting_projection import report_result_from_projection
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.paper.report import PaperReportService
+from polysignal_lab.reporting.daily_report import DailyReportService
 
 
 def _paper_result_from_confidence(confidence: float, resolved_outcome: Side):
     market = sample_market(MarketFactoryConfig(asset="ETH", timeframe="5m"))
     token = market.token_for(Side.UP)
     outcome_value = 1.0 if resolved_outcome is Side.UP else 0.0
-    return _paper_trade_result_from_projection(
+    return report_result_from_projection(
         {
             "position_id": f"pos-{confidence}",
             "signal_id": f"sig-{confidence}",
@@ -56,14 +56,14 @@ def test_calibration_buckets_use_signal_confidence_from_paper_flow() -> None:
     assert high_result is not None
     assert medium_result is not None
 
-    report = PaperReportService().build_daily_report(
+    report = DailyReportService().build_daily_report(
         report_date=date(2026, 6, 24),
         starting_equity=1000.0,
         ending_equity=1000.0,
         total_signals=2,
-        paper_orders=2,
-        paper_fills=2,
-        rejected_paper_orders=0,
+        order_count=2,
+        fill_count=2,
+        rejected_order_count=0,
         open_positions=0,
         results=[high_result, medium_result],
     )

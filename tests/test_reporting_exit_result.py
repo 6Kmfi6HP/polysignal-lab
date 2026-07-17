@@ -1,5 +1,5 @@
 """
-Input: polysignal_lab.domain.enums, polysignal_lab.paper.exit_result, polysignal_lab.app._settlement_check
+Input: polysignal_lab.domain.enums, polysignal_lab.reporting.exit_result, polysignal_lab.app.reporting_projection
 Output: early-exit result + fee_model v1 contract tests
 Pos: Test Layer
 
@@ -11,12 +11,12 @@ from __future__ import annotations
 from datetime import date
 
 from factories import MarketFactoryConfig, sample_market
-from polysignal_lab.app._settlement_check import _paper_trade_result_from_projection
+from polysignal_lab.app.reporting_projection import report_result_from_projection
 from polysignal_lab.domain.enums import ExitMode, MarketStatus, Side, TradeResultStatus
-from polysignal_lab.paper.exit_result import (
+from polysignal_lab.reporting.exit_result import (
     FEE_MODEL_IGNORED_V1,
     fee_fields_v1,
-    paper_trade_result_from_early_exit,
+    report_result_from_early_exit,
 )
 
 
@@ -32,7 +32,7 @@ def test_resolution_result_writes_fee_model_ignored_v1() -> None:
     ).model_copy(
         update={"status": MarketStatus.RESOLVED, "resolved_outcome": Side.UP}
     )
-    result = _paper_trade_result_from_projection(
+    result = report_result_from_projection(
         {
             "position_id": "pos-fee",
             "signal_id": "sig-fee",
@@ -57,7 +57,7 @@ def test_resolution_result_writes_fee_model_ignored_v1() -> None:
 
 
 def test_early_exit_take_profit_builds_win_result() -> None:
-    result = paper_trade_result_from_early_exit(
+    result = report_result_from_early_exit(
         {
             "exit_reason": "TAKE_PROFIT",
             "position_id": "position-1",
@@ -84,11 +84,11 @@ def test_early_exit_take_profit_builds_win_result() -> None:
     assert result["entry_fee"] == 0.0
     assert result["settlement_value"] == 9.1
     assert abs(result["pnl_usdc"] - 5.1) < 1e-9
-    assert result["paper_position_id"] == "position-1"
+    assert result["report_position_id"] == "position-1"
 
 
 def test_early_exit_stop_loss_builds_loss_result() -> None:
-    result = paper_trade_result_from_early_exit(
+    result = report_result_from_early_exit(
         {
             "exit_reason": "STOP_LOSS",
             "position_id": "position-2",
@@ -115,7 +115,7 @@ def test_early_exit_stop_loss_builds_loss_result() -> None:
 
 def test_early_exit_ignores_non_exit_fills() -> None:
     assert (
-        paper_trade_result_from_early_exit(
+        report_result_from_early_exit(
             {"position_id": "p", "entry_price": 0.4, "position_quantity": 1.0},
             fill_price=0.5,
             fill_shares=1.0,

@@ -1,7 +1,6 @@
-# noqa: SIZE_OK  — integration coverage file for SQLite restore migrations
 """
-Input: __future__, __future__.annotations, datetime, datetime.date, json, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode, polysignal_lab.domain.enums.PositionStatus, polysignal_lab.domain.enums.Side, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.paper_result
-Output: test_sqlite_store_restores_wallet_reports_and_leaderboard, test_sqlite_store_rejects_invalid_paper_trade_rows, test_sqlite_store_skips_malformed_payload_paper_trade_rows, test_sqlite_store_excludes_invalid_position_events, test_sqlite_store_invalid_latest_position_hides_prior_current_state, test_strategy_leaderboard_win_rate_counts_voids_as_closed, test_sqlite_store_uses_wal_and_busy_timeout
+Input: __future__, __future__.annotations, datetime, datetime.date, json, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode, polysignal_lab.domain.enums.PositionStatus, polysignal_lab.domain.enums.Side, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.reporting_result
+Output: test_sqlite_store_restores_account_reports_and_leaderboard, test_sqlite_store_rejects_invalid_paper_trade_rows, test_sqlite_store_skips_malformed_payload_paper_trade_rows, test_sqlite_store_excludes_invalid_position_events, test_sqlite_store_invalid_latest_position_hides_prior_current_state, test_strategy_leaderboard_win_rate_counts_voids_as_closed, test_sqlite_store_uses_wal_and_busy_timeout
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -16,22 +15,22 @@ import sqlite3
 
 import pytest
 
-from factories import sample_paper_trade_result
+from factories import sample_report_result
 
 from polysignal_lab.domain.enums import ExitMode, PositionStatus, Side, TradeResultStatus
-from polysignal_lab.domain.paper_result import (
+from polysignal_lab.domain.reporting_result import (
     DailyReport,
-    InvalidPaperTradeResultRow,
-    PaperWalletSnapshot,
+    InvalidReportResultRow,
+    ReportAccountSnapshot,
 )
 from polysignal_lab.storage.sqlite_store import MalformedSQLitePayloadError, SQLiteStore
 from polysignal_lab.utils import utc_now
-from signal_helpers import ptb_signal_from_snapshot
+from signal_helpers import ptb_signal_from_view
 
 
-def test_payload_insert_preserves_duplicate_detection(tmp_path, snapshot, settings) -> None:
+def test_payload_insert_preserves_duplicate_detection(tmp_path, market_view, settings) -> None:
     store = SQLiteStore(tmp_path / "db.sqlite3")
-    payload = ptb_signal_from_snapshot(snapshot, settings)
+    payload = ptb_signal_from_view(market_view, settings)
 
     store.insert_signal(payload)
     store.insert_signal(payload)
@@ -39,11 +38,11 @@ def test_payload_insert_preserves_duplicate_detection(tmp_path, snapshot, settin
     assert store.counts()["signals"] == 1
 
 
-def test_sqlite_store_restores_wallet_reports_and_leaderboard(tmp_path):
-    # Given: wallet, open position, trade result, and report rows persisted to SQLite.
+def test_sqlite_store_restores_account_reports_and_leaderboard(tmp_path):
+    # Given: account, open position, trade result, and report rows persisted to SQLite.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
     now = utc_now()
-    wallet = PaperWalletSnapshot(
+    account = ReportAccountSnapshot(
         starting_balance=1000.0,
         cash_balance=975.5,
         realized_pnl=14.25,
@@ -52,11 +51,11 @@ def test_sqlite_store_restores_wallet_reports_and_leaderboard(tmp_path):
         created_at=now,
     )
     open_position = {
-        "paper_position_id": "pp-open-1",
+        "report_position_id": "pp-open-1",
         "position_id": "pp-open-1",
         "signal_id": "sig-open-1",
-        "paper_order_id": "po-open-1",
-        "paper_fill_id": "pf-open-1",
+        "report_order_id": "po-open-1",
+        "report_fill_id": "pf-open-1",
         "strategy": "ptb_diff",
         "asset": "BTC",
         "timeframe": "5m",
@@ -73,19 +72,19 @@ def test_sqlite_store_restores_wallet_reports_and_leaderboard(tmp_path):
     }
     closed_position = {
         **open_position,
-        "paper_position_id": "pp-closed-1",
+        "report_position_id": "pp-closed-1",
         "position_id": "pp-closed-1",
         "signal_id": "sig-closed-1",
-        "paper_order_id": "po-closed-1",
-        "paper_fill_id": "pf-closed-1",
+        "report_order_id": "po-closed-1",
+        "report_fill_id": "pf-closed-1",
         "status": PositionStatus.CLOSED.value,
         "is_closed": True,
         "closed_at": now.isoformat(),
     }
-    result = sample_paper_trade_result(
-        paper_trade_id="pt-restore-1",
+    result = sample_report_result(
+        report_result_id="pt-restore-1",
         signal_id=closed_position["signal_id"],
-        paper_position_id=closed_position["paper_position_id"],
+        report_position_id=closed_position["report_position_id"],
         strategy="ptb_diff",
         asset="BTC",
         timeframe="5m",
@@ -109,12 +108,12 @@ def test_sqlite_store_restores_wallet_reports_and_leaderboard(tmp_path):
         report_date=date(2026, 6, 21),
         starting_equity=1000.0,
         ending_equity=1014.25,
-        paper_pnl=14.25,
-        paper_roi=0.01425,
+        net_pnl=14.25,
+        return_rate=0.01425,
         total_signals=7,
-        paper_orders=5,
-        paper_fills=4,
-        rejected_paper_orders=1,
+        order_count=5,
+        fill_count=4,
+        rejected_order_count=1,
         open_positions=1,
         closed_positions=1,
         win_count=1,
@@ -136,11 +135,11 @@ def test_sqlite_store_restores_wallet_reports_and_leaderboard(tmp_path):
             }
         },
     )
-    store.insert_wallet_snapshot(wallet)
+    store.insert_report_account_snapshot(account)
     for pos in (open_position, closed_position):
         store.insert_system_event(
             {
-                "event_id": f"evt-{pos['paper_position_id']}",
+                "event_id": f"evt-{pos['report_position_id']}",
                 "event_type": "nautilus_position",
                 "severity": "info",
                 "created_at": pos.get("closed_at") or pos["opened_at"],
@@ -148,20 +147,20 @@ def test_sqlite_store_restores_wallet_reports_and_leaderboard(tmp_path):
                 **pos,
             }
         )
-    store.insert_paper_trade_result(result)
+    store.insert_report_result(result)
     store.insert_daily_report(report)
 
     # When: restart-time data is reconstructed from SQLite payloads.
-    restored_wallet = store.restore_latest_wallet_snapshot()
-    restored_positions = store.restore_open_positions()
-    restored_reports = store.restore_daily_reports()
-    leaderboard = store.restore_strategy_leaderboard()
+    restored_account = store.query_latest_report_account_snapshot()
+    restored_positions = store.query_report_open_positions()
+    restored_reports = store.query_daily_reports()
+    leaderboard = store.query_strategy_leaderboard()
 
     # Then: restored values match persisted rows, not fabricated in-memory state.
-    assert restored_wallet is not None
-    assert restored_wallet["cash_balance"] == 975.5
-    assert restored_wallet["equity"] == 1014.25
-    assert [position["paper_position_id"] for position in restored_positions] == ["pp-open-1"]
+    assert restored_account is not None
+    assert restored_account["cash_balance"] == 975.5
+    assert restored_account["equity"] == 1014.25
+    assert [position["report_position_id"] for position in restored_positions] == ["pp-open-1"]
     assert restored_reports[0]["report_id"] == "dr-restore-1"
     assert restored_reports[0]["total_signals"] == 7
     assert leaderboard == [
@@ -181,20 +180,20 @@ def test_sqlite_store_restores_wallet_reports_and_leaderboard(tmp_path):
 def test_sqlite_store_rejects_invalid_paper_trade_rows(tmp_path) -> None:
     # Given: malformed trade-result rows which used to be silently coerced.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
-    invalid = sample_paper_trade_result(paper_trade_id="pt-invalid", shares="NaN")
+    invalid = sample_report_result(report_result_id="pt-invalid", shares="NaN")
 
     # When/Then: API inserts fail closed.
-    with pytest.raises(InvalidPaperTradeResultRow):
-        store.insert_paper_trade_result(invalid)
+    with pytest.raises(InvalidReportResultRow):
+        store.insert_report_result(invalid)
 
     # When: a hostile row already exists in persisted storage.
     with store._lock, store._conn:
         store._conn.execute(
-            """INSERT INTO paper_trade_results(
-                paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+            """INSERT INTO report_results(
+                report_result_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                invalid["paper_trade_id"],
+                invalid["report_result_id"],
                 invalid["signal_id"],
                 invalid["strategy"],
                 invalid["asset"],
@@ -209,28 +208,28 @@ def test_sqlite_store_rejects_invalid_paper_trade_rows(tmp_path) -> None:
         )
 
     # Then: restore/query excludes the invalid row instead of fabricating values.
-    assert store.query_json("paper_trade_results") == []
+    assert store.query_json("report_results") == []
 
 
 def test_sqlite_store_rejects_zero_money_paper_trade_rows(tmp_path: Path) -> None:
     # Given: zero money fields which would fabricate a settled trade.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
     for key in ("entry_price", "shares", "stake_usdc"):
-        invalid = sample_paper_trade_result(paper_trade_id=f"pt-zero-{key}")
+        invalid = sample_report_result(report_result_id=f"pt-zero-{key}")
         invalid[key] = 0.0
 
         # When/Then: API inserts fail closed.
-        with pytest.raises(InvalidPaperTradeResultRow):
-            store.insert_paper_trade_result(invalid)
+        with pytest.raises(InvalidReportResultRow):
+            store.insert_report_result(invalid)
 
         # When: a hostile row already exists in persisted storage.
         with store._lock, store._conn:
             store._conn.execute(
-                """INSERT INTO paper_trade_results(
-                    paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+                """INSERT INTO report_results(
+                    report_result_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    invalid["paper_trade_id"],
+                    invalid["report_result_id"],
                     invalid["signal_id"],
                     invalid["strategy"],
                     invalid["asset"],
@@ -245,28 +244,28 @@ def test_sqlite_store_rejects_zero_money_paper_trade_rows(tmp_path: Path) -> Non
             )
 
     # Then: restore/query excludes zero-money rows instead of trusting them.
-    assert store.query_json("paper_trade_results") == []
+    assert store.query_json("report_results") == []
 
 
 def test_sqlite_store_rejects_boolean_money_paper_trade_rows(tmp_path: Path) -> None:
     # Given: boolean money fields which JSON can otherwise coerce to one or zero.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
     for key in ("entry_price", "shares", "stake_usdc"):
-        invalid = sample_paper_trade_result(paper_trade_id=f"pt-bool-{key}")
+        invalid = sample_report_result(report_result_id=f"pt-bool-{key}")
         invalid[key] = True
 
         # When/Then: API inserts fail closed.
-        with pytest.raises(InvalidPaperTradeResultRow):
-            store.insert_paper_trade_result(invalid)
+        with pytest.raises(InvalidReportResultRow):
+            store.insert_report_result(invalid)
 
         # When: a hostile row already exists in persisted storage.
         with store._lock, store._conn:
             store._conn.execute(
-                """INSERT INTO paper_trade_results(
-                    paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+                """INSERT INTO report_results(
+                    report_result_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    invalid["paper_trade_id"],
+                    invalid["report_result_id"],
                     invalid["signal_id"],
                     invalid["strategy"],
                     invalid["asset"],
@@ -281,27 +280,27 @@ def test_sqlite_store_rejects_boolean_money_paper_trade_rows(tmp_path: Path) -> 
             )
 
     # Then: restore/query excludes boolean-money rows instead of coercing them.
-    assert store.query_json("paper_trade_results") == []
+    assert store.query_json("report_results") == []
 
 
 def test_sqlite_store_rejects_huge_integer_paper_trade_rows(tmp_path: Path) -> None:
     # Given: huge valid JSON integers which cannot fit paper numeric boundaries.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
-    invalid = sample_paper_trade_result(paper_trade_id="pt-huge-entry-price")
+    invalid = sample_report_result(report_result_id="pt-huge-entry-price")
     invalid["entry_price"] = 10**4000
 
     # When/Then: API inserts fail closed with the typed parser error.
-    with pytest.raises(InvalidPaperTradeResultRow):
-        store.insert_paper_trade_result(invalid)
+    with pytest.raises(InvalidReportResultRow):
+        store.insert_report_result(invalid)
 
     # When: a hostile row already exists in persisted storage.
     with store._lock, store._conn:
         store._conn.execute(
-            """INSERT INTO paper_trade_results(
-                paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+            """INSERT INTO report_results(
+                report_result_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                invalid["paper_trade_id"],
+                invalid["report_result_id"],
                 invalid["signal_id"],
                 invalid["strategy"],
                 invalid["asset"],
@@ -316,7 +315,7 @@ def test_sqlite_store_rejects_huge_integer_paper_trade_rows(tmp_path: Path) -> N
         )
 
     # Then: restore/query excludes it instead of leaking OverflowError.
-    assert store.query_json("paper_trade_results") == []
+    assert store.query_json("report_results") == []
 
 
 def test_sqlite_store_skips_malformed_payload_paper_trade_rows(tmp_path: Path) -> None:
@@ -326,8 +325,8 @@ def test_sqlite_store_skips_malformed_payload_paper_trade_rows(tmp_path: Path) -
 
     with sqlite3.connect(db_path) as conn:
         _ = conn.execute(
-            """INSERT INTO paper_trade_results(
-                paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+            """INSERT INTO report_results(
+                report_result_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 "pt-malformed-json",
@@ -345,7 +344,7 @@ def test_sqlite_store_skips_malformed_payload_paper_trade_rows(tmp_path: Path) -
         )
 
     # When/Then: restore/query excludes the bad row instead of raising JSONDecodeError.
-    assert store.query_json("paper_trade_results") == []
+    assert store.query_json("report_results") == []
 
 
 def test_sqlite_store_skips_malformed_timestamp_paper_trade_rows(tmp_path: Path) -> None:
@@ -353,16 +352,16 @@ def test_sqlite_store_skips_malformed_timestamp_paper_trade_rows(tmp_path: Path)
     db_path = tmp_path / "restore.sqlite3"
     store = SQLiteStore(db_path)
     for key in ("opened_at", "closed_at"):
-        invalid = sample_paper_trade_result(paper_trade_id=f"pt-malformed-{key}")
+        invalid = sample_report_result(report_result_id=f"pt-malformed-{key}")
         invalid[key] = "not-a-date"
 
         with sqlite3.connect(db_path) as conn:
             _ = conn.execute(
-                """INSERT INTO paper_trade_results(
-                    paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+                """INSERT INTO report_results(
+                    report_result_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    invalid["paper_trade_id"],
+                    invalid["report_result_id"],
                     invalid["signal_id"],
                     invalid["strategy"],
                     invalid["asset"],
@@ -377,7 +376,7 @@ def test_sqlite_store_skips_malformed_timestamp_paper_trade_rows(tmp_path: Path)
             )
 
     # When/Then: restore/query excludes the bad row instead of raising ValueError.
-    assert store.query_json("paper_trade_results") == []
+    assert store.query_json("report_results") == []
 
 
 def test_sqlite_store_skips_json_integer_digit_limit_payloads(tmp_path: Path) -> None:
@@ -385,18 +384,18 @@ def test_sqlite_store_skips_json_integer_digit_limit_payloads(tmp_path: Path) ->
     db_path = tmp_path / "restore.sqlite3"
     store = SQLiteStore(db_path)
     huge_json_integer = "1" + ("0" * 5000)
-    trade = sample_paper_trade_result(paper_trade_id="pt-digit-limit")
+    trade = sample_report_result(report_result_id="pt-digit-limit")
     trade["entry_price"] = "__HUGE__"
     trade_payload = json.dumps(trade).replace('"__HUGE__"', huge_json_integer)
     now = utc_now().isoformat()
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            """INSERT INTO paper_trade_results(
-                paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+            """INSERT INTO report_results(
+                report_result_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                trade["paper_trade_id"],
+                trade["report_result_id"],
                 trade["signal_id"],
                 trade["strategy"],
                 trade["asset"],
@@ -435,24 +434,24 @@ def test_sqlite_store_skips_json_integer_digit_limit_payloads(tmp_path: Path) ->
             ),
         )
         conn.execute(
-            """INSERT INTO paper_wallet_snapshots(
-                wallet_id, equity, cash_balance, realized_pnl, open_position_count, created_at, payload_json
+            """INSERT INTO report_account_snapshots(
+                account_id, equity, cash_balance, realized_pnl, open_position_count, created_at, payload_json
             ) VALUES(?,?,?,?,?,?,?)""",
             (
-                "wallet-digit-limit",
+                "account-digit-limit",
                 1000.0,
                 1000.0,
                 0.0,
                 0,
                 now,
-                f'{{"wallet_id":"wallet-digit-limit","equity":{huge_json_integer}}}',
+                f'{{"account_id":"account-digit-limit","equity":{huge_json_integer}}}',
             ),
         )
 
-    assert store.query_json("paper_trade_results") == []
+    assert store.query_json("report_results") == []
     assert store.query_json("system_events") == []
-    assert store.restore_daily_reports() == []
-    assert store.restore_latest_wallet_snapshot() is None
+    assert store.query_daily_reports() == []
+    assert store.query_latest_report_account_snapshot() is None
 
 
 def test_sqlite_store_skips_malformed_system_events(tmp_path: Path) -> None:
@@ -474,8 +473,8 @@ def test_sqlite_store_skips_malformed_system_events(tmp_path: Path) -> None:
 
     # When/Then: restore surfaces skip the bad row instead of raising JSONDecodeError.
     assert store.query_json("system_events") == []
-    assert store.restore_open_positions() == []
-    assert store.restore_latest_system_event("nautilus_position") is None
+    assert store.query_report_open_positions() == []
+    assert store.query_latest_system_event("nautilus_position") is None
 
 
 def test_sqlite_store_skips_malformed_daily_reports(tmp_path: Path) -> None:
@@ -499,8 +498,8 @@ def test_sqlite_store_skips_malformed_daily_reports(tmp_path: Path) -> None:
         )
 
     # When/Then: report restore surfaces skip the bad row instead of raising JSONDecodeError.
-    assert store.restore_daily_reports() == []
-    assert store.restore_strategy_leaderboard() == []
+    assert store.query_daily_reports() == []
+    assert store.query_strategy_leaderboard() == []
 
 
 def test_sqlite_store_rejects_malformed_existing_payload(tmp_path: Path) -> None:
@@ -535,23 +534,23 @@ def test_sqlite_store_rejects_malformed_existing_payload(tmp_path: Path) -> None
 def test_sqlite_store_rejects_incomplete_paper_trade_rows(tmp_path) -> None:
     # Given: persisted trade-result JSON missing fields required by the old model.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
-    incomplete = sample_paper_trade_result(paper_trade_id="pt-incomplete")
+    incomplete = sample_report_result(report_result_id="pt-incomplete")
     del incomplete["signal_id"]
     del incomplete["side"]
     del incomplete["opened_at"]
 
     # When/Then: API inserts fail closed with the typed parser error.
-    with pytest.raises(InvalidPaperTradeResultRow):
-        store.insert_paper_trade_result(incomplete)
+    with pytest.raises(InvalidReportResultRow):
+        store.insert_report_result(incomplete)
 
     # When: an incomplete row already exists in persisted storage.
     with store._lock, store._conn:
         store._conn.execute(
-            """INSERT INTO paper_trade_results(
-                paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+            """INSERT INTO report_results(
+                report_result_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                incomplete["paper_trade_id"],
+                incomplete["report_result_id"],
                 "",
                 incomplete["strategy"],
                 incomplete["asset"],
@@ -566,22 +565,22 @@ def test_sqlite_store_rejects_incomplete_paper_trade_rows(tmp_path) -> None:
         )
 
     # Then: restore/query excludes it instead of fabricating missing fields.
-    assert store.query_json("paper_trade_results") == []
+    assert store.query_json("report_results") == []
 
 
 def test_sqlite_store_rejects_paper_trade_rows_missing_exit_mode(tmp_path: Path) -> None:
     # Given: a persisted trade-result row missing the required settlement mode.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
-    incomplete = sample_paper_trade_result(paper_trade_id="pt-missing-exit-mode")
+    incomplete = sample_report_result(report_result_id="pt-missing-exit-mode")
     del incomplete["exit_mode"]
 
     with store._lock, store._conn:
         store._conn.execute(
-            """INSERT INTO paper_trade_results(
-                paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+            """INSERT INTO report_results(
+                report_result_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                incomplete["paper_trade_id"],
+                incomplete["report_result_id"],
                 incomplete["signal_id"],
                 incomplete["strategy"],
                 incomplete["asset"],
@@ -596,22 +595,22 @@ def test_sqlite_store_rejects_paper_trade_rows_missing_exit_mode(tmp_path: Path)
         )
 
     # When/Then: restore/query excludes it instead of accepting an incomplete settlement row.
-    assert store.query_json("paper_trade_results") == []
+    assert store.query_json("report_results") == []
 
 
 def test_sqlite_store_rejects_paper_trade_rows_with_invalid_exit_mode(tmp_path: Path) -> None:
     # Given: a persisted trade-result row with an unknown settlement mode.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
-    invalid = sample_paper_trade_result(paper_trade_id="pt-invalid-exit-mode")
+    invalid = sample_report_result(report_result_id="pt-invalid-exit-mode")
     invalid["exit_mode"] = "BROKEN"
 
     with store._lock, store._conn:
         store._conn.execute(
-            """INSERT INTO paper_trade_results(
-                paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+            """INSERT INTO report_results(
+                report_result_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                invalid["paper_trade_id"],
+                invalid["report_result_id"],
                 invalid["signal_id"],
                 invalid["strategy"],
                 invalid["asset"],
@@ -626,22 +625,22 @@ def test_sqlite_store_rejects_paper_trade_rows_with_invalid_exit_mode(tmp_path: 
         )
 
     # When/Then: restore/query excludes it instead of accepting an unknown settlement mode.
-    assert store.query_json("paper_trade_results") == []
+    assert store.query_json("report_results") == []
 
 
 def test_sqlite_store_rejects_paper_trade_rows_missing_market_slug(tmp_path: Path) -> None:
     # Given: a persisted trade-result row missing the market display key.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
-    incomplete = sample_paper_trade_result(paper_trade_id="pt-missing-market-slug")
+    incomplete = sample_report_result(report_result_id="pt-missing-market-slug")
     del incomplete["market_slug"]
 
     with store._lock, store._conn:
         store._conn.execute(
-            """INSERT INTO paper_trade_results(
-                paper_trade_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
+            """INSERT INTO report_results(
+                report_result_id,signal_id,strategy,asset,timeframe,market_id,result,pnl_usdc,roi,closed_at,payload_json
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                incomplete["paper_trade_id"],
+                incomplete["report_result_id"],
                 incomplete["signal_id"],
                 incomplete["strategy"],
                 incomplete["asset"],
@@ -656,7 +655,7 @@ def test_sqlite_store_rejects_paper_trade_rows_missing_market_slug(tmp_path: Pat
         )
 
     # When/Then: restore/query excludes it instead of accepting an incomplete market row.
-    assert store.query_json("paper_trade_results") == []
+    assert store.query_json("report_results") == []
 
 
 def test_sqlite_store_excludes_invalid_position_events(tmp_path) -> None:
@@ -668,7 +667,7 @@ def test_sqlite_store_excludes_invalid_position_events(tmp_path) -> None:
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": utc_now().isoformat(),
-            "paper_position_id": "pos-bad",
+            "report_position_id": "pos-bad",
             "market_id": "market-1",
             "token_id": "token-up",
             "status": "BROKEN",
@@ -680,8 +679,8 @@ def test_sqlite_store_excludes_invalid_position_events(tmp_path) -> None:
     )
 
     # When/Then: restore paths fail closed instead of treating it as OPEN.
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
 def test_sqlite_store_excludes_incomplete_open_position_events(tmp_path) -> None:
@@ -693,7 +692,7 @@ def test_sqlite_store_excludes_incomplete_open_position_events(tmp_path) -> None
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": utc_now().isoformat(),
-            "paper_position_id": "pos-incomplete",
+            "report_position_id": "pos-incomplete",
             "market_id": "market-1",
             "token_id": "token-up",
             "status": PositionStatus.OPEN.value,
@@ -702,8 +701,8 @@ def test_sqlite_store_excludes_incomplete_open_position_events(tmp_path) -> None
     )
 
     # When/Then: restore paths fail closed instead of returning an un-settleable row.
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
 def test_sqlite_store_excludes_open_position_events_with_zero_money(tmp_path) -> None:
@@ -730,14 +729,14 @@ def test_sqlite_store_excludes_open_position_events_with_zero_money(tmp_path) ->
             {
                 **base,
                 "event_id": f"evt-zero-{key}",
-                "paper_position_id": f"pos-zero-{key}",
+                "report_position_id": f"pos-zero-{key}",
                 key: 0.0,
             }
         )
 
     # When/Then: restore fails closed instead of returning zero-money rows.
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
 def test_sqlite_store_excludes_closed_position_events_with_zero_money(tmp_path) -> None:
@@ -765,14 +764,14 @@ def test_sqlite_store_excludes_closed_position_events_with_zero_money(tmp_path) 
             {
                 **base,
                 "event_id": f"evt-closed-zero-{key}",
-                "paper_position_id": f"pos-closed-zero-{key}",
+                "report_position_id": f"pos-closed-zero-{key}",
                 key: 0.0,
             }
         )
 
     # When/Then: restore fails closed instead of returning zero-money rows.
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
 def test_sqlite_store_excludes_open_position_events_with_boolean_money(
@@ -801,28 +800,28 @@ def test_sqlite_store_excludes_open_position_events_with_boolean_money(
             {
                 **base,
                 "event_id": f"evt-bool-{key}",
-                "paper_position_id": f"pos-bool-{key}",
+                "report_position_id": f"pos-bool-{key}",
                 key: True,
             }
         )
 
     # When/Then: restore fails closed instead of coercing true to one.
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
-def test_sqlite_store_skips_malformed_wallet_snapshot_payload(tmp_path: Path) -> None:
-    # Given: a persisted wallet snapshot row whose payload_json is not valid JSON.
+def test_sqlite_store_skips_malformed_account_snapshot_payload(tmp_path: Path) -> None:
+    # Given: a persisted account snapshot row whose payload_json is not valid JSON.
     db_path = tmp_path / "restore.sqlite3"
     store = SQLiteStore(db_path)
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            """INSERT INTO paper_wallet_snapshots(
-                wallet_id, equity, cash_balance, realized_pnl, open_position_count, created_at, payload_json
+            """INSERT INTO report_account_snapshots(
+                account_id, equity, cash_balance, realized_pnl, open_position_count, created_at, payload_json
             ) VALUES(?,?,?,?,?,?,?)""",
             (
-                "wallet-malformed",
+                "account-malformed",
                 1000.0,
                 1000.0,
                 0.0,
@@ -833,21 +832,21 @@ def test_sqlite_store_skips_malformed_wallet_snapshot_payload(tmp_path: Path) ->
         )
 
     # When/Then: restore fails closed instead of raising JSONDecodeError.
-    assert store.restore_latest_wallet_snapshot() is None
+    assert store.query_latest_report_account_snapshot() is None
 
 
-def test_sqlite_store_skips_hostile_wallet_snapshot_payload(tmp_path: Path) -> None:
-    # Given: a persisted wallet snapshot row whose payload_json is valid JSON but not valid money state.
+def test_sqlite_store_skips_hostile_account_snapshot_payload(tmp_path: Path) -> None:
+    # Given: a persisted account snapshot row whose payload_json is valid JSON but not valid money state.
     db_path = tmp_path / "restore.sqlite3"
     store = SQLiteStore(db_path)
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            """INSERT INTO paper_wallet_snapshots(
-                wallet_id, equity, cash_balance, realized_pnl, open_position_count, created_at, payload_json
+            """INSERT INTO report_account_snapshots(
+                account_id, equity, cash_balance, realized_pnl, open_position_count, created_at, payload_json
             ) VALUES(?,?,?,?,?,?,?)""",
             (
-                "wallet-hostile",
+                "account-hostile",
                 1000.0,
                 1000.0,
                 0.0,
@@ -855,7 +854,7 @@ def test_sqlite_store_skips_hostile_wallet_snapshot_payload(tmp_path: Path) -> N
                 utc_now().isoformat(),
                 json.dumps(
                     {
-                        "wallet_id": "wallet-hostile",
+                        "account_id": "account-hostile",
                         "equity": float("nan"),
                         "cash_balance": True,
                         "realized_pnl": 0.0,
@@ -867,21 +866,21 @@ def test_sqlite_store_skips_hostile_wallet_snapshot_payload(tmp_path: Path) -> N
         )
 
     # When/Then: restore fails closed instead of returning fabricated money.
-    assert store.restore_latest_wallet_snapshot() is None
+    assert store.query_latest_report_account_snapshot() is None
 
 
-def test_sqlite_store_skips_wallet_snapshot_with_oversized_count(tmp_path: Path) -> None:
-    # Given: a persisted wallet snapshot row whose count cannot be represented safely.
+def test_sqlite_store_skips_account_snapshot_with_oversized_count(tmp_path: Path) -> None:
+    # Given: a persisted account snapshot row whose count cannot be represented safely.
     db_path = tmp_path / "restore.sqlite3"
     store = SQLiteStore(db_path)
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            """INSERT INTO paper_wallet_snapshots(
-                wallet_id, equity, cash_balance, realized_pnl, open_position_count, created_at, payload_json
+            """INSERT INTO report_account_snapshots(
+                account_id, equity, cash_balance, realized_pnl, open_position_count, created_at, payload_json
             ) VALUES(?,?,?,?,?,?,?)""",
             (
-                "wallet-overflow",
+                "account-overflow",
                 1000.0,
                 1000.0,
                 0.0,
@@ -889,7 +888,7 @@ def test_sqlite_store_skips_wallet_snapshot_with_oversized_count(tmp_path: Path)
                 utc_now().isoformat(),
                 json.dumps(
                     {
-                        "wallet_id": "wallet-overflow",
+                        "account_id": "account-overflow",
                         "equity": 1000.0,
                         "cash_balance": 1000.0,
                         "realized_pnl": 0.0,
@@ -901,7 +900,7 @@ def test_sqlite_store_skips_wallet_snapshot_with_oversized_count(tmp_path: Path)
         )
 
     # When/Then: restore fails closed instead of raising OverflowError.
-    assert store.restore_latest_wallet_snapshot() is None
+    assert store.query_latest_report_account_snapshot() is None
 
 
 def test_sqlite_store_skips_hostile_daily_report_payload(tmp_path: Path) -> None:
@@ -944,8 +943,8 @@ def test_sqlite_store_skips_hostile_daily_report_payload(tmp_path: Path) -> None
         )
 
     # When/Then: restore and leaderboard fail closed.
-    assert store.restore_daily_reports() == []
-    assert store.restore_strategy_leaderboard() == []
+    assert store.query_daily_reports() == []
+    assert store.query_strategy_leaderboard() == []
 
 
 def test_sqlite_store_excludes_open_position_events_without_timestamp(tmp_path) -> None:
@@ -955,7 +954,7 @@ def test_sqlite_store_excludes_open_position_events_without_timestamp(tmp_path) 
         "event_id": "evt-open-no-timestamp",
         "event_type": "nautilus_position",
         "severity": "info",
-        "paper_position_id": "pos-open-no-timestamp",
+        "report_position_id": "pos-open-no-timestamp",
         "market_id": "market-1",
         "token_id": "token-up",
         "status": PositionStatus.OPEN.value,
@@ -978,8 +977,8 @@ def test_sqlite_store_excludes_open_position_events_without_timestamp(tmp_path) 
         )
 
     # When/Then: restore paths fail closed instead of returning an un-settleable row.
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
 def test_sqlite_store_excludes_closed_position_events_without_state_fields(tmp_path) -> None:
@@ -989,7 +988,7 @@ def test_sqlite_store_excludes_closed_position_events_without_state_fields(tmp_p
         "event_id": "evt-closed-incomplete",
         "event_type": "nautilus_position",
         "severity": "info",
-        "paper_position_id": "pos-closed-incomplete",
+        "report_position_id": "pos-closed-incomplete",
         "status": PositionStatus.CLOSED.value,
         "is_closed": True,
     }
@@ -1007,8 +1006,8 @@ def test_sqlite_store_excludes_closed_position_events_without_state_fields(tmp_p
         )
 
     # When/Then: restore paths fail closed instead of returning an un-settleable row.
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
 def test_sqlite_store_excludes_contradictory_position_state(tmp_path) -> None:
@@ -1021,7 +1020,7 @@ def test_sqlite_store_excludes_contradictory_position_state(tmp_path) -> None:
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": now,
-            "paper_position_id": "pos-contradictory-state",
+            "report_position_id": "pos-contradictory-state",
             "status": PositionStatus.OPEN.value,
             "is_closed": True,
             "side": Side.UP.value,
@@ -1034,8 +1033,8 @@ def test_sqlite_store_excludes_contradictory_position_state(tmp_path) -> None:
     )
 
     # When/Then: restore paths reject the row instead of returning it as both open and closed.
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
 def test_sqlite_store_invalid_latest_position_hides_prior_current_state(tmp_path) -> None:
@@ -1047,7 +1046,7 @@ def test_sqlite_store_invalid_latest_position_hides_prior_current_state(tmp_path
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": opened_at,
-            "paper_position_id": "pos-invalid-latest",
+            "report_position_id": "pos-invalid-latest",
             "status": PositionStatus.OPEN.value,
             "is_closed": False,
             "side": Side.UP.value,
@@ -1064,7 +1063,7 @@ def test_sqlite_store_invalid_latest_position_hides_prior_current_state(tmp_path
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": "2026-07-13T12:05:00+00:00",
-            "paper_position_id": "pos-invalid-latest",
+            "report_position_id": "pos-invalid-latest",
             "status": "UNKNOWN",
             "is_closed": "false",
             "side": Side.UP.value,
@@ -1076,8 +1075,8 @@ def test_sqlite_store_invalid_latest_position_hides_prior_current_state(tmp_path
         }
     )
 
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
 def test_sqlite_store_excludes_open_position_event_with_invalid_opened_at(tmp_path) -> None:
@@ -1090,7 +1089,7 @@ def test_sqlite_store_excludes_open_position_event_with_invalid_opened_at(tmp_pa
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": event_time,
-            "paper_position_id": "pos-open-invalid-opened-at",
+            "report_position_id": "pos-open-invalid-opened-at",
             "market_id": "market-1",
             "token_id": "token-up",
             "side": Side.UP.value,
@@ -1105,8 +1104,8 @@ def test_sqlite_store_excludes_open_position_event_with_invalid_opened_at(tmp_pa
     )
 
     # When/Then: restore fails closed instead of falling through to ts/created_at.
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
 def test_sqlite_store_excludes_open_position_event_without_side(tmp_path) -> None:
@@ -1119,7 +1118,7 @@ def test_sqlite_store_excludes_open_position_event_without_side(tmp_path) -> Non
             "event_type": "nautilus_position",
             "severity": "info",
             "created_at": event_time,
-            "paper_position_id": "pos-open-no-side",
+            "report_position_id": "pos-open-no-side",
             "market_id": "market-1",
             "token_id": "token-up",
             "status": PositionStatus.OPEN.value,
@@ -1133,8 +1132,8 @@ def test_sqlite_store_excludes_open_position_event_without_side(tmp_path) -> Non
     )
 
     # When/Then: restore fails closed instead of fabricating UP.
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
 def test_sqlite_store_newer_invalid_position_event_blocks_stale_restore(tmp_path) -> None:
@@ -1145,7 +1144,7 @@ def test_sqlite_store_newer_invalid_position_event_blocks_stale_restore(tmp_path
     base = {
         "event_type": "nautilus_position",
         "severity": "info",
-        "paper_position_id": "pos-stale-blocked",
+        "report_position_id": "pos-stale-blocked",
         "market_id": "market-1",
         "token_id": "token-up",
         "side": Side.UP.value,
@@ -1168,33 +1167,33 @@ def test_sqlite_store_newer_invalid_position_event_blocks_stale_restore(tmp_path
     )
 
     # When/Then: the malformed latest state wins selection and is filtered out.
-    assert store.restore_open_positions() == []
-    assert store.restore_closed_positions() == []
+    assert store.query_report_open_positions() == []
+    assert store.query_report_closed_positions() == []
 
 
 def test_strategy_leaderboard_win_rate_counts_voids_as_closed(tmp_path):
     # Given: one WIN and one VOID in the canonical closed trade-result stream.
     store = SQLiteStore(tmp_path / "restore.sqlite3")
-    store.insert_paper_trade_result(
-        sample_paper_trade_result(
-            paper_trade_id="pt-leaderboard-win",
-            paper_position_id="pos-leaderboard-win",
+    store.insert_report_result(
+        sample_report_result(
+            report_result_id="pt-leaderboard-win",
+            report_position_id="pos-leaderboard-win",
             pnl_usdc=2.4,
             roi=0.24,
             result=TradeResultStatus.WIN.value,
         )
     )
-    store.insert_paper_trade_result(
-        sample_paper_trade_result(
-            paper_trade_id="pt-leaderboard-void",
-            paper_position_id="pos-leaderboard-void",
+    store.insert_report_result(
+        sample_report_result(
+            report_result_id="pt-leaderboard-void",
+            report_position_id="pos-leaderboard-void",
             pnl_usdc=0.0,
             roi=0.0,
             result=TradeResultStatus.VOID.value,
         )
     )
 
-    leaderboard = store.restore_strategy_leaderboard()
+    leaderboard = store.query_strategy_leaderboard()
 
     assert leaderboard[0]["closed_positions"] == 2
     assert leaderboard[0]["win_count"] == 1

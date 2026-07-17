@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, asyncio, sqlite3, polysignal_lab.app.scheduler_reporting_equity, polysignal_lab.app.scheduler_reporting_sources, polysignal_lab.app.scheduler_reporting_types, polysignal_lab.app.scheduler_health, polysignal_lab.domain.paper_result, polysignal_lab.paper.report
+Input: __future__, __future__.annotations, asyncio, sqlite3, polysignal_lab.app.reporting_equity, polysignal_lab.app.reporting_sources, polysignal_lab.app.reporting_types, polysignal_lab.app.scheduler_health, polysignal_lab.domain.reporting_result, polysignal_lab.reporting.daily_report
 Output: _build_daily_report_from_inputs
 Pos: Application code
 
@@ -12,18 +12,18 @@ import asyncio
 import sqlite3
 
 from polysignal_lab.app import scheduler_health
-from polysignal_lab.app.scheduler_reporting_equity import (
+from polysignal_lab.app.reporting_equity import (
     _report_equity_inputs,
     _sandbox_base_currency,
 )
-from polysignal_lab.app.scheduler_reporting_sources import (
+from polysignal_lab.app.reporting_sources import (
     _fill_payloads_with_order_intents,
-    _paper_order_metrics,
+    _order_metrics,
 )
-from polysignal_lab.app.scheduler_reporting_types import DailyReportInputs, _ReportScheduler
-from polysignal_lab.domain.paper_result import DailyReport
-from polysignal_lab.paper.report import PaperReportService
-from polysignal_lab.paper.report_rejections import is_rejected_paper_order_payload
+from polysignal_lab.app.reporting_types import DailyReportInputs, _ReportScheduler
+from polysignal_lab.domain.reporting_result import DailyReport
+from polysignal_lab.reporting.daily_report import DailyReportService
+from polysignal_lab.reporting.rejections import is_rejected_order_payload
 
 
 async def _build_daily_report_from_inputs(
@@ -52,7 +52,7 @@ async def _build_daily_report_from_inputs(
         "Generated" if created else "Reused",
         inputs.today_iso,
         report.closed_positions,
-        report.paper_pnl,
+        report.net_pnl,
     )
     return report
 
@@ -64,46 +64,46 @@ def _build_report(
     today_fill_payloads = _fill_payloads_with_order_intents(
         scheduler, inputs.today_fills_raw, inputs.today_orders_raw
     )
-    rejected_paper_orders = sum(
+    rejected_order_count = sum(
         1
         for order in inputs.today_reject_orders_raw
-        if is_rejected_paper_order_payload(order, _paper_order_metrics(order))
+        if is_rejected_order_payload(order, _order_metrics(order))
     )
-    stale_paper_fills = sum(
+    stale_fill_count = sum(
         1
         for order in inputs.today_orders_raw
         if order.get("status") == "FILLED"
-        and _paper_order_metrics(order).get("orderbook_fresh") is False
+        and _order_metrics(order).get("orderbook_fresh") is False
     )
-    paper_execution_assumptions = {
+    execution_assumptions = {
         "max_book_staleness_ms": scheduler.settings.data.polymarket.max_book_staleness_ms,
     }
-    execution_metadata = getattr(scheduler, "paper_execution_metadata", None)
+    execution_metadata = getattr(scheduler, "execution_metadata", None)
     if isinstance(execution_metadata, dict):
-        paper_execution_assumptions.update(execution_metadata)
+        execution_assumptions.update(execution_metadata)
 
     starting_equity, ending_equity, open_positions, equity_source = (
         _report_equity_inputs(scheduler)
     )
     try:
-        return PaperReportService().build_daily_report(
+        return DailyReportService().build_daily_report(
             report_date=inputs.today,
             starting_equity=starting_equity,
             ending_equity=ending_equity,
             equity_currency=_sandbox_base_currency(scheduler.settings),
             equity_source=equity_source,
             total_signals=len(inputs.today_signals_raw),
-            paper_orders=len(inputs.today_orders_raw),
-            paper_fills=len(inputs.today_fills_raw),
-            rejected_paper_orders=rejected_paper_orders,
+            order_count=len(inputs.today_orders_raw),
+            fill_count=len(inputs.today_fills_raw),
+            rejected_order_count=rejected_order_count,
             open_positions=open_positions,
             results=inputs.trade_results,
             equity_curve=[starting_equity, ending_equity],
-            stale_paper_fills=stale_paper_fills,
-            paper_order_payloads=inputs.today_orders_raw,
-            paper_fill_payloads=today_fill_payloads,
-            paper_reject_payloads=inputs.today_reject_orders_raw,
-            paper_execution_assumptions=paper_execution_assumptions,
+            stale_fill_count=stale_fill_count,
+            order_payloads=inputs.today_orders_raw,
+            fill_payloads=today_fill_payloads,
+            reject_payloads=inputs.today_reject_orders_raw,
+            execution_assumptions=execution_assumptions,
             telemetry_incomplete_reasons=inputs.telemetry_incomplete_reasons,
         )
     except (KeyError, TypeError, ValueError) as exc:

@@ -48,7 +48,7 @@ class ReportingReadPort(Protocol):
 
     def rejected_signal_rows(self, limit: int) -> list[JsonRow]: ...
 
-    def paper_order_rows(
+    def report_order_rows(
         self,
         status: str | None,
         limit: int,
@@ -56,13 +56,13 @@ class ReportingReadPort(Protocol):
 
     def market_rows(self, limit: int) -> list[JsonRow]: ...
 
-    def paper_position_rows(
+    def report_position_rows(
         self,
         status: str | None,
         limit: int,
     ) -> list[JsonRow]: ...
 
-    def paper_trade_result_rows(self, limit: int) -> list[JsonRow]: ...
+    def report_result_rows(self, limit: int) -> list[JsonRow]: ...
 
     def strategy_leaderboard(self, limit: int) -> list[JsonRow]: ...
 

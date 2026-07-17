@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Callable, datetime, datetime.UTC, datetime.datetime, datetime.time, telegram, polysignal_lab.app.services.persistence_service, polysignal_lab.config, polysignal_lab.data.state, polysignal_lab.nautilus_runtime.observability, polysignal_lab.paper.strategy_stats, polysignal_lab.publish.telegram_render, polysignal_lab.signal_layer.formatter, polysignal_lab.utils
+Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Callable, datetime, datetime.UTC, datetime.datetime, datetime.time, telegram, polysignal_lab.app.services.persistence_service, polysignal_lab.config, polysignal_lab.data.state, polysignal_lab.nautilus_runtime.observability, polysignal_lab.reporting.strategy_stats, polysignal_lab.publish.telegram_render, polysignal_lab.signal_layer.formatter, polysignal_lab.utils
 Output: TelegramBotService, _position_display_payload
 Pos: Application code
 
@@ -36,8 +36,8 @@ from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.config import TelegramConfig
 from polysignal_lab.data.state import MarketRegistry
 from polysignal_lab.nautilus_runtime.observability import StrategyControl
-from polysignal_lab.paper.event_projection import paper_token_id
-from polysignal_lab.paper.strategy_stats import build_strategy_leaderboard_rows
+from polysignal_lab.storage.event_projection import report_token_id
+from polysignal_lab.reporting.strategy_stats import build_strategy_leaderboard_rows
 from polysignal_lab.publish import telegram_render
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 from polysignal_lab.utils import new_id, utc_iso
@@ -87,7 +87,7 @@ class TelegramBotService:
         from telegram import BotCommand
         commands = [
             BotCommand("start", "主菜单 / 选择操作"),
-            BotCommand("positions", "查看 open paper 持仓"),
+            BotCommand("positions", "查看 open 持仓"),
             BotCommand("status", "系统运行状态"),
             BotCommand("signals", "最近信号"),
             BotCommand("strategies", "策略启停"),
@@ -353,13 +353,13 @@ class TelegramBotService:
             market = self.markets.get(market_id)
             if market is not None:
                 return market
-        token_id = paper_token_id(row)
+        token_id = report_token_id(row)
         return self.markets.for_token(token_id) if token_id else None
 
     def _format_positions(self) -> str:
-        rows = self.persistence.restore_open_positions()
+        rows = self.persistence.query_report_open_positions()
         if not rows:
-            return "暂无 open paper positions。"
+            return "暂无 open positions。"
         blocks: list[str] = []
         for row in rows:
             payload = _position_display_payload(
@@ -395,12 +395,12 @@ class TelegramBotService:
             lines.extend(
                 [
                     f"Opened    {self._format_age(payload.get('opened_at'))}",
-                    f"ID        {self._safe(payload.get('paper_position_id'))}",
+                    f"ID        {self._safe(payload.get('report_position_id'))}",
                 ]
             )
             blocks.append("\n".join(lines))
         if not blocks:
-            return "暂无 open paper positions。"
+            return "暂无 open positions。"
         return "\n\n".join(blocks)
 
     def _format_signals(self) -> str:
@@ -441,7 +441,7 @@ class TelegramBotService:
         )
 
     def _format_daily(self) -> str:
-        reports = self.persistence.restore_daily_reports(limit=1)
+        reports = self.persistence.query_daily_reports(limit=1)
         if not reports:
             return "暂无 daily report。"
         payload = reports[0]
@@ -451,10 +451,10 @@ class TelegramBotService:
             self.logger.exception("Invalid daily report payload")
             return "\n".join(
                 [
-                    "<b>📊 Daily Paper Report</b>",
+                    "<b>📊 Daily Trading Report</b>",
                     self._safe(payload.get("report_date", "unknown")),
                     f"Signals {self._safe(payload.get('total_signals', 'unknown'))}",
-                    f"PnL     {self._safe(payload.get('total_pnl_usdc', payload.get('paper_pnl', 'unknown')))} USDC",
+                    f"PnL     {self._safe(payload.get('total_pnl_usdc', payload.get('net_pnl', 'unknown')))} USDC",
                     f"WR      {self._safe(payload.get('win_rate', 'unknown'))}",
                     f"ID      {self._safe(payload.get('report_id', 'unknown'))}",
                 ]
@@ -481,7 +481,7 @@ class TelegramBotService:
         until: datetime | None = None
         if scope == "today":
             since, until = self._today_closed_bounds()
-        rows_raw = self.persistence.restore_closed_trade_results(since=since, until=until)
+        rows_raw = self.persistence.query_closed_trade_results(since=since, until=until)
         rows = build_strategy_leaderboard_rows(rows_raw)
         return self.formatter.strategy_leaderboard_message(rows, scope=scope)
 
@@ -613,15 +613,15 @@ class TelegramBotService:
 
     def _format_status(self) -> str:
         counts = self.persistence.counts()
-        positions = self.persistence.restore_open_positions()
-        wallet = self.persistence.restore_latest_wallet_snapshot() or {}
-        health = self.persistence.restore_latest_system_event("health_snapshot") or {}
+        positions = self.persistence.query_report_open_positions()
+        account = self.persistence.query_latest_report_account_snapshot() or {}
+        health = self.persistence.query_latest_system_event("health_snapshot") or {}
         status = str(health.get("status") or "unknown")
         emoji = "🟢" if status == "ok" else "🟡" if status == "degraded" else "🔴"
         strategies = list(self.strategy_names)
         enabled_count = sum(1 for name in strategies if self._is_strategy_enabled(name))
         total_count = len(strategies)
-        equity = float(wallet.get("equity", 0.0) or 0.0)
+        equity = float(account.get("equity", 0.0) or 0.0)
         health_age = self._format_age(health.get("created_at")) if health else "n/a"
         return "\n".join(
             [
@@ -629,7 +629,7 @@ class TelegramBotService:
                 f"Health age  {health_age}",
                 f"Markets     {len(self.markets.markets)} tracked",
                 f"Positions   {len(positions)} open",
-                f"Wallet      {equity:.2f} USDC equity",
+                f"Account     {equity:.2f} USDC equity",
                 f"Signals     {counts.get('signals', 0)} accepted / {counts.get('rejected_signals', 0)} rejected",
                 f"Strategies  {enabled_count}/{total_count} enabled",
                 f"Telegram    {'polling ok' if self._running else 'not polling'}",
@@ -654,7 +654,6 @@ def _position_display_payload(
     *,
     market: object | None = None,
 ) -> dict[str, Any]:
-    """Normalize open-position rows for Telegram display without PaperPosition."""
     return telegram_render.position_display_payload(row, market=market)
 
 

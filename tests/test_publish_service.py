@@ -1,6 +1,6 @@
 """
-Input: pytest, factories, factories.sample_paper_trade_result, polysignal_lab.app.services.publish_service, polysignal_lab.app.services.publish_service.PublishService, polysignal_lab.domain.paper_result, polysignal_lab.domain.paper_result.InvalidPaperTradeResultRow
-Output: test_publish_service_health_starts_ok, test_deliver_daily_report_uses_durable_idempotency_key, test_publish_signal_persists_publish_audit, test_publish_paper_result_rejects_invalid_payload, test_publish_nautilus_paper_fill_persists_publish_audit, _Publish, _Formatter, _Publisher, _Persistence, _Signal
+Input: pytest, factories, factories.sample_report_result, polysignal_lab.app.services.publish_service, polysignal_lab.app.services.publish_service.PublishService, polysignal_lab.domain.reporting_result, polysignal_lab.domain.reporting_result.InvalidReportResultRow
+Output: test_publish_service_health_starts_ok, test_deliver_daily_report_uses_durable_idempotency_key, test_publish_signal_persists_publish_audit, test_publish_report_result_rejects_invalid_payload, test_publish_nautilus_fill_persists_publish_audit, _Publish, _Formatter, _Publisher, _Persistence, _Signal
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -15,12 +15,12 @@ Pos: Test Layer - Unit/Integration tests
 
 import pytest
 
-from factories import sample_paper_trade_result
+from factories import sample_report_result
 
 from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.market import Market, OutcomeToken
-from polysignal_lab.domain.paper_result import InvalidPaperTradeResultRow
+from polysignal_lab.domain.reporting_result import InvalidReportResultRow
 
 
 class _Publish:
@@ -42,7 +42,7 @@ class _Formatter:
         return f"fill {fill['fill_price']}"
 
     def result_message(self, result) -> str:
-        return f"result {result['paper_trade_id']}"
+        return f"result {result['report_result_id']}"
 
     def daily_report_message(self, report) -> str:
         return f"report {report['report_id']}"
@@ -117,14 +117,14 @@ async def test_publish_signal_persists_publish_audit() -> None:
     assert persistence.publishes == [{"publish_id": "pub-1", "status": "dry_run"}]
 
 
-async def test_publish_paper_result_rejects_invalid_payload() -> None:
+async def test_publish_report_result_rejects_invalid_payload() -> None:
     persistence = _Persistence()
     publisher = _Publisher()
     service = PublishService(_Formatter(), publisher, persistence)
 
-    with pytest.raises(InvalidPaperTradeResultRow):
-        await service.publish_paper_result(
-            sample_paper_trade_result(paper_trade_id="pt-invalid", shares="NaN")
+    with pytest.raises(InvalidReportResultRow):
+        await service.publish_report_result(
+            sample_report_result(report_result_id="pt-invalid", shares="NaN")
         )
 
     assert publisher.last is None
@@ -132,25 +132,25 @@ async def test_publish_paper_result_rejects_invalid_payload() -> None:
     assert persistence.publishes == []
 
 
-async def test_publish_nautilus_paper_fill_persists_publish_audit() -> None:
+async def test_publish_nautilus_fill_persists_publish_audit() -> None:
     persistence = _Persistence()
     publisher = _Publisher()
     formatter = _Formatter()
     service = PublishService(formatter, publisher, persistence)
 
-    publish = await service.publish_nautilus_paper_fill(
+    publish = await service.publish_nautilus_fill(
         {"signal_id": "sig-fill-1", "fill_price": 0.5}
     )
 
     assert publish.status == "dry_run"
-    assert publisher.last == ("fill 0.5", "nautilus_paper_fill", "sig-fill-1")
+    assert publisher.last == ("fill 0.5", "nautilus_fill", "sig-fill-1")
     assert formatter.last_fill is not None
     assert formatter.last_fill["fill_price"] == 0.5
     assert persistence.logs == [("telegram_publishes", {"publish_id": "pub-1", "status": "dry_run"})]
     assert persistence.publishes == [{"publish_id": "pub-1", "status": "dry_run"}]
 
 
-async def test_publish_nautilus_paper_fill_normalizes_projected_rows() -> None:
+async def test_publish_nautilus_fill_normalizes_projected_rows() -> None:
     persistence = _Persistence()
     publisher = _Publisher()
     formatter = _Formatter()
@@ -176,7 +176,7 @@ async def test_publish_nautilus_paper_fill_normalizes_projected_rows() -> None:
         market_lookup=lambda _fill: market,
     )
 
-    publish = await service.publish_nautilus_paper_fill(
+    publish = await service.publish_nautilus_fill(
         {
             "trade_id": "T-001",
             "order_id": "C-001",
@@ -191,10 +191,10 @@ async def test_publish_nautilus_paper_fill_normalizes_projected_rows() -> None:
     )
 
     assert publish.status == "dry_run"
-    assert publisher.last == ("fill 0.5", "nautilus_paper_fill", "sig-fill-1")
+    assert publisher.last == ("fill 0.5", "nautilus_fill", "sig-fill-1")
     assert formatter.last_fill is not None
-    assert formatter.last_fill["paper_fill_id"] == "T-001"
-    assert formatter.last_fill["paper_order_id"] == "C-001"
+    assert formatter.last_fill["report_fill_id"] == "T-001"
+    assert formatter.last_fill["report_order_id"] == "C-001"
     assert formatter.last_fill["token_id"] == "up-token"
     assert formatter.last_fill["fill_price"] == 0.5
     assert formatter.last_fill["shares"] == 10.0

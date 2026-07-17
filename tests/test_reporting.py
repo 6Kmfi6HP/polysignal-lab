@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.date, typing, typing.Any, typing.assert_never, factories, factories.sample_paper_trade_result, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.paper.report, polysignal_lab.paper.report.PaperReportService, polysignal_lab.signal_layer.formatter, polysignal_lab.signal_layer.formatter.MessageFormatter
+Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.date, typing, typing.Any, typing.assert_never, factories, factories.sample_report_result, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.reporting.daily_report, polysignal_lab.reporting.daily_report.DailyReportService, polysignal_lab.signal_layer.formatter, polysignal_lab.signal_layer.formatter.MessageFormatter
 Output: ResultSpec, test_daily_report_includes_strategy_win_rate_and_pnl, test_daily_report_counts_split_as_closed_without_win_loss_void, test_daily_report_includes_strategy_asset_timeframe_calibration, test_daily_report_aggregates_paper_execution_quality
 Pos: Test Layer - Unit/Integration tests
 
@@ -18,10 +18,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, assert_never
 
-from factories import sample_paper_trade_result
+from factories import sample_report_result
 
 from polysignal_lab.domain.enums import TradeResultStatus
-from polysignal_lab.paper.report import PaperReportService
+from polysignal_lab.reporting.daily_report import DailyReportService
 from polysignal_lab.signal_layer.formatter import MessageFormatter
 
 
@@ -47,9 +47,9 @@ def _outcome_value(status: TradeResultStatus) -> float:
 
 
 def _result(spec: ResultSpec) -> dict[str, Any]:
-    return sample_paper_trade_result(
+    return sample_report_result(
         signal_id=spec.signal_id,
-        paper_position_id=f"pos-{spec.signal_id}",
+        report_position_id=f"pos-{spec.signal_id}",
         strategy=spec.strategy,
         asset=spec.asset,
         timeframe=spec.timeframe,
@@ -78,26 +78,26 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
     ]
 
     # When: the daily report is built.
-    report = PaperReportService().build_daily_report(
+    report = DailyReportService().build_daily_report(
         report_date=date(2026, 6, 22),
         starting_equity=1000.0,
         ending_equity=996.0,
         total_signals=4,
-        paper_orders=4,
-        paper_fills=3,
-        rejected_paper_orders=1,
+        order_count=4,
+        fill_count=3,
+        rejected_order_count=1,
         open_positions=1,
         results=results,
-        stale_paper_fills=0,
+        stale_fill_count=0,
         equity_currency="pUSD",
         equity_source="portfolio",
     )
 
     # Then: metrics use real closed states and exclude UNKNOWN from closed PnL.
     assert report.total_signals == 4
-    assert report.paper_orders == 4
-    assert report.paper_fills == 3
-    assert report.rejected_paper_orders == 1
+    assert report.order_count == 4
+    assert report.fill_count == 3
+    assert report.rejected_order_count == 1
     assert report.open_positions == 1
     assert report.closed_positions == 3
     assert report.win_count == 1
@@ -107,7 +107,7 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
     assert report.total_pnl_usdc == -4.0
     assert report.average_roi == (0.60 - 1.0 + 0.0) / 3
     assert report.profit_factor == 0.6
-    assert report.stale_paper_fills == 0
+    assert report.stale_fill_count == 0
     assert report.strategy_breakdown["ptb_diff"]["closed_positions"] == 2
     assert report.strategy_breakdown["ptb_diff"]["win_rate"] == 0.5
     assert report.asset_breakdown["BTC"]["total_pnl_usdc"] == 6.0
@@ -115,7 +115,7 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
 
     message = MessageFormatter().daily_report_message(report.model_dump(mode="json"))
     assert "SPLIT" not in message
-    assert message.startswith("<b>📊 Daily Paper Report</b>")
+    assert message.startswith("<b>📊 Daily Trading Report</b>")
     assert "Equity  1000.00 → 996.00 pUSD" in message
     assert "Source  Portfolio" in message
     assert "PnL     -4.00 pUSD" in message
@@ -140,14 +140,14 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
 def test_daily_report_counts_split_as_closed_without_win_loss_void() -> None:
     result = _result(ResultSpec("split", TradeResultStatus.SPLIT, 2.0, 0.20))
 
-    report = PaperReportService().build_daily_report(
+    report = DailyReportService().build_daily_report(
         report_date=date(2026, 6, 22),
         starting_equity=1000.0,
         ending_equity=1002.0,
         total_signals=1,
-        paper_orders=1,
-        paper_fills=1,
-        rejected_paper_orders=0,
+        order_count=1,
+        fill_count=1,
+        rejected_order_count=0,
         open_positions=0,
         results=[result],
     )
@@ -166,14 +166,14 @@ def test_daily_report_includes_strategy_asset_timeframe_calibration() -> None:
         "details": {"confidence": 0.80},
     }
 
-    report = PaperReportService().build_daily_report(
+    report = DailyReportService().build_daily_report(
         report_date=date(2026, 6, 22),
         starting_equity=1000.0,
         ending_equity=1004.0,
         total_signals=1,
-        paper_orders=1,
-        paper_fills=1,
-        rejected_paper_orders=0,
+        order_count=1,
+        fill_count=1,
+        rejected_order_count=0,
         open_positions=0,
         results=[result],
     )
@@ -194,68 +194,68 @@ def test_daily_report_includes_strategy_asset_timeframe_calibration() -> None:
 def test_daily_report_aggregates_paper_execution_quality() -> None:
     order_payloads = [
         {
-            "paper_order_id": "po-fill",
+            "report_order_id": "po-fill",
             "status": "FILLED",
             "order_intent": "taker_fok",
             "metrics": {
-                "paper_order_intent": "taker_fok",
-                "paper_orderbook_staleness_ms": 42.0,
-                "paper_available_depth_usdc": 50.0,
+                "order_intent": "taker_fok",
+                "orderbook_staleness_ms": 42.0,
+                "available_depth_usdc": 50.0,
             },
         },
         {
-            "paper_order_id": "po-partial",
+            "report_order_id": "po-partial",
             "status": "PARTIAL",
             "order_intent": "taker_fak",
             "metrics": {
-                "paper_order_intent": "taker_fak",
-                "paper_orderbook_staleness_ms": 64.0,
-                "paper_available_depth_usdc": 4.0,
+                "order_intent": "taker_fak",
+                "orderbook_staleness_ms": 64.0,
+                "available_depth_usdc": 4.0,
             },
         },
         {
-            "paper_order_id": "po-reject",
+            "report_order_id": "po-reject",
             "status": "REJECTED",
             "order_intent": None,
-            "reject_reason": "PAPER_ENTRY_PRICE_MOVED",
+            "reject_reason": "ENTRY_PRICE_MOVED",
             "metrics": {
-                "paper_order_intent": None,
-                "paper_normalized_reason": "PAPER_ENTRY_PRICE_MOVED",
-                "paper_original_reason": "ASK_ABOVE_MAX_ENTRY",
-                "paper_orderbook_staleness_ms": 20.0,
-                "paper_available_depth_usdc": 100.0,
+                "order_intent": None,
+                "normalized_reason": "ENTRY_PRICE_MOVED",
+                "original_reason": "ASK_ABOVE_MAX_ENTRY",
+                "orderbook_staleness_ms": 20.0,
+                "available_depth_usdc": 100.0,
             },
         },
     ]
     fill_payloads = [
-        {"paper_order_id": "po-fill", "fill_ratio": 1.0},
-        {"paper_order_id": "po-partial", "fill_ratio": 0.4},
+        {"report_order_id": "po-fill", "fill_ratio": 1.0},
+        {"report_order_id": "po-partial", "fill_ratio": 0.4},
     ]
 
-    report = PaperReportService().build_daily_report(
+    report = DailyReportService().build_daily_report(
         report_date=date(2026, 6, 22),
         starting_equity=1000.0,
         ending_equity=1000.0,
         total_signals=3,
-        paper_orders=3,
-        paper_fills=2,
-        rejected_paper_orders=1,
+        order_count=3,
+        fill_count=2,
+        rejected_order_count=1,
         open_positions=1,
         results=[],
-        paper_order_payloads=order_payloads,
-        paper_fill_payloads=fill_payloads,
-        paper_execution_assumptions={"slippage_bps": 25.0, "require_depth_check": True},
+        order_payloads=order_payloads,
+        fill_payloads=fill_payloads,
+        execution_assumptions={"slippage_bps": 25.0, "require_depth_check": True},
     )
 
-    assert report.paper_attempts_by_intent == {
+    assert report.order_attempts_by_intent == {
         "default": 1,
         "taker_fak": 1,
         "taker_fok": 1,
     }
-    assert report.paper_fills_by_intent == {"taker_fak": 1, "taker_fok": 1}
-    assert report.paper_partial_fills_by_intent == {"taker_fak": 1}
-    assert report.paper_rejects_by_reason == {"PAPER_ENTRY_PRICE_MOVED": 1}
-    assert report.paper_rejects_by_original_reason == {"ASK_ABOVE_MAX_ENTRY": 1}
+    assert report.fills_by_intent == {"taker_fak": 1, "taker_fok": 1}
+    assert report.partial_fills_by_intent == {"taker_fak": 1}
+    assert report.rejects_by_reason == {"ENTRY_PRICE_MOVED": 1}
+    assert report.rejects_by_original_reason == {"ASK_ABOVE_MAX_ENTRY": 1}
     assert report.average_execution_staleness_ms == 42.0
     assert report.average_executable_depth_usdc == 154.0 / 3
-    assert report.paper_execution_assumptions["slippage_bps"] == 25.0
+    assert report.execution_assumptions["slippage_bps"] == 25.0

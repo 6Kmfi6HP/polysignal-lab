@@ -1,6 +1,5 @@
-# noqa: SIZE_OK  — SQLite gateway; split is outside reporting boundary prefactor
 """
-Input: __future__, json, datetime, sqlite3, dataclasses, collections.abc, pathlib, threading, typing, polysignal_lab.domain, polysignal_lab.paper, polysignal_lab.storage, polysignal_lab.utils
+Input: __future__, json, datetime, sqlite3, dataclasses, collections.abc, pathlib, threading, typing, polysignal_lab.domain, polysignal_lab.reporting, polysignal_lab.storage, polysignal_lab.utils
 Output: DuplicateRecordError, MalformedSQLitePayloadError, SQLiteStore
 Pos: Application code
 
@@ -28,21 +27,26 @@ from typing import TYPE_CHECKING, Any, Iterable, Literal
 
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.enums import PositionStatus, Side
-from polysignal_lab.domain.paper_result import (
+from polysignal_lab.domain.reporting_result import (
     DailyReport,
-    InvalidPaperTradeResultRow,
-    parse_paper_trade_result_row,
+    InvalidReportResultRow,
+    parse_report_result_row,
 )
-from polysignal_lab.paper.event_projection import (
-    normalize_paper_fill,
-    normalize_paper_order,
-    normalize_paper_position,
+from polysignal_lab.reporting.strategy_stats import build_strategy_leaderboard_rows
+from polysignal_lab.storage.event_projection import (
+    normalize_report_fill,
+    normalize_report_order,
+    normalize_report_position,
 )
-from polysignal_lab.paper.strategy_stats import build_strategy_leaderboard_rows
+from polysignal_lab.storage.projection_migration import (
+    LEGACY_REPORTING_TABLES,
+    migrate_legacy_tables_to_reporting,
+)
 from polysignal_lab.storage.sqlite_schema import (
     ALLOWED_TABLES,
     COUNT_TABLES,
     INDEX_DDL_STATEMENTS,
+    PROJECTION_SCHEMA_VERSION,
     TABLE_DDL_STATEMENTS,
     validate_sqlite_schema,
 )
@@ -52,7 +56,7 @@ if TYPE_CHECKING:
     from polysignal_lab.dashboard.reporting_read import StorageHealthRead
 
 
-_PAPER_CURRENT_STATE_SCHEMA_VERSION = 2
+_REPORT_CURRENT_STATE_SCHEMA_VERSION = 2
 
 DailyReportPublishAuthorization = Literal[
     "AUTHORIZED",
@@ -98,7 +102,7 @@ def _payload_json(row: sqlite3.Row) -> Any | None:
 
 
 def _valid_position_event(row: Mapping[str, Any]) -> bool:
-    position_id = str(row.get("paper_position_id") or row.get("position_id") or "")
+    position_id = str(row.get("report_position_id") or row.get("position_id") or "")
     if not position_id:
         return False
     status = str(row.get("status") or "").upper()
@@ -191,7 +195,7 @@ def _same_daily_report_content(
     return candidate_content == persisted_content
 
 
-def _merge_paper_order_payload(
+def _merge_report_order_payload(
     existing: Mapping[str, Any],
     incoming: Mapping[str, Any],
     *,
@@ -323,8 +327,10 @@ def _valid_count_value(value: Any) -> bool:
     return 0 <= parsed <= 1_000_000
 
 
-def _valid_wallet_snapshot_payload(payload: Mapping[str, Any]) -> bool:
-    for key in ("starting_balance", "cash_balance", "reserved_balance", "equity"):
+def _valid_account_snapshot_payload(payload: Mapping[str, Any]) -> bool:
+    if not str(payload.get("account_id") or ""):
+        return False
+    for key in ("starting_balance", "cash_balance", "equity"):
         value = payload.get(key)
         if value not in (None, "") and not _valid_money_value(value, allow_negative=False):
             return False
@@ -349,11 +355,11 @@ def _valid_strategy_breakdown(row: Mapping[str, Any]) -> bool:
 
 
 def _valid_daily_report_payload(payload: Mapping[str, Any]) -> bool:
-    for key in ("paper_pnl", "paper_roi", "total_pnl_usdc", "average_roi", "win_rate", "max_drawdown"):
+    for key in ("net_pnl", "return_rate", "total_pnl_usdc", "average_roi", "win_rate", "max_drawdown"):
         value = payload.get(key)
         if value not in (None, "") and not _valid_money_value(value, allow_negative=True):
             return False
-    for key in ("total_signals", "paper_orders", "paper_fills", "rejected_paper_orders", "open_positions", "closed_positions", "win_count", "loss_count", "void_count"):
+    for key in ("total_signals", "order_count", "fill_count", "rejected_order_count", "open_positions", "closed_positions", "win_count", "loss_count", "void_count"):
         value = payload.get(key)
         if value not in (None, "") and not _valid_count_value(value):
             return False
@@ -413,7 +419,9 @@ class SQLiteStore:
         self._conn.close()
 
     def migrate(self) -> None:
+        self._backup_legacy_database()
         with self._lock, self._conn:
+            initial_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
             for statement in TABLE_DDL_STATEMENTS:
                 self._conn.execute(statement)
             revision_added = self._add_column_if_missing(
@@ -423,15 +431,56 @@ class SQLiteStore:
             )
             if revision_added:
                 self._backfill_daily_report_revisions()
-            self._add_column_if_missing(
-                "paper_order_states",
-                "created_event_at",
-                "TEXT NOT NULL DEFAULT ''",
+            migrate_legacy_tables_to_reporting(
+                self._conn,
+                json_dumps=self._json,
             )
             validate_sqlite_schema(self._conn)
-            self._backfill_paper_current_states()
+            if initial_version < _REPORT_CURRENT_STATE_SCHEMA_VERSION:
+                self._backfill_report_current_states(force=True)
             for statement in INDEX_DDL_STATEMENTS:
                 self._conn.execute(statement)
+
+    def _backup_legacy_database(self) -> None:
+        present = {
+            str(row[0])
+            for row in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+        has_reporting_data = bool(
+            present.intersection(
+                {
+                    "report_orders",
+                    "report_fills",
+                    "report_positions",
+                    "report_results",
+                    "report_account_snapshots",
+                    "daily_reports",
+                }
+            )
+        )
+        if (
+            (
+                not present.intersection(LEGACY_REPORTING_TABLES)
+                and not (
+                    version < PROJECTION_SCHEMA_VERSION and has_reporting_data
+                )
+            )
+            or str(self.path) == ":memory:"
+        ):
+            return
+        backup_path = self.path.with_name(
+            f"{self.path.name}.pre-report-v{PROJECTION_SCHEMA_VERSION}.bak"
+        )
+        if backup_path.exists():
+            return
+        destination = sqlite3.connect(backup_path)
+        try:
+            self._conn.backup(destination)
+        finally:
+            destination.close()
 
     def _add_column_if_missing(
         self,
@@ -469,9 +518,9 @@ class SQLiteStore:
                 (revision, payload_json, str(row["report_id"])),
             )
 
-    def _backfill_paper_current_states(self) -> None:
+    def _backfill_report_current_states(self, *, force: bool = False) -> None:
         current_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-        if current_version >= _PAPER_CURRENT_STATE_SCHEMA_VERSION:
+        if not force and current_version >= _REPORT_CURRENT_STATE_SCHEMA_VERSION:
             return
         rows = self._conn.execute(
             """SELECT payload_json
@@ -482,16 +531,17 @@ class SQLiteStore:
         for row in rows:
             payload = _payload_json(row)
             if isinstance(payload, dict):
-                self._upsert_paper_current_state(payload)
+                self._upsert_report_current_state(payload)
         self._backfill_missing_order_creation_times()
-        self._conn.execute(
-            f"PRAGMA user_version = {_PAPER_CURRENT_STATE_SCHEMA_VERSION}"
-        )
+        if current_version < _REPORT_CURRENT_STATE_SCHEMA_VERSION:
+            self._conn.execute(
+                f"PRAGMA user_version = {_REPORT_CURRENT_STATE_SCHEMA_VERSION}"
+            )
 
     def _backfill_missing_order_creation_times(self) -> None:
         rows = self._conn.execute(
-            """SELECT paper_order_id,source_event_at,payload_json
-            FROM paper_order_states
+            """SELECT report_order_id,source_event_at,payload_json
+            FROM report_orders
             WHERE created_event_at=''"""
         ).fetchall()
         for row in rows:
@@ -501,13 +551,13 @@ class SQLiteStore:
             source_event_at = str(row["source_event_at"])
             payload["_creation_event_at_inferred"] = True
             self._conn.execute(
-                """UPDATE paper_order_states
+                """UPDATE report_orders
                 SET created_event_at=?,payload_json=?
-                WHERE paper_order_id=?""",
+                WHERE report_order_id=?""",
                 (
                     source_event_at,
                     self._json(payload),
-                    str(row["paper_order_id"]),
+                    str(row["report_order_id"]),
                 ),
             )
 
@@ -681,24 +731,50 @@ class SQLiteStore:
                 ),
             )
 
-    def insert_paper_trade_result(self, result: Any) -> None:
-        p: dict[str, Any] = dict(parse_paper_trade_result_row(to_jsonable(result)))
+    def insert_report_result(self, result: Any) -> None:
+        p: dict[str, Any] = dict(parse_report_result_row(to_jsonable(result)))
+        result_id = str(p["report_result_id"])
+        p["report_result_id"] = result_id
         with self._lock, self._conn:
             self._insert_idempotent(
-                "paper_trade_results",
-                "paper_trade_id",
-                p["paper_trade_id"],
-                ("paper_trade_id", "signal_id", "strategy", "asset", "timeframe", "market_id", "result", "pnl_usdc", "roi", "closed_at", "payload_json"),
-                (p["paper_trade_id"], p["signal_id"], p["strategy"], p["asset"], p["timeframe"], p["market_id"], p["result"], p["pnl_usdc"], p["roi"], p["closed_at"], self._json(p)),
+                "report_results",
+                "report_result_id",
+                result_id,
+                (
+                    "report_result_id",
+                    "signal_id",
+                    "strategy",
+                    "asset",
+                    "timeframe",
+                    "market_id",
+                    "result",
+                    "pnl_usdc",
+                    "roi",
+                    "closed_at",
+                    "payload_json",
+                ),
+                (
+                    result_id,
+                    p["signal_id"],
+                    p["strategy"],
+                    p["asset"],
+                    p["timeframe"],
+                    p["market_id"],
+                    p["result"],
+                    p["pnl_usdc"],
+                    p["roi"],
+                    p["closed_at"],
+                    self._json(p),
+                ),
             )
 
-    def insert_wallet_snapshot(self, snapshot: Any) -> None:
+    def insert_report_account_snapshot(self, snapshot: Any) -> None:
         p = to_jsonable(snapshot)
         with self._lock, self._conn:
             self._conn.execute(
-                """INSERT INTO paper_wallet_snapshots(wallet_id,equity,cash_balance,realized_pnl,open_position_count,created_at,payload_json)
+                """INSERT INTO report_account_snapshots(account_id,equity,cash_balance,realized_pnl,open_position_count,created_at,payload_json)
                 VALUES(?,?,?,?,?,?,?)""",
-                (p["wallet_id"], p["equity"], p["cash_balance"], p["realized_pnl"], p["open_position_count"], p["created_at"], self._json(p)),
+                (p["account_id"], p["equity"], p["cash_balance"], p["realized_pnl"], p["open_position_count"], p["created_at"], self._json(p)),
             )
 
     def insert_daily_report(self, report: Any) -> None:
@@ -1442,7 +1518,7 @@ class SQLiteStore:
                 ("event_id", "event_type", "severity", "created_at", "payload_json"),
                 (p["event_id"], p["event_type"], p["severity"], p["created_at"], self._json(p)),
             )
-            self._upsert_paper_current_state(p)
+            self._upsert_report_current_state(p)
 
     def prune_system_events(
         self,
@@ -1464,41 +1540,51 @@ class SQLiteStore:
             )
         return max(cursor.rowcount, 0)
 
-    def _upsert_paper_current_state(self, event: Mapping[str, Any]) -> None:
+    def _upsert_report_current_state(self, event: Mapping[str, Any]) -> None:
+        """Upsert reporting projections from Nautilus events. Never writes Cache/Portfolio."""
         event_type = str(event.get("event_type") or "")
+        raw_status = ""
         if event_type == "nautilus_order":
             raw_status = str(event.get("status") or event.get("order_status") or "").strip()
-            payload = normalize_paper_order(event)
+            payload = normalize_report_order(event)
             if not payload.get("status"):
                 payload["_projection_invalid"] = True
                 payload["status"] = "INVALID"
-            table = "paper_order_states"
-            id_column = "paper_order_id"
+            table = "report_orders"
+            id_column = "report_order_id"
+            record_id = str(payload.get("report_order_id") or "")
+            payload["report_order_id"] = record_id
         elif event_type == "nautilus_fill":
-            self._apply_fill_to_paper_order_state(event)
+            self._apply_fill_to_report_order_state(event)
             return
         elif event_type == "nautilus_position":
-            payload = normalize_paper_position(event)
+            payload = normalize_report_position(event)
             invalid = _invalid_position_state_source(event)
             if invalid:
                 payload["_projection_invalid"] = True
                 if not payload.get("status"):
                     payload["status"] = "INVALID"
-            table = "paper_position_states"
-            id_column = "paper_position_id"
+            table = "report_positions"
+            id_column = "report_position_id"
+            record_id = str(
+                payload.get("report_position_id")
+                or payload.get("position_id")
+                or ""
+            )
+            payload["report_position_id"] = record_id
+            payload.setdefault("position_id", record_id)
         else:
             return
 
-        record_id = str(payload.get(id_column) or "")
         status = str(payload.get("status") or "").upper()
         source_event_id = str(event.get("event_id") or "")
-        source_event_at = self._paper_state_event_at(event, status=status)
+        source_event_at = self._report_state_event_at(event, status=status)
         if not record_id or not status or not source_event_id or not source_event_at:
             return
         if event_type == "nautilus_order":
             existing_row = self._conn.execute(
-                """SELECT payload_json FROM paper_order_states
-                WHERE paper_order_id=?""",
+                """SELECT payload_json FROM report_orders
+                WHERE report_order_id=?""",
                 (record_id,),
             ).fetchone()
             existing_payload = (
@@ -1515,7 +1601,7 @@ class SQLiteStore:
                     and not explicit_invalid
                 ):
                     return
-                payload = _merge_paper_order_payload(
+                payload = _merge_report_order_payload(
                     existing_payload,
                     payload,
                     raw_status=raw_status if event_type == "nautilus_order" else "",
@@ -1541,9 +1627,9 @@ class SQLiteStore:
         ]
         if event_type == "nautilus_order":
             self._conn.execute(
-                """UPDATE paper_order_states
+                """UPDATE report_orders
                 SET created_event_at=?
-                WHERE paper_order_id=?
+                WHERE report_order_id=?
                   AND (created_event_at='' OR created_event_at > ?)""",
                 (source_event_at, record_id, source_event_at),
             )
@@ -1566,23 +1652,54 @@ class SQLiteStore:
             values,
         )
 
-    def _apply_fill_to_paper_order_state(self, event: Mapping[str, Any]) -> None:
-        fill = normalize_paper_fill(event)
+    def _apply_fill_to_report_order_state(self, event: Mapping[str, Any]) -> None:
+        fill = normalize_report_fill(event)
         order_id = str(
-            fill.get("paper_order_id")
+            fill.get("report_order_id")
             or event.get("client_order_id")
-            or event.get("paper_order_id")
+            or event.get("report_order_id")
+            or ""
+        )
+        fill_id = str(
+            fill.get("report_fill_id")
+            or event.get("trade_id")
+            or event.get("fill_id")
             or ""
         )
         if not order_id:
             return
         source_event_id = str(event.get("event_id") or "")
-        source_event_at = self._paper_state_event_at(event, status="FILLED")
+        source_event_at = self._report_state_event_at(event, status="FILLED")
         if not source_event_id or not source_event_at:
             return
+        if fill_id:
+            fill["report_fill_id"] = fill_id
+            fill["report_order_id"] = order_id
+            self._conn.execute(
+                """INSERT INTO report_fills(
+                    report_fill_id,report_order_id,source_event_at,source_event_id,payload_json
+                ) VALUES(?,?,?,?,?)
+                ON CONFLICT(report_fill_id) DO UPDATE SET
+                    report_order_id=excluded.report_order_id,
+                    source_event_at=excluded.source_event_at,
+                    source_event_id=excluded.source_event_id,
+                    payload_json=excluded.payload_json
+                WHERE excluded.source_event_at > report_fills.source_event_at
+                   OR (
+                        excluded.source_event_at = report_fills.source_event_at
+                        AND excluded.source_event_id > report_fills.source_event_id
+                   )""",
+                (
+                    fill_id,
+                    order_id,
+                    source_event_at,
+                    source_event_id,
+                    self._json(fill),
+                ),
+            )
         existing_row = self._conn.execute(
-            """SELECT payload_json FROM paper_order_states
-            WHERE paper_order_id=?""",
+            """SELECT payload_json FROM report_orders
+            WHERE report_order_id=?""",
             (order_id,),
         ).fetchone()
         existing_payload = (
@@ -1614,22 +1731,22 @@ class SQLiteStore:
             payload["stake_usdc"] = fill.get("stake_usdc")
         payload["status"] = "FILLED"
         payload.pop("_projection_invalid", None)
-        payload["paper_order_id"] = order_id
+        payload["report_order_id"] = order_id
         self._conn.execute(
-            """INSERT INTO paper_order_states(
-                paper_order_id,status,created_event_at,source_event_at,source_event_id,payload_json
+            """INSERT INTO report_orders(
+                report_order_id,status,created_event_at,source_event_at,source_event_id,payload_json
             ) VALUES(?,?,?,?,?,?)
-            ON CONFLICT(paper_order_id) DO UPDATE SET
+            ON CONFLICT(report_order_id) DO UPDATE SET
                 status=excluded.status,
                 source_event_at=excluded.source_event_at,
                 source_event_id=excluded.source_event_id,
                 payload_json=excluded.payload_json
-            WHERE excluded.source_event_at > paper_order_states.source_event_at
+            WHERE excluded.source_event_at > report_orders.source_event_at
                OR (
-                    excluded.source_event_at = paper_order_states.source_event_at
+                    excluded.source_event_at = report_orders.source_event_at
                     AND (
-                        paper_order_states.status != 'FILLED'
-                        OR excluded.source_event_id > paper_order_states.source_event_id
+                        report_orders.status != 'FILLED'
+                        OR excluded.source_event_id > report_orders.source_event_id
                     )
                )""",
             (
@@ -1643,7 +1760,7 @@ class SQLiteStore:
         )
 
     @staticmethod
-    def _paper_state_event_at(
+    def _report_state_event_at(
         event: Mapping[str, Any],
         *,
         status: str,
@@ -1664,15 +1781,15 @@ class SQLiteStore:
                 return utc_iso(timestamp)
         return ""
 
-    def delete_paper_result_rows(
+    def delete_report_result_rows(
         self,
-        paper_trade_id: str,
+        report_result_id: str,
         publish_id: str | None,
     ) -> None:
         with self._lock, self._conn:
             self._conn.execute(
-                "DELETE FROM paper_trade_results WHERE paper_trade_id = ?",
-                (paper_trade_id,),
+                "DELETE FROM report_results WHERE report_result_id = ?",
+                (report_result_id,),
             )
             if publish_id is not None:
                 self._conn.execute(
@@ -1696,7 +1813,7 @@ class SQLiteStore:
                     (publish_id,),
                 )
 
-    def restore_latest_system_event(self, event_type: str) -> dict[str, Any] | None:
+    def query_latest_system_event(self, event_type: str) -> dict[str, Any] | None:
         sql, params = self._build_query(
             "system_events",
             where="WHERE event_type = ?",
@@ -1714,18 +1831,29 @@ class SQLiteStore:
         return payload
 
     def query_json(self, table: str, limit: int = 100, where: str = "", params: Iterable[Any] = ()) -> list[dict[str, Any]]:
-        sql, params = self._build_query(table, where=where, params=params, limit=limit)
+        return self._query_json_table(table, limit=limit, where=where, params=params)
+
+    def _query_json_table(
+        self,
+        table: str,
+        *,
+        limit: int,
+        where: str,
+        params: Iterable[Any],
+    ) -> list[dict[str, Any]]:
+        sql, bound = self._build_query(table, where=where, params=params, limit=limit)
         with self._lock:
-            rows = self._conn.execute(sql, params).fetchall()
-        if table == "paper_trade_results":
+            rows = self._conn.execute(sql, bound).fetchall()
+        if table == "report_results":
             valid_results: list[dict[str, Any]] = []
             for row in rows:
                 try:
                     payload = _payload_json(row)
                     if not isinstance(payload, dict):
                         continue
-                    valid_results.append(dict(parse_paper_trade_result_row(payload)))
-                except InvalidPaperTradeResultRow:
+                    parsed = dict(parse_report_result_row(payload))
+                    valid_results.append(parsed)
+                except InvalidReportResultRow:
                     continue
             return valid_results
         if table in {"system_events", "daily_reports"}:
@@ -1773,7 +1901,7 @@ class SQLiteStore:
         )
 
     def latest_health_snapshot(self) -> dict[str, Any] | None:
-        return self.restore_latest_system_event("health_snapshot")
+        return self.query_latest_system_event("health_snapshot")
 
     def strategy_status_rows(self, limit: int) -> list[dict[str, Any]]:
         return self.query_json(
@@ -1796,7 +1924,7 @@ class SQLiteStore:
             limit=limit,
         )
 
-    def _paper_state_rows(
+    def _report_state_rows(
         self,
         table: str,
         status: str | None,
@@ -1810,23 +1938,19 @@ class SQLiteStore:
             clauses.append("status=?")
             params = (status.upper(),)
         prefix = f"WHERE {' AND '.join(clauses)} "
-        return self.query_json(
+        return self._query_json_table(
             table,
             where=f"{prefix}ORDER BY source_event_at DESC, source_event_id DESC",
             params=params,
             limit=limit,
         )
 
-    def paper_order_rows(
+    def report_order_rows(
         self,
         status: str | None,
         limit: int,
     ) -> list[dict[str, Any]]:
-        return self._paper_state_rows(
-            "paper_order_states",
-            status,
-            limit,
-        )
+        return self._report_state_rows("report_orders", status, limit)
 
     def market_rows(self, limit: int) -> list[dict[str, Any]]:
         return self.query_json(
@@ -1835,33 +1959,29 @@ class SQLiteStore:
             limit=limit,
         )
 
-    def paper_position_rows(
+    def report_position_rows(
         self,
         status: str | None,
         limit: int,
     ) -> list[dict[str, Any]]:
-        return self._paper_state_rows(
-            "paper_position_states",
-            status,
-            limit,
-        )
+        return self._report_state_rows("report_positions", status, limit)
 
-    def paper_trade_result_rows(self, limit: int) -> list[dict[str, Any]]:
-        return self.query_json("paper_trade_results", limit=limit)
+    def report_result_rows(self, limit: int) -> list[dict[str, Any]]:
+        return self.query_json("report_results", limit=limit)
 
     def daily_reports(self, limit: int) -> list[dict[str, Any]]:
-        return self.restore_daily_reports(limit=limit)
+        return self.query_daily_reports(limit=limit)
 
     def strategy_leaderboard(self, limit: int) -> list[dict[str, Any]]:
-        return self.restore_strategy_leaderboard(limit=limit)
+        return self.query_strategy_leaderboard(limit=limit)
 
     def counts(self) -> dict[str, int]:
         with self._lock:
             return {t: int(self._conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"]) for t in COUNT_TABLES}
 
-    def restore_latest_wallet_snapshot(self) -> dict[str, Any] | None:
+    def query_latest_report_account_snapshot(self) -> dict[str, Any] | None:
         sql, params = self._build_query(
-            "paper_wallet_snapshots",
+            "report_account_snapshots",
             order_by="created_at DESC, id DESC",
             limit=1,
         )
@@ -1872,34 +1992,34 @@ class SQLiteStore:
         payload = _payload_json(row)
         if not isinstance(payload, dict):
             return None
-        if not _valid_wallet_snapshot_payload(payload):
+        if not _valid_account_snapshot_payload(payload):
             return None
         return payload
 
-    def restore_open_positions(self) -> list[dict[str, Any]]:
+    def query_report_open_positions(self) -> list[dict[str, Any]]:
         return [
             row
-            for row in self.paper_position_rows(PositionStatus.OPEN.value, 100_000)
+            for row in self.report_position_rows(PositionStatus.OPEN.value, 100_000)
             if _valid_position_event(row)
         ]
 
-    def restore_closed_positions(self) -> list[dict[str, Any]]:
+    def query_report_closed_positions(self) -> list[dict[str, Any]]:
         return [
             row
-            for row in self.paper_position_rows(PositionStatus.CLOSED.value, 100_000)
+            for row in self.report_position_rows(PositionStatus.CLOSED.value, 100_000)
             if _valid_position_event(row)
         ]
 
-    def restore_daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
+    def query_daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
         return self.query_json(
             "daily_reports",
             where="ORDER BY report_date DESC, revision DESC, created_at DESC",
             limit=limit,
         )
 
-    def restore_strategy_leaderboard(self, limit: int = 500) -> list[dict[str, Any]]:
+    def query_strategy_leaderboard(self, limit: int = 500) -> list[dict[str, Any]]:
         results = self.query_json(
-            "paper_trade_results",
+            "report_results",
             where="ORDER BY closed_at DESC",
             limit=50_000,
         )

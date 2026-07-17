@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, math, typing, typing.Any, polysignal_lab.domain.paper_report
-Output: InvalidPaperTradeResultRow, PaperTradeResultRow, parse_paper_trade_result_row, trade_result_status, PaperWalletSnapshot, DailyReport, EquitySource
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, math, typing, typing.Any, polysignal_lab.domain.reporting_models
+Output: InvalidReportResultRow, ReportResultRow, parse_report_result_row, trade_result_status, ReportAccountSnapshot, DailyReport, EquitySource
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,18 +14,18 @@ from datetime import datetime
 import math
 from typing import Any, TypedDict, assert_never
 
-from polysignal_lab.domain.paper_report import (
+from polysignal_lab.domain.reporting_models import (
     DailyReport,
     DailyReportRow,
     EquitySource,
-    PaperWalletSnapshot,
-    PaperWalletSnapshotRow,
+    ReportAccountSnapshot,
+    ReportAccountSnapshotRow,
     daily_report_row,
     report_date_text,
     report_float,
     report_nested_mapping,
     report_text,
-    wallet_float,
+    account_float,
 )
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
 from polysignal_lab.utils import parse_dt
@@ -35,12 +35,12 @@ __all__ = [
     "DailyReport",
     "DailyReportRow",
     "EquitySource",
-    "InvalidPaperTradeResultRow",
-    "PaperTradeResultRow",
-    "PaperWalletSnapshot",
-    "PaperWalletSnapshotRow",
+    "InvalidReportResultRow",
+    "ReportResultRow",
+    "ReportAccountSnapshot",
+    "ReportAccountSnapshotRow",
     "daily_report_row",
-    "parse_paper_trade_result_row",
+    "parse_report_result_row",
     "report_date_text",
     "report_float",
     "report_nested_mapping",
@@ -49,24 +49,24 @@ __all__ = [
     "trade_result_float",
     "trade_result_status",
     "trade_result_text",
-    "wallet_float",
+    "account_float",
 ]
 
 
-@dataclass(slots=True)  # noqa: MUTABLE_OK
-class InvalidPaperTradeResultRow(ValueError):
+@dataclass(slots=True)
+class InvalidReportResultRow(ValueError):
     field: str
     reason: str
 
     def __str__(self) -> str:
-        return f"invalid paper_trade_results.{self.field}: {self.reason}"
+        return f"invalid report_results.{self.field}: {self.reason}"
 
 
-class PaperTradeResultRow(TypedDict, total=False):
+class ReportResultRow(TypedDict, total=False):
     schema_version: int
-    paper_trade_id: str
+    report_result_id: str
     signal_id: str
-    paper_position_id: str
+    report_position_id: str
     strategy: str
     asset: str
     timeframe: str
@@ -119,12 +119,12 @@ def trade_result_float(row: Mapping[str, Any], key: str, default: float = 0.0) -
     return default
 
 
-def parse_paper_trade_result_row(row: Mapping[str, Any]) -> PaperTradeResultRow:
+def parse_report_result_row(row: Mapping[str, Any]) -> ReportResultRow:
     payload = dict(row)
     for key in (
-        "paper_trade_id",
+        "report_result_id",
         "signal_id",
-        "paper_position_id",
+        "report_position_id",
         "strategy",
         "asset",
         "timeframe",
@@ -137,14 +137,14 @@ def parse_paper_trade_result_row(row: Mapping[str, Any]) -> PaperTradeResultRow:
         "closed_at",
     ):
         if not trade_result_text(payload, key):
-            raise InvalidPaperTradeResultRow(key, "missing")
+            raise InvalidReportResultRow(key, "missing")
 
     status = trade_result_status(payload)
     match status:
         case TradeResultStatus.WIN | TradeResultStatus.LOSS | TradeResultStatus.VOID | TradeResultStatus.SPLIT:
             payload["result"] = status.value
         case TradeResultStatus.UNKNOWN:
-            raise InvalidPaperTradeResultRow("result", "unknown")
+            raise InvalidReportResultRow("result", "unknown")
         case _:
             assert_never(status)
 
@@ -153,13 +153,13 @@ def parse_paper_trade_result_row(row: Mapping[str, Any]) -> PaperTradeResultRow:
         try:
             payload["side"] = Side(str(raw_side).upper()).value
         except ValueError as exc:
-            raise InvalidPaperTradeResultRow("side", "unknown") from exc
+            raise InvalidReportResultRow("side", "unknown") from exc
 
     raw_exit_mode = payload.get("exit_mode")
     try:
         payload["exit_mode"] = ExitMode(str(raw_exit_mode)).value
     except ValueError as exc:
-        raise InvalidPaperTradeResultRow("exit_mode", "unknown") from exc
+        raise InvalidReportResultRow("exit_mode", "unknown") from exc
 
     for key in ("entry_price", "shares", "stake_usdc"):
         payload[key] = _finite_float(payload, key, allow_negative=False, allow_zero=False)
@@ -173,17 +173,17 @@ def parse_paper_trade_result_row(row: Mapping[str, Any]) -> PaperTradeResultRow:
         if value in (None, ""):
             continue
         if not isinstance(value, (str, datetime)):
-            raise InvalidPaperTradeResultRow(key, "invalid timestamp")
+            raise InvalidReportResultRow(key, "invalid timestamp")
         try:
             parsed_timestamp = parse_dt(value)
         except ValueError as exc:
-            raise InvalidPaperTradeResultRow(key, "invalid timestamp") from exc
+            raise InvalidReportResultRow(key, "invalid timestamp") from exc
         if parsed_timestamp is None:
-            raise InvalidPaperTradeResultRow(key, "invalid timestamp")
+            raise InvalidReportResultRow(key, "invalid timestamp")
 
     details = payload.get("details")
     payload["details"] = dict(details) if isinstance(details, dict) else {}
-    return PaperTradeResultRow(**payload)
+    return ReportResultRow(**payload)
 
 
 def _finite_float(
@@ -195,17 +195,17 @@ def _finite_float(
 ) -> float:
     value = row.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-        raise InvalidPaperTradeResultRow(key, "missing")
+        raise InvalidReportResultRow(key, "missing")
     try:
         parsed = float(value)
     except (OverflowError, TypeError, ValueError) as exc:
-        raise InvalidPaperTradeResultRow(key, "not numeric") from exc
+        raise InvalidReportResultRow(key, "not numeric") from exc
     if not math.isfinite(parsed):
-        raise InvalidPaperTradeResultRow(key, "not finite")
+        raise InvalidReportResultRow(key, "not finite")
     if parsed < 0.0 and not allow_negative:
-        raise InvalidPaperTradeResultRow(key, "negative")
+        raise InvalidReportResultRow(key, "negative")
     if parsed == 0.0 and not allow_zero:
-        raise InvalidPaperTradeResultRow(key, "zero")
+        raise InvalidReportResultRow(key, "zero")
     return parsed
 
 

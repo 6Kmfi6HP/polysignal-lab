@@ -32,7 +32,7 @@ def _live_telegram_config() -> TelegramConfig:
         dry_run=False,
         send_signals=True,
         send_consensus_signals=False,
-        send_paper_results=False,
+        send_report_results=False,
         send_daily_report=False,
         retry_attempts=1,
     )
@@ -126,7 +126,7 @@ def test_nautilus_runtime_does_not_construct_legacy_orderbook_for_telegram(
 
 
 def test_telegram_qa_default_message_is_compact() -> None:
-    assert DEFAULT_MESSAGE == "<b>PolySignal Lab</b>\nTelegram QA send · Mode: Paper"
+    assert DEFAULT_MESSAGE == "<b>PolySignal Lab</b>\nTelegram QA send · Mode: Sandbox"
     assert parse_args([]).message == DEFAULT_MESSAGE
     for removed in (
         "No real order",

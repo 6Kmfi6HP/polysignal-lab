@@ -18,7 +18,7 @@ from datetime import date
 
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.config import Settings, TelegramConfig, load_settings
-from polysignal_lab.domain.paper_result import DailyReport
+from polysignal_lab.domain.reporting_result import DailyReport
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
@@ -57,12 +57,12 @@ def test_persistence_service_restores_daily_reports_and_latest_event(tmp_path) -
         report_date=date(2026, 6, 24),
         starting_equity=1000.0,
         ending_equity=1005.0,
-        paper_pnl=5.0,
-        paper_roi=0.005,
+        net_pnl=5.0,
+        return_rate=0.005,
         total_signals=2,
-        paper_orders=2,
-        paper_fills=1,
-        rejected_paper_orders=1,
+        order_count=2,
+        fill_count=1,
+        rejected_order_count=1,
         open_positions=1,
         closed_positions=1,
         win_count=1,
@@ -86,5 +86,5 @@ def test_persistence_service_restores_daily_reports_and_latest_event(tmp_path) -
     service.insert_daily_report(report)
     service.insert_system_event(event)
 
-    assert service.restore_daily_reports(limit=1)[0]["report_id"] == report.report_id
-    assert service.restore_latest_system_event("health_snapshot") == event
+    assert service.query_daily_reports(limit=1)[0]["report_id"] == report.report_id
+    assert service.query_latest_system_event("health_snapshot") == event
