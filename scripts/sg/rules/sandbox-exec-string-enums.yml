@@ -1,0 +1,62 @@
+id: sandbox-exec-string-enums
+message: SandboxExecutionClientConfig requires OmsType/AccountType enums, not string literals
+severity: error
+language: python
+rule:
+  any:
+    - kind: keyword_argument
+      all:
+        - has:
+            kind: identifier
+            regex: '^oms_type$'
+        - has:
+            pattern: '"NETTING"'
+    - kind: keyword_argument
+      all:
+        - has:
+            kind: identifier
+            regex: '^oms_type$'
+        - has:
+            pattern: '"HEDGING"'
+    - kind: keyword_argument
+      all:
+        - has:
+            kind: identifier
+            regex: '^account_type$'
+        - has:
+            pattern: '"CASH"'
+    - kind: keyword_argument
+      all:
+        - has:
+            kind: identifier
+            regex: '^account_type$'
+        - has:
+            pattern: '"MARGIN"'
+    - kind: pair
+      all:
+        - has:
+            kind: string
+            regex: oms_type
+        - has:
+            pattern: '"NETTING"'
+    - kind: pair
+      all:
+        - has:
+            kind: string
+            regex: oms_type
+        - has:
+            pattern: '"HEDGING"'
+    - kind: pair
+      all:
+        - has:
+            kind: string
+            regex: account_type
+        - has:
+            pattern: '"CASH"'
+    - kind: pair
+      all:
+        - has:
+            kind: string
+            regex: account_type
+        - has:
+            pattern: '"MARGIN"'

@@ -115,7 +115,10 @@ class NinetyNineCentSniperAlphaCore:
                 "opposite_ask": opposite_ask,
                 "created_at_for_test": view.created_at,
             },
-            order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FOK),
+            order_intent=OrderIntentSpec(
+                intent=OrderIntent.TAKER_FOK,
+                notional=cfg.max_notional_per_trade,
+            ),
         )
 
     def _opposite_ask_if_settled(self, view: MarketView, side: Side) -> float | None:

@@ -36,3 +36,12 @@ repos:
         stages: [pre-commit]
         always_run: true
         pass_filenames: false
+
+      - id: ast-grep-dual-design
+        name: ast-grep concrete dual-design residue
+        entry: sg scan --error --config scripts/sg/sgconfig.yml src/polysignal_lab
+        language: python
+        additional_dependencies: [ast_grep_cli==0.44.1]
+        stages: [pre-commit]
+        always_run: true
+        pass_filenames: false

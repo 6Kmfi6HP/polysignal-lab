@@ -5,7 +5,7 @@
 
 **Files**:
 - `strategy_readiness.py` - Exports StrategyMarketStatus
-- `strategy_config.py` - Exports StrategyExecutionConfig and 19 more
+- `strategy_config.py` - Exports strategy configuration models
 - `spot.py` - Exports SpotPrice
 - `signal.py` - Exports SignalCandidate and 1 more
 - `reporting_result.py` - Exports trade_result_status and 6 more

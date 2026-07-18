@@ -1,0 +1,7 @@
+# ast-grep rules guarding concrete Nautilus dual-design residue.
+# Type-flow boundaries (AlphaDecision vs publish DTO) are enforced by BasedPyright;
+# AST rules intentionally cover only syntax that can be matched without inference.
+# Run from repo root:
+#   sg scan --config scripts/sg/sgconfig.yml src/polysignal_lab
+ruleDirs:
+  - rules

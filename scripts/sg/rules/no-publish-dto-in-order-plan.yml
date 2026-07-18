@@ -1,0 +1,15 @@
+id: no-publish-dto-in-order-plan
+message: Order planning accepts AlphaDecision and scalar signal_id, never a publish DTO.
+severity: error
+language: python
+rule:
+  kind: keyword_argument
+  has:
+    field: name
+    pattern: publish
+    stopBy: end
+  inside:
+    any:
+      - pattern: build_order_spec($$$ARGS)
+      - pattern: order_spec_from_decision($$$ARGS)
+    stopBy: end

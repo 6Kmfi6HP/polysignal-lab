@@ -27,14 +27,11 @@ class LiveRuntimeSymbols:
     currency_from_str: Callable[[str], object]
 
 
-def _load_live_node_cls() -> object:
-    return import_module("nautilus_trader.core.nautilus_pyo3").LiveNode
-
-
 def load_live_runtime_symbols() -> LiveRuntimeSymbols:
+    """Single load surface for pyo3 LiveNode + factory symbols used by live_node."""
     pyo3 = import_module("nautilus_trader.core.nautilus_pyo3")
     return LiveRuntimeSymbols(
-        live_node=_load_live_node_cls(),
+        live_node=pyo3.LiveNode,
         trader_id=pyo3.TraderId,
         environment=pyo3.Environment,
         polymarket_data_factory=pyo3.PolymarketDataClientFactory,

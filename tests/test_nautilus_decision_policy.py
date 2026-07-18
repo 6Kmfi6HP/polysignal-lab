@@ -83,10 +83,13 @@ def test_approved_decision_preserves_order_intent_fields() -> None:
     )
     result = actor.evaluate(decision, _view())
     assert isinstance(result, ApprovedDecision)
-    assert result.signal.order_intent == OrderIntent.PASSIVE_GTD
-    assert result.signal.expiry_seconds == 300
-    assert result.signal.pair_id == "pair-1"
-    assert result.signal.hedge_leg is True
+    assert result.decision.order_intent is not None
+    assert result.decision.order_intent.intent == OrderIntent.PASSIVE_GTD
+    assert result.decision.expiry_seconds == 300
+    assert result.decision.pair_id == "pair-1"
+    assert result.decision.hedge_leg is True
+    assert result.publish.order_intent == OrderIntent.PASSIVE_GTD
+    assert result.publish.expiry_seconds == 300
 
 
 def test_candidate_from_decision_uses_market_view_time_for_identity() -> None:
@@ -178,8 +181,8 @@ def test_batch_arbitration_rejects_incomplete_pair() -> None:
 
 def test_batch_arbitration_returns_survivors_in_input_order() -> None:
     actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
-    beta = _decision(strategy="beta", market_id="market-2", token_id="token-beta")
-    alpha = _decision(strategy="alpha", market_id="market-1", token_id="token-alpha")
+    beta = _decision(strategy="beta", market_id="market-2")
+    alpha = _decision(strategy="alpha", market_id="market-1")
     result = actor.batch_arbitrate([(beta, _view(market_id="market-2")), (alpha, _view())])
     assert result == [beta, alpha]
 

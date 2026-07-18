@@ -21,7 +21,6 @@
 - `helpers.py` - Exports enabled_for_view and 11 more
 - `fibonacci_core.py` - Exports _FibState and 4 more
 - `dump_hedge_core.py` - Exports DumpHedgeAlphaCore
-- `cross_market_core.py` - Exports RelationType and 2 more
 - `binary_momentum_core.py` - Exports BinaryMomentumAlphaCore
 - `__init__.py` - Application code
 

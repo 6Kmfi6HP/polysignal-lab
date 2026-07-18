@@ -20,7 +20,7 @@ from typing import Protocol
 
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy, RejectedDecision
 from polysignal_lab.nautilus_runtime.observability_persistence import (
     AcceptedSignalNotifier,
     NautilusEventStoreAdapter,
@@ -256,12 +256,12 @@ class ObservabilityService:
             return
         self.store.insert_json("signals", signal.model_dump(mode="json"))
 
-    def record_rejected_decision(self, rejected: object) -> None:
+    def record_rejected_decision(self, rejected: RejectedDecision) -> None:
         self._event_count += 1
-        candidate = getattr(rejected, "candidate", None)
-        if self.store is None or not isinstance(candidate, SignalCandidate):
+        candidate = rejected.publish
+        if self.store is None or candidate is None:
             return
-        reason_code = str(getattr(rejected, "reason_code", ""))
+        reason_code = rejected.reason_code
         if self._suppress_repeat((
             "rejected",
             candidate.strategy,
@@ -276,7 +276,7 @@ class ObservabilityService:
                 candidate=candidate,
                 gate_name="nautilus_decision_policy",
                 reason_code=reason_code,
-                details=dict(getattr(rejected, "detail", {}) or {}),
+                details=dict(rejected.detail),
             ).model_dump(),
         )
 
@@ -291,14 +291,14 @@ class ObservabilityService:
             "components": [c.as_dict() for c in snapshot.components],
         })
 
-    def record_event(self, table: str, data: Mapping[str, object]) -> None:
+    def record_event(self, table: str, data: Mapping[str, object]) -> bool:
         self._event_count += 1
         if self.store is None:
-            return
+            return False
         if persistence_class_for_table(table) is PersistenceClass.BEST_EFFORT_TELEMETRY:
             self._enqueue_best_effort(table, data)
-            return
-        self.store.insert_json(table, data)
+            return True
+        return self.store.insert_json(table, data)
 
     def record_nautilus_order_event(
         self,
@@ -403,4 +403,6 @@ class DecisionPolicyControl:
         }
 
     def skip_reason_for(self, name: str) -> str | None:
-        return self._policy._skip_reason_for(name)
+        if name in self._policy.disabled_strategies:
+            return "manual_disabled"
+        return None

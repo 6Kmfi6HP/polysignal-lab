@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, typing, typing.Protocol, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market
-Output: market_metadata, timestamp_ns, _Publisher, CustomDataPublisher
+Output: market_metadata, timestamp_ns, framework_now, _Publisher, _ClockHost, CustomDataPublisher
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -33,6 +33,25 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
 
 class _Publisher(Protocol):
     def publish_data(self, data_type: object, data: object) -> None: ...
+
+
+class _ClockHost(Protocol):
+    clock: object
+    trader_id: object | None
+
+
+def framework_now(host: _ClockHost) -> datetime:
+    try:
+        timestamp_ns_fn = getattr(host.clock, "timestamp_ns", None)
+        if callable(timestamp_ns_fn):
+            value = int(timestamp_ns_fn())
+            if value >= 0:
+                return datetime.fromtimestamp(value / 1_000_000_000, UTC)
+    except (NotImplementedError, RuntimeError, AttributeError):
+        pass
+    if getattr(host, "trader_id", None) is None:
+        return datetime(1970, 1, 1, tzinfo=UTC)
+    raise RuntimeError("Nautilus framework clock timestamp_ns is unavailable")
 
 
 class CustomDataPublisher:

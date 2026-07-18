@@ -35,7 +35,7 @@
 - `market_rotation.py` - Exports _Health and 1 more
 - `market_catalog.py` - Exports InstrumentTokenMeta and 2 more
 - `live_node.py` - Exports assert_no_live_polymarket_execution and 10 more
-- `group_views.py` - Exports MarketGroupViewAssembler
+- `instrument_markets.py` - Exports PolymarketInstrumentMarketBuilder
 - `decision_policy.py` - Exports decision_policy_from_settings and 5 more
 - `custom_data_types.py` - Exports is_polymarket_rtds_crypto_price and 11 more
 - `custom_data_state.py` - Exports event_datetime and 4 more

@@ -31,6 +31,7 @@ dev = [
   "httpx2>=2.4",
   "basedpyright>=1.39.8",
   "ruff>=0.15.18",
+  "ast_grep_cli>=0.44.0",
 ]
 nautilus = [
   "nautilus_trader[polymarket]==1.231.0.dev20260716+16604",
@@ -79,6 +80,7 @@ packages = ["src/polysignal_lab"]
 
 [dependency-groups]
 dev = [
+    "ast_grep_cli>=0.44.0",
     "basedpyright>=1.39.8",
     "pre-commit>=4.6.0",
     "pytest-asyncio>=0.23",

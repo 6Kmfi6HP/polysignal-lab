@@ -41,14 +41,14 @@ Auto-generated project index maintained by the Fractal Multi-level Index System.
     ├── data/ (7 files)
       ├── provider/ (2 files)
     ├── domain/ (11 files)
-    ├── nautilus_runtime/ (40 files)
+    ├── nautilus_runtime/ (41 files)
       ├── strategy/ (15 files)
     ├── observability/ (6 files)
     ├── publish/ (5 files)
     ├── reporting/ (6 files)
     ├── signal_layer/ (3 files)
     ├── storage/ (7 files)
-├── tests/ (91 files)
+├── tests/ (93 files)
   ├── fixtures/ (1 files)
 ```
 
@@ -234,7 +234,7 @@ graph TD
 ## 📊 Statistics
 
 - Total folders: 43
-- Total files: 361
+- Total files: 364
 
 ---
 

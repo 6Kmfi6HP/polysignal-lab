@@ -54,7 +54,7 @@ def persistence_class_for_table(table: str) -> PersistenceClass:
 class PersistenceWriter(Protocol):
     def insert_signal(self, signal: object) -> None: ...
     def insert_rejected_signal(self, rejected: object) -> None: ...
-    def insert_report_result(self, result: object) -> None: ...
+    def insert_report_result(self, result: object) -> bool | None: ...
     def insert_system_event(self, event: dict[str, object]) -> None: ...
     def append_log(self, stream: str, payload: object) -> None: ...
 
@@ -81,7 +81,7 @@ class ReportResultNotifier(Protocol):
 class EventStore(Protocol):
     """Protocol for storing observability events."""
 
-    def insert_json(self, table: str, data: Mapping[str, object]) -> None: ...
+    def insert_json(self, table: str, data: Mapping[str, object]) -> bool: ...
     def insert_many_json(self, table: str, rows: Sequence[Mapping[str, object]]) -> None: ...
 
 
@@ -119,13 +119,26 @@ def _system_event_id(table: str, payload: Mapping[str, object]) -> str:
     return f"{table}:{created_at}"
 
 
+def _prepare_event_payload(table: str, payload: dict[str, object]) -> None:
+    if table != "health_snapshot" and not table.startswith("nautilus_"):
+        return
+    event_type = "health_snapshot" if table == "health_snapshot" else table
+    _ = payload.setdefault("event_type", event_type)
+    _ = payload.setdefault("severity", "info")
+    _ = payload.setdefault("created_at", payload.get("ts") or utc_iso())
+    if payload.get("event_id"):
+        payload["event_id"] = str(payload["event_id"])
+    else:
+        payload["event_id"] = _system_event_id(event_type, payload)
+
+
 class NautilusEventStoreAdapter:
     """Adapts a PersistenceService-like object to the EventStore protocol."""
 
     def __init__(self, persistence: PersistenceWriter) -> None:
         self.persistence: PersistenceWriter = persistence
         insert_system_event = persistence.insert_system_event
-        self._routes: dict[str, Callable[[dict[str, object]], None]] = {
+        self._routes: dict[str, Callable[[dict[str, object]], object]] = {
             "signals": persistence.insert_signal,
             "rejected_signals": persistence.insert_rejected_signal,
             "settlements": persistence.insert_report_result,
@@ -160,31 +173,15 @@ class NautilusEventStoreAdapter:
         data: Mapping[str, object],
         *,
         suppress_best_effort_locks: bool = True,
-    ) -> None:
+    ) -> bool:
         route = self._routes.get(table)
         if route is None:
             raise ValueError(f"Unknown Nautilus event table: {table}")
         payload = dict(data)
-        if table == "health_snapshot":
-            _ = payload.setdefault("event_type", "health_snapshot")
-            _ = payload.setdefault("severity", "info")
-            created_at = payload.get("ts") or utc_iso()
-            _ = payload.setdefault("created_at", created_at)
-            if payload.get("event_id"):
-                payload["event_id"] = str(payload["event_id"])
-            else:
-                payload["event_id"] = _system_event_id("health_snapshot", payload)
-        elif table.startswith("nautilus_"):
-            _ = payload.setdefault("event_type", table)
-            _ = payload.setdefault("severity", "info")
-            created_at = payload.get("ts") or utc_iso()
-            _ = payload.setdefault("created_at", created_at)
-            if payload.get("event_id"):
-                payload["event_id"] = str(payload["event_id"])
-            else:
-                payload["event_id"] = _system_event_id(table, payload)
+        _prepare_event_payload(table, payload)
+        created: object = None
         try:
-            route(payload)
+            created = route(payload)
         except sqlite3.OperationalError as exc:
             if (
                 table not in self._best_effort_tables
@@ -195,13 +192,15 @@ class NautilusEventStoreAdapter:
 
         retention = telemetry_retention_policy(table)
         if (
-            self._append_log is not None
+            created is not False
+            and self._append_log is not None
             and (retention is None or retention.append_jsonl)
         ):
             try:
                 self._append_log(self._streams[table], payload)
             except (OSError, TypeError):
                 logger.exception("JSONL append failed for table %s", table)
+        return created is not False
 
     def insert_many_json(self, table: str, rows: Sequence[Mapping[str, object]]) -> None:
         for row in rows:

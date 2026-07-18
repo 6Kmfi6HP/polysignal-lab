@@ -107,13 +107,17 @@ def _order_view(
         price=_number(getattr(order, "price", None)),
         filled_quantity=_number(getattr(order, "filled_qty", None)) or 0.0,
         average_fill_price=_number(getattr(order, "avg_px", None)),
-        ts_event=_timestamp(getattr(order, "ts_last", None)),
+        ts_event=(
+            _timestamp(getattr(order, "ts_accepted", None))
+            or _timestamp(getattr(order, "ts_last", None))
+        ),
         hedge_leg=_truthy(tags.get("hedge_leg")),
         reduce_only=_truthy(tags.get("reduce_only")),
         is_open=_boolean(order, "is_open"),
         is_inflight=_boolean(order, "is_inflight"),
         take_profit_price=_number(tags.get("exit_tp_price")),
         stop_loss_price=_number(tags.get("exit_stop_price")),
+        dedupe_key=tags.get("dedupe_key"),
     )
 
 
@@ -137,16 +141,18 @@ def _position_view(
         orders,
         instrument_id,
     )
-    tags = next(
+    candidates = sorted(
         (
-            parsed
-            for order in reversed(linked)
+            order
+            for order in linked
             if (parsed := _tags(getattr(order, "tags", ())))
             and parsed.get("strategy")
             and not _truthy(parsed.get("reduce_only"))
         ),
-        {},
+        key=_order_sort_key,
+        reverse=True,
     )
+    tags = _tags(getattr(candidates[0], "tags", ())) if candidates else {}
     strategy = tags.get("strategy", "")
     quantity = abs(_number(getattr(position, "signed_qty", None)) or 0.0)
     avg_entry_price = _number(getattr(position, "avg_px_open", None)) or 0.0
@@ -164,6 +170,18 @@ def _position_view(
         avg_entry_price=avg_entry_price,
         opened_at=_timestamp(getattr(position, "ts_opened", None)),
     )
+
+
+def _order_sort_key(order: object) -> tuple[int, str]:
+    raw_ts = getattr(order, "ts_last", None)
+    try:
+        ts = int(raw_ts) if raw_ts is not None else 0
+    except (TypeError, ValueError):
+        ts = 0
+    order_id = _text(
+        getattr(order, "client_order_id", getattr(order, "id", ""))
+    )
+    return ts, order_id
 
 
 def _linked_orders(

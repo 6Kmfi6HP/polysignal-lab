@@ -114,6 +114,7 @@ class LowSideDualReversionAlphaCore:
                         OrderIntent.PASSIVE_GTD,
                         expiry_seconds=min(seconds_to_close - 60, 300),
                         pair_id=f"{view.market_id}:dual",
+                        quantity=self.config.shares_per_level,
                     ),
                 ),
             )

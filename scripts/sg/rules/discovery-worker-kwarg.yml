@@ -1,0 +1,7 @@
+id: discovery-worker-kwarg
+language: python
+rule:
+  kind: keyword_argument
+  has:
+    field: name
+    pattern: discovery_worker

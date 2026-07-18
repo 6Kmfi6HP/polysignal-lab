@@ -22,6 +22,7 @@ from types import MappingProxyType
 from typing import Any, Mapping, Protocol, Sequence
 
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.utils import compact_json, stable_hash
 
 
 def _freeze_mapping(value: Mapping[str, Any] | None) -> Mapping[str, Any]:
@@ -112,6 +113,7 @@ class CachedOrderView:
     is_inflight: bool
     take_profit_price: float | None
     stop_loss_price: float | None
+    dedupe_key: str | None = None
 
     @property
     def has_fill(self) -> bool:
@@ -150,6 +152,18 @@ class CachedPositionView:
 class TradingStateView:
     orders: tuple[CachedOrderView, ...] = ()
     positions: tuple[CachedPositionView, ...] = ()
+
+    def for_condition(self, condition_id: str) -> "TradingStateView":
+        return TradingStateView(
+            orders=tuple(
+                order for order in self.orders if order.condition_id == condition_id
+            ),
+            positions=tuple(
+                position
+                for position in self.positions
+                if position.condition_id == condition_id
+            ),
+        )
 
     def has_market_activity(
         self,
@@ -243,7 +257,14 @@ class TradingStateView:
             for order in self.accepted_entry_orders(strategy, market_id)
             if order.ts_event is not None
         )
-        return max(dated, key=lambda order: order.ts_event) if dated else None
+        return (
+            max(
+                dated,
+                key=lambda order: (order.ts_event, order.client_order_id),
+            )
+            if dated
+            else None
+        )
 
     def has_entry_level(
         self,
@@ -280,14 +301,18 @@ class TradingStateView:
         )
         if position is None:
             return None, None
-        orders = tuple(
-            order
-            for order in self.orders
-            if order.instrument_id == position.instrument_id
-            and order.strategy == position.strategy
-            and not order.reduce_only
+        orders = sorted(
+            (
+                order
+                for order in self.orders
+                if order.instrument_id == position.instrument_id
+                and order.strategy == position.strategy
+                and not order.reduce_only
+            ),
+            key=lambda order: (order.ts_event or datetime.min.replace(tzinfo=UTC), order.client_order_id),
+            reverse=True,
         )
-        for order in reversed(orders):
+        for order in orders:
             if order.take_profit_price is not None or order.stop_loss_price is not None:
                 return order.take_profit_price, order.stop_loss_price
         return None, None
@@ -328,10 +353,24 @@ class OrderIntentSpec:
     expiry_seconds: int | None = None
     pair_id: str | None = None
     reduce_only: bool = False
+    quantity: float | None = None
+    notional: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.quantity is not None and self.notional is not None:
+            raise ValueError("order intent accepts quantity or notional, not both")
+        for name, value in (("quantity", self.quantity), ("notional", self.notional)):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive")
 
 
 @dataclass(frozen=True, slots=True)
 class AlphaDecision:
+    """Sole trading intent SoT. Nautilus Order is built only from this (+ book depth).
+
+    SignalCandidate is a publish/projection DTO, never the order-routing type.
+    """
+
     strategy: str
     asset: str
     timeframe: str
@@ -354,20 +393,69 @@ class AlphaDecision:
         object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
         object.__setattr__(self, "metrics", _freeze_mapping(self.metrics))
 
+    @property
+    def reduce_only(self) -> bool:
+        return bool(self.order_intent and self.order_intent.reduce_only)
+
+    @property
+    def resolved_intent(self) -> OrderIntent:
+        if self.order_intent is None:
+            return OrderIntent.TAKER_IOC
+        return self.order_intent.intent
+
+    @property
+    def explicit_intent(self) -> OrderIntent | None:
+        return None if self.order_intent is None else self.order_intent.intent
+
+    @property
+    def expiry_seconds(self) -> int | None:
+        return None if self.order_intent is None else self.order_intent.expiry_seconds
+
+    @property
+    def pair_id(self) -> str | None:
+        return None if self.order_intent is None else self.order_intent.pair_id
+
+    @property
+    def quantity(self) -> float | None:
+        return None if self.order_intent is None else self.order_intent.quantity
+
+    @property
+    def notional(self) -> float | None:
+        return None if self.order_intent is None else self.order_intent.notional
+
+    def signal_id(self, view_id: str) -> str:
+        """Stable execution/report correlation derived only from trading inputs."""
+        intent = self.order_intent
+        return f"sig_{stable_hash(
+            self.strategy,
+            self.asset,
+            self.timeframe,
+            self.market_id,
+            self.token_id,
+            self.side.value,
+            self.confidence,
+            self.entry_reference_price,
+            self.max_entry_price,
+            self.reason_codes,
+            compact_json(dict(self.metrics)),
+            intent.intent.value if intent is not None else "",
+            intent.expiry_seconds if intent is not None else None,
+            intent.pair_id if intent is not None else None,
+            intent.quantity if intent is not None else None,
+            intent.notional if intent is not None else None,
+            self.reduce_only,
+            self.hedge_leg,
+            view_id,
+            length=20,
+        )}"
+
+    def dedupe_key(self) -> str:
+        scope = "exit" if self.reduce_only else "entry"
+        return (
+            f"{self.asset}:{self.timeframe}:{self.market_id}:"
+            f"{self.side.value}:{self.strategy}:{scope}"
+        )
+
 
 class AlphaCore(Protocol):
     def evaluate(self, view: MarketView) -> list[AlphaDecision]: ...
-
-
-@dataclass(frozen=True, slots=True)
-class MarketGroupView:
-    group_id: str
-    relation_id: str
-    created_at: datetime
-    views_by_condition_id: Mapping[str, MarketView]
-    max_source_skew_ms: int
-    metrics: Mapping[str, Any]
-
-
-class GroupAlphaCore(Protocol):
-    def evaluate_group(self, view: MarketGroupView) -> list[AlphaDecision]: ...

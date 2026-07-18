@@ -46,6 +46,7 @@
 - `test_nautilus_market_rotation.py` - Exports test_spot_anchor_state_captures_actor_local_history_without_trading_projection and 5 more
 - `test_nautilus_market_catalog.py` - Exports test_market_catalog_registers_binary_yes_no_pair and 8 more
 - `test_nautilus_livenode_acceptance.py` - Exports test_load_live_runtime_symbols_resolves_livenode and 5 more
+- `test_nautilus_instrument_markets.py` - Exports test_instrument_market_builder_emits_binary_market_after_pair
 - `test_nautilus_instrument_load_ids.py` - Exports test_instrument_load_ids_use_market_catalog
 - `test_nautilus_full_sandbox_runtime_smoke.py` - Exports test_full_backtest_runtime_materializes_native_component_graph and 2 more
 - `test_nautilus_exit_policy.py` - Exports test_custom_nautilus_exit_policy_module_is_removed and 1 more
@@ -56,7 +57,6 @@
 - `test_nautilus_decision_policy.py` - Exports test_decision_policy_preserves_gate_first_failure_reasons and 14 more
 - `test_nautilus_custom_data_actor.py` - Exports test_custom_data_publisher_publishes_price_to_beat_as_pyo3_custom_data and 7 more
 - `test_nautilus_custom_data.py` - Exports custom_data_samples and 4 more
-- `test_nautilus_cross_market.py` - Exports test_group_assembler_rejects_excessive_skew and 10 more
 - `test_nautilus_close_lifecycle.py` - Exports test_reduce_only_fill_does_not_count_as_new_alpha_entry and 4 more
 - `test_nautilus_cache_trading_state.py` - Exports test_trading_state_is_rebuilt_from_cache_orders_positions_and_tags and 2 more
 - `test_nautilus_cache_market_data.py` - Exports test_cache_market_data_provider_reads_book_without_local_cache and 7 more
@@ -85,10 +85,10 @@
 - `test_alpha_mid_price_sizing.py` - Exports test_mid_price_exit_bypasses_entry_regime_and_uses_exit_confidence and 2 more
 - `test_alpha_late_consensus.py` - Exports test_late_consensus_sequence_comes_from_cached_accepted_orders and 3 more
 - `test_alpha_dump_hedge.py` - Exports test_dump_detection_uses_fixed_view_time_when_wall_clock_is_unavailable and 2 more
-- `test_alpha_cross_market.py` - Exports test_cross_market_group_core_emits_expected_candidates and 2 more
 - `test_alpha_binary_momentum.py` - Exports test_binary_momentum_entered_only_after_order_acceptance
 - `signal_helpers.py` - Exports ptb_signals_from_view and 1 more
 - `nautilus_runtime_contracts_harness.py` - Exports default_instrument and 7 more
+- `nautilus_polymarket_fixtures.py` - Exports polymarket_binary_instrument
 - `nautilus_optional.py` - Exports require_nautilus
 - `nautilus_contract_probe.py` - Exports ContractProbeConfig and 1 more
 - `factories.py` - Exports sample_market and 9 more

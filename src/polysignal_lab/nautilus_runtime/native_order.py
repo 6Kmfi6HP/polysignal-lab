@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Iterable, collections.abc.Sequence, dataclasses, dataclasses.replace, datetime, datetime.datetime
+Input: __future__, __future__.annotations, collections.abc, dataclasses, datetime, decimal, typing, nautilus_trader
 Output: submit_approved_decision, NautilusOrderFactory, OrderSubmittingStrategy
 Pos: Application code
 
@@ -7,28 +7,20 @@ Pos: Application code
 """
 
 
-
-
-
-
-
-
-
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import replace
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
-from decimal import Decimal
-from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Price, Quantity
+from decimal import Decimal, InvalidOperation
 from typing import Protocol, TypeVar, cast
 
+from nautilus_trader.model.identifiers import InstrumentId
+
 from polysignal_lab.domain.enums import OrderIntent
-from polysignal_lab.nautilus_runtime.polymarket_adapter import PolymarketEnumParser
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan
+from polysignal_lab.nautilus_runtime.polymarket_adapter import PolymarketEnumParser
 
 OrderT = TypeVar("OrderT")
 OrderT_co = TypeVar("OrderT_co", covariant=True)
@@ -65,26 +57,26 @@ def submit_approved_decision(
     instrument_id_resolver: Callable[[str], object],
     now: Callable[[], datetime] | None = None,
     best_bid: float | None = None,
+    view_id: str = "",
+    use_native_reduce_only: bool = False,
 ) -> OrderT:
-    """Create and submit a Nautilus-native order from an approved alpha decision."""
+    """Create and submit a Nautilus-native order from an approved AlphaDecision."""
 
     spec = order_spec_from_decision(
-        approved,
+        approved.decision,
         fixed_stake_usdc=fixed_stake_usdc,
         best_ask=best_ask,
         best_bid=best_bid,
+        view_id=view_id,
     )
     instrument = instrument_id_resolver(spec.instrument_id)
-    if spec.reduce_only:
-        spec = replace(
-            spec,
-            quantity=_reduce_only_quantity(strategy, instrument),
-        )
-    spec = replace(
+    return _submit_native_order(
+        strategy,
         spec,
-        tags={**spec.tags, "strategy": str(approved.signal.strategy)},
+        instrument,
+        now=now,
+        use_native_reduce_only=use_native_reduce_only,
     )
-    return _submit_native_order(strategy, spec, instrument, now=now)
 
 
 def _submit_native_order(
@@ -93,6 +85,7 @@ def _submit_native_order(
     instrument: object,
     *,
     now: Callable[[], datetime] | None,
+    use_native_reduce_only: bool,
 ) -> OrderT:
     order_side = PolymarketEnumParser.to_nautilus_order_side(
         spec.side,
@@ -105,43 +98,21 @@ def _submit_native_order(
             raise RuntimeError("Nautilus framework clock is required for GTD expiry")
         expire_time = now() + timedelta(seconds=spec.expiry_seconds or 300)
 
+    native_price = _price_value(instrument, spec.price)
+    _validate_entry_price_ceiling(native_price, spec.max_entry_price)
     order = strategy.order_factory.limit(
         instrument_id=_instrument_id(instrument),
         order_side=order_side,
         quantity=_quantity_value(instrument, spec.quantity),
-        price=_price_value(instrument, spec.price),
+        price=native_price,
         time_in_force=time_in_force,
-        reduce_only=spec.reduce_only,
+        # Sandbox matching enforces reduce-only; live Polymarket does not support it.
+        reduce_only=spec.reduce_only and use_native_reduce_only,
         expire_time=expire_time,
         tags=[f"{key}={value}" for key, value in sorted(spec.tags.items())],
     )
     strategy.submit_order(order)
     return order
-
-
-def _reduce_only_quantity(strategy: object, instrument: object) -> float:
-    cache = getattr(strategy, "cache", None)
-    positions_open = getattr(cache, "positions_open", None)
-    strategy_id = getattr(strategy, "strategy_id", None) or getattr(strategy, "id", None)
-    if not callable(positions_open) or strategy_id is None:
-        raise ValueError("NO_REDUCIBLE_POSITION")
-    positions = positions_open(
-        instrument_id=_instrument_id(instrument),
-        strategy_id=strategy_id,
-    )
-    if not isinstance(positions, Iterable):
-        raise ValueError("NO_REDUCIBLE_POSITION")
-    signed_quantity = 0.0
-    for position in positions:
-        raw_quantity = getattr(position, "signed_qty", None)
-        if raw_quantity is None:
-            continue
-        as_double = getattr(raw_quantity, "as_double", None)
-        value = as_double() if callable(as_double) else raw_quantity
-        signed_quantity += float(value)
-    if signed_quantity <= 0:
-        raise ValueError("NO_REDUCIBLE_POSITION")
-    return signed_quantity
 
 
 def _instrument_id(instrument: object) -> object:
@@ -152,32 +123,28 @@ def _instrument_id(instrument: object) -> object:
 
 
 def _price_value(instrument: object, value: float) -> object:
-    precision = _precision(instrument, "price_precision")
-    price_text = _decimal_str(value, precision)
     maker = cast(object, getattr(instrument, "make_price", None))
-    if callable(maker):
-        maker_value = Decimal(price_text) if precision is not None else value
-        return cast(Callable[[Decimal | float], object], maker)(maker_value)
-    return Price.from_str(price_text)
+    if not callable(maker):
+        raise ValueError("Nautilus Instrument.make_price is required")
+    return cast(Callable[[float], object], maker)(value)
+
+
+def _validate_entry_price_ceiling(price: object, ceiling: float | None) -> None:
+    if ceiling is None:
+        return
+    try:
+        native = Decimal(str(price))
+        maximum = Decimal(str(ceiling))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError("Nautilus Price must be comparable to max_entry_price") from exc
+    if native > maximum:
+        raise ValueError(
+            f"native price {native} exceeds max entry price {maximum} after quantization"
+        )
 
 
 def _quantity_value(instrument: object, value: float) -> object:
-    precision = _precision(instrument, "size_precision")
-    quantity_text = _decimal_str(value, precision)
     maker = cast(object, getattr(instrument, "make_qty", None))
-    if callable(maker):
-        maker_value = Decimal(quantity_text) if precision is not None else value
-        return cast(Callable[[Decimal | float], object], maker)(maker_value)
-    return Quantity.from_str(quantity_text)
-
-
-def _precision(instrument: object, attr: str) -> int | None:
-    value = cast(object, getattr(instrument, attr, None))
-    return value if isinstance(value, int) else None
-
-
-def _decimal_str(value: float, precision: int | None = None) -> str:
-    decimal_value = Decimal(str(value))
-    if precision is None:
-        return format(decimal_value.normalize(), "f")
-    return format(decimal_value.quantize(Decimal(1).scaleb(-precision)), f".{precision}f")
+    if not callable(maker):
+        raise ValueError("Nautilus Instrument.make_qty is required")
+    return cast(Callable[[float], object], maker)(value)

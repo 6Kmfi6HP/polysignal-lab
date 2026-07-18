@@ -137,6 +137,15 @@ class MarketConfig(BaseModel):
     def normalize_assets(cls, value: list[str]) -> list[str]:
         return [x.upper() for x in value]
 
+    @field_validator("timeframes")
+    @classmethod
+    def normalize_timeframes(cls, value: list[str]) -> list[str]:
+        normalized = [timeframe.strip().lower() for timeframe in value]
+        if any(not timeframe for timeframe in normalized):
+            raise ValueError("market timeframes must not be empty")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("market timeframes contain duplicate client routes")
+        return normalized
 
 
 class PolymarketDataConfig(BaseModel):
@@ -246,7 +255,7 @@ class NautilusDataClientConfig(BaseModel):
 
 class NautilusMarketRotationConfig(BaseModel):
     enabled: bool = True
-    interval_sec: int = 10
+    interval_sec: int = Field(default=10, gt=0)
     include_next_periods: int = 1
     stale_grace_sec: int = 5
     unsubscribe_exited: bool = True

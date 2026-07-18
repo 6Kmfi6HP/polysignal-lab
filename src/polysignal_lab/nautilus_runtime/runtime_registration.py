@@ -55,7 +55,8 @@ def register_runtime_components(
     add_actor = getattr(runtime, "add_actor_from_config")
     add_strategy = getattr(runtime, "add_strategy_from_config")
     configured_markets = tuple(markets)
-    configured_condition_ids = tuple(condition_ids)
+    _ = condition_ids  # MarketRotationActor universe events are the sole active-set SoT.
+    strategy_names = enabled_strategy_names(settings)
 
     rotation_config = MarketRotationActorConfig.build(settings, configured_markets)
     add_actor(
@@ -66,12 +67,11 @@ def register_runtime_components(
         )
     )
 
-    strategy_names = enabled_strategy_names(settings)
     for name in strategy_names:
         strategy_config = PolySignalStrategyConfig.build(
             settings,
             configured_markets,
-            configured_condition_ids,
+            (),
             strategy_name=name,
         )
         add_strategy(

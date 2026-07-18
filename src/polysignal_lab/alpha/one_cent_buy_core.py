@@ -111,6 +111,7 @@ class OneCentBuyAlphaCore:
                         order_intent=OrderIntentSpec(
                             intent=OrderIntent.PASSIVE_GTD,
                             expiry_seconds=int(seconds_to_close - cfg.cancel_before_close_seconds),
+                            quantity=cfg.shares_per_level,
                         ),
                     )
                 )

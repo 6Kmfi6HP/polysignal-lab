@@ -18,10 +18,10 @@ from polysignal_lab.utils import utc_now
 def build_polymarket_updown_event_slugs(
     settings: Settings | None = None,
 ) -> list[str]:
-    """FQN target for PolymarketInstrumentProviderConfig.event_slug_builder.
+    """Build startup slugs for current and near-future Up/Down windows.
 
-    Expresses assets × timeframes × current/next periods as official event
-    slugs so the NT InstrumentProvider owns discovery — not a project worker.
+    The official provider owns Gamma loading and periodic instrument refresh;
+    this helper only scopes the initial bootstrap across configured timeframes.
     """
     resolved = settings or load_settings()
     markets = resolved.markets

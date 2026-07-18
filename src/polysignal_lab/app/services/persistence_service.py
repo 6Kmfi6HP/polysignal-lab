@@ -85,8 +85,8 @@ class PersistenceService:
     def insert_strategy_status(self, status: Any) -> None:
         self.sqlite.insert_strategy_status(status)
 
-    def insert_report_result(self, result: Any) -> None:
-        self.sqlite.insert_report_result(result)
+    def insert_report_result(self, result: Any) -> bool:
+        return self.sqlite.insert_report_result(result)
 
     def insert_report_account_snapshot(self, snapshot: Any) -> None:
         self.sqlite.insert_report_account_snapshot(snapshot)

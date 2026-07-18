@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Protocol, cast, runtime_checkable
 
 from nautilus_trader.core import nautilus_pyo3
+from nautilus_trader.core.nautilus_pyo3 import InstrumentId
 
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.domain.market import Market
@@ -22,6 +23,9 @@ from polysignal_lab.nautilus_runtime.node_builder_components import (
     instrument_load_ids,
 )
 from polysignal_lab.nautilus_runtime.observability import ObservabilityService
+from polysignal_lab.nautilus_runtime.polymarket_clients import (
+    polymarket_data_client_name,
+)
 from polysignal_lab.nautilus_runtime.runtime_context_factory import (
     NautilusRuntimeContext,
     build_nautilus_runtime_context as build_nautilus_runtime_context,
@@ -33,6 +37,10 @@ from polysignal_lab.nautilus_runtime.runtime_registration import (
 PolymarketInstrumentProviderConfig = cast(
     Callable[..., object],
     getattr(nautilus_pyo3, "PolymarketInstrumentProviderConfig"),
+)
+PolymarketUpDownEventSlugConfig = cast(
+    Callable[..., object],
+    getattr(nautilus_pyo3, "PolymarketUpDownEventSlugConfig"),
 )
 
 
@@ -47,6 +55,43 @@ class NautilusRuntimeBundle:
     node: object
     observability: ObservabilityService
     strategy_names: tuple[str, ...]
+
+
+def _timeframe_minutes(timeframe: str) -> int:
+    normalized = timeframe.strip().lower()
+    if not normalized.endswith("m") or not normalized[:-1].isdigit():
+        raise ValueError(f"unsupported Polymarket timeframe: {timeframe!r}")
+    return int(normalized[:-1])
+
+
+def _dynamic_event_slug_builder(settings: Settings, timeframe: str) -> object:
+    return PolymarketUpDownEventSlugConfig(
+        assets=list(settings.markets.assets),
+        interval_mins=_timeframe_minutes(timeframe),
+        periods=settings.runtime.nautilus.market_rotation.include_next_periods + 1,
+        start_offset_periods=0,
+    )
+
+
+def _polymarket_instrument_configs(
+    settings: Settings,
+    markets: Sequence[Market],
+) -> dict[str, object]:
+    configs: dict[str, object] = {}
+    for timeframe in settings.markets.timeframes:
+        load_ids = instrument_load_ids(
+            tuple(market for market in markets if market.timeframe == timeframe)
+        )
+        instrument_kwargs: dict[str, object] = {
+            "event_slug_builder": _dynamic_event_slug_builder(settings, timeframe),
+        }
+        if load_ids:
+            instrument_kwargs["load_ids"] = [
+                InstrumentId.from_str(load_id) for load_id in load_ids
+            ]
+        client_name = polymarket_data_client_name(timeframe)
+        configs[client_name] = PolymarketInstrumentProviderConfig(**instrument_kwargs)
+    return configs
 
 
 def build_runtime_node(
@@ -66,22 +111,15 @@ def build_runtime_node(
             condition_ids=configured_ids,
         )
 
-    # Official pyo3 provider owns Gamma instrument load. Project only supplies
-    # asset/timeframe/period slug selection (and optional startup load_ids).
-    from polysignal_lab.nautilus_runtime.polymarket_slugs import (
-        build_polymarket_updown_event_slugs,
+    # Official pyo3 providers own Gamma instrument load and dynamic slug refresh.
+    # One provider per timeframe preserves the native single-interval builder contract.
+    instrument_configs = _polymarket_instrument_configs(
+        settings,
+        configured_markets,
     )
-
-    load_ids = instrument_load_ids(configured_markets)
-    instrument_kwargs: dict[str, object] = {
-        "event_slugs": build_polymarket_updown_event_slugs(settings),
-    }
-    if load_ids:
-        instrument_kwargs["load_ids"] = list(load_ids)
-    instrument_config = PolymarketInstrumentProviderConfig(**instrument_kwargs)
     from polysignal_lab.nautilus_runtime.live_node import build_runtime_node as build
 
-    node = build(settings, instrument_config=instrument_config)
+    node = build(settings, instrument_configs=instrument_configs)
     register_runtime_components(
         node,
         settings,

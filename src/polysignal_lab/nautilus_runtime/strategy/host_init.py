@@ -11,11 +11,12 @@ Pos: Application code
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from polysignal_lab.alpha.types import AlphaCore
+from polysignal_lab.config import MarketConfig
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.decision_policy import (
@@ -63,6 +64,8 @@ class HostInitRequest:
     unsubscribe_exited: bool = True
     l1_book_snapshot_interval_ms: int = 0
     policy: DecisionPolicy | None = None
+    market_config: MarketConfig = field(default_factory=MarketConfig)
+    spot_data_source: str = "polymarket_rtds"
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +91,8 @@ class HostConstruction:
     observability: _Observability | None
     progress_callback: Callable[[str], None] | None
     readiness_callback: Callable[[str, bool, dict[str, object]], None] | None
+    market_config: MarketConfig
+    spot_data_source: str
 
 
 def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
@@ -115,6 +120,8 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
         observability=req.observability,
         progress_callback=req.progress_callback,
         readiness_callback=req.readiness_callback,
+        market_config=settings.markets,
+        spot_data_source=settings.runtime.nautilus.spot_data.source,
     )
 
 
@@ -172,6 +179,8 @@ def resolve_host_construction(req: HostInitRequest) -> HostConstruction:
         observability=work.observability,
         progress_callback=work.progress_callback,
         readiness_callback=work.readiness_callback,
+        market_config=work.market_config,
+        spot_data_source=work.spot_data_source,
     )
 
 
@@ -186,6 +195,8 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
     strategy.condition_ids = host.condition_ids
     strategy.strategy_name = host.strategy_name
     strategy.registry = host.registry
+    strategy._market_config = host.market_config
+    strategy._spot_data_source = host.spot_data_source
     strategy.policy = host.policy  # Strategy-owned DecisionPolicy (not Actor bus)
     strategy.fixed_stake_usdc = host.fixed_stake_usdc
     strategy.exit_policy = NativeExitPolicy.from_config(host.exit_model)
@@ -200,6 +211,8 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
     strategy._startup_condition_ids = strategy.condition_ids
     strategy._active_condition_ids = set(strategy.condition_ids)
     strategy._market_epoch = None
+    strategy._evaluation_heartbeat_started = False
+    strategy._subscriptions_started = False
     strategy.unsubscribe_exited = host.unsubscribe_exited
     strategy._subscription_state = subs.MarketSubscriptionState()
     strategy._asset_condition_ids = _asset_conditions(
@@ -227,7 +240,6 @@ def _bind_pipeline(strategy: Any) -> None:
         record_rejected_fn=strategy._record_rejected,
         note_progress_fn=strategy._note_runtime_progress,
     )
-    strategy._subscription_manager = subs.InstrumentSubscriptionManager(strategy)
     strategy.rejected_decisions = strategy._pipeline_state.rejected_decisions
 
 
@@ -244,14 +256,18 @@ def resolve_instrument_from_cache(
     cache: object | None,
     nautilus_instrument_id: Callable[[str], object],
 ) -> object:
-    """Prefer Cache instrument when present; else catalog/resolver result."""
+    """Resolve the complete Nautilus Instrument from Cache or fail closed."""
     resolved = instrument_id_resolver(token_id)
     if cache is None:
-        return resolved
+        if callable(getattr(resolved, "make_price", None)) and callable(
+            getattr(resolved, "make_qty", None)
+        ):
+            return resolved
+        raise ValueError("Nautilus Instrument is required when Cache is unavailable")
     key = getattr(resolved, "id", resolved)
     getter = getattr(cache, "instrument", None)
     if not callable(getter):
-        return resolved
+        raise ValueError("Nautilus Cache.instrument is required")
     try:
         cached = getter(key)
     except (LookupError, TypeError):
@@ -261,4 +277,6 @@ def resolve_instrument_from_cache(
             cached = getter(nautilus_instrument_id(str(key)))
         except (LookupError, TypeError):
             cached = None
-    return cached if cached is not None else resolved
+    if cached is None:
+        raise ValueError(f"Nautilus Instrument is not available in Cache for token {token_id!r}")
+    return cached

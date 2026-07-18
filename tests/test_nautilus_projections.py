@@ -16,6 +16,7 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from types import SimpleNamespace
 
@@ -140,7 +141,7 @@ def test_project_order_event_normalizes_timezone_aware_test_double() -> None:
     assert projected['ts_event'] == datetime(2026, 1, 1, 17, tzinfo=UTC)
 
 
-def test_fill_records_metrics_from_tags_without_core_follow_up() -> None:
+def test_fill_without_cache_order_is_quarantined() -> None:
     """Production path no longer routes AlphaFillEvent into core.on_order_filled."""
 
     class Strategy:
@@ -181,10 +182,239 @@ def test_fill_records_metrics_from_tags_without_core_follow_up() -> None:
         ),
     )
 
-    assert len(strategy.recorded) == 1
-    assert strategy.recorded[0]["fill_price"] == 0.5
-    assert strategy.recorded[0]["shares"] == 1.0
-    assert "order_event" in strategy.progress
+    assert strategy.recorded == []
+    assert "order_event_unresolved" in strategy.progress
+    assert "fill_event_quarantined" in strategy.progress
+
+
+def test_fill_recovers_association_tags_from_cache_order() -> None:
+    from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
+    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+
+    order = SimpleNamespace(
+        tags=(
+            "strategy=alpha",
+            "condition_id=condition-btc-5m",
+            "reduce_only=true",
+            "exit_reason=TAKE_PROFIT",
+            "position_id=position-1",
+        )
+    )
+
+    class Cache:
+        def order(self, client_order_id: object) -> object:
+            assert str(client_order_id) == "client-order-1"
+            return order
+
+    class Strategy:
+        registry: MarketCatalog | None = None
+        strategy_name: str = "alpha"
+        _active_condition_ids: set[str] = {"condition-btc-5m"}
+        observability: object | None = None
+
+        def __init__(self) -> None:
+            self.cache: object = Cache()
+            self.core: object = SimpleNamespace()
+            self.recorded: list[dict[str, object]] = []
+            self._settled_position_keys: set[tuple[str, str]] = set()
+
+        def _note_runtime_progress(self, phase: str) -> None:
+            _ = phase
+
+        def _record_nautilus_fill(
+            self,
+            event: object,
+            metrics: Mapping[str, object],
+        ) -> None:
+            _ = event
+            self.recorded.append(dict(metrics))
+
+        def _record_nautilus_order(
+            self,
+            event: object,
+            metrics: Mapping[str, object],
+        ) -> None:
+            _ = event, metrics
+
+        def _record_nautilus_position(self, position: object) -> None:
+            _ = position
+
+        def _require_assembler(self) -> object:
+            return object()
+
+        def _handle_decision(self, decision: object, view: object) -> None:
+            _ = decision, view
+
+    strategy = Strategy()
+    handle_order_filled(
+        strategy,
+        SimpleNamespace(
+            client_order_id="client-order-1",
+            instrument_id="up-token.POLYMARKET",
+            last_px=0.5,
+            last_qty=1.0,
+            side="UP",
+            ts_event=1_788_451_200_123_456_789,
+        ),
+    )
+
+    assert strategy.recorded[0]["reduce_only"] is True
+    assert strategy.recorded[0]["exit_reason"] == "TAKE_PROFIT"
+    assert strategy.recorded[0]["position_id"] == "position-1"
+
+
+def test_order_event_merges_partial_event_tags_with_cache_order() -> None:
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_lifecycle_event,
+    )
+
+    order = SimpleNamespace(
+        tags=(
+            "strategy=alpha",
+            "market_id=market-1",
+            "condition_id=condition-1",
+            "token_id=token-up",
+        )
+    )
+
+    class Cache:
+        def order(self, client_order_id: object) -> object:
+            _ = client_order_id
+            return order
+
+    class Strategy:
+        registry = None
+        strategy_name = "alpha"
+        cache: object = Cache()
+
+        def __init__(self) -> None:
+            self.recorded: list[dict[str, object]] = []
+            self.progress: list[str] = []
+
+        def _note_runtime_progress(self, phase: str) -> None:
+            self.progress.append(phase)
+
+        def _record_nautilus_order(
+            self, event: object, metrics: Mapping[str, object]
+        ) -> None:
+            _ = event
+            self.recorded.append(dict(metrics))
+
+    strategy = Strategy()
+    handle_order_lifecycle_event(  # pyright: ignore[reportArgumentType]
+        strategy,  # pyright: ignore[reportArgumentType]
+        "on_order_updated",
+        SimpleNamespace(
+            client_order_id="client-order-1",
+            instrument_id="token-up.POLYMARKET",
+            tags=("strategy=alpha", "condition_id="),
+            side="UP",
+            ts_event=1_788_451_200_123_456_789,
+        ),
+    )
+
+    assert strategy.recorded[0]["condition_id"] == "condition-1"
+    assert strategy.recorded[0]["market_id"] == "market-1"
+
+
+def test_order_event_quarantines_cache_order_without_project_identity() -> None:
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_lifecycle_event,
+    )
+
+    class Cache:
+        def __init__(self) -> None:
+            self.order_tags: tuple[str, ...] = ("foo=bar",)
+
+        def order(self, client_order_id: object) -> object:
+            _ = client_order_id
+            return SimpleNamespace(tags=self.order_tags)
+
+    class Strategy:
+        registry = None
+        strategy_name = "alpha"
+        cache = Cache()
+
+        def __init__(self) -> None:
+            self.recorded: list[dict[str, object]] = []
+            self.progress: list[str] = []
+
+        def _note_runtime_progress(self, phase: str) -> None:
+            self.progress.append(phase)
+
+        def _record_nautilus_order(
+            self, event: object, metrics: Mapping[str, object]
+        ) -> None:
+            _ = event
+            self.recorded.append(dict(metrics))
+
+    strategy = Strategy()
+    event = SimpleNamespace(
+        client_order_id="client-order-1",
+        instrument_id="token-up.POLYMARKET",
+        side="UP",
+        ts_event=1_788_451_200_123_456_789,
+    )
+
+    handle_order_lifecycle_event(  # pyright: ignore[reportArgumentType]
+        strategy,  # pyright: ignore[reportArgumentType]
+        "on_order_accepted",
+        event,
+    )
+    strategy.cache.order_tags = ("strategy=", "condition_id=condition-1")
+    handle_order_lifecycle_event(  # pyright: ignore[reportArgumentType]
+        strategy,  # pyright: ignore[reportArgumentType]
+        "on_order_accepted",
+        event,
+    )
+
+    assert strategy.recorded == []
+    assert strategy.progress.count("order_event_unresolved") == 2
+
+
+def test_tagless_cache_miss_fill_is_quarantined() -> None:
+    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+
+    class Cache:
+        def order(self, client_order_id: object) -> None:
+            _ = client_order_id
+            return None
+
+    class Strategy:
+        registry = None
+        strategy_name = "alpha"
+        observability = None
+        cache: object = Cache()
+        core: object = SimpleNamespace()
+
+        def __init__(self) -> None:
+            self.progress: list[str] = []
+            self.recorded: list[object] = []
+
+        def _note_runtime_progress(self, phase: str) -> None:
+            self.progress.append(phase)
+
+        def _record_nautilus_fill(
+            self, event: object, metrics: Mapping[str, object]
+        ) -> None:
+            _ = event
+            self.recorded.append(metrics)
+
+    strategy = Strategy()
+    handle_order_filled(
+        strategy,  # pyright: ignore[reportArgumentType]
+        SimpleNamespace(
+            client_order_id="missing",
+            instrument_id="token-up.POLYMARKET",
+            tags=(),
+            last_px=0.5,
+            last_qty=1.0,
+        ),
+    )
+
+    assert strategy.recorded == []
+    assert "order_event_unresolved" in strategy.progress
+    assert "fill_event_quarantined" in strategy.progress
 
 
 class _FloatLike:

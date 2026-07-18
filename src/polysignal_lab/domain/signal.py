@@ -45,7 +45,11 @@ FrozenMap = Annotated[
 
 
 class SignalCandidate(BaseModel):
-    """Immutable signal message — Nautilus message-integrity: no in-place field or container mutation."""
+    """Publish/projection DTO only — not the trading-order SoT.
+
+    Order routing uses AlphaDecision → Nautilus OrderFactory. This type carries
+    Telegram/SQLite identity (signal_id, dedupe_key) with message immutability.
+    """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -116,6 +120,7 @@ class SignalCandidate(BaseModel):
         reason_codes: Sequence[str],
         metrics: Mapping[str, Any],
         freshness_policy: FreshnessPolicy | None = None,
+        signal_id: str | None = None,
         created_at: datetime | None = None,
         snapshot_id: str | None = None,
         source_signal_ids: Sequence[str] | None = None,
@@ -128,7 +133,7 @@ class SignalCandidate(BaseModel):
         event_time = created_at if created_at is not None else utc_now()
         dedupe_scope = "exit" if reduce_only else "entry"
         dedupe_key = f"{asset}:{timeframe}:{market_id}:{side.value}:{strategy}:{dedupe_scope}"
-        sid = f"sig_{stable_hash(strategy, asset, timeframe, market_id, side.value, event_time.isoformat(), length=20)}"
+        sid = signal_id or f"sig_{stable_hash(strategy, asset, timeframe, market_id, side.value, event_time.isoformat(), length=20)}"
         return cls(
             signal_id=sid,
             created_at=event_time,

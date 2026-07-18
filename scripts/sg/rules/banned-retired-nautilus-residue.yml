@@ -1,0 +1,13 @@
+id: banned-retired-nautilus-residue
+message: Retired dual-design modules and compatibility attributes must not return.
+severity: error
+language: python
+rule:
+  any:
+    - pattern: from polysignal_lab.alpha.cross_market_core import $$$
+    - pattern: import polysignal_lab.alpha.cross_market_core
+    - pattern: from polysignal_lab.nautilus_runtime.group_views import $$$
+    - pattern: import polysignal_lab.nautilus_runtime.group_views
+    - pattern: $APPROVED.publish.signal_id
+    - pattern: return Price.from_str($VALUE)
+    - pattern: return Quantity.from_str($VALUE)

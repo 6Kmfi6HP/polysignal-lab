@@ -164,8 +164,6 @@ strategies:
       market_data_max_lag_sec: 2
   binary_momentum:
     enabled: true
-  cross_market_bot:
-    enabled: true
   dump_hedge:
     enabled: true
   fibonacci_bot:

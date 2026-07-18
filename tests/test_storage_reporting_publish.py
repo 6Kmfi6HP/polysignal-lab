@@ -1439,8 +1439,8 @@ def test_duplicate_ids_are_idempotent_or_reported(tmp_path, market_view, setting
         **lifecycle.position,
         "ts": lifecycle.position["opened_at"],
     })
-    store.insert_report_result(lifecycle.result)
-    store.insert_report_result(lifecycle.result)
+    assert store.insert_report_result(lifecycle.result) is True
+    assert store.insert_report_result(lifecycle.result) is False
     store.insert_report_account_snapshot(lifecycle.account_snapshot)
     store.insert_daily_report(lifecycle.report)
     store.insert_daily_report(lifecycle.report)

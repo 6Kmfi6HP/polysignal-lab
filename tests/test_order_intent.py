@@ -10,6 +10,9 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
@@ -116,20 +119,27 @@ def _make_gate() -> SignalGate:
     )
 
 
-def _make_passive_signal() -> SignalCandidate:
-    return SignalCandidate.build(
-        strategy="test", asset="BTC", timeframe="5m",
-        market_id="mkt-1", market_slug="s", condition_id="c",
-        token_id="t-up", side=Side.UP, confidence=0.6,
-        entry_reference_price=0.35, max_entry_price=0.35,
-        seconds_to_close=300, data_freshness_ms=100,
-        reason_codes=["TEST"], metrics={},
-        order_intent=OrderIntent.PASSIVE_GTD, expiry_seconds=200,
+def _make_decision(**overrides: object) -> AlphaDecision:
+    return AlphaDecision(**_base_build_kwargs(**overrides))
+
+
+def _make_passive_decision() -> AlphaDecision:
+    return _make_decision(
+        market_slug="s",
+        condition_id="c",
+        token_id="t-up",
+        confidence=0.6,
+        entry_reference_price=0.35,
+        max_entry_price=0.35,
+        order_intent=OrderIntentSpec(
+            intent=OrderIntent.PASSIVE_GTD,
+            expiry_seconds=200,
+        ),
     )
 
 
 def _make_active_view():
-    return sample_market_view(
+    view = sample_market_view(
         up_ask=0.55,
         up_bid=0.30,
         down_ask=0.45,
@@ -139,97 +149,105 @@ def _make_active_view():
         seconds_to_close=300,
         view_id="snap-1",
     )
+    return replace(
+        view,
+        market_id="mkt-1",
+        market_slug="s",
+        condition_id="c",
+        up=replace(view.up, token_id="t-up"),
+    )
 
 
 def test_passive_gtd_skips_max_entry_check():
     gate = _make_gate()
-    sig = _make_passive_signal()
+    decision = _make_passive_decision()
     snap = _make_active_view()
     # ask=0.55 > max_entry=0.35, but PASSIVE_GTD should pass
-    reason = gate._max_entry(sig, snap)
+    reason = gate._max_entry(decision, snap)
     assert reason is None
 
 
 def test_taker_still_fails_ask_above_max_entry():
     gate = _make_gate()
-    sig = SignalCandidate.build(
-        strategy="test", asset="BTC", timeframe="5m",
-        market_id="mkt-1", market_slug="s", condition_id="c",
-        token_id="t-up", side=Side.UP, confidence=0.6,
-        entry_reference_price=0.85, max_entry_price=0.50,
-        seconds_to_close=300, data_freshness_ms=100,
-        reason_codes=["TEST"], metrics={},
-        # no order_intent → default taker
+    decision = _make_decision(
+        market_slug="s",
+        condition_id="c",
+        token_id="t-up",
+        confidence=0.6,
+        entry_reference_price=0.85,
+        max_entry_price=0.50,
     )
     snap = _make_active_view()
-    reason = gate._max_entry(sig, snap)
+    reason = gate._max_entry(decision, snap)
     assert reason is not None
     assert reason.reason_code == "ASK_ABOVE_MAX_ENTRY"
 
 
 def test_gtd_expiry_rejects_missing():
     gate = _make_gate()
-    sig = SignalCandidate.build(
-        strategy="test", asset="BTC", timeframe="5m",
-        market_id="mkt-1", market_slug="s", condition_id="c",
-        token_id="t-up", side=Side.UP, confidence=0.6,
-        entry_reference_price=0.35, max_entry_price=0.35,
-        seconds_to_close=300, data_freshness_ms=100,
-        reason_codes=["TEST"], metrics={},
-        order_intent=OrderIntent.PASSIVE_GTD,
-        # expiry_seconds NOT set
+    decision = _make_decision(
+        market_slug="s",
+        condition_id="c",
+        token_id="t-up",
+        confidence=0.6,
+        entry_reference_price=0.35,
+        max_entry_price=0.35,
+        order_intent=OrderIntentSpec(intent=OrderIntent.PASSIVE_GTD),
     )
     snap = _make_active_view()
-    reason = gate._gtd_expiry(sig, snap)
+    reason = gate._gtd_expiry(decision, snap)
     assert reason is not None
     assert reason.reason_code == "MISSING_GTD_EXPIRY"
 
 
 def test_gtd_expiry_rejects_too_long():
     gate = _make_gate()
-    sig = SignalCandidate.build(
-        strategy="test", asset="BTC", timeframe="5m",
-        market_id="mkt-1", market_slug="s", condition_id="c",
-        token_id="t-up", side=Side.UP, confidence=0.6,
-        entry_reference_price=0.35, max_entry_price=0.35,
-        seconds_to_close=300, data_freshness_ms=100,
-        reason_codes=["TEST"], metrics={},
-        order_intent=OrderIntent.PASSIVE_GTD, expiry_seconds=100000,
+    decision = _make_decision(
+        market_slug="s",
+        condition_id="c",
+        token_id="t-up",
+        confidence=0.6,
+        entry_reference_price=0.35,
+        max_entry_price=0.35,
+        order_intent=OrderIntentSpec(
+            intent=OrderIntent.PASSIVE_GTD,
+            expiry_seconds=100000,
+        ),
     )
     snap = _make_active_view()
-    reason = gate._gtd_expiry(sig, snap)
+    reason = gate._gtd_expiry(decision, snap)
     assert reason is not None
     assert reason.reason_code == "GTD_EXPIRY_EXCEEDS_24H"
 
 
 def test_gtd_expiry_accepts_valid():
     gate = _make_gate()
-    sig = _make_passive_signal()
+    decision = _make_passive_decision()
     snap = _make_active_view()
-    reason = gate._gtd_expiry(sig, snap)
+    reason = gate._gtd_expiry(decision, snap)
     assert reason is None
 
 
 def test_passive_gtd_skips_spread_check():
     gate = _make_gate()
-    sig = _make_passive_signal()
+    decision = _make_passive_decision()
     snap = _make_active_view()
-    reason = gate._spread(sig, snap)
+    reason = gate._spread(decision, snap)
     assert reason is None
 
 
 def test_passive_gtd_skips_time_window():
     gate = _make_gate()
-    sig = _make_passive_signal()
+    decision = replace(_make_passive_decision(), seconds_to_close=0)
     snap = _make_active_view()
-    reason = gate._time_window(sig, snap)
+    reason = gate._time_window(decision, snap)
     assert reason is None
 
 
 def test_passive_gtd_full_evaluate_accepted():
     gate = _make_gate()
-    sig = _make_passive_signal()
+    decision_in = _make_passive_decision()
     snap = _make_active_view()
-    decision = gate.evaluate(sig, snap)
-    assert decision.accepted is True
-    assert decision.signal is not None
+    result = gate.evaluate(decision_in, snap)
+    assert result.accepted is True
+    assert result.publish is not None

@@ -28,7 +28,7 @@ from nautilus_trader.core.nautilus_pyo3 import (
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.state import JsonValue, StateSchemaError
-from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState, event_datetime
+from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
@@ -131,6 +131,12 @@ class _Observability(Protocol):
 
 class _CustomDataSubscriber(Protocol):
     def subscribe_data(
+        self,
+        data_type: object,
+        client_id: object | None = None,
+    ) -> object: ...
+
+    def unsubscribe_data(
         self,
         data_type: object,
         client_id: object | None = None,
@@ -313,6 +319,15 @@ def _subscribe_custom_data(
     client_id: object | None = None,
 ) -> None:
     _ = strategy.subscribe_data(_nautilus_data_type(data_type), client_id=client_id)
+
+
+def unsubscribe_custom_data(
+    strategy: _CustomDataSubscriber,
+    data_type: object,
+    *,
+    client_id: object | None = None,
+) -> None:
+    _ = strategy.unsubscribe_data(_nautilus_data_type(data_type), client_id=client_id)
 
 
 def _json_state_payload(value: object) -> Mapping[str, JsonValue]:

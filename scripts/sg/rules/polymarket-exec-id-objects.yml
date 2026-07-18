@@ -1,0 +1,34 @@
+id: polymarket-exec-id-objects
+message: PolymarketExecClientConfig trader_id/account_id must be plain str, not TraderId/AccountId objects
+severity: error
+language: python
+rule:
+  any:
+    - kind: keyword_argument
+      all:
+        - has:
+            kind: identifier
+            regex: '^trader_id$'
+        - has:
+            pattern: TraderId($ID)
+    - kind: keyword_argument
+      all:
+        - has:
+            kind: identifier
+            regex: '^account_id$'
+        - has:
+            pattern: AccountId($ID)
+    - kind: pair
+      all:
+        - has:
+            kind: string
+            regex: trader_id
+        - has:
+            pattern: TraderId($ID)
+    - kind: pair
+      all:
+        - has:
+            kind: string
+            regex: account_id
+        - has:
+            pattern: AccountId($ID)

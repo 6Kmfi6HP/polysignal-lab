@@ -23,9 +23,10 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from types import SimpleNamespace
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, override
 
 from factories import sample_market_view
+from nautilus_polymarket_fixtures import polymarket_binary_instrument
 from polysignal_lab.alpha.types import (
     AlphaDecision,
     MarketView,
@@ -78,9 +79,19 @@ class _NoopClock:
     def set_timer(self, name: object, interval: object, *, callback: object) -> None:
         _ = name, interval, callback
 
+    def timestamp_ns(self) -> int:
+        return 0
+
 
 class _NativeSubscriptionMethods:
     def subscribe_data(
+        self,
+        data_type: object,
+        client_id: object | None = None,
+    ) -> None:
+        _ = data_type, client_id
+
+    def unsubscribe_data(
         self,
         data_type: object,
         client_id: object | None = None,
@@ -135,6 +146,17 @@ class StatefulFakeCore(FakeCore):
 
 def _assembler(view: object | None) -> MarketViewAssembler:
     return cast(MarketViewAssembler, cast(object, FakeAssembler(view)))
+
+
+class _TestInstrument:
+    def __init__(self, token_id: str) -> None:
+        self.id = f"{token_id}.POLYMARKET"
+
+    def make_price(self, value: float) -> float:
+        return value
+
+    def make_qty(self, value: float) -> float:
+        return value
 
 
 def _test_instrument_id(_condition_id: str, token_id: str) -> str:
@@ -292,7 +314,7 @@ def test_native_strategy_on_save_excludes_runtime_trading_state() -> None:
     strategy = _minimal_native_strategy(core=core, strategy_name="vwap_momentum")
     assert not hasattr(strategy, "_metrics_tracker")
     strategy.rejected_decisions.append(
-        RejectedDecision(reason_code="TEST", detail={}, candidate=None)
+        RejectedDecision(reason_code="TEST", detail={}, decision=None)
     )
 
     payload = decode_state("vwap_momentum", strategy.on_save())
@@ -312,7 +334,7 @@ def test_native_strategy_on_load_does_not_restore_runtime_trading_state() -> Non
     core = StatefulFakeCore([])
     strategy = _minimal_native_strategy(core=core, strategy_name="ptb_diff")
     strategy.rejected_decisions.append(
-        RejectedDecision(reason_code="TEST", detail={}, candidate=None)
+        RejectedDecision(reason_code="TEST", detail={}, decision=None)
     )
 
     state = strategy.on_save()
@@ -334,7 +356,6 @@ def test_native_strategy_on_load_does_not_restore_runtime_trading_state() -> Non
 # ── Batch evaluation tests (nautilus runtime) ─────────────────────────────────
 
 
-from polysignal_lab.domain.signal import SignalCandidate  # noqa: E402
 from polysignal_lab.nautilus_runtime.decision_policy import (  # noqa: E402
     ApprovedDecision,
     BatchArbitrationResult,
@@ -400,34 +421,10 @@ def _real_market_view(
 
 class RuntimeFakePolicy(DecisionPolicy):
     def evaluate(self, decision: AlphaDecision, view: MarketView) -> ApprovedDecision:
-        _ = view
-        candidate = SignalCandidate.build(
-            strategy=decision.strategy,
-            asset=decision.asset,
-            timeframe=decision.timeframe,
-            market_id=decision.market_id,
-            market_slug=decision.market_slug,
-            condition_id=decision.condition_id,
-            token_id=decision.token_id,
-            side=decision.side,
-            confidence=decision.confidence,
-            entry_reference_price=decision.entry_reference_price,
-            max_entry_price=decision.max_entry_price,
-            seconds_to_close=decision.seconds_to_close,
-            data_freshness_ms=decision.data_freshness_ms,
-            reason_codes=list(decision.reason_codes),
-            metrics=dict(decision.metrics),
-            order_intent=decision.order_intent.intent
-            if decision.order_intent
-            else None,
-            expiry_seconds=decision.order_intent.expiry_seconds
-            if decision.order_intent
-            else None,
-            pair_id=decision.order_intent.pair_id if decision.order_intent else None,
-            reduce_only=decision.order_intent.reduce_only if decision.order_intent else False,
-            hedge_leg=decision.hedge_leg,
-        )
-        return ApprovedDecision(signal=candidate)
+        from polysignal_lab.nautilus_runtime.decision_policy import candidate_from_decision
+
+        publish = candidate_from_decision(decision, view)
+        return ApprovedDecision(decision=decision, publish=publish)
 
     def batch_arbitrate(
         self, decisions: list[tuple[AlphaDecision, MarketView]]
@@ -482,11 +479,12 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
             self.captured_specs = []
 
         def _submit_approved(self, approved, *, view):
-            book = view.book_for(approved.signal.side)
+            book = view.book_for(approved.decision.side)
             spec = order_spec_from_decision(
-                approved,
+                approved.decision,
                 fixed_stake_usdc=self.fixed_stake_usdc,
                 best_ask=book.best_ask,
+                view_id=view.view_id,
             )
             self.captured_specs.append(spec)
             return SimpleNamespace(client_order_id="captured")
@@ -503,7 +501,7 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         fixed_stake_usdc=10.0,
-        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        instrument_id_resolver=lambda token_id: _TestInstrument(token_id),
         readiness_callback=lambda condition_id, ready, _detail: readiness.append(
             (condition_id, ready)
         ),
@@ -537,7 +535,8 @@ def test_native_strategy_gate_rejection_does_not_drive_data_plane_readiness() ->
                     "source": "orderbook",
                     "threshold_ms": 300_000,
                 },
-                candidate=approved.signal,
+                decision=approved.decision,
+                publish=approved.publish,
             )
 
     readiness: list[tuple[str, bool]] = []
@@ -615,7 +614,7 @@ def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         fixed_stake_usdc=10.0,
-        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        instrument_id_resolver=lambda token_id: _TestInstrument(token_id),
         **_native_projections(),
     )
     _policy = _attach_decision_policy(strategy)
@@ -646,13 +645,13 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
             return dedupe_key in self.active_dedupe_keys
 
         def _submit_approved(self, approved, *, view):
-            _ = view
-            dedupe_key = approved.signal.dedupe_key
+            view_id = getattr(view, "view_id", "") or ""
+            dedupe_key = approved.decision.dedupe_key()
             self.submitted.append(dedupe_key)
             self.active_dedupe_keys.add(dedupe_key)
             return SimpleNamespace(
                 id=f"order-{len(self.submitted)}",
-                tags={"signal_id": approved.signal.signal_id},
+                tags={"signal_id": approved.decision.signal_id(view_id)},
             )
 
         def on_order_filled(self, event: object) -> None:
@@ -869,7 +868,7 @@ def test_static_native_strategy_does_not_bypass_custom_data_lifecycle(monkeypatc
         getattr(data_type, "type_name", data_type): str(client_id)
         for data_type, client_id in custom_subscriptions
     } == {
-        PolymarketRtdsCryptoPrice.__name__: "None",
+        PolymarketRtdsCryptoPrice.__name__: "POLYMARKET-5M",
         PolySignalPriceToBeatData.__name__: "None",
         PolySignalMarketMetaData.__name__: "None",
         PolySignalMarketUniverseData.__name__: "None",
@@ -923,7 +922,7 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         fixed_stake_usdc=10.0,
-        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        instrument_id_resolver=lambda token_id: _TestInstrument(token_id),
         progress_callback=lambda phase: progress.append(phase),
         **_native_projections(),
     )
@@ -1081,7 +1080,13 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         ) -> None:
             self.custom_subscriptions.append((data_type, client_id))
 
-        def evaluate_condition(self, condition_id: str) -> None:
+        def evaluate_condition(
+            self,
+            condition_id: str,
+            *,
+            trading_state: object | None = None,
+        ) -> None:
+            _ = trading_state
             self.evaluated.append(condition_id)
 
     strategy = FakeNativeStrategy(
@@ -1138,6 +1143,133 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         EVALUATION_HEARTBEAT_TIMER_NAME,
         EVALUATION_HEARTBEAT_TIMER_NAME,
     ]
+
+
+def test_native_strategy_stop_unsubscribes_market_and_custom_data() -> None:
+    from polysignal_lab.nautilus_runtime.custom_data_types import (
+        PolySignalMarketMetaData,
+        PolySignalMarketUniverseData,
+        PolySignalPriceToBeatData,
+    )
+    from polysignal_lab.nautilus_runtime.market_catalog import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+    )
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
+        market_unsubscriptions: list[tuple[str, str]]
+        custom_unsubscriptions: list[tuple[str, str]]
+
+        @override
+        def unsubscribe_quotes(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.market_unsubscriptions.append(("quotes", str(instrument_id)))
+
+        @override
+        def unsubscribe_trades(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.market_unsubscriptions.append(("trades", str(instrument_id)))
+
+        @override
+        def unsubscribe_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.market_unsubscriptions.append(("book", str(instrument_id)))
+
+        @override
+        def unsubscribe_data(
+            self,
+            data_type: object,
+            client_id: object | None = None,
+        ) -> None:
+            _ = client_id
+            self.custom_unsubscriptions.append(
+                (str(getattr(data_type, "type_name", data_type)), str(client_id))
+            )
+
+    registry = _test_market_catalog()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-5m",
+            market_slug="btc-updown-5m",
+            condition_id="condition-btc-5m",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
+        )
+    )
+    strategy = FakeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        registry=registry,
+    )
+    strategy.market_unsubscriptions = []
+    strategy.custom_unsubscriptions = []
+    strategy._subscription_state.subscribed_instrument_ids.update(
+        {"up-token.POLYMARKET", "down-token.POLYMARKET"}
+    )
+    strategy._subscriptions_started = True
+
+    strategy.on_stop()
+
+    assert strategy.market_unsubscriptions == [
+        ("quotes", "up-token.POLYMARKET"),
+        ("trades", "up-token.POLYMARKET"),
+        ("book", "up-token.POLYMARKET"),
+        ("quotes", "down-token.POLYMARKET"),
+        ("trades", "down-token.POLYMARKET"),
+        ("book", "down-token.POLYMARKET"),
+    ]
+    names = {name for name, _ in strategy.custom_unsubscriptions}
+    assert names == {
+        "PolymarketRtdsCryptoPrice",
+        PolySignalPriceToBeatData.__name__,
+        PolySignalMarketMetaData.__name__,
+        PolySignalMarketUniverseData.__name__,
+    }
+    assert strategy._subscription_state.subscribed_instrument_ids == set()
+
+
+def test_native_strategy_stop_before_heartbeat_creation_is_safe() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeClock:
+        def __init__(self) -> None:
+            self.canceled: list[str] = []
+
+        def cancel_timer(self, name: object) -> None:
+            self.canceled.append(str(name))
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        fake_clock: FakeClock
+
+        @property
+        def clock(self) -> FakeClock:
+            return self.fake_clock
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=(),
+        strategy_name="ptb_diff",
+        registry=_test_market_catalog(),
+    )
+    strategy.fake_clock = FakeClock()
+
+    strategy.on_stop()
+
+    assert strategy.clock.canceled == []
 
 
 def test_native_strategy_backtest_does_not_schedule_unbounded_evaluation_heartbeat() -> None:
@@ -1671,7 +1803,9 @@ def test_cache_market_data_provider_treats_absent_trade_ticks_api_as_empty() -> 
     assert provider.trades_for_token("up-token") == ()
 
 
-def test_native_strategy_resolved_instrument_allows_cache_without_instrument_api() -> None:
+def test_native_strategy_resolved_instrument_requires_cache_instrument_api() -> None:
+    import pytest
+
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     class Cache:
@@ -1687,7 +1821,8 @@ def test_native_strategy_resolved_instrument_allows_cache_without_instrument_api
     )
     strategy._cache_override = Cache()
 
-    assert strategy._resolved_instrument("up-token") == "up-token.POLYMARKET"
+    with pytest.raises(ValueError, match="Cache.instrument"):
+        strategy._resolved_instrument("up-token")
 
 
 def test_native_strategy_does_not_submit_when_approved_decision_view_lacks_book() -> None:
@@ -1803,7 +1938,7 @@ def test_native_strategy_constructor_without_registry_fails_clearly() -> None:
             assembler=_assembler(None),
             condition_ids=(),
             strategy_name="ptb_diff",
-            instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+            instrument_id_resolver=lambda token_id: _TestInstrument(token_id),
         )
 
 
@@ -1927,11 +2062,21 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
             _ = args, kwargs
             self.trade_subscriptions.append(str(instrument_id))
 
-        def unsubscribe_book_deltas(self, instrument_id, *args, **kwargs):
+        def unsubscribe_book_deltas(
+            self,
+            instrument_id: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
             _ = args, kwargs
             self.book_unsubscriptions.append(str(instrument_id))
 
-        def unsubscribe_trades(self, instrument_id, *args, **kwargs):
+        def unsubscribe_trades(
+            self,
+            instrument_id: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
             _ = args, kwargs
             self.trade_unsubscriptions.append(str(instrument_id))
 
@@ -2211,10 +2356,10 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
         )
     )
 
-    assert strategy.book_subscriptions.count("up-a.POLYMARKET") == 2
-    assert strategy.book_subscriptions.count("down-a.POLYMARKET") == 2
-    assert strategy.trade_subscriptions.count("up-a.POLYMARKET") == 2
-    assert strategy.trade_subscriptions.count("down-a.POLYMARKET") == 2
+    assert strategy.book_subscriptions.count("up-a.POLYMARKET") == 1
+    assert strategy.book_subscriptions.count("down-a.POLYMARKET") == 1
+    assert strategy.trade_subscriptions.count("up-a.POLYMARKET") == 1
+    assert strategy.trade_subscriptions.count("down-a.POLYMARKET") == 1
     assert strategy._subscription_state.subscribe_intent_condition_ids == {"condition-a"}
 
 
@@ -2287,7 +2432,7 @@ def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> (
 
 
 
-def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> None:
+def test_native_strategy_ptb_update_does_not_request_provider_owned_instruments() -> None:
     from polysignal_lab.nautilus_runtime.market_catalog import (
         InstrumentTokenMeta,
         MarketPairMeta,
@@ -2350,10 +2495,7 @@ def test_native_strategy_ptb_update_re_requests_unconfirmed_wired_market() -> No
         )
     )
 
-    assert strategy.instrument_requests == [
-        "up-a.POLYMARKET",
-        "down-a.POLYMARKET",
-    ]
+    assert strategy.instrument_requests == []
 def test_native_strategy_active_market_without_metadata_stays_pending_until_metadata_arrives() -> (
     None
 ):
@@ -2381,7 +2523,7 @@ def test_native_strategy_active_market_without_metadata_stays_pending_until_meta
         condition_ids=(),
         strategy_name="ptb_diff",
         registry=_test_market_catalog(),
-        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        instrument_id_resolver=lambda token_id: _TestInstrument(token_id),
     )
 
     strategy.on_data(
@@ -2440,6 +2582,381 @@ def test_native_strategy_active_market_without_metadata_stays_pending_until_meta
     assert strategy._subscription_state.pending_metadata_condition_ids == set()
     assert strategy._subscription_state.subscribe_intent_condition_ids == {"condition-b"}
 
+def test_native_strategy_waits_for_actor_owned_market_universe(
+    monkeypatch,
+) -> None:
+    from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeCache:
+        def __init__(self) -> None:
+            self.instruments: dict[str, object] = {}
+
+        def instrument(self, instrument_id: object) -> object | None:
+            return self.instruments.get(str(instrument_id))
+
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
+        now: datetime
+
+        @property
+        def clock(self) -> _NoopClock:
+            return self.fake_clock
+
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)  # type: ignore[arg-type]
+            self.fake_clock = _NoopClock()
+            self.now = datetime(2026, 7, 18, 12, tzinfo=UTC)
+            self._cache_override = FakeCache()
+            self.instrument_venue_subscriptions: list[tuple[str, str | None]] = []
+            self.instrument_venue_requests: list[tuple[str, str | None]] = []
+            self.custom_data_subscriptions: list[tuple[object, str | None]] = []
+            self.book_subscriptions: list[str] = []
+            self.trade_subscriptions: list[str] = []
+            self.quote_subscriptions: list[str] = []
+
+        def subscribe_instruments(self, venue: object, *args: object, **kwargs: object) -> None:
+            _ = args
+            client_id = kwargs.get("client_id")
+            self.instrument_venue_subscriptions.append(
+                (str(venue), None if client_id is None else str(client_id))
+            )
+
+        @override
+        def _framework_now(self) -> datetime:
+            return self.now
+
+        def request_instruments(self, venue: object, *args: object, **kwargs: object) -> None:
+            _ = args
+            client_id = kwargs.get("client_id")
+            self.instrument_venue_requests.append(
+                (str(venue), None if client_id is None else str(client_id))
+            )
+
+        @override
+        def subscribe_data(
+            self,
+            data_type: object,
+            client_id: object | None = None,
+        ) -> None:
+            self.custom_data_subscriptions.append(
+                (data_type, None if client_id is None else str(client_id))
+            )
+
+        def subscribe_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.book_subscriptions.append(str(instrument_id))
+
+        def subscribe_quotes(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.quote_subscriptions.append(str(instrument_id))
+
+        def subscribe_trades(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.trade_subscriptions.append(str(instrument_id))
+
+    monkeypatch.setattr(
+        FakeNativeStrategy,
+        "trader_id",
+        property(lambda _self: "TEST-TRADER"),
+    )
+    registry = MarketCatalog(
+        instrument_id_resolver=lambda condition_id, token_id: (
+            f"{condition_id}-{token_id}.POLYMARKET"
+        )
+    )
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=(),
+        strategy_name="ptb_diff",
+        registry=registry,
+    )
+    strategy._spot_data_source = "disabled"
+
+    strategy.on_start()
+
+    assert strategy.instrument_venue_subscriptions == []
+    assert strategy.instrument_venue_requests == []
+    assert all(client_id is None for _, client_id in strategy.custom_data_subscriptions)
+
+    instruments = (
+        polymarket_binary_instrument("uptoken", "Up"),
+        polymarket_binary_instrument("downtoken", "Down"),
+    )
+    for instrument in instruments:
+        strategy._cache_override.instruments[str(instrument.id)] = instrument
+        strategy.on_instrument(instrument)
+
+    # Provider instruments are Cache inputs; the rotation Actor owns Market/universe state.
+    assert strategy.registry.by_condition("0xcondition1") is None
+    assert strategy._active_condition_ids == set()
+    assert strategy.book_subscriptions == []
+    assert strategy.trade_subscriptions == []
+    assert strategy.quote_subscriptions == []
+
+    from polysignal_lab.nautilus_runtime.custom_data_types import (
+        PolySignalMarketMetaData,
+        PolySignalMarketUniverseData,
+    )
+
+    strategy.on_data(
+        PolySignalMarketMetaData(
+            market_id="market1",
+            market_slug="btc-updown-5m-1784376000",
+            condition_id="0xcondition1",
+            asset="BTC",
+            timeframe="5m",
+            start_ts_ns=int(datetime(2026, 7, 18, 12, tzinfo=UTC).timestamp() * 1e9),
+            end_ts_ns=int(datetime(2026, 7, 18, 12, 5, tzinfo=UTC).timestamp() * 1e9),
+            up_token_id="uptoken",
+            down_token_id="downtoken",
+            up_outcome="Up",
+            down_outcome="Down",
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+    strategy.on_data(
+        PolySignalMarketUniverseData(
+            epoch=1,
+            active_condition_ids=("0xcondition1",),
+            entered_condition_ids=("0xcondition1",),
+            condition_to_up_token={"0xcondition1": "uptoken"},
+            condition_to_down_token={"0xcondition1": "downtoken"},
+            condition_to_asset={"0xcondition1": "BTC"},
+            condition_to_timeframe={"0xcondition1": "5m"},
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+
+    assert registry.by_condition("0xcondition1") is not None
+    assert strategy._active_condition_ids == {  # pyright: ignore[reportUnknownMemberType]
+        "0xcondition1"
+    }
+    expected = [str(instrument.id) for instrument in instruments]
+    assert strategy.book_subscriptions == expected
+    assert strategy.trade_subscriptions == expected
+    assert strategy.quote_subscriptions == expected
+
+    for instrument in instruments:
+        strategy.on_instrument(instrument)
+
+    assert strategy.book_subscriptions == expected
+    assert strategy.trade_subscriptions == expected
+    assert strategy.quote_subscriptions == expected
+
+
+def test_native_strategy_ignores_expired_provider_instrument_pair(
+    monkeypatch: Any,  # pyright: ignore[reportExplicitAny, reportAny]
+) -> None:
+    from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeCache:
+        def __init__(self) -> None:
+            self.instruments: dict[str, object] = {}
+
+        def instrument(self, instrument_id: object) -> object | None:
+            return self.instruments.get(str(instrument_id))
+
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
+        fake_clock: _NoopClock
+        now: datetime
+        _cache_override: FakeCache
+
+        @property
+        def clock(self) -> _NoopClock:
+            return self.fake_clock
+
+        def __init__(  # pyright: ignore[reportInconsistentConstructor]
+            self,
+            **kwargs: Any,  # pyright: ignore[reportExplicitAny, reportAny]
+        ) -> None:
+            super().__init__(**kwargs)  # pyright: ignore[reportAny]
+            self.fake_clock = _NoopClock()
+            self.now = datetime(2026, 7, 18, 12, 5, tzinfo=UTC)
+            self._cache_override = FakeCache()
+            self.subscriptions: list[str] = []
+
+        @override
+        def _framework_now(self) -> datetime:
+            return self.now
+
+        @override
+        def subscribe_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.subscriptions.append(str(instrument_id))
+
+        @override
+        def subscribe_quotes(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.subscriptions.append(str(instrument_id))
+
+        @override
+        def subscribe_trades(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.subscriptions.append(str(instrument_id))
+
+    monkeypatch.setattr(  # pyright: ignore[reportAny]
+        FakeNativeStrategy,
+        "trader_id",
+        property(lambda _self: "TEST-TRADER"),  # pyright: ignore[reportAny]
+    )
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=(),
+        strategy_name="ptb_diff",
+        registry=MarketCatalog(
+            instrument_id_resolver=lambda condition_id, token_id: (
+                f"{condition_id}-{token_id}.POLYMARKET"
+            )
+        ),
+    )
+    instruments = (
+        polymarket_binary_instrument("uptoken", "Up"),
+        polymarket_binary_instrument("downtoken", "Down"),
+    )
+
+    for instrument in instruments:
+        instrument_id = getattr(instrument, "id")  # pyright: ignore[reportAny]
+        strategy._cache_override.instruments[str(instrument_id)] = instrument  # pyright: ignore[reportPrivateUsage, reportAny]
+        strategy.on_instrument(instrument)
+
+    registry = cast(MarketCatalog, strategy.registry)
+    assert registry.by_condition("0xcondition1") is None
+    assert strategy._active_condition_ids == set()  # pyright: ignore[reportUnknownMemberType]
+    assert strategy.subscriptions == []
+
+
+def test_native_strategy_retires_expired_preloaded_pair_before_first_leg(
+    monkeypatch: Any,  # pyright: ignore[reportExplicitAny, reportAny]
+) -> None:
+    from polysignal_lab.nautilus_runtime.market_catalog import (
+        InstrumentTokenMeta,
+        MarketCatalog,
+        MarketPairMeta,
+    )
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeCache:
+        def __init__(self) -> None:
+            self.instruments: dict[str, object] = {}
+
+        def instrument(self, instrument_id: object) -> object | None:
+            return self.instruments.get(str(instrument_id))
+
+    class FakeClock(_NoopClock):
+        @override
+        def timestamp_ns(self) -> int:
+            return int(datetime(2026, 7, 18, 12, 5, tzinfo=UTC).timestamp() * 1e9)
+
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
+        fake_clock: FakeClock
+        _cache_override: FakeCache
+
+        @property
+        def clock(self) -> FakeClock:
+            return self.fake_clock
+
+        def __init__(  # pyright: ignore[reportInconsistentConstructor]
+            self,
+            **kwargs: Any,  # pyright: ignore[reportExplicitAny, reportAny]
+        ) -> None:
+            super().__init__(**kwargs)  # pyright: ignore[reportAny]
+            self.fake_clock = FakeClock()
+            self._cache_override = FakeCache()
+            self.subscriptions: list[str] = []
+            self.instrument_requests: list[str] = []
+
+        @override
+        def _framework_now(self) -> datetime:
+            return datetime(2026, 7, 18, 12, 5, tzinfo=UTC)
+
+        def request_instrument(self, instrument_id: object) -> None:
+            self.instrument_requests.append(str(instrument_id))
+
+        def subscribe_instruments(self, venue: object, *args: object, **kwargs: object) -> None:
+            _ = venue, args, kwargs
+
+        def request_instruments(self, venue: object, *args: object, **kwargs: object) -> None:
+            _ = venue, args, kwargs
+
+        @override
+        def subscribe_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.subscriptions.append(str(instrument_id))
+
+        @override
+        def subscribe_quotes(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.subscriptions.append(str(instrument_id))
+
+        @override
+        def subscribe_trades(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
+            self.subscriptions.append(str(instrument_id))
+
+    monkeypatch.setattr(  # pyright: ignore[reportAny]
+        FakeNativeStrategy,
+        "trader_id",
+        property(lambda _self: "TEST-TRADER"),  # pyright: ignore[reportAny]
+    )
+    registry = MarketCatalog(
+        instrument_id_resolver=lambda condition_id, token_id: (
+            f"{condition_id}-{token_id}.POLYMARKET"
+        )
+    )
+    registry.register(
+        MarketPairMeta(
+            market_id="market-1",
+            market_slug="btc-updown-5m-expired",
+            condition_id="0xcondition1",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=datetime(2026, 7, 18, 12, tzinfo=UTC),
+            end_ts=datetime(2026, 7, 18, 12, 5, tzinfo=UTC),
+            up=InstrumentTokenMeta("uptoken", Side.UP),
+            down=InstrumentTokenMeta("downtoken", Side.DOWN),
+        )
+    )
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("0xcondition1",),
+        strategy_name="ptb_diff",
+        registry=registry,
+    )
+
+    strategy.on_start()
+    first_leg = polymarket_binary_instrument("uptoken", "Up")
+    strategy._cache_override.instruments[str(getattr(first_leg, "id"))] = first_leg  # pyright: ignore[reportPrivateUsage, reportAny]
+    strategy.on_instrument(first_leg)
+
+    assert strategy._active_condition_ids == set()  # pyright: ignore[reportUnknownMemberType]
+    assert strategy.subscriptions == []
+    assert strategy.instrument_requests == []
+
+
 def test_native_strategy_subscribes_only_after_instrument_in_cache() -> None:
     """provider → Cache / on_instrument → subscribe (never request then immediate wire)."""
     from types import SimpleNamespace
@@ -2463,26 +2980,58 @@ def test_native_strategy_subscribes_only_after_instrument_in_cache() -> None:
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self._cache_override = FakeCache()
-            self.instrument_requests: list[str] = []
-            self.book_subscriptions: list[str] = []
-            self.trade_subscriptions: list[str] = []
-            self.quote_subscriptions: list[str] = []
+            self.instrument_requests: list[tuple[str, str | None]] = []
+            self.book_subscriptions: list[tuple[str, str | None]] = []
+            self.trade_subscriptions: list[tuple[str, str | None]] = []
+            self.quote_subscriptions: list[tuple[str, str | None]] = []
 
-        def request_instrument(self, instrument_id, *args, **kwargs):
-            _ = args, kwargs
-            self.instrument_requests.append(str(instrument_id))
+        def request_instrument(
+            self,
+            instrument_id: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            _ = args
+            client_id = kwargs.get("client_id")
+            self.instrument_requests.append(
+                (str(instrument_id), None if client_id is None else str(client_id))
+            )
 
-        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
-            _ = args, kwargs
-            self.book_subscriptions.append(str(instrument_id))
+        def subscribe_book_deltas(
+            self,
+            instrument_id: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            _ = args
+            client_id = kwargs.get("client_id")
+            self.book_subscriptions.append(
+                (str(instrument_id), None if client_id is None else str(client_id))
+            )
 
-        def subscribe_quotes(self, instrument_id, *args, **kwargs):
-            _ = args, kwargs
-            self.quote_subscriptions.append(str(instrument_id))
+        def subscribe_quotes(
+            self,
+            instrument_id: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            _ = args
+            client_id = kwargs.get("client_id")
+            self.quote_subscriptions.append(
+                (str(instrument_id), None if client_id is None else str(client_id))
+            )
 
-        def subscribe_trades(self, instrument_id, *args, **kwargs):
-            _ = args, kwargs
-            self.trade_subscriptions.append(str(instrument_id))
+        def subscribe_trades(
+            self,
+            instrument_id: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            _ = args
+            client_id = kwargs.get("client_id")
+            self.trade_subscriptions.append(
+                (str(instrument_id), None if client_id is None else str(client_id))
+            )
 
     registry = _test_market_catalog()
     registry.register(
@@ -2521,8 +3070,8 @@ def test_native_strategy_subscribes_only_after_instrument_in_cache() -> None:
 
     strategy.on_data(universe)
 
-    # Cache empty → request only, no market-data wire yet.
-    assert strategy.instrument_requests == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
+    # Cache empty → pending intent only; provider owns instrument loading.
+    assert strategy.instrument_requests == []
     assert strategy.book_subscriptions == []
     assert strategy.trade_subscriptions == []
     assert strategy.quote_subscriptions == []
@@ -2535,9 +3084,18 @@ def test_native_strategy_subscribes_only_after_instrument_in_cache() -> None:
         strategy._cache_override.loaded.add(iid)
         strategy.on_instrument(SimpleNamespace(id=iid))
 
-    assert strategy.book_subscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
-    assert strategy.trade_subscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
-    assert strategy.quote_subscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
+    assert strategy.book_subscriptions == [
+        ("up-a.POLYMARKET", "POLYMARKET-5M"),
+        ("down-a.POLYMARKET", "POLYMARKET-5M"),
+    ]
+    assert strategy.trade_subscriptions == [
+        ("up-a.POLYMARKET", "POLYMARKET-5M"),
+        ("down-a.POLYMARKET", "POLYMARKET-5M"),
+    ]
+    assert strategy.quote_subscriptions == [
+        ("up-a.POLYMARKET", "POLYMARKET-5M"),
+        ("down-a.POLYMARKET", "POLYMARKET-5M"),
+    ]
     assert strategy._subscription_state.pending_instrument_ids == set()
 
 
@@ -2658,7 +3216,7 @@ def test_native_strategy_exited_market_fill_follow_up_is_gated() -> None:
         condition_ids=("condition-a",),
         strategy_name="ptb_diff",
         fixed_stake_usdc=10.0,
-        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        instrument_id_resolver=lambda token_id: _TestInstrument(token_id),
         **_native_projections(),
     )
     strategy.on_data(
@@ -2889,10 +3447,22 @@ def test_native_strategy_exited_market_unsubscribes_without_book_type_kwarg() ->
         def subscribe_trades(self, instrument_id, *args, **kwargs):
             _ = instrument_id, args, kwargs
 
-        def unsubscribe_book_deltas(self, instrument_id):
+        def unsubscribe_book_deltas(
+            self,
+            instrument_id: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            _ = args, kwargs
             self.book_unsubscriptions.append(str(instrument_id))
 
-        def unsubscribe_trades(self, instrument_id):
+        def unsubscribe_trades(
+            self,
+            instrument_id: object,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            _ = args, kwargs
             self.trade_unsubscriptions.append(str(instrument_id))
 
     registry = _test_market_catalog()
@@ -3222,7 +3792,13 @@ def test_native_strategy_routes_spot_custom_data_to_matching_asset_conditions_on
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
 
-        def evaluate_condition(self, condition_id: str) -> None:
+        def evaluate_condition(
+            self,
+            condition_id: str,
+            *,
+            trading_state: object | None = None,
+        ) -> None:
+            _ = trading_state
             seen.append(condition_id)
 
     strategy = FakeNativeStrategy(
@@ -3407,7 +3983,13 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
             self._cache_override = fake_cache
             self.evaluated: list[str] = []
 
-        def evaluate_condition(self, condition_id: str) -> None:
+        def evaluate_condition(
+            self,
+            condition_id: str,
+            *,
+            trading_state: object | None = None,
+        ) -> None:
+            _ = trading_state
             self.evaluated.append(condition_id)
             super().evaluate_condition(condition_id)
 
@@ -3529,7 +4111,7 @@ def test_native_strategy_on_order_accepted_preserves_ephemeral() -> None:
         condition_ids=("condition-btc-5m",),
         strategy_name="one_cent_buy",
         fixed_stake_usdc=10.0,
-        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        instrument_id_resolver=lambda token_id: _TestInstrument(token_id),
         registry=registry,
         observability=observability,
     )
@@ -3550,6 +4132,9 @@ def test_native_strategy_on_order_accepted_preserves_ephemeral() -> None:
         ts_event=datetime.now(UTC),
     )
 
+    strategy._cache_override = SimpleNamespace(
+        order=lambda _client_order_id: SimpleNamespace(tags=submitted["tags"])
+    )
     strategy.on_order_accepted(accepted)
 
     assert observability.decisions == [("one_cent_buy", True)]
@@ -3635,6 +4220,20 @@ def test_native_strategy_attributes_inactive_registered_down_order_and_fill_from
                 recorded.append(metrics)
 
     strategy.observability = RecordingObs()
+
+    class Cache:
+        def order(self, client_order_id: object) -> object:
+            _ = client_order_id
+            return SimpleNamespace(
+                tags=(
+                    "strategy=ptb_diff",
+                    "market_id=btc-exited-5m",
+                    "condition_id=condition-btc-exited-5m",
+                    "token_id=down-exited-token",
+                )
+            )
+
+    strategy._cache_override = Cache()
     strategy.on_order_submitted(event)
     strategy.on_order_filled(event)
 
@@ -3742,7 +4341,7 @@ def test_native_strategy_surfaces_approved_signal_to_observability() -> None:
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         fixed_stake_usdc=10.0,
-        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        instrument_id_resolver=lambda token_id: _TestInstrument(token_id),
         observability=observability,
         **_native_projections(),
     )
@@ -3796,7 +4395,7 @@ def test_native_strategy_does_not_swallow_durable_signal_persistence_failure() -
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         fixed_stake_usdc=10.0,
-        instrument_id_resolver=lambda token_id: f"{token_id}.POLYMARKET",
+        instrument_id_resolver=lambda token_id: _TestInstrument(token_id),
         observability=FailingSignalObservability(),
         **_native_projections(),
     )
@@ -3934,6 +4533,9 @@ def test_native_strategy_fill_and_position_callbacks_bridge_to_observability() -
         is_closed=True,
     )
 
+    strategy._cache_override = SimpleNamespace(
+        order=lambda _client_order_id: SimpleNamespace(tags=fill.tags)
+    )
     strategy.on_order_filled(fill)
     strategy.on_position_opened(opened)
     strategy.on_position_closed(closed)
@@ -3978,22 +4580,24 @@ def test_native_strategy_notifies_core_before_fill_handler() -> None:
         **_native_projections(),
     )
 
-    strategy.on_order_filled(
-        SimpleNamespace(
-            order_id="order-1",
-            client_order_id="order-1",
-            market_id="btc-5m",
-            condition_id="condition-btc-5m",
-            token_id="up-token",
-            side=Side.UP,
-            last_qty=10.0,
-            last_px=0.5,
-            trade_id="trade-1",
-            liquidity_side="TAKER",
-            tags=["strategy=vwap_momentum", "condition_id=condition-btc-5m"],
-            ts_event=datetime.now(UTC),
-        )
+    event = SimpleNamespace(
+        order_id="order-1",
+        client_order_id="order-1",
+        market_id="btc-5m",
+        condition_id="condition-btc-5m",
+        token_id="up-token",
+        side=Side.UP,
+        last_qty=10.0,
+        last_px=0.5,
+        trade_id="trade-1",
+        liquidity_side="TAKER",
+        tags=["strategy=vwap_momentum", "condition_id=condition-btc-5m"],
+        ts_event=datetime.now(UTC),
     )
+    strategy._cache_override = SimpleNamespace(
+        order=lambda _client_order_id: SimpleNamespace(tags=event.tags)
+    )
+    strategy.on_order_filled(event)
 
     # on_notify_fill still fires; on_order_filled core callback removed.
     assert core.events == [
@@ -4018,13 +4622,21 @@ def test_native_strategy_l1_subscribes_data_names_without_snapshot_request() -> 
             self.subscribed_deltas: list[str] = []
             self.snapshot_requests: list[str] = []
 
-        def subscribe_quotes(self, instrument_id):
+        def subscribe_quotes(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
             self.subscribed_quotes.append(str(instrument_id))
 
-        def subscribe_trades(self, instrument_id):
+        def subscribe_trades(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
             self.subscribed_trades.append(str(instrument_id))
 
-        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
             _ = args, kwargs
             self.subscribed_deltas.append(str(instrument_id))
 
@@ -4062,11 +4674,16 @@ def test_native_strategy_l1_subscribes_all_data_names() -> None:
             self.subscribed_deltas: list[str] = []
             self.subscribed_trades: list[str] = []
 
-        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
             _ = args, kwargs
             self.subscribed_deltas.append(str(instrument_id))
 
-        def subscribe_trades(self, instrument_id):
+        def subscribe_trades(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
             self.subscribed_trades.append(str(instrument_id))
 
     strategy = FakeNativeStrategy(
@@ -4099,13 +4716,21 @@ def test_native_strategy_l2_subscribes_all_data_names() -> None:
             self.subscribed_trades: list[str] = []
             self.subscribed_deltas: list[str] = []
 
-        def subscribe_quotes(self, instrument_id):
+        def subscribe_quotes(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
             self.subscribed_quotes.append(str(instrument_id))
 
-        def subscribe_trades(self, instrument_id):
+        def subscribe_trades(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            _ = args, kwargs
             self.subscribed_trades.append(str(instrument_id))
 
-        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
+        def subscribe_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
             _ = args, kwargs
             self.subscribed_deltas.append(str(instrument_id))
 

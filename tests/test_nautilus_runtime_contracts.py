@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from nautilus_optional import require_nautilus
@@ -23,7 +24,7 @@ require_nautilus()
 from nautilus_trader.core import nautilus_pyo3 as pyo3
 
 from factories import sample_market_view
-from nautilus_contract_probe import ContractProbeStrategy
+from nautilus_contract_probe import ContractProbeConfig, ContractProbeStrategy
 from nautilus_runtime_contracts_harness import (
     build_backtest_engine,
     order_statuses,
@@ -168,6 +169,65 @@ def test_backtest_settlement_close_via_strategy_api() -> None:
     assert any(event[0] == "pos_closed" for event in strategy.events)
     assert engine.cache.positions_open_count() == 0
     assert engine.portfolio.is_completely_flat() is True
+    safe_dispose(engine)
+
+
+def test_backtest_reduce_only_exit_cannot_reverse_position() -> None:
+    engine, raw_inst = build_backtest_engine()
+    inst = cast(Any, raw_inst)
+    engine = cast(Any, engine)
+    engine.add_data(synthetic_quotes(inst.id, [100.0, 100.5, 101.0, 101.5, 102.0]))
+
+    class ReduceOnlyProbe(ContractProbeStrategy):
+        def __init__(self) -> None:
+            super().__init__(
+                ContractProbeConfig(
+                    instrument_id=str(inst.id),
+                    strategy_id="ReduceOnly-Probe",
+                    order_id_tag="reduceonly",
+                    auto_buy=False,
+                )
+            )
+            self._entered = False
+            self._exit_submitted = False
+            self.exit_order: object | None = None
+
+        def on_start(self) -> None:
+            self.subscribe_quotes(inst.id)
+
+        def on_quote(self, tick: object) -> None:
+            _ = tick
+            if self._entered:
+                return
+            self._entered = True
+            self.submit_order(
+                self.order_factory.market(
+                    instrument_id=inst.id,
+                    order_side=pyo3.OrderSide.BUY,
+                    quantity=pyo3.Quantity.from_str("0.001000"),
+                )
+            )
+
+        def on_order_filled(self, event: object) -> None:
+            _ = event
+            if self._exit_submitted:
+                return
+            self._exit_submitted = True
+            self.exit_order = self.order_factory.market(
+                instrument_id=inst.id,
+                order_side=pyo3.OrderSide.SELL,
+                quantity=pyo3.Quantity.from_str("0.002000"),
+                reduce_only=True,
+            )
+            self.submit_order(self.exit_order)
+
+    strategy = ReduceOnlyProbe()
+    engine.add_strategy(strategy)
+    engine.run()
+
+    assert strategy.exit_order is not None
+    assert bool(getattr(strategy.exit_order, "is_reduce_only", False)) is True
+    assert all(float(position.signed_qty) >= 0 for position in engine.cache.positions_open())
     safe_dispose(engine)
 
 

@@ -11,7 +11,6 @@ Pos: Application code
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Final
 
 from pydantic import BaseModel, Field, JsonValue, computed_field
 

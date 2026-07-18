@@ -22,7 +22,6 @@ from pydantic import JsonValue
 
 from polysignal_lab.domain.enums import MarketStatus, Side
 from polysignal_lab.domain.market import Market
-import polysignal_lab.domain.market as market_module
 
 
 def _gamma_payload(outcome: JsonValue = "Up") -> dict[str, JsonValue]:
@@ -44,6 +43,24 @@ def _gamma_payload(outcome: JsonValue = "Up") -> dict[str, JsonValue]:
         "clobTokenIds": '["111", "222"]',
         "winning_outcome": outcome,
     }
+
+
+def test_gamma_closed_flag_overrides_stale_active_status() -> None:
+    payload = _gamma_payload()
+    payload.update(
+        {
+            "status": "active",
+            "active": True,
+            "closed": True,
+            "resolved": False,
+            "winning_outcome": None,
+        }
+    )
+
+    market = Market.from_gamma(payload, asset="btc", timeframe="5m")
+
+    assert market.status == MarketStatus.CLOSED
+    assert market.is_active is False
 
 
 def test_gamma_resolved_payload_sets_resolved_outcome() -> None:

@@ -4,6 +4,7 @@
 - Application code
 
 **Files**:
+- `sg/` - ast-grep rules for Nautilus dual-design purge guards
 - `validate_commit_msg.py` - Exports validate_message and 2 more
 - `safety_scan.py` - Application code
 - `quick_test.py` - Exports test_gamma_api and 1 more

@@ -10,12 +10,16 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Protocol
+from collections.abc import Iterable, Mapping
+import math
+from typing import Protocol, cast
+
+from nautilus_trader.core.nautilus_pyo3 import PositionId
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.projections import _tags
 from polysignal_lab.nautilus_runtime.strategy.event_projection import (
     fill_side,
     fill_ts_event,
@@ -28,10 +32,12 @@ from polysignal_lab.utils import utc_iso
 
 class _OrderEventStrategy(Protocol):
     core: object
+    cache: object | None
     registry: MarketCatalog | None
     strategy_name: str
     observability: object | None
     _active_condition_ids: set[str]
+    _settled_position_keys: set[tuple[str, str]]
 
     def _note_runtime_progress(self, phase: str) -> None: ...
     def _record_nautilus_order(
@@ -57,6 +63,39 @@ def should_notify_fill(strategy: _OrderEventStrategy, metrics: Mapping[str, obje
     )
 
 
+def _order_from_cache(
+    strategy: _OrderEventStrategy,
+    event: object,
+) -> object | None:
+    client_order_id = getattr(event, "client_order_id", None)
+    cache = cast(object | None, getattr(strategy, "cache", None))
+    if client_order_id is None or cache is None:
+        return None
+    getter = getattr(cache, "order", None)
+    if not callable(getter):
+        return None
+    try:
+        return getter(client_order_id)
+    except (LookupError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def _has_usable_tags(source: object) -> bool:
+    tags = _tags(getattr(source, "tags", None))
+    return bool(tags.get("strategy")) and bool(tags.get("condition_id"))
+
+
+def _association_order(
+    strategy: _OrderEventStrategy,
+    event: object,
+) -> tuple[object | None, bool]:
+    order = _order_from_cache(strategy, event)
+    resolved = order is not None and _has_usable_tags(order)
+    if not resolved:
+        strategy._note_runtime_progress("order_event_unresolved")
+    return order, resolved
+
+
 def handle_order_lifecycle_event(
     strategy: _OrderEventStrategy,
     method_name: str,
@@ -66,11 +105,15 @@ def handle_order_lifecycle_event(
 ) -> None:
     _ = method_name, forget_metrics  # no core on_order_* / metrics tracker
     strategy._note_runtime_progress("order_event")
+    order, resolved = _association_order(strategy, event)
+    if not resolved:
+        return
     try:
         metrics = project_order_metrics(
             event,
             registry=strategy.registry,
             strategy_name=strategy.strategy_name,
+            order=order,
         )
     except ValueError:
         strategy._note_runtime_progress("order_event_quarantined")
@@ -80,11 +123,16 @@ def handle_order_lifecycle_event(
 
 def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
     strategy._note_runtime_progress("order_event")
+    order, resolved = _association_order(strategy, event)
+    if not resolved:
+        strategy._note_runtime_progress("fill_event_quarantined")
+        return
     try:
         metrics = project_fill_metrics(
             event,
             registry=strategy.registry,
             strategy_name=strategy.strategy_name,
+            order=order,
         )
     except ValueError:
         strategy._note_runtime_progress("fill_event_quarantined")
@@ -97,15 +145,96 @@ def handle_order_filled(strategy: _OrderEventStrategy, event: object) -> None:
             _ = notify(str(metrics.get("market_id") or ""), side, shares)
     strategy._record_nautilus_fill(event, metrics)
     if bool(metrics.get("reduce_only")):
-        _record_early_exit_result(strategy, metrics)
+        _record_completed_early_exit(strategy, metrics)
         return
     # Production cores do not implement on_order_filled; no follow-up decisions.
+
+
+def _record_completed_early_exit(
+    strategy: _OrderEventStrategy,
+    metrics: Mapping[str, object],
+) -> None:
+    position_id = str(metrics.get("position_id") or "")
+    if not position_id:
+        strategy._note_runtime_progress("early_exit_result_quarantined")
+        return
+    try:
+        cache_position_id = PositionId.from_str(position_id)
+    except ValueError:
+        strategy._note_runtime_progress("early_exit_result_quarantined")
+        return
+    settlement_key = (
+        strategy.strategy_name,
+        position_id,
+    )
+    if settlement_key in strategy._settled_position_keys:
+        strategy._note_runtime_progress("early_exit_result_duplicate")
+        return
+    position = _cache_position(strategy, cache_position_id)
+    if position is None or not bool(getattr(position, "is_closed", False)):
+        strategy._note_runtime_progress("early_exit_result_pending")
+        return
+    exit_orders = _exit_orders_for_position(strategy, cache_position_id)
+    if exit_orders is None:
+        strategy._note_runtime_progress("early_exit_result_quarantined")
+        return
+    priced_fills = _priced_exit_fills(exit_orders)
+    fill_quantity = sum(quantity for quantity, _ in priced_fills)
+    fill_price = _exit_fill_price(priced_fills, position)
+    payload = dict(metrics)
+    if fill_quantity > 0:
+        payload["shares"] = fill_quantity
+    if fill_price is not None:
+        payload["fill_price"] = fill_price
+    if _record_early_exit_result(strategy, payload):
+        strategy._settled_position_keys.add(settlement_key)
+
+
+def _priced_exit_fills(
+    exit_orders: Iterable[object],
+) -> tuple[tuple[float, float | None], ...]:
+    return tuple(
+        (quantity, _positive_number(getattr(item, "avg_px", None)))
+        for item in exit_orders
+        if (quantity := _positive_number(getattr(item, "filled_qty", None))) is not None
+    )
+
+
+def _exit_fill_price(
+    priced_fills: tuple[tuple[float, float | None], ...],
+    position: object,
+) -> float | None:
+    if priced_fills and all(price is not None for _, price in priced_fills):
+        quantity = sum(fill_quantity for fill_quantity, _ in priced_fills)
+        notional = sum(
+            fill_quantity * price
+            for fill_quantity, price in priced_fills
+            if price is not None
+        )
+        return notional / quantity
+    return _positive_number(getattr(position, "avg_px_close", None))
+
+
+def _positive_number(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    candidate = value
+    for name in ("as_double", "as_decimal"):
+        converter = getattr(value, name, None)
+        if callable(converter):
+            candidate = converter()
+            break
+    try:
+        number = float(str(candidate))
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
 
 
 def _record_early_exit_result(
     strategy: _OrderEventStrategy,
     metrics: Mapping[str, object],
-) -> None:
+) -> bool:
     """Persist Reporting Truth for NativeExitPolicy reduce-only closes."""
     payload = dict(metrics)
     side = fill_side(payload)
@@ -130,25 +259,68 @@ def _record_early_exit_result(
         closed_at=closed_at or utc_iso(),
     )
     if result is None:
-        return
+        strategy._note_runtime_progress("early_exit_result_quarantined")
+        return False
     observability = strategy.observability
     if observability is None:
-        return
+        return False
     recorder = getattr(observability, "record_event", None)
     if not callable(recorder):
-        return
+        return False
     try:
-        recorder("settlements", result)
+        created = recorder("settlements", result)
+        if created is False:
+            strategy._note_runtime_progress("early_exit_result_duplicate")
+            return True
         strategy._note_runtime_progress("early_exit_result")
     except Exception:
         strategy._note_runtime_progress("early_exit_result_failed")
-        return
+        return False
     notify = getattr(observability, "notify_report_result", None)
     if callable(notify):
         try:
             notify(result)
         except Exception:
             strategy._note_runtime_progress("early_exit_result_publish_failed")
+    return True
+
+
+def _exit_orders_for_position(
+    strategy: _OrderEventStrategy,
+    position_id: object,
+) -> tuple[object, ...] | None:
+    cache = getattr(strategy, "cache", None)
+    getter = getattr(cache, "orders_for_position", None)
+    if not callable(getter):
+        return None
+    try:
+        orders = getter(position_id)
+    except (LookupError, TypeError, ValueError, AttributeError):
+        return None
+    if not isinstance(orders, Iterable):
+        return None
+    return tuple(
+        order
+        for order in orders
+        if str(_tags(getattr(order, "tags", None)).get("reduce_only", "")).lower()
+        in {"1", "true", "yes"}
+    )
+
+
+def _cache_position(
+    strategy: _OrderEventStrategy,
+    position_id: object,
+) -> object | None:
+    cache = getattr(strategy, "cache", None)
+    if cache is None:
+        return None
+    getter = getattr(cache, "position", None)
+    if not callable(getter):
+        return None
+    try:
+        return getter(position_id)
+    except (LookupError, TypeError, ValueError, AttributeError):
+        return None
 
 
 def _position_from_event(strategy: _OrderEventStrategy, event: object) -> object | None:
@@ -162,16 +334,7 @@ def _position_from_event(strategy: _OrderEventStrategy, event: object) -> object
         ):
             return event
         return None
-    cache = getattr(strategy, "cache", None)
-    if cache is None:
-        return None
-    getter = getattr(cache, "position", None)
-    if not callable(getter):
-        return None
-    try:
-        return getter(position_id)
-    except (LookupError, TypeError, ValueError, AttributeError):
-        return None
+    return _cache_position(strategy, position_id)
 
 
 def handle_position_event(strategy: _OrderEventStrategy, event: object) -> None:

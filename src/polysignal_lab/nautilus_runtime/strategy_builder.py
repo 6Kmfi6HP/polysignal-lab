@@ -28,7 +28,6 @@ class AlphaCoreRegistry:
         if cls._initialized:
             return
         from polysignal_lab.alpha.binary_momentum_core import BinaryMomentumAlphaCore
-        from polysignal_lab.alpha.cross_market_core import CrossMarketAlphaCore
         from polysignal_lab.alpha.dump_hedge_core import DumpHedgeAlphaCore
         from polysignal_lab.alpha.fibonacci_core import FibonacciAlphaCore
         from polysignal_lab.alpha.late_consensus_core import LateConsensusAlphaCore
@@ -59,7 +58,6 @@ class AlphaCoreRegistry:
                 "mid_price_sizing": MidPriceSizingAlphaCore,
                 "pre_order_market": PreOrderMarketAlphaCore,
                 "low_side_dual_reversion": LowSideDualReversionAlphaCore,
-                "cross_market_bot": CrossMarketAlphaCore,
             }
         )
         cls._initialized = True

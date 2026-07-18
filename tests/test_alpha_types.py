@@ -22,12 +22,13 @@ import pytest
 
 from polysignal_lab.alpha.types import (
     AlphaDecision,
+    CachedOrderView,
     FreshnessView,
-    MarketGroupView,
     MarketView,
     OrderIntentSpec,
     SideBookView,
     SpotView,
+    TradingStateView,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan
@@ -99,20 +100,41 @@ def test_alpha_decision_carries_order_intent_spec() -> None:
     assert decision.reason_codes == ("PTB_DIFF_THRESHOLD_OK",)
 
 
-def test_market_group_view_carries_relation_members() -> None:
-    now = datetime(2026, 1, 1, tzinfo=UTC)
-    view = _view()
-    group = MarketGroupView(
-        group_id="basket-1",
-        relation_id="all_markets",
-        created_at=now,
-        views_by_condition_id={view.condition_id: view},
-        max_source_skew_ms=25,
-        metrics={"relation_count": 1},
-    )
+def test_latest_accepted_entry_is_stable_for_equal_timestamps() -> None:
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
 
-    assert group.views_by_condition_id[view.condition_id] is view
-    assert group.max_source_skew_ms == 25
+    def order(client_order_id: str, side: Side) -> CachedOrderView:
+        return CachedOrderView(
+            client_order_id=client_order_id,
+            instrument_id=f"{side.value.lower()}-token.POLYMARKET",
+            strategy="late_consensus",
+            market_id="btc-5m",
+            condition_id="condition-btc-5m",
+            side=side,
+            pair_id=None,
+            position_id=None,
+            status="ACCEPTED",
+            price=0.5,
+            filled_quantity=0.0,
+            average_fill_price=None,
+            ts_event=ts,
+            hedge_leg=False,
+            reduce_only=False,
+            is_open=True,
+            is_inflight=False,
+            take_profit_price=None,
+            stop_loss_price=None,
+        )
+
+    up = order("a", Side.UP)
+    down = order("b", Side.DOWN)
+
+    assert TradingStateView((up, down)).latest_accepted_entry(
+        "late_consensus", "btc-5m"
+    ) == down
+    assert TradingStateView((down, up)).latest_accepted_entry(
+        "late_consensus", "btc-5m"
+    ) == down
 
 
 def test_nautilus_order_spec_carries_quantity_and_tags() -> None:
@@ -126,6 +148,7 @@ def test_nautilus_order_spec_carries_quantity_and_tags() -> None:
         pair_id="pair-1",
         reduce_only=False,
         hedge_leg=True,
+        max_entry_price=0.81,
         tags={"strategy": "vwap_momentum"},
     )
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 import math
 
 from polysignal_lab.alpha.types import (
@@ -23,9 +23,6 @@ from polysignal_lab.alpha.types import (
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
-from polysignal_lab.nautilus_runtime.projections import project_position
-from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
-from polysignal_lab.utils import parse_dt
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,20 +91,17 @@ class NativeExitPolicy:
         registry: MarketCatalog,
         view: MarketView,
         now: datetime,
+        trading: TradingStateView | None = None,
     ) -> tuple[AlphaDecision, ...]:
-        if cache is None or strategy_id is None:
+        if cache is None or strategy_id is None or trading is None:
             return ()
         pair = registry.by_condition(view.condition_id)
         if pair is None:
             return ()
-        trading = trading_state_from_cache(
-            cache,
-            strategy_id=strategy_id,
-            registry=registry,
-            condition_id=view.condition_id,
-        )
         decisions: list[AlphaDecision] = []
-        for position in _open_positions(cache, strategy_id):
+        for position in trading.positions:
+            if position.condition_id != view.condition_id:
+                continue
             decision = self._decision_for_position(
                 position,
                 registry=registry,
@@ -130,13 +124,10 @@ class NativeExitPolicy:
         now: datetime,
         trading: TradingStateView,
     ) -> AlphaDecision | None:
-        projection = project_position(position)
-        if bool(projection.get("is_closed")):
-            return None
-        position_id = str(projection.get("position_id") or "")
-        instrument_id = str(projection.get("instrument_id") or "")
-        quantity = _finite_float(projection.get("quantity"))
-        entry_price = _finite_float(projection.get("avg_entry_price"))
+        position_id = str(getattr(position, "position_id", "") or "")
+        instrument_id = str(getattr(position, "instrument_id", "") or "")
+        quantity = _finite_float(getattr(position, "quantity", None))
+        entry_price = _finite_float(getattr(position, "avg_entry_price", None))
         if not position_id or not instrument_id or quantity is None or quantity <= 0:
             return None
         identity = _position_identity(registry, pair, instrument_id)
@@ -146,7 +137,7 @@ class NativeExitPolicy:
         bid = view.book_for(side).best_bid
         if bid is None or not math.isfinite(float(bid)) or float(bid) <= 0:
             return None
-        opened_at = _opened_at(projection)
+        opened_at = getattr(position, "opened_at", None)
         thresholds_for_position = trading.exit_thresholds(position_id)
         stamped = PositionExitThresholds(
             take_profit_price=thresholds_for_position[0],
@@ -173,7 +164,7 @@ class NativeExitPolicy:
             quantity=quantity,
             entry_price=entry_price,
             opened_at=opened_at,
-            stake_usdc=_finite_float(projection.get("stake_usdc")),
+            stake_usdc=(quantity * entry_price if entry_price is not None else None),
             thresholds=stamped,
         )
 
@@ -293,24 +284,9 @@ def _build_exit_decision(
         order_intent=OrderIntentSpec(
             intent=OrderIntent.TAKER_FAK,
             reduce_only=True,
+            quantity=quantity,
         ),
     )
-
-
-def _open_positions(cache: object, strategy_id: object) -> tuple[object, ...]:
-    method = getattr(cache, "positions_open", None)
-    if not callable(method):
-        return ()
-    try:
-        raw = method(strategy_id=strategy_id)
-    except TypeError:
-        raw = method()
-    if isinstance(raw, (str, bytes, bytearray)):
-        return ()
-    try:
-        return tuple(raw)
-    except TypeError:
-        return ()
 
 
 def _position_identity(
@@ -324,22 +300,10 @@ def _position_identity(
         token_id = str(getattr(token_meta, "token_id", ""))
         if not token_id:
             continue
-        if registry.instrument_id_for_token(token_id) == instrument_id:
+        if str(registry.instrument_id_for_token(token_id)) == instrument_id:
             side = getattr(token_meta, "side", None)
             if isinstance(side, Side):
                 return token_id, side
-    return None
-
-
-def _opened_at(projection: dict[str, object]) -> datetime | None:
-    raw = projection.get("opened_at") or projection.get("ts")
-    if isinstance(raw, datetime):
-        return raw.astimezone(UTC) if raw.tzinfo is not None else raw.replace(tzinfo=UTC)
-    if isinstance(raw, str):
-        try:
-            return parse_dt(raw)
-        except ValueError:
-            return None
     return None
 
 

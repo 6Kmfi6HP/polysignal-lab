@@ -14,13 +14,13 @@ from datetime import datetime
 from typing import Protocol
 
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.nautilus_runtime.custom_data_state import event_datetime
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.market_view_assembler import BookReceiptObserver
 from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _condition_id_from_catalog_instrument,
     _identifier_text,
     _token_id_from_catalog_instrument,
-    event_datetime,
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     observe_market_book_side,

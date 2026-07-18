@@ -30,13 +30,13 @@ def _arrow_record(data: object) -> dict[str, object]:
     values = data.to_dict()
     schema = type(data)._schema
     record: dict[str, object] = {}
-    for field in schema:
-        value = values[field.name]
+    for schema_field in schema:
+        value = values[schema_field.name]
         if isinstance(value, Mapping):
             value = json.dumps(dict(value), sort_keys=True, separators=(",", ":"))
-        elif pa.types.is_list(field.type) and isinstance(value, tuple):
+        elif pa.types.is_list(schema_field.type) and isinstance(value, tuple):
             value = list(value)
-        record[field.name] = value
+        record[schema_field.name] = value
     return record
 
 

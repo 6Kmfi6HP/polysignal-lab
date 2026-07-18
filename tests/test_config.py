@@ -217,14 +217,17 @@ def test_production_config_uses_reviewed_strategy_subset() -> None:
 
 def test_lab_config_preserves_experimental_strategy_breadth() -> None:
     settings = Settings.from_yaml("config/signal_bot.lab.yaml")
-    names = set(_enabled_strategy_names(settings))
+    names = {
+        name
+        for name in settings.strategies.explicit_strategy_names()
+        if bool(getattr(settings.strategies, name).enabled)
+    }
 
     assert names == {
         "vwap_momentum",
         "late_consensus",
         "ptb_diff",
         "binary_momentum",
-        "cross_market_bot",
         "dump_hedge",
         "fibonacci_bot",
         "low_side_dual_reversion",

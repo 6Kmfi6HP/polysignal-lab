@@ -88,6 +88,53 @@ def test_early_exit_take_profit_builds_win_result() -> None:
     assert abs(result["pnl_usdc"] - 5.1) < 1e-9
     assert result["report_position_id"] == "position-1"
 
+    replay = report_result_from_early_exit(
+        {
+            "exit_reason": "TAKE_PROFIT",
+            "position_id": "position-1",
+            "entry_price": 0.40,
+            "position_quantity": 10.0,
+            "stake_usdc": 4.0,
+            "side": "UP",
+            "asset": "BTC",
+            "timeframe": "5m",
+            "market_id": "mkt-1",
+            "market_slug": "btc-updown-5m",
+        },
+        fill_price=0.91,
+        fill_shares=10.0,
+        strategy_name="ptb_diff",
+        closed_at="2026-07-06T12:02:00+00:00",
+    )
+    assert replay is not None
+    assert replay["report_result_id"] == result["report_result_id"]
+
+
+def test_early_exit_partial_fill_uses_actual_quantity_and_prorated_stake() -> None:
+    result = report_result_from_early_exit(
+        {
+            "exit_reason": "TAKE_PROFIT",
+            "position_id": "position-partial",
+            "entry_price": 0.40,
+            "position_quantity": 10.0,
+            "stake_usdc": 4.0,
+            "side": "UP",
+            "asset": "BTC",
+            "timeframe": "5m",
+            "market_id": "mkt-1",
+            "market_slug": "btc-updown-5m",
+        },
+        fill_price=0.90,
+        fill_shares=2.5,
+        strategy_name="ptb_diff",
+    )
+
+    assert result is not None
+    assert result["shares"] == 2.5
+    assert result["stake_usdc"] == 1.0
+    assert result["settlement_value"] == 2.25
+    assert result["pnl_usdc"] == 1.25
+
 
 def test_early_exit_stop_loss_builds_loss_result() -> None:
     result = report_result_from_early_exit(

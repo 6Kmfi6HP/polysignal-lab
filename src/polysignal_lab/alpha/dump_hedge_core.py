@@ -85,7 +85,11 @@ class DumpHedgeAlphaCore:
                             "move_threshold": self.config.move_threshold,
                             "shares": self.config.leg_shares,
                         },
-                        order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dump"),
+                        order_intent=OrderIntentSpec(
+                            OrderIntent.TAKER_FAK,
+                            pair_id=f"{view.market_id}:dump",
+                            quantity=self.config.leg_shares,
+                        ),
                     ),
                 )
                 if decision:

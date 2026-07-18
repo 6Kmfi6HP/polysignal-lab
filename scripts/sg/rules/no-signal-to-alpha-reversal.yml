@@ -1,0 +1,9 @@
+id: no-signal-to-alpha-reversal
+message: SignalCandidate is a publish projection and must not be converted back to AlphaDecision.
+severity: error
+language: python
+rule:
+  any:
+    - pattern: alpha_from_signal($SIGNAL)
+    - pattern: decision_from_signal($SIGNAL)
+    - pattern: alpha_decision_from_signal($SIGNAL)

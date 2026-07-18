@@ -208,16 +208,16 @@ def test_build_sandbox_live_node_uses_polymarket_data_and_sandbox_exec(
     settings.trading.starting_balance_usdc = 1234.0
     instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 
-    node = build_sandbox_live_node(settings, instrument_config=instrument_config)
+    node = build_sandbox_live_node(settings, instrument_configs={"POLYMARKET-5M": instrument_config})
 
     assert isinstance(node, FakeLiveNode)
     builder = node.builder
     assert builder.name == "PolySignal-Nautilus-001"
     assert builder.trader_id == "TraderId:PolySignal-Nautilus-001"
     assert builder.environment == "SANDBOX"
-    assert builder.data_clients[0][0] == POLYMARKET_CLIENT_ID
+    assert builder.data_clients[0][0] == "POLYMARKET-5M"
     assert builder.exec_clients[0][0] == SANDBOX_EXEC_CLIENT_ID
-    assert SANDBOX_EXEC_CLIENT_ID != POLYMARKET_CLIENT_ID
+    assert SANDBOX_EXEC_CLIENT_ID != builder.data_clients[0][0]
     assert getattr(builder.kwargs["exec_engine"], "reconciliation") is False
     assert builder.kwargs["load_state"] is True
     assert builder.kwargs["save_state"] is True
@@ -236,15 +236,15 @@ def test_build_sandbox_live_node_uses_official_rtds_via_polymarket_config(
     settings.runtime.nautilus.spot_data.source = "polymarket_rtds"
     instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 
-    node = build_sandbox_live_node(settings, instrument_config=instrument_config)
+    node = build_sandbox_live_node(settings, instrument_configs={"POLYMARKET-5M": instrument_config})
 
     builder = cast(FakeLiveNode, node).builder
-    assert [item[0] for item in builder.data_clients] == ["POLYMARKET"]
+    assert [item[0] for item in builder.data_clients] == ["POLYMARKET-5M"]
     market_config = builder.data_clients[0][2]
     assert getattr(market_config, "base_url_rtds") == settings.data.polymarket.rtds_ws_url
 
 
-def test_build_polymarket_data_client_config_uses_dynamic_loading_without_bulk_refresh(
+def test_build_polymarket_data_client_config_subscribes_to_future_markets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_live_node_fakes(monkeypatch)
@@ -258,7 +258,7 @@ def test_build_polymarket_data_client_config_uses_dynamic_loading_without_bulk_r
     assert getattr(polymarket, "auto_load_debounce_ms") == 100
     assert getattr(polymarket, "auto_load_max_retries") == 12
     assert getattr(polymarket, "subscribe_new_markets") is False
-    assert getattr(polymarket, "update_instruments_interval_mins") == 0
+    assert getattr(polymarket, "update_instruments_interval_mins") == 1
 
 
 def test_build_sandbox_live_node_bounds_cache_config(
@@ -266,10 +266,7 @@ def test_build_sandbox_live_node_bounds_cache_config(
 ) -> None:
     _patch_live_node_fakes(monkeypatch)
 
-    node = build_sandbox_live_node(
-        Settings(),
-        instrument_config=SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"})),
-    )
+    node = build_sandbox_live_node(Settings(), instrument_configs={"POLYMARKET-5M": SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))})
 
     builder = cast(FakeLiveNode, node).builder
     cache = builder.kwargs["cache"]
@@ -287,8 +284,9 @@ def test_build_sandbox_exec_client_config_uses_paper_venue(
     sandbox_config = build_sandbox_exec_client_config(settings)
 
     assert str(getattr(sandbox_config, "venue")).endswith(POLYMARKET_CLIENT_ID)
-    assert getattr(sandbox_config, "account_type") == "CASH"
-    assert getattr(sandbox_config, "oms_type") == "NETTING"
+    assert str(cast(object, getattr(sandbox_config, "account_type"))) == "CASH"
+    assert str(cast(object, getattr(sandbox_config, "oms_type"))) == "NETTING"
+    assert str(cast(object, getattr(sandbox_config, "book_type"))) == "L2_MBP"
     assert "4321.0" in str(getattr(sandbox_config, "starting_balances"))
     assert "USDC" in str(getattr(sandbox_config, "base_currency"))
 
@@ -326,7 +324,10 @@ def test_live_execution_node_fails_closed_without_safety_unlock() -> None:
     )
 
     with pytest.raises(RuntimeError, match="safety.allow_live_market_actions"):
-        build_live_execution_node(settings, instrument_config=SimpleNamespace())
+        _ = build_live_execution_node(
+            settings,
+            instrument_configs={"POLYMARKET-5M": SimpleNamespace()},
+        )
 
 
 
@@ -340,9 +341,11 @@ def test_live_execution_node_fails_closed_without_live_authorization(
     settings.safety.allow_live_market_actions = True
 
     with pytest.raises(RuntimeError, match="allow_live_polymarket_execution"):
-        build_live_execution_node(
+        _ = build_live_execution_node(
             settings,
-            instrument_config=SimpleNamespace(load_ids=frozenset()),
+            instrument_configs={
+                "POLYMARKET-5M": SimpleNamespace(load_ids=frozenset()),
+            },
         )
 
 
@@ -371,10 +374,7 @@ def test_live_execution_node_registers_official_factory_only_after_all_gates(
     for name, value in credentials.items():
         monkeypatch.setenv(name, value)
 
-    node = build_live_execution_node(
-        settings,
-        instrument_config=SimpleNamespace(load_ids=frozenset()),
-    )
+    node = build_live_execution_node(settings, instrument_configs={"POLYMARKET-5M": SimpleNamespace(load_ids=frozenset())})
 
     builder = cast(FakeLiveNode, node).builder
     assert [item[0] for item in builder.exec_clients] == [LIVE_EXEC_CLIENT_ID]
@@ -388,6 +388,55 @@ def test_locked_pyo3_composition_has_no_signature_fallbacks() -> None:
     text = Path(source).read_text(encoding="utf-8")
 
     assert "except TypeError" not in text
+
+
+def test_real_pyo3_execution_configs_match_locked_constructor_types() -> None:
+    from nautilus_trader.core import nautilus_pyo3 as pyo3
+
+    sandbox = build_sandbox_exec_client_config(Settings())
+    assert getattr(sandbox, "oms_type") is pyo3.OmsType.NETTING
+    assert getattr(sandbox, "account_type") is pyo3.AccountType.CASH
+    assert getattr(sandbox, "book_type") is pyo3.BookType.L2_MBP
+
+    live = live_node.build_polymarket_exec_client_config(Settings())
+    assert 'trader_id: "PolySignal-Nautilus-001"' in str(live)
+    assert 'account_id: "POLYMARKET-001"' in str(live)
+
+
+def test_sandbox_book_type_uses_pyo3_enum_attribute_not_from_str() -> None:
+    """Match backtest_node: getattr(BookType, name). Stubs omit BookType.from_str."""
+    from nautilus_trader.core import nautilus_pyo3 as pyo3
+
+    source = live_node.__file__
+    assert source is not None
+    text = Path(source).read_text(encoding="utf-8")
+    assert "BookType.from_str" not in text
+
+    settings = Settings()
+    settings.runtime.nautilus.sandbox_book_type = "L1_MBP"
+    sandbox = build_sandbox_exec_client_config(settings)
+    assert getattr(sandbox, "book_type") is pyo3.BookType.L1_MBP
+
+
+def test_build_sandbox_live_node_enables_rtds_only_on_primary_data_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_live_node_fakes(monkeypatch)
+    settings = Settings()
+    settings.runtime.nautilus.spot_data.source = "polymarket_rtds"
+    instrument_configs = {
+        "POLYMARKET-5M": SimpleNamespace(load_ids=frozenset({"up-5.POLYMARKET"})),
+        "POLYMARKET-15M": SimpleNamespace(load_ids=frozenset({"up-15.POLYMARKET"})),
+    }
+
+    node = build_sandbox_live_node(settings, instrument_configs=instrument_configs)
+
+    builder = cast(FakeLiveNode, node).builder
+    by_name = {str(name): config for name, _factory, config in builder.data_clients}
+    assert getattr(by_name["POLYMARKET-5M"], "base_url_rtds") == (
+        settings.data.polymarket.rtds_ws_url
+    )
+    assert not hasattr(by_name["POLYMARKET-15M"], "base_url_rtds")
 
 
 async def test_run_nautilus_cli_async_starts_and_stops_observability_writer(

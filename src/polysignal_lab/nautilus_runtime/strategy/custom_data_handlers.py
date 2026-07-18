@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, typing, typing.Callable, typing.Protocol, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.market_catalog.MarketCatalog, polysignal_lab.nautilus_runtime.market_catalog.MarketPairMeta, polysignal_lab.nautilus_runtime.custom_data_state, polysignal_lab.nautilus_runtime.custom_data_state.StrategyCustomDataState
-Output: route_strategy_data, handle_custom_data, handle_market_metadata, handle_market_universe, handle_generic_data, _CustomDataStrategy, _SubscriptionManagerLike
+Output: route_strategy_data, handle_custom_data, handle_market_metadata, handle_market_universe, handle_generic_data, _CustomDataStrategy
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Callable, Protocol
 
+from polysignal_lab.alpha.types import TradingStateView
+from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.custom_data_types import (
@@ -36,9 +38,14 @@ class _CustomDataStrategy(Protocol):
     _market_epoch: int | None
     unsubscribe_exited: bool
     _subscription_state: MarketSubscriptionState
-    _subscription_manager: _SubscriptionManagerLike
+    cache: object | None
 
-    def evaluate_condition(self, condition_id: str) -> None: ...
+    def evaluate_condition(
+        self,
+        condition_id: str,
+        *,
+        trading_state: object | None = None,
+    ) -> None: ...
     def _note_runtime_progress(self, phase: str) -> None: ...
     def _note_runtime_readiness(self, condition_id: str, *, ready: bool) -> None: ...
     def _require_registry(self) -> MarketCatalog: ...
@@ -46,10 +53,6 @@ class _CustomDataStrategy(Protocol):
     def _refresh_asset_conditions(self) -> None: ...
     def _subscribe_market_conditions(self, condition_ids: tuple[str, ...] | list[str]) -> None: ...
     def _unsubscribe_market_conditions(self, condition_ids: tuple[str, ...] | list[str]) -> None: ...
-
-
-class _SubscriptionManagerLike(Protocol):
-    def retry_instrument_requests(self, condition_ids: tuple[str, ...]) -> None: ...
 
 
 def route_strategy_data(
@@ -62,11 +65,7 @@ def route_strategy_data(
     if classify(payload) is DataBoundaryClassification.DROPPED_FRAME:
         strategy._note_runtime_progress("dropped_frame")
         return
-    if handle_custom_data(
-        strategy,
-        payload,
-        subscription_manager=strategy._subscription_manager,
-    ):
+    if handle_custom_data(strategy, payload):
         return
     if isinstance(payload, PolySignalMarketMetaData):
         if handle_market_metadata(strategy, payload):
@@ -80,8 +79,6 @@ def route_strategy_data(
 def handle_custom_data(
     strategy: _CustomDataStrategy,
     data: object,
-    *,
-    subscription_manager: _SubscriptionManagerLike,
 ) -> bool:
     if not (
         is_polymarket_rtds_crypto_price(data)
@@ -90,16 +87,24 @@ def handle_custom_data(
         return False
     result = strategy.custom_data.apply(data)
     if result.spot_asset is not None:
-        for candidate in strategy._asset_condition_ids.get(result.spot_asset, ()):
-            strategy.evaluate_condition(candidate)
+        candidates = strategy._asset_condition_ids.get(result.spot_asset, ())
+        trading_state = _trading_state_snapshot(strategy) if candidates else None
+        for candidate in candidates:
+            strategy.evaluate_condition(candidate, trading_state=trading_state)
         return True
     if result.price_to_beat_condition_id is not None:
-        subscription_manager.retry_instrument_requests(
-            (result.price_to_beat_condition_id,)
-        )
         strategy.evaluate_condition(result.price_to_beat_condition_id)
         return True
     return True
+
+
+def _trading_state_snapshot(strategy: _CustomDataStrategy) -> TradingStateView:
+    return trading_state_from_cache(
+        strategy.cache,
+        strategy_id=getattr(strategy, "strategy_id", None)
+        or getattr(strategy, "id", None),
+        registry=strategy._require_registry(),
+    )
 
 
 def handle_market_metadata(strategy: _CustomDataStrategy, data: PolySignalMarketMetaData) -> bool:

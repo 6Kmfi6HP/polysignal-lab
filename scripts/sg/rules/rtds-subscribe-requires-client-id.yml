@@ -1,0 +1,8 @@
+id: rtds-subscribe-requires-client-id
+message: RTDS custom-data subscribe must pass an explicit Polymarket data client_id under multi-client wiring
+severity: error
+language: python
+rule:
+  any:
+    - pattern: self.subscribe_data(custom_data_type(polymarket_rtds_crypto_price_type()))
+    - pattern: _subscribe_custom_data($S, polymarket_rtds_crypto_price_type())

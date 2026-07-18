@@ -278,6 +278,7 @@ class VWAPMomentumAlphaCore:
                 intent=OrderIntent.PASSIVE_GTD,
                 expiry_seconds=self.config.hedge_expiry_seconds,
                 pair_id=f"{ctx.market_id}:vwap",
+                quantity=ctx.contracts,
             ),
             hedge_leg=True,
         )

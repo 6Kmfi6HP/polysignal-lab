@@ -1,0 +1,11 @@
+id: no-approved-envelope-in-order-mapping
+message: order_spec_from_decision accepts only AlphaDecision; unwrap approval metadata at the caller.
+severity: error
+language: python
+constraints:
+  APPROVED:
+    regex: ^approved$
+rule:
+  any:
+    - pattern: order_spec_from_decision(ApprovedDecision($$$INNER), $$$ARGS)
+    - pattern: order_spec_from_decision($APPROVED, $$$ARGS)

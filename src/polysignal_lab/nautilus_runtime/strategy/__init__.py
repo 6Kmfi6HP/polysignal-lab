@@ -24,7 +24,6 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (  # noqa: F401
     classify_project_owned_data,
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (  # noqa: F401
-    InstrumentSubscriptionManager,
     MarketSubscriptionState,
 )
 
@@ -35,7 +34,6 @@ __all__ = [
     "EVALUATION_HEARTBEAT_TIMER_NAME",
     "MISSING_PROJECTIONS_ERROR",
     "DataBoundaryClassification",
-    "InstrumentSubscriptionManager",
     "MarketSubscriptionState",
     "PolySignalNativeStrategy",
     "_Assembler",

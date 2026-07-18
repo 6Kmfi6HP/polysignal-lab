@@ -95,6 +95,7 @@ class PreOrderMarketAlphaCore:
                             OrderIntent.PASSIVE_GTD,
                             expiry_seconds=max(1, int(view.start_ts.timestamp() + self.config.seconds_after_open_expiry - now.timestamp())),
                             pair_id=f"{view.market_id}:pre",
+                            quantity=shares,
                         ),
                     ),
                 )

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, types, types.SimpleNamespace, typing, typing.Any, typing.cast, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3, nautilus_trader.core.nautilus_pyo3.PolymarketRtdsCryptoPrice
-Output: test_custom_data_publisher_publishes_price_to_beat_as_pyo3_custom_data, test_custom_data_publisher_publishes_market_metadata_without_shadow_state, test_market_rotation_actor_accepts_managed_rtds_source, test_market_rotation_actor_subscribes_to_managed_rtds_spot, test_market_rotation_actor_does_not_construct_legacy_rtds_feed, test_pyo3_engine_routes_rtds_custom_data_by_data_type, FakePublisher, _NoopWorker
+Output: test_custom_data_publisher_publishes_price_to_beat_as_pyo3_custom_data, test_custom_data_publisher_publishes_market_metadata_without_shadow_state, test_market_rotation_actor_accepts_managed_rtds_source, test_market_rotation_actor_subscribes_to_managed_rtds_spot, test_market_rotation_actor_does_not_construct_legacy_rtds_feed, test_pyo3_engine_routes_rtds_custom_data_by_data_type, FakePublisher
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -23,8 +23,11 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     custom_data_type,
     unwrap_custom_data,
 )
-from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
 from polysignal_lab.nautilus_runtime.custom_data_publisher import CustomDataPublisher
+from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
+from polysignal_lab.nautilus_runtime.polymarket_clients import (
+    polymarket_rtds_data_client_id,
+)
 
 
 class FakePublisher:
@@ -35,24 +38,9 @@ class FakePublisher:
         self.published.append((data_type, data))
 
 
-class _NoopWorker:
-    def request(self, epoch: int) -> bool:
-        _ = epoch
-        return True
-
-    def take_result(self) -> None:
-        return None
-
-    def close(self) -> None:
-        return None
-
-
 def _actor(settings: Settings) -> MarketRotationActor:
     settings.runtime.nautilus.market_rotation.enabled = False
-    return MarketRotationActor(
-        settings=settings,
-        discovery_worker=cast(Any, _NoopWorker()),
-    )
+    return MarketRotationActor(settings=settings)
 
 
 def test_custom_data_publisher_publishes_price_to_beat_as_pyo3_custom_data() -> None:
@@ -144,7 +132,10 @@ def test_market_rotation_actor_subscribes_to_managed_rtds_spot(
     )
 
     assert subscriptions == [
-        (custom_data_type(PolymarketRtdsCryptoPrice), None),
+        (
+            custom_data_type(PolymarketRtdsCryptoPrice),  # pyright: ignore[reportUnknownArgumentType]
+            polymarket_rtds_data_client_id(settings.markets.timeframes),
+        ),
     ]
     assert published == []
 

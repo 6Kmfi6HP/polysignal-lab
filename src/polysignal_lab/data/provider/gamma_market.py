@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, datetime, datetime.datetime, importlib, importlib.import_module, typing, typing.Final, pydantic, pydantic.JsonValue
-Output: market_from_gamma, binary_option_outcome_from_gamma, parse_nautilus_polymarket_instrument
+Output: market_from_gamma, market_status_from_gamma, binary_option_outcome_from_gamma, parse_nautilus_polymarket_instrument
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -146,7 +146,7 @@ def market_from_gamma(payload: JsonObject, asset: str, timeframe: str) -> Market
             )
         )
     resolved_outcome = _resolved_outcome_from_gamma(payload, tokens)
-    status = _status_from_gamma(payload)
+    status = market_status_from_gamma(payload)
     return Market(
         market_id=market_id,
         market_slug=slug,
@@ -299,7 +299,7 @@ def _outcome_prices_from_gamma(payload: JsonObject) -> list[float]:
     return parsed
 
 
-def _status_from_gamma(payload: JsonObject) -> MarketStatus:
+def market_status_from_gamma(payload: JsonObject) -> MarketStatus:
     if (
         _bool_value(payload.get("cancelled"))
         or _bool_value(payload.get("canceled"))
@@ -316,23 +316,24 @@ def _status_from_gamma(payload: JsonObject) -> MarketStatus:
         ):
             return MarketStatus.RESOLVED
     raw_status = _first_text(payload, ("status", "marketStatus"))
-    if raw_status is not None:
-        match raw_status.strip().upper():
-            case "RESOLVED":
-                return MarketStatus.RESOLVED
+    normalized_status = raw_status.strip().upper() if raw_status is not None else None
+    if normalized_status == "RESOLVED" or _bool_value(payload.get("resolved")):
+        return MarketStatus.RESOLVED
+    if normalized_status in {"CANCELLED", "CANCELED"}:
+        return MarketStatus.CANCELLED
+    closed = _bool_value(payload.get("closed")) or _bool_value(payload.get("archived"))
+    if closed:
+        return MarketStatus.CLOSED
+    if normalized_status is not None:
+        match normalized_status:
             case "CLOSED":
                 return MarketStatus.CLOSED
             case "ACTIVE" | "OPEN":
                 return MarketStatus.ACTIVE
-            case "CANCELLED" | "CANCELED":
-                return MarketStatus.CANCELLED
             case "UNKNOWN":
                 return MarketStatus.UNKNOWN
-    if _bool_value(payload.get("resolved")):
-        return MarketStatus.RESOLVED
-    closed = _bool_value(payload.get("closed")) or _bool_value(payload.get("archived"))
-    if closed:
-        return MarketStatus.CLOSED
+            case _:
+                pass
     if _bool_value(payload.get("active"), default=False):
         return MarketStatus.ACTIVE
     return MarketStatus.UNKNOWN

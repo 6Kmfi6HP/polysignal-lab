@@ -1,18 +1,10 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Iterator, collections.abc.Mapping, enum, enum.StrEnum, typing, typing.Literal
-Output: StrategyExecutionConfig, VWAPMomentumConfig, FixedStopLossConfig, StopLossPerCoinConfig, LateConsensusConfig, PTBTriggerConfig, PTBExitConfig, PTBDiffConfig, BinaryMomentumConfig, CrossMarketBotConfig
+Output: VWAPMomentumConfig, FixedStopLossConfig, StopLossPerCoinConfig, LateConsensusConfig, PTBTriggerConfig, PTBExitConfig, PTBDiffConfig, BinaryMomentumConfig
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
-
-
-
-
-
-
-
-
 
 from __future__ import annotations
 
@@ -24,12 +16,6 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, RootModel
 
 from polysignal_lab.domain.enums import Side
 
-class StrategyExecutionConfig(BaseModel):
-    priority: int = 100
-    depends_on: list[str] = Field(default_factory=list)
-    execution_mode: Literal["stateless", "stateful", "cross_market"] = "stateful"
-
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Existing core strategy configs
@@ -39,7 +25,7 @@ class StrategyExecutionConfig(BaseModel):
 class VWAPMomentumConfig(BaseModel):
     name: Literal["vwap_momentum"] = "vwap_momentum"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
+
     assets: list[str] = Field(default_factory=lambda: ["BTC"])
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     min_price: float = 0.35
@@ -74,7 +60,7 @@ class StopLossPerCoinConfig(RootModel[Mapping[str, FixedStopLossConfig]]):
 class LateConsensusConfig(BaseModel):
     name: Literal["late_consensus"] = "late_consensus"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
+
     assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP"])
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     entry_window_sec: int = 240
@@ -130,13 +116,17 @@ class PTBExitConfig(BaseModel):
 class PTBDiffConfig(BaseModel):
     name: Literal["ptb_diff"] = "ptb_diff"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
+
     assets: list[str] = Field(default_factory=lambda: ["BTC"])
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     require_verified_ptb_source: bool = True
     require_anchor_price_source: bool = False
     require_chainlink_spot_source: bool = True
-    chainlink_spot_sources: tuple[str, ...] = ("polymarket_rtds", "chainlink", "chainlink_rtds")
+    chainlink_spot_sources: tuple[str, ...] = (
+        "polymarket_rtds",
+        "chainlink",
+        "chainlink_rtds",
+    )
     max_spread: float = 0.08
     triggers: list[PTBTriggerConfig] = Field(
         default_factory=lambda: [
@@ -189,7 +179,7 @@ class PTBDiffConfig(BaseModel):
 class BinaryMomentumConfig(BaseModel):
     name: Literal["binary_momentum"] = "binary_momentum"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
+
     assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP"])
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     macd_fast: int = 12
@@ -207,26 +197,13 @@ class BinaryMomentumConfig(BaseModel):
     take_profit_pct: float = 0.25
 
 
-class CrossMarketBotConfig(BaseModel):
-    name: Literal["cross_market_bot"] = "cross_market_bot"
-    enabled: bool = True
-    execution: StrategyExecutionConfig = Field(
-        default_factory=lambda: StrategyExecutionConfig(execution_mode="cross_market")
-    )
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
-    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    min_edge: float = 0.01
-    max_leg_timeout_seconds: float = 1.5
-    max_basket_notional: float = 50.0
-    min_depth_shares: int = 5
-    fee_rate: float = 0.01
-
-
 class DumpHedgeConfig(BaseModel):
     name: Literal["dump_hedge"] = "dump_hedge"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+
+    assets: list[str] = Field(
+        default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]
+    )
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     move_threshold: float = 0.15
     lookback_seconds: float = 30.0
@@ -240,8 +217,10 @@ class DumpHedgeConfig(BaseModel):
 class FibonacciBotConfig(BaseModel):
     name: Literal["fibonacci_bot"] = "fibonacci_bot"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+
+    assets: list[str] = Field(
+        default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]
+    )
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     zigzag_pct: float = 0.005
     zone_width_pct: float = 0.001
@@ -259,8 +238,10 @@ class FibonacciBotConfig(BaseModel):
 class LowSideDualReversionConfig(BaseModel):
     name: Literal["low_side_dual_reversion"] = "low_side_dual_reversion"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+
+    assets: list[str] = Field(
+        default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]
+    )
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     bid_prices: tuple[float, ...] = (0.35, 0.40, 0.45)
     shares_per_level: int = 5
@@ -280,8 +261,10 @@ class SizingMode(StrEnum):
 class MidPriceSizingConfig(BaseModel):
     name: Literal["mid_price_sizing"] = "mid_price_sizing"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+
+    assets: list[str] = Field(
+        default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]
+    )
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     mode: SizingMode = SizingMode.MARTINGALE
     entry_center: float = 0.45
@@ -301,7 +284,7 @@ class MidPriceSizingConfig(BaseModel):
 class NinetyNineCentSniperConfig(BaseModel):
     name: Literal["ninety_nine_cent_sniper"] = "ninety_nine_cent_sniper"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
+
     max_entry_price: float = 0.99
     min_external_probability: float = 0.995
     min_seconds_before_close: float = 0.0
@@ -314,7 +297,7 @@ class NinetyNineCentSniperConfig(BaseModel):
 class OneCentBuyConfig(BaseModel):
     name: Literal["one_cent_buy"] = "one_cent_buy"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
+
     entry_prices: tuple[float, ...] = (0.01, 0.02, 0.03)
     shares_per_level: int = 10
     cancel_before_close_seconds: float = 20.0
@@ -328,8 +311,10 @@ class OneCentBuyConfig(BaseModel):
 class PreOrderMarketConfig(BaseModel):
     name: Literal["pre_order_market"] = "pre_order_market"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
-    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"])
+
+    assets: list[str] = Field(
+        default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]
+    )
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     seconds_before_open: float = 180.0
     seconds_after_open_expiry: float = 30.0
@@ -343,7 +328,7 @@ class PreOrderMarketConfig(BaseModel):
 class SkewMeanReversionConfig(BaseModel):
     name: Literal["skew_mean_reversion"] = "skew_mean_reversion"
     enabled: bool = True
-    execution: StrategyExecutionConfig = Field(default_factory=StrategyExecutionConfig)
+
     assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP"])
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     max_seconds_to_close: int = 3600
@@ -368,7 +353,6 @@ class StrategyConfig(BaseModel):
     late_consensus: LateConsensusConfig = Field(default_factory=LateConsensusConfig)
     ptb_diff: PTBDiffConfig = Field(default_factory=PTBDiffConfig)
     binary_momentum: BinaryMomentumConfig = Field(default_factory=BinaryMomentumConfig)
-    cross_market_bot: CrossMarketBotConfig = Field(default_factory=CrossMarketBotConfig)
     dump_hedge: DumpHedgeConfig = Field(default_factory=DumpHedgeConfig)
     fibonacci_bot: FibonacciBotConfig = Field(default_factory=FibonacciBotConfig)
     low_side_dual_reversion: LowSideDualReversionConfig = Field(
@@ -383,7 +367,6 @@ class StrategyConfig(BaseModel):
     skew_mean_reversion: SkewMeanReversionConfig = Field(
         default_factory=SkewMeanReversionConfig
     )
-
 
     _explicit_strategy_names: tuple[str, ...] = PrivateAttr(default=())
 

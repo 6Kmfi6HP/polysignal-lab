@@ -19,24 +19,26 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from polysignal_lab.alpha.types import FreshnessView, MarketView
+from polysignal_lab.alpha.types import AlphaDecision, FreshnessView, MarketView, OrderIntentSpec
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.signal_layer.gate import SignalGate
 from factories import sample_market_view
-from signal_helpers import ptb_signal_from_view, ptb_signals_from_view
+from signal_helpers import (
+    ptb_decision_from_view,
+    ptb_decisions_from_view,
+    ptb_signals_from_view,
+)
 
 
 async def _ptb_signal(view, settings):
-    return ptb_signal_from_view(view, settings)
+    return ptb_decision_from_view(view, settings)
 
 
 async def test_signal_gate_records_prd_reason_details(market_view, settings) -> None:
-    signal = (await _ptb_signal(market_view, settings)).model_copy(
-        update={"confidence": 0.1}
-    )
+    signal = replace(await _ptb_signal(market_view, settings), confidence=0.1)
     gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
 
     decision = gate.evaluate(signal, market_view)
@@ -110,8 +112,9 @@ def _freshness_signal(
     policy: FreshnessPolicy | None = None,
     *,
     reduce_only: bool = False,
-) -> SignalCandidate:
-    return SignalCandidate.build(
+) -> AlphaDecision:
+    _ = policy  # applied via evaluate(..., freshness_policy=)
+    return AlphaDecision(
         strategy="unit",
         asset="BTC",
         timeframe="5m",
@@ -125,16 +128,20 @@ def _freshness_signal(
         max_entry_price=0.92,
         seconds_to_close=90,
         data_freshness_ms=10,
-        freshness_policy=policy,
-        reason_codes=["UNIT"],
+        reason_codes=("UNIT",),
         metrics={"max_spread": 0.20},
-        order_intent=OrderIntent.TAKER_IOC if reduce_only else None,
-        reduce_only=reduce_only,
+        order_intent=OrderIntentSpec(
+            intent=OrderIntent.TAKER_IOC,
+            reduce_only=reduce_only,
+        )
+        if reduce_only
+        else None,
+        hedge_leg=False,
     )
 
 
 def _freshness_view(*, book_age_ms: int | None, spot_age_ms: int | None) -> MarketView:
-    return sample_market_view(
+    view = sample_market_view(
         up_ask=0.82,
         down_ask=0.18,
         include_up_book=book_age_ms is not None,
@@ -145,6 +152,67 @@ def _freshness_view(*, book_age_ms: int | None, spot_age_ms: int | None) -> Mark
         up_bid=0.80,
         metrics={"max_spread": 0.20},
     )
+    return replace(
+        view,
+        market_id="mkt-1",
+        market_slug="btc-updown-5m-test",
+        condition_id="condition-1",
+        up=replace(view.up, token_id="token-up"),
+    )
+
+
+def test_gate_rejects_market_identity_mismatch() -> None:
+    decision = _freshness_signal()
+    view = replace(
+        _freshness_view(book_age_ms=100, spot_age_ms=100),
+        market_id="other-market",
+    )
+
+    result = SignalGate(
+        SignalConfig(dedupe_enabled=False),
+        PolymarketDataConfig(),
+        BinanceDataConfig(),
+    ).evaluate(decision, view)
+
+    assert result.rejected is not None
+    assert result.rejected.reason_code == "MARKET_ID_MISMATCH"
+
+
+def test_gate_rejects_condition_identity_mismatch() -> None:
+    decision = _freshness_signal()
+    view = replace(
+        _freshness_view(book_age_ms=100, spot_age_ms=100),
+        condition_id="other-condition",
+    )
+
+    result = SignalGate(
+        SignalConfig(dedupe_enabled=False),
+        PolymarketDataConfig(),
+        BinanceDataConfig(),
+    ).evaluate(decision, view)
+
+    assert result.rejected is not None
+    assert result.rejected.reason_code == "CONDITION_ID_MISMATCH"
+
+
+def test_gate_rejects_token_side_identity_mismatch() -> None:
+    decision = _freshness_signal()
+    view = replace(
+        _freshness_view(book_age_ms=100, spot_age_ms=100),
+        up=replace(
+            _freshness_view(book_age_ms=100, spot_age_ms=100).up,
+            token_id="other-token",
+        ),
+    )
+
+    result = SignalGate(
+        SignalConfig(dedupe_enabled=False),
+        PolymarketDataConfig(),
+        BinanceDataConfig(),
+    ).evaluate(decision, view)
+
+    assert result.rejected is not None
+    assert result.rejected.reason_code == "TOKEN_SIDE_MISMATCH"
 
 
 def test_gate_rejects_strategy_policy_stale_orderbook_with_details() -> None:
@@ -153,12 +221,11 @@ def test_gate_rejects_strategy_policy_stale_orderbook_with_details() -> None:
         PolymarketDataConfig(max_book_staleness_ms=60_000),
         BinanceDataConfig(max_price_staleness_ms=60_000),
     )
-    signal = _freshness_signal(
-        FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
-    )
+    policy = FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
+    signal = _freshness_signal(policy)
     view = _freshness_view(book_age_ms=2_000, spot_age_ms=100)
 
-    decision = gate.evaluate(signal, view)
+    decision = gate.evaluate(signal, view, freshness_policy=policy)
 
     assert decision.accepted is False
     assert decision.rejected is not None
@@ -175,12 +242,11 @@ def test_gate_uses_strictest_threshold_when_global_is_lower() -> None:
         PolymarketDataConfig(max_book_staleness_ms=1_000),
         BinanceDataConfig(max_price_staleness_ms=60_000),
     )
-    signal = _freshness_signal(
-        FreshnessPolicy(max_orderbook_staleness_ms=5_000, max_spot_staleness_ms=5_000)
-    )
+    policy = FreshnessPolicy(max_orderbook_staleness_ms=5_000, max_spot_staleness_ms=5_000)
+    signal = _freshness_signal(policy)
     view = _freshness_view(book_age_ms=2_000, spot_age_ms=100)
 
-    decision = gate.evaluate(signal, view)
+    decision = gate.evaluate(signal, view, freshness_policy=policy)
 
     assert decision.accepted is False
     assert decision.rejected is not None
@@ -206,12 +272,11 @@ def test_gate_uses_global_threshold_when_strategy_has_no_policy() -> None:
 
 def test_gate_distinguishes_missing_orderbook_from_stale_orderbook() -> None:
     gate = SignalGate(SignalConfig(dedupe_enabled=False), PolymarketDataConfig(), BinanceDataConfig())
-    signal = _freshness_signal(
-        FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
-    )
+    policy = FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
+    signal = _freshness_signal(policy)
     view = _freshness_view(book_age_ms=None, spot_age_ms=100)
 
-    decision = gate.evaluate(signal, view)
+    decision = gate.evaluate(signal, view, freshness_policy=policy)
 
     assert decision.accepted is False
     assert decision.rejected is not None
@@ -222,11 +287,14 @@ def test_gate_distinguishes_missing_orderbook_from_stale_orderbook() -> None:
 
 def test_gate_distinguishes_missing_spot_from_stale_spot() -> None:
     gate = SignalGate(SignalConfig(dedupe_enabled=False), PolymarketDataConfig(), BinanceDataConfig())
-    signal = _freshness_signal(
-        FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
+    policy = FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
+    signal = _freshness_signal(policy)
+    missing = gate.evaluate(
+        signal, _freshness_view(book_age_ms=100, spot_age_ms=None), freshness_policy=policy
     )
-    missing = gate.evaluate(signal, _freshness_view(book_age_ms=100, spot_age_ms=None))
-    stale = gate.evaluate(signal, _freshness_view(book_age_ms=100, spot_age_ms=2_000))
+    stale = gate.evaluate(
+        signal, _freshness_view(book_age_ms=100, spot_age_ms=2_000), freshness_policy=policy
+    )
 
     assert missing.rejected is not None
     assert missing.rejected.reason_code == "MISSING_SPOT_PRICE"
@@ -263,20 +331,22 @@ async def test_ptb_diff_stale_spot_candidate_is_rejected_by_gate(market_view, se
             max_ms=3_000,
         ),
     )
-    signals = ptb_signals_from_view(stale_view, settings)
-    assert signals
+    decisions = ptb_decisions_from_view(stale_view, settings)
+    assert decisions
+    lag_ms = int(settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000)
+    policy = FreshnessPolicy(
+        max_orderbook_staleness_ms=lag_ms,
+        max_spot_staleness_ms=lag_ms,
+    )
 
     gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
-    decision = gate.evaluate(signals[0], stale_view)
+    decision = gate.evaluate(decisions[0], stale_view, freshness_policy=policy)
 
     assert decision.accepted is False
     assert decision.rejected is not None
     assert decision.rejected.reason_code == "STALE_SPOT_PRICE"
     assert decision.rejected.details["lag_ms"] == 3_000
-    assert (
-        decision.rejected.details["threshold_ms"]
-        == settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000
-    )
+    assert decision.rejected.details["threshold_ms"] == lag_ms
 
 
 async def test_ptb_diff_stale_orderbook_candidate_has_no_fresh_reason(
@@ -293,21 +363,23 @@ async def test_ptb_diff_stale_orderbook_candidate_has_no_fresh_reason(
             max_ms=3_000,
         ),
     )
-    signals = ptb_signals_from_view(stale_view, settings)
-    assert signals
-    assert "PTB_ORDERBOOK_FRESH" not in signals[0].reason_codes
+    decisions = ptb_decisions_from_view(stale_view, settings)
+    assert decisions
+    assert "PTB_ORDERBOOK_FRESH" not in decisions[0].reason_codes
+    lag_ms = int(settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000)
+    policy = FreshnessPolicy(
+        max_orderbook_staleness_ms=lag_ms,
+        max_spot_staleness_ms=lag_ms,
+    )
 
     gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
-    decision = gate.evaluate(signals[0], stale_view)
+    decision = gate.evaluate(decisions[0], stale_view, freshness_policy=policy)
 
     assert decision.accepted is False
     assert decision.rejected is not None
     assert decision.rejected.reason_code == "STALE_ORDERBOOK"
     assert decision.rejected.details["lag_ms"] == 3_000
-    assert (
-        decision.rejected.details["threshold_ms"]
-        == settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000
-    )
+    assert decision.rejected.details["threshold_ms"] == lag_ms
 
 
 def test_reduce_only_exit_bypasses_entry_confidence_and_rate_limit() -> None:
@@ -322,7 +394,7 @@ def test_reduce_only_exit_bypasses_entry_confidence_and_rate_limit() -> None:
         BinanceDataConfig(max_price_staleness_ms=60_000),
     )
     entry = _freshness_signal()
-    close = _freshness_signal(reduce_only=True).model_copy(update={"confidence": 0.10})
+    close = replace(_freshness_signal(reduce_only=True), confidence=0.10)
     view = _freshness_view(book_age_ms=100, spot_age_ms=100)
 
     assert entry.dedupe_key != close.dedupe_key
@@ -336,12 +408,10 @@ def test_reduce_only_exit_bypasses_entry_confidence_and_rate_limit() -> None:
         PolymarketDataConfig(max_book_staleness_ms=60_000),
         BinanceDataConfig(max_price_staleness_ms=60_000),
     )
-    signal = _freshness_signal().model_copy(
-        update={
-            "max_entry_price": 0.10,
-            "order_intent": OrderIntent.TAKER_IOC,
-            "reduce_only": True,
-        }
+    signal = replace(
+        _freshness_signal(reduce_only=True),
+        max_entry_price=0.10,
+        order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_IOC, reduce_only=True),
     )
     view = _freshness_view(book_age_ms=100, spot_age_ms=100)
 
@@ -361,18 +431,16 @@ def test_reduce_only_exit_survives_entry_batch_rejection() -> None:
         BinanceDataConfig(max_price_staleness_ms=60_000),
     )
     entry = _freshness_signal()
-    close = _freshness_signal(reduce_only=True).model_copy(
-        update={"confidence": 0.10}
-    )
+    close = replace(_freshness_signal(reduce_only=True), confidence=0.10)
     view = _freshness_view(book_age_ms=100, spot_age_ms=100)
 
     assert gate.evaluate(entry, view).accepted is True
-    decisions = gate.commit([entry, close])
+    decisions = gate.commit([entry, close], view)
 
     assert decisions[0].accepted is True
-    assert decisions[0].signal == entry
+    assert decisions[0].decision == entry
     assert decisions[1].accepted is True
-    assert decisions[1].signal == close
+    assert decisions[1].decision == close
 
     gate = SignalGate(
         SignalConfig(
@@ -384,8 +452,10 @@ def test_reduce_only_exit_survives_entry_batch_rejection() -> None:
         PolymarketDataConfig(max_book_staleness_ms=60_000),
         BinanceDataConfig(max_price_staleness_ms=60_000),
     )
-    close = _freshness_signal(reduce_only=True).model_copy(
-        update={"confidence": 0.10, "seconds_to_close": 0}
+    close = replace(
+        _freshness_signal(reduce_only=True),
+        confidence=0.10,
+        seconds_to_close=0,
     )
     base = _freshness_view(book_age_ms=100, spot_age_ms=100)
     view = replace(base, spot=None, up=replace(base.up, spread=0.9))

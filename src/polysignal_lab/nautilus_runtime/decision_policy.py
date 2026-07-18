@@ -1,11 +1,10 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, dataclasses, dataclasses.dataclass, typing, typing.cast, polysignal_lab.alpha.types
-Output: decision_policy_from_settings, candidate_from_decision, ApprovedDecision, RejectedDecision, BatchArbitrationResult, DecisionPolicy
+Input: __future__, __future__.annotations, collections.abc, dataclasses, typing, polysignal_lab.alpha.types
+Output: decision_policy_from_settings, candidate_from_decision, publish_from_approved, ApprovedDecision, RejectedDecision, BatchArbitrationResult, DecisionPolicy
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
-
 
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ from polysignal_lab.signal_layer.gate import SignalGate
 
 
 def decision_policy_from_settings(settings: object) -> DecisionPolicy:
-    """Per-Strategy gate only — RiskEngine owns account/exposure risk."""
+    """Per-Strategy pretrade checks only — RiskEngine owns account/exposure risk."""
     signal = getattr(settings, "signal", SignalConfig())
     data = getattr(settings, "data", None)
     poly = (
@@ -40,7 +39,10 @@ def decision_policy_from_settings(settings: object) -> DecisionPolicy:
 
 
 def candidate_from_decision(decision: AlphaDecision, view: MarketView) -> SignalCandidate:
+    """Publish/projection DTO only — never used as order-routing SoT."""
+    view_id = str(getattr(view, "view_id", "") or "")
     return SignalCandidate.build(
+        signal_id=decision.signal_id(view_id),
         strategy=decision.strategy,
         asset=decision.asset,
         timeframe=decision.timeframe,
@@ -57,25 +59,38 @@ def candidate_from_decision(decision: AlphaDecision, view: MarketView) -> Signal
         reason_codes=list(decision.reason_codes),
         metrics=dict(decision.metrics),
         created_at=getattr(view, "created_at", None),
-        snapshot_id=str(getattr(view, "view_id", "") or ""),
+        snapshot_id=view_id,
         order_intent=decision.order_intent.intent if decision.order_intent else None,
         expiry_seconds=decision.order_intent.expiry_seconds if decision.order_intent else None,
         pair_id=decision.order_intent.pair_id if decision.order_intent else None,
-        reduce_only=decision.order_intent.reduce_only if decision.order_intent else False,
+        reduce_only=decision.reduce_only,
         hedge_leg=decision.hedge_leg,
     )
 
 
+def publish_from_approved(approved: ApprovedDecision) -> SignalCandidate:
+    """Telegram/SQLite projection from an approved trading intent."""
+    return approved.publish
+
+
 @dataclass(frozen=True, slots=True)
 class ApprovedDecision:
-    signal: SignalCandidate
+    """Gate-approved AlphaDecision plus a publish-only projection.
+
+    Trading/order path must use ``decision`` (and Nautilus OrderFactory).
+    ``publish`` is SignalCandidate for notifications/storage only.
+    """
+
+    decision: AlphaDecision
+    publish: SignalCandidate
 
 
 @dataclass(frozen=True, slots=True)
 class RejectedDecision:
     reason_code: str
     detail: Mapping[str, object]
-    candidate: SignalCandidate | None = None
+    decision: AlphaDecision | None = None
+    publish: SignalCandidate | None = None
 
 
 class BatchArbitrationResult(list[AlphaDecision]):
@@ -91,7 +106,7 @@ class BatchArbitrationResult(list[AlphaDecision]):
 
 
 class DecisionPolicy:
-    """SignalGate + optional manual disable; no SignalArbiter/ConsensusEngine."""
+    """Stateless strategy pretrade gate; RiskEngine + Cache own account risk."""
 
     def __init__(
         self,
@@ -143,21 +158,35 @@ class DecisionPolicy:
         handoff = self._batch_approved.get(id(decision))
         if handoff is not None and handoff[0] is decision and handoff[1] is view:
             _ = self._batch_approved.pop(id(decision))
-            return ApprovedDecision(signal=handoff[2])
+            return ApprovedDecision(decision=handoff[0], publish=handoff[2])
         if decision.strategy in self.disabled_strategies:
-            return RejectedDecision(reason_code="manual_disabled", detail={})
-        candidate = candidate_from_decision(decision, view)
-        gate_decision = self.gate.evaluate(candidate, view)
+            return RejectedDecision(
+                reason_code="manual_disabled",
+                detail={},
+                decision=decision,
+            )
+        gate_decision = self.gate.evaluate(
+            decision,
+            view,
+            freshness_policy=self.strategy_freshness_policies.get(decision.strategy),
+        )
         if gate_decision.accepted:
-            return ApprovedDecision(signal=gate_decision.signal or candidate)
+            publish = gate_decision.publish or candidate_from_decision(decision, view)
+            return ApprovedDecision(decision=decision, publish=publish)
         if gate_decision.rejected is not None:
             rejected = gate_decision.rejected
             return RejectedDecision(
                 reason_code=rejected.reason_code,
                 detail=dict(rejected.details),
-                candidate=rejected.candidate,
+                decision=decision,
+                publish=rejected.candidate,
             )
-        return RejectedDecision(reason_code="GATE_REJECTED", detail={}, candidate=candidate)
+        return RejectedDecision(
+            reason_code="GATE_REJECTED",
+            detail={},
+            decision=decision,
+            publish=candidate_from_decision(decision, view),
+        )
 
     def batch_arbitrate(
         self,
@@ -169,8 +198,8 @@ class DecisionPolicy:
         committed, gate_rejections = self._gate_batch(unpaired)
         rejections.extend(gate_rejections)
         self._batch_approved = {
-            id(decision): (decision, view, candidate)
-            for decision, view, candidate in committed
+            id(decision): (decision, view, publish)
+            for decision, view, publish in committed
         }
         return BatchArbitrationResult(
             [decision for decision, _, _ in committed],
@@ -181,67 +210,78 @@ class DecisionPolicy:
         self,
         decisions: list[tuple[AlphaDecision, MarketView]],
     ) -> tuple[
-        list[tuple[AlphaDecision, MarketView, SignalCandidate]],
+        list[tuple[AlphaDecision, MarketView]],
         list[tuple[AlphaDecision, RejectedDecision]],
     ]:
         rejections: list[tuple[AlphaDecision, RejectedDecision]] = []
-        unpaired: list[tuple[AlphaDecision, MarketView, SignalCandidate]] = []
-        pairs: dict[
-            str, list[tuple[AlphaDecision, MarketView, SignalCandidate]]
-        ] = {}
+        unpaired: list[tuple[AlphaDecision, MarketView]] = []
+        pairs: dict[str, list[tuple[AlphaDecision, MarketView]]] = {}
         for decision, view in decisions:
             if decision.strategy in self.disabled_strategies:
                 rejections.append(
-                    (decision, RejectedDecision(reason_code="manual_disabled", detail={}))
+                    (
+                        decision,
+                        RejectedDecision(
+                            reason_code="manual_disabled",
+                            detail={},
+                            decision=decision,
+                        ),
+                    )
                 )
                 continue
-            candidate = candidate_from_decision(decision, view)
-            pair_id = decision.order_intent.pair_id if decision.order_intent else None
+            pair_id = decision.pair_id
             if pair_id:
-                pairs.setdefault(pair_id, []).append((decision, view, candidate))
+                pairs.setdefault(pair_id, []).append((decision, view))
             else:
-                unpaired.append((decision, view, candidate))
+                unpaired.append((decision, view))
         for members in pairs.values():
             self._resolve_pair_group(members, unpaired=unpaired, rejections=rejections)
         return unpaired, rejections
 
     def _resolve_pair_group(
         self,
-        members: list[tuple[AlphaDecision, MarketView, SignalCandidate]],
+        members: list[tuple[AlphaDecision, MarketView]],
         *,
-        unpaired: list[tuple[AlphaDecision, MarketView, SignalCandidate]],
+        unpaired: list[tuple[AlphaDecision, MarketView]],
         rejections: list[tuple[AlphaDecision, RejectedDecision]],
     ) -> None:
-        candidates = [c for _, _, c in members]
-        malformed = len(members) > 2 or (
-            len(candidates) == 2
-            and {c.side for c in candidates} != {Side.UP, Side.DOWN}
-        )
-        if not malformed and len(candidates) == 2:
+        sides = {decision.side for decision, _ in members}
+        malformed = len(members) > 2 or (len(members) == 2 and sides != {Side.UP, Side.DOWN})
+        if not malformed and len(members) == 2:
             unpaired.extend(members)
             return
         reason = "MALFORMED_PAIR" if malformed else "INCOMPLETE_PAIR"
-        for decision, _, candidate in members:
+        for decision, view in members:
             rejections.append(
                 (
                     decision,
-                    RejectedDecision(reason_code=reason, detail={}, candidate=candidate),
+                    RejectedDecision(
+                        reason_code=reason,
+                        detail={},
+                        decision=decision,
+                        publish=candidate_from_decision(decision, view),
+                    ),
                 )
             )
 
     def _gate_batch(
         self,
-        unpaired: list[tuple[AlphaDecision, MarketView, SignalCandidate]],
+        unpaired: list[tuple[AlphaDecision, MarketView]],
     ) -> tuple[
         list[tuple[AlphaDecision, MarketView, SignalCandidate]],
         list[tuple[AlphaDecision, RejectedDecision]],
     ]:
         committed: list[tuple[AlphaDecision, MarketView, SignalCandidate]] = []
         rejections: list[tuple[AlphaDecision, RejectedDecision]] = []
-        for decision, view, candidate in unpaired:
-            gate_decision = self.gate.evaluate(candidate, view)
+        for decision, view in unpaired:
+            gate_decision = self.gate.evaluate(
+                decision,
+                view,
+                freshness_policy=self.strategy_freshness_policies.get(decision.strategy),
+            )
             if gate_decision.accepted:
-                committed.append((decision, view, gate_decision.signal or candidate))
+                publish = gate_decision.publish or candidate_from_decision(decision, view)
+                committed.append((decision, view, publish))
                 continue
             if gate_decision.rejected is not None:
                 rejected = gate_decision.rejected
@@ -251,7 +291,8 @@ class DecisionPolicy:
                         RejectedDecision(
                             reason_code=rejected.reason_code,
                             detail=dict(rejected.details),
-                            candidate=rejected.candidate,
+                            decision=decision,
+                            publish=rejected.candidate,
                         ),
                     )
                 )
@@ -262,7 +303,8 @@ class DecisionPolicy:
                         RejectedDecision(
                             reason_code="GATE_REJECTED",
                             detail={},
-                            candidate=candidate,
+                            decision=decision,
+                            publish=candidate_from_decision(decision, view),
                         ),
                     )
                 )

@@ -1,0 +1,9 @@
+id: no-publish-dto-in-signal-gate
+message: SignalGate accepts AlphaDecision, never SignalCandidate publish projections.
+severity: error
+language: python
+rule:
+  any:
+    - pattern: $GATE.evaluate(SignalCandidate.build($$$ARGS), $$$REST)
+    - pattern: $GATE.evaluate(candidate_from_decision($$$ARGS), $$$REST)
+    - pattern: $GATE.evaluate(ptb_signal_from_view($$$ARGS), $$$REST)

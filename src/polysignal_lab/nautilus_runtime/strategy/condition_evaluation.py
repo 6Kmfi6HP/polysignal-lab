@@ -15,7 +15,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Protocol, cast
 
-from polysignal_lab.alpha.types import AlphaCore, AlphaDecision, MarketView
+from polysignal_lab.alpha.types import AlphaCore, AlphaDecision, MarketView, TradingStateView
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicy,
@@ -57,6 +57,7 @@ class _EvaluationStrategy(Protocol):
     _pipeline_state: DecisionPipelineState
     _decision_result_handler: DecisionResultHandler
     _decision_sink: NativeDecisionSink
+    _batch_active_dedupe_keys: set[str] | None
 
     def _framework_now(self) -> datetime: ...
     def _require_registry(self) -> MarketCatalog | None: ...
@@ -108,11 +109,34 @@ def mark_condition_unready(strategy: _EvaluationStrategy, condition_id: str) -> 
     strategy._note_runtime_readiness(condition_id, ready=False)
 
 
+def _with_trading_state(
+    strategy: _EvaluationStrategy,
+    view: MarketView,
+    trading_state: object | None,
+) -> MarketView | None:
+    registry = strategy._require_registry()
+    if registry is None:
+        return None
+    trading = (
+        trading_state.for_condition(view.condition_id)
+        if isinstance(trading_state, TradingStateView)
+        else trading_state_from_cache(
+            strategy.cache,
+            strategy_id=getattr(strategy, "strategy_id", None)
+            or getattr(strategy, "id", None),
+            registry=registry,
+            condition_id=view.condition_id,
+        )
+    )
+    return replace(view, trading=trading)
+
+
 def evaluate_condition(
     strategy: _EvaluationStrategy,
     condition_id: str,
     *,
     created_at: datetime | None = None,
+    trading_state: object | None = None,
 ) -> None:
     if condition_id not in strategy._active_condition_ids:
         return
@@ -130,16 +154,11 @@ def evaluate_condition(
         return
     market_view = cast(MarketView, view)
     if isinstance(view, MarketView):
-        market_view = replace(
-            view,
-            trading=trading_state_from_cache(
-                strategy.cache,
-                strategy_id=getattr(strategy, "strategy_id", None)
-                or getattr(strategy, "id", None),
-                registry=strategy._require_registry(),
-                condition_id=market_view.condition_id,
-            ),
-        )
+        resolved_view = _with_trading_state(strategy, view, trading_state)
+        if resolved_view is None:
+            mark_condition_unready(strategy, condition_id)
+            return
+        market_view = resolved_view
     stale_sides = stale_orderbook_sides(
         market_view,
         threshold_ms=orderbook_readiness_threshold_ms(strategy),  # type: ignore[arg-type]
@@ -195,6 +214,14 @@ def evaluate_ready_condition(
         strategy._note_runtime_readiness(condition_id, ready=True)
 
 
+def _active_dedupe_keys(view: MarketView) -> set[str]:
+    return {
+        order.dedupe_key
+        for order in view.trading.orders
+        if order.dedupe_key is not None and (order.is_open or order.is_inflight)
+    }
+
+
 def apply_decision_batch(
     strategy: _EvaluationStrategy,
     decisions: Sequence[AlphaDecision],
@@ -209,28 +236,34 @@ def apply_decision_batch(
     rejected_by_id = {
         id(decision): rejected for decision, rejected in arbitration.rejections
     }
-    for decision in decisions:
-        if id(decision) not in survivor_ids:
-            rejected = rejected_by_id.get(id(decision)) or RejectedDecision(
-                reason_code="ARBITRATION_SUPPRESSED",
-                detail={},
-            )
-            strategy._decision_result_handler.handle_result(
-                rejected,
+    strategy._batch_active_dedupe_keys = _active_dedupe_keys(view)
+    try:
+        for decision in decisions:
+            if id(decision) not in survivor_ids:
+                rejected = rejected_by_id.get(id(decision)) or RejectedDecision(
+                    reason_code="ARBITRATION_SUPPRESSED",
+                    detail={},
+                )
+                _ = strategy._decision_result_handler.handle_result(
+                    rejected,
+                    decision,
+                    view,
+                    state=strategy._pipeline_state,
+                    sink=strategy._decision_sink,
+                )
+                continue
+            policy_result = strategy.policy.decide(decision, view)
+            submitted = strategy._decision_result_handler.handle_result(
+                policy_result,
                 decision,
                 view,
                 state=strategy._pipeline_state,
                 sink=strategy._decision_sink,
             )
-            continue
-        policy_result = strategy.policy.decide(decision, view)
-        strategy._decision_result_handler.handle_result(
-            policy_result,
-            decision,
-            view,
-            state=strategy._pipeline_state,
-            sink=strategy._decision_sink,
-        )
+            if submitted:
+                strategy._batch_active_dedupe_keys.add(decision.dedupe_key())
+    finally:
+        strategy._batch_active_dedupe_keys = None
 
 
 def evaluate_decisions(
@@ -254,6 +287,7 @@ def evaluate_decisions(
             registry=strategy._require_registry(),
             view=market_view,
             now=now,
+            trading=market_view.trading,
         )
     except (TypeError, ValueError, RuntimeError):
         strategy._note_runtime_progress("native_exit_failed")

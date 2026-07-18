@@ -1,0 +1,6 @@
+id: no-op-publish-data-override
+language: python
+rule:
+  pattern: |
+    def publish_data(self, $TYPE, $DATA) -> None:
+        super().publish_data($TYPE, $DATA)

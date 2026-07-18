@@ -17,8 +17,10 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+
+from nautilus_trader.core import nautilus_pyo3 as pyo3
 
 from polysignal_lab.alpha.types import (
     AlphaDecision,
@@ -33,6 +35,31 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     candidate_from_decision,
 )
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+from polysignal_lab.nautilus_runtime.observability import ObservabilityService
+from polysignal_lab.nautilus_runtime.observability_persistence import (
+    NautilusEventStoreAdapter,
+)
+from polysignal_lab.storage.jsonl_store import JSONLStore
+from polysignal_lab.storage.sqlite_store import SQLiteStore
+from polysignal_lab.storage.state_store import StateStore
+from polysignal_lab.app.services.persistence_service import PersistenceService
+
+
+class _Instrument:
+    def __init__(self, instrument_id: pyo3.InstrumentId) -> None:
+        self.id: pyo3.InstrumentId = instrument_id
+
+    def make_price(self, value: float) -> pyo3.Price:
+        return pyo3.Price.from_str(str(value))
+
+    def make_qty(self, value: float) -> pyo3.Quantity:
+        return pyo3.Quantity.from_str(str(value))
+
+
+def _cached_instrument(instrument_id: object) -> _Instrument | None:
+    if not isinstance(instrument_id, pyo3.InstrumentId):
+        return None
+    return _Instrument(instrument_id)
 
 
 class _AllowAllDecisionPolicy(DecisionPolicy):
@@ -47,7 +74,8 @@ class _AllowAllDecisionPolicy(DecisionPolicy):
         decision: AlphaDecision,
         view: MarketView,
     ) -> ApprovedDecision:
-        return ApprovedDecision(signal=candidate_from_decision(decision, view))
+        publish = candidate_from_decision(decision, view)
+        return ApprovedDecision(decision=decision, publish=publish)
 
 
 def _attach_decision_policy(
@@ -57,7 +85,9 @@ def _attach_decision_policy(
     return strategy.policy
 
 
-def _native_strategy() -> PolySignalNativeStrategy:
+def _native_strategy(
+    strategy_name: str = "test",
+) -> PolySignalNativeStrategy:
     class Core:
         def evaluate(self, view):
             return []
@@ -105,14 +135,62 @@ def _native_strategy() -> PolySignalNativeStrategy:
         def by_condition(self, condition_id):
             return None
 
+    class Cache:
+        def order(self, client_order_id: object) -> object | None:
+            reasons = {
+                "order-1": ("TAKE_PROFIT", "position-1", "10.0", "4.0"),
+                "order-2": ("STOP_LOSS", "position-2", "8.0", "3.2"),
+                "order-3": ("MAX_HOLD_TIME", "position-3", "5.0", "2.0"),
+            }
+            values = reasons.get(str(client_order_id))
+            if values is None:
+                return None
+            reason, position_id, quantity, stake = values
+            return SimpleNamespace(
+                filled_qty=float(quantity),
+                avg_px=0.91,
+                tags=(
+                    "strategy=" + strategy_name,
+                    "reduce_only=true",
+                    f"exit_reason={reason}",
+                    f"position_id={position_id}",
+                    "market_id=mkt-1",
+                    "condition_id=condition-1",
+                    "entry_price=0.40",
+                    f"position_quantity={quantity}",
+                    f"stake_usdc={stake}",
+                    "side=UP",
+                    "asset=BTC",
+                    "timeframe=5m",
+                    "market_slug=btc-updown-5m",
+                    "opened_at=2026-07-06T12:00:00+00:00",
+                )
+            )
+
+        def position(self, position_id: object) -> object | None:
+            if str(position_id) not in {"position-1", "position-2", "position-3"}:
+                return None
+            return SimpleNamespace(is_closed=True, avg_px_close=0.91)
+
+        def orders_for_position(self, position_id: object) -> tuple[object, ...]:
+            order = self.order(
+                {
+                    "position-1": "order-1",
+                    "position-2": "order-2",
+                    "position-3": "order-3",
+                }[str(position_id)]
+            )
+            return () if order is None else (order,)
+
     strategy = PolySignalNativeStrategy(
         core=Core(),
         assembler=Assembler(),
         condition_ids=("condition-1",),
-        strategy_name="test",
+        strategy_name=strategy_name,
         registry=Registry(),
         instrument_id_resolver=lambda value: value,
     )
+    strategy._cache_override = Cache()
     return strategy
 
 
@@ -197,7 +275,32 @@ def test_native_exit_runs_when_opposite_book_exceeds_trade_freshness() -> None:
         realized_pnl=0.0,
     )
 
+    entry = SimpleNamespace(
+        instrument_id="token-up.POLYMARKET",
+        tags=(
+            "strategy=ptb_diff",
+            "market_id=mkt-1",
+            "condition_id=condition-1",
+            "position_id=position-1",
+        ),
+        status="FILLED",
+        filled_qty=10.0,
+        is_open=False,
+        is_inflight=False,
+    )
+
     class Cache:
+        def instrument(self, instrument_id: object):
+            return _cached_instrument(instrument_id)
+
+        def orders(self, **kwargs: object) -> list[object]:
+            _ = kwargs
+            return [entry]
+
+        def orders_for_position(self, position_id: object) -> list[object]:
+            _ = position_id
+            return [entry]
+
         def positions_open(self, **kwargs):
             _ = kwargs
             return [position]
@@ -239,6 +342,53 @@ def test_native_exit_runs_when_opposite_book_exceeds_trade_freshness() -> None:
     assert str(order["price"]) == "0.91"
     assert "exit_reason=TAKE_PROFIT" in order["tags"]
     assert "position_id=position-1" in order["tags"]
+    assert "entry_price=0.4" in order["tags"]
+    assert "position_quantity=10.0" in order["tags"]
+    assert "stake_usdc=4.0" in order["tags"]
+    assert f"opened_at={opened_at.isoformat()}" in order["tags"]
+
+    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+
+    settlements: list[dict[str, object]] = []
+    strategy._cache_override = SimpleNamespace(
+        order=lambda _client_order_id: SimpleNamespace(
+            filled_qty=10.0,
+            avg_px=0.91,
+            tags=tuple(order["tags"]),
+        ),
+        position=lambda _position_id: SimpleNamespace(
+            is_closed=True,
+            avg_px_close=0.91,
+        ),
+        orders_for_position=lambda _position_id: (
+            SimpleNamespace(
+                filled_qty=10.0,
+                avg_px=0.91,
+                tags=tuple(order["tags"]),
+            ),
+        ),
+    )
+    strategy.observability = SimpleNamespace(
+        record_event=lambda table, payload: settlements.append(payload)
+        if table == "settlements"
+        else None
+    )
+    strategy._record_nautilus_fill = lambda event, metrics: None
+    handle_order_filled(
+        strategy,
+        SimpleNamespace(
+            client_order_id="native-exit-order",
+            instrument_id="token-up.POLYMARKET",
+            last_qty=10.0,
+            last_px=0.91,
+            ts_event=datetime(2026, 7, 6, 12, 1, tzinfo=UTC),
+            side="UP",
+        ),
+    )
+
+    assert len(settlements) == 1
+    assert settlements[0]["report_position_id"] == "position-1"
+    assert settlements[0]["shares"] == 10.0
 
 
 def test_native_exit_failure_falls_back_to_alpha_core() -> None:
@@ -270,6 +420,239 @@ def test_native_strategy_has_no_custom_exit_evaluation_api() -> None:
     assert not hasattr(strategy, "_submit_exit_position")
 
 
+def test_reduce_only_fill_missing_economic_tags_is_quarantined() -> None:
+    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+
+    strategy = _native_strategy()
+    progress: list[str] = []
+    strategy._cache_override = SimpleNamespace(
+        order=lambda _client_order_id: SimpleNamespace(
+            tags=(
+                "strategy=test",
+                "reduce_only=true",
+                "exit_reason=TAKE_PROFIT",
+                "position_id=position-missing",
+                "market_id=mkt-1",
+                "condition_id=condition-1",
+                "side=UP",
+                "asset=BTC",
+                "timeframe=5m",
+                "market_slug=btc-updown-5m",
+            )
+        )
+    )
+    strategy._record_nautilus_fill = lambda event, metrics: None
+    strategy._note_runtime_progress = lambda phase: progress.append(phase)
+
+    handle_order_filled(
+        strategy,
+        SimpleNamespace(
+            client_order_id="missing-economic-tags",
+            instrument_id="token-up.POLYMARKET",
+            last_qty=1.0,
+            last_px=0.91,
+            ts_event=datetime(2026, 7, 6, 12, 1, tzinfo=UTC),
+            side="UP",
+        ),
+    )
+
+    assert "early_exit_result_pending" in progress
+
+
+def test_reduce_only_partial_fills_emit_one_result_after_position_closes() -> None:
+    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+
+    position_id = pyo3.PositionId.from_str("position-partial")
+    tags = (
+        "strategy=test",
+        "reduce_only=true",
+        "exit_reason=TAKE_PROFIT",
+        "position_id=position-partial",
+        "entry_price=0.4",
+        "position_quantity=10.0",
+        "stake_usdc=4.0",
+        "market_id=mkt-1",
+        "condition_id=condition-1",
+        "side=UP",
+        "asset=BTC",
+        "timeframe=5m",
+        "market_slug=btc-updown-5m",
+    )
+    order = SimpleNamespace(
+        tags=tags,
+        filled_qty=pyo3.Quantity.from_str("2.5"),
+        avg_px=pyo3.Price.from_str("0.90"),
+    )
+    cached_position = SimpleNamespace(is_closed=False, avg_px_close=None)
+    strategy = _native_strategy()
+    results: list[dict[str, object]] = []
+    progress: list[str] = []
+
+    def cached_position_for_id(cache_position_id: object) -> object:
+        assert isinstance(cache_position_id, pyo3.PositionId)
+        assert cache_position_id == position_id
+        return cached_position
+
+    def orders_for_position(cache_position_id: object) -> tuple[object, ...]:
+        assert isinstance(cache_position_id, pyo3.PositionId)
+        assert cache_position_id == position_id
+        return (order,)
+
+    strategy._cache_override = SimpleNamespace(
+        order=lambda _client_order_id: order,
+        position=cached_position_for_id,
+        orders_for_position=orders_for_position,
+    )
+    strategy.observability = SimpleNamespace(
+        record_event=lambda table, payload: results.append(payload)
+        if table == "settlements"
+        else None
+    )
+    strategy._record_nautilus_fill = lambda event, metrics: None
+    strategy._note_runtime_progress = lambda phase: progress.append(phase)
+
+    first = SimpleNamespace(
+        client_order_id="partial-exit",
+        instrument_id="token-up.POLYMARKET",
+        last_qty=2.5,
+        last_px=0.90,
+        ts_event=datetime(2026, 7, 6, 12, 1, tzinfo=UTC),
+        side="UP",
+    )
+    handle_order_filled(strategy, first)
+
+    assert results == []
+    assert "early_exit_result_pending" in progress
+
+    order.filled_qty = pyo3.Quantity.from_str("10")
+    order.avg_px = pyo3.Price.from_str("0.91")
+    cached_position.is_closed = True
+    cached_position.avg_px_close = 0.91
+    second = SimpleNamespace(
+        client_order_id="partial-exit",
+        instrument_id="token-up.POLYMARKET",
+        last_qty=7.5,
+        last_px=0.9133333333333333,
+        ts_event=datetime(2026, 7, 6, 12, 2, tzinfo=UTC),
+        side="UP",
+    )
+    handle_order_filled(strategy, second)
+    handle_order_filled(strategy, second)
+
+    assert len(results) == 1
+    assert results[0]["shares"] == 10.0
+    assert results[0]["stake_usdc"] == 4.0
+    outcome_value = results[0]["outcome_value"]
+    assert isinstance(outcome_value, float)
+    assert abs(outcome_value - 0.91) < 1e-12
+    assert "early_exit_result_duplicate" in progress
+
+
+def test_reduce_only_exit_uses_position_average_when_order_price_is_missing() -> None:
+    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+
+    position_id = pyo3.PositionId.from_str("position-multi")
+    tags = (
+        "strategy=test",
+        "reduce_only=true",
+        "exit_reason=TAKE_PROFIT",
+        "position_id=position-multi",
+        "entry_price=0.4",
+        "position_quantity=10.0",
+        "stake_usdc=4.0",
+        "market_id=mkt-1",
+        "condition_id=condition-1",
+        "side=UP",
+        "asset=BTC",
+        "timeframe=5m",
+        "market_slug=btc-updown-5m",
+    )
+    current_order = SimpleNamespace(
+        tags=tags,
+        filled_qty=pyo3.Quantity.from_str("5"),
+        avg_px=pyo3.Price.from_str("0.8"),
+    )
+    missing_price_order = SimpleNamespace(
+        tags=tags,
+        filled_qty=pyo3.Quantity.from_str("5"),
+        avg_px=None,
+    )
+    position = SimpleNamespace(is_closed=True, avg_px_close=0.9)
+    results: list[dict[str, object]] = []
+    strategy = _native_strategy()
+    strategy._cache_override = SimpleNamespace(
+        order=lambda _client_order_id: current_order,
+        position=lambda cache_position_id: position
+        if cache_position_id == position_id
+        else None,
+        orders_for_position=lambda cache_position_id: (
+            current_order,
+            missing_price_order,
+        )
+        if cache_position_id == position_id
+        else (),
+    )
+    strategy.observability = SimpleNamespace(
+        record_event=lambda table, payload: results.append(payload)
+        if table == "settlements"
+        else None
+    )
+    strategy._record_nautilus_fill = lambda event, metrics: None
+    strategy._note_runtime_progress = lambda phase: None
+
+    handle_order_filled(
+        strategy,
+        SimpleNamespace(
+            client_order_id="multi-exit",
+            instrument_id="token-up.POLYMARKET",
+            last_qty=5.0,
+            last_px=0.8,
+            ts_event=datetime(2026, 7, 6, 12, 2, tzinfo=UTC),
+            side="UP",
+        ),
+    )
+
+    assert len(results) == 1
+    assert results[0]["shares"] == 10.0
+    assert results[0]["outcome_value"] == 0.9
+
+
+def test_reduce_only_replay_after_restart_is_durably_idempotent(
+    tmp_path: Path,
+) -> None:
+    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+
+    persistence = PersistenceService(
+        JSONLStore(tmp_path / "logs"),
+        SQLiteStore(tmp_path / "runtime.sqlite3"),
+        StateStore(tmp_path / "state"),
+    )
+    notifications: list[dict[str, object]] = []
+    event = SimpleNamespace(
+        client_order_id="order-1",
+        instrument_id="token-up.POLYMARKET",
+        last_qty=10.0,
+        last_px=0.91,
+        ts_event=datetime(2026, 7, 6, 12, 2, tzinfo=UTC),
+        side="UP",
+    )
+
+    for _ in range(2):
+        strategy = _native_strategy()
+        strategy.observability = ObservabilityService(
+            store=NautilusEventStoreAdapter(persistence),
+            report_result_notifier=lambda result: notifications.append(dict(result)),
+        )
+        strategy._record_nautilus_fill = lambda event, metrics: None
+        strategy._note_runtime_progress = lambda phase: None
+        handle_order_filled(strategy, event)
+
+    results = persistence.sqlite.query_json("report_results")
+    assert len(results) == 1
+    assert len(notifications) == 1
+    persistence.close()
+
+
 def test_reduce_only_fill_records_early_exit_paper_result() -> None:
     from polysignal_lab.domain.enums import Side
     from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
@@ -298,8 +681,7 @@ def test_reduce_only_fill_records_early_exit_paper_result() -> None:
         def forget(self, event, order):
             _ = event, order
 
-    strategy = _native_strategy()
-    strategy.strategy_name = "ptb_diff"
+    strategy = _native_strategy("ptb_diff")
     strategy._metrics_tracker = Tracker()
     strategy.observability = SimpleNamespace(
         record_event=lambda table, data: recorded.append((table, data)),
@@ -376,8 +758,7 @@ def test_reduce_only_fill_notifies_paper_result_after_durable_record() -> None:
         def forget(self, event, order):
             _ = event, order
 
-    strategy = _native_strategy()
-    strategy.strategy_name = "ptb_diff"
+    strategy = _native_strategy("ptb_diff")
     strategy._metrics_tracker = Tracker()
     strategy.observability = SimpleNamespace(
         record_event=lambda table, data: recorded.append((table, data)),
@@ -450,8 +831,7 @@ def test_reduce_only_fill_durable_when_report_result_notifier_raises() -> None:
         def forget(self, event, order):
             _ = event, order
 
-    strategy = _native_strategy()
-    strategy.strategy_name = "late_consensus"
+    strategy = _native_strategy("late_consensus")
     strategy._metrics_tracker = Tracker()
     strategy.observability = SimpleNamespace(
         record_event=lambda table, data: recorded.append((table, data)),
@@ -590,6 +970,9 @@ def test_native_exit_uses_per_position_take_profit_threshold() -> None:
     )
 
     class Cache:
+        def instrument(self, instrument_id: object):
+            return _cached_instrument(instrument_id)
+
         def orders(self, **kwargs):
             _ = kwargs
             return [entry_order]
@@ -740,6 +1123,9 @@ def test_native_exit_flip_stop_uses_stamped_stop_price() -> None:
     )
 
     class Cache:
+        def instrument(self, instrument_id: object):
+            return _cached_instrument(instrument_id)
+
         def orders(self, **kwargs):
             _ = kwargs
             return [entry_order]

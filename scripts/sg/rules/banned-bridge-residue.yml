@@ -1,0 +1,10 @@
+id: banned-bridge-residue
+language: python
+rule:
+  any:
+    - pattern: from polysignal_lab.nautilus_bridge import $$$
+    - pattern: import polysignal_lab.nautilus_bridge
+    - pattern: from polysignal_lab.nautilus_runtime.decision_policy_actor import $$$
+    - pattern: from polysignal_lab.nautilus_runtime.decision_messages import $$$
+    - pattern: from polysignal_lab.nautilus_runtime.composite_alpha import $$$
+    - pattern: import polysignal_lab.nautilus_runtime.composite_alpha

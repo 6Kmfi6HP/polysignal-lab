@@ -33,7 +33,6 @@ from polysignal_lab.storage.state_store import StateStore
 SPOT_DEPENDENT_NATIVE_STRATEGIES: Final = frozenset(
     {
         "binary_momentum",
-        "cross_market_bot",
         "dump_hedge",
         "fibonacci_bot",
         "late_consensus",

@@ -10,6 +10,8 @@ Pos: Test Layer - Unit/Integration tests
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 
@@ -91,13 +93,16 @@ async def test_runtime_records_gate_rejections_and_persists_health_snapshot(
     from polysignal_lab.app import scheduler_health
     from polysignal_lab.nautilus_runtime.runtime_context_factory import build_nautilus_runtime_context
     from polysignal_lab.signal_layer.gate import SignalGate
-    from signal_helpers import ptb_signal_from_view
+    from signal_helpers import ptb_decision_from_view
 
     runtime = build_nautilus_runtime_context(settings, base_dir=tmp_path)
     gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
-    signal = ptb_signal_from_view(market_view, settings).model_copy(update={"confidence": 0.01})
+    decision_in = replace(
+        ptb_decision_from_view(market_view, settings),
+        confidence=0.01,
+    )
 
-    decision = gate.evaluate(signal, market_view)
+    decision = gate.evaluate(decision_in, market_view)
     assert decision.rejected is not None
     runtime.health.inc_metric(
         "signal_gate", f"rejected_{decision.rejected.reason_code}"

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, dataclasses.field, datetime, datetime.UTC, datetime.datetime
-Output: refresh_asset_conditions, retry_market_instrument_requests, subscribe_market_conditions, instrument_visible_in_cache, subscribe_market_instrument, on_instrument_available, unsubscribe_market_conditions, condition_instruments, clear_condition_subscription_state, begin_market_book_generation
+Output: refresh_asset_conditions, subscribe_market_conditions, instrument_visible_in_cache, subscribe_market_instrument, on_instrument_available, unsubscribe_market_conditions, condition_instruments, clear_condition_subscription_state, begin_market_book_generation
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -16,6 +16,9 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
+from polysignal_lab.nautilus_runtime.polymarket_clients import (
+    polymarket_data_client_id,
+)
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.strategy.helpers import (
     _asset_conditions,
@@ -31,8 +34,10 @@ class MarketSubscriptionState:
 
     subscribe_intent_condition_ids: set[str] = field(default_factory=set)
     pending_metadata_condition_ids: set[str] = field(default_factory=set)
-    # Instruments requested but not yet visible in Cache / on_instrument.
+    # Instruments expected from the Actor-owned provider but not Cache-visible yet.
     pending_instrument_ids: set[str] = field(default_factory=set)
+    # Instrument-level intent keeps repeated provider updates idempotent.
+    subscribed_instrument_ids: set[str] = field(default_factory=set)
     awaiting_book_sides_by_condition: dict[str, set[Side]] = field(default_factory=dict)
     book_generation_started_at_by_condition: dict[str, datetime] = field(default_factory=dict)
     last_book_at_by_condition: dict[str, dict[Side, datetime]] = field(default_factory=dict)
@@ -64,25 +69,38 @@ class _SubscriptionStrategy(Protocol):
         now: datetime,
     ) -> dict[str, object]: ...
 
-    def request_instrument(self, instrument_id: object) -> object: ...
-    def subscribe_quotes(self, instrument_id: object) -> object: ...
-    def subscribe_trades(self, instrument_id: object) -> object: ...
-    def subscribe_book_deltas(
-        self, instrument_id: object, *, book_type: object
+    def subscribe_quotes(
+        self,
+        instrument_id: object,
+        client_id: object | None = None,
     ) -> object: ...
-    def unsubscribe_quotes(self, instrument_id: object) -> object: ...
-    def unsubscribe_trades(self, instrument_id: object) -> object: ...
-    def unsubscribe_book_deltas(self, instrument_id: object) -> object: ...
-
-
-class InstrumentSubscriptionManager:
-    """Thin connector used by custom-data handlers to re-request missing instruments."""
-
-    def __init__(self, strategy: _SubscriptionStrategy) -> None:
-        self._strategy = strategy
-
-    def retry_instrument_requests(self, condition_ids: tuple[str, ...]) -> None:
-        retry_market_instrument_requests(self._strategy, condition_ids)
+    def subscribe_trades(
+        self,
+        instrument_id: object,
+        client_id: object | None = None,
+    ) -> object: ...
+    def subscribe_book_deltas(
+        self,
+        instrument_id: object,
+        *,
+        book_type: object,
+        client_id: object | None = None,
+    ) -> object: ...
+    def unsubscribe_quotes(
+        self,
+        instrument_id: object,
+        client_id: object | None = None,
+    ) -> object: ...
+    def unsubscribe_trades(
+        self,
+        instrument_id: object,
+        client_id: object | None = None,
+    ) -> object: ...
+    def unsubscribe_book_deltas(
+        self,
+        instrument_id: object,
+        client_id: object | None = None,
+    ) -> object: ...
 
 
 def refresh_asset_conditions(strategy: _SubscriptionStrategy) -> None:
@@ -94,14 +112,23 @@ def refresh_asset_conditions(strategy: _SubscriptionStrategy) -> None:
     )
 
 
-def retry_market_instrument_requests(
+def _client_id_for_instrument(
     strategy: _SubscriptionStrategy,
-    condition_ids: Sequence[str],
-) -> None:
-    if strategy.registry is None:
-        return
-    for instrument_id in _instrument_ids(strategy.registry, condition_ids):
-        _ = strategy.request_instrument(instrument_id)
+    instrument_id: object,
+) -> object | None:
+    registry = strategy.registry
+    if registry is None:
+        return None
+    instrument_key = _instrument_key(instrument_id)
+    for condition_id in registry.condition_ids():
+        pair = registry.by_condition(condition_id)
+        if pair is None:
+            continue
+        for token_id in (pair.up.token_id, pair.down.token_id):
+            resolved = registry.instrument_id_for_token(token_id)
+            if resolved is not None and _instrument_key(resolved) == instrument_key:
+                return polymarket_data_client_id(pair.timeframe)
+    return None
 
 
 def _subscribe_market_condition(
@@ -160,9 +187,9 @@ def instrument_visible_in_cache(
 ) -> bool:
     """True when Cache holds the instrument, or Cache is not yet bound.
 
-    Production on_start always has a Cache: missing instrument → request and
-    wait for on_instrument. Unit hosts with no Cache (pre-engine) may wire
-    subscribe calls directly so pure function tests stay unblocked.
+    Production on_start always has a Cache: missing instrument → pending intent,
+    then wait for the provider-owned on_instrument callback. Unit hosts with no
+    Cache (pre-engine) may wire subscribe calls directly.
     """
     cache = getattr(strategy, "cache", None)
     if cache is None:
@@ -194,15 +221,23 @@ def subscribe_market_instrument(
     """
     instrument_id = _nautilus_instrument_id(instrument_id)
     key = _instrument_key(instrument_id)
+    if key in strategy._subscription_state.subscribed_instrument_ids:  # pyright: ignore[reportPrivateUsage]
+        strategy._subscription_state.pending_instrument_ids.discard(key)  # pyright: ignore[reportPrivateUsage]
+        return True
+    client_id = _client_id_for_instrument(strategy, instrument_id)
     if not instrument_visible_in_cache(strategy, instrument_id):
         strategy._subscription_state.pending_instrument_ids.add(key)
-        _ = strategy.request_instrument(instrument_id)
         return False
     strategy._subscription_state.pending_instrument_ids.discard(key)
     book_type = _nautilus_book_type(strategy.book_type)
-    _ = strategy.subscribe_quotes(instrument_id)
-    _ = strategy.subscribe_trades(instrument_id)
-    _ = strategy.subscribe_book_deltas(instrument_id, book_type=book_type)
+    _ = strategy.subscribe_quotes(instrument_id, client_id=client_id)
+    _ = strategy.subscribe_trades(instrument_id, client_id=client_id)
+    _ = strategy.subscribe_book_deltas(
+        instrument_id,
+        book_type=book_type,
+        client_id=client_id,
+    )
+    strategy._subscription_state.subscribed_instrument_ids.add(key)
     return True
 
 
@@ -214,7 +249,7 @@ def on_instrument_available(
     raw_id = getattr(instrument, "id", instrument)
     instrument_id = _nautilus_instrument_id(raw_id)
     key = _instrument_key(instrument_id)
-    strategy._subscription_state.pending_instrument_ids.discard(key)
+    strategy._subscription_state.pending_instrument_ids.discard(key)  # pyright: ignore[reportPrivateUsage]
     if strategy.registry is None:
         return False
     wanted = {
@@ -227,6 +262,16 @@ def on_instrument_available(
     if key not in wanted:
         return False
     return subscribe_market_instrument(strategy, instrument_id)
+
+
+def unsubscribe_all_market_instruments(
+    strategy: _SubscriptionStrategy,
+) -> None:
+    for instrument_id in tuple(strategy._subscription_state.subscribed_instrument_ids):
+        _ = unsubscribe_market_instrument(strategy, instrument_id)
+    strategy._subscription_state.pending_instrument_ids.clear()
+    strategy._subscription_state.subscribe_intent_condition_ids.clear()
+    strategy._subscription_state.pending_metadata_condition_ids.clear()
 
 
 def unsubscribe_market_conditions(
@@ -258,9 +303,9 @@ def clear_condition_subscription_state(
     strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)
     if strategy.registry is not None:
         for instrument_id in _instrument_ids(strategy.registry, (condition_id,)):
-            strategy._subscription_state.pending_instrument_ids.discard(
-                _instrument_key(instrument_id)
-            )
+            key = _instrument_key(instrument_id)
+            strategy._subscription_state.pending_instrument_ids.discard(key)
+            strategy._subscription_state.subscribed_instrument_ids.discard(key)  # pyright: ignore[reportPrivateUsage]
     retire_market_book_generation(strategy, condition_id, clear_history=False)
 
 
@@ -359,7 +404,10 @@ def unsubscribe_market_instrument(
     instrument_id: object,
 ) -> bool:
     instrument_id = _nautilus_instrument_id(instrument_id)
-    _ = strategy.unsubscribe_quotes(instrument_id)
-    _ = strategy.unsubscribe_trades(instrument_id)
-    _ = strategy.unsubscribe_book_deltas(instrument_id)
+    key = _instrument_key(instrument_id)
+    client_id = _client_id_for_instrument(strategy, instrument_id)
+    _ = strategy.unsubscribe_quotes(instrument_id, client_id=client_id)
+    _ = strategy.unsubscribe_trades(instrument_id, client_id=client_id)
+    _ = strategy.unsubscribe_book_deltas(instrument_id, client_id=client_id)
+    strategy._subscription_state.subscribed_instrument_ids.discard(key)  # pyright: ignore[reportPrivateUsage]
     return True

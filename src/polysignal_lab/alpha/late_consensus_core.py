@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from polysignal_lab.alpha.types import AlphaDecision, MarketView
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
+from polysignal_lab.domain.enums import OrderIntent, Side
 
 
 @dataclass(frozen=True)
@@ -210,6 +210,10 @@ class LateConsensusAlphaCore:
                 "entry_sequence": sequence,
                 "created_at_for_test": view.created_at,
             },
+            order_intent=OrderIntentSpec(
+                intent=OrderIntent.TAKER_IOC,
+                quantity=contracts,
+            ),
         )
 
     # ------------------------------------------------------------------

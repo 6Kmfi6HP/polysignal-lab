@@ -15,7 +15,7 @@ import math
 from typing import Any, TypedDict
 
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
-from polysignal_lab.utils import new_id, utc_iso
+from polysignal_lab.utils import stable_hash, utc_iso
 
 FEE_MODEL_IGNORED_V1 = "ignored_v1"
 
@@ -66,17 +66,22 @@ def report_result_from_early_exit(
     entry_price = _positive_float(metrics.get("entry_price"))
     if entry_price is None:
         entry_price = _positive_float(metrics.get("avg_entry_price"))
-    quantity = _positive_float(metrics.get("position_quantity"))
+    if entry_price is None:
+        return None
+    quantity = _positive_float(fill_shares)
     if quantity is None:
-        quantity = _positive_float(fill_shares)
+        return None
     exit_px = _positive_float(fill_price)
     if exit_px is None:
         exit_px = _positive_float(metrics.get("exit_price"))
-    if entry_price is None or quantity is None or exit_px is None:
+    if exit_px is None:
         return None
 
-    stake = _positive_float(metrics.get("stake_usdc"))
-    if stake is None:
+    total_quantity = _positive_float(metrics.get("position_quantity"))
+    total_stake = _positive_float(metrics.get("stake_usdc"))
+    if total_stake is not None and total_quantity is not None:
+        stake = total_stake * quantity / total_quantity
+    else:
         stake = entry_price * quantity
     if stake <= 0.0:
         return None
@@ -128,9 +133,10 @@ def report_result_from_early_exit(
         **fee,
     }
 
+    report_result_id = f"rr_exit_{stable_hash(strategy, position_id, length=24)}"
     return {
         "schema_version": 1,
-        "report_result_id": new_id("rr", "exit", position_id),
+        "report_result_id": report_result_id,
         "signal_id": signal_id,
         "report_position_id": position_id,
         "strategy": strategy,

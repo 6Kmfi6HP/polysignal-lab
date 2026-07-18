@@ -31,9 +31,22 @@ from polysignal_lab.nautilus_runtime.strategy.helpers import (
 )
 
 
-def metrics_from_tags(event: object) -> dict[str, object]:
-    """Recover signal metrics from Cache order tags (sole association path)."""
-    tags = _tags(_value(event, "tags"))
+def _merged_tags(event: object, order: object | None) -> dict[str, str]:
+    cached = _tags(_value(order, "tags")) if order is not None else {}
+    event_tags = _tags(_value(event, "tags"))
+    return {
+        **cached,
+        **{key: value for key, value in event_tags.items() if value not in (None, "")},
+    }
+
+
+def metrics_from_tags(
+    event: object,
+    *,
+    order: object | None = None,
+) -> dict[str, object]:
+    """Recover signal metrics from the Cache-owned Order tags."""
+    tags = _merged_tags(event, order)
     metrics: dict[str, object] = {}
     for key, value in tags.items():
         if value not in (None, ""):
@@ -53,32 +66,40 @@ def metrics_from_tags(event: object) -> dict[str, object]:
     return metrics
 
 
+def _association_ids(
+    event: object,
+    registry: MarketCatalog | None,
+    tags: Mapping[str, object],
+    metrics: Mapping[str, object],
+) -> tuple[str | None, str | None, str | None, str | None]:
+    instrument_id = _identifier_text(_value(event, "instrument_id"))
+    condition_id = _optional_str(tags.get("condition_id") or metrics.get("condition_id"))
+    if not condition_id and registry is not None and instrument_id is not None:
+        condition_id = _condition_id_from_catalog_instrument(
+            registry, registry.condition_ids(), instrument_id
+        )
+    market_id = _optional_str(tags.get("market_id") or metrics.get("market_id"))
+    if not market_id and registry is not None and condition_id is not None:
+        market_id = _market_id_for_condition(registry, condition_id)
+    token_id = _optional_str(tags.get("token_id") or metrics.get("token_id"))
+    if not token_id and registry is not None and condition_id and instrument_id:
+        token_id = _token_id_from_catalog_instrument(registry, condition_id, instrument_id)
+    return instrument_id, condition_id, market_id, token_id
+
+
 def project_order_metrics(
     event: object,
     *,
     registry: MarketCatalog | None,
     strategy_name: str,
+    order: object | None = None,
 ) -> dict[str, object]:
     """Typed Nautilus-event → reporting metrics dict (unique projection path)."""
-    tags = _tags(_value(event, "tags"))
-    metrics = metrics_from_tags(event)
-    instrument_id = _identifier_text(_value(event, "instrument_id"))
-    condition_id = tags.get("condition_id") or _optional_str(metrics.get("condition_id"))
-    if not condition_id and registry is not None and instrument_id is not None:
-        condition_id = _condition_id_from_catalog_instrument(
-            registry, registry.condition_ids(), instrument_id
-        )
-    market_id = tags.get("market_id") or _optional_str(metrics.get("market_id"))
-    if not market_id and registry is not None and condition_id is not None:
-        market_id = _market_id_for_condition(registry, condition_id)
-    token_id = tags.get("token_id") or _optional_str(metrics.get("token_id"))
-    if (
-        not token_id
-        and registry is not None
-        and condition_id is not None
-        and instrument_id is not None
-    ):
-        token_id = _token_id_from_catalog_instrument(registry, condition_id, instrument_id)
+    tags = _merged_tags(event, order)
+    metrics = metrics_from_tags(event, order=order)
+    instrument_id, condition_id, market_id, token_id = _association_ids(
+        event, registry, tags, metrics
+    )
     price = _maybe_float(_value(event, "price"))
     if "level_price" not in metrics and price is not None:
         metrics["level_price"] = price
@@ -109,9 +130,13 @@ def project_fill_metrics(
     *,
     registry: MarketCatalog | None,
     strategy_name: str,
+    order: object | None = None,
 ) -> dict[str, object]:
     metrics = project_order_metrics(
-        event, registry=registry, strategy_name=strategy_name
+        event,
+        registry=registry,
+        strategy_name=strategy_name,
+        order=order,
     )
     fill_price = _maybe_float(
         _value(event, "fill_price", _value(event, "last_px", _value(event, "price")))

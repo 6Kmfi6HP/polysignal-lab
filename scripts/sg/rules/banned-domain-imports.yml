@@ -1,0 +1,8 @@
+id: banned-domain-orderbook-trade
+language: python
+rule:
+  any:
+    - pattern: from polysignal_lab.domain.orderbook import $$$
+    - pattern: from polysignal_lab.domain.trade import $$$
+    - pattern: import polysignal_lab.domain.orderbook
+    - pattern: import polysignal_lab.domain.trade

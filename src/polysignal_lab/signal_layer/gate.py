@@ -1,18 +1,10 @@
 """
-Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Callable, collections.abc.Mapping, dataclasses, dataclasses.dataclass, dataclasses.field, datetime
-Output: GateDecision, GateRejection, _FreshnessCheckSpec, SignalGate
+Input: __future__, __future__.annotations, logging, collections.abc, dataclasses, datetime
+Output: GateDecision, GateRejection, SignalGate
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
-
-
-
-
-
-
-
-
 
 
 from __future__ import annotations
@@ -22,25 +14,27 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from polysignal_lab.alpha.types import MarketView, SideBookView, SpotView
+from polysignal_lab.alpha.types import AlphaDecision, MarketView, SideBookView, SpotView
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
-
 
 _UNKNOWN_LAG_MS = 10**12
 
 
 @dataclass(frozen=True, slots=True)
 class GateDecision:
+    """Pretrade check result. ``publish`` is optional projection for storage only."""
+
     accepted: bool
-    signal: SignalCandidate | None = None
+    decision: AlphaDecision | None = None
+    publish: SignalCandidate | None = None
     rejected: RejectedSignal | None = None
 
 
 GateDetails = dict[str, str | float | int | None]
-GateCheck = Callable[[SignalCandidate, MarketView], "GateRejection | None"]
+GateCheck = Callable[[AlphaDecision, MarketView], "GateRejection | None"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +89,11 @@ def _market_is_active(view: MarketView) -> bool:
 
 
 class SignalGate:
+    """Stateless strategy pretrade checks on AlphaDecision.
+
+    Account/exposure/rate limits belong to Nautilus RiskEngine + Cache.
+    """
+
     def __init__(
         self,
         signal_config: SignalConfig,
@@ -105,88 +104,130 @@ class SignalGate:
         self.poly_config = poly_config
         self.binance_config = binance_config
 
-    def evaluate(self, candidate: SignalCandidate, view: MarketView) -> GateDecision:
-        prevalidated = self.prevalidate(candidate, view)
+    def evaluate(
+        self,
+        decision: AlphaDecision,
+        view: MarketView,
+        *,
+        freshness_policy: FreshnessPolicy | None = None,
+    ) -> GateDecision:
+        prevalidated = self.prevalidate(
+            decision, view, freshness_policy=freshness_policy
+        )
         if not prevalidated.accepted:
             return prevalidated
-        return self.commit([candidate])[0]
+        publish = self._publish_projection(decision, view)
+        return GateDecision(True, decision=decision, publish=publish)
 
-    def commit(self, candidates: list[SignalCandidate]) -> list[GateDecision]:
-        """Accept prevalidated candidates; RiskEngine and Cache own stateful checks."""
-        return [GateDecision(True, signal=candidate) for candidate in candidates]
+    def commit(
+        self,
+        decisions: list[AlphaDecision],
+        view: MarketView,
+        *,
+        freshness_policy: FreshnessPolicy | None = None,
+    ) -> list[GateDecision]:
+        """Evaluate each AlphaDecision; RiskEngine owns stateful rate limits."""
+        return [
+            self.evaluate(decision, view, freshness_policy=freshness_policy)
+            for decision in decisions
+        ]
 
     def prevalidate(
-        self, candidate: SignalCandidate, view: MarketView
+        self,
+        decision: AlphaDecision,
+        view: MarketView,
+        *,
+        freshness_policy: FreshnessPolicy | None = None,
     ) -> GateDecision:
-        """Check candidate eligibility without consuming dedupe or rate-limit state."""
-        return self._evaluate_checks(
-            candidate,
-            view,
-            [
-                self._market_active,
-                self._time_window,
-                self._book_freshness,
-                self._spot_freshness,
-                self._spread,
-                self._max_entry,
-                self._gtd_expiry,
-                self._confidence,
-            ],
-        )
+        """Check eligibility without RiskEngine/Cache stateful checks."""
+        previous = getattr(self, "_freshness_policy", None)
+        self._freshness_policy = freshness_policy
+        try:
+            return self._evaluate_checks(
+                decision,
+                view,
+                [
+                    self._identity,
+                    self._market_active,
+                    self._time_window,
+                    self._book_freshness,
+                    self._spot_freshness,
+                    self._spread,
+                    self._max_entry,
+                    self._gtd_expiry,
+                    self._confidence,
+                ],
+            )
+        finally:
+            self._freshness_policy = previous
 
     def _evaluate_checks(
         self,
-        candidate: SignalCandidate,
+        decision: AlphaDecision,
         view: MarketView,
         checks: list[GateCheck],
     ) -> GateDecision:
         log = logging.getLogger("polysignal_lab.gate")
         for check in checks:
-            rejection = check(candidate, view)
+            rejection = check(decision, view)
             if rejection:
                 reason = rejection.reason_code
                 log.info(
                     "GATE_REJECT %s %s market=%s side=%s reason=%s",
                     check.__name__,
                     reason,
-                    candidate.market_id[:16],
-                    candidate.side.value,
+                    decision.market_id[:16],
+                    decision.side.value,
                     reason,
                 )
+                publish = self._publish_projection(decision, view)
                 return GateDecision(
                     False,
+                    decision=decision,
+                    publish=publish,
                     rejected=RejectedSignal(
-                        candidate=candidate,
+                        candidate=publish,
                         gate_name=check.__name__,
                         reason_code=reason,
-                        details=self._rejection_details(candidate, rejection),
+                        details=self._rejection_details(decision, rejection, publish),
                     ),
                 )
         log.info(
-            "GATE_ACCEPT %s market=%s side=%s confidence=%.3f",
-            candidate.signal_id[:12],
-            candidate.market_id[:16],
-            candidate.side.value,
-            candidate.confidence,
+            "GATE_ACCEPT market=%s side=%s confidence=%.3f strategy=%s",
+            decision.market_id[:16],
+            decision.side.value,
+            decision.confidence,
+            decision.strategy,
         )
-        return GateDecision(True, signal=candidate)
+        return GateDecision(True, decision=decision)
+
+    def _publish_projection(
+        self, decision: AlphaDecision, view: MarketView
+    ) -> SignalCandidate:
+        # Local import avoids gate → decision_policy cycle.
+        from polysignal_lab.nautilus_runtime.decision_policy import candidate_from_decision
+
+        return candidate_from_decision(decision, view)
 
     def _rejection_details(
-        self, candidate: SignalCandidate, rejection: GateRejection
+        self,
+        decision: AlphaDecision,
+        rejection: GateRejection,
+        publish: SignalCandidate,
     ) -> dict[str, str | float | int | None]:
         details: dict[str, str | float | int | None] = {
             "reason_code": rejection.reason_code,
-            "signal_id": candidate.signal_id,
-            "strategy": candidate.strategy,
-            "asset": candidate.asset,
-            "timeframe": candidate.timeframe,
-            "market_id": candidate.market_id,
-            "side": candidate.side.value,
-            "confidence": candidate.confidence,
-            "entry_reference_price": candidate.entry_reference_price,
-            "max_entry_price": candidate.max_entry_price,
-            "seconds_to_close": candidate.seconds_to_close,
-            "dedupe_key": candidate.dedupe_key,
+            "signal_id": publish.signal_id,
+            "strategy": decision.strategy,
+            "asset": decision.asset,
+            "timeframe": decision.timeframe,
+            "market_id": decision.market_id,
+            "side": decision.side.value,
+            "confidence": decision.confidence,
+            "entry_reference_price": decision.entry_reference_price,
+            "max_entry_price": decision.max_entry_price,
+            "seconds_to_close": decision.seconds_to_close,
+            "dedupe_key": decision.dedupe_key(),
         }
         details.update(rejection.details)
         return details
@@ -205,9 +246,7 @@ class SignalGate:
         self,
         policy: FreshnessPolicy | None,
     ) -> float:
-        policy_value = (
-            None if policy is None else policy.max_orderbook_staleness_ms
-        )
+        policy_value = None if policy is None else policy.max_orderbook_staleness_ms
         threshold_ms, _ = self._policy_threshold(
             policy,
             policy_value,
@@ -232,7 +271,7 @@ class SignalGate:
 
     def _check_freshness(
         self,
-        candidate: SignalCandidate,
+        decision: AlphaDecision,
         *,
         source: str,
         missing_reason: str,
@@ -241,9 +280,10 @@ class SignalGate:
         lag_ms: int | None,
         policy_staleness_ms: int | float | None,
         config_threshold: int,
+        freshness_policy: FreshnessPolicy | None = None,
     ) -> GateRejection | None:
         threshold_ms, policy_source = self._policy_threshold(
-            candidate.freshness_policy,
+            freshness_policy,
             policy_staleness_ms,
             config_threshold,
         )
@@ -270,97 +310,122 @@ class SignalGate:
             )
         return None
 
-    def _market_active(self, candidate: SignalCandidate, view: MarketView) -> GateRejection | None:
+    @staticmethod
+    def _identity(
+        decision: AlphaDecision, view: MarketView
+    ) -> GateRejection | None:
+        if decision.market_id != view.market_id:
+            return GateRejection("MARKET_ID_MISMATCH")
+        if decision.condition_id != view.condition_id:
+            return GateRejection("CONDITION_ID_MISMATCH")
+        if decision.token_id != view.book_for(decision.side).token_id:
+            return GateRejection("TOKEN_SIDE_MISMATCH")
+        return None
+
+    def _market_active(
+        self, decision: AlphaDecision, view: MarketView
+    ) -> GateRejection | None:
+        _ = decision
         return None if _market_is_active(view) else GateRejection("MARKET_NOT_ACTIVE")
 
-    def _time_window(self, candidate: SignalCandidate, view: MarketView) -> GateRejection | None:
-        if candidate.reduce_only:
+    def _time_window(
+        self, decision: AlphaDecision, view: MarketView
+    ) -> GateRejection | None:
+        _ = view
+        if decision.reduce_only:
             return None
-        if candidate.order_intent == OrderIntent.PASSIVE_GTD and candidate.expiry_seconds is not None:
+        if (
+            decision.explicit_intent == OrderIntent.PASSIVE_GTD
+            and decision.expiry_seconds is not None
+        ):
             return None
-        if candidate.seconds_to_close is None or candidate.seconds_to_close <= 0:
+        if decision.seconds_to_close is None or decision.seconds_to_close <= 0:
             return GateRejection("OUTSIDE_ENTRY_WINDOW")
         return None
 
-    def _book_freshness(self, candidate: SignalCandidate, view: MarketView) -> GateRejection | None:
-        book = view.book_for(candidate.side)
+    def _book_freshness(
+        self, decision: AlphaDecision, view: MarketView
+    ) -> GateRejection | None:
+        book = view.book_for(decision.side)
         present = _book_present(book)
-        return self._check_configured_freshness(
-            candidate,
-            _BOOK_FRESHNESS,
+        policy = getattr(self, "_freshness_policy", None)
+        return self._check_freshness(
+            decision,
+            source=_BOOK_FRESHNESS.source,
+            missing_reason=_BOOK_FRESHNESS.missing_reason,
+            stale_reason=_BOOK_FRESHNESS.stale_reason,
             present=present,
             lag_ms=_book_lag_ms(book) if present else None,
-            policy_staleness_ms=candidate.freshness_policy.max_orderbook_staleness_ms if candidate.freshness_policy else None,  # noqa: E501
+            policy_staleness_ms=(
+                None if policy is None else policy.max_orderbook_staleness_ms
+            ),
             config_threshold=self.poly_config.max_book_staleness_ms,
+            freshness_policy=policy,
         )
 
-    def _spot_freshness(self, candidate: SignalCandidate, view: MarketView) -> GateRejection | None:
-        if candidate.reduce_only:
+    def _spot_freshness(
+        self, decision: AlphaDecision, view: MarketView
+    ) -> GateRejection | None:
+        if decision.reduce_only:
             return None
         spot = view.spot
         present = spot is not None
-        return self._check_configured_freshness(
-            candidate,
-            _SPOT_FRESHNESS,
+        policy = getattr(self, "_freshness_policy", None)
+        return self._check_freshness(
+            decision,
+            source=_SPOT_FRESHNESS.source,
+            missing_reason=_SPOT_FRESHNESS.missing_reason,
+            stale_reason=_SPOT_FRESHNESS.stale_reason,
             present=present,
             lag_ms=_spot_lag_ms(spot, view.created_at) if spot is not None else None,
-            policy_staleness_ms=candidate.freshness_policy.max_spot_staleness_ms if candidate.freshness_policy else None,  # noqa: E501
+            policy_staleness_ms=(
+                None if policy is None else policy.max_spot_staleness_ms
+            ),
             config_threshold=self.binance_config.max_price_staleness_ms,
+            freshness_policy=policy,
         )
 
-    def _check_configured_freshness(
-        self,
-        candidate: SignalCandidate,
-        spec: _FreshnessCheckSpec,
-        *,
-        present: bool,
-        lag_ms: int | None,
-        policy_staleness_ms: int | None,
-        config_threshold: int,
+    def _spread(
+        self, decision: AlphaDecision, view: MarketView
     ) -> GateRejection | None:
-        return self._check_freshness(
-            candidate,
-            source=spec.source,
-            missing_reason=spec.missing_reason,
-            stale_reason=spec.stale_reason,
-            present=present,
-            lag_ms=lag_ms,
-            policy_staleness_ms=policy_staleness_ms,
-            config_threshold=config_threshold,
-        )
-
-    def _spread(self, candidate: SignalCandidate, view: MarketView) -> GateRejection | None:
-        if candidate.reduce_only or candidate.order_intent == OrderIntent.PASSIVE_GTD:
+        if decision.reduce_only or decision.explicit_intent == OrderIntent.PASSIVE_GTD:
             return None
-        book = view.book_for(candidate.side)
-        max_spread = candidate.metrics.get("max_spread", 0.12)
+        book = view.book_for(decision.side)
+        max_spread = decision.metrics.get("max_spread", 0.12)
         if _book_present(book) and book.spread is not None and book.spread <= max_spread:
             return None
         return GateRejection("SPREAD_TOO_WIDE")
 
-    def _max_entry(self, candidate: SignalCandidate, view: MarketView) -> GateRejection | None:
-        if candidate.order_intent == OrderIntent.PASSIVE_GTD or candidate.reduce_only:
+    def _max_entry(
+        self, decision: AlphaDecision, view: MarketView
+    ) -> GateRejection | None:
+        if decision.explicit_intent == OrderIntent.PASSIVE_GTD or decision.reduce_only:
             return None
-        ask = view.ask_for(candidate.side)
-        if ask is None or ask > candidate.max_entry_price:
+        ask = view.ask_for(decision.side)
+        if ask is None or ask > decision.max_entry_price:
             return GateRejection("ASK_ABOVE_MAX_ENTRY")
         return None
 
-    def _gtd_expiry(self, candidate: SignalCandidate, view: MarketView) -> GateRejection | None:
-        if candidate.order_intent != OrderIntent.PASSIVE_GTD:
+    def _gtd_expiry(
+        self, decision: AlphaDecision, view: MarketView
+    ) -> GateRejection | None:
+        _ = view
+        if decision.explicit_intent != OrderIntent.PASSIVE_GTD:
             return None
-        if candidate.expiry_seconds is None or candidate.expiry_seconds <= 0:
+        if decision.expiry_seconds is None or decision.expiry_seconds <= 0:
             return GateRejection("MISSING_GTD_EXPIRY")
-        if candidate.expiry_seconds > 86400:
+        if decision.expiry_seconds > 86400:
             return GateRejection("GTD_EXPIRY_EXCEEDS_24H")
         return None
 
-    def _confidence(self, candidate: SignalCandidate, view: MarketView) -> GateRejection | None:
-        if candidate.reduce_only:
+    def _confidence(
+        self, decision: AlphaDecision, view: MarketView
+    ) -> GateRejection | None:
+        _ = view
+        if decision.reduce_only:
             return None
         return (
             None
-            if candidate.confidence >= self.signal_config.min_confidence_to_publish
+            if decision.confidence >= self.signal_config.min_confidence_to_publish
             else GateRejection("CONFIDENCE_TOO_LOW")
         )
-

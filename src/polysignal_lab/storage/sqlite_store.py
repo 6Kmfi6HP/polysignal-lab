@@ -733,12 +733,12 @@ class SQLiteStore:
                 ),
             )
 
-    def insert_report_result(self, result: Any) -> None:
+    def insert_report_result(self, result: Any) -> bool:
         p: dict[str, Any] = dict(parse_report_result_row(to_jsonable(result)))
         result_id = str(p["report_result_id"])
         p["report_result_id"] = result_id
         with self._lock, self._conn:
-            self._insert_idempotent(
+            return self._insert_idempotent(
                 "report_results",
                 "report_result_id",
                 result_id,
@@ -2089,7 +2089,7 @@ class SQLiteStore:
         record_id: str,
         columns: tuple[str, ...],
         values: tuple[Any, ...],
-    ) -> None:
+    ) -> bool:
         payload_json = values[-1]
         if self._skip_duplicate_payload_row(
             table=table,
@@ -2097,13 +2097,14 @@ class SQLiteStore:
             key_value=record_id,
             payload_json=payload_json,
         ):
-            return
+            return False
         placeholders = ",".join("?" for _ in columns)
         column_sql = ",".join(columns)
         self._conn.execute(
             f"INSERT INTO {table}({column_sql}) VALUES({placeholders})",
             values,
         )
+        return True
 
     def _skip_duplicate_payload_row(
         self,

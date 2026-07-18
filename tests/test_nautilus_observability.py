@@ -39,7 +39,7 @@ from polysignal_lab.nautilus_runtime.observability import (
     NautilusNotifierAdapter,
     ObservabilityService,
 )
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy, RejectedDecision
 
 
 class FakeStore:
@@ -392,7 +392,7 @@ def test_record_decision_event_store_persists_system_event_without_signal_id(
     assert rows[0]["side"] == "UP"
     assert rows[0]["event_type"] == "nautilus_decision"
 
-def test_record_rejected_decision_writes_duplicate_signal_candidate_payload() -> None:
+def test_record_rejected_decision_writes_publish_projection_payload() -> None:
     store = FakeStore()
     actor = ObservabilityService(store=store)
     candidate = SignalCandidate.build(
@@ -414,10 +414,10 @@ def test_record_rejected_decision_writes_duplicate_signal_candidate_payload() ->
     )
 
     actor.record_rejected_decision(
-        SimpleNamespace(
+        RejectedDecision(
             reason_code="DUPLICATE_SIGNAL",
             detail={"dedupe_key": candidate.dedupe_key},
-            candidate=candidate,
+            publish=candidate,
         )
     )
 
@@ -473,10 +473,10 @@ def test_record_decision_uses_sqlite_and_rejection_keeps_jsonl_audit(tmp_path: P
     actor.record_decision(decision, accepted=True)
     actor.drain_telemetry_once()
     actor.record_rejected_decision(
-        SimpleNamespace(
+        RejectedDecision(
             reason_code="DUPLICATE_SIGNAL",
             detail={"dedupe_key": candidate.dedupe_key},
-            candidate=candidate,
+            publish=candidate,
         )
     )
 
@@ -515,7 +515,7 @@ def _decision(**overrides: object) -> AlphaDecision:
     return AlphaDecision(**base)
 
 
-def _rejected(reason_code: str = "DUPLICATE_SIGNAL") -> SimpleNamespace:
+def _rejected(reason_code: str = "DUPLICATE_SIGNAL") -> RejectedDecision:
     candidate = SignalCandidate.build(
         strategy="test",
         asset="BTC",
@@ -533,10 +533,10 @@ def _rejected(reason_code: str = "DUPLICATE_SIGNAL") -> SimpleNamespace:
         reason_codes=["EDGE"],
         metrics={},
     )
-    return SimpleNamespace(
+    return RejectedDecision(
         reason_code=reason_code,
         detail={"dedupe_key": candidate.dedupe_key},
-        candidate=candidate,
+        publish=candidate,
     )
 
 
@@ -750,6 +750,15 @@ def test_decision_policy_control_returns_status_payload() -> None:
     disabled = payload["disabled_strategies"]
     assert isinstance(disabled, list)
     assert "test_strat" in disabled
+
+
+def test_decision_policy_control_skip_reason_for_manual_disable() -> None:
+    policy = DecisionPolicy()
+    ctrl = DecisionPolicyControl(policy)
+
+    assert ctrl.skip_reason_for("vwap_momentum") is None
+    ctrl.set_strategy_enabled("vwap_momentum", enabled=False)
+    assert ctrl.skip_reason_for("vwap_momentum") == "manual_disabled"
 
 
 class FakePersistence:

@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, importlib, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.cast, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3
-Output: assert_no_live_polymarket_execution, build_sandbox_live_node, build_live_execution_node, build_runtime_node, build_cache_config, build_data_engine_config, build_exec_engine_config, build_risk_engine_config, build_polymarket_data_client_config, build_sandbox_exec_client_config
+Input: __future__, __future__.annotations, importlib, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.cast, nautilus_trader.core.nautilus_pyo3, polysignal_lab.config, polysignal_lab.nautilus_runtime.optional_imports, polysignal_lab.nautilus_runtime.polymarket_clients
+Output: assert_no_live_polymarket_execution, build_sandbox_live_node, build_live_execution_node, build_runtime_node, build_cache_config, build_data_engine_config, build_exec_engine_config, build_risk_engine_config, build_polymarket_data_client_config, build_sandbox_exec_client_config, build_polymarket_exec_client_config
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,23 +14,28 @@ import importlib
 from collections.abc import Callable, Mapping
 from typing import cast
 
-from nautilus_trader.core import nautilus_pyo3 as _pyo3
+from nautilus_trader.core.nautilus_pyo3 import AccountType, BookType, OmsType
 
 from polysignal_lab.config import Settings, load_settings
+from polysignal_lab.nautilus_runtime.optional_imports import load_live_runtime_symbols
+from polysignal_lab.nautilus_runtime.polymarket_clients import (
+    polymarket_rtds_data_client_name,
+)
 
 SANDBOX_EXEC_CLIENT_ID = "POLYSIGNAL_PM_SANDBOX"
 LIVE_EXEC_CLIENT_ID = "POLYMARKET"
 POLYMARKET_CLIENT_ID = "POLYMARKET"
 
-LiveNode = getattr(_pyo3, "LiveNode")
-TraderId = _pyo3.TraderId
-Environment = _pyo3.Environment
-PolymarketDataClientFactory = getattr(_pyo3, "PolymarketDataClientFactory")
-SandboxExecutionClientFactory = getattr(_pyo3, "SandboxExecutionClientFactory")
-PolymarketExecutionClientFactory = getattr(_pyo3, "PolymarketExecutionClientFactory")
-Venue = _pyo3.Venue
-Money = _pyo3.Money
-CurrencyFromStr = _pyo3.Currency.from_str
+_symbols = load_live_runtime_symbols()
+LiveNode = _symbols.live_node
+TraderId = _symbols.trader_id
+Environment = _symbols.environment
+PolymarketDataClientFactory = _symbols.polymarket_data_factory
+SandboxExecutionClientFactory = _symbols.sandbox_exec_factory
+PolymarketExecutionClientFactory = _symbols.polymarket_exec_factory
+Venue = _symbols.venue
+Money = _symbols.money
+CurrencyFromStr = _symbols.currency_from_str
 
 
 def assert_no_live_polymarket_execution(config: object) -> None:
@@ -44,24 +49,22 @@ def assert_no_live_polymarket_execution(config: object) -> None:
 def build_sandbox_live_node(
     settings: Settings | None = None,
     *,
-    instrument_config: object,
+    instrument_configs: Mapping[str, object],
 ) -> object:
     if settings is None:
         settings = load_settings()
-    data_config = build_polymarket_data_client_config(
-        settings, instrument_config=instrument_config
-    )
+    data_configs = _build_polymarket_data_configs(settings, instrument_configs)
     exec_config = build_sandbox_exec_client_config(settings)
     assert_no_live_polymarket_execution(
         {"exec_clients": {SANDBOX_EXEC_CLIENT_ID: exec_config}}
     )
-    return _build_live_node(settings, data_config, exec_config)
+    return _build_live_node(settings, data_configs, exec_config)
 
 
 def build_live_execution_node(
     settings: Settings | None = None,
     *,
-    instrument_config: object,
+    instrument_configs: Mapping[str, object],
 ) -> object:
     if settings is None:
         settings = load_settings()
@@ -72,13 +75,11 @@ def build_live_execution_node(
         raise RuntimeError("live execution requires allow_live_polymarket_execution")
     if not settings.safety.allow_live_market_actions:
         raise RuntimeError("live execution requires safety.allow_live_market_actions")
-    data_config = build_polymarket_data_client_config(
-        settings, instrument_config=instrument_config
-    )
+    data_configs = _build_polymarket_data_configs(settings, instrument_configs)
     exec_config = build_polymarket_exec_client_config(settings)
     return _build_live_node(
         settings,
-        data_config,
+        data_configs,
         exec_config,
         live=True,
     )
@@ -87,21 +88,29 @@ def build_live_execution_node(
 def build_runtime_node(
     settings: Settings | None = None,
     *,
-    instrument_config: object | None = None,
+    instrument_configs: Mapping[str, object] | None = None,
 ) -> object:
     if settings is None:
         settings = load_settings()
+    if instrument_configs is None or not instrument_configs:
+        raise RuntimeError("Polymarket instrument configs are required")
     mode = settings.runtime.nautilus.execution_mode
     if mode == "sandbox":
-        return build_sandbox_live_node(settings, instrument_config=instrument_config)
+        return build_sandbox_live_node(
+            settings,
+            instrument_configs=instrument_configs,
+        )
     if mode == "live":
-        return build_live_execution_node(settings, instrument_config=instrument_config)
+        return build_live_execution_node(
+            settings,
+            instrument_configs=instrument_configs,
+        )
     raise RuntimeError("live_node.build_runtime_node requires sandbox or live mode")
 
 
 def _build_live_node(
     settings: Settings,
-    data_config: object,
+    data_configs: Mapping[str, object],
     exec_config: object,
     *,
     live: bool = False,
@@ -112,8 +121,9 @@ def _build_live_node(
     trader_id_text = settings.runtime.nautilus.trader_id
     trader_id = trader_id_cls(trader_id_text)
     exec_engine_config = build_exec_engine_config(reconciliation=live)
-    data_factory = _required(
-        PolymarketDataClientFactory, "PolymarketDataClientFactory"
+    data_factory_cls = cast(
+        Callable[[], object],
+        _required(PolymarketDataClientFactory, "PolymarketDataClientFactory"),
     )
     exec_factory = _required(
         PolymarketExecutionClientFactory if live else SandboxExecutionClientFactory,
@@ -127,8 +137,13 @@ def _build_live_node(
         .with_exec_engine_config(exec_engine_config)
         .with_load_state(True)
         .with_save_state(True)
-        .add_data_client(POLYMARKET_CLIENT_ID, data_factory(), data_config)
     )
+    for client_name, data_config in data_configs.items():
+        builder = builder.add_data_client(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+            client_name,
+            data_factory_cls(),
+            data_config,
+        )
     with_risk = getattr(builder, "with_risk_engine_config", None)
     if not callable(with_risk):
         raise RuntimeError(
@@ -183,10 +198,31 @@ def build_risk_engine_config(settings: Settings) -> object:
     )
 
 
+def _build_polymarket_data_configs(
+    settings: Settings,
+    instrument_configs: Mapping[str, object],
+) -> dict[str, object]:
+    spot_source = str(settings.runtime.nautilus.spot_data.source).strip().lower()
+    rtds_client_name = (
+        polymarket_rtds_data_client_name(settings.markets.timeframes)
+        if spot_source == "polymarket_rtds"
+        else None
+    )
+    return {
+        client_name: build_polymarket_data_client_config(
+            settings,
+            instrument_config=instrument_config,
+            enable_rtds=client_name == rtds_client_name,
+        )
+        for client_name, instrument_config in instrument_configs.items()
+    }
+
+
 def build_polymarket_data_client_config(
     settings: Settings,
     *,
     instrument_config: object,
+    enable_rtds: bool = False,
 ) -> object:
     polymarket_data_config = _import_callable(
         "nautilus_trader.core.nautilus_pyo3",
@@ -194,10 +230,11 @@ def build_polymarket_data_client_config(
     )
     nautilus_runtime = settings.runtime.nautilus
     polymarket = settings.data.polymarket
-    spot_source = str(nautilus_runtime.spot_data.source).strip().lower()
     kwargs: dict[str, object] = {
         "instrument_config": instrument_config,
-        "update_instruments_interval_mins": 0,
+        "update_instruments_interval_mins": 1,
+        # The locked pyo3 constructor does not expose new_market_filter;
+        # keep adapter-wide events disabled rather than cache every Polymarket market.
         "subscribe_new_markets": False,
         "auto_load_missing_instruments": True,
         "auto_load_debounce_ms": 100,
@@ -209,7 +246,7 @@ def build_polymarket_data_client_config(
     }
     ws_max = nautilus_runtime.polymarket_data.ws_max_subscriptions_per_connection
     kwargs["ws_max_subscriptions"] = ws_max
-    if spot_source == "polymarket_rtds":
+    if enable_rtds:
         kwargs["base_url_rtds"] = polymarket.rtds_ws_url
     return polymarket_data_config(**kwargs)
 
@@ -233,9 +270,9 @@ def build_sandbox_exec_client_config(settings: Settings) -> object:
         "venue": venue_cls(POLYMARKET_CLIENT_ID),
         "starting_balances": [balance],
         "base_currency": currency_from_str(sandbox_base_currency),
-        "oms_type": "NETTING",
-        "account_type": "CASH",
-        "book_type": settings.runtime.nautilus.sandbox_book_type,
+        "oms_type": OmsType.NETTING,
+        "account_type": AccountType.CASH,
+        "book_type": getattr(BookType, settings.runtime.nautilus.sandbox_book_type),
         "bar_execution": False,
         "trade_execution": True,
         "support_gtd_orders": True,
@@ -250,15 +287,11 @@ def build_polymarket_exec_client_config(settings: Settings) -> object:
     config_cls = _import_callable(
         "nautilus_trader.core.nautilus_pyo3", "PolymarketExecClientConfig"
     )
-    account_id_cls = _import_callable(
-        "nautilus_trader.core.nautilus_pyo3", "AccountId"
-    )
     runtime = settings.runtime.nautilus
     kwargs = {
-        "trader_id": cast(Callable[[str], object], _required(TraderId, "TraderId"))(
-            runtime.trader_id
-        ),
-        "account_id": account_id_cls(f"{POLYMARKET_CLIENT_ID}-001"),
+        # Locked pyo3 PolymarketExecClientConfig expects plain strings.
+        "trader_id": runtime.trader_id,
+        "account_id": f"{POLYMARKET_CLIENT_ID}-001",
         # Credential fields intentionally unset; Polymarket adapter resolves from env.
     }
     return config_cls(**kwargs)

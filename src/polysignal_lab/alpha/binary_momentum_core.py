@@ -243,5 +243,8 @@ class BinaryMomentumAlphaCore:
                 "max_notional": cfg.max_notional,
                 "created_at_for_test": view.created_at,
             },
-            order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_FAK),
+            order_intent=OrderIntentSpec(
+                intent=OrderIntent.TAKER_FAK,
+                notional=cfg.max_notional,
+            ),
         )

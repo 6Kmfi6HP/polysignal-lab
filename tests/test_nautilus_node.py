@@ -187,7 +187,8 @@ def test_shared_registration_uses_rotation_actor_and_one_strategy() -> None:
         "polysignal_lab.nautilus_runtime.native_strategy:PolySignalNativeStrategy",
     ]
     strategy_payload = cast(dict[str, object], getattr(runtime.strategy_configs[0], "config"))
-    assert strategy_payload["condition_ids"] == [market.condition_id]
+    assert strategy_payload["condition_ids"] == []
+    # MarketRotationActor universe events are the sole active-set source.
     assert strategy_payload["strategy_names"] == ["one_cent_buy"]
     assert strategy_payload["strategy_name"] == "one_cent_buy"
     assert strategy_payload["strategy_id"] == "PolySignal-one_cent_buy"
@@ -210,6 +211,23 @@ def test_shared_registration_adds_one_strategy_per_enabled_alpha() -> None:
         "PolySignal-one_cent_buy",
         "PolySignal-ptb_diff",
     ]
+
+
+def test_shared_registration_empty_market_configs_bootstrap_from_provider() -> None:
+    settings = Settings()
+    settings.strategies.set_explicit_strategy_names(("one_cent_buy",))
+    runtime = _RecordingRuntime()
+
+    register_runtime_components(runtime, settings)
+
+    actor_payload = cast(dict[str, object], getattr(runtime.actor_configs[0], "config"))
+    strategy_payload = cast(
+        dict[str, object], getattr(runtime.strategy_configs[0], "config")
+    )
+    assert actor_payload["markets_json"] == "[]"
+    assert strategy_payload["markets_json"] == "[]"
+    assert strategy_payload["condition_ids"] == []
+    assert settings.runtime.nautilus.market_rotation.enabled is True
 
 
 def test_shared_registration_does_not_create_shadow_strategy_when_none_enabled() -> None:
@@ -265,15 +283,19 @@ def test_live_router_returns_native_node_and_registers_importable_components(
 
     settings = _settings_with_strategy(mode="sandbox")
     native_node = _RecordingRuntime()
-    monkeypatch.setattr(
-        live_node,
-        "build_runtime_node",
-        lambda received_settings, *, instrument_config: (
-            native_node
-            if received_settings is settings and instrument_config is not None
-            else None
-        ),
-    )
+    def fake_build_runtime_node(
+        received_settings: Settings,
+        *,
+        instrument_configs: dict[str, object],
+    ) -> object | None:
+        if received_settings is settings and tuple(instrument_configs) == (
+            "POLYMARKET-5M",
+            "POLYMARKET-15M",
+        ):
+            return native_node
+        return None
+
+    monkeypatch.setattr(live_node, "build_runtime_node", fake_build_runtime_node)
 
     result = build_runtime_node(settings)
 

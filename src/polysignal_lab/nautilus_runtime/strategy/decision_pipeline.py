@@ -1,11 +1,10 @@
 """
-Input: __future__, __future__.annotations, collections, collections.deque, collections.abc, collections.abc.Callable, dataclasses, dataclasses.dataclass, dataclasses.field, datetime
+Input: __future__, __future__.annotations, collections, collections.abc, dataclasses, datetime, typing
 Output: submit_approved_for_view, DecisionPipelineState, NativeDecisionSink, NativeDecisionSinkImpl, DecisionResultHandler
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
 """
-
 
 
 from __future__ import annotations
@@ -22,7 +21,10 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     RejectedDecision,
 )
-from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy, submit_approved_decision
+from polysignal_lab.nautilus_runtime.native_order import (
+    OrderSubmittingStrategy,
+    submit_approved_decision,
+)
 
 
 def submit_approved_for_view(
@@ -33,9 +35,10 @@ def submit_approved_for_view(
     fixed_stake_usdc: float,
     instrument_id_resolver: Callable[[str], object],
     now: Callable[[], datetime] | None = None,
+    use_native_reduce_only: bool = False,
 ) -> object:
-    signal = approved.signal
-    book = view.book_for(signal.side)
+    decision = approved.decision
+    book = view.book_for(decision.side)
     return submit_approved_decision(
         strategy,
         approved,
@@ -44,6 +47,8 @@ def submit_approved_for_view(
         best_bid=getattr(book, "best_bid", None),
         instrument_id_resolver=instrument_id_resolver,
         now=now,
+        view_id=view.view_id,
+        use_native_reduce_only=use_native_reduce_only,
     )
 
 
@@ -125,23 +130,24 @@ class DecisionResultHandler:
         *,
         state: DecisionPipelineState,
         sink: NativeDecisionSink,
-    ) -> None:
+    ) -> bool:
         if isinstance(result, RejectedDecision):
             self._on_rejected(result, decision, state=state, sink=sink)
-            return
-        signal_key = result.signal.dedupe_key
+            return False
+        signal_key = result.decision.dedupe_key()
         if self._is_signal_submitted(signal_key):
             self._on_duplicate(
                 RejectedDecision(
                     reason_code="DUPLICATE_IN_FLIGHT_SIGNAL",
                     detail={"dedupe_key": signal_key},
-                    candidate=result.signal,
+                    decision=result.decision,
+                    publish=result.publish,
                 ),
                 decision,
                 state=state,
                 sink=sink,
             )
-            return
+            return False
         try:
             order = sink.submit_order(result, view=view)
         except ValueError as exc:
@@ -149,14 +155,16 @@ class DecisionResultHandler:
                 RejectedDecision(
                     reason_code="ORDER_MAPPING_FAILED",
                     detail={"error": str(exc)},
-                    candidate=result.signal,
+                    decision=result.decision,
+                    publish=result.publish,
                 ),
                 decision,
                 state=state,
                 sink=sink,
             )
-            return
+            return False
         self._on_approved(result, decision, order, state=state, sink=sink)
+        return True
 
     @staticmethod
     def _on_duplicate(
@@ -187,9 +195,10 @@ class DecisionResultHandler:
         state: DecisionPipelineState,
         sink: NativeDecisionSink,
     ) -> None:
+        _ = state
         sink.remember_metrics(order, approved)
-        sink.record_signal(approved.signal)
-        sink.notify_accepted(approved.signal)
+        sink.record_signal(approved.publish)
+        sink.notify_accepted(approved.publish)
         sink.record_decision(decision, accepted=True)
 
     @staticmethod

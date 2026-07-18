@@ -72,6 +72,8 @@ __all__ = [
 class PolySignalNativeStrategy(Strategy):
     """Nautilus callback host: DI + on_* dispatch; business logic in strategy/*."""
 
+    _execution_mode: str
+
     def __new__(cls, *args: object, **kwargs: object):
         return super().__new__(cls)
 
@@ -121,8 +123,13 @@ class PolySignalNativeStrategy(Strategy):
         )
         super().__init__(config=host.nautilus_config)
         bind_host_runtime(self, host)
+        self._batch_active_dedupe_keys: set[str] | None = None
+        self._settled_position_keys: set[tuple[str, str]] = set()
 
     def _is_signal_submitted(self, dedupe_key: str) -> bool:
+        batch_keys = getattr(self, "_batch_active_dedupe_keys", None)
+        if batch_keys is not None:
+            return dedupe_key in batch_keys
         try:
             cache = self.cache
         except (AttributeError, RuntimeError):
@@ -133,7 +140,7 @@ class PolySignalNativeStrategy(Strategy):
             dedupe_key=dedupe_key,
         )
 
-    def _require_registry(self) -> MarketCatalog | None:
+    def _require_registry(self) -> MarketCatalog:
         if self.registry is None:
             raise RuntimeError(MISSING_PROJECTIONS_ERROR)
         return self.registry
@@ -178,7 +185,7 @@ class PolySignalNativeStrategy(Strategy):
         life.on_strategy_start(self, self._on_evaluation_heartbeat)
 
     def on_stop(self) -> None:
-        life.stop_evaluation_heartbeat(self)
+        life.on_strategy_stop(self)
 
     def on_save(self) -> dict[str, bytes]:
         return save_strategy_state(self.strategy_name, self.core)
@@ -196,8 +203,8 @@ class PolySignalNativeStrategy(Strategy):
         )
 
     def on_instrument(self, instrument: object) -> None:
-        """Subscribe market data only after instrument is in Cache / delivered here."""
-        subs.on_instrument_available(self, instrument)
+        """Subscribe only when Actor-owned metadata marks the instrument wanted."""
+        _ = subs.on_instrument_available(self, instrument)
 
     def on_quote(self, tick: object) -> None:
         mde.evaluate_order_book_event(self, tick)
@@ -229,6 +236,14 @@ class PolySignalNativeStrategy(Strategy):
             self, "on_order_rejected", event, forget_metrics=True
         )
 
+    def on_order_denied(self, event: object) -> None:
+        oev.handle_order_lifecycle_event(
+            self, "on_order_denied", event, forget_metrics=True
+        )
+
+    def on_order_updated(self, event: object) -> None:
+        oev.handle_order_lifecycle_event(self, "on_order_updated", event)
+
     def on_order_canceled(self, event: object) -> None:
         oev.handle_order_lifecycle_event(
             self, "on_order_canceled", event, forget_metrics=True
@@ -252,9 +267,18 @@ class PolySignalNativeStrategy(Strategy):
         oev.handle_position_closed(self, position)
 
     def evaluate_condition(
-        self, condition_id: str, *, created_at: datetime | None = None
+        self,
+        condition_id: str,
+        *,
+        created_at: datetime | None = None,
+        trading_state: object | None = None,
     ) -> None:
-        cond.evaluate_condition(self, condition_id, created_at=created_at)
+        cond.evaluate_condition(
+            self,
+            condition_id,
+            created_at=created_at,
+            trading_state=trading_state,
+        )
 
     def _apply_decision_batch(
         self, decisions: Sequence[AlphaDecision], view: MarketView
@@ -286,6 +310,7 @@ class PolySignalNativeStrategy(Strategy):
             fixed_stake_usdc=self.fixed_stake_usdc,
             instrument_id_resolver=self._resolved_instrument,
             now=self._framework_now,
+            use_native_reduce_only=self._execution_mode in {"sandbox", "backtest"},
         )
 
     def _resolved_instrument(self, token_id: str) -> object:
@@ -334,3 +359,6 @@ class PolySignalNativeStrategy(Strategy):
 
     def _unsubscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
         subs.unsubscribe_market_conditions(self, condition_ids)
+
+    def _unsubscribe_all_market_instruments(self) -> None:
+        subs.unsubscribe_all_market_instruments(self)

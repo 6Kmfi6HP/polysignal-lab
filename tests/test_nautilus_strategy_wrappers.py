@@ -11,7 +11,6 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 import pytest
 
@@ -103,11 +102,13 @@ class FakePolicy(DecisionPolicy):
         self.calls.append((decision, view))
         approve = self.approvals[min(len(self.calls) - 1, len(self.approvals) - 1)]
         if approve:
-            return ApprovedDecision(signal=_signal_from_decision(decision))
+            publish = _signal_from_decision(decision)
+            return ApprovedDecision(decision=decision, publish=publish)
         return RejectedDecision(
             reason_code="TEST_REJECTED",
             detail={},
-            candidate=_signal_from_decision(decision),
+            decision=decision,
+            publish=_signal_from_decision(decision),
         )
 
     def batch_arbitrate(
