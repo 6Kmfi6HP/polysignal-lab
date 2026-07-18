@@ -1,0 +1,12 @@
+{
+  "exclude": [
+    ".claude/worktrees/",
+    ".omo/",
+    "data/",
+    "logs/",
+    "state/",
+    "frontend/node_modules/",
+    "docs/nautilus_reference/",
+    "refs/"
+  ]
+}

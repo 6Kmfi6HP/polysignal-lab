@@ -6,7 +6,10 @@
       "args": [
         "serve",
         "--mcp"
-      ]
+      ],
+      "env": {
+        "CODEGRAPH_WATCH_DEBOUNCE_MS": "5000"
+      }
     }
   }
 }
