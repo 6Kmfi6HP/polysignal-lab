@@ -1,6 +1,6 @@
 """
 Input: __future__, collections.abc, datetime, nautilus_trader, polysignal_lab
-Output: PolymarketInstrumentMarketBuilder
+Output: PolymarketInstrumentMarketBuilder, _payload_from_nautilus_instrument
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -117,10 +117,14 @@ def _instrument_payload(
     typed_info = cast(Mapping[object, object], info)
     original = typed_info.get("_gamma_original")
     if isinstance(original, Mapping):
+        # Test/fixture path that embeds a full Gamma market payload.
         typed_original = cast(Mapping[object, object], original)
         payload = {_text_value(key): value for key, value in typed_original.items()}
     else:
-        payload = _gamma_payload(typed_info)
+        # Official Nautilus Polymarket BinaryOption path (Rust/pyO3 v2 adapter).
+        # Info keys match crates/adapters/polymarket/src/http/parse.rs build_info_json;
+        # lifecycle lives on BinaryOption activation_ns/expiration_ns, not info.
+        payload = _payload_from_nautilus_instrument(instrument, typed_info)
     return condition_id, token_id, outcome, payload
 
 
@@ -145,22 +149,52 @@ def _text_value(value: object) -> str:
     return value if isinstance(value, str) else str(value)
 
 
-def _gamma_payload(info: Mapping[object, object]) -> dict[str, object]:
+def _payload_from_nautilus_instrument(
+    instrument: object,
+    info: Mapping[object, object],
+) -> dict[str, object]:
+    """Map official Nautilus BinaryOption → Gamma-shaped Market payload.
+
+    Official Rust adapter instrument.info contains only:
+    token_id, condition_id, market_id, question_id, market_slug, neg_risk,
+    fee_schedule, game_id. It does not set active/closed/end_date_iso.
+
+    The adapter only publishes non-expired instruments via cache_instrument_if_active,
+    so a delivered instrument without explicit closed flags is treated as active.
+    Expiration comes from BinaryOption.expiration_ns (official instrument model).
+    """
     slug = str(info.get("market_slug") or "")
-    start = info.get("game_start_time")
-    end = info.get("end_date_iso")
+    condition_id = info.get("condition_id")
+    market_id = info.get("market_id") or condition_id
+    question = info.get("question") or getattr(instrument, "description", None)
+    end_text = _datetime_text(info.get("end_date_iso")) or _ns_to_datetime_text(
+        getattr(instrument, "expiration_ns", None)
+    )
+    start_text = _datetime_text(info.get("game_start_time")) or _ns_to_datetime_text(
+        getattr(instrument, "activation_ns", None)
+    )
+    has_status_flags = any(key in info for key in ("active", "closed", "archived"))
+    if has_status_flags:
+        active = bool(info.get("active", False))
+        closed = bool(info.get("closed", False))
+        archived = bool(info.get("archived", False))
+    else:
+        # Live NT instruments are non-expired when published; default open.
+        active = True
+        closed = False
+        archived = False
     return {
-        "id": info.get("condition_id"),
-        "conditionId": info.get("condition_id"),
+        "id": market_id,
+        "conditionId": condition_id,
         "questionID": info.get("question_id"),
-        "question": info.get("question"),
+        "question": question,
         "slug": slug,
         "eventSlug": slug,
-        "eventStartTime": _datetime_text(start),
-        "endDate": _datetime_text(end),
-        "active": bool(info.get("active", False)),
-        "closed": bool(info.get("closed", False)),
-        "archived": bool(info.get("archived", False)),
+        "eventStartTime": start_text,
+        "endDate": end_text,
+        "active": active,
+        "closed": closed,
+        "archived": archived,
     }
 
 
@@ -171,3 +205,16 @@ def _datetime_text(value: object) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
+
+
+def _ns_to_datetime_text(value: object) -> str | None:
+    if value in (None, ""):
+        return None
+    try:
+        nanos = int(value)  # pyright: ignore[reportArgumentType]
+    except (TypeError, ValueError):
+        return None
+    if nanos <= 0:
+        return None
+    return datetime.fromtimestamp(nanos / 1_000_000_000, tz=UTC).isoformat()
+

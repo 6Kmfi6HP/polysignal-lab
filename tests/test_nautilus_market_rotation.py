@@ -14,7 +14,10 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import override
 
-from nautilus_polymarket_fixtures import polymarket_binary_instrument
+from nautilus_polymarket_fixtures import (
+    polymarket_binary_instrument,
+    rust_shaped_polymarket_binary_instrument,
+)
 from polysignal_lab.config import Settings
 from polysignal_lab.data.price_to_beat_provider import PriceToBeatResult
 from polysignal_lab.domain.enums import MarketStatus, Side
@@ -284,6 +287,48 @@ def test_market_rotation_publishes_provider_instrument_market() -> None:
     assert len(universes) == 1
     assert universes[0].active_condition_ids == ("0xcondition1",)
     assert universes[0].entered_condition_ids == ("0xcondition1",)
+
+
+def test_market_rotation_activates_official_rust_shaped_instruments() -> None:
+    """Issue #20: official Rust BinaryOption.info must enter the active universe."""
+    settings = Settings()
+    settings.runtime.nautilus.spot_data.source = "disabled"
+    actor = _RecordingActor(settings=settings)
+    actor.ptb_provider = SimpleNamespace(  # pyright: ignore[reportAttributeAccessIssue]
+        get_sync=lambda _market: PriceToBeatResult(  # pyright: ignore[reportUnknownLambdaType]
+            value=None,
+            source="unavailable",
+            verified=False,
+            from_anchor_service=False,
+            anchor_source=None,
+            anchor_lag_ms=None,
+        )
+    )
+    start = datetime.now(UTC)
+    end = start + timedelta(minutes=5)
+
+    actor.on_instrument(
+        rust_shaped_polymarket_binary_instrument(
+            "up1", "Up", event_start=start, event_end=end
+        )
+    )
+    actor.on_instrument(
+        rust_shaped_polymarket_binary_instrument(
+            "down1", "Down", event_start=start, event_end=end
+        )
+    )
+
+    markets = actor.active_markets()
+    assert len(markets) == 1
+    assert markets[0].is_active is True
+    assert markets[0].condition_id == "0xcondition1"
+    universes = [
+        unwrap_custom_data(item)
+        for item in actor.published
+        if isinstance(unwrap_custom_data(item), PolySignalMarketUniverseData)
+    ]
+    assert universes
+    assert universes[-1].active_condition_ids == ("0xcondition1",)
 
 
 def test_market_rotation_ignores_unchanged_provider_refresh() -> None:

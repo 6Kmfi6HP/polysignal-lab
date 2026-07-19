@@ -57,6 +57,8 @@ __all__ = [
     "ObservabilityService",
     "PersistenceClass",
     "StrategyControl",
+    "bind_runtime_observability",
+    "runtime_observability",
     "persistence_class_for_table",
 ]
 
@@ -65,6 +67,22 @@ __all__ = [
 # Identical rejection records within this window are suppressed; accepted
 # decisions are never suppressed.
 REPEAT_SUPPRESS_TTL_SEC = 60.0
+
+# Importable Strategy/Actor configs are JSON-only and cannot carry the process
+# ObservabilityService. CLI/runtime binds the live instance before strategies
+# construct so host_init can resolve it.
+_runtime_observability: ObservabilityService | None = None
+
+
+def bind_runtime_observability(service: ObservabilityService | None) -> None:
+    """Bind or clear the process-local ObservabilityService for Importable hosts."""
+    global _runtime_observability
+    _runtime_observability = service
+
+
+def runtime_observability() -> ObservabilityService | None:
+    """Return the process-local ObservabilityService, if bound."""
+    return _runtime_observability
 
 
 class ObservabilityService:

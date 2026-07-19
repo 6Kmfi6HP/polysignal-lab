@@ -6,7 +6,12 @@ Pos: Test Layer - Unit tests
 🔄 Self-reference: When this file changes, update this index and PROJECT_INDEX.md
 """
 
-from nautilus_polymarket_fixtures import polymarket_binary_instrument
+from datetime import UTC, datetime, timedelta
+
+from nautilus_polymarket_fixtures import (
+    polymarket_binary_instrument,
+    rust_shaped_polymarket_binary_instrument,
+)
 
 from polysignal_lab.config import MarketConfig
 from polysignal_lab.domain.enums import MarketStatus, Side
@@ -54,3 +59,35 @@ def test_unknown_market_can_become_active_without_terminal_tombstone() -> None:
     assert active is not None
     assert active.status is MarketStatus.ACTIVE
     assert builder.terminal_condition_ids() == ()
+
+
+def test_official_rust_binary_option_info_builds_active_market() -> None:
+    """Issue #20: Rust adapter info omits active/endDate; must still be tradable."""
+    builder = PolymarketInstrumentMarketBuilder(
+        MarketConfig(assets=["BTC"], timeframes=["5m"])
+    )
+    start = datetime.now(UTC)
+    end = start + timedelta(minutes=4)
+
+    assert (
+        builder.add(
+            rust_shaped_polymarket_binary_instrument(
+                "up1", "Up", event_start=start, event_end=end
+            )
+        )
+        is None
+    )
+    market = builder.add(
+        rust_shaped_polymarket_binary_instrument(
+            "down1", "Down", event_start=start, event_end=end
+        )
+    )
+
+    assert market is not None
+    assert market.is_active is True
+    assert market.status is MarketStatus.ACTIVE
+    assert market.asset == "BTC"
+    assert market.timeframe == "5m"
+    assert market.end_ts is not None
+    assert market.token_for(Side.UP).token_id == "up1"
+    assert market.token_for(Side.DOWN).token_id == "down1"

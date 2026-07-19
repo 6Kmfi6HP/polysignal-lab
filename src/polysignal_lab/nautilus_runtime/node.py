@@ -51,6 +51,7 @@ from polysignal_lab.nautilus_runtime.observability import (
     NautilusEventStoreAdapter,
     NautilusNotifierAdapter,
     ObservabilityService,
+    bind_runtime_observability,
 )
 from polysignal_lab.nautilus_runtime.runtime_registration import enabled_strategy_names
 from polysignal_lab.nautilus_runtime.signal_notifications import (
@@ -77,6 +78,8 @@ async def _prepare_nautilus_runtime_context(
         ),
         report_result_notifier=lambda result: _notify_report_result(context, result),
     )
+    # Importable strategies resolve this process-local handle during construction.
+    bind_runtime_observability(observability)
     return context, observability
 
 
