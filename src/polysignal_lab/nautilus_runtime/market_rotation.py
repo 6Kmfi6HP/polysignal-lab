@@ -32,9 +32,9 @@ from polysignal_lab.nautilus_runtime.custom_data_publisher import (
 )
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketUniverseData,
-    custom_data_type,
     is_polymarket_rtds_crypto_price,
-    polymarket_rtds_crypto_price_type,
+    polymarket_rtds_crypto_price_data_type,
+    polymarket_rtds_crypto_symbols,
     polymarket_rtds_spot_identity,
     unwrap_custom_data,
 )
@@ -138,6 +138,7 @@ class MarketRotationActor(DataActor):
         self._startup_restored_condition_ids: tuple[str, ...] = ()
         self._instrument_subscriptions_started: bool = False
         self._rtds_subscription_started: bool = False
+        self._rtds_data_types: tuple[object, ...] = ()
 
     def _framework_now(self) -> datetime:
         return framework_now(self)
@@ -183,12 +184,17 @@ class MarketRotationActor(DataActor):
             )
             self._expiry_timer_started = True
         if self.settings.runtime.nautilus.spot_data.source == "polymarket_rtds":
-            self.subscribe_data(
-                custom_data_type(polymarket_rtds_crypto_price_type()),
-                client_id=polymarket_rtds_data_client_id(
-                    self.settings.markets.timeframes
-                ),
+            client_id = polymarket_rtds_data_client_id(self.settings.markets.timeframes)
+            rtds_types = tuple(
+                polymarket_rtds_crypto_price_data_type(symbol)
+                for symbol in polymarket_rtds_crypto_symbols(
+                    self.settings.markets.assets,
+                    self.settings.data.binance.symbols,
+                )
             )
+            for data_type in rtds_types:
+                self.subscribe_data(data_type, client_id=client_id)
+            self._rtds_data_types = rtds_types
             self._rtds_subscription_started = True
         self._schedule_startup_replay(exited_condition_ids)
         if self._loaded_from_state:
@@ -276,12 +282,10 @@ class MarketRotationActor(DataActor):
                 )
             self._instrument_subscriptions_started = False
         if self._rtds_subscription_started:
-            self.unsubscribe_data(
-                custom_data_type(polymarket_rtds_crypto_price_type()),
-                client_id=polymarket_rtds_data_client_id(
-                    self.settings.markets.timeframes
-                ),
-            )
+            client_id = polymarket_rtds_data_client_id(self.settings.markets.timeframes)
+            for data_type in self._rtds_data_types:
+                self.unsubscribe_data(data_type, client_id=client_id)
+            self._rtds_data_types = ()
             self._rtds_subscription_started = False
 
     def _schedule_startup_replay(self, exited_condition_ids: tuple[str, ...]) -> None:

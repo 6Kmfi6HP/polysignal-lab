@@ -20,7 +20,8 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
-    polymarket_rtds_crypto_price_type,
+    polymarket_rtds_crypto_price_data_type,
+    polymarket_rtds_crypto_symbols,
 )
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.polymarket_clients import (
@@ -138,11 +139,14 @@ def on_strategy_start(strategy: _LifecycleStrategy, heartbeat_callback: object) 
         strategy._spot_data_source == "polymarket_rtds"  # pyright: ignore[reportPrivateUsage]
         and rtds_timeframes
     ):
-        _subscribe_custom_data(
-            strategy,
-            polymarket_rtds_crypto_price_type(),  # type: ignore[arg-type]
-            client_id=polymarket_rtds_data_client_id(rtds_timeframes),
-        )
+        client_id = polymarket_rtds_data_client_id(rtds_timeframes)
+        assets = tuple(getattr(strategy._market_config, "assets", ()) or ())
+        for symbol in polymarket_rtds_crypto_symbols(assets):
+            _subscribe_custom_data(
+                strategy,
+                polymarket_rtds_crypto_price_data_type(symbol),
+                client_id=client_id,
+            )
     _subscribe_custom_data(strategy, PolySignalPriceToBeatData)  # type: ignore[arg-type]
     # Meta/universe still accepted for catalog keys + active-set updates;
     # Gamma discovery worker is deleted (official InstrumentProvider owns load).
@@ -168,11 +172,14 @@ def on_strategy_stop(strategy: _LifecycleStrategy) -> None:
     strategy._unsubscribe_all_market_instruments()
     rtds_timeframes = tuple(getattr(strategy._market_config, "timeframes", ()))
     if strategy._spot_data_source == "polymarket_rtds" and rtds_timeframes:
-        unsubscribe_custom_data(
-            strategy,
-            polymarket_rtds_crypto_price_type(),
-            client_id=polymarket_rtds_data_client_id(rtds_timeframes),
-        )
+        client_id = polymarket_rtds_data_client_id(rtds_timeframes)
+        assets = tuple(getattr(strategy._market_config, "assets", ()) or ())
+        for symbol in polymarket_rtds_crypto_symbols(assets):
+            unsubscribe_custom_data(
+                strategy,
+                polymarket_rtds_crypto_price_data_type(symbol),
+                client_id=client_id,
+            )
     unsubscribe_custom_data(strategy, PolySignalPriceToBeatData)
     unsubscribe_custom_data(strategy, PolySignalMarketMetaData)
     unsubscribe_custom_data(strategy, PolySignalMarketUniverseData)

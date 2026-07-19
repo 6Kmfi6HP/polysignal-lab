@@ -669,6 +669,10 @@ def test_market_rotation_retires_expired_market_on_provider_update() -> None:
 
 
 def test_market_rotation_stop_unsubscribes_instruments_and_rtds() -> None:
+    from polysignal_lab.nautilus_runtime.custom_data_types import (
+        polymarket_rtds_crypto_symbols,
+    )
+
     settings = Settings()
     settings.runtime.nautilus.spot_data.source = "polymarket_rtds"
     actor = _RecordingActor(settings=settings)
@@ -680,9 +684,19 @@ def test_market_rotation_stop_unsubscribes_instruments_and_rtds() -> None:
         ("POLYMARKET", "POLYMARKET-5M"),
         ("POLYMARKET", "POLYMARKET-15M"),
     ]
-    assert len(actor.custom_data_unsubscriptions) == 1
-    _, client_id = actor.custom_data_unsubscriptions[0]
-    assert client_id == "POLYMARKET-5M"
+    expected_symbols = polymarket_rtds_crypto_symbols(
+        settings.markets.assets,
+        settings.data.binance.symbols,
+    )
+    assert len(actor.custom_data_unsubscriptions) == len(expected_symbols)
+    assert {client_id for _, client_id in actor.custom_data_unsubscriptions} == {
+        "POLYMARKET-5M"
+    }
+    assert all(
+        getattr(data_type, "metadata", None) is not None
+        and "symbol" in getattr(data_type, "metadata")
+        for data_type, _ in actor.custom_data_unsubscriptions
+    )
     assert actor.clock.canceled == ["polysignal_market_expiry"]
 
 

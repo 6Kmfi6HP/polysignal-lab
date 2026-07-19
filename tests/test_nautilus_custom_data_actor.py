@@ -131,13 +131,29 @@ def test_market_rotation_actor_subscribes_to_managed_rtds_spot(
         PolymarketRtdsCryptoPrice("BTCUSD", "100000.0", 0, 0, 1, 1)
     )
 
-    assert subscriptions == [
+    from polysignal_lab.nautilus_runtime.custom_data_types import (
+        polymarket_rtds_crypto_price_data_type,
+        polymarket_rtds_crypto_symbols,
+    )
+
+    expected_client = polymarket_rtds_data_client_id(settings.markets.timeframes)
+    expected = [
         (
-            custom_data_type(PolymarketRtdsCryptoPrice),  # pyright: ignore[reportUnknownArgumentType]
-            polymarket_rtds_data_client_id(settings.markets.timeframes),
-        ),
+            polymarket_rtds_crypto_price_data_type(symbol),
+            expected_client,
+        )
+        for symbol in polymarket_rtds_crypto_symbols(
+            settings.markets.assets,
+            settings.data.binance.symbols,
+        )
     ]
+    assert subscriptions == expected
     assert published == []
+    assert all(
+        getattr(data_type, "metadata", None) is not None
+        and "symbol" in getattr(data_type, "metadata")
+        for data_type, _ in subscriptions
+    )
 
 
 def test_market_rotation_actor_does_not_construct_legacy_rtds_feed() -> None:

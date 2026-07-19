@@ -1018,7 +1018,7 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
             client_id: object | None = None,
         ) -> None:
             _ = client_id
-            self.custom_subscriptions.append(getattr(data_type, "type_name", data_type))
+            self.custom_subscriptions.append(data_type)
 
         def _start_evaluation_heartbeat(self) -> None:
             return None
@@ -1033,10 +1033,24 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
 
     strategy.on_start()
 
-    assert PolySignalMarketMetaData.__name__ in strategy.custom_subscriptions
-    assert PolySignalMarketUniverseData.__name__ in strategy.custom_subscriptions
-    assert PolymarketRtdsCryptoPrice.__name__ in strategy.custom_subscriptions
-    assert PolySignalPriceToBeatData.__name__ in strategy.custom_subscriptions
+    type_names = [
+        getattr(item, "type_name", getattr(item, "__name__", item))
+        for item in strategy.custom_subscriptions
+    ]
+    assert PolySignalMarketMetaData.__name__ in type_names
+    assert PolySignalMarketUniverseData.__name__ in type_names
+    assert PolymarketRtdsCryptoPrice.__name__ in type_names
+    assert PolySignalPriceToBeatData.__name__ in type_names
+    rtds_subs = [
+        item
+        for item in strategy.custom_subscriptions
+        if getattr(item, "type_name", None) == PolymarketRtdsCryptoPrice.__name__
+    ]
+    assert rtds_subs
+    assert all(
+        getattr(item, "metadata", None) is not None and "symbol" in item.metadata
+        for item in rtds_subs
+    )
 
 
 def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:

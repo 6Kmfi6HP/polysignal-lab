@@ -5,4 +5,6 @@ language: python
 rule:
   any:
     - pattern: self.subscribe_data(custom_data_type(polymarket_rtds_crypto_price_type()))
+    - pattern: self.subscribe_data(polymarket_rtds_crypto_price_data_type($SYM))
     - pattern: _subscribe_custom_data($S, polymarket_rtds_crypto_price_type())
+    - pattern: _subscribe_custom_data($S, polymarket_rtds_crypto_price_data_type($SYM))

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Mapping, json, dataclasses, dataclasses.field, types, types.MappingProxyType
-Output: is_polymarket_rtds_crypto_price, polymarket_rtds_crypto_price_type, custom_data_type, polymarket_rtds_spot_identity, wrap_custom_data, unwrap_custom_data, register_custom_data_type, PolymarketRtdsCryptoPriceData, _FrozenData, PolySignalPriceToBeatData
+Output: is_polymarket_rtds_crypto_price, polymarket_rtds_crypto_price_type, polymarket_rtds_crypto_price_data_type, polymarket_rtds_crypto_symbols, custom_data_type, polymarket_rtds_spot_identity, wrap_custom_data, unwrap_custom_data, register_custom_data_type, PolymarketRtdsCryptoPriceData, _FrozenData, PolySignalPriceToBeatData
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -10,7 +10,7 @@ Pos: Application code
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 import json
 from dataclasses import field
 from types import MappingProxyType
@@ -330,6 +330,37 @@ def _require_str_mapping(value: object, field_name: str) -> dict[str, str]:
 
 def custom_data_type(payload_cls: type[object]) -> nautilus_pyo3.DataType:
     return nautilus_pyo3.DataType(payload_cls.__name__)
+
+
+def polymarket_rtds_crypto_price_data_type(symbol: str) -> nautilus_pyo3.DataType:
+    """Build an RTDS crypto-price DataType with required metadata['symbol']."""
+    normalized = str(symbol).strip()
+    if not normalized:
+        raise ValueError("Polymarket RTDS crypto symbol must not be empty")
+    return nautilus_pyo3.DataType(
+        "PolymarketRtdsCryptoPrice",
+        {"symbol": normalized},
+    )
+
+
+def polymarket_rtds_crypto_symbols(
+    assets: Sequence[str],
+    symbol_by_asset: Mapping[str, str] | None = None,
+) -> tuple[str, ...]:
+    """Resolve per-asset RTDS venue symbols (e.g. BTCUSDT) for subscription metadata."""
+    symbols: list[str] = []
+    for asset in assets:
+        key = str(asset).strip().upper()
+        if not key:
+            continue
+        mapped = None
+        if symbol_by_asset is not None:
+            mapped = symbol_by_asset.get(key) or symbol_by_asset.get(asset)
+        raw = str(mapped).strip() if mapped is not None else f"{key}USDT"
+        if not raw:
+            continue
+        symbols.append(raw)
+    return tuple(dict.fromkeys(symbols))
 
 
 def polymarket_rtds_spot_identity(symbol: object) -> tuple[str, str]:
