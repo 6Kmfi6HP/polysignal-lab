@@ -69,7 +69,7 @@ High CBO/LCOM on Strategy/Actor/policy hubs is often framework-shaped or desirab
 ## Locked version
 
 Executable API truth: installed and locked
-`nautilus_trader[polymarket]==1.231.0.dev20260716+16604`.
+`nautilus_trader[polymarket]==1.231.0a20260716`.
 `docs/nautilus_reference/` is reference material, not a version lock.
 Verified capability rows: [`NAUTILUS_CAPABILITY_MATRIX.md`](NAUTILUS_CAPABILITY_MATRIX.md).
 

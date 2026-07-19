@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, ast, importlib, re, subprocess, sys, tomllib, pathlib, pathlib.Path
-Output: test_default_import_does_not_require_nautilus, test_nautilus_node_and_strategies_do_not_import_legacy_execution, test_nautilus_is_required_dependency_for_default_runtime, test_nautilus_docker_and_lock_avoid_git_source_builds, test_cli_exposes_nautilus_mode_and_script, test_default_source_keeps_forbidden_live_symbols_out_of_runtime, test_default_nautilus_runtime_source_avoids_local_paper_executors, test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources, test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime_layers, test_nautilus_runtime_duplicate_platform_modules_are_deleted
+Output: test_default_import_does_not_require_nautilus, test_nautilus_node_and_strategies_do_not_import_legacy_execution, test_nautilus_is_required_dependency_for_default_runtime, test_nautilus_dependency_avoids_ephemeral_develop_wheel, test_nautilus_docker_and_lock_avoid_git_source_builds, test_cli_exposes_nautilus_mode_and_script, test_default_source_keeps_forbidden_live_symbols_out_of_runtime, test_default_nautilus_runtime_source_avoids_local_paper_executors, test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources, test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime_layers, test_nautilus_runtime_duplicate_platform_modules_are_deleted
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -55,7 +55,7 @@ def test_nautilus_is_required_dependency_for_default_runtime() -> None:
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     dependencies = cast(list[str], data["project"]["dependencies"])
-    expected = "nautilus_trader[polymarket]==1.231.0.dev20260716+16604"
+    expected = "nautilus_trader[polymarket]==1.231.0a20260716"
     assert expected in dependencies
     nautilus_extra = cast(list[str], data["project"]["optional-dependencies"]["nautilus"])
 
@@ -63,6 +63,29 @@ def test_nautilus_is_required_dependency_for_default_runtime() -> None:
         expected,
     ]
     assert data["project"]["requires-python"] == ">=3.12"
+
+
+def test_nautilus_dependency_avoids_ephemeral_develop_wheel() -> None:
+    data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    lock = tomllib.loads(Path("uv.lock").read_text(encoding="utf-8"))
+    project = data["project"]
+    dependencies = cast(list[str], project["dependencies"])
+    nautilus_extra = cast(list[str], project["optional-dependencies"]["nautilus"])
+
+    nautilus_dependencies = [
+        dependency
+        for dependency in [*dependencies, *nautilus_extra]
+        if dependency.startswith("nautilus_trader[")
+    ]
+    nautilus_packages = [
+        package for package in lock["package"] if package["name"] == "nautilus-trader"
+    ]
+
+    assert len(nautilus_dependencies) == 2
+    assert all(".dev" not in dependency for dependency in nautilus_dependencies)
+    assert len(nautilus_packages) == 1
+    assert ".dev" not in nautilus_packages[0]["version"]
+
 
 def test_nautilus_docker_and_lock_avoid_git_source_builds() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")

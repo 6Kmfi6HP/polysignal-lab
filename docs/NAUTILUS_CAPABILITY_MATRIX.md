@@ -5,7 +5,7 @@
 > and [`RUNTIME_BOUNDARY.md`](RUNTIME_BOUNDARY.md).
 
 Verified on Python 3.12 against the installed and locked
-`nautilus_trader[polymarket]==1.231.0.dev20260716+16604` package. Evidence comes
+`nautilus_trader[polymarket]==1.231.0a20260716` package. Evidence comes
 from installed code, public signatures, and executable local probes. It is not
 live venue acceptance evidence.
 
