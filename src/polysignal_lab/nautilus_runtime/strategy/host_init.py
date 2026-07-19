@@ -101,6 +101,14 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
     core, assembler, registry, instrument_id_resolver = dependencies_from_config(config)
     settings = config.settings()
     resolved_policy = req.policy or decision_policy_from_settings(settings)
+    # Importable LiveNode construction cannot inject callables; default to file probes.
+    from polysignal_lab.nautilus_runtime.node_probes import (
+        _runtime_progress_callback,
+        _runtime_readiness_callback,
+    )
+
+    progress_callback = req.progress_callback or _runtime_progress_callback(settings)
+    readiness_callback = req.readiness_callback or _runtime_readiness_callback(settings)
     return HostInitRequest(
         config=config,
         core=core,
@@ -118,8 +126,8 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
         orderbook_staleness_ms=float(settings.data.polymarket.max_book_staleness_ms),
         data_names=req.data_names,
         observability=req.observability,
-        progress_callback=req.progress_callback,
-        readiness_callback=req.readiness_callback,
+        progress_callback=progress_callback,
+        readiness_callback=readiness_callback,
         market_config=settings.markets,
         spot_data_source=settings.runtime.nautilus.spot_data.source,
     )
