@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, subprocess, sys, pathlib, pathlib.Path
-Output: test_accepts_project_conventional_commit_with_scope, test_rejects_missing_conventional_type, test_rejects_vague_subject, test_rejects_long_subject, test_allows_git_generated_merge_and_revert_messages
+Output: test_accepts_project_conventional_commit_with_scope, test_rejects_missing_conventional_type, test_rejects_vague_subject, test_rejects_long_subject, test_allows_git_generated_merge_and_revert_messages, test_new_branch_range_starts_at_default_branch_merge_base
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -79,3 +79,52 @@ def test_allows_git_generated_merge_and_revert_messages(tmp_path: Path):
 
     assert merge.returncode == 0, merge.stderr
     assert revert.returncode == 0, revert.stderr
+
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+
+def test_new_branch_range_starts_at_default_branch_merge_base(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _ = _git(repo, "init", "-b", "main")
+    _ = _git(repo, "config", "user.name", "Commit Policy Test")
+    _ = _git(repo, "config", "user.email", "commit-policy@example.com")
+
+    tracked = repo / "tracked.txt"
+    _ = tracked.write_text("base\n", encoding="utf-8")
+    _ = _git(repo, "add", "tracked.txt")
+    _ = _git(repo, "commit", "-m", "chore: establish test history")
+    _ = _git(repo, "branch", "feature")
+
+    _ = tracked.write_text("main\n", encoding="utf-8")
+    _ = _git(repo, "commit", "-am", "legacy default branch subject")
+    _ = _git(repo, "switch", "feature")
+    _ = tracked.write_text("feature\n", encoding="utf-8")
+    _ = _git(repo, "commit", "-am", "fix(ci): validate the feature commit only")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--head",
+            "HEAD",
+            "--before",
+            "0000000000000000000000000000000000000000",
+            "--default-branch",
+            "main",
+        ],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr

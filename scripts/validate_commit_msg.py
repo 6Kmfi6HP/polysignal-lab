@@ -53,6 +53,7 @@ VAGUE_DESCRIPTIONS = {
     "work in progress",
 }
 MAX_HEADER_LEN = 72
+ZERO_SHA = "0" * 40
 
 
 def _message_lines(message: str) -> list[str]:
@@ -119,6 +120,24 @@ def _read_commit_messages_from_range(commit_range: str) -> list[str]:
     return [message for message in result.stdout.split("\0") if message.strip()]
 
 
+def _resolve_push_range(head: str, before: str, default_branch: str) -> str:
+    if before != ZERO_SHA:
+        return f"{before}..{head}"
+
+    result = subprocess.run(
+        ["git", "merge-base", default_branch, head],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            result.stderr.strip()
+            or f"git merge-base failed for {default_branch} and {head}"
+        )
+    return f"{result.stdout.strip()}..{head}"
+
+
 def _validate_named_messages(named_messages: list[tuple[str, str]]) -> int:
     failed = False
     for name, message in named_messages:
@@ -138,26 +157,49 @@ def _validate_named_messages(named_messages: list[tuple[str, str]]) -> int:
 class Args(argparse.Namespace):
     message_files: list[Path]
     commit_range: str | None
+    head: str | None
+    before: str | None
+    default_branch: str | None
 
     def __init__(self) -> None:
         super().__init__()
         self.message_files = []
         self.commit_range = None
+        self.head = None
+        self.before = None
+        self.default_branch = None
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.add_argument("message_files", nargs="*", type=Path)
     _ = parser.add_argument("--range", dest="commit_range")
+    _ = parser.add_argument("--head")
+    _ = parser.add_argument("--before")
+    _ = parser.add_argument("--default-branch")
     args = parser.parse_args(argv, namespace=Args())
+
+    if args.commit_range and args.head:
+        parser.error("--range and --head are mutually exclusive")
+    if args.head and (args.before is None or args.default_branch is None):
+        parser.error("--head requires --before and --default-branch")
 
     try:
         named_messages: list[tuple[str, str]] = []
-        if args.commit_range:
+        commit_range = args.commit_range
+        if args.head is not None:
+            assert args.before is not None
+            assert args.default_branch is not None
+            commit_range = _resolve_push_range(
+                args.head,
+                args.before,
+                args.default_branch,
+            )
+        if commit_range:
             named_messages.extend(
                 (f"commit #{index}", message)
                 for index, message in enumerate(
-                    _read_commit_messages_from_range(args.commit_range), start=1
+                    _read_commit_messages_from_range(commit_range), start=1
                 )
             )
         named_messages.extend(
