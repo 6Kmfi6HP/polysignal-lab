@@ -1,7 +1,7 @@
 minimum_pre_commit_version: "4.6.0"
 default_install_hook_types: [pre-commit, commit-msg]
 default_language_version:
-  python: python3.11
+  python: python3
 
 repos:
   - repo: local
@@ -39,9 +39,8 @@ repos:
 
       - id: ast-grep-dual-design
         name: ast-grep concrete dual-design residue
-        entry: sg scan --error --config scripts/sg/sgconfig.yml src/polysignal_lab
-        language: python
-        additional_dependencies: [ast_grep_cli==0.44.1]
+        entry: uv run sg scan --error --config scripts/sg/sgconfig.yml src/polysignal_lab
+        language: system
         stages: [pre-commit]
         always_run: true
         pass_filenames: false
