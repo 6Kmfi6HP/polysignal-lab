@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.OrderIntentSpec, polysignal_lab.alpha.types.SideBookView, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side
+Input: __future__, __future__.annotations, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.OrderIntentSpec, polysignal_lab.alpha.types.SideBookView, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.NinetyNineCentSniperConfig
 Output: NinetyNineCentSniperAlphaCore
 Pos: Application code
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec, SideBookView
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.strategy_config import NinetyNineCentSniperConfig
 
 
 class NinetyNineCentSniperAlphaCore:
@@ -26,7 +27,7 @@ class NinetyNineCentSniperAlphaCore:
 
     name = "ninety_nine_cent_sniper"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: NinetyNineCentSniperConfig) -> None:
         self.config = config
 
     def reset(self) -> None:

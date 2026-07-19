@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side
+Input: __future__, __future__.annotations, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.LowSideDualReversionConfig
 Output: LowSideDualReversionAlphaCore
 Pos: Application code
 
@@ -34,12 +34,13 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.strategy_config import LowSideDualReversionConfig
 
 
 class LowSideDualReversionAlphaCore:
     name = "low_side_dual_reversion"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: LowSideDualReversionConfig) -> None:
         self.config = config
 
     # -- guard helpers -------------------------------------------------------

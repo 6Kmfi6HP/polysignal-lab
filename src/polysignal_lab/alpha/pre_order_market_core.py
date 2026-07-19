@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.datetime, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent
+Input: __future__, __future__.annotations, datetime, datetime.datetime, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.PreOrderMarketConfig
 Output: PreOrderMarketAlphaCore
 Pos: Application code
 
@@ -34,12 +34,13 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
 )
 from polysignal_lab.domain.enums import OrderIntent
+from polysignal_lab.domain.strategy_config import PreOrderMarketConfig
 
 
 class PreOrderMarketAlphaCore:
     name = "pre_order_market"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: PreOrderMarketConfig) -> None:
         self.config = config
 
     def _now_from(self, view: MarketView) -> datetime:

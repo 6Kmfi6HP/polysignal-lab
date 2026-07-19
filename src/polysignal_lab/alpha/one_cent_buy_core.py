@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.OrderIntentSpec, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side
+Input: __future__, __future__.annotations, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.OrderIntentSpec, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.OneCentBuyConfig
 Output: OneCentBuyAlphaCore
 Pos: Application code
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.strategy_config import OneCentBuyConfig
 
 
 class OneCentBuyAlphaCore:
@@ -26,7 +27,7 @@ class OneCentBuyAlphaCore:
 
     name = "one_cent_buy"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: OneCentBuyConfig) -> None:
         self.config = config
 
     def _elapsed_seconds(self, view: MarketView) -> float | None:

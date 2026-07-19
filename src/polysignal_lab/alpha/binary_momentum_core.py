@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, collections, collections.deque, typing, typing.TYPE_CHECKING, polysignal_lab.alpha.stats, polysignal_lab.alpha.stats._RollingPriceStats, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
+Input: __future__, __future__.annotations, collections, collections.deque, typing, typing.TYPE_CHECKING, polysignal_lab.alpha.stats, polysignal_lab.alpha.stats._RollingPriceStats, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.BinaryMomentumConfig
 Output: BinaryMomentumAlphaCore
 Pos: Application code
 
@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from polysignal_lab.alpha.stats import _RollingPriceStats
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec, SideBookView
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.strategy_config import BinaryMomentumConfig
 
 if TYPE_CHECKING:
     pass
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 class BinaryMomentumAlphaCore:
     name = "binary_momentum"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: BinaryMomentumConfig) -> None:
         self.config = config
         maxlen = config.macd_slow + config.macd_signal + 20
         self._spot_prices: deque[float] = deque(maxlen=maxlen)

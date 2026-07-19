@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.stats, polysignal_lab.alpha.stats.RollingPriceStats, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent
+Input: __future__, __future__.annotations, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.stats, polysignal_lab.alpha.stats.RollingPriceStats, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.DumpHedgeConfig
 Output: DumpHedgeAlphaCore
 Pos: Application code
 
@@ -34,12 +34,13 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
 )
 from polysignal_lab.domain.enums import OrderIntent
+from polysignal_lab.domain.strategy_config import DumpHedgeConfig
 
 
 class DumpHedgeAlphaCore:
     name = "dump_hedge"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: DumpHedgeConfig) -> None:
         self.config = config
         self._price_stats = RollingPriceStats(window_size=16)
 
