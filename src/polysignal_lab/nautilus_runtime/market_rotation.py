@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Protocol, cast
 
-from nautilus_trader.core.nautilus_pyo3 import DataActor
+from nautilus_trader.core.nautilus_pyo3 import DataActor, DataType
 
 from polysignal_lab.config import Settings
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
@@ -138,7 +138,7 @@ class MarketRotationActor(DataActor):
         self._startup_restored_condition_ids: tuple[str, ...] = ()
         self._instrument_subscriptions_started: bool = False
         self._rtds_subscription_started: bool = False
-        self._rtds_data_types: tuple[object, ...] = ()
+        self._rtds_data_types: tuple[DataType, ...] = ()
 
     def _framework_now(self) -> datetime:
         return framework_now(self)

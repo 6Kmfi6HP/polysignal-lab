@@ -1048,7 +1048,8 @@ def test_native_strategy_on_start_subscribes_all_custom_data_with_injected_proje
     ]
     assert rtds_subs
     assert all(
-        getattr(item, "metadata", None) is not None and "symbol" in item.metadata
+        isinstance(getattr(item, "metadata", None), dict)
+        and "symbol" in getattr(item, "metadata")
         for item in rtds_subs
     )
 
