@@ -141,16 +141,22 @@ class MarketCatalog:
         self._by_condition: dict[str, MarketPairMeta] = {}
         self._condition_by_token: dict[str, str] = {}
         self._instrument_id_resolver = instrument_id_resolver
+        # Resolution is on the market-data hot path; cache per token (issue #21).
+        self._instrument_id_by_token: dict[str, str] = {}
 
     def register(self, pair: MarketPairMeta) -> None:
         previous = self._by_condition.get(pair.condition_id)
         if previous is not None:
             self._condition_by_token.pop(previous.up.token_id, None)
             self._condition_by_token.pop(previous.down.token_id, None)
+            self._instrument_id_by_token.pop(previous.up.token_id, None)
+            self._instrument_id_by_token.pop(previous.down.token_id, None)
 
         self._by_condition[pair.condition_id] = pair
         self._condition_by_token[pair.up.token_id] = pair.condition_id
         self._condition_by_token[pair.down.token_id] = pair.condition_id
+        self._instrument_id_by_token.pop(pair.up.token_id, None)
+        self._instrument_id_by_token.pop(pair.down.token_id, None)
 
     def by_condition(self, condition_id: str) -> MarketPairMeta | None:
         return self._by_condition.get(condition_id)
@@ -175,20 +181,26 @@ class MarketCatalog:
         return None
 
     def instrument_id_for_token(self, token_id: str) -> str | None:
+        cached = self._instrument_id_by_token.get(token_id)
+        if cached is not None:
+            return cached
         pair = self.by_token(token_id)
         if pair is None:
             return None
         resolver = self._instrument_id_resolver
         if resolver is not None:
-            return resolver(pair.condition_id, token_id)
-
-        condition = pair.condition_id.strip()
-        token = str(token_id).strip()
-        if not condition:
-            raise ValueError("condition_id must not be empty")
-        if not token:
-            raise ValueError("token_id must not be empty")
-        return str(_nautilus_polymarket_instrument_id(condition, token))
+            instrument_id = resolver(pair.condition_id, token_id)
+        else:
+            condition = pair.condition_id.strip()
+            token = str(token_id).strip()
+            if not condition:
+                raise ValueError("condition_id must not be empty")
+            if not token:
+                raise ValueError("token_id must not be empty")
+            instrument_id = str(_nautilus_polymarket_instrument_id(condition, token))
+        if instrument_id is not None:
+            self._instrument_id_by_token[token_id] = instrument_id
+        return instrument_id
 
     def market_id_for_instrument(self, instrument_id: str) -> str | None:
         for pair in self._by_condition.values():

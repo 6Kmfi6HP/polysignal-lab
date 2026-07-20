@@ -109,5 +109,5 @@ def rust_shaped_polymarket_binary_instrument(
         ts_init=0,
         outcome=outcome,
         description="Bitcoin Up or Down?",
-        info=info,
+        info=info,  # pyright: ignore[reportCallIssue] - PyO3 runtime supports info
     )

@@ -147,6 +147,48 @@ def test_market_catalog_uses_injected_instrument_id_resolver() -> None:
     assert seen == [(pair.condition_id, pair.up.token_id)]
 
 
+def test_market_catalog_caches_instrument_id_resolution() -> None:
+    """
+    Hot-path regression: instrument-id resolution runs per market-data event;
+    recomputing it via the adapter each time starved the event loop (issue #21).
+    """
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    pair = MarketPairMeta.from_market(market)
+    calls: list[str] = []
+
+    def resolver(condition_id: str, token_id: str) -> str:
+        calls.append(token_id)
+        return f"{condition_id}:{token_id}"
+
+    catalog = MarketCatalog(instrument_id_resolver=resolver)
+    catalog.register(pair)
+
+    for _ in range(5):
+        _ = catalog.instrument_id_for_token(pair.up.token_id)
+
+    assert calls == [pair.up.token_id]
+
+
+def test_register_replacement_invalidates_instrument_id_cache() -> None:
+    market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
+    pair = MarketPairMeta.from_market(market)
+    generation = {"value": "old"}
+    catalog = MarketCatalog(
+        instrument_id_resolver=lambda c, t: f"{generation['value']}:{c}:{t}"
+    )
+    catalog.register(pair)
+    assert catalog.instrument_id_for_token(pair.up.token_id) == (
+        f"old:{pair.condition_id}:{pair.up.token_id}"
+    )
+
+    generation["value"] = "new"
+    catalog.register(pair)
+
+    assert catalog.instrument_id_for_token(pair.up.token_id) == (
+        f"new:{pair.condition_id}:{pair.up.token_id}"
+    )
+
+
 def test_market_catalog_resolves_market_from_instrument_id() -> None:
     market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
     pair = MarketPairMeta.from_market(market)

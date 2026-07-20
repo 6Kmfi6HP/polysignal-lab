@@ -85,6 +85,7 @@ class _SubscriptionStrategy(Protocol):
         *,
         book_type: object,
         client_id: object | None = None,
+        managed: bool = False,
     ) -> object: ...
     def unsubscribe_quotes(
         self,
@@ -232,10 +233,13 @@ def subscribe_market_instrument(
     book_type = _nautilus_book_type(strategy.book_type)
     _ = strategy.subscribe_quotes(instrument_id, client_id=client_id)
     _ = strategy.subscribe_trades(instrument_id, client_id=client_id)
+    # managed=True: the engine maintains the Cache order book from deltas;
+    # MarketView assembly reads books from the Cache (issue #21).
     _ = strategy.subscribe_book_deltas(
         instrument_id,
         book_type=book_type,
         client_id=client_id,
+        managed=True,
     )
     strategy._subscription_state.subscribed_instrument_ids.add(key)
     return True

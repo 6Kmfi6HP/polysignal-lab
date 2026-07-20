@@ -18,6 +18,7 @@ from typing import Protocol
 
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
 from polysignal_lab.nautilus_runtime.strategy.helpers import _Observability
 
 
@@ -75,7 +76,10 @@ def record_decision(
     )
 
 
-def record_rejected(strategy: _ObservabilityStrategy, rejected: object) -> None:
+def record_rejected(
+    strategy: _ObservabilityStrategy,
+    rejected: RejectedDecision,
+) -> None:
     record_observability(
         strategy,
         lambda obs: obs.record_rejected_decision(rejected),

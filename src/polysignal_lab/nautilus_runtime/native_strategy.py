@@ -10,6 +10,7 @@ Pos: Application code
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import cast
@@ -29,6 +30,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import unwrap_custom_data
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     DecisionPolicy,
+    RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy
@@ -67,6 +69,8 @@ __all__ = [
     "EVALUATION_HEARTBEAT_TIMER_NAME",
     "PolySignalNativeStrategy",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class PolySignalNativeStrategy(Strategy):
@@ -330,7 +334,7 @@ class PolySignalNativeStrategy(Strategy):
     def _record_decision(self, decision: AlphaDecision, *, accepted: bool) -> None:
         obs.record_decision(self, decision, accepted=accepted)
 
-    def _record_rejected(self, rejected: object) -> None:
+    def _record_rejected(self, rejected: RejectedDecision) -> None:
         obs.record_rejected(self, rejected)
 
     def _record_nautilus_order(

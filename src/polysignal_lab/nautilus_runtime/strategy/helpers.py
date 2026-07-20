@@ -25,7 +25,9 @@ from nautilus_trader.core.nautilus_pyo3 import (
     InstrumentId as _Pyo3InstrumentId,
 )
 
+from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.state import JsonValue, StateSchemaError
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
@@ -110,9 +112,9 @@ class _Assembler(Protocol):
 
 
 class _Observability(Protocol):
-    def record_decision(self, decision: object, accepted: bool) -> None: ...
+    def record_decision(self, decision: AlphaDecision, accepted: bool) -> None: ...
 
-    def record_rejected_decision(self, rejected: object) -> None: ...
+    def record_rejected_decision(self, rejected: RejectedDecision) -> None: ...
 
     def record_nautilus_order_event(
         self,

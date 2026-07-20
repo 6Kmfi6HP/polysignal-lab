@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, asyncio, logging, queue, threading, collections.abc, collections.abc.Awaitable, collections.abc.Callable, collections.abc.Mapping
-Output: _AcceptedSignalJob, _ReportResultJob, _PublishResultLike, _AcceptedSignalPublisher
+Input: __future__, __future__.annotations, asyncio, logging, queue, threading, collections.abc, collections.abc.Mapping
+Output: _AcceptedSignalJob, _ReportResultJob, _PublishResultLike, _AcceptedSignalPublisher, _ReportResultPublisher
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,7 +14,7 @@ import asyncio
 import logging
 import queue
 import threading
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -24,8 +24,9 @@ from polysignal_lab.domain.signal import SignalCandidate
 logger = logging.getLogger("polysignal_lab.nautilus_runtime.signal_notifications")
 
 # Single process-wide outbox: Strategy callbacks only put(); one worker drains.
+# Trading paths must never block on Telegram I/O (Nautilus side-effect isolation).
 _OUTBOX: queue.SimpleQueue[object] = queue.SimpleQueue()
-_WORKER_STARTED = False
+_worker_thread: threading.Thread | None = None
 _WORKER_LOCK = threading.Lock()
 _STOP = object()
 
@@ -55,6 +56,13 @@ class _AcceptedSignalPublisher(Protocol):
     ) -> _PublishResultLike: ...
 
 
+class _ReportResultPublisher(Protocol):
+    async def publish_report_result_once(
+        self,
+        result: Mapping[str, object],
+    ) -> _PublishResultLike: ...
+
+
 async def _stop_nautilus_services(services: object) -> None:
     """Mark services as stopped and persist final health snapshot."""
     setattr(services, "_running", False)
@@ -80,9 +88,15 @@ async def _publish_accepted_signal_once(
 
 
 def _ensure_outbox_worker() -> None:
-    global _WORKER_STARTED
+    """Start or restart the notify outbox worker if it is not alive.
+
+    A dead worker with a sticky started flag is a silent-drop mode: strategy
+    callbacks keep enqueueing while Telegram never drains. Detect liveness on
+    every enqueue so the process self-heals without touching trading state.
+    """
+    global _worker_thread
     with _WORKER_LOCK:
-        if _WORKER_STARTED:
+        if _worker_thread is not None and _worker_thread.is_alive():
             return
         thread = threading.Thread(
             target=_outbox_worker_loop,
@@ -90,32 +104,114 @@ def _ensure_outbox_worker() -> None:
             daemon=True,
         )
         thread.start()
-        _WORKER_STARTED = True
+        _worker_thread = thread
 
 
 def _outbox_worker_loop() -> None:
-    while True:
-        job = _OUTBOX.get()
-        if job is _STOP:
-            return
+    """Drain notify jobs on a dedicated thread with one event loop.
+
+    One long-lived loop avoids asyncio.run() per job (loop create/teardown and
+    re-entrancy hazards) while keeping Strategy callbacks free of await.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        while True:
+            job = _OUTBOX.get()
+            if job is _STOP:
+                return
+            try:
+                if isinstance(job, _AcceptedSignalJob):
+                    _publish_accepted_signal_in_background(
+                        job.services,
+                        job.signal,
+                        job.stake_usdc,
+                        loop=loop,
+                    )
+                elif isinstance(job, _ReportResultJob):
+                    _publish_report_result_in_background(
+                        job.services,
+                        job.result,
+                        loop=loop,
+                    )
+            except Exception:
+                logger.exception("notify outbox worker failed")
+    finally:
         try:
-            if isinstance(job, _AcceptedSignalJob):
-                _publish_accepted_signal_in_background(
-                    job.services, job.signal, job.stake_usdc
-                )
-            elif isinstance(job, _ReportResultJob):
-                _publish_report_result_in_background(job.services, job.result)
+            loop.run_until_complete(loop.shutdown_asyncgens())
         except Exception:
-            logger.exception("notify outbox worker failed")
+            logger.debug("notify outbox asyncgen shutdown failed", exc_info=True)
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
+def _audit_accepted_signal_publish_failure(
+    services: object,
+    signal: SignalCandidate,
+    exc: BaseException,
+) -> None:
+    """Persist a best-effort failure record; never raise into the outbox loop."""
+    persistence = getattr(services, "persistence", None)
+    insert = getattr(persistence, "insert_system_event", None) if persistence else None
+    if not callable(insert):
+        return
+    try:
+        from polysignal_lab.utils import new_id, redact_text, utc_iso
+
+        event = {
+            "event_id": new_id(
+                "evt",
+                "accepted_signal_publish_failed",
+                str(signal.signal_id),
+            ),
+            "event_type": "accepted_signal_publish_failed",
+            "severity": "WARNING",
+            "created_at": utc_iso(),
+            "signal_id": signal.signal_id,
+            "strategy": signal.strategy,
+            "market_id": signal.market_id,
+            "error_type": type(exc).__name__,
+            "error": redact_text(str(exc)),
+        }
+        insert(event)
+        append_log = getattr(persistence, "append_log", None)
+        if callable(append_log):
+            append_log("system_events", event)
+        insert_publish = getattr(persistence, "insert_telegram_publish", None)
+        if callable(insert_publish):
+            insert_publish(
+                {
+                    "publish_id": new_id("tg", "failed", str(signal.signal_id)),
+                    "message_type": "signal",
+                    "status": "FAILED",
+                    "signal_id": signal.signal_id,
+                    "telegram_message_id": None,
+                    "error": redact_text(str(exc)),
+                    "sent_at": None,
+                }
+            )
+    except Exception:
+        cast(logging.Logger, getattr(services, "logger", logger)).debug(
+            "Failed to audit accepted_signal_publish_failed", exc_info=True
+        )
 
 
 def _publish_accepted_signal_in_background(
     services: object,
     signal: SignalCandidate,
     stake_usdc: float,
+    *,
+    loop: asyncio.AbstractEventLoop | None = None,
 ) -> None:
     try:
-        publish = asyncio.run(_publish_accepted_signal_once(services, signal, stake_usdc))
+        if loop is None:
+            publish = asyncio.run(
+                _publish_accepted_signal_once(services, signal, stake_usdc)
+            )
+        else:
+            publish = loop.run_until_complete(
+                _publish_accepted_signal_once(services, signal, stake_usdc)
+            )
         scheduler_health.note_publish_result(services, publish)
     except Exception as exc:
         cast(logging.Logger, getattr(services, "logger", logger)).warning(
@@ -123,6 +219,7 @@ def _publish_accepted_signal_in_background(
             signal.signal_id,
             exc,
         )
+        _audit_accepted_signal_publish_failure(services, signal, exc)
 
 
 def _notify_accepted_signal(
@@ -142,27 +239,62 @@ async def _publish_report_result_once(
     services: object,
     result: Mapping[str, object],
 ) -> dict[str, str | None]:
-    publish_service = getattr(services, "publish_service", None)
-    publish_fn = (
-        None
-        if publish_service is None
-        else getattr(publish_service, "publish_report_result", None)
+    publish = await cast(_ReportResultPublisher, services).publish_report_result_once(
+        result
     )
-    if not callable(publish_fn):
-        raise RuntimeError("publish_service.publish_report_result is not available")
-    publish = await cast(Callable[..., Awaitable[object]], publish_fn)(result)
-    as_dict = getattr(publish, "as_dict", None)
-    if not callable(as_dict):
-        return {}
-    return cast(dict[str, str | None], as_dict())
+    return publish.as_dict()
+
+
+def _audit_report_result_publish_failure(
+    services: object,
+    result: Mapping[str, object],
+    exc: BaseException,
+) -> None:
+    persistence = getattr(services, "persistence", None)
+    insert = getattr(persistence, "insert_system_event", None) if persistence else None
+    if not callable(insert):
+        return
+    try:
+        from polysignal_lab.utils import new_id, redact_text, utc_iso
+
+        event = {
+            "event_id": new_id(
+                "evt",
+                "report_result_publish_failed",
+                str(result.get("report_result_id") or ""),
+            ),
+            "event_type": "report_result_publish_failed",
+            "severity": "WARNING",
+            "created_at": utc_iso(),
+            "report_result_id": result.get("report_result_id"),
+            "report_position_id": result.get("report_position_id"),
+            "signal_id": result.get("signal_id"),
+            "error_type": type(exc).__name__,
+            "error": redact_text(str(exc)),
+        }
+        insert(event)
+        append_log = getattr(persistence, "append_log", None)
+        if callable(append_log):
+            append_log("system_events", event)
+    except Exception:
+        cast(logging.Logger, getattr(services, "logger", logger)).debug(
+            "Failed to audit report_result_publish_failed", exc_info=True
+        )
 
 
 def _publish_report_result_in_background(
     services: object,
     result: Mapping[str, object],
+    *,
+    loop: asyncio.AbstractEventLoop | None = None,
 ) -> None:
     try:
-        publish = asyncio.run(_publish_report_result_once(services, result))
+        if loop is None:
+            publish = asyncio.run(_publish_report_result_once(services, result))
+        else:
+            publish = loop.run_until_complete(
+                _publish_report_result_once(services, result)
+            )
         scheduler_health.note_publish_result(services, publish)
     except Exception as exc:
         cast(logging.Logger, getattr(services, "logger", logger)).warning(
@@ -170,37 +302,7 @@ def _publish_report_result_in_background(
             result.get("report_result_id"),
             exc,
         )
-        persistence = getattr(services, "persistence", None)
-        insert = None if persistence is None else getattr(persistence, "insert_system_event", None)
-        if not callable(insert):
-            return
-        try:
-            from polysignal_lab.utils import new_id, redact_text, utc_iso
-
-            event = {
-                "event_id": new_id(
-                    "evt",
-                    "report_result_publish_failed",
-                    str(result.get("report_result_id") or ""),
-                ),
-                "event_type": "report_result_publish_failed",
-                "severity": "WARNING",
-                "created_at": utc_iso(),
-                "report_result_id": result.get("report_result_id"),
-                "report_position_id": result.get("report_position_id"),
-                "signal_id": result.get("signal_id"),
-                "error_type": type(exc).__name__,
-                "error": redact_text(str(exc)),
-            }
-            insert(event)
-            append_log = getattr(persistence, "append_log", None)
-            if callable(append_log):
-                append_log("system_events", event)
-        except Exception:
-            cast(logging.Logger, getattr(services, "logger", logger)).debug(
-                "Failed to audit report_result_publish_failed",
-                exc_info=True,
-            )
+        _audit_report_result_publish_failure(services, result, exc)
 
 
 def _notify_report_result(

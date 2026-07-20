@@ -426,7 +426,7 @@ class AlphaDecision:
     def signal_id(self, view_id: str) -> str:
         """Stable execution/report correlation derived only from trading inputs."""
         intent = self.order_intent
-        return f"sig_{stable_hash(
+        hash_val = stable_hash(
             self.strategy,
             self.asset,
             self.timeframe,
@@ -447,7 +447,8 @@ class AlphaDecision:
             self.hedge_leg,
             view_id,
             length=20,
-        )}"
+        )
+        return f"sig_{hash_val}"
 
     def dedupe_key(self) -> str:
         scope = "exit" if self.reduce_only else "entry"
