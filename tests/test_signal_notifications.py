@@ -25,9 +25,12 @@ from polysignal_lab.publish.telegram_publisher import PublishResult
 def _reset_outbox() -> None:
     """Stop any live worker and drain the process-local outbox."""
     with sn._WORKER_LOCK:
-        sn._OUTBOX.put(sn._STOP)
-        # Allow a live worker to exit; ignore if none is running.
-    time.sleep(0.05)
+        thread = sn._worker_thread
+        if thread is not None and thread.is_alive():
+            sn._OUTBOX.put(sn._STOP)
+    if thread is not None:
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
     with sn._WORKER_LOCK:
         while True:
             try:

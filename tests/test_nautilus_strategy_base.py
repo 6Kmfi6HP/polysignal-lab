@@ -2115,23 +2115,31 @@ def test_market_data_evaluation_is_debounced_per_condition() -> None:
 
     clock = {"now": datetime(2026, 7, 20, 12, 0, 0, tzinfo=UTC)}
     evaluated: list[str] = []
-    strategy = SimpleNamespace(
-        _framework_now=lambda: clock["now"],
-        _note_runtime_progress=lambda phase: None,
-        _last_market_data_evaluation_at={},
-        evaluate_condition=lambda condition_id: evaluated.append(condition_id),
-    )
+
+    class DebounceStrategy:
+        _last_market_data_evaluation_at: dict[str, datetime] = {}
+
+        def _framework_now(self) -> datetime:
+            return clock["now"]
+
+        def _note_runtime_progress(self, phase: str) -> None:
+            _ = phase
+
+        def evaluate_condition(self, condition_id: str) -> None:
+            evaluated.append(condition_id)
+
+    strategy = DebounceStrategy()
 
     for _ in range(10):
-        mde.evaluate_market_data_condition(cast(Any, strategy), "cond-1")
+        mde.evaluate_market_data_condition(strategy, "cond-1")
     assert evaluated == ["cond-1"]
 
     clock["now"] += timedelta(seconds=1)
-    mde.evaluate_market_data_condition(cast(Any, strategy), "cond-1")
+    mde.evaluate_market_data_condition(strategy, "cond-1")
     assert evaluated == ["cond-1", "cond-1"]
 
     # A different condition is not blocked by cond-1's window.
-    mde.evaluate_market_data_condition(cast(Any, strategy), "cond-2")
+    mde.evaluate_market_data_condition(strategy, "cond-2")
     assert evaluated == ["cond-1", "cond-1", "cond-2"]
 
 

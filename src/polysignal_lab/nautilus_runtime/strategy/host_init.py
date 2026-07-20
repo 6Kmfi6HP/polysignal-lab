@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 from polysignal_lab.alpha.types import AlphaCore
 from polysignal_lab.config import MarketConfig
@@ -112,7 +112,7 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
 
     progress_callback = req.progress_callback or _runtime_progress_callback(settings)
     readiness_callback = req.readiness_callback or _runtime_readiness_callback(settings)
-    observability = req.observability or cast(_Observability | None, runtime_observability())
+    observability = req.observability or runtime_observability()
     return HostInitRequest(
         config=config,
         core=core,

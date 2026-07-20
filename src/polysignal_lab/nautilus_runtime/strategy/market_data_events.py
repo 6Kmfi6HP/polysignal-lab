@@ -27,7 +27,15 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
 )
 
 
-class _MarketDataStrategy(Protocol):
+class _MarketDataEvaluator(Protocol):
+    _last_market_data_evaluation_at: dict[str, datetime]
+
+    def _framework_now(self) -> datetime: ...
+    def _note_runtime_progress(self, phase: str) -> None: ...
+    def evaluate_condition(self, condition_id: str) -> None: ...
+
+
+class _MarketDataStrategy(_MarketDataEvaluator, Protocol):
     registry: MarketCatalog | None
     assembler: object
     _active_condition_ids: set[str]
@@ -118,7 +126,7 @@ _MARKET_DATA_EVALUATION_MIN_INTERVAL = timedelta(milliseconds=500)
 
 
 def evaluate_market_data_condition(
-    strategy: _MarketDataStrategy,
+    strategy: _MarketDataEvaluator,
     condition_id: str,
     *,
     event: object | None = None,
