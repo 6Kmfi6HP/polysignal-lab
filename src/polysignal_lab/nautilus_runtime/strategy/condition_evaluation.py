@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.replace, datetime, datetime.datetime, typing, typing.Protocol
-Output: skip_preloaded_condition, retire_expired_condition, mark_condition_unready, evaluate_condition, evaluate_ready_condition, apply_decision_batch, evaluate_decisions, handle_decision, _EvaluationStrategy
+Output: skip_preloaded_condition, retire_expired_condition, mark_condition_unready, evaluate_condition, evaluate_ready_condition, evaluate_decisions, handle_decision, _EvaluationStrategy
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -17,17 +17,10 @@ from typing import Protocol, cast
 
 from polysignal_lab.alpha.types import AlphaCore, AlphaDecision, MarketView, TradingStateView
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
-from polysignal_lab.nautilus_runtime.decision_policy import (
-    DecisionPolicy,
-    RejectedDecision,
-)
+from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.native_strategy_exit import NativeExitPolicy
-from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
-    DecisionPipelineState,
-    DecisionResultHandler,
-    NativeDecisionSink,
-)
+from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import DecisionPipeline
 from polysignal_lab.nautilus_runtime.strategy.helpers import _Assembler, _market_view_ready
 from polysignal_lab.nautilus_runtime.strategy.readiness import (
     orderbook_readiness_threshold_ms,
@@ -54,10 +47,7 @@ class _EvaluationStrategy(Protocol):
     _runtime_readiness_miss_condition_ids: set[str]
     _stale_orderbook_recovery_by_condition: dict
     _subscription_state: object
-    _pipeline_state: DecisionPipelineState
-    _decision_result_handler: DecisionResultHandler
-    _decision_sink: NativeDecisionSink
-    _batch_active_dedupe_keys: set[str] | None
+    _decision_pipeline: DecisionPipeline
 
     def _framework_now(self) -> datetime: ...
     def _require_registry(self) -> MarketCatalog | None: ...
@@ -206,64 +196,12 @@ def evaluate_ready_condition(
         now=now,
         evaluate_core=evaluate_core,
     )
-    apply_decision_batch(strategy, decisions, market_view)
+    _ = strategy._decision_pipeline.apply(decisions, market_view)
     if (
         not readiness_confirmed
         and condition_id not in strategy._runtime_readiness_miss_condition_ids
     ):
         strategy._note_runtime_readiness(condition_id, ready=True)
-
-
-def _active_dedupe_keys(view: MarketView) -> set[str]:
-    return {
-        order.dedupe_key
-        for order in view.trading.orders
-        if order.dedupe_key is not None and (order.is_open or order.is_inflight)
-    }
-
-
-def apply_decision_batch(
-    strategy: _EvaluationStrategy,
-    decisions: Sequence[AlphaDecision],
-    view: MarketView,
-) -> None:
-    """Evaluate decisions through the strategy-owned DecisionPolicy (no Actor bus)."""
-    if not decisions:
-        return
-    pairs = [(decision, view) for decision in decisions]
-    arbitration = strategy.policy.batch_arbitrate(list(pairs))
-    survivor_ids = {id(decision) for decision in arbitration}
-    rejected_by_id = {
-        id(decision): rejected for decision, rejected in arbitration.rejections
-    }
-    strategy._batch_active_dedupe_keys = _active_dedupe_keys(view)
-    try:
-        for decision in decisions:
-            if id(decision) not in survivor_ids:
-                rejected = rejected_by_id.get(id(decision)) or RejectedDecision(
-                    reason_code="ARBITRATION_SUPPRESSED",
-                    detail={},
-                )
-                _ = strategy._decision_result_handler.handle_result(
-                    rejected,
-                    decision,
-                    view,
-                    state=strategy._pipeline_state,
-                    sink=strategy._decision_sink,
-                )
-                continue
-            policy_result = strategy.policy.decide(decision, view)
-            submitted = strategy._decision_result_handler.handle_result(
-                policy_result,
-                decision,
-                view,
-                state=strategy._pipeline_state,
-                sink=strategy._decision_sink,
-            )
-            if submitted:
-                strategy._batch_active_dedupe_keys.add(decision.dedupe_key())
-    finally:
-        strategy._batch_active_dedupe_keys = None
 
 
 def evaluate_decisions(
@@ -303,11 +241,10 @@ def handle_decision(
     decision: AlphaDecision,
     view: MarketView,
 ) -> None:
-    apply_decision_batch(strategy, (decision,), view)
+    _ = strategy._decision_pipeline.apply((decision,), view)
 
 
 __all__ = [
-    "apply_decision_batch",
     "evaluate_condition",
     "evaluate_decisions",
     "evaluate_ready_condition",

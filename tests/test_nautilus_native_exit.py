@@ -67,7 +67,11 @@ class _AllowAllDecisionPolicy(DecisionPolicy):
         self,
         decisions: list[tuple[AlphaDecision, MarketView]],
     ) -> BatchArbitrationResult:
-        return BatchArbitrationResult(decision for decision, _ in decisions)
+        return BatchArbitrationResult(
+            approvals=tuple(
+                self.decide(decision, view) for decision, view in decisions
+            )
+        )
 
     def decide(
         self,
@@ -82,6 +86,7 @@ def _attach_decision_policy(
     strategy: PolySignalNativeStrategy,
 ) -> DecisionPolicy:
     strategy.policy = _AllowAllDecisionPolicy()
+    strategy._decision_pipeline.policy = strategy.policy
     return strategy.policy
 
 

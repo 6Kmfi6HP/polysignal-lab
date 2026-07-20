@@ -431,7 +431,11 @@ class RuntimeFakePolicy(DecisionPolicy):
     def batch_arbitrate(
         self, decisions: list[tuple[AlphaDecision, MarketView]]
     ) -> BatchArbitrationResult:
-        return BatchArbitrationResult(decision for decision, _ in decisions)
+        return BatchArbitrationResult(
+            approvals=tuple(
+                self.evaluate(decision, view) for decision, view in decisions
+            )
+        )
 
 
 def _attach_decision_policy(
@@ -439,6 +443,7 @@ def _attach_decision_policy(
     policy: DecisionPolicy | None = None,
 ) -> DecisionPolicy:
     strategy.policy = policy or RuntimeFakePolicy()
+    strategy._decision_pipeline.policy = strategy.policy
     return strategy.policy
 
 
@@ -475,24 +480,8 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
         def submit_order(self, order):
             self.submitted.append(order)
 
-    class SpecCapturingStrategy(FakeNativeStrategy):
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
-            self.captured_specs = []
-
-        def _submit_approved(self, approved, *, view):
-            book = view.book_for(approved.decision.side)
-            spec = order_spec_from_decision(
-                approved.decision,
-                fixed_stake_usdc=self.fixed_stake_usdc,
-                best_ask=book.best_ask,
-                view_id=view.view_id,
-            )
-            self.captured_specs.append(spec)
-            return SimpleNamespace(client_order_id="captured")
-
     readiness: list[tuple[str, bool]] = []
-    strategy = SpecCapturingStrategy(
+    strategy = FakeNativeStrategy(
         core=FakeCore([decision]),
         assembler=_assembler(
             _real_market_view(
@@ -510,13 +499,28 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
         **_native_projections(),
     )
     _policy = _attach_decision_policy(strategy)
+    captured_specs = []
+
+    class SpecCapturingSubmitter:
+        def submit(self, approved, view):
+            book = view.book_for(approved.decision.side)
+            spec = order_spec_from_decision(
+                approved.decision,
+                fixed_stake_usdc=strategy.fixed_stake_usdc,
+                best_ask=book.best_ask,
+                view_id=view.view_id,
+            )
+            captured_specs.append(spec)
+            return SimpleNamespace(client_order_id="captured")
+
+    strategy._decision_pipeline.submitter = SpecCapturingSubmitter()
 
     strategy.evaluate_condition("condition-btc-5m")
 
     assert readiness == [("condition-btc-5m", True)]
-    assert len(strategy.captured_specs) == 1
-    assert strategy.captured_specs[0].intent == OrderIntent.TAKER_FOK
-    assert strategy.captured_specs[0].quantity == 20.0
+    assert len(captured_specs) == 1
+    assert captured_specs[0].intent == OrderIntent.TAKER_FOK
+    assert captured_specs[0].quantity == 20.0
     assert len(strategy.rejected_decisions) == 0
 
 
@@ -627,7 +631,7 @@ def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
     assert len(strategy.rejected_decisions) != 0
 
 
-def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
+def test_native_strategy_submits_when_market_view_has_no_active_duplicate() -> None:
     from types import SimpleNamespace
 
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -643,19 +647,6 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
             self.submitted: list[str] = []
             self.active_dedupe_keys: set[str] = set()
 
-        def _is_signal_submitted(self, dedupe_key: str) -> bool:
-            return dedupe_key in self.active_dedupe_keys
-
-        def _submit_approved(self, approved, *, view):
-            view_id = getattr(view, "view_id", "") or ""
-            dedupe_key = approved.decision.dedupe_key()
-            self.submitted.append(dedupe_key)
-            self.active_dedupe_keys.add(dedupe_key)
-            return SimpleNamespace(
-                id=f"order-{len(self.submitted)}",
-                tags={"signal_id": approved.decision.signal_id(view_id)},
-            )
-
         def on_order_filled(self, event: object) -> None:
             super().on_order_filled(event)
             self.active_dedupe_keys.clear()
@@ -670,13 +661,26 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
     )
     _policy = _attach_decision_policy(strategy)
 
+    class RecordingSubmitter:
+        def submit(self, approved, view):
+            view_id = getattr(view, "view_id", "") or ""
+            dedupe_key = approved.decision.dedupe_key()
+            strategy.submitted.append(dedupe_key)
+            strategy.active_dedupe_keys.add(dedupe_key)
+            return SimpleNamespace(
+                id=f"order-{len(strategy.submitted)}",
+                tags={"signal_id": approved.decision.signal_id(view_id)},
+            )
+
+    strategy._decision_pipeline.submitter = RecordingSubmitter()
     strategy.evaluate_condition("condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
-    assert strategy.submitted == ["BTC:5m:btc-5m:UP:ptb_diff:entry"]
-    assert [rejected.reason_code for rejected in strategy.rejected_decisions] == [
-        "DUPLICATE_IN_FLIGHT_SIGNAL"
+    assert strategy.submitted == [
+        "BTC:5m:btc-5m:UP:ptb_diff:entry",
+        "BTC:5m:btc-5m:UP:ptb_diff:entry",
     ]
+    assert list(strategy.rejected_decisions) == []
 
     strategy.on_order_filled(
         SimpleNamespace(
@@ -689,6 +693,7 @@ def test_native_strategy_blocks_duplicate_in_flight_signal_submission() -> None:
     )
     strategy.evaluate_condition("condition-btc-5m")
     assert strategy.submitted == [
+        "BTC:5m:btc-5m:UP:ptb_diff:entry",
         "BTC:5m:btc-5m:UP:ptb_diff:entry",
         "BTC:5m:btc-5m:UP:ptb_diff:entry",
     ]
@@ -1656,7 +1661,7 @@ def test_native_strategy_missing_view_fails_closed_without_resubscription() -> N
     assert readiness == [("condition-btc-5m", False)]
 
 
-def test_native_strategy_routes_decisions_through_owned_policy_decide() -> None:
+def test_native_strategy_routes_decisions_through_owned_policy_batch_arbitrate() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     decision = _decision()
@@ -1664,13 +1669,11 @@ def test_native_strategy_routes_decisions_through_owned_policy_decide() -> None:
     decided: list[tuple[AlphaDecision, object]] = []
 
     class ActorPolicy(RuntimeFakePolicy):
-        def decide(
-            self,
-            decision: AlphaDecision,
-            view: MarketView,
-        ) -> ApprovedDecision:
-            decided.append((decision, view))
-            return super().evaluate(decision, view)
+        def batch_arbitrate(
+            self, decisions: list[tuple[AlphaDecision, MarketView]]
+        ) -> BatchArbitrationResult:
+            decided.extend(decisions)
+            return super().batch_arbitrate(decisions)
 
     strategy = PolySignalNativeStrategy(
         core=FakeCore([]),
@@ -1679,9 +1682,15 @@ def test_native_strategy_routes_decisions_through_owned_policy_decide() -> None:
         strategy_name="ptb_diff",
         **_native_projections(),
     )
-    strategy._submit_approved = lambda approved, *, view: submitted.append((approved, view))  # type: ignore[method-assign]
     policy = ActorPolicy()
     _policy = _attach_decision_policy(strategy, policy)
+
+    class CapturingSubmitter:
+        def submit(self, approved, view):
+            submitted.append((approved, view))
+            return object()
+
+    strategy._decision_pipeline.submitter = CapturingSubmitter()
     view = _real_market_view()
 
     strategy._handle_decision(decision, view)
@@ -4552,7 +4561,19 @@ def test_native_strategy_rejection_persistence_failure_does_not_block_evaluate()
         def batch_arbitrate(
             self, decisions: list[tuple[AlphaDecision, MarketView]]
         ) -> BatchArbitrationResult:
-            return BatchArbitrationResult(decision for decision, _ in decisions)
+            return BatchArbitrationResult(
+                rejections=tuple(
+                    (
+                        decision,
+                        RejectedDecision(
+                            reason_code="TEST_REJECTED",
+                            detail={},
+                            decision=decision,
+                        ),
+                    )
+                    for decision, _ in decisions
+                )
+            )
 
     phases: list[str] = []
     strategy = PolySignalNativeStrategy(

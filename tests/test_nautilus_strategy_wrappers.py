@@ -32,6 +32,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import OrderSubmitter
 
 DEFAULT_DATA_NAMES = (
     "order_book_deltas",
@@ -114,7 +115,18 @@ class FakePolicy(DecisionPolicy):
     def batch_arbitrate(
         self, decisions: list[tuple[AlphaDecision, MarketView]]
     ) -> BatchArbitrationResult:
-        return BatchArbitrationResult(decision for decision, _ in decisions)
+        approvals: list[ApprovedDecision] = []
+        rejections: list[tuple[AlphaDecision, RejectedDecision]] = []
+        for decision, view in decisions:
+            result = self.decide(decision, view)
+            if isinstance(result, ApprovedDecision):
+                approvals.append(result)
+            else:
+                rejections.append((decision, result))
+        return BatchArbitrationResult(
+            approvals=tuple(approvals),
+            rejections=tuple(rejections),
+        )
 
     def orderbook_readiness_threshold_ms(self) -> float:
         return 60_000.0
@@ -129,6 +141,7 @@ def _attach_decision_policy(
     policy: FakePolicy,
 ) -> DecisionPolicy:
     strategy.policy = policy
+    strategy._decision_pipeline.policy = policy
     return strategy.policy
 
 
@@ -284,16 +297,15 @@ def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved
     )
     _policy = _attach_decision_policy(strategy, policy)
 
-    def capture_submit(_strategy, _approved, **kwargs):
-        order = FakeOrderFactory().limit(instrument_id="up-token", **kwargs)
-        submitted.append(order)
-        return order
+    class CapturingSubmitter:
+        def submit(self, approved: ApprovedDecision, view: MarketView) -> object:
+            _ = approved, view
+            order = FakeOrderFactory().limit(instrument_id="up-token")
+            submitted.append(order)
+            return order
 
-    with patch(
-        "polysignal_lab.nautilus_runtime.native_strategy.submit_approved_for_view",
-        side_effect=capture_submit,
-    ):
-        strategy.evaluate_condition("condition-btc-5m")
+    strategy._decision_pipeline.submitter = CapturingSubmitter()
+    strategy.evaluate_condition("condition-btc-5m")
 
     assert core.views == [view]
     assert [call[0] for call in policy.calls] == [approved, rejected]

@@ -165,7 +165,7 @@ def test_batch_arbitration_keeps_opposite_legs_in_same_pair() -> None:
     )
     view = _view()
     result = actor.batch_arbitrate([(up, view), (down, view)])
-    assert list(result) == [up, down] or set(id(x) for x in result) == {id(up), id(down)}
+    assert [approved.decision for approved in result.approvals] == [up, down]
 
 
 def test_batch_arbitration_rejects_incomplete_pair() -> None:
@@ -175,7 +175,7 @@ def test_batch_arbitration_rejects_incomplete_pair() -> None:
         order_intent=OrderIntentSpec(OrderIntent.PASSIVE_GTD, expiry_seconds=300, pair_id="p1"),
     )
     result = actor.batch_arbitrate([(up, _view())])
-    assert result == []
+    assert result.approvals == ()
     assert result.rejections[0][1].reason_code == "INCOMPLETE_PAIR"
 
 
@@ -184,19 +184,17 @@ def test_batch_arbitration_returns_survivors_in_input_order() -> None:
     beta = _decision(strategy="beta", market_id="market-2")
     alpha = _decision(strategy="alpha", market_id="market-1")
     result = actor.batch_arbitrate([(beta, _view(market_id="market-2")), (alpha, _view())])
-    assert result == [beta, alpha]
+    assert [approved.decision for approved in result.approvals] == [beta, alpha]
 
 
-def test_batch_commit_handoff_requires_exact_market_view_identity() -> None:
+def test_batch_arbitration_does_not_cache_gate_results() -> None:
     actor = DecisionPolicy(gate=_gate(dedupe_enabled=True))
     decision = _decision()
     view = _view()
     stale_view = replace(view, up=replace(view.up, freshness_ms=101))
-    assert actor.batch_arbitrate([(decision, view)]) == [decision]
-    result = actor.evaluate(decision, stale_view)
-    assert isinstance(result, RejectedDecision)
-    assert result.reason_code == "STALE_ORDERBOOK"
-    assert isinstance(actor.evaluate(decision, view), ApprovedDecision)
+    result = actor.batch_arbitrate([(decision, view)])
+    assert [approved.decision for approved in result.approvals] == [decision]
+    assert isinstance(actor.evaluate(decision, stale_view), RejectedDecision)
 
 
 def _gate(
