@@ -177,6 +177,8 @@ def test_order_plan_rejects_taker_without_best_ask() -> None:
 
 
 def test_submit_approved_decision_submits_limit_order_through_strategy() -> None:
+    from nautilus_trader.core.nautilus_pyo3 import OrderSide, TimeInForce
+
     strategy = FakeStrategy()
     approved = _approved(OrderIntent.TAKER_IOC)
 
@@ -191,11 +193,13 @@ def test_submit_approved_decision_submits_limit_order_through_strategy() -> None
 
     assert order is strategy.submitted[0]
     assert order.instrument_id == "up-token.POLYMARKET"
-    assert _enum_name(order.order_side) == "BUY"
+    assert isinstance(order.order_side, OrderSide)
+    assert order.order_side == OrderSide.BUY
     assert order.quantity == 20.0
     assert order.reduce_only is False
     assert order.price == 0.50
-    assert _enum_name(order.time_in_force) == "IOC"
+    assert isinstance(order.time_in_force, TimeInForce)
+    assert order.time_in_force == TimeInForce.IOC
     assert order.expire_time is None
     assert "strategy=ptb_diff" in order.tags
     assert "condition_id=condition-btc-5m" in order.tags

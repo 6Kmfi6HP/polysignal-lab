@@ -10,7 +10,7 @@ Pos: Application code
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from polysignal_lab.domain.enums import Side
@@ -111,6 +111,12 @@ def order_book_observation(
     return now, token.side, received_at, book_at
 
 
+# Full MarketView evaluation per raw book event saturates the event loop on
+# busy Polymarket books (issue #21); bursts collapse to one evaluation per
+# window, with the 10s heartbeat timer as the idle backstop.
+_MARKET_DATA_EVALUATION_MIN_INTERVAL = timedelta(milliseconds=500)
+
+
 def evaluate_market_data_condition(
     strategy: _MarketDataStrategy,
     condition_id: str,
@@ -118,8 +124,11 @@ def evaluate_market_data_condition(
     event: object | None = None,
 ) -> None:
     _ = event
-    strategy._note_runtime_progress("market_data_evaluation")
     now = strategy._framework_now()
+    last = strategy._last_market_data_evaluation_at.get(condition_id)
+    if last is not None and now - last < _MARKET_DATA_EVALUATION_MIN_INTERVAL:
+        return
+    strategy._note_runtime_progress("market_data_evaluation")
     strategy._last_market_data_evaluation_at[condition_id] = now
     strategy.evaluate_condition(condition_id)
 

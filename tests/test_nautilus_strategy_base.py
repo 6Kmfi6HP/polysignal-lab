@@ -23,7 +23,9 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from types import SimpleNamespace
-from typing import Any, Protocol, cast, override
+from typing import Any, Protocol, cast
+
+from typing_extensions import override
 
 from factories import sample_market_view
 from nautilus_polymarket_fixtures import polymarket_binary_instrument
@@ -1127,6 +1129,13 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         strategy.clock.timestamp_ns() / 1_000_000_000,
         UTC,
     )
+    # Within the market-data debounce window the evaluation is a no-op.
+    strategy._evaluate_market_data_condition(
+        "condition-btc-5m",
+        event=SimpleNamespace(ts_event=1),
+    )
+    assert strategy.evaluated == ["condition-btc-5m"]
+    strategy.clock.now_ns += 600_000_000  # past the debounce window
     strategy._evaluate_market_data_condition(
         "condition-btc-5m",
         event=SimpleNamespace(ts_event=1),
@@ -2038,6 +2047,92 @@ def test_native_strategy_on_start_subscribes_built_in_market_data_by_instrument(
         "down-token.POLYMARKET",
     ]
     assert cast(_CustomDataStrategy, cast(object, strategy)).custom_subscriptions != []
+
+
+def test_native_strategy_book_deltas_subscription_is_engine_managed() -> None:
+    """
+    Issue #21: pyo3 LiveNode only maintains Cache order books for
+    managed subscriptions; without managed=True every MarketView build
+    returned None and readiness never cleared.
+    """
+    from polysignal_lab.nautilus_runtime.market_catalog import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+    )
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.book_delta_kwargs = []
+            self.custom_subscriptions = []
+
+        def subscribe_book_deltas(self, instrument_id, *args, **kwargs):
+            self.book_delta_kwargs.append(kwargs)
+
+        def subscribe_data(self, data_type, *args, **kwargs):
+            self.custom_subscriptions.append(data_type)
+
+    registry = _test_market_catalog()
+    registry.register(
+        MarketPairMeta(
+            market_id="btc-5m",
+            market_slug="btc-updown-5m",
+            condition_id="condition-btc-5m",
+            asset="BTC",
+            timeframe="5m",
+            start_ts=None,
+            end_ts=None,
+            up=InstrumentTokenMeta("up-token", Side.UP),
+            down=InstrumentTokenMeta("down-token", Side.DOWN),
+        )
+    )
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(None),
+        condition_ids=("condition-btc-5m",),
+        strategy_name="ptb_diff",
+        registry=registry,
+    )
+
+    strategy.on_start()
+
+    assert strategy.book_delta_kwargs, "expected book delta subscriptions"
+    assert all(
+        kwargs.get("managed") is True for kwargs in strategy.book_delta_kwargs
+    )
+
+
+def test_market_data_evaluation_is_debounced_per_condition() -> None:
+    """
+    Issue #21: full MarketView evaluation on every book delta saturated
+    the event loop; bursts within the debounce window must evaluate once.
+    """
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+
+    from polysignal_lab.nautilus_runtime.strategy import market_data_events as mde
+
+    clock = {"now": datetime(2026, 7, 20, 12, 0, 0, tzinfo=UTC)}
+    evaluated: list[str] = []
+    strategy = SimpleNamespace(
+        _framework_now=lambda: clock["now"],
+        _note_runtime_progress=lambda phase: None,
+        _last_market_data_evaluation_at={},
+        evaluate_condition=lambda condition_id: evaluated.append(condition_id),
+    )
+
+    for _ in range(10):
+        mde.evaluate_market_data_condition(strategy, "cond-1")
+    assert evaluated == ["cond-1"]
+
+    clock["now"] += timedelta(seconds=1)
+    mde.evaluate_market_data_condition(strategy, "cond-1")
+    assert evaluated == ["cond-1", "cond-1"]
+
+    # A different condition is not blocked by cond-1's window.
+    mde.evaluate_market_data_condition(strategy, "cond-2")
+    assert evaluated == ["cond-1", "cond-1", "cond-2"]
 
 
 def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
@@ -4018,6 +4113,8 @@ def test_native_strategy_trade_tick_callback_reads_cache_trades_without_shared_t
 
     strategy.on_book_deltas(SimpleNamespace(instrument_id="up-token.POLYMARKET"))
     strategy.evaluated.clear()
+    # Reset the market-data debounce so the trade tick evaluates immediately.
+    strategy._last_market_data_evaluation_at.clear()
     strategy.on_trade(
         SimpleNamespace(
             instrument_id="up-token.POLYMARKET",

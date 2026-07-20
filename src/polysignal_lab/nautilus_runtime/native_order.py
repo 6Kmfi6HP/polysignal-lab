@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Protocol, TypeVar, cast
 
+from nautilus_trader.core.nautilus_pyo3 import OrderSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 
 from polysignal_lab.domain.enums import OrderIntent
@@ -87,11 +88,17 @@ def _submit_native_order(
     now: Callable[[], datetime] | None,
     use_native_reduce_only: bool,
 ) -> OrderT:
-    order_side = PolymarketEnumParser.to_nautilus_order_side(
-        spec.side,
-        reduce_only=spec.reduce_only,
+    order_side = getattr(
+        OrderSide,
+        PolymarketEnumParser.to_nautilus_order_side(
+            spec.side,
+            reduce_only=spec.reduce_only,
+        ).name,
     )
-    time_in_force = PolymarketEnumParser.to_nautilus_time_in_force(spec.intent)
+    time_in_force = getattr(
+        TimeInForce,
+        PolymarketEnumParser.to_nautilus_time_in_force(spec.intent).name,
+    )
     expire_time = None
     if spec.intent == OrderIntent.PASSIVE_GTD:
         if now is None:

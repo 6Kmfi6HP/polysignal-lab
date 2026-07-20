@@ -10,6 +10,7 @@ Pos: Application code
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import cast
@@ -67,6 +68,8 @@ __all__ = [
     "EVALUATION_HEARTBEAT_TIMER_NAME",
     "PolySignalNativeStrategy",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class PolySignalNativeStrategy(Strategy):
