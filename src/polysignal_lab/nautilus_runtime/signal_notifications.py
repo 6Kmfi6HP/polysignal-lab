@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, asyncio, logging, queue, threading, collections.abc, collections.abc.Awaitable, collections.abc.Callable, collections.abc.Mapping
-Output: _AcceptedSignalJob, _ReportResultJob, _PublishResultLike, _AcceptedSignalPublisher
+Input: __future__, __future__.annotations, asyncio, logging, queue, threading, collections.abc, collections.abc.Mapping
+Output: _AcceptedSignalJob, _ReportResultJob, _PublishResultLike, _AcceptedSignalPublisher, _ReportResultPublisher
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -14,7 +14,7 @@ import asyncio
 import logging
 import queue
 import threading
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -53,6 +53,13 @@ class _AcceptedSignalPublisher(Protocol):
         self,
         signal: SignalCandidate,
         stake_usdc: float,
+    ) -> _PublishResultLike: ...
+
+
+class _ReportResultPublisher(Protocol):
+    async def publish_report_result_once(
+        self,
+        result: Mapping[str, object],
     ) -> _PublishResultLike: ...
 
 
@@ -232,19 +239,10 @@ async def _publish_report_result_once(
     services: object,
     result: Mapping[str, object],
 ) -> dict[str, str | None]:
-    publish_service = getattr(services, "publish_service", None)
-    publish_fn = (
-        None
-        if publish_service is None
-        else getattr(publish_service, "publish_report_result", None)
+    publish = await cast(_ReportResultPublisher, services).publish_report_result_once(
+        result
     )
-    if not callable(publish_fn):
-        raise RuntimeError("publish_service.publish_report_result is not available")
-    publish = await cast(Callable[..., Awaitable[object]], publish_fn)(result)
-    as_dict = getattr(publish, "as_dict", None)
-    if not callable(as_dict):
-        return {}
-    return cast(dict[str, str | None], as_dict())
+    return publish.as_dict()
 
 
 def _audit_report_result_publish_failure(

@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, logging, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, typing, typing.TYPE_CHECKING, typing.Final
+Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, typing, typing.TYPE_CHECKING, typing.Final
 Output: validate_native_runtime_settings, build_nautilus_runtime_context, NautilusRuntimeContext
 Pos: Application code
 
@@ -11,6 +11,7 @@ Pos: Application code
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
@@ -124,6 +125,23 @@ class NautilusRuntimeContext:
             return cast(
                 PublishResult,
                 await publish_service.publish_signal(signal, stake_usdc),
+            )
+        finally:
+            await publisher.client.aclose()
+
+    async def publish_report_result_once(
+        self,
+        result: Mapping[str, object],
+    ) -> PublishResult:
+        publish_service, publisher = _build_publish_service(
+            self.settings,
+            self.formatter,
+            self.persistence,
+        )
+        try:
+            return cast(
+                PublishResult,
+                await publish_service.publish_report_result(result),
             )
         finally:
             await publisher.client.aclose()

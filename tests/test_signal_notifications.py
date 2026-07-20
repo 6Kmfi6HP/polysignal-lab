@@ -1,6 +1,6 @@
 """
 Input: pytest, threading, time, types
-Output: accepted-signal Telegram outbox regression coverage
+Output: accepted-signal and report-result Telegram outbox regression coverage
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -174,6 +174,39 @@ def test_dead_outbox_worker_is_restarted_on_next_notify() -> None:
     sn._notify_accepted_signal(services, _signal("sig_after_death"), 10.0)
     assert _wait_until(lambda: services._published == [("sig_after_death", 10.0)])
     assert services._published == [("sig_after_death", 10.0)]
+
+
+def test_report_result_uses_loop_local_publisher() -> None:
+    published: list[str] = []
+    services = _services()
+
+    async def publish_report_result_once(
+        result: dict[str, object],
+    ) -> PublishResult:
+        published.append(str(result["report_result_id"]))
+        return PublishResult(
+            publish_id="tg_report_result",
+            message_type="report_result",
+            status="SENT",
+            signal_id=str(result["signal_id"]),
+            telegram_message_id="2",
+            sent_at="2026-07-20T00:00:00Z",
+        )
+
+    async def stale_publish_service(_result: object) -> object:
+        raise RuntimeError("Event loop is closed")
+
+    services.publish_report_result_once = publish_report_result_once
+    services.publish_service = SimpleNamespace(
+        publish_report_result=stale_publish_service,
+    )
+
+    sn._notify_report_result(
+        services,
+        {"report_result_id": "rr_loop_local", "signal_id": "sig_loop_local"},
+    )
+
+    assert _wait_until(lambda: published == ["rr_loop_local"])
 
 
 def test_accepted_signal_publish_failure_leaves_durable_audit() -> None:
