@@ -148,7 +148,7 @@ def _audit_accepted_signal_publish_failure(
 ) -> None:
     """Persist a best-effort failure record; never raise into the outbox loop."""
     persistence = getattr(services, "persistence", None)
-    insert = None if persistence is None else getattr(persistence, "insert_system_event", None)
+    insert = getattr(persistence, "insert_system_event", None) if persistence else None
     if not callable(insert):
         return
     try:
@@ -188,8 +188,7 @@ def _audit_accepted_signal_publish_failure(
             )
     except Exception:
         cast(logging.Logger, getattr(services, "logger", logger)).debug(
-            "Failed to audit accepted_signal_publish_failed",
-            exc_info=True,
+            "Failed to audit accepted_signal_publish_failed", exc_info=True
         )
 
 
@@ -251,6 +250,43 @@ async def _publish_report_result_once(
     return cast(dict[str, str | None], as_dict())
 
 
+def _audit_report_result_publish_failure(
+    services: object,
+    result: Mapping[str, object],
+    exc: BaseException,
+) -> None:
+    persistence = getattr(services, "persistence", None)
+    insert = getattr(persistence, "insert_system_event", None) if persistence else None
+    if not callable(insert):
+        return
+    try:
+        from polysignal_lab.utils import new_id, redact_text, utc_iso
+
+        event = {
+            "event_id": new_id(
+                "evt",
+                "report_result_publish_failed",
+                str(result.get("report_result_id") or ""),
+            ),
+            "event_type": "report_result_publish_failed",
+            "severity": "WARNING",
+            "created_at": utc_iso(),
+            "report_result_id": result.get("report_result_id"),
+            "report_position_id": result.get("report_position_id"),
+            "signal_id": result.get("signal_id"),
+            "error_type": type(exc).__name__,
+            "error": redact_text(str(exc)),
+        }
+        insert(event)
+        append_log = getattr(persistence, "append_log", None)
+        if callable(append_log):
+            append_log("system_events", event)
+    except Exception:
+        cast(logging.Logger, getattr(services, "logger", logger)).debug(
+            "Failed to audit report_result_publish_failed", exc_info=True
+        )
+
+
 def _publish_report_result_in_background(
     services: object,
     result: Mapping[str, object],
@@ -271,37 +307,7 @@ def _publish_report_result_in_background(
             result.get("report_result_id"),
             exc,
         )
-        persistence = getattr(services, "persistence", None)
-        insert = None if persistence is None else getattr(persistence, "insert_system_event", None)
-        if not callable(insert):
-            return
-        try:
-            from polysignal_lab.utils import new_id, redact_text, utc_iso
-
-            event = {
-                "event_id": new_id(
-                    "evt",
-                    "report_result_publish_failed",
-                    str(result.get("report_result_id") or ""),
-                ),
-                "event_type": "report_result_publish_failed",
-                "severity": "WARNING",
-                "created_at": utc_iso(),
-                "report_result_id": result.get("report_result_id"),
-                "report_position_id": result.get("report_position_id"),
-                "signal_id": result.get("signal_id"),
-                "error_type": type(exc).__name__,
-                "error": redact_text(str(exc)),
-            }
-            insert(event)
-            append_log = getattr(persistence, "append_log", None)
-            if callable(append_log):
-                append_log("system_events", event)
-        except Exception:
-            cast(logging.Logger, getattr(services, "logger", logger)).debug(
-                "Failed to audit report_result_publish_failed",
-                exc_info=True,
-            )
+        _audit_report_result_publish_failure(services, result, exc)
 
 
 def _notify_report_result(
