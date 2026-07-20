@@ -39,8 +39,15 @@ def probe_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return note_progress, note_readiness, heartbeat_path, clock, writes
 
 
-def _read(path: Path) -> dict:
+def _read(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _readiness_misses(path: Path) -> dict[str, object]:
+    payload = _read(path)
+    value = payload["readiness_miss_started_at_by_key"]
+    assert isinstance(value, dict)
+    return value
 
 
 def test_progress_burst_is_throttled_to_one_disk_write(probe_env) -> None:
@@ -76,8 +83,7 @@ def test_new_readiness_miss_bypasses_throttle(probe_env) -> None:
     note_readiness("cond-1", False, {"asset": "BTC"})
 
     assert writes["count"] == 2
-    payload = _read(heartbeat_path)
-    assert "cond-1" in payload["readiness_miss_started_at_by_key"]
+    assert "cond-1" in _readiness_misses(heartbeat_path)
 
 
 def test_repeated_readiness_miss_is_throttled(probe_env) -> None:
@@ -97,8 +103,7 @@ def test_readiness_clear_bypasses_throttle(probe_env) -> None:
     note_readiness("cond-1", True, {"asset": "BTC"})
 
     assert writes["count"] == 2
-    payload = _read(heartbeat_path)
-    assert "cond-1" not in payload["readiness_miss_started_at_by_key"]
+    assert "cond-1" not in _readiness_misses(heartbeat_path)
 
 
 def test_startup_phase_bypasses_throttle_and_resets_tracking(probe_env) -> None:
@@ -110,8 +115,7 @@ def test_startup_phase_bypasses_throttle_and_resets_tracking(probe_env) -> None:
     note_readiness("cond-1", False, {"asset": "BTC"})
 
     assert writes["count"] == 3
-    payload = _read(heartbeat_path)
-    assert "cond-1" in payload["readiness_miss_started_at_by_key"]
+    assert "cond-1" in _readiness_misses(heartbeat_path)
 
 
 def test_fatal_bypasses_throttle(probe_env, tmp_path: Path) -> None:

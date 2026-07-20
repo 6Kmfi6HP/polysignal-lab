@@ -2123,15 +2123,15 @@ def test_market_data_evaluation_is_debounced_per_condition() -> None:
     )
 
     for _ in range(10):
-        mde.evaluate_market_data_condition(strategy, "cond-1")
+        mde.evaluate_market_data_condition(cast(Any, strategy), "cond-1")
     assert evaluated == ["cond-1"]
 
     clock["now"] += timedelta(seconds=1)
-    mde.evaluate_market_data_condition(strategy, "cond-1")
+    mde.evaluate_market_data_condition(cast(Any, strategy), "cond-1")
     assert evaluated == ["cond-1", "cond-1"]
 
     # A different condition is not blocked by cond-1's window.
-    mde.evaluate_market_data_condition(strategy, "cond-2")
+    mde.evaluate_market_data_condition(cast(Any, strategy), "cond-2")
     assert evaluated == ["cond-1", "cond-1", "cond-2"]
 
 
@@ -2151,8 +2151,10 @@ def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
     seen: list[tuple[str, str]] = []
 
     class FakeNativeStrategy(_NativeSubscriptionMethods, PolySignalNativeStrategy):
-        def __init__(self, *, label: str, **kwargs):
-            super().__init__(**kwargs)
+        def __init__(  # pyright: ignore[reportInconsistentConstructor]
+            self, *, label: str, **kwargs: Any  # pyright: ignore[reportExplicitAny]
+        ) -> None:
+            super().__init__(**kwargs)  # pyright: ignore[reportAny]
             self.label = label
             self.book_subscriptions: list[str] = []
             self.trade_subscriptions: list[str] = []

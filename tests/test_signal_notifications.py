@@ -34,9 +34,7 @@ def _reset_outbox() -> None:
                 sn._OUTBOX.get_nowait()
             except Exception:
                 break
-        sn._WORKER_STARTED = False
-        if hasattr(sn, "_WORKER_THREAD"):
-            sn._WORKER_THREAD = None
+        sn._worker_thread = None
 
 
 @pytest.fixture(autouse=True)
@@ -165,7 +163,7 @@ def test_dead_outbox_worker_is_restarted_on_next_notify() -> None:
     # Stop the worker the way a crashed/exited thread leaves the flag set.
     sn._OUTBOX.put(sn._STOP)
     assert _wait_until(
-        lambda: sn._WORKER_THREAD is None or not sn._WORKER_THREAD.is_alive(),
+        lambda: sn._worker_thread is None or not sn._worker_thread.is_alive(),
         timeout=2.0,
     )
 

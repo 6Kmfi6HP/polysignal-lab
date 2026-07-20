@@ -26,8 +26,7 @@ logger = logging.getLogger("polysignal_lab.nautilus_runtime.signal_notifications
 # Single process-wide outbox: Strategy callbacks only put(); one worker drains.
 # Trading paths must never block on Telegram I/O (Nautilus side-effect isolation).
 _OUTBOX: queue.SimpleQueue[object] = queue.SimpleQueue()
-_WORKER_STARTED = False
-_WORKER_THREAD: threading.Thread | None = None
+_worker_thread: threading.Thread | None = None
 _WORKER_LOCK = threading.Lock()
 _STOP = object()
 
@@ -88,10 +87,9 @@ def _ensure_outbox_worker() -> None:
     callbacks keep enqueueing while Telegram never drains. Detect liveness on
     every enqueue so the process self-heals without touching trading state.
     """
-    global _WORKER_STARTED, _WORKER_THREAD
+    global _worker_thread
     with _WORKER_LOCK:
-        if _WORKER_THREAD is not None and _WORKER_THREAD.is_alive():
-            _WORKER_STARTED = True
+        if _worker_thread is not None and _worker_thread.is_alive():
             return
         thread = threading.Thread(
             target=_outbox_worker_loop,
@@ -99,8 +97,7 @@ def _ensure_outbox_worker() -> None:
             daemon=True,
         )
         thread.start()
-        _WORKER_THREAD = thread
-        _WORKER_STARTED = True
+        _worker_thread = thread
 
 
 def _outbox_worker_loop() -> None:

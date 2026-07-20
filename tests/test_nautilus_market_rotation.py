@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import cast
 from typing_extensions import override
 
 from nautilus_polymarket_fixtures import (
@@ -328,7 +329,9 @@ def test_market_rotation_activates_official_rust_shaped_instruments() -> None:
         if isinstance(unwrap_custom_data(item), PolySignalMarketUniverseData)
     ]
     assert universes
-    assert universes[-1].active_condition_ids == ("0xcondition1",)
+    assert cast(PolySignalMarketUniverseData, universes[-1]).active_condition_ids == (
+        "0xcondition1",
+    )
 
 
 def test_market_rotation_ignores_unchanged_provider_refresh() -> None:

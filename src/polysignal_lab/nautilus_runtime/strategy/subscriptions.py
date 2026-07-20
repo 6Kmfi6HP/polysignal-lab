@@ -85,6 +85,7 @@ class _SubscriptionStrategy(Protocol):
         *,
         book_type: object,
         client_id: object | None = None,
+        managed: bool = False,
     ) -> object: ...
     def unsubscribe_quotes(
         self,
