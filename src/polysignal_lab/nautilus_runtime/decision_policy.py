@@ -93,16 +93,12 @@ class RejectedDecision:
     publish: SignalCandidate | None = None
 
 
-class BatchArbitrationResult(list[AlphaDecision]):
-    """Survivors after pair-completeness + per-decision gate (no multi-alpha arbiter)."""
+@dataclass(frozen=True, slots=True)
+class BatchArbitrationResult:
+    """Gate-approved decisions and rejections after pair arbitration."""
 
-    def __init__(
-        self,
-        survivors: Iterable[AlphaDecision] = (),
-        rejections: Iterable[tuple[AlphaDecision, RejectedDecision]] = (),
-    ) -> None:
-        super().__init__(survivors)
-        self.rejections = tuple(rejections)
+    approvals: tuple[ApprovedDecision, ...] = ()
+    rejections: tuple[tuple[AlphaDecision, RejectedDecision], ...] = ()
 
 
 class DecisionPolicy:
@@ -123,7 +119,6 @@ class DecisionPolicy:
         self.strategy_freshness_policies: dict[str, FreshnessPolicy] = dict(
             strategy_freshness_policies or {}
         )
-        self._batch_approved: dict[int, tuple[AlphaDecision, MarketView, SignalCandidate]] = {}
 
     def orderbook_readiness_threshold_ms(self) -> float:
         return float(self.gate.poly_config.max_book_staleness_ms)
@@ -155,10 +150,6 @@ class DecisionPolicy:
     def evaluate(
         self, decision: AlphaDecision, view: MarketView
     ) -> ApprovedDecision | RejectedDecision:
-        handoff = self._batch_approved.get(id(decision))
-        if handoff is not None and handoff[0] is decision and handoff[1] is view:
-            _ = self._batch_approved.pop(id(decision))
-            return ApprovedDecision(decision=handoff[0], publish=handoff[2])
         if decision.strategy in self.disabled_strategies:
             return RejectedDecision(
                 reason_code="manual_disabled",
@@ -192,18 +183,16 @@ class DecisionPolicy:
         self,
         decisions: list[tuple[AlphaDecision, MarketView]],
     ) -> BatchArbitrationResult:
-        """Pair-completeness for hedge legs; then gate each survivor."""
-        self._batch_approved.clear()
+        """Return gate-approved decisions and rejections after pair arbitration."""
         unpaired, rejections = self._partition_batch(decisions)
         committed, gate_rejections = self._gate_batch(unpaired)
         rejections.extend(gate_rejections)
-        self._batch_approved = {
-            id(decision): (decision, view, publish)
-            for decision, view, publish in committed
-        }
         return BatchArbitrationResult(
-            [decision for decision, _, _ in committed],
-            rejections,
+            approvals=tuple(
+                ApprovedDecision(decision=decision, publish=publish)
+                for decision, _, publish in committed
+            ),
+            rejections=tuple(rejections),
         )
 
     def _partition_batch(

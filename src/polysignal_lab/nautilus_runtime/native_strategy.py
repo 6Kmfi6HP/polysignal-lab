@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.datetime, typing, typing.cast
+Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.datetime, typing
 Output: PolySignalNativeStrategy
 Pos: Application code
 
@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
-from typing import cast
 
 from nautilus_trader.core.nautilus_pyo3 import Strategy
 
@@ -23,17 +22,12 @@ from polysignal_lab.alpha.types import (
     MarketView,
 )
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.nautilus_runtime.cache_trading_state import (
-    cache_has_active_order_dedupe_key,
-)
 from polysignal_lab.nautilus_runtime.custom_data_types import unwrap_custom_data
 from polysignal_lab.nautilus_runtime.decision_policy import (
-    ApprovedDecision,
     DecisionPolicy,
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
-from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy
 from polysignal_lab.nautilus_runtime.state import load_strategy_state, save_strategy_state
 from polysignal_lab.nautilus_runtime.strategy import condition_evaluation as cond
 from polysignal_lab.nautilus_runtime.strategy import lifecycle as life
@@ -43,9 +37,6 @@ from polysignal_lab.nautilus_runtime.strategy import order_events as oev
 from polysignal_lab.nautilus_runtime.strategy import readiness as readiness_mod
 from polysignal_lab.nautilus_runtime.strategy import subscriptions as subs
 from polysignal_lab.nautilus_runtime.strategy.custom_data_handlers import route_strategy_data
-from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
-    submit_approved_for_view,
-)
 from polysignal_lab.nautilus_runtime.strategy.helpers import (
     DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
     DEFAULT_NATIVE_DATA_NAMES,
@@ -127,22 +118,7 @@ class PolySignalNativeStrategy(Strategy):
         )
         super().__init__(config=host.nautilus_config)
         bind_host_runtime(self, host)
-        self._batch_active_dedupe_keys: set[str] | None = None
         self._settled_position_keys: set[tuple[str, str]] = set()
-
-    def _is_signal_submitted(self, dedupe_key: str) -> bool:
-        batch_keys = getattr(self, "_batch_active_dedupe_keys", None)
-        if batch_keys is not None:
-            return dedupe_key in batch_keys
-        try:
-            cache = self.cache
-        except (AttributeError, RuntimeError):
-            cache = None
-        return cache_has_active_order_dedupe_key(
-            cache,
-            strategy_id=getattr(self, "strategy_id", None) or getattr(self, "id", None),
-            dedupe_key=dedupe_key,
-        )
 
     def _require_registry(self) -> MarketCatalog:
         if self.registry is None:
@@ -288,7 +264,7 @@ class PolySignalNativeStrategy(Strategy):
         self, decisions: Sequence[AlphaDecision], view: MarketView
     ) -> None:
         """Evaluate decisions through the strategy-owned DecisionPolicy (no Actor bus)."""
-        cond.apply_decision_batch(self, decisions, view)
+        self._decision_pipeline.apply(decisions, view)
 
     def _evaluate_decisions(
         self,
@@ -303,19 +279,6 @@ class PolySignalNativeStrategy(Strategy):
 
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None:
         cond.handle_decision(self, decision, view)
-
-    def _submit_approved(
-        self, approved: ApprovedDecision, *, view: MarketView
-    ) -> object:
-        return submit_approved_for_view(
-            cast(OrderSubmittingStrategy[object], cast(object, self)),
-            approved,
-            view=view,
-            fixed_stake_usdc=self.fixed_stake_usdc,
-            instrument_id_resolver=self._resolved_instrument,
-            now=self._framework_now,
-            use_native_reduce_only=self._execution_mode in {"sandbox", "backtest"},
-        )
 
     def _resolved_instrument(self, token_id: str) -> object:
         return resolve_instrument_from_cache(

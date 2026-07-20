@@ -29,9 +29,9 @@ from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyCo
 from polysignal_lab.nautilus_runtime.strategy import subscriptions as subs
 from polysignal_lab.nautilus_runtime.strategy.config_deps import dependencies_from_config
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
-    DecisionPipelineState,
-    DecisionResultHandler,
-    NativeDecisionSinkImpl,
+    DecisionPipeline,
+    NautilusOrderSubmitter,
+    NativeDecisionTelemetry,
 )
 
 from polysignal_lab.nautilus_runtime.strategy.helpers import (
@@ -236,23 +236,19 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
 
 
 def _bind_pipeline(strategy: Any) -> None:
-    strategy._pipeline_state = DecisionPipelineState()
-    strategy._decision_result_handler = DecisionResultHandler(
-        is_signal_submitted=strategy._is_signal_submitted,
-    )
-    # Metrics live on order tags (Cache); no ApprovedSignalMetricsTracker.
-    strategy._decision_sink = NativeDecisionSinkImpl(
-        submit_order_fn=lambda approved, view: strategy._submit_approved(
-            approved, view=view
+    pipeline = DecisionPipeline(
+        policy=strategy.policy,
+        submitter=NautilusOrderSubmitter(
+            strategy=strategy,
+            fixed_stake_usdc=strategy.fixed_stake_usdc,
+            instrument_id_resolver=strategy._resolved_instrument,
+            now=strategy._framework_now,
+            use_native_reduce_only=strategy._execution_mode in {"sandbox", "backtest"},
         ),
-        remember_metrics_fn=lambda _order, _approved: None,
-        record_signal_fn=strategy._record_signal,
-        notify_accepted_fn=strategy._notify_accepted_signal,
-        record_decision_fn=lambda d, a: strategy._record_decision(d, accepted=a),
-        record_rejected_fn=strategy._record_rejected,
-        note_progress_fn=strategy._note_runtime_progress,
+        telemetry=NativeDecisionTelemetry(strategy),
     )
-    strategy.rejected_decisions = strategy._pipeline_state.rejected_decisions
+    strategy._decision_pipeline = pipeline
+    strategy.rejected_decisions = pipeline.rejected_decisions
 
 
 def bind_host_runtime(strategy: Any, host: HostConstruction) -> None:

@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections, collections.abc, dataclasses, datetime, typing
-Output: submit_approved_for_view, DecisionPipelineState, NativeDecisionSink, NativeDecisionSinkImpl, DecisionResultHandler
+Output: DecisionPipeline, SubmittedDecision, NautilusOrderSubmitter, NativeDecisionTelemetry, OrderSubmitter, DecisionTelemetry
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -10,15 +10,15 @@ Pos: Application code
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView
-from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
+    BatchArbitrationResult,
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.native_order import (
@@ -27,186 +27,153 @@ from polysignal_lab.nautilus_runtime.native_order import (
 )
 
 
-def submit_approved_for_view(
-    strategy: OrderSubmittingStrategy[object],
-    approved: ApprovedDecision,
-    *,
-    view: MarketView,
-    fixed_stake_usdc: float,
-    instrument_id_resolver: Callable[[str], object],
-    now: Callable[[], datetime] | None = None,
-    use_native_reduce_only: bool = False,
-) -> object:
-    decision = approved.decision
-    book = view.book_for(decision.side)
-    return submit_approved_decision(
-        strategy,
-        approved,
-        fixed_stake_usdc=fixed_stake_usdc,
-        best_ask=book.best_ask,
-        best_bid=getattr(book, "best_bid", None),
-        instrument_id_resolver=instrument_id_resolver,
-        now=now,
-        view_id=view.view_id,
-        use_native_reduce_only=use_native_reduce_only,
-    )
+class DecisionPolicyPort(Protocol):
+    def batch_arbitrate(
+        self, decisions: list[tuple[AlphaDecision, MarketView]]
+    ) -> BatchArbitrationResult: ...
 
 
-@dataclass
-class DecisionPipelineState:
+class _NativeTelemetryStrategy(Protocol):
+    def _record_signal(self, signal: object) -> None: ...
+    def _notify_accepted_signal(self, signal: object) -> None: ...
+    def _record_decision(self, decision: AlphaDecision, *, accepted: bool) -> None: ...
+    def _record_rejected(self, rejected: RejectedDecision) -> None: ...
+    def _note_runtime_progress(self, event: str) -> None: ...
+
+
+class OrderSubmitter(Protocol):
+    def submit(self, approved: ApprovedDecision, view: MarketView) -> object: ...
+
+
+class DecisionTelemetry(Protocol):
+    def accepted(self, approved: ApprovedDecision, order: object) -> None: ...
+    def rejected(self, rejected: RejectedDecision, decision: AlphaDecision) -> None: ...
+    def progress(self, event: str) -> None: ...
+
+
+@dataclass(slots=True)
+class NautilusOrderSubmitter:
+    strategy: OrderSubmittingStrategy[object]
+    fixed_stake_usdc: float
+    instrument_id_resolver: Callable[[str], object]
+    now: Callable[[], datetime] | None = None
+    use_native_reduce_only: bool = False
+
+    def submit(self, approved: ApprovedDecision, view: MarketView) -> object:
+        book = view.book_for(approved.decision.side)
+        return submit_approved_decision(
+            self.strategy,
+            approved,
+            fixed_stake_usdc=self.fixed_stake_usdc,
+            best_ask=book.best_ask,
+            best_bid=getattr(book, "best_bid", None),
+            instrument_id_resolver=self.instrument_id_resolver,
+            now=self.now,
+            view_id=view.view_id,
+            use_native_reduce_only=self.use_native_reduce_only,
+        )
+
+
+@dataclass(slots=True)
+class NativeDecisionTelemetry:
+    strategy: _NativeTelemetryStrategy
+
+    def accepted(self, approved: ApprovedDecision, order: object) -> None:
+        _ = order
+        self.strategy._record_signal(approved.publish)
+        self.strategy._notify_accepted_signal(approved.publish)
+        self.strategy._record_decision(approved.decision, accepted=True)
+
+    def rejected(self, rejected: RejectedDecision, decision: AlphaDecision) -> None:
+        self.strategy._record_decision(decision, accepted=False)
+        self.strategy._record_rejected(rejected)
+
+    def progress(self, event: str) -> None:
+        self.strategy._note_runtime_progress(event)
+
+
+@dataclass(frozen=True, slots=True)
+class SubmittedDecision:
+    approved: ApprovedDecision
+    order: object
+
+
+@dataclass(slots=True)
+class DecisionPipeline:
+    policy: DecisionPolicyPort
+    submitter: OrderSubmitter
+    telemetry: DecisionTelemetry
     rejected_decisions: deque[RejectedDecision] = field(
         default_factory=lambda: deque(maxlen=1000)
     )
 
-
-class NativeDecisionSink(Protocol):
-    def submit_order(self, approved: ApprovedDecision, *, view: MarketView) -> object: ...
-    def remember_metrics(self, order: object, approved: ApprovedDecision) -> None: ...
-    def record_signal(self, signal: SignalCandidate) -> None: ...
-    def notify_accepted(self, signal: SignalCandidate) -> None: ...
-    def record_decision(self, decision: AlphaDecision, *, accepted: bool) -> None: ...
-    def record_rejected(self, rejected: RejectedDecision) -> None: ...
-    def note_progress(self, event: str) -> None: ...
-
-
-def _record_rejection(
-    rejected: RejectedDecision,
-    decision: AlphaDecision,
-    *,
-    state: DecisionPipelineState,
-    sink: NativeDecisionSink,
-) -> None:
-    state.rejected_decisions.append(rejected)
-    sink.record_decision(decision, accepted=False)
-    sink.record_rejected(rejected)
-
-
-@dataclass(slots=True)
-class NativeDecisionSinkImpl:
-    submit_order_fn: Callable[[ApprovedDecision, MarketView], object]
-    remember_metrics_fn: Callable[[object, ApprovedDecision], None]
-    record_signal_fn: Callable[[SignalCandidate], None]
-    notify_accepted_fn: Callable[[SignalCandidate], None]
-    record_decision_fn: Callable[[AlphaDecision, bool], None]
-    record_rejected_fn: Callable[[RejectedDecision], None]
-    note_progress_fn: Callable[[str], None] | None = None
-
-    def submit_order(self, approved: ApprovedDecision, *, view: MarketView) -> object:
-        return self.submit_order_fn(approved, view)
-
-    def remember_metrics(self, order: object, approved: ApprovedDecision) -> None:
-        self.remember_metrics_fn(order, approved)
-
-    def record_signal(self, signal: SignalCandidate) -> None:
-        self.record_signal_fn(signal)
-
-    def notify_accepted(self, signal: SignalCandidate) -> None:
-        self.notify_accepted_fn(signal)
-
-    def record_decision(self, decision: AlphaDecision, *, accepted: bool) -> None:
-        self.record_decision_fn(decision, accepted)
-
-    def record_rejected(self, rejected: RejectedDecision) -> None:
-        self.record_rejected_fn(rejected)
-
-    def note_progress(self, event: str) -> None:
-        if self.note_progress_fn is not None:
-            self.note_progress_fn(event)
-
-
-class DecisionResultHandler:
-    def __init__(
+    def apply(
         self,
-        *,
-        is_signal_submitted: Callable[[str], bool],
-    ) -> None:
-        self._is_signal_submitted = is_signal_submitted
-
-    def handle_result(
-        self,
-        result: ApprovedDecision | RejectedDecision,
-        decision: AlphaDecision,
+        decisions: Sequence[AlphaDecision],
         view: MarketView,
-        *,
-        state: DecisionPipelineState,
-        sink: NativeDecisionSink,
-    ) -> bool:
-        if isinstance(result, RejectedDecision):
-            self._on_rejected(result, decision, state=state, sink=sink)
-            return False
-        signal_key = result.decision.dedupe_key()
-        if self._is_signal_submitted(signal_key):
-            self._on_duplicate(
-                RejectedDecision(
+    ) -> list[SubmittedDecision | RejectedDecision]:
+        if not decisions:
+            return []
+        arbitration = self.policy.batch_arbitrate([(decision, view) for decision in decisions])
+        approved_by_id, rejected_by_id = _arbitration_results(arbitration)
+        active_dedupe_keys = _active_dedupe_keys(view)
+        results: list[SubmittedDecision | RejectedDecision] = []
+        for decision in decisions:
+            approved = approved_by_id.get(id(decision))
+            if approved is None:
+                rejected = rejected_by_id.get(id(decision)) or RejectedDecision(
+                    reason_code="ARBITRATION_SUPPRESSED",
+                    detail={},
+                    decision=decision,
+                )
+                self._reject(rejected, decision)
+                results.append(rejected)
+                continue
+            dedupe_key = approved.decision.dedupe_key()
+            if dedupe_key in active_dedupe_keys:
+                rejected = RejectedDecision(
                     reason_code="DUPLICATE_IN_FLIGHT_SIGNAL",
-                    detail={"dedupe_key": signal_key},
-                    decision=result.decision,
-                    publish=result.publish,
-                ),
-                decision,
-                state=state,
-                sink=sink,
-            )
-            return False
-        try:
-            order = sink.submit_order(result, view=view)
-        except ValueError as exc:
-            self._on_order_mapping_failed(
-                RejectedDecision(
+                    detail={"dedupe_key": dedupe_key},
+                    decision=approved.decision,
+                    publish=approved.publish,
+                )
+                self._reject(rejected, decision)
+                results.append(rejected)
+                continue
+            try:
+                order = self.submitter.submit(approved, view)
+            except ValueError as exc:
+                rejected = RejectedDecision(
                     reason_code="ORDER_MAPPING_FAILED",
                     detail={"error": str(exc)},
-                    decision=result.decision,
-                    publish=result.publish,
-                ),
-                decision,
-                state=state,
-                sink=sink,
-            )
-            return False
-        self._on_approved(result, decision, order, state=state, sink=sink)
-        return True
+                    decision=approved.decision,
+                    publish=approved.publish,
+                )
+                self._reject(rejected, decision)
+                results.append(rejected)
+                continue
+            active_dedupe_keys.add(dedupe_key)
+            self.telemetry.accepted(approved, order)
+            results.append(SubmittedDecision(approved=approved, order=order))
+        return results
 
-    @staticmethod
-    def _on_duplicate(
-        rejected: RejectedDecision,
-        decision: AlphaDecision,
-        *,
-        state: DecisionPipelineState,
-        sink: NativeDecisionSink,
-    ) -> None:
-        _record_rejection(rejected, decision, state=state, sink=sink)
+    def _reject(self, rejected: RejectedDecision, decision: AlphaDecision) -> None:
+        self.rejected_decisions.append(rejected)
+        self.telemetry.rejected(rejected, decision)
 
-    @staticmethod
-    def _on_order_mapping_failed(
-        rejected: RejectedDecision,
-        decision: AlphaDecision,
-        *,
-        state: DecisionPipelineState,
-        sink: NativeDecisionSink,
-    ) -> None:
-        _record_rejection(rejected, decision, state=state, sink=sink)
 
-    @staticmethod
-    def _on_approved(
-        approved: ApprovedDecision,
-        decision: AlphaDecision,
-        order: object,
-        *,
-        state: DecisionPipelineState,
-        sink: NativeDecisionSink,
-    ) -> None:
-        _ = state
-        sink.remember_metrics(order, approved)
-        sink.record_signal(approved.publish)
-        sink.notify_accepted(approved.publish)
-        sink.record_decision(decision, accepted=True)
+def _arbitration_results(
+    arbitration: BatchArbitrationResult,
+) -> tuple[dict[int, ApprovedDecision], dict[int, RejectedDecision]]:
+    return (
+        {id(approved.decision): approved for approved in arbitration.approvals},
+        {id(decision): rejected for decision, rejected in arbitration.rejections},
+    )
 
-    @staticmethod
-    def _on_rejected(
-        rejected: RejectedDecision,
-        decision: AlphaDecision,
-        *,
-        state: DecisionPipelineState,
-        sink: NativeDecisionSink,
-    ) -> None:
-        _record_rejection(rejected, decision, state=state, sink=sink)
+
+def _active_dedupe_keys(view: MarketView) -> set[str]:
+    return {
+        order.dedupe_key
+        for order in view.trading.orders
+        if order.dedupe_key is not None and (order.is_open or order.is_inflight)
+    }
