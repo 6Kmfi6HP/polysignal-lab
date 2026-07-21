@@ -67,7 +67,7 @@ class RecordedMarketDataStore:
 
     def __init__(self, directory: str | Path) -> None:
         self.path: Path = Path(directory) / _RECORDING_FILE
-        self._queue: Queue[dict[str, object] | None] = Queue(maxsize=10_000)
+        self._queue: Queue[object | None] = Queue(maxsize=10_000)
         self._writer: Thread | None = None
         self._lock = Lock()
 
@@ -80,11 +80,10 @@ class RecordedMarketDataStore:
 
     def record(self, data: object) -> None:
         try:
-            record = _encode_record(data)
-            if record is None:
+            if not _is_supported(data):
                 return
             self.start()
-            self._queue.put_nowait(record)
+            self._queue.put_nowait(data)
         except Full:
             logger.error("recorded market data queue full; dropping event")
         except Exception:
@@ -92,11 +91,13 @@ class RecordedMarketDataStore:
 
     def _write_loop(self) -> None:
         while True:
-            record = self._queue.get()
+            data = self._queue.get()
             try:
-                if record is None:
+                if data is None:
                     return
-                self._append(record)
+                record = _encode_record(data)
+                if record is not None:
+                    self._append(record)
             except Exception:
                 logger.exception("recorded market data write failed")
             finally:
@@ -165,17 +166,23 @@ class RecordedMarketDataStore:
         )
 
 
+def _is_supported(data: object) -> bool:
+    return isinstance(
+        unwrap_custom_data(data),
+        (
+            nautilus_pyo3.BinaryOption,
+            nautilus_pyo3.QuoteTick,
+            nautilus_pyo3.PolymarketRtdsCryptoPrice,  # pyright: ignore[reportAttributeAccessIssue]
+            PolySignalMarketMetaData,
+            PolySignalMarketUniverseData,
+            PolySignalPriceToBeatData,
+        ),
+    )
+
+
 def _encode_record(data: object) -> dict[str, object] | None:
     payload = unwrap_custom_data(data)
-    supported = (
-        nautilus_pyo3.BinaryOption,
-        nautilus_pyo3.QuoteTick,
-        nautilus_pyo3.PolymarketRtdsCryptoPrice,  # pyright: ignore[reportAttributeAccessIssue]
-        PolySignalMarketMetaData,
-        PolySignalMarketUniverseData,
-        PolySignalPriceToBeatData,
-    )
-    if not isinstance(payload, supported):
+    if not _is_supported(payload):
         return None
     to_dict = getattr(payload, "to_dict", None)
     values = (

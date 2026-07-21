@@ -15,13 +15,43 @@ from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.domain.market import Market
 
 
+def _recorded_clock_data(
+    custom_data: tuple[object, ...], instrument_id: object
+) -> list[object]:
+    from nautilus_trader.core import nautilus_pyo3 as pyo3
+
+    timestamps = sorted({int(getattr(item, "ts_init")) for item in custom_data})
+    clock_data: list[object] = []
+    for timestamp in timestamps:
+        clock_data.append(
+            pyo3.InstrumentStatus(
+                instrument_id=instrument_id,  # pyright: ignore[reportArgumentType]
+                action=pyo3.MarketStatusAction.NONE,
+                ts_event=timestamp,
+                ts_init=timestamp,
+                reason=None,
+                trading_event=None,
+                is_trading=None,
+                is_quoting=None,
+                is_short_sell_restricted=None,
+            )
+        )
+    return clock_data
+
+
 def _add_backtest_data(engine: object, source: list[object]) -> None:
     from nautilus_trader.core import nautilus_pyo3 as pyo3
 
-    native_data = [item for item in source if isinstance(item, pyo3.QuoteTick)]
+    native_data: list[object] = [
+        item for item in source if isinstance(item, pyo3.QuoteTick)
+    ]
+    custom_data = tuple(item for item in source if item not in native_data)
+    if native_data and custom_data:
+        native_data.extend(
+            _recorded_clock_data(custom_data, getattr(native_data[0], "instrument_id"))
+        )
     if native_data:
         engine.add_data(native_data)  # pyright: ignore[reportAttributeAccessIssue]
-    custom_data = tuple(item for item in source if item not in native_data)
     if not custom_data:
         return
     from polysignal_lab.nautilus_runtime.recorded_market_data import (

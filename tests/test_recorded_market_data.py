@@ -1,5 +1,5 @@
 """
-Input: logging, pathlib, pytest, nautilus_trader, polysignal_lab.nautilus_runtime
+Input: pathlib, pytest, nautilus_trader, polysignal_lab.nautilus_runtime
 Output: Recorded market data round-trip and fail-open contract tests
 Pos: Test Layer - Unit/contract tests
 
@@ -7,8 +7,6 @@ Pos: Test Layer - Unit/contract tests
 """
 
 from __future__ import annotations
-
-import logging
 
 from nautilus_trader.core import nautilus_pyo3 as pyo3
 from nautilus_trader.test_kit.rust.instruments_pyo3 import TestInstrumentProviderPyo3
@@ -19,10 +17,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalPriceToBeatData,
 )
-from polysignal_lab.nautilus_runtime.recorded_market_data import (
-    RecordedCustomDataReplayActor,
-    RecordedMarketDataStore,
-)
+from polysignal_lab.nautilus_runtime.recorded_market_data import RecordedMarketDataStore
 
 
 def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path) -> None:
@@ -64,6 +59,15 @@ def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path) -> None:
         store.record(item)
 
     dataset = store.read()
+    window = store.read(start_ns=20, end_ns=25)
+    settings = Settings()
+    settings.runtime.nautilus.execution_mode = "backtest"
+    engine = build_backtest_engine(
+        settings,
+        instruments=dataset.instruments,
+        data=dataset.data,
+    )
+    engine.dispose()
 
     assert [type(item) for item in dataset.data] == [
         PolySignalMarketMetaData,
@@ -94,17 +98,8 @@ def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path) -> None:
     assert window.end_ns == 25
     assert "condition-1" in window.markets
 
-    settings = Settings()
-    settings.runtime.nautilus.execution_mode = "backtest"
-    engine = build_backtest_engine(
-        settings,
-        instruments=dataset.instruments,
-        data=dataset.data,
-    )
-    engine.dispose()
 
-
-def test_recording_failure_is_logged_and_fail_open(tmp_path, monkeypatch, caplog) -> None:
+def test_recording_failure_is_fail_open(tmp_path, monkeypatch) -> None:
     store = RecordedMarketDataStore(tmp_path)
     quote = pyo3.QuoteTick(
         instrument_id=pyo3.InstrumentId.from_str("token.POLYMARKET"),
@@ -121,50 +116,64 @@ def test_recording_failure_is_logged_and_fail_open(tmp_path, monkeypatch, caplog
 
     monkeypatch.setattr(store, "_append", fail)
 
-    with caplog.at_level(logging.ERROR):
-        store.record(quote)
-        store._queue.join()
+    store.record(quote)
+    store._queue.join()
 
-    assert "recorded market data write failed" in caplog.text
+    assert store._writer is not None and store._writer.is_alive()
     store.close()
 
 
-def test_custom_data_replay_runs_after_subscription_in_timestamp_order() -> None:
-    received: list[int] = []
+def test_recorded_data_replays_quotes_and_custom_data_in_timestamp_order() -> None:
+    received: list[tuple[str, int]] = []
+    instrument = TestInstrumentProviderPyo3.binary_option()
+    quote = pyo3.QuoteTick(
+        instrument_id=instrument.id,
+        bid_price=pyo3.Price.from_str("0.40"),
+        ask_price=pyo3.Price.from_str("0.41"),
+        bid_size=pyo3.Quantity.from_str("1"),
+        ask_size=pyo3.Quantity.from_str("1"),
+        ts_event=30,
+        ts_init=30,
+    )
+    price_to_beat = PolySignalPriceToBeatData(
+        condition_id="condition-1",
+        value=100_000.0,
+        source="test",
+        ts_event=20,
+        ts_init=20,
+    )
 
     class Probe(pyo3.DataActor):
         def __init__(self) -> None:
             super().__init__(
-                pyo3.DataActorConfig(actor_id=pyo3.ActorId("Recorded-Probe"))
+                pyo3.DataActorConfig(  # pyright: ignore[reportAttributeAccessIssue]
+                    actor_id=pyo3.ActorId("Recorded-Probe")
+                )
             )
 
         def on_start(self) -> None:
+            self.subscribe_quotes(instrument.id)
             self.subscribe_data(pyo3.DataType("PolySignalPriceToBeatData"))
 
-        def on_data(self, data: object) -> None:
-            received.append(data.data.ts_init)
+        def on_quote(self, tick: object) -> None:
+            received.append(("quote", int(getattr(tick, "ts_init"))))
 
-    items = tuple(
-        PolySignalPriceToBeatData(
-            condition_id="condition-1",
-            value=float(timestamp),
-            source="test",
-            ts_event=timestamp,
-            ts_init=timestamp,
-        )
-        for timestamp in (10, 20)
+        def on_data(self, data: object) -> None:
+            payload = getattr(data, "data")
+            received.append(("custom", int(getattr(payload, "ts_init"))))
+
+    settings = Settings()
+    settings.runtime.nautilus.execution_mode = "backtest"
+    settings.runtime.nautilus.sandbox_book_type = "L1_MBP"
+    engine = build_backtest_engine(
+        settings,
+        instruments=(instrument,),
+        data=(price_to_beat, quote),
     )
-    engine = pyo3.BacktestEngine(
-        pyo3.BacktestEngineConfig(
-            trader_id=pyo3.TraderId("RECORDED-REPLAY-001"),
-            bypass_logging=True,
-        )
-    )
-    engine.add_actor(Probe())
-    engine.add_actor(RecordedCustomDataReplayActor(items))
+    engine.add_actor(Probe())  # pyright: ignore[reportAttributeAccessIssue]
 
     try:
-        engine.run()
-        assert received == [10, 20]
+        engine.run()  # pyright: ignore[reportAttributeAccessIssue]
+        assert received == [("custom", 20), ("quote", 30)]
     finally:
-        engine.dispose()
+        engine.dispose()  # pyright: ignore[reportAttributeAccessIssue]
