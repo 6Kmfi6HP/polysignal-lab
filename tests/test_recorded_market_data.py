@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from threading import Thread
+from typing import Any, cast
 
 import pytest
 from nautilus_trader.core import nautilus_pyo3 as pyo3
@@ -54,7 +55,7 @@ def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path: Path) -> No
         ts_event=20,
         ts_init=20,
     )
-    spot = pyo3.PolymarketRtdsCryptoPrice(
+    spot = pyo3.PolymarketRtdsCryptoPrice(  # pyright: ignore[reportAttributeAccessIssue]
         "BTCUSDT", "99999.0", 0, 0, 25, 25
     )
     store = RecordedMarketDataStore(tmp_path)
@@ -66,36 +67,42 @@ def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path: Path) -> No
     window = store.read(start_ns=20, end_ns=25)
     settings = Settings()
     settings.runtime.nautilus.execution_mode = "backtest"
-    engine = build_backtest_engine(
-        settings,
-        instruments=dataset.instruments,
-        data=dataset.data,
+    engine = cast(
+        Any,
+        build_backtest_engine(
+            settings,
+            instruments=dataset.instruments,
+            data=dataset.data,
+        ),
     )
     engine.dispose()
 
-    assert [type(item) for item in dataset.data] == [
+    recorded = cast(tuple[Any, ...], dataset.data)
+    recorded_instruments = cast(tuple[Any, ...], dataset.instruments)
+
+    assert [type(item) for item in recorded] == [
         PolySignalMarketMetaData,
         PolySignalPriceToBeatData,
-        pyo3.PolymarketRtdsCryptoPrice,
+        pyo3.PolymarketRtdsCryptoPrice,  # pyright: ignore[reportAttributeAccessIssue]
         pyo3.QuoteTick,
     ]
-    assert [item.to_dict() for item in dataset.data[:2]] == [
+    assert [item.to_dict() for item in recorded[:2]] == [
         metadata.to_dict(),
         price_to_beat.to_dict(),
     ]
-    assert dataset.data[2].to_json() == spot.to_json()
-    assert dataset.data[3].to_dict() == quote.to_dict()
-    assert dataset.instruments[0].to_dict() == instrument.to_dict()
+    assert recorded[2].to_json() == spot.to_json()
+    assert recorded[3].to_dict() == quote.to_dict()
+    assert recorded_instruments[0].to_dict() == instrument.to_dict()
     assert dataset.start_ns == 10
     assert dataset.end_ns == 30
     assert "condition-1" in dataset.markets
-    assert [item.ts_init for item in dataset.data] == sorted(
-        item.ts_init for item in dataset.data
+    assert [item.ts_init for item in recorded] == sorted(
+        item.ts_init for item in recorded
     )
 
     assert [type(item) for item in window.data] == [
         PolySignalPriceToBeatData,
-        pyo3.PolymarketRtdsCryptoPrice,
+        pyo3.PolymarketRtdsCryptoPrice,  # pyright: ignore[reportAttributeAccessIssue]
     ]
     assert window.start_ns == 20
     assert window.end_ns == 25
