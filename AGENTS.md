@@ -269,4 +269,4 @@ Issues 托管在 GitHub Issues。外部 PR 不作为 triage 来源。详见 `doc
 
 ### 领域文档
 
-单一上下文布局——一个 `CONTEXT.md` 放在仓库根目录（尚未创建）。详见 `docs/agents/domain.md`。
+单一上下文布局——`CONTEXT.md` 位于仓库根目录，ADR 位于 `docs/adr/`。详见 `docs/agents/domain.md`。
