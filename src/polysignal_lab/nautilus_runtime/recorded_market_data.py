@@ -71,18 +71,25 @@ class RecordedMarketDataStore:
         self._writer: Thread | None = None
         self._lock = Lock()
 
-    def start(self) -> None:
+    def start(self) -> bool:
         with self._lock:
             if self._writer is not None:
-                return
-            self._writer = Thread(target=self._write_loop, daemon=True)
-            self._writer.start()
+                return True
+            writer = Thread(target=self._write_loop, daemon=True)
+            try:
+                writer.start()
+            except Exception:
+                logger.exception("recorded market data writer failed to start")
+                return False
+            self._writer = writer
+            return True
 
     def record(self, data: object) -> None:
         try:
             if not _is_supported(data):
                 return
-            self.start()
+            if not self.start():
+                return
             self._queue.put_nowait(data)
         except Full:
             logger.error("recorded market data queue full; dropping event")

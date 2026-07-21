@@ -8,6 +8,10 @@ Pos: Test Layer - Unit/contract tests
 
 from __future__ import annotations
 
+from pathlib import Path
+from threading import Thread
+
+import pytest
 from nautilus_trader.core import nautilus_pyo3 as pyo3
 from nautilus_trader.test_kit.rust.instruments_pyo3 import TestInstrumentProviderPyo3
 
@@ -20,7 +24,7 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
 from polysignal_lab.nautilus_runtime.recorded_market_data import RecordedMarketDataStore
 
 
-def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path) -> None:
+def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path: Path) -> None:
     instrument = TestInstrumentProviderPyo3.binary_option()
     quote = pyo3.QuoteTick(
         instrument_id=instrument.id,
@@ -98,7 +102,10 @@ def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path) -> None:
     assert "condition-1" in window.markets
 
 
-def test_recording_failure_is_fail_open(tmp_path, monkeypatch) -> None:
+def test_recording_failure_is_fail_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store = RecordedMarketDataStore(tmp_path)
     quote = pyo3.QuoteTick(
         instrument_id=pyo3.InstrumentId.from_str("token.POLYMARKET"),
@@ -120,6 +127,21 @@ def test_recording_failure_is_fail_open(tmp_path, monkeypatch) -> None:
 
     assert store._writer is not None and store._writer.is_alive()
     store.close()
+
+
+def test_writer_start_failure_is_fail_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = RecordedMarketDataStore(tmp_path)
+
+    def fail(_thread: Thread) -> None:
+        raise OSError("thread unavailable")
+
+    monkeypatch.setattr(Thread, "start", fail)
+
+    assert store.start() is False
+    assert store._writer is None
 
 
 def test_custom_data_only_replay_completes() -> None:
