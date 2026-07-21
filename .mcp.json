@@ -8,7 +8,8 @@
         "--mcp"
       ],
       "env": {
-        "CODEGRAPH_WATCH_DEBOUNCE_MS": "5000"
+        "CODEGRAPH_WATCH_DEBOUNCE_MS": "5000",
+        "CODEGRAPH_MCP_TOOLS": "explore,node,search,callers,callees,impact,files,status"
       }
     }
   }
