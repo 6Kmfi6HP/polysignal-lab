@@ -39,17 +39,27 @@ def _recorded_clock_data(
     return clock_data
 
 
-def _add_backtest_data(engine: object, source: list[object]) -> None:
+def _add_backtest_data(
+    engine: object,
+    source: list[object],
+    instruments: Sequence[object],
+) -> None:
     from nautilus_trader.core import nautilus_pyo3 as pyo3
 
     native_data: list[object] = [
         item for item in source if isinstance(item, pyo3.QuoteTick)
     ]
     custom_data = tuple(item for item in source if item not in native_data)
-    if native_data and custom_data:
-        native_data.extend(
-            _recorded_clock_data(custom_data, getattr(native_data[0], "instrument_id"))
-        )
+    if custom_data:
+        clock_source = native_data[0] if native_data else next(iter(instruments), None)
+        if clock_source is not None:
+            instrument_id = getattr(
+                clock_source,
+                "instrument_id",
+                getattr(clock_source, "id", None),
+            )
+            if instrument_id is not None:
+                native_data.extend(_recorded_clock_data(custom_data, instrument_id))
     if native_data:
         engine.add_data(native_data)  # pyright: ignore[reportAttributeAccessIssue]
     if not custom_data:
@@ -97,7 +107,7 @@ def build_backtest_engine(
     for instrument in instruments:
         engine.add_instrument(instrument)
     source = list(data if data is not None else quotes)
-    _add_backtest_data(engine, source)
+    _add_backtest_data(engine, source, instruments)
     from polysignal_lab.nautilus_runtime.runtime_registration import (
         register_runtime_components,
     )

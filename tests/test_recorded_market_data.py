@@ -89,7 +89,6 @@ def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path) -> None:
         item.ts_init for item in dataset.data
     )
 
-    window = store.read(start_ns=20, end_ns=25)
     assert [type(item) for item in window.data] == [
         PolySignalPriceToBeatData,
         pyo3.PolymarketRtdsCryptoPrice,
@@ -121,6 +120,48 @@ def test_recording_failure_is_fail_open(tmp_path, monkeypatch) -> None:
 
     assert store._writer is not None and store._writer.is_alive()
     store.close()
+
+
+def test_custom_data_only_replay_completes() -> None:
+    received: list[int] = []
+    instrument = TestInstrumentProviderPyo3.binary_option()
+    price_to_beat = PolySignalPriceToBeatData(
+        condition_id="condition-1",
+        value=100_000.0,
+        source="test",
+        ts_event=20,
+        ts_init=20,
+    )
+
+    class Probe(pyo3.DataActor):
+        def __init__(self) -> None:
+            super().__init__(
+                pyo3.DataActorConfig(  # pyright: ignore[reportAttributeAccessIssue]
+                    actor_id=pyo3.ActorId("Custom-Only-Probe")
+                )
+            )
+
+        def on_start(self) -> None:
+            self.subscribe_data(pyo3.DataType("PolySignalPriceToBeatData"))
+
+        def on_data(self, data: object) -> None:
+            received.append(int(getattr(getattr(data, "data"), "ts_init")))
+
+    settings = Settings()
+    settings.runtime.nautilus.execution_mode = "backtest"
+    settings.runtime.nautilus.sandbox_book_type = "L1_MBP"
+    engine = build_backtest_engine(
+        settings,
+        instruments=(instrument,),
+        data=(price_to_beat,),
+    )
+    engine.add_actor(Probe())  # pyright: ignore[reportAttributeAccessIssue]
+
+    try:
+        engine.run()  # pyright: ignore[reportAttributeAccessIssue]
+        assert received == [20]
+    finally:
+        engine.dispose()  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def test_recorded_data_replays_quotes_and_custom_data_in_timestamp_order() -> None:
