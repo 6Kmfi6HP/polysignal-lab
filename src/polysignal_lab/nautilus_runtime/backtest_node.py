@@ -15,6 +15,24 @@ from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.domain.market import Market
 
 
+def _add_backtest_data(engine: object, source: list[object]) -> None:
+    from nautilus_trader.core import nautilus_pyo3 as pyo3
+
+    native_data = [item for item in source if isinstance(item, pyo3.QuoteTick)]
+    if native_data:
+        engine.add_data(native_data)  # pyright: ignore[reportAttributeAccessIssue]
+    custom_data = tuple(item for item in source if item not in native_data)
+    if not custom_data:
+        return
+    from polysignal_lab.nautilus_runtime.recorded_market_data import (
+        RecordedCustomDataReplayActor,
+    )
+
+    engine.add_actor(  # pyright: ignore[reportAttributeAccessIssue]
+        RecordedCustomDataReplayActor(custom_data)
+    )
+
+
 def build_backtest_engine(
     settings: Settings | None = None,
     *,
@@ -49,8 +67,7 @@ def build_backtest_engine(
     for instrument in instruments:
         engine.add_instrument(instrument)
     source = list(data if data is not None else quotes)
-    if source:
-        engine.add_data(source)
+    _add_backtest_data(engine, source)
     from polysignal_lab.nautilus_runtime.runtime_registration import (
         register_runtime_components,
     )

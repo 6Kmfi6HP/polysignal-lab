@@ -237,7 +237,7 @@ def test_shared_registration_does_not_create_shadow_strategy_when_none_enabled()
     names = register_runtime_components(runtime, settings)
 
     assert names == ()
-    assert len(runtime.actor_configs) == 1
+    assert len(runtime.actor_configs) == 2
     assert runtime.strategy_configs == []
 
 
@@ -300,7 +300,7 @@ def test_live_router_returns_native_node_and_registers_importable_components(
     result = build_runtime_node(settings)
 
     assert result is native_node
-    assert len(native_node.actor_configs) == 1
+    assert len(native_node.actor_configs) == 2
     assert len(native_node.strategy_configs) == 1
     assert not hasattr(result, "components")
     assert not hasattr(result, "trader")
