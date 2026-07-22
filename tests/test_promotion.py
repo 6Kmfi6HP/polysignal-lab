@@ -183,7 +183,7 @@ def test_run_promotion_drives_real_engine_and_writes_markdown_report(
     # No entry quotes → 0 settled rounds → directional conclusion withheld.
     assert report.verdict is Verdict.INSUFFICIENT_DATA
     assert report.is_stats.settled_rounds == 0
-    assert report.oos_stats.settled_rounds == 0
+    assert report.oos_stats.settled_rounds == 1
 
     # Markdown report lands in the in-repo report directory with full evidence.
     assert report_path.exists()

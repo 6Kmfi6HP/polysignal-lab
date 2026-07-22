@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from nautilus_trader.adapters.polymarket import get_polymarket_instrument_id
+from nautilus_trader.core import nautilus_pyo3
 
 from polysignal_lab.config import Settings
 from polysignal_lab.nautilus_runtime.backtest_node import build_backtest_engine
@@ -48,8 +49,10 @@ class PromotionRequest:
             raise ValueError("Promotion sample floors cannot be lowered below ADR 0005")
 
 
-def _instrument_combinations(data: tuple[object, ...]) -> dict[str, tuple[str, str]]:
-    result: dict[str, tuple[str, str]] = {}
+def _instrument_context(
+    data: tuple[object, ...],
+) -> dict[str, tuple[str, tuple[str, str]]]:
+    context: dict[str, tuple[str, tuple[str, str]]] = {}
     for item in data:
         if not isinstance(item, PolySignalMarketMetaData):
             continue
@@ -58,14 +61,52 @@ def _instrument_combinations(data: tuple[object, ...]) -> dict[str, tuple[str, s
             if not token_id:
                 continue
             try:
-                result[str(get_polymarket_instrument_id(item.condition_id, token_id))] = combination
+                instrument_id = str(
+                    get_polymarket_instrument_id(item.condition_id, token_id)
+                )
             except (RuntimeError, TypeError, ValueError):
                 continue
-    return result
+            context[instrument_id] = (item.condition_id, combination)
+    return context
 
 
-def _known_combinations(data: tuple[object, ...]) -> tuple[tuple[str, str], ...]:
-    return tuple(sorted({(item.asset.upper(), item.timeframe) for item in data if isinstance(item, PolySignalMarketMetaData)}))
+def _known_combinations(
+    data: tuple[object, ...],
+    strategy: object,
+) -> tuple[tuple[str, str], ...]:
+    combinations = {
+        (item.asset.upper(), item.timeframe)
+        for item in data
+        if isinstance(item, PolySignalMarketMetaData)
+    }
+    assets = getattr(strategy, "assets", None)
+    timeframes = getattr(strategy, "timeframes", None)
+    if assets is None or timeframes is None:
+        return tuple(sorted(combinations))
+    allowed = {(str(asset).upper(), str(timeframe)) for asset in assets for timeframe in timeframes}
+    return tuple(sorted(combinations & allowed))
+
+
+def _settlement_rounds(
+    data: tuple[object, ...],
+    context: Mapping[str, tuple[str, tuple[str, str]]],
+    known_combinations: tuple[tuple[str, str], ...],
+) -> dict[str, tuple[str, str]]:
+    rounds: dict[str, tuple[str, str]] = {}
+    allowed = set(known_combinations)
+    for item in data:
+        if not isinstance(item, nautilus_pyo3.InstrumentClose):
+            continue
+        instrument_id = str(item.instrument_id)
+        condition, combination = context.get(
+            instrument_id,
+            (f"UNKNOWN:{instrument_id}", ("UNKNOWN", "UNKNOWN")),
+        )
+        if combination in allowed:
+            rounds[condition] = combination
+        elif combination == ("UNKNOWN", "UNKNOWN"):
+            rounds[condition] = combination
+    return rounds
 
 
 def _segment_stats(
@@ -74,45 +115,68 @@ def _segment_stats(
     label: str,
     start_ns: int | None,
     end_ns: int | None,
-    instrument_combinations: Mapping[str, tuple[str, str]] | None = None,
+    instrument_combinations: Mapping[str, tuple[str, tuple[str, str]]] | None = None,
     known_combinations: tuple[tuple[str, str], ...] = (),
-    settled_instruments: frozenset[str] | None = None,
+    settlement_rounds: Mapping[str, tuple[str, str]] | None = None,
 ) -> SegmentedStats:
     mappings = instrument_combinations or {}
     closed = [project_position(p) for p in positions if bool(p) and _is_closed(p)]
-    if settled_instruments is not None:
-        closed = [p for p in closed if str(p.get("instrument_id") or "") in settled_instruments]
     totals: dict[tuple[str, str], list[float]] = {
         key: [0.0, 0.0, 0.0, 0.0] for key in known_combinations
     }
-    counted: set[tuple[tuple[str, str], str]] = set()
-    realized: list[float] = []
-    winners = losers = 0
-    for position in closed:
-        value_raw = position["realized_pnl"]
-        if value_raw is None:
-            continue
-        value = float(cast(Any, value_raw))
-        instrument_id = str(position.get("instrument_id") or "")
-        combination = mappings.get(instrument_id, ("UNKNOWN", "UNKNOWN"))
-        values = totals.setdefault(combination, [0.0, 0.0, 0.0, 0.0])
-        identity = str(
-            position.get("report_position_id")
-            or position.get("closed_at")
-            or position.get("ts")
-            or id(position)
-        )
-        round_key = (combination, identity)
-        if round_key in counted:
-            continue
-        counted.add(round_key)
-        realized.append(value)
-        winners += value > 0
-        losers += value < 0
-        values[0] += 1
-        values[1] += value
-        values[2] += value > 0
-        values[3] += value < 0
+    if settlement_rounds is None:
+        counted: set[tuple[tuple[str, str], str]] = set()
+        realized: list[float] = []
+        winners = losers = 0
+        for position in closed:
+            value_raw = position["realized_pnl"]
+            if value_raw is None:
+                continue
+            value = float(cast(Any, value_raw))
+            instrument_id = str(position.get("instrument_id") or "")
+            combination = mappings.get(instrument_id, ("", ("UNKNOWN", "UNKNOWN")))[1]
+            values = totals.setdefault(combination, [0.0, 0.0, 0.0, 0.0])
+            identity = str(
+                position.get("report_position_id")
+                or position.get("closed_at")
+                or position.get("ts")
+                or id(position)
+            )
+            round_key = (combination, identity)
+            if round_key in counted:
+                continue
+            counted.add(round_key)
+            realized.append(value)
+            winners += value > 0
+            losers += value < 0
+            values[0] += 1
+            values[1] += value
+            values[2] += value > 0
+            values[3] += value < 0
+    else:
+        pnl_by_round = {condition: 0.0 for condition in settlement_rounds}
+        for position in closed:
+            value_raw = position["realized_pnl"]
+            if value_raw is None:
+                continue
+            instrument_id = str(position.get("instrument_id") or "")
+            condition = mappings.get(instrument_id, ("", ("UNKNOWN", "UNKNOWN")))[0]
+            if condition in pnl_by_round:
+                pnl_by_round[condition] += float(cast(Any, value_raw))
+        counted = set()
+        realized = []
+        winners = losers = 0
+        for condition, combination in settlement_rounds.items():
+            value = pnl_by_round[condition]
+            values = totals.setdefault(combination, [0.0, 0.0, 0.0, 0.0])
+            counted.add((combination, condition))
+            realized.append(value)
+            winners += value > 0
+            losers += value < 0
+            values[0] += 1
+            values[1] += value
+            values[2] += value > 0
+            values[3] += value < 0
     combinations = tuple(
         ComboStats(
             asset=asset,
@@ -172,9 +236,9 @@ def collect_segment_stats(
     label: str,
     start_ns: int | None,
     end_ns: int | None,
-    instrument_combinations: Mapping[str, tuple[str, str]] | None = None,
+    instrument_combinations: Mapping[str, tuple[str, tuple[str, str]]] | None = None,
     known_combinations: tuple[tuple[str, str], ...] = (),
-    settled_instruments: frozenset[str] | None = None,
+    settlement_rounds: Mapping[str, tuple[str, str]] | None = None,
 ) -> SegmentedStats:
     engine, positions = _replay_segment(settings, instruments=instruments, data=data)
     try:
@@ -185,7 +249,7 @@ def collect_segment_stats(
             end_ns=end_ns,
             instrument_combinations=instrument_combinations,
             known_combinations=known_combinations,
-            settled_instruments=settled_instruments,
+            settlement_rounds=settlement_rounds,
         )
     finally:
         dispose = getattr(engine, "dispose", None)
@@ -230,8 +294,9 @@ def run_promotion(request: PromotionRequest, settings: Settings) -> PromotionRep
         is_stats = _empty_stats("IS (70%)")
         oos_stats = _empty_stats("OOS (30%)")
     else:
-        combination_map = _instrument_combinations(full.data)
-        known_combinations = _known_combinations(full.data)
+        context = _instrument_context(full.data)
+        strategy = getattr(promotion_settings.strategies, request.strategy_name)
+        known_combinations = _known_combinations(full.data, strategy)
         is_window = store.read(end_ns=split_ns - 1)
         oos_window = store.read(start_ns=split_ns, include_prior_context=True)
         is_stats = collect_segment_stats(
@@ -241,8 +306,9 @@ def run_promotion(request: PromotionRequest, settings: Settings) -> PromotionRep
             label="IS (70%)",
             start_ns=full.start_ns,
             end_ns=split_ns,
-            instrument_combinations=combination_map,
+            instrument_combinations={instrument_id: (condition, combo) for instrument_id, (condition, combo) in context.items()},
             known_combinations=known_combinations,
+            settlement_rounds=_settlement_rounds(is_window.data, context, known_combinations),
         )
         oos_stats = collect_segment_stats(
             promotion_settings,
@@ -251,8 +317,9 @@ def run_promotion(request: PromotionRequest, settings: Settings) -> PromotionRep
             label="OOS (30%)",
             start_ns=split_ns,
             end_ns=full.end_ns,
-            instrument_combinations=combination_map,
+            instrument_combinations={instrument_id: (condition, combo) for instrument_id, (condition, combo) in context.items()},
             known_combinations=known_combinations,
+            settlement_rounds=_settlement_rounds(oos_window.data, context, known_combinations),
         )
     report = PromotionReport(request.strategy_name, request.dataset_dir, full.start_ns, full.end_ns, full.markets, split_ns, is_stats, oos_stats, request.is_floor, request.oos_floor, evaluate_verdict(is_stats, oos_stats, is_floor=request.is_floor, oos_floor=request.oos_floor), utc_iso())
     report_path.parent.mkdir(parents=True, exist_ok=True)
