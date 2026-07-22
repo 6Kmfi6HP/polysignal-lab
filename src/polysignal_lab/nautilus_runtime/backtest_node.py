@@ -47,7 +47,9 @@ def _add_backtest_data(
     from nautilus_trader.core import nautilus_pyo3 as pyo3
 
     native_data: list[object] = [
-        item for item in source if isinstance(item, pyo3.QuoteTick)
+        item
+        for item in source
+        if isinstance(item, (pyo3.QuoteTick, pyo3.InstrumentClose))
     ]
     custom_data = tuple(item for item in source if item not in native_data)
     if custom_data:

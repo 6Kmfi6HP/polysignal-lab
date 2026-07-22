@@ -179,6 +179,7 @@ def _is_supported(data: object) -> bool:
         (
             nautilus_pyo3.BinaryOption,
             nautilus_pyo3.QuoteTick,
+            nautilus_pyo3.InstrumentClose,
             nautilus_pyo3.PolymarketRtdsCryptoPrice,  # pyright: ignore[reportAttributeAccessIssue]
             PolySignalMarketMetaData,
             PolySignalMarketUniverseData,
@@ -211,6 +212,8 @@ def _decode_record(record: dict[str, object]) -> object:
         return nautilus_pyo3.BinaryOption.from_dict(cast(dict[str, str], payload))
     if type_name == "QuoteTick":
         return nautilus_pyo3.QuoteTick.from_dict(payload)
+    if type_name == "InstrumentClose":
+        return nautilus_pyo3.InstrumentClose.from_dict(payload)
     if type_name == "PolymarketRtdsCryptoPrice":
         return nautilus_pyo3.PolymarketRtdsCryptoPrice.from_json(  # pyright: ignore[reportAttributeAccessIssue]
             payload

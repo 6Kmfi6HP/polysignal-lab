@@ -58,9 +58,16 @@ def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path: Path) -> No
     spot = pyo3.PolymarketRtdsCryptoPrice(  # pyright: ignore[reportAttributeAccessIssue]
         "BTCUSDT", "99999.0", 0, 0, 25, 25
     )
+    instrument_close = pyo3.InstrumentClose(
+        instrument_id=instrument.id,
+        close_price=pyo3.Price.from_str("1.00"),
+        close_type=pyo3.InstrumentCloseType.CONTRACT_EXPIRED,
+        ts_event=40,
+        ts_init=40,
+    )
     store = RecordedMarketDataStore(tmp_path)
 
-    for item in (quote, instrument, price_to_beat, spot, metadata):
+    for item in (quote, instrument, price_to_beat, spot, metadata, instrument_close):
         store.record(item)
 
     dataset = store.read()
@@ -85,6 +92,7 @@ def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path: Path) -> No
         PolySignalPriceToBeatData,
         pyo3.PolymarketRtdsCryptoPrice,  # pyright: ignore[reportAttributeAccessIssue]
         pyo3.QuoteTick,
+        pyo3.InstrumentClose,
     ]
     assert [item.to_dict() for item in recorded[:2]] == [
         metadata.to_dict(),
@@ -92,9 +100,10 @@ def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path: Path) -> No
     ]
     assert recorded[2].to_json() == spot.to_json()
     assert recorded[3].to_dict() == quote.to_dict()
+    assert recorded[4].to_dict() == instrument_close.to_dict()
     assert recorded_instruments[0].to_dict() == instrument.to_dict()
     assert dataset.start_ns == 10
-    assert dataset.end_ns == 30
+    assert dataset.end_ns == 40
     assert "condition-1" in dataset.markets
     assert [item.ts_init for item in recorded] == sorted(
         item.ts_init for item in recorded
