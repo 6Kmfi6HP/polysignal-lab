@@ -85,8 +85,14 @@ def _replay_segment(
     per ADR 0005. Backtest mode does not attach the sandbox recorder.
     """
     engine = cast(Any, build_backtest_engine(settings, instruments=instruments, data=data))
-    engine.run()
-    positions = tuple(engine.cache.positions())
+    try:
+        engine.run()
+        positions = tuple(engine.cache.positions())
+    except Exception:
+        dispose = getattr(engine, "dispose", None)
+        if callable(dispose):
+            _ = dispose()
+        raise
     return engine, positions
 
 
@@ -134,11 +140,14 @@ def run_promotion(
     settings.runtime.nautilus.sandbox_book_type = "L1_MBP"
     settings.strategies.set_explicit_strategy_names((request.strategy_name,))
 
+    if request.report_path.suffix.lower() != ".md":
+        raise ValueError("Promotion Report path must use the .md Markdown suffix")
+
     store = RecordedMarketDataStore(request.dataset_dir)
     full = store.read()
     split_ns = _split_boundary(full.start_ns, full.end_ns)
 
-    is_window = store.read(end_ns=split_ns)
+    is_window = store.read(end_ns=split_ns - 1 if split_ns is not None else None)
     oos_window = store.read(start_ns=split_ns)
 
     is_stats = collect_segment_stats(

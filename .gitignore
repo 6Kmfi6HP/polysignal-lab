@@ -30,6 +30,5 @@ refs/*
 .opencode/
 .omo/lsp.json
 data/*
-reports/promotion/
 backups/
 .pyscn/

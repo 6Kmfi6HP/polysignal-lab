@@ -58,23 +58,6 @@ class PromotionReport:
     created_at: str
     notes: tuple[str, ...] = field(default_factory=tuple)
 
-    def with_datetime(self, *, created_at: str) -> "PromotionReport":
-        return PromotionReport(
-            strategy_name=self.strategy_name,
-            dataset_dir=self.dataset_dir,
-            dataset_start_ns=self.dataset_start_ns,
-            dataset_end_ns=self.dataset_end_ns,
-            markets=self.markets,
-            split_ns=self.split_ns,
-            is_stats=self.is_stats,
-            oos_stats=self.oos_stats,
-            is_floor=self.is_floor,
-            oos_floor=self.oos_floor,
-            verdict=self.verdict,
-            created_at=created_at,
-            notes=self.notes,
-        )
-
 
 def evaluate_verdict(
     is_stats: SegmentedStats,

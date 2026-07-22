@@ -202,6 +202,53 @@ def test_run_promotion_drives_real_engine_and_writes_markdown_report(
     assert report.dataset_start_ns <= report.split_ns <= report.dataset_end_ns
 
 
+def test_run_promotion_splits_boundary_without_replaying_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_dir = tmp_path / "recorded"
+    _write_minimal_dataset(dataset_dir)
+    captured: dict[str, tuple[int, ...]] = {}
+
+    def collect(
+        _settings: Settings,
+        *,
+        instruments: tuple[object, ...],
+        data: tuple[object, ...],
+        label: str,
+        start_ns: int | None,
+        end_ns: int | None,
+    ) -> SegmentedStats:
+        _ = instruments, start_ns, end_ns
+        captured[label] = tuple(int(getattr(item, "ts_init")) for item in data)
+        return _stats(0, 0.0)
+
+    monkeypatch.setattr("polysignal_lab.promotion.runner.collect_segment_stats", collect)
+    run_promotion(
+        PromotionRequest(
+            dataset_dir=str(dataset_dir),
+            strategy_name="one_cent_buy",
+            report_path=tmp_path / "reports" / "promotion.md",
+        ),
+        Settings(),
+    )
+
+    assert captured["IS (70%)"] == (10,)
+    assert captured["OOS (30%)"] == (1_000_000_000_000,)
+
+
+def test_run_promotion_rejects_non_markdown_report_path(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Markdown"):
+        run_promotion(
+            PromotionRequest(
+                dataset_dir=str(tmp_path / "recorded"),
+                strategy_name="one_cent_buy",
+                report_path=tmp_path / "config" / "signal_bot.yaml",
+            ),
+            Settings(),
+        )
+
+
 def test_run_promotion_pass_path_with_small_floors(tmp_path: Path) -> None:
     """With the ADR floors lowered to 0, zero settled rounds but non-negative OOS
     expectation is withheld (<=0 → FAIL until positive). Assert the thresholded
