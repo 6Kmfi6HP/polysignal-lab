@@ -29,6 +29,7 @@ class ComboStats:
     total_realized_pnl: float
     winning_rounds: int
     losing_rounds: int
+    valid: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +80,7 @@ def evaluate_verdict(
     if is_stats.settled_rounds < is_floor or oos_stats.settled_rounds < oos_floor:
         return Verdict.INSUFFICIENT_DATA
     if any(
-        combo.settled_rounds < floor
+        not combo.valid or combo.settled_rounds < floor
         for stats, floor in ((is_stats, is_floor), (oos_stats, oos_floor))
         for combo in stats.combinations
     ):

@@ -159,11 +159,12 @@ def _write_minimal_dataset(directory: Path) -> None:
 
 
 def test_run_promotion_drives_real_engine_and_writes_markdown_report(
-    tmp_path: Path
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dataset_dir = tmp_path / "recorded"
     _write_minimal_dataset(dataset_dir)
-    report_path = tmp_path / "reports" / "promotion" / "one_cent_buy.md"
+    report_path = Path("reports/promotion/one_cent_buy.md")
+    monkeypatch.chdir(tmp_path)
 
     settings = Settings()
     request = PromotionRequest(
@@ -175,9 +176,9 @@ def test_run_promotion_drives_real_engine_and_writes_markdown_report(
     )
     report = run_promotion(request, settings)
 
-    # Real BacktestEngine assembly + sandbox-shared strategy selection.
-    assert settings.runtime.nautilus.execution_mode == "backtest"
-    assert settings.strategies.explicit_strategy_names() == ("one_cent_buy",)
+    # Promotion replays with an isolated backtest Settings copy.
+    assert settings.runtime.nautilus.execution_mode == "sandbox"
+    assert settings.strategies.explicit_strategy_names() == ()
 
     # No entry quotes → 0 settled rounds → directional conclusion withheld.
     assert report.verdict is Verdict.INSUFFICIENT_DATA
@@ -218,26 +219,29 @@ def test_run_promotion_splits_boundary_without_replaying_event(
         label: str,
         start_ns: int | None,
         end_ns: int | None,
+        **kwargs: object,
     ) -> SegmentedStats:
         _ = instruments, start_ns, end_ns
         captured[label] = tuple(int(getattr(item, "ts_init")) for item in data)
         return _stats(0, 0.0)
 
     monkeypatch.setattr("polysignal_lab.promotion.runner.collect_segment_stats", collect)
+    monkeypatch.chdir(tmp_path)
     run_promotion(
         PromotionRequest(
             dataset_dir=str(dataset_dir),
             strategy_name="one_cent_buy",
-            report_path=tmp_path / "reports" / "promotion.md",
+            report_path=Path("reports/promotion/boundary.md"),
         ),
         Settings(),
     )
 
     assert captured["IS (70%)"] == (10,)
-    assert captured["OOS (30%)"] == (1_000_000_000_000,)
+    assert captured["OOS (30%)"] == (10, 1_000_000_000_000)
 
 
-def test_run_promotion_rejects_non_markdown_report_path(tmp_path: Path) -> None:
+def test_run_promotion_rejects_non_markdown_report_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="Markdown"):
         run_promotion(
             PromotionRequest(
@@ -291,7 +295,7 @@ def test_promotion_report_render_contains_all_evidence() -> None:
 
 
 def test_run_promotion_writes_no_production_or_lab_config(
-    tmp_path: Path
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dataset_dir = tmp_path / "recorded"
     _write_minimal_dataset(dataset_dir)
@@ -301,10 +305,11 @@ def test_run_promotion_writes_no_production_or_lab_config(
     sentinel.write_text("existing: true", encoding="utf-8")
 
     settings = Settings()
+    monkeypatch.chdir(tmp_path)
     request = PromotionRequest(
         dataset_dir=str(dataset_dir),
         strategy_name="vwap_momentum",
-        report_path=tmp_path / "reports" / "promotion" / "vwap.md",
+        report_path=Path("reports/promotion/vwap.md"),
     )
     run_promotion(request, settings)
     # Toolchain must not write or touch any production/lab config file.

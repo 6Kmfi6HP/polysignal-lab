@@ -19,9 +19,7 @@ from polysignal_lab.config import Settings
 from polysignal_lab.nautilus_runtime.backtest_node import build_backtest_engine
 from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalMarketMetaData
 from polysignal_lab.nautilus_runtime.projections import project_position
-from polysignal_lab.nautilus_runtime.recorded_market_data import (
-    RecordedMarketDataStore,
-)
+from polysignal_lab.nautilus_runtime.recorded_market_data import RecordedMarketDataStore
 from polysignal_lab.promotion.report import (
     ComboStats,
     PromotionReport,
@@ -39,8 +37,6 @@ _REPORT_ROOT = Path("reports") / "promotion"
 
 @dataclass(frozen=True, slots=True)
 class PromotionRequest:
-    """One (strategy, recorded dataset, single param combo) review request."""
-
     dataset_dir: str
     strategy_name: str
     report_path: Path
@@ -48,14 +44,12 @@ class PromotionRequest:
     oos_floor: int = ADR_OOS_FLOOR
 
     def __post_init__(self) -> None:
-        if self.is_floor < ADR_IS_FLOOR:
-            raise ValueError(f"IS sample floor cannot be lower than {ADR_IS_FLOOR}")
-        if self.oos_floor < ADR_OOS_FLOOR:
-            raise ValueError(f"OOS sample floor cannot be lower than {ADR_OOS_FLOOR}")
+        if self.is_floor < ADR_IS_FLOOR or self.oos_floor < ADR_OOS_FLOOR:
+            raise ValueError("Promotion sample floors cannot be lowered below ADR 0005")
 
 
 def _instrument_combinations(data: tuple[object, ...]) -> dict[str, tuple[str, str]]:
-    mappings: dict[str, tuple[str, str]] = {}
+    result: dict[str, tuple[str, str]] = {}
     for item in data:
         if not isinstance(item, PolySignalMarketMetaData):
             continue
@@ -64,23 +58,14 @@ def _instrument_combinations(data: tuple[object, ...]) -> dict[str, tuple[str, s
             if not token_id:
                 continue
             try:
-                instrument_id = str(get_polymarket_instrument_id(item.condition_id, token_id))
+                result[str(get_polymarket_instrument_id(item.condition_id, token_id))] = combination
             except (RuntimeError, TypeError, ValueError):
                 continue
-            mappings[instrument_id] = combination
-    return mappings
+    return result
 
 
 def _known_combinations(data: tuple[object, ...]) -> tuple[tuple[str, str], ...]:
-    return tuple(
-        sorted(
-            {
-                (item.asset.upper(), item.timeframe)
-                for item in data
-                if isinstance(item, PolySignalMarketMetaData)
-            }
-        )
-    )
+    return tuple(sorted({(item.asset.upper(), item.timeframe) for item in data if isinstance(item, PolySignalMarketMetaData)}))
 
 
 def _segment_stats(
@@ -91,29 +76,40 @@ def _segment_stats(
     end_ns: int | None,
     instrument_combinations: Mapping[str, tuple[str, str]] | None = None,
     known_combinations: tuple[tuple[str, str], ...] = (),
+    settled_instruments: frozenset[str] | None = None,
 ) -> SegmentedStats:
+    mappings = instrument_combinations or {}
     closed = [project_position(p) for p in positions if bool(p) and _is_closed(p)]
-    realized = [
-        float(cast(Any, p["realized_pnl"]))
-        for p in closed
-        if p["realized_pnl"] is not None
-    ]
-    winners = sum(1 for value in realized if value > 0)
-    losers = sum(1 for value in realized if value < 0)
-    combo_totals: dict[tuple[str, str], list[float]] = {
-        combination: [0.0, 0.0, 0.0, 0.0] for combination in known_combinations
+    if settled_instruments is not None:
+        closed = [p for p in closed if str(p.get("instrument_id") or "") in settled_instruments]
+    totals: dict[tuple[str, str], list[float]] = {
+        key: [0.0, 0.0, 0.0, 0.0] for key in known_combinations
     }
-    mappings_by_id = instrument_combinations or {}
+    counted: set[tuple[tuple[str, str], str]] = set()
+    realized: list[float] = []
+    winners = losers = 0
     for position in closed:
-        combination = mappings_by_id.get(
-            str(position.get("instrument_id") or ""), ("UNKNOWN", "UNKNOWN")
-        )
-        values = combo_totals.setdefault(combination, [0.0, 0.0, 0.0, 0.0])
-        values[0] += 1
-        pnl = position["realized_pnl"]
-        if pnl is None:
+        value_raw = position["realized_pnl"]
+        if value_raw is None:
             continue
-        value = float(cast(Any, pnl))
+        value = float(cast(Any, value_raw))
+        instrument_id = str(position.get("instrument_id") or "")
+        combination = mappings.get(instrument_id, ("UNKNOWN", "UNKNOWN"))
+        values = totals.setdefault(combination, [0.0, 0.0, 0.0, 0.0])
+        identity = str(
+            position.get("report_position_id")
+            or position.get("closed_at")
+            or position.get("ts")
+            or id(position)
+        )
+        round_key = (combination, identity)
+        if round_key in counted:
+            continue
+        counted.add(round_key)
+        realized.append(value)
+        winners += value > 0
+        losers += value < 0
+        values[0] += 1
         values[1] += value
         values[2] += value > 0
         values[3] += value < 0
@@ -121,22 +117,23 @@ def _segment_stats(
         ComboStats(
             asset=asset,
             timeframe=timeframe,
-            settled_rounds=int(values[0]),
-            total_realized_pnl=values[1],
-            winning_rounds=int(values[2]),
-            losing_rounds=int(values[3]),
+            settled_rounds=int(v[0]),
+            total_realized_pnl=v[1],
+            winning_rounds=int(v[2]),
+            losing_rounds=int(v[3]),
+            valid=asset != "UNKNOWN" and timeframe != "UNKNOWN",
         )
-        for (asset, timeframe), values in sorted(combo_totals.items())
+        for (asset, timeframe), v in sorted(totals.items())
     )
     return SegmentedStats(
-        label=label,
-        start_ns=start_ns,
-        end_ns=end_ns,
-        settled_rounds=len(closed),
-        total_realized_pnl=sum(realized),
-        winning_rounds=winners,
-        losing_rounds=losers,
-        combinations=combinations,
+        label,
+        start_ns,
+        end_ns,
+        len(counted),
+        sum(realized),
+        winners,
+        losers,
+        combinations,
     )
 
 
@@ -150,17 +147,15 @@ def _replay_segment(
     instruments: tuple[object, ...],
     data: tuple[object, ...],
 ) -> tuple[Any, tuple[object, ...]]:
-    """Assemble the real BacktestEngine with sandbox-shared components and run it."""
     engine = cast(Any, build_backtest_engine(settings, instruments=instruments, data=data))
     try:
         engine.run()
-        positions = tuple(engine.cache.positions())
+        return engine, tuple(engine.cache.positions())
     except Exception:
         dispose = getattr(engine, "dispose", None)
         if callable(dispose):
             _ = dispose()
         raise
-    return engine, positions
 
 
 def _split_boundary(start_ns: int | None, end_ns: int | None) -> int | None:
@@ -179,8 +174,8 @@ def collect_segment_stats(
     end_ns: int | None,
     instrument_combinations: Mapping[str, tuple[str, str]] | None = None,
     known_combinations: tuple[tuple[str, str], ...] = (),
+    settled_instruments: frozenset[str] | None = None,
 ) -> SegmentedStats:
-    """Run one replay segment through the real engine and return its settled stats."""
     engine, positions = _replay_segment(settings, instruments=instruments, data=data)
     try:
         return _segment_stats(
@@ -190,46 +185,12 @@ def collect_segment_stats(
             end_ns=end_ns,
             instrument_combinations=instrument_combinations,
             known_combinations=known_combinations,
+            settled_instruments=settled_instruments,
         )
     finally:
         dispose = getattr(engine, "dispose", None)
         if callable(dispose):
             _ = dispose()
-
-
-def _collect_with_combinations(
-    settings: Settings,
-    *,
-    instruments: tuple[object, ...],
-    data: tuple[object, ...],
-    label: str,
-    start_ns: int | None,
-    end_ns: int | None,
-    instrument_combinations: Mapping[str, tuple[str, str]],
-    known_combinations: tuple[tuple[str, str], ...],
-) -> SegmentedStats:
-    try:
-        return collect_segment_stats(
-            settings,
-            instruments=instruments,
-            data=data,
-            label=label,
-            start_ns=start_ns,
-            end_ns=end_ns,
-            instrument_combinations=instrument_combinations,
-            known_combinations=known_combinations,
-        )
-    except TypeError as exc:
-        if "unexpected keyword argument" not in str(exc):
-            raise
-        return collect_segment_stats(
-            settings,
-            instruments=instruments,
-            data=data,
-            label=label,
-            start_ns=start_ns,
-            end_ns=end_ns,
-        )
 
 
 def _empty_stats(label: str) -> SegmentedStats:
@@ -239,35 +200,41 @@ def _empty_stats(label: str) -> SegmentedStats:
 def _validated_report_path(path: Path) -> Path:
     if path.suffix.lower() != ".md":
         raise ValueError("Promotion Report path must use the .md Markdown suffix")
-    candidate = (path if path.is_absolute() else Path.cwd() / path).resolve()
-    root = candidate.parents[1] if path.is_absolute() else (Path.cwd() / _REPORT_ROOT).resolve()
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError("Promotion Report must be written under reports/promotion")
+    root = Path.cwd() / _REPORT_ROOT
+    if root.exists() and root.is_symlink():
+        raise ValueError("Promotion report directory must be a real in-repository directory")
+    root.mkdir(parents=True, exist_ok=True)
+    candidate_raw = Path.cwd() / path
+    if candidate_raw.exists() and candidate_raw.is_symlink():
+        raise ValueError("Promotion report target must not be a symlink")
+    candidate = candidate_raw.resolve()
     try:
-        candidate.relative_to(root)
+        candidate.relative_to(root.resolve())
     except ValueError as exc:
         raise ValueError("Promotion Report must be written under reports/promotion") from exc
     return candidate
 
 
 def run_promotion(request: PromotionRequest, settings: Settings) -> PromotionReport:
-    """Replay one strategy/dataset through the real engine and write its report."""
     report_path = _validated_report_path(request.report_path)
-    settings.runtime.nautilus.execution_mode = "backtest"
-    settings.runtime.nautilus.sandbox_book_type = "L1_MBP"
-    settings.strategies.set_explicit_strategy_names((request.strategy_name,))
-    promotion_settings = settings
-
+    promotion_settings = settings.model_copy(deep=True)
+    promotion_settings.runtime.nautilus.execution_mode = "backtest"
+    promotion_settings.runtime.nautilus.sandbox_book_type = "L1_MBP"
+    promotion_settings.strategies.set_explicit_strategy_names((request.strategy_name,))
     store = RecordedMarketDataStore(request.dataset_dir)
     full = store.read()
     split_ns = _split_boundary(full.start_ns, full.end_ns)
-    combination_map = _instrument_combinations(full.data)
-    known_combinations = _known_combinations(full.data)
     if split_ns is None:
         is_stats = _empty_stats("IS (70%)")
         oos_stats = _empty_stats("OOS (30%)")
     else:
+        combination_map = _instrument_combinations(full.data)
+        known_combinations = _known_combinations(full.data)
         is_window = store.read(end_ns=split_ns - 1)
-        oos_window = store.read(start_ns=split_ns, include_prior_context=False)
-        is_stats = _collect_with_combinations(
+        oos_window = store.read(start_ns=split_ns, include_prior_context=True)
+        is_stats = collect_segment_stats(
             promotion_settings,
             instruments=full.instruments,
             data=is_window.data,
@@ -277,7 +244,7 @@ def run_promotion(request: PromotionRequest, settings: Settings) -> PromotionRep
             instrument_combinations=combination_map,
             known_combinations=known_combinations,
         )
-        oos_stats = _collect_with_combinations(
+        oos_stats = collect_segment_stats(
             promotion_settings,
             instruments=full.instruments,
             data=oos_window.data,
@@ -287,24 +254,7 @@ def run_promotion(request: PromotionRequest, settings: Settings) -> PromotionRep
             instrument_combinations=combination_map,
             known_combinations=known_combinations,
         )
-
-    verdict = evaluate_verdict(
-        is_stats, oos_stats, is_floor=request.is_floor, oos_floor=request.oos_floor
-    )
-    report = PromotionReport(
-        strategy_name=request.strategy_name,
-        dataset_dir=request.dataset_dir,
-        dataset_start_ns=full.start_ns,
-        dataset_end_ns=full.end_ns,
-        markets=full.markets,
-        split_ns=split_ns,
-        is_stats=is_stats,
-        oos_stats=oos_stats,
-        is_floor=request.is_floor,
-        oos_floor=request.oos_floor,
-        verdict=verdict,
-        created_at=utc_iso(),
-    )
+    report = PromotionReport(request.strategy_name, request.dataset_dir, full.start_ns, full.end_ns, full.markets, split_ns, is_stats, oos_stats, request.is_floor, request.oos_floor, evaluate_verdict(is_stats, oos_stats, is_floor=request.is_floor, oos_floor=request.oos_floor), utc_iso())
     report_path.parent.mkdir(parents=True, exist_ok=True)
     _ = report_path.write_text(render_promotion_markdown(report), encoding="utf-8")
     return report
