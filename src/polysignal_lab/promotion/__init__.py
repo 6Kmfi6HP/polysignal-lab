@@ -7,6 +7,7 @@ Pos: Application code
 """
 
 from polysignal_lab.promotion.report import (
+    ComboStats,
     PromotionReport,
     SegmentedStats,
     Verdict,
@@ -24,6 +25,7 @@ from polysignal_lab.promotion.runner import (
 __all__ = [
     "ADR_IS_FLOOR",
     "ADR_OOS_FLOOR",
+    "ComboStats",
     "PromotionReport",
     "PromotionRequest",
     "SegmentedStats",

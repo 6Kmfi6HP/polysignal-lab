@@ -136,10 +136,12 @@ class RecordedMarketDataStore:
         *,
         start_ns: int | None = None,
         end_ns: int | None = None,
+        include_prior_context: bool = False,
     ) -> RecordedMarketDataSet:
         self._queue.join()
         instruments: list[object] = []
         data: list[object] = []
+        prior_context: list[object] = []
         markets: set[str] = set()
         if not self.path.exists():
             return RecordedMarketDataSet((), (), None, None, ())
@@ -156,12 +158,15 @@ class RecordedMarketDataStore:
                     markets.update(_market_ids(item))
                     continue
                 timestamp = int(getattr(item, "ts_init"))
-                if start_ns is not None and timestamp < start_ns:
+                if timestamp < (start_ns or 0):
+                    if include_prior_context and isinstance(item, (PolySignalMarketMetaData, PolySignalMarketUniverseData)):
+                        prior_context.append(item)
                     continue
                 if end_ns is not None and timestamp > end_ns:
                     continue
                 data.append(item)
                 markets.update(_market_ids(item))
+        data = [*prior_context, *data]
         data.sort(key=lambda item: int(getattr(item, "ts_init")))
         timestamps = [int(getattr(item, "ts_init")) for item in data]
         return RecordedMarketDataSet(

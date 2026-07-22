@@ -58,27 +58,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--is-floor",
         type=int,
         default=ADR_IS_FLOOR,
-        help="Minimum IS settled rounds (ADR 0005 floor).",
+        help="Minimum IS settled rounds (ADR 0005 floor; cannot be lowered).",
     )
     parser.add_argument(
         "--oos-floor",
         type=int,
         default=ADR_OOS_FLOOR,
-        help="Minimum OOS settled rounds (ADR 0005 floor).",
+        help="Minimum OOS settled rounds (ADR 0005 floor; cannot be lowered).",
     )
     return parser
 
 
 def parse_cli(argv: Sequence[str] | None = None) -> PromotionCliOptions:
     args = build_parser().parse_args(argv)
+    is_floor = int(args.is_floor)
+    oos_floor = int(args.oos_floor)
     report_path = Path(args.report_path.format(strategy=args.strategy))
+    if report_path.is_absolute() or ".." in report_path.parts:
+        raise ValueError("Promotion Report must be written under reports/promotion")
     return PromotionCliOptions(
         config=Path(args.config),
         dataset_dir=args.dataset_dir,
         strategy_name=args.strategy,
         report_path=report_path,
-        is_floor=int(args.is_floor),
-        oos_floor=int(args.oos_floor),
+        is_floor=is_floor,
+        oos_floor=oos_floor,
     )
 
 

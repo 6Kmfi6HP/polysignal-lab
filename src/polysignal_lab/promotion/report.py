@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, enum, enum.StrEnum
-Output: Verdict, SegmentedStats, PromotionReport, render_promotion_markdown
+Output: Verdict, ComboStats, SegmentedStats, PromotionReport, render_promotion_markdown
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -20,12 +20,20 @@ class Verdict(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class SegmentedStats:
-    """Settled-round statistics for one IS/OOS segment.
+class ComboStats:
+    """Settled-round evidence for one asset/timeframe combination."""
 
-    Settled rounds are engine-native closed Positions; ``realized_pnl`` is the
-    Nautilus portfolio truth, not a synthetic settlement (ADR 0003/0005).
-    """
+    asset: str
+    timeframe: str
+    settled_rounds: int
+    total_realized_pnl: float
+    winning_rounds: int
+    losing_rounds: int
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentedStats:
+    """Settled-round statistics for one IS/OOS segment."""
 
     label: str
     start_ns: int | None
@@ -34,6 +42,7 @@ class SegmentedStats:
     total_realized_pnl: float
     winning_rounds: int
     losing_rounds: int
+    combinations: tuple[ComboStats, ...] = ()
 
     @property
     def average_realized_pnl(self) -> float:
@@ -66,8 +75,14 @@ def evaluate_verdict(
     is_floor: int,
     oos_floor: int,
 ) -> Verdict:
-    """ADR 0005 precedence: insufficient → no directional conclusion; else OOS expectation."""
+    """Apply sample floors and positive OOS expectation."""
     if is_stats.settled_rounds < is_floor or oos_stats.settled_rounds < oos_floor:
+        return Verdict.INSUFFICIENT_DATA
+    if any(
+        combo.settled_rounds < floor
+        for stats, floor in ((is_stats, is_floor), (oos_stats, oos_floor))
+        for combo in stats.combinations
+    ):
         return Verdict.INSUFFICIENT_DATA
     if oos_stats.total_realized_pnl <= 0.0:
         return Verdict.FAIL
@@ -102,6 +117,12 @@ def render_promotion_markdown(report: PromotionReport) -> str:
             f"| {stats.label} | {stats.settled_rounds} | {stats.winning_rounds} | "
             f"{stats.losing_rounds} | {stats.total_realized_pnl:.4f} | {stats.average_realized_pnl:.4f} |"
         )
+        for combo in stats.combinations:
+            lines.append(
+                f"| {stats.label} {combo.asset}/{combo.timeframe} | "
+                f"{combo.settled_rounds} | {combo.winning_rounds} | "
+                f"{combo.losing_rounds} | {combo.total_realized_pnl:.4f} | - |"
+            )
     lines.append("")
     if report.verdict is Verdict.INSUFFICIENT_DATA:
         lines.append(
