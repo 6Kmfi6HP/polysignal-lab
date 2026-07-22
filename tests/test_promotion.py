@@ -30,7 +30,12 @@ from polysignal_lab.promotion import (
 )
 from polysignal_lab.promotion.cli import parse_cli
 from polysignal_lab.promotion.report import PromotionReport
-from polysignal_lab.promotion.runner import PromotionRequest, _segment_stats, _split_boundary
+from polysignal_lab.promotion.runner import (
+    PromotionRequest,
+    _known_combinations,
+    _segment_stats,
+    _split_boundary,
+)
 
 
 # --- ADR 0005 verdict precedence (pure unit) ---
@@ -125,7 +130,21 @@ def test_segment_stats_collects_only_settled_rounds_with_realized_pnl() -> None:
     assert stats.losing_rounds == 1
 
 
-# --- Real-engine integration: entry seam + report + INSUFFICIENT_DATA ---
+def test_known_combinations_keep_missing_configured_combinations_for_floor_check() -> None:
+    strategy = SimpleNamespace(assets=["BTC", "ETH"], timeframes=["5m"])
+    metadata = PolySignalMarketMetaData(
+        market_id="market-1",
+        market_slug="btc-updown-5m",
+        condition_id="condition-1",
+        asset="BTC",
+        timeframe="5m",
+        up_token_id="up-token",
+        down_token_id="down-token",
+        ts_event=1,
+        ts_init=1,
+    )
+
+    assert _known_combinations((metadata,), strategy) == (("BTC", "5m"), ("ETH", "5m"))
 
 
 def _write_minimal_dataset(directory: Path) -> None:

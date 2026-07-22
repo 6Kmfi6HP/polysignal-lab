@@ -118,6 +118,41 @@ def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path: Path) -> No
     assert "condition-1" in window.markets
 
 
+def test_recorded_data_includes_prior_market_inputs_for_oos_warmup(tmp_path: Path) -> None:
+    instrument = TestInstrumentProviderPyo3.binary_option()
+    prior_quote = pyo3.QuoteTick(
+        instrument_id=instrument.id,
+        bid_price=pyo3.Price.from_str("0.40"),
+        ask_price=pyo3.Price.from_str("0.41"),
+        bid_size=pyo3.Quantity.from_str("1"),
+        ask_size=pyo3.Quantity.from_str("1"),
+        ts_event=10,
+        ts_init=10,
+    )
+    prior_ptb = PolySignalPriceToBeatData(
+        condition_id="condition-1",
+        value=100_000.0,
+        source="test",
+        ts_event=11,
+        ts_init=11,
+    )
+    current_quote = pyo3.QuoteTick(
+        instrument_id=instrument.id,
+        bid_price=pyo3.Price.from_str("0.42"),
+        ask_price=pyo3.Price.from_str("0.43"),
+        bid_size=pyo3.Quantity.from_str("1"),
+        ask_size=pyo3.Quantity.from_str("1"),
+        ts_event=20,
+        ts_init=20,
+    )
+    store = RecordedMarketDataStore(tmp_path)
+    for item in (instrument, prior_quote, prior_ptb, current_quote):
+        store.record(item)
+    window = store.read(start_ns=20, include_prior_context=True)
+
+    assert [int(getattr(item, "ts_init")) for item in window.data] == [10, 11, 20]
+
+
 def test_recording_failure_is_fail_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

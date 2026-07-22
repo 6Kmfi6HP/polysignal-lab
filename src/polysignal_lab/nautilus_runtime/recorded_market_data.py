@@ -159,7 +159,9 @@ class RecordedMarketDataStore:
                     continue
                 timestamp = int(getattr(item, "ts_init"))
                 if timestamp < (start_ns or 0):
-                    if include_prior_context and isinstance(item, (PolySignalMarketMetaData, PolySignalMarketUniverseData)):
+                    if include_prior_context and not isinstance(
+                        item, nautilus_pyo3.InstrumentClose
+                    ):
                         prior_context.append(item)
                     continue
                 if end_ns is not None and timestamp > end_ns:
@@ -307,7 +309,10 @@ class RecordedMarketDataActor(nautilus_pyo3.DataActor):
         self.store.start()
         venue = nautilus_pyo3.Venue.from_str("POLYMARKET")
         for timeframe in self.settings.markets.timeframes:
-            self.subscribe_instruments(venue, client_id=polymarket_data_client_id(timeframe))
+            self.subscribe_instruments(
+                venue,
+                client_id=polymarket_data_client_id(timeframe),
+            )
         for data_type in (
             custom_data_type(PolySignalPriceToBeatData),
             custom_data_type(PolySignalMarketMetaData),
@@ -346,9 +351,13 @@ class RecordedMarketDataActor(nautilus_pyo3.DataActor):
                 token.token_id,
             )
             self.subscribe_quotes(instrument_id, client_id=client_id)
+            self.subscribe_instrument_close(instrument_id, client_id=client_id)
 
     def on_quote(self, tick: object) -> None:
         self.store.record(tick)
+
+    def on_instrument_close(self, update: object) -> None:
+        self.store.record(update)
 
     def on_data(self, data: object) -> None:
         self.store.record(data)

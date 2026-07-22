@@ -83,8 +83,12 @@ def _known_combinations(
     timeframes = getattr(strategy, "timeframes", None)
     if assets is None or timeframes is None:
         return tuple(sorted(combinations))
-    allowed = {(str(asset).upper(), str(timeframe)) for asset in assets for timeframe in timeframes}
-    return tuple(sorted(combinations & allowed))
+    allowed = {
+        (str(asset).upper(), str(timeframe))
+        for asset in assets
+        for timeframe in timeframes
+    }
+    return tuple(sorted(allowed))
 
 
 def _settlement_rounds(
