@@ -159,8 +159,9 @@ class RecordedMarketDataStore:
                     continue
                 timestamp = int(getattr(item, "ts_init"))
                 if timestamp < (start_ns or 0):
-                    if include_prior_context and not isinstance(
-                        item, nautilus_pyo3.InstrumentClose
+                    if include_prior_context and isinstance(
+                        item,
+                        (PolySignalMarketMetaData, PolySignalMarketUniverseData),
                     ):
                         prior_context.append(item)
                     continue

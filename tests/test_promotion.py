@@ -184,6 +184,10 @@ def test_run_promotion_drives_real_engine_and_writes_markdown_report(
     _write_minimal_dataset(dataset_dir)
     report_path = Path("reports/promotion/one_cent_buy.md")
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "polysignal_lab.promotion.runner._repository_root",
+        lambda: tmp_path,
+    )
 
     settings = Settings()
     request = PromotionRequest(
@@ -205,8 +209,8 @@ def test_run_promotion_drives_real_engine_and_writes_markdown_report(
     assert report.oos_stats.settled_rounds == 1
 
     # Markdown report lands in the in-repo report directory with full evidence.
-    assert report_path.exists()
-    markdown = report_path.read_text(encoding="utf-8")
+    assert (tmp_path / report_path).exists()
+    markdown = (tmp_path / report_path).read_text(encoding="utf-8")
     assert "INSUFFICIENT_DATA" in markdown
     assert "IS (70%)" in markdown
     assert "OOS (30%)" in markdown
@@ -259,7 +263,25 @@ def test_run_promotion_splits_boundary_without_replaying_event(
     assert captured["OOS (30%)"] == (10, 1_000_000_000_000)
 
 
-def test_run_promotion_rejects_non_markdown_report_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_report_path_requires_repository_working_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "polysignal_lab.promotion.runner._repository_root",
+        lambda: (_ for _ in ()).throw(ValueError("inside the repository")),
+    )
+    from polysignal_lab.promotion.runner import _validated_report_path
+
+    with pytest.raises(ValueError, match="inside the repository"):
+        _validated_report_path(Path("reports/promotion/report.md"))
+
+
+def test_run_promotion_rejects_non_markdown_report_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="Markdown"):
         run_promotion(

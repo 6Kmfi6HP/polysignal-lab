@@ -265,16 +265,23 @@ def _empty_stats(label: str) -> SegmentedStats:
     return SegmentedStats(label, None, None, 0, 0.0, 0, 0)
 
 
+def _repository_root() -> Path:
+    current = Path.cwd().resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    raise ValueError("Promotion Report must be run from inside the repository")
+
+
 def _validated_report_path(path: Path) -> Path:
     if path.suffix.lower() != ".md":
         raise ValueError("Promotion Report path must use the .md Markdown suffix")
     if path.is_absolute() or ".." in path.parts:
         raise ValueError("Promotion Report must be written under reports/promotion")
-    root = Path.cwd() / _REPORT_ROOT
+    root = _repository_root() / _REPORT_ROOT
     if root.exists() and root.is_symlink():
         raise ValueError("Promotion report directory must be a real in-repository directory")
-    root.mkdir(parents=True, exist_ok=True)
-    candidate_raw = Path.cwd() / path
+    candidate_raw = _repository_root() / path
     if candidate_raw.exists() and candidate_raw.is_symlink():
         raise ValueError("Promotion report target must not be a symlink")
     candidate = candidate_raw.resolve()
@@ -282,6 +289,7 @@ def _validated_report_path(path: Path) -> Path:
         candidate.relative_to(root.resolve())
     except ValueError as exc:
         raise ValueError("Promotion Report must be written under reports/promotion") from exc
+    root.mkdir(parents=True, exist_ok=True)
     return candidate
 
 
