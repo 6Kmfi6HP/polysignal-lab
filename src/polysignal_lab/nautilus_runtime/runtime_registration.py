@@ -18,9 +18,14 @@ from polysignal_lab.config import Settings
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+from polysignal_lab.nautilus_runtime.recorded_market_data import (
+    RecordedMarketDataActor,
+    RecordedMarketDataActorConfig,
+)
 from polysignal_lab.nautilus_runtime.runtime_configs import (
     MarketRotationActorConfig,
     PolySignalStrategyConfig,
+    importable_config_dict,
 )
 
 _importable_actor_config = cast(
@@ -66,6 +71,15 @@ def register_runtime_components(
             config=rotation_config.importable_dict(),
         )
     )
+    if settings.runtime.nautilus.execution_mode == "sandbox":
+        recorder_config = RecordedMarketDataActorConfig.build(settings)
+        add_actor(
+            _importable_actor_config(
+                actor_path=_fqn(RecordedMarketDataActor),
+                config_path=_fqn(RecordedMarketDataActorConfig),
+                config=importable_config_dict(recorder_config),
+            )
+        )
 
     for name in strategy_names:
         strategy_config = PolySignalStrategyConfig.build(
