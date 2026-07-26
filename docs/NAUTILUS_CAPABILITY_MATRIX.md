@@ -26,6 +26,7 @@ live venue acceptance evidence.
 | OrderList/contingency/stops | Native Strategy and OrderFactory expose order lists, bracket/stop factories, contingency and emulation fields | Engine surface supported; venue support narrower | Keep contingent orders disabled for Polymarket until venue acceptance evidence exists |
 | Reduce-only | Sandbox supports reduce-only; Polymarket live execution declares it unsupported | Sandbox-only | Sandbox exits may be reduce-only; live cannot claim this behavior |
 | Risk limits | `LiveRiskEngineConfig` exposes submit/modify rates and exact-instrument decimal `max_notional_per_order` | Supported subset | Use native rate/notional controls; keep allocation as read-only business policy |
+| Data catalog for recording | Probe wrote and re-queried `PolySignalPriceToBeatData` and pyo3 `QuoteTick` through `ParquetDataCatalog`; pyo3 `InstrumentClose` and `PolymarketRtdsCryptoPrice` both raise `TypeError: Cannot serialize object ... Register a serialization method via register_arrow()`. The arrow encoder registry holds the **Cython** `InstrumentClose`, not the pyo3 class the runtime emits | Partial — insufficient for the recorded stream | Keep the local append-only JSONL `RecordedMarketDataStore`. Recording must cover `InstrumentClose` (backtest settlement rounds) and RTDS spot, so the catalog cannot carry the stream until those pyo3 types get `register_arrow()` coverage |
 
 ## Probe boundary
 

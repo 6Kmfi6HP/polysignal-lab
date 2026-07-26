@@ -63,7 +63,13 @@ class RecordedMarketDataSet:
 
 
 class RecordedMarketDataStore:
-    """Append-only local recording with non-blocking writes from runtime callbacks."""
+    """Append-only local recording with non-blocking writes from runtime callbacks.
+
+    Not a `ParquetDataCatalog`: the recorded stream must carry pyo3
+    `InstrumentClose` and `PolymarketRtdsCryptoPrice`, and neither has an arrow
+    serializer registered (the registry holds the Cython `InstrumentClose`).
+    See the data-catalog row in `docs/NAUTILUS_CAPABILITY_MATRIX.md`.
+    """
 
     def __init__(self, directory: str | Path) -> None:
         self.path: Path = Path(directory) / _RECORDING_FILE
