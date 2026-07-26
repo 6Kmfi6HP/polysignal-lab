@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, posixpath, re, pathlib, pathlib.Path, pathlib.PurePosixPath, urllib.request, urllib.request.urlopen
-Output: fetch_text, title_from_markdown, normalize_posix, docs_url_from_repo_path, rewrite_relative_links, build_document, write_index, main
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import posixpath
@@ -25,7 +9,12 @@ BASE_URL = "https://nautilustrader.io"
 GUIDE_ROOT = f"{BASE_URL}/docs/latest/developer_guide/"
 RAW_ROOT = "https://raw.githubusercontent.com/nautechsystems/nautilus_trader/master/docs/developer_guide"
 GITHUB_BLOB_ROOT = "https://github.com/nautechsystems/nautilus_trader/blob/master"
-OUTPUT_DIR = Path(__file__).resolve().parents[1] / "docs" / "nautilus_reference" / "developer_guide"
+OUTPUT_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "nautilus_reference"
+    / "developer_guide"
+)
 INDEX_PATH = OUTPUT_DIR / "README.md"
 TIMEOUT = 30
 
@@ -92,7 +81,10 @@ def rewrite_relative_links(markdown: str, source_name: str) -> str:
 
         resolved = normalize_posix(source_path.parent / rel_path)
 
-        if resolved.parts[:2] == ("docs", "developer_guide") and resolved.name in EXPORTED:
+        if (
+            resolved.parts[:2] == ("docs", "developer_guide")
+            and resolved.name in EXPORTED
+        ):
             target = resolved.name + anchor
         elif resolved.parts and resolved.parts[0] == "docs":
             target = docs_url_from_repo_path(resolved) + anchor

@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, datetime.timezone, datetime.tzinfo, types, types.SimpleNamespace, nautilus_optional, nautilus_optional.require_nautilus, nautilus_trader.test_kit.rust.events_pyo3
-Output: test_project_order_event_converts_nautilus_nanoseconds_to_utc, test_project_order_event_normalizes_malformed_timezone_error, test_project_order_event_normalizes_runtime_timezone_error, test_project_order_event_rejects_invalid_event_time, test_project_order_event_rejects_missing_event_time, test_project_order_event_normalizes_timezone_aware_test_double, test_fill_records_metrics_from_tags_without_core_follow_up, test_project_order_event_uses_nautilus_event_fields, test_project_fill_event_uses_nautilus_fill_fields, test_project_fill_event_accepts_nautilus_price_quantity_objects, test_project_portfolio_snapshot_without_account_reports_no_equity
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -41,7 +25,7 @@ def test_project_order_event_converts_nautilus_nanoseconds_to_utc() -> None:
         strategy_name="alpha",
     )
 
-    assert projected['ts_event'] == datetime.fromtimestamp(1_788_451_200.1234567, UTC)
+    assert projected["ts_event"] == datetime.fromtimestamp(1_788_451_200.1234567, UTC)
 
 
 class _NaiveTimezone(tzinfo):
@@ -69,7 +53,9 @@ class _RuntimeErrorTimezone(tzinfo):
 
 
 def test_project_order_event_normalizes_malformed_timezone_error() -> None:
-    event = SimpleNamespace(ts_event=datetime(2026, 1, 1, tzinfo=_BadTimezone()), side="UP")
+    event = SimpleNamespace(
+        ts_event=datetime(2026, 1, 1, tzinfo=_BadTimezone()), side="UP"
+    )
 
     with pytest.raises(ValueError, match="ts_event datetime"):
         event_projection.project_order_metrics(
@@ -139,7 +125,7 @@ def test_project_order_event_normalizes_timezone_aware_test_double() -> None:
         strategy_name="alpha",
     )
 
-    assert projected['ts_event'] == datetime(2026, 1, 1, 17, tzinfo=UTC)
+    assert projected["ts_event"] == datetime(2026, 1, 1, 17, tzinfo=UTC)
 
 
 def test_fill_without_cache_order_is_quarantined() -> None:
@@ -169,7 +155,9 @@ def test_fill_without_cache_order_is_quarantined() -> None:
         def _handle_decision(self, decision: object, view: object) -> None:
             raise AssertionError("no core follow-up")
 
-    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
 
     strategy = Strategy()
     handle_order_filled(
@@ -190,7 +178,9 @@ def test_fill_without_cache_order_is_quarantined() -> None:
 
 def test_fill_recovers_association_tags_from_cache_order() -> None:
     from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
-    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
 
     order = SimpleNamespace(
         tags=(
@@ -374,7 +364,9 @@ def test_order_event_quarantines_cache_order_without_project_identity() -> None:
 
 
 def test_tagless_cache_miss_fill_is_quarantined() -> None:
-    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
 
     class Cache:
         def order(self, client_order_id: object) -> None:

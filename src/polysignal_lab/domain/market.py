@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.datetime, typing, typing.Final, pydantic, pydantic.BaseModel, pydantic.Field, pydantic.JsonValue
-Output: OutcomeToken, Market
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from datetime import datetime

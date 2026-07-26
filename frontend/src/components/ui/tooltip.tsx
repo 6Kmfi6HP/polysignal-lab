@@ -1,19 +1,3 @@
-/**
- * Input: * as React from 'react', * as TooltipPrimitive from '@radix-ui/react-tooltip', { cn } from '@/lib/utils', react, @radix-ui/react-tooltip, @/lib/utils
- * Output: TooltipProvider, Tooltip, TooltipTrigger, TooltipContent
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 'use client'
 
 import * as React from 'react'

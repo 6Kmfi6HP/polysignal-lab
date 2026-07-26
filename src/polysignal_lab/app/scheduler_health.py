@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, sqlite3, typing, typing.Any, polysignal_lab.observability.health, polysignal_lab.observability.health.HealthSnapshot, polysignal_lab.utils, polysignal_lab.utils.new_id, polysignal_lab.utils.utc_iso
-Output: note_storage_success, note_storage_failure, note_publish_result, sync_runtime_health, persist_health_snapshot
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import sqlite3
@@ -27,16 +11,12 @@ def note_storage_success(scheduler: Any, store_name: str) -> None:
     scheduler.health.mark_ok(f"{store_name}_storage", last_successful_write=utc_iso())
 
 
-def note_storage_failure(
-    scheduler: Any, store_name: str, exc: BaseException
-) -> None:
+def note_storage_failure(scheduler: Any, store_name: str, exc: BaseException) -> None:
     scheduler.health.inc_metric(f"{store_name}_storage", "write_failures")
     scheduler.health.mark_down(f"{store_name}_storage", str(exc))
 
 
-def note_publish_result(
-    scheduler: Any, publish: dict[str, str | None]
-) -> None:
+def note_publish_result(scheduler: Any, publish: dict[str, str | None]) -> None:
     status = str(publish.get("status") or "")
     if status == "SENT":
         scheduler.health.inc_metric("telegram", "sent")
@@ -74,5 +54,3 @@ def persist_health_snapshot(scheduler: Any) -> None:
             scheduler.persistence.insert_system_event(event)
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         scheduler.logger.warning("Failed to persist health snapshot: %s", exc)
-
-

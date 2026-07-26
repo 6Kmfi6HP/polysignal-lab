@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side
-Output: evaluate_core, with_active_order, with_open_position
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from dataclasses import replace

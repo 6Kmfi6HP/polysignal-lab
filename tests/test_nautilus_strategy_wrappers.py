@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, typing, typing.Any, pytest, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(
-Output: test_each_wrapper_constructs_without_nautilus_and_subscribes_required_data, test_each_wrapper_preserves_custom_data_names, test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved, test_stateful_core_round_trips_through_shared_state_codec, FakeAssembler, FakeCore, FakePolicy
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime

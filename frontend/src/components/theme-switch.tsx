@@ -1,19 +1,3 @@
-/**
- * Input: { useEffect } from 'react', { Check, Moon, Sun } from 'lucide-react', { cn } from '@/lib/utils', { useTheme } from '@/context/theme-provider', { Button } from '@/components/ui/button', {, react, lucide-react, @/lib/utils, @/context/theme-provider
- * Output: ThemeSwitch
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { useEffect } from 'react'
 import { Check, Moon, Sun } from 'lucide-react'
 import { cn } from '@/lib/utils'

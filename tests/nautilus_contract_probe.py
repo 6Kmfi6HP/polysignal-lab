@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, typing, typing.Any, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3
-Output: ContractProbeConfig, ContractProbeStrategy
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -15,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from nautilus_trader.core import nautilus_pyo3 as pyo3
+
 
 @dataclass(frozen=True, slots=True)
 class ContractProbeConfig:

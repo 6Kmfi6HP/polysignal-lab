@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, asyncio, inspect, logging, collections.abc, collections.abc.Callable, collections.abc.Sequence, contextlib, contextlib.suppress
-Output: None
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import asyncio

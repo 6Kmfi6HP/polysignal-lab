@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, typing, typing.Any, polysignal_lab.alpha.types
-Output: test_evaluate_condition_does_not_run_custom_exit_scan, test_native_exit_runs_when_opposite_book_exceeds_trade_freshness, test_native_exit_failure_falls_back_to_alpha_core, test_native_strategy_has_no_custom_exit_evaluation_api, test_reduce_only_fill_records_early_exit_paper_result, test_reduce_only_fill_notifies_paper_result_after_durable_record, test_reduce_only_fill_durable_when_report_result_notifier_raises, test_native_exit_uses_per_position_take_profit_threshold, test_native_exit_flip_stop_uses_stamped_stop_price, _AllowAllDecisionPolicy
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -68,9 +52,7 @@ class _AllowAllDecisionPolicy(DecisionPolicy):
         decisions: list[tuple[AlphaDecision, MarketView]],
     ) -> BatchArbitrationResult:
         return BatchArbitrationResult(
-            approvals=tuple(
-                self.decide(decision, view) for decision, view in decisions
-            )
+            approvals=tuple(self.decide(decision, view) for decision, view in decisions)
         )
 
     def decide(
@@ -169,7 +151,7 @@ def _native_strategy(
                     "timeframe=5m",
                     "market_slug=btc-updown-5m",
                     "opened_at=2026-07-06T12:00:00+00:00",
-                )
+                ),
             )
 
         def position(self, position_id: object) -> object | None:
@@ -352,7 +334,9 @@ def test_native_exit_runs_when_opposite_book_exceeds_trade_freshness() -> None:
     assert "stake_usdc=4.0" in order["tags"]
     assert f"opened_at={opened_at.isoformat()}" in order["tags"]
 
-    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
 
     settlements: list[dict[str, object]] = []
     strategy._cache_override = SimpleNamespace(
@@ -374,9 +358,9 @@ def test_native_exit_runs_when_opposite_book_exceeds_trade_freshness() -> None:
         ),
     )
     strategy.observability = SimpleNamespace(
-        record_event=lambda table, payload: settlements.append(payload)
-        if table == "settlements"
-        else None
+        record_event=lambda table, payload: (
+            settlements.append(payload) if table == "settlements" else None
+        )
     )
     strategy._record_nautilus_fill = lambda event, metrics: None
     handle_order_filled(
@@ -426,7 +410,9 @@ def test_native_strategy_has_no_custom_exit_evaluation_api() -> None:
 
 
 def test_reduce_only_fill_missing_economic_tags_is_quarantined() -> None:
-    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
 
     strategy = _native_strategy()
     progress: list[str] = []
@@ -465,7 +451,9 @@ def test_reduce_only_fill_missing_economic_tags_is_quarantined() -> None:
 
 
 def test_reduce_only_partial_fills_emit_one_result_after_position_closes() -> None:
-    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
 
     position_id = pyo3.PositionId.from_str("position-partial")
     tags = (
@@ -509,9 +497,9 @@ def test_reduce_only_partial_fills_emit_one_result_after_position_closes() -> No
         orders_for_position=orders_for_position,
     )
     strategy.observability = SimpleNamespace(
-        record_event=lambda table, payload: results.append(payload)
-        if table == "settlements"
-        else None
+        record_event=lambda table, payload: (
+            results.append(payload) if table == "settlements" else None
+        )
     )
     strategy._record_nautilus_fill = lambda event, metrics: None
     strategy._note_runtime_progress = lambda phase: progress.append(phase)
@@ -554,7 +542,9 @@ def test_reduce_only_partial_fills_emit_one_result_after_position_closes() -> No
 
 
 def test_reduce_only_exit_uses_position_average_when_order_price_is_missing() -> None:
-    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
 
     position_id = pyo3.PositionId.from_str("position-multi")
     tags = (
@@ -587,20 +577,22 @@ def test_reduce_only_exit_uses_position_average_when_order_price_is_missing() ->
     strategy = _native_strategy()
     strategy._cache_override = SimpleNamespace(
         order=lambda _client_order_id: current_order,
-        position=lambda cache_position_id: position
-        if cache_position_id == position_id
-        else None,
+        position=lambda cache_position_id: (
+            position if cache_position_id == position_id else None
+        ),
         orders_for_position=lambda cache_position_id: (
-            current_order,
-            missing_price_order,
-        )
-        if cache_position_id == position_id
-        else (),
+            (
+                current_order,
+                missing_price_order,
+            )
+            if cache_position_id == position_id
+            else ()
+        ),
     )
     strategy.observability = SimpleNamespace(
-        record_event=lambda table, payload: results.append(payload)
-        if table == "settlements"
-        else None
+        record_event=lambda table, payload: (
+            results.append(payload) if table == "settlements" else None
+        )
     )
     strategy._record_nautilus_fill = lambda event, metrics: None
     strategy._note_runtime_progress = lambda phase: None
@@ -625,7 +617,9 @@ def test_reduce_only_exit_uses_position_average_when_order_price_is_missing() ->
 def test_reduce_only_replay_after_restart_is_durably_idempotent(
     tmp_path: Path,
 ) -> None:
-    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
 
     persistence = PersistenceService(
         JSONLStore(tmp_path / "logs"),
@@ -660,7 +654,9 @@ def test_reduce_only_replay_after_restart_is_durably_idempotent(
 
 def test_reduce_only_fill_records_early_exit_paper_result() -> None:
     from polysignal_lab.domain.enums import Side
-    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
     from polysignal_lab.reporting.exit_result import FEE_MODEL_IGNORED_V1
 
     recorded: list[tuple[str, object]] = []
@@ -737,7 +733,9 @@ def test_reduce_only_fill_records_early_exit_paper_result() -> None:
 
 def test_reduce_only_fill_notifies_paper_result_after_durable_record() -> None:
     from polysignal_lab.domain.enums import Side
-    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
 
     recorded: list[tuple[str, object]] = []
     notified: list[object] = []
@@ -810,7 +808,9 @@ def test_reduce_only_fill_notifies_paper_result_after_durable_record() -> None:
 
 def test_reduce_only_fill_durable_when_report_result_notifier_raises() -> None:
     from polysignal_lab.domain.enums import Side
-    from polysignal_lab.nautilus_runtime.strategy.order_events import handle_order_filled
+    from polysignal_lab.nautilus_runtime.strategy.order_events import (
+        handle_order_filled,
+    )
 
     recorded: list[tuple[str, object]] = []
     progress: list[str] = []
@@ -840,7 +840,9 @@ def test_reduce_only_fill_durable_when_report_result_notifier_raises() -> None:
     strategy._metrics_tracker = Tracker()
     strategy.observability = SimpleNamespace(
         record_event=lambda table, data: recorded.append((table, data)),
-        notify_report_result=lambda _result: (_ for _ in ()).throw(RuntimeError("tg down")),
+        notify_report_result=lambda _result: (_ for _ in ()).throw(
+            RuntimeError("tg down")
+        ),
         record_nautilus_fill_event=lambda event: None,
     )
     strategy._record_nautilus_fill = lambda event, metrics: None

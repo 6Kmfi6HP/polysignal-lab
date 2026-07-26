@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, json, os, pathlib, pathlib.Path, typing, typing.Any, polysignal_lab.utils, polysignal_lab.utils.to_jsonable
-Output: StateStore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import json
@@ -35,7 +19,9 @@ class StateStore:
         path = self.base_dir / name
         tmp = path.with_suffix(path.suffix + ".tmp")
         with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(to_jsonable(value), fh, ensure_ascii=False, sort_keys=True, indent=2)
+            json.dump(
+                to_jsonable(value), fh, ensure_ascii=False, sort_keys=True, indent=2
+            )
         os.replace(tmp, path)
         return path
 

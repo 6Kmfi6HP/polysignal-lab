@@ -1,19 +1,3 @@
-"""
-Input: asyncio, pytest, polysignal_lab.app.services.publish_service, polysignal_lab.app.services.publish_service.PublishService
-Output: test_publish_timeout_does_not_hang_signal_processing, _Formatter, _SlowPublisher, _Persistence, _Signal
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 import asyncio
 
 import pytest

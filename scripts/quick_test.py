@@ -1,19 +1,3 @@
-"""
-Input: asyncio, httpx, json
-Output: test_gamma_api, main
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 import asyncio
 import httpx
 import json
@@ -34,7 +18,9 @@ async def test_gamma_api():
                 print(f"  Markets: {len(markets)}")
                 for m in markets[:2]:
                     tokens = m.get("clobTokenIds", [])
-                    print(f"    Market: {m.get('question', '')[:50]} | tokens: {tokens}")
+                    print(
+                        f"    Market: {m.get('question', '')[:50]} | tokens: {tokens}"
+                    )
 
 
 async def main():

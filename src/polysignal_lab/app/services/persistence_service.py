@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, typing, typing.Any, typing.Final
-Output: telemetry_retention_policy, TelemetryRetentionPolicy, PersistenceService
-Pos: Service Layer - Business logic
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -52,7 +36,9 @@ def telemetry_retention_policy(
 class PersistenceService:
     name = "persistence"
 
-    def __init__(self, logs: JSONLStore, sqlite: SQLiteStore, state: StateStore) -> None:
+    def __init__(
+        self, logs: JSONLStore, sqlite: SQLiteStore, state: StateStore
+    ) -> None:
         self.logs = logs
         self.sqlite = sqlite
         self.state = state
@@ -241,9 +227,7 @@ class PersistenceService:
     ) -> None:
         self.sqlite.delete_report_result_rows(report_result_id, publish_id)
 
-    def delete_daily_report_rows(
-        self, report_id: str, publish_id: str | None
-    ) -> None:
+    def delete_daily_report_rows(self, report_id: str, publish_id: str | None) -> None:
         self.sqlite.delete_daily_report_rows(report_id, publish_id)
 
     def close(self) -> None:

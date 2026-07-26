@@ -1,20 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, typing, typing.Protocol, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market
-Output: market_metadata, timestamp_ns, framework_now, _Publisher, _ClockHost, CustomDataPublisher
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -129,4 +112,6 @@ def timestamp_ns(value: datetime | None) -> int:
         return 0
     current = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     delta = current.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
-    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1_000
+    return (
+        delta.days * 86_400 + delta.seconds
+    ) * 1_000_000_000 + delta.microseconds * 1_000

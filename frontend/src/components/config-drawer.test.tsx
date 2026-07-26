@@ -1,23 +1,7 @@
-/**
- * Input: { clearCookies } from '@/test-utils/cookies', { beforeEach, describe, expect, it, vi } from 'vitest', { render, type RenderResult, within } from '@testing-library/react', userEvent from '@testing-library/user-event', { getCookie, setCookie } from '@/lib/cookies', { DirectionProvider } from '@/context/direction-provider', { LayoutProvider } from '@/context/layout-provider', { ThemeProvider } from '@/context/theme-provider', { SidebarProvider } from '@/components/ui/sidebar', { ConfigDrawer } from './config-drawer'
- * Output: renderConfigDrawer, openDrawer
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { clearCookies } from '@/test-utils/cookies'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, type RenderResult, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getCookie, setCookie } from '@/lib/cookies'
 import { DirectionProvider } from '@/context/direction-provider'
 import { LayoutProvider } from '@/context/layout-provider'
@@ -75,11 +59,10 @@ describe('ConfigDrawer (integration)', () => {
     expect(drawerQueries.getAllByText(/^Sidebar$/i)[0]).toBeInTheDocument()
     expect(drawerQueries.getByText(/^Direction$/i)).toBeInTheDocument()
     expect(
-        screen.getByRole('button', {
-          name: /reset all settings to default values/i,
-        })
-      )
-      .toBeInTheDocument()
+      screen.getByRole('button', {
+        name: /reset all settings to default values/i,
+      })
+    ).toBeInTheDocument()
   })
 
   describe('theme preference', () => {
@@ -278,8 +261,9 @@ describe('ConfigDrawer (integration)', () => {
 
     await openDrawer(screen)
 
-    expect(screen.getByRole('radio', { name: /select default/i }))
-      .toHaveAttribute('data-state', 'checked')
+    expect(
+      screen.getByRole('radio', { name: /select default/i })
+    ).toHaveAttribute('data-state', 'checked')
 
     await userEvent.click(
       screen.getByRole('radio', { name: /select compact/i })

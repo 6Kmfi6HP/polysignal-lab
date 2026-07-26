@@ -1,11 +1,3 @@
-"""
-Input: datetime, nautilus_trader
-Output: polymarket_binary_instrument, rust_shaped_polymarket_binary_instrument
-Pos: Test Layer - Nautilus Polymarket fixtures
-
-🔄 Self-reference: When this file changes, update this header and tests/FOLDER_INDEX.md
-"""
-
 from datetime import UTC, datetime, timedelta
 
 from nautilus_trader.core import nautilus_pyo3 as pyo3
@@ -51,7 +43,9 @@ def polymarket_binary_instrument(
     price_increment = pyo3.Price.from_str("0.01")
     size_increment = pyo3.Quantity.from_str("0.000001")
     return pyo3.BinaryOption(
-        instrument_id=pyo3.InstrumentId.from_str(f"{condition_id}-{token_id}.POLYMARKET"),
+        instrument_id=pyo3.InstrumentId.from_str(
+            f"{condition_id}-{token_id}.POLYMARKET"
+        ),
         raw_symbol=pyo3.Symbol(token_id),
         asset_class=pyo3.AssetClass.ALTERNATIVE,
         currency=pyo3.Currency.from_str("USDC"),
@@ -95,7 +89,9 @@ def rust_shaped_polymarket_binary_instrument(
         "neg_risk": False,
     }
     return pyo3.BinaryOption(
-        instrument_id=pyo3.InstrumentId.from_str(f"{condition_id}-{token_id}.POLYMARKET"),
+        instrument_id=pyo3.InstrumentId.from_str(
+            f"{condition_id}-{token_id}.POLYMARKET"
+        ),
         raw_symbol=pyo3.Symbol(token_id),
         asset_class=pyo3.AssetClass.ALTERNATIVE,
         currency=pyo3.Currency.from_str("USDC"),

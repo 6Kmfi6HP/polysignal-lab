@@ -1,19 +1,3 @@
-/**
- * Input: { useMemo } from 'react', {, { Header } from '@/components/layout/header', { Main } from '@/components/layout/main', { Search } from '@/components/search', { ThemeSwitch } from '@/components/theme-switch', { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card', { Skeleton } from '@/components/ui/skeleton', { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs', type { ReportOrder, ReportPosition, ReportTradeResult } from '@/lib/api/types'
- * Output: ReportingPage, CumulativePnlChart, buildCumulativePnlPoints, TradesTable, PositionsTable, OrdersTable
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { useMemo } from 'react'
 import {
   CartesianGrid,
@@ -23,10 +7,16 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Header } from '@/components/layout/header'
-import { Main } from '@/components/layout/main'
-import { Search } from '@/components/search'
-import { ThemeSwitch } from '@/components/theme-switch'
+import {
+  useReportOrdersQuery,
+  usePositionsQuery,
+  useTradesQuery,
+} from '@/lib/api/hooks'
+import type {
+  ReportOrder,
+  ReportPosition,
+  ReportTradeResult,
+} from '@/lib/api/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -38,12 +28,10 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  useReportOrdersQuery,
-  usePositionsQuery,
-  useTradesQuery,
-} from '@/lib/api/hooks'
-import type { ReportOrder, ReportPosition, ReportTradeResult } from '@/lib/api/types'
+import { Header } from '@/components/layout/header'
+import { Main } from '@/components/layout/main'
+import { Search } from '@/components/search'
+import { ThemeSwitch } from '@/components/theme-switch'
 
 export function ReportingPage() {
   const orders = useReportOrdersQuery()
@@ -59,7 +47,9 @@ export function ReportingPage() {
         </div>
       </Header>
       <Main>
-        <h1 className='mb-4 text-2xl font-bold tracking-tight'>Trading Reports</h1>
+        <h1 className='mb-4 text-2xl font-bold tracking-tight'>
+          Trading Reports
+        </h1>
 
         <Card className='mb-6'>
           <CardHeader>
@@ -141,7 +131,9 @@ function CumulativePnlChart({ trades }: { trades: ReportTradeResult[] }) {
   )
 }
 
-function buildCumulativePnlPoints(trades: ReportTradeResult[]): CumulativePnlPoint[] {
+function buildCumulativePnlPoints(
+  trades: ReportTradeResult[]
+): CumulativePnlPoint[] {
   const sorted = [...trades].sort(
     (a, b) => new Date(a.closed_at).getTime() - new Date(b.closed_at).getTime()
   )
@@ -175,7 +167,9 @@ function TradesTable({ trades }: { trades: ReportTradeResult[] }) {
       <TableBody>
         {trades.map((trade) => (
           <TableRow key={trade.report_result_id}>
-            <TableCell className='font-mono text-xs'>{trade.report_result_id}</TableCell>
+            <TableCell className='font-mono text-xs'>
+              {trade.report_result_id}
+            </TableCell>
             <TableCell>{trade.strategy}</TableCell>
             <TableCell>{trade.result}</TableCell>
             <TableCell>{trade.pnl_usdc.toFixed(2)} USDC</TableCell>
@@ -240,7 +234,9 @@ function OrdersTable({ orders }: { orders: ReportOrder[] }) {
       <TableBody>
         {orders.map((order) => (
           <TableRow key={order.report_order_id}>
-            <TableCell className='font-mono text-xs'>{order.report_order_id}</TableCell>
+            <TableCell className='font-mono text-xs'>
+              {order.report_order_id}
+            </TableCell>
             <TableCell>{order.strategy}</TableCell>
             <TableCell>{order.status}</TableCell>
             <TableCell>{order.reject_reason ?? '-'}</TableCell>

@@ -1,19 +1,3 @@
-/**
- * Input: { type SVGProps } from 'react', { cn } from '@/lib/utils', react, @/lib/utils
- * Output: IconThemeSystem
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { type SVGProps } from 'react'
 import { cn } from '@/lib/utils'
 

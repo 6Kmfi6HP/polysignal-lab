@@ -1,11 +1,3 @@
-"""
-Input: __future__, __future__.annotations, pathlib, pytest, nautilus_trader, polysignal_lab.config, polysignal_lab.promotion
-Output: promotion gate verdict / split / report / real-engine integration tests
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -130,7 +122,9 @@ def test_segment_stats_collects_only_settled_rounds_with_realized_pnl() -> None:
     assert stats.losing_rounds == 1
 
 
-def test_known_combinations_keep_missing_configured_combinations_for_floor_check() -> None:
+def test_known_combinations_keep_missing_configured_combinations_for_floor_check() -> (
+    None
+):
     strategy = SimpleNamespace(assets=["BTC", "ETH"], timeframes=["5m"])
     metadata = PolySignalMarketMetaData(
         market_id="market-1",
@@ -248,7 +242,9 @@ def test_run_promotion_splits_boundary_without_replaying_event(
         captured[label] = tuple(int(getattr(item, "ts_init")) for item in data)
         return _stats(0, 0.0)
 
-    monkeypatch.setattr("polysignal_lab.promotion.runner.collect_segment_stats", collect)
+    monkeypatch.setattr(
+        "polysignal_lab.promotion.runner.collect_segment_stats", collect
+    )
     monkeypatch.chdir(tmp_path)
     run_promotion(
         PromotionRequest(
@@ -359,12 +355,18 @@ def test_run_promotion_writes_no_production_or_lab_config(
 
 
 def test_promotion_cli_parses_strategy_into_report_path(tmp_path: Path) -> None:
-    options = parse_cli([
-        "--dataset-dir", str(tmp_path / "data" / "recorded_market_data"),
-        "--strategy", "binary_momentum",
-        "--is-floor", "5",
-        "--oos-floor", "2",
-    ])
+    options = parse_cli(
+        [
+            "--dataset-dir",
+            str(tmp_path / "data" / "recorded_market_data"),
+            "--strategy",
+            "binary_momentum",
+            "--is-floor",
+            "5",
+            "--oos-floor",
+            "2",
+        ]
+    )
     assert options.strategy_name == "binary_momentum"
     assert options.dataset_dir.endswith("recorded_market_data")
     assert options.is_floor == 5

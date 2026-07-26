@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, dataclasses.replace, typing, typing.Final, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.ptb_diff_core.PTBDiffAlphaCore, polysignal_lab.alpha.types
-Output: test_ptb_alpha_core_matches_equivalent_up_input, test_ptb_alpha_core_matches_equivalent_down_input, test_ptb_alpha_core_rejects_missing_verified_anchor_source, test_ptb_alpha_core_rejects_missing_market_data, test_ptb_core_consumes_market_view_directly, CoreScenario
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -88,7 +78,9 @@ def _view(scenario: CoreScenario) -> MarketView:
 
 def test_ptb_alpha_core_matches_equivalent_up_input() -> None:
     config = _config()
-    decision = PTBDiffAlphaCore(config).evaluate(_view(CoreScenario(side=Side.UP, diff_usd=120.0, side_ask=0.82)))[0]
+    decision = PTBDiffAlphaCore(config).evaluate(
+        _view(CoreScenario(side=Side.UP, diff_usd=120.0, side_ask=0.82))
+    )[0]
 
     assert decision.side == Side.UP
     assert decision.confidence > 0
@@ -99,7 +91,9 @@ def test_ptb_alpha_core_matches_equivalent_up_input() -> None:
 
 def test_ptb_alpha_core_matches_equivalent_down_input() -> None:
     config = _config()
-    decision = PTBDiffAlphaCore(config).evaluate(_view(CoreScenario(side=Side.DOWN, diff_usd=140.0, side_ask=0.83)))[0]
+    decision = PTBDiffAlphaCore(config).evaluate(
+        _view(CoreScenario(side=Side.DOWN, diff_usd=140.0, side_ask=0.83))
+    )[0]
 
     assert decision.side == Side.DOWN
     assert decision.metrics["abs_diff_usd"] > 0
@@ -108,7 +102,12 @@ def test_ptb_alpha_core_matches_equivalent_down_input() -> None:
 
 def test_ptb_alpha_core_rejects_missing_verified_anchor_source() -> None:
     config = _config()
-    assert PTBDiffAlphaCore(config).evaluate(_view(CoreScenario(verified_ptb=False, anchor_ptb=False))) == []
+    assert (
+        PTBDiffAlphaCore(config).evaluate(
+            _view(CoreScenario(verified_ptb=False, anchor_ptb=False))
+        )
+        == []
+    )
 
 
 def test_ptb_alpha_core_rejects_missing_market_data() -> None:

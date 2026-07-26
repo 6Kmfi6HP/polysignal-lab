@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, json, datetime, datetime.UTC, datetime.datetime, pathlib, pathlib.Path, unittest.mock, unittest.mock.patch
-Output: test_readonly_smoke_matches_production_gamma_filtering, test_fake_public_api_outage_degrades_without_unhandled_exception, test_health_snapshot_syncs_before_client_cleanup, test_failure_count_counts_only_down_health_snapshot
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import json
@@ -72,7 +56,9 @@ async def test_readonly_smoke_matches_production_gamma_filtering(
                 )
                 return httpx.Response(200, json=payload, request=request)
             if host == "clob.polymarket.com" and token_id in {"111", "222"}:
-                return httpx.Response(200, json=_book_payload(token_id), request=request)
+                return httpx.Response(
+                    200, json=_book_payload(token_id), request=request
+                )
             if host == "clob.polymarket.com":
                 return httpx.Response(404, json={"error": "not found"}, request=request)
             if host == "api.binance.com":
@@ -116,9 +102,7 @@ async def test_readonly_smoke_matches_production_gamma_filtering(
             )
 
     production_tokens = {
-        token.token_id
-        for market in production
-        for token in market.outcome_tokens
+        token.token_id for market in production for token in market.outcome_tokens
     }
     smoke_tokens = {
         request.url.params["token_id"]
@@ -130,8 +114,7 @@ async def test_readonly_smoke_matches_production_gamma_filtering(
     assert [market.market_id for market in production] == ["market-1"]
     assert smoke_tokens
     assert not any(
-        request.url.path == "/events"
-        and request.url.params.get("offset") == "200"
+        request.url.path == "/events" and request.url.params.get("offset") == "200"
         for request in smoke_requests
     )
     assert evidence["surfaces"]["clob_book"]["ok"] is True
@@ -182,12 +165,20 @@ async def test_fake_public_api_outage_degrades_without_unhandled_exception(
     assert evidence["surfaces"]["clob_404"]["status_code"] == 404
     assert evidence["surfaces"]["binance_spot_rest"]["ok"] is True
     assert evidence["scheduler_snapshot"]["status"] == "not_run"
-    assert evidence["health_snapshot"]["status"] in {"not_run", "unknown", "ok", "degraded"}
+    assert evidence["health_snapshot"]["status"] in {
+        "not_run",
+        "unknown",
+        "ok",
+        "degraded",
+    }
     assert evidence["dashboard_reads"]["status"] == "not_run"
     assert evidence["safety_scan"]["status"] == "not_run"
     written_evidence = json.loads(request.evidence_path.read_text(encoding="utf-8"))
     assert written_evidence["health_snapshot"] == evidence["health_snapshot"]
-    assert all("authorization" not in {key.lower() for key in item.headers} for item in requests)
+    assert all(
+        "authorization" not in {key.lower() for key in item.headers}
+        for item in requests
+    )
 
 
 async def test_health_snapshot_syncs_before_client_cleanup(
@@ -202,7 +193,12 @@ async def test_health_snapshot_syncs_before_client_cleanup(
 
     evidence = await collect_readonly_smoke(request, httpx.AsyncClient())
 
-    assert evidence["health_snapshot"]["status"] in {"not_run", "unknown", "ok", "degraded"}
+    assert evidence["health_snapshot"]["status"] in {
+        "not_run",
+        "unknown",
+        "ok",
+        "degraded",
+    }
 
 
 def test_failure_count_counts_only_down_health_snapshot() -> None:
@@ -230,7 +226,11 @@ def test_failure_count_counts_only_down_health_snapshot() -> None:
     degraded_failures = failure_count(
         surfaces,
         scheduler_snapshot,
-        {"status": "degraded", "generated_at": "2026-06-24T00:00:00Z", "components": []},
+        {
+            "status": "degraded",
+            "generated_at": "2026-06-24T00:00:00Z",
+            "components": [],
+        },
         dashboard_reads,
         safety_scan,
     )

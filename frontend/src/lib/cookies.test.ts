@@ -1,19 +1,3 @@
-/**
- * Input: { clearCookies } from '@/test-utils/cookies', { beforeEach, describe, expect, it } from 'vitest', { getCookie, removeCookie, setCookie } from './cookies', @/test-utils/cookies, vitest, ./cookies
- * Output: None
- * Pos: Library - Shared code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { clearCookies } from '@/test-utils/cookies'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { getCookie, removeCookie, setCookie } from './cookies'

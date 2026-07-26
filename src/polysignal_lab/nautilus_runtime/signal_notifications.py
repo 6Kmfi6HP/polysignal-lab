@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, asyncio, logging, queue, threading, collections.abc, collections.abc.Mapping
-Output: _AcceptedSignalJob, _ReportResultJob, _PublishResultLike, _AcceptedSignalPublisher, _ReportResultPublisher
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import asyncio
@@ -311,7 +301,9 @@ def _notify_report_result(
 ) -> None:
     if not getattr(getattr(services, "settings", None), "telegram", None):
         return
-    if not getattr(getattr(services, "settings").telegram, "send_report_results", False):
+    if not getattr(
+        getattr(services, "settings").telegram, "send_report_results", False
+    ):
         return
     _ensure_outbox_worker()
     _OUTBOX.put(_ReportResultJob(services, dict(result)))

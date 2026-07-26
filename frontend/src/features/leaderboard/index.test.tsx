@@ -1,27 +1,11 @@
-/**
- * Input: type { ReactNode } from 'react', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', * as client from '@/lib/api/client', { makeLeaderboardResponse } from '@/test-utils/fixtures', { renderWithQueryClient } from '@/test-utils/render-with-query-client', { SidebarProvider } from '@/components/ui/sidebar', { afterEach, describe, expect, it, vi } from 'vitest', { LeaderboardPage } from './index', react
- * Output: renderLeaderboardPage
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import type { ReactNode } from 'react'
-import { SearchProvider } from '@/context/search-provider'
-import { ThemeProvider } from '@/context/theme-provider'
-import * as client from '@/lib/api/client'
 import { makeLeaderboardResponse } from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
-import { SidebarProvider } from '@/components/ui/sidebar'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as client from '@/lib/api/client'
+import { SearchProvider } from '@/context/search-provider'
+import { ThemeProvider } from '@/context/theme-provider'
+import { SidebarProvider } from '@/components/ui/sidebar'
 import { LeaderboardPage } from './index'
 
 vi.mock('recharts', () => ({
@@ -32,13 +16,7 @@ vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
-  BarChart: ({
-    children,
-    data,
-  }: {
-    children: ReactNode
-    data: unknown
-  }) => (
+  BarChart: ({ children, data }: { children: ReactNode; data: unknown }) => (
     <div data-testid='pnl-chart-data'>
       {JSON.stringify(data)}
       {children}
@@ -87,7 +65,9 @@ describe('LeaderboardPage', () => {
     expect(view.getByText('50.0%')).toBeInTheDocument()
     expect(view.getByText('4.00 USDC')).toBeInTheDocument()
     expect(view.getByText('Total PnL by strategy')).toBeInTheDocument()
-    expect(JSON.parse(view.getByTestId('pnl-chart-data').textContent ?? '[]')).toEqual([
+    expect(
+      JSON.parse(view.getByTestId('pnl-chart-data').textContent ?? '[]')
+    ).toEqual([
       {
         strategy: 'late_consensus',
         closed_positions: 2,
@@ -108,7 +88,9 @@ describe('LeaderboardPage', () => {
 
     const view = renderLeaderboardPage()
 
-    expect(await view.findAllByText('No stored report rows yet.')).toHaveLength(2)
+    expect(await view.findAllByText('No stored report rows yet.')).toHaveLength(
+      2
+    )
   })
 
   it('renders a loading placeholder while leaderboard data loads', () => {
@@ -116,7 +98,9 @@ describe('LeaderboardPage', () => {
 
     const { container } = renderLeaderboardPage()
 
-    expect(container.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
+    expect(
+      container.querySelector('[data-slot="skeleton"]')
+    ).toBeInTheDocument()
   })
 
   it('renders an error message when leaderboard data fails to load', async () => {

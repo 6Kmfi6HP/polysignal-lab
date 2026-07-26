@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, sys, types, types.SimpleNamespace, pytest, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market, polysignal_lab.domain.market.OutcomeToken
-Output: test_market_catalog_registers_binary_yes_no_pair, test_register_replacement_removes_previous_token_indexes, test_market_catalog_token_meta_returns_registered_side_metadata, test_market_catalog_rejects_non_binary_market, test_market_catalog_derives_instrument_id_from_condition_and_token, test_market_catalog_uses_injected_instrument_id_resolver, test_market_catalog_resolves_market_from_instrument_id, test_instrument_token_meta_keeps_positional_constructors_compatible, test_market_catalog_from_custom_data_metadata_keeps_optional_binary_option_fields
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import sys
@@ -49,7 +33,9 @@ def test_market_catalog_registers_binary_yes_no_pair() -> None:
 
 
 def test_register_replacement_removes_previous_token_indexes() -> None:
-    catalog = MarketCatalog(instrument_id_resolver=lambda condition_id, token_id: token_id)
+    catalog = MarketCatalog(
+        instrument_id_resolver=lambda condition_id, token_id: token_id
+    )
     first = MarketPairMeta(
         market_id="market-1",
         market_slug="market-1",
@@ -98,9 +84,15 @@ def test_market_catalog_rejects_non_binary_market() -> None:
     market = sample_market().model_copy(
         update={
             "outcome_tokens": [
-                OutcomeToken(token_id="a", side=Side.UP, outcome_name="A", market_id="m"),
-                OutcomeToken(token_id="b", side=Side.DOWN, outcome_name="B", market_id="m"),
-                OutcomeToken(token_id="c", side=Side.UP, outcome_name="C", market_id="m"),
+                OutcomeToken(
+                    token_id="a", side=Side.UP, outcome_name="A", market_id="m"
+                ),
+                OutcomeToken(
+                    token_id="b", side=Side.DOWN, outcome_name="B", market_id="m"
+                ),
+                OutcomeToken(
+                    token_id="c", side=Side.UP, outcome_name="C", market_id="m"
+                ),
             ]
         }
     )
@@ -109,7 +101,9 @@ def test_market_catalog_rejects_non_binary_market() -> None:
         MarketPairMeta.from_market(market)
 
 
-def test_market_catalog_derives_instrument_id_from_condition_and_token(monkeypatch) -> None:
+def test_market_catalog_derives_instrument_id_from_condition_and_token(
+    monkeypatch,
+) -> None:
     market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
     pair = MarketPairMeta.from_market(market)
     catalog = MarketCatalog()
@@ -125,7 +119,10 @@ def test_market_catalog_derives_instrument_id_from_condition_and_token(monkeypat
         ),
     )
 
-    assert catalog.instrument_id_for_token(pair.up.token_id) == f"{pair.condition_id}-{pair.up.token_id}.POLYMARKET"
+    assert (
+        catalog.instrument_id_for_token(pair.up.token_id)
+        == f"{pair.condition_id}-{pair.up.token_id}.POLYMARKET"
+    )
     assert catalog.instrument_id_for_token("missing") is None
 
 
@@ -193,7 +190,9 @@ def test_market_catalog_resolves_market_from_instrument_id() -> None:
     market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
     pair = MarketPairMeta.from_market(market)
     catalog = MarketCatalog(
-        instrument_id_resolver=lambda condition_id, token_id: f"{condition_id}:{token_id}"
+        instrument_id_resolver=lambda condition_id, token_id: (
+            f"{condition_id}:{token_id}"
+        )
     )
     catalog.register(pair)
 
@@ -210,7 +209,9 @@ def test_instrument_token_meta_keeps_positional_constructors_compatible() -> Non
     assert meta.outcome is None
 
 
-def test_market_catalog_from_custom_data_metadata_keeps_optional_binary_option_fields() -> None:
+def test_market_catalog_from_custom_data_metadata_keeps_optional_binary_option_fields() -> (
+    None
+):
     market = sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m"))
     pair = MarketPairMeta.from_metadata(
         SimpleNamespace(
@@ -220,7 +221,9 @@ def test_market_catalog_from_custom_data_metadata_keeps_optional_binary_option_f
             asset=market.asset,
             timeframe=market.timeframe,
             start_ts_ns=1,
-            end_ts_ns=int(market.end_ts.timestamp() * 1_000_000_000) if market.end_ts is not None else None,
+            end_ts_ns=int(market.end_ts.timestamp() * 1_000_000_000)
+            if market.end_ts is not None
+            else None,
             up_token_id=market.token_for(Side.UP).token_id,
             down_token_id=market.token_for(Side.DOWN).token_id,
             question=market.question,

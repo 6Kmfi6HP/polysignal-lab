@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, pytest, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent
-Output: test_market_view_exposes_side_books_and_asks, test_market_view_is_immutable, test_alpha_decision_carries_order_intent_spec, test_market_group_view_carries_relation_members, test_nautilus_order_spec_carries_quantity_and_tags
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -47,14 +31,34 @@ def _view() -> MarketView:
         end_ts=now,
         created_at=now,
         seconds_to_close=60,
-        up=SideBookView(token_id="up-token", best_bid=0.81, best_ask=0.82, spread=0.01, freshness_ms=100),
-        down=SideBookView(token_id="down-token", best_bid=0.17, best_ask=0.18, spread=0.01, freshness_ms=120),
-        spot=SpotView(asset="BTC", symbol="BTCUSD", price=100120.0, source="polymarket_rtds", freshness_ms=90),
+        up=SideBookView(
+            token_id="up-token",
+            best_bid=0.81,
+            best_ask=0.82,
+            spread=0.01,
+            freshness_ms=100,
+        ),
+        down=SideBookView(
+            token_id="down-token",
+            best_bid=0.17,
+            best_ask=0.18,
+            spread=0.01,
+            freshness_ms=120,
+        ),
+        spot=SpotView(
+            asset="BTC",
+            symbol="BTCUSD",
+            price=100120.0,
+            source="polymarket_rtds",
+            freshness_ms=90,
+        ),
         price_to_beat=100000.0,
         up_trades=(),
         down_trades=(),
         metrics={"price_to_beat_verified": True},
-        freshness=FreshnessView(up_book_ms=100, down_book_ms=120, spot_ms=90, max_ms=120),
+        freshness=FreshnessView(
+            up_book_ms=100, down_book_ms=120, spot_ms=90, max_ms=120
+        ),
     )
 
 
@@ -129,12 +133,14 @@ def test_latest_accepted_entry_is_stable_for_equal_timestamps() -> None:
     up = order("a", Side.UP)
     down = order("b", Side.DOWN)
 
-    assert TradingStateView((up, down)).latest_accepted_entry(
-        "late_consensus", "btc-5m"
-    ) == down
-    assert TradingStateView((down, up)).latest_accepted_entry(
-        "late_consensus", "btc-5m"
-    ) == down
+    assert (
+        TradingStateView((up, down)).latest_accepted_entry("late_consensus", "btc-5m")
+        == down
+    )
+    assert (
+        TradingStateView((down, up)).latest_accepted_entry("late_consensus", "btc-5m")
+        == down
+    )
 
 
 def test_nautilus_order_spec_carries_quantity_and_tags() -> None:

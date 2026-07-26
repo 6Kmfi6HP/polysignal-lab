@@ -1,19 +1,3 @@
-/**
- * Input: * as React from 'react', * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu', { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react', { cn } from '@/lib/utils', react, @radix-ui/react-dropdown-menu, lucide-react, @/lib/utils
- * Output: DropdownMenu, DropdownMenuPortal, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuLabel
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import * as React from 'react'
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
 import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react'

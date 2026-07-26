@@ -1,22 +1,11 @@
-/**
- * Input: { beforeEach, describe, expect, it, vi } from 'vitest', { act, fireEvent, render, type RenderResult } from '@testing-library/react', userEvent from '@testing-library/user-event', { SearchProvider } from '@/context/search-provider', vitest, @testing-library/react, @testing-library/user-event, @/context/search-provider
- * Output: renderWithSearchProvider, openCommandPalette
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, type RenderResult } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  type RenderResult,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SearchProvider } from '@/context/search-provider'
 
 const COMMAND_MENU_PLACEHOLDER = 'Type a command or search...'
@@ -69,8 +58,7 @@ describe('SearchProvider and CommandMenu', () => {
 
     await openCommandPalette(screen)
 
-    expect(getByPlaceholderText(COMMAND_MENU_PLACEHOLDER))
-      .toBeInTheDocument()
+    expect(getByPlaceholderText(COMMAND_MENU_PLACEHOLDER)).toBeInTheDocument()
     expect(getByText('Theme')).toBeInTheDocument()
     expect(getByText('Light')).toBeInTheDocument()
     expect(getByText('Dark')).toBeInTheDocument()
@@ -81,8 +69,9 @@ describe('SearchProvider and CommandMenu', () => {
   it('does not show the dialog content when search is closed', async () => {
     const { queryByPlaceholderText } = await renderWithSearchProvider()
 
-    expect(queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER))
-      .not.toBeInTheDocument()
+    expect(
+      queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER)
+    ).not.toBeInTheDocument()
   })
 
   it.each([
@@ -93,13 +82,15 @@ describe('SearchProvider and CommandMenu', () => {
     async (_label, modifier) => {
       const screen = await renderWithSearchProvider()
 
-      expect(screen.queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER))
-        .not.toBeInTheDocument()
+      expect(
+        screen.queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER)
+      ).not.toBeInTheDocument()
 
       await openCommandPalette(screen, modifier)
 
-      expect(screen.getByPlaceholderText(COMMAND_MENU_PLACEHOLDER))
-        .toBeInTheDocument()
+      expect(
+        screen.getByPlaceholderText(COMMAND_MENU_PLACEHOLDER)
+      ).toBeInTheDocument()
     }
   )
 
@@ -111,8 +102,9 @@ describe('SearchProvider and CommandMenu', () => {
     await userEvent.click(screen.getByText('Overview'))
 
     expect(mocks.navigate).toHaveBeenCalledWith({ to: '/' })
-    expect(screen.queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER))
-      .not.toBeInTheDocument()
+    expect(
+      screen.queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER)
+    ).not.toBeInTheDocument()
   })
 
   it('navigates to another top-level route and closes the palette when selected', async () => {
@@ -124,8 +116,9 @@ describe('SearchProvider and CommandMenu', () => {
     await userEvent.click(getByRole('option', { name: 'Signals' }))
 
     expect(mocks.navigate).toHaveBeenCalledWith({ to: '/signals' })
-    expect(screen.queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER))
-      .not.toBeInTheDocument()
+    expect(
+      screen.queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER)
+    ).not.toBeInTheDocument()
   })
 
   it('applies theme and closes the palette when a theme command is chosen', async () => {
@@ -136,8 +129,9 @@ describe('SearchProvider and CommandMenu', () => {
     await userEvent.click(screen.getByText('Dark'))
 
     expect(mocks.setTheme).toHaveBeenCalledWith('dark')
-    expect(screen.queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER))
-      .not.toBeInTheDocument()
+    expect(
+      screen.queryByPlaceholderText(COMMAND_MENU_PLACEHOLDER)
+    ).not.toBeInTheDocument()
   })
 
   it('shows empty state when the filter matches nothing', async () => {
@@ -150,7 +144,6 @@ describe('SearchProvider and CommandMenu', () => {
       'zzzz-no-match-xxxx'
     )
 
-    expect(screen.getByText('No results found.'))
-      .toBeInTheDocument()
+    expect(screen.getByText('No results found.')).toBeInTheDocument()
   })
 })

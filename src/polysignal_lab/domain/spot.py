@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.datetime, pydantic, pydantic.BaseModel, pydantic.Field, polysignal_lab.utils, polysignal_lab.utils.utc_now
-Output: SpotPrice
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import datetime

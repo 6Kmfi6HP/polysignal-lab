@@ -1,26 +1,9 @@
-/**
- * Input: { type ClassValue, clsx } from 'clsx', { twMerge } from 'tailwind-merge', clsx, tailwind-merge
- * Output: cn, getPageNumbers
- * Pos: Library - Shared code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
-
 
 /**
  * Generates page numbers for pagination with ellipsis

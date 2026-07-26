@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, json, sqlite3, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.Any, polysignal_lab.storage.event_projection
-Output: migrate_legacy_tables_to_reporting
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import json
@@ -242,9 +232,7 @@ def _migrate_fills_from_system_events(
         fill_id = str(fill.get("report_fill_id") or "")
         order_id = str(fill.get("report_order_id") or "")
         source_event_id = str(payload.get("event_id") or fill_id)
-        source_event_at = str(
-            payload.get("ts") or payload.get("created_at") or ""
-        )
+        source_event_at = str(payload.get("ts") or payload.get("created_at") or "")
         if not fill_id or not order_id or not source_event_id:
             continue
         # Touch normalize helpers so order/position shapes stay consistent if present.

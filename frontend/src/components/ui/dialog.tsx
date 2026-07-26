@@ -1,19 +1,3 @@
-/**
- * Input: * as React from 'react', * as DialogPrimitive from '@radix-ui/react-dialog', { XIcon } from 'lucide-react', { cn } from '@/lib/utils', react, @radix-ui/react-dialog, lucide-react, @/lib/utils
- * Output: Dialog, DialogTrigger, DialogPortal, DialogClose, DialogOverlay, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 'use client'
 
 import * as React from 'react'

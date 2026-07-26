@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.config.load_settings, polysignal_lab.data.market_discovery_helpers, polysignal_lab.data.market_discovery_helpers.build_current_slot_slugs, polysignal_lab.utils, polysignal_lab.utils.utc_now
-Output: build_polymarket_updown_event_slugs
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from polysignal_lab.config import Settings, load_settings

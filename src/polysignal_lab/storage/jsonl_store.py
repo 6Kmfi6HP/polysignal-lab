@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, json, pathlib, pathlib.Path, threading, threading.Lock, typing, typing.Any, polysignal_lab.utils
-Output: JSONLStore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import json
@@ -36,7 +20,10 @@ class JSONLStore:
         path = self.base_dir / stream
         with self._lock:
             with path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(to_jsonable(record), ensure_ascii=False, sort_keys=True) + "\n")
+                fh.write(
+                    json.dumps(to_jsonable(record), ensure_ascii=False, sort_keys=True)
+                    + "\n"
+                )
         return path
 
     def read_all(self, stream: str) -> list[dict[str, Any]]:

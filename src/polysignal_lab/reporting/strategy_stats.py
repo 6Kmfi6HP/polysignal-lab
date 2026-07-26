@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections, collections.defaultdict, collections.abc, collections.abc.Iterable, collections.abc.Mapping, typing, typing.Any, typing.assert_never
-Output: build_strategy_leaderboard_rows
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections import defaultdict
@@ -14,7 +5,11 @@ from collections.abc import Iterable, Mapping
 from typing import Any, assert_never
 
 from polysignal_lab.domain.enums import TradeResultStatus
-from polysignal_lab.domain.reporting_result import trade_result_float, trade_result_status, trade_result_text
+from polysignal_lab.domain.reporting_result import (
+    trade_result_float,
+    trade_result_status,
+    trade_result_text,
+)
 from polysignal_lab.reporting.daily_report import _is_closed_result
 
 
@@ -53,11 +48,15 @@ def build_strategy_leaderboard_rows(
                 pass
             case unreachable:
                 assert_never(unreachable)
-        entry["total_pnl_usdc"] = float(entry["total_pnl_usdc"]) + trade_result_float(result, "pnl_usdc")
+        entry["total_pnl_usdc"] = float(entry["total_pnl_usdc"]) + trade_result_float(
+            result, "pnl_usdc"
+        )
         roi_sum[strategy] += trade_result_float(result, "roi")
     for strategy, entry in rows.items():
         count = int(entry["closed_positions"])
         entry["average_roi"] = roi_sum[strategy] / count if count else 0.0
         wins = int(entry["win_count"])
         entry["win_rate"] = wins / count if count else 0.0
-    return sorted(rows.values(), key=lambda row: float(row["total_pnl_usdc"]), reverse=True)
+    return sorted(
+        rows.values(), key=lambda row: float(row["total_pnl_usdc"]), reverse=True
+    )

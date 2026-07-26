@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, pathlib, pathlib.Path, sqlite3, polysignal_lab.storage.event_projection, polysignal_lab.storage.event_projection.normalize_report_order, polysignal_lab.storage.sqlite_schema, polysignal_lab.storage.sqlite_schema.PROJECTION_SCHEMA_VERSION, polysignal_lab.storage.sqlite_store
-Output: test_normalize_report_order_emits_only_report_identity, test_migrate_legacy_tables_to_reporting_backs_up_and_drops_legacy, test_insert_report_result_does_not_write_legacy_paper_table, test_migrate_v4_reporting_columns_renames_and_canonicalizes_payload, test_migrate_v5_account_and_daily_report_payload_to_runtime_neutral_names
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -168,7 +158,9 @@ def test_insert_report_result_does_not_write_legacy_paper_table(tmp_path: Path) 
         ).fetchall()
     }
     assert "paper_trade_results" not in tables
-    assert store.query_json("report_results", limit=10)[0]["report_result_id"] == "ptr-new"
+    assert (
+        store.query_json("report_results", limit=10)[0]["report_result_id"] == "ptr-new"
+    )
     store.close()
 
 

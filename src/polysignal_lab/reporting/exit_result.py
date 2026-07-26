@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, math, typing, typing.Any, typing.TypedDict, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode
-Output: fee_fields_v1, exit_mode_from_reason, report_result_from_early_exit, FeeFields
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -23,6 +13,7 @@ FEE_MODEL_IGNORED_V1 = "ignored_v1"
 class FeeFields(TypedDict):
     fee_model: str
     entry_fee: float
+
 
 _EXIT_REASON_TO_MODE: dict[str, ExitMode] = {
     "TAKE_PROFIT": ExitMode.TAKE_PROFIT,
@@ -116,7 +107,9 @@ def report_result_from_early_exit(
     if not signal_id:
         signal_id = f"native_exit:{position_id}"
 
-    strategy = str(metrics.get("owning_strategy") or strategy_name or metrics.get("strategy") or "").strip()
+    strategy = str(
+        metrics.get("owning_strategy") or strategy_name or metrics.get("strategy") or ""
+    ).strip()
     if not strategy or strategy == "native_exit":
         strategy = strategy_name or "native_exit"
 

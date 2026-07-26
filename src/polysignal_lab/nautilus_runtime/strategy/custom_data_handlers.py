@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, typing, typing.Callable, typing.Protocol, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.market_catalog.MarketCatalog, polysignal_lab.nautilus_runtime.market_catalog.MarketPairMeta, polysignal_lab.nautilus_runtime.custom_data_state, polysignal_lab.nautilus_runtime.custom_data_state.StrategyCustomDataState
-Output: route_strategy_data, handle_custom_data, handle_market_metadata, handle_market_universe, handle_generic_data, _CustomDataStrategy
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from typing import Callable, Protocol
@@ -23,7 +13,9 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     is_polymarket_rtds_crypto_price,
     unwrap_custom_data,
 )
-from polysignal_lab.nautilus_runtime.strategy.data_boundary import DataBoundaryClassification
+from polysignal_lab.nautilus_runtime.strategy.data_boundary import (
+    DataBoundaryClassification,
+)
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
     retire_market_book_generation,
@@ -51,8 +43,12 @@ class _CustomDataStrategy(Protocol):
     def _require_registry(self) -> MarketCatalog: ...
     def _require_assembler(self) -> object: ...
     def _refresh_asset_conditions(self) -> None: ...
-    def _subscribe_market_conditions(self, condition_ids: tuple[str, ...] | list[str]) -> None: ...
-    def _unsubscribe_market_conditions(self, condition_ids: tuple[str, ...] | list[str]) -> None: ...
+    def _subscribe_market_conditions(
+        self, condition_ids: tuple[str, ...] | list[str]
+    ) -> None: ...
+    def _unsubscribe_market_conditions(
+        self, condition_ids: tuple[str, ...] | list[str]
+    ) -> None: ...
 
 
 def route_strategy_data(
@@ -107,7 +103,9 @@ def _trading_state_snapshot(strategy: _CustomDataStrategy) -> TradingStateView:
     )
 
 
-def handle_market_metadata(strategy: _CustomDataStrategy, data: PolySignalMarketMetaData) -> bool:
+def handle_market_metadata(
+    strategy: _CustomDataStrategy, data: PolySignalMarketMetaData
+) -> bool:
     """Catalog registration for business keys (not Gamma discovery transport)."""
     registry = strategy._require_registry()
     registry.register(MarketPairMeta.from_metadata(data))
@@ -135,7 +133,9 @@ def handle_market_universe(
     strategy._active_condition_ids = active_condition_ids
     strategy._refresh_asset_conditions()
     for condition_id in exited_condition_ids:
-        strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)
+        strategy._subscription_state.pending_metadata_condition_ids.discard(
+            condition_id
+        )
         retire_market_book_generation(strategy, condition_id)
         strategy._note_runtime_readiness(condition_id, ready=True)
     if strategy.unsubscribe_exited:

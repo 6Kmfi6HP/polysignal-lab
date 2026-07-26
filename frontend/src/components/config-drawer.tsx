@@ -1,19 +1,3 @@
-/**
- * Input: { type SVGProps } from 'react', { Root as Radio, Item } from '@radix-ui/react-radio-group', { CircleCheck, RotateCcw, Settings } from 'lucide-react', { IconDir } from '@/assets/custom/icon-dir', { IconLayoutCompact } from '@/assets/custom/icon-layout-compact', { IconLayoutDefault } from '@/assets/custom/icon-layout-default', { IconLayoutFull } from '@/assets/custom/icon-layout-full', { IconSidebarFloating } from '@/assets/custom/icon-sidebar-floating', { IconSidebarInset } from '@/assets/custom/icon-sidebar-inset', { IconSidebarSidebar } from '@/assets/custom/icon-sidebar-sidebar'
- * Output: ConfigDrawer, SectionTitle, RadioGroupItem, ThemeConfig, SidebarConfig, LayoutConfig, DirConfig
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { type SVGProps } from 'react'
 import { Root as Radio, Item } from '@radix-ui/react-radio-group'
 import { CircleCheck, RotateCcw, Settings } from 'lucide-react'

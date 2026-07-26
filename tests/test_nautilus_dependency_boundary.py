@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, importlib, subprocess, sys, tomllib, pathlib, pathlib.Path
-Output: test_default_package_import_does_not_require_nautilus, test_alpha_package_import_does_not_require_nautilus, test_order_plan_dto_import_does_not_require_nautilus, test_nautilus_is_required_default_dependency, test_nautilus_node_does_not_import_legacy_trading_state
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import importlib
@@ -74,10 +58,9 @@ def test_nautilus_is_required_default_dependency() -> None:
 
     expected = "nautilus_trader[polymarket]==1.231.0a20260716"
     assert expected in default_deps
-    assert optional_deps["nautilus"] == [
-        expected
-    ]
+    assert optional_deps["nautilus"] == [expected]
     assert data["project"]["requires-python"] == ">=3.12"
+
 
 def test_nautilus_node_does_not_import_legacy_trading_state() -> None:
     source = Path("src/polysignal_lab/nautilus_runtime/node.py").read_text()

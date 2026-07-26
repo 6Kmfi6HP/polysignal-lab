@@ -91,9 +91,7 @@ def validate_message(message: str) -> list[str]:
     description = match.group("description")
 
     if commit_type not in ALLOWED_TYPES:
-        errors.append(
-            "Type must be one of: " + ", ".join(sorted(ALLOWED_TYPES)) + "."
-        )
+        errors.append("Type must be one of: " + ", ".join(sorted(ALLOWED_TYPES)) + ".")
 
     description_key = re.sub(r"[.!?]+$", "", description.lower()).strip()
     if description_key in VAGUE_DESCRIPTIONS:
@@ -116,7 +114,9 @@ def _read_commit_messages_from_range(commit_range: str) -> list[str]:
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f"git log failed for {commit_range}")
+        raise RuntimeError(
+            result.stderr.strip() or f"git log failed for {commit_range}"
+        )
     return [message for message in result.stdout.split("\0") if message.strip()]
 
 

@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, pathlib, pathlib.Path, pytest, pydantic, pydantic.ValidationError, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.config.load_settings
-Output: test_load_settings_records_explicit_strategy_names, test_settings_model_validate_has_no_explicit_strategy_names, test_enabled_strategy_names_builds_default_configured_strategies, test_explicit_restored_strategy_can_be_built, test_disabled_explicit_strategy_is_skipped, test_unknown_strategy_config_rejected, test_late_consensus_stop_loss_config_rejects_malformed_entry, test_late_consensus_policy_uses_model_defaults_when_yaml_omits_fields, test_ptb_diff_policy_uses_exit_lag_default_when_yaml_omits_fields, test_ptb_diff_anchor_required_mode_loads_from_yaml
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 from pathlib import Path
 
@@ -65,6 +49,7 @@ def test_settings_model_validate_has_no_explicit_strategy_names() -> None:
     assert settings.strategies.explicit_strategy_names() == ()
     assert list(settings.strategies) == []
 
+
 def _enabled_strategy_names(settings: Settings) -> list[str]:
     return list(enabled_strategy_names(settings))
 
@@ -93,9 +78,7 @@ strategies:
 
     settings = load_settings(config_path)
 
-    assert _enabled_strategy_names(settings) == [
-        "fibonacci_bot"
-    ]
+    assert _enabled_strategy_names(settings) == ["fibonacci_bot"]
 
 
 def test_disabled_explicit_strategy_is_skipped(tmp_path: Path) -> None:
@@ -114,9 +97,7 @@ strategies:
 
     settings = load_settings(config_path)
 
-    assert _enabled_strategy_names(settings) == [
-        "late_consensus"
-    ]
+    assert _enabled_strategy_names(settings) == ["late_consensus"]
 
 
 def test_unknown_strategy_config_rejected() -> None:
@@ -130,6 +111,7 @@ def test_unknown_strategy_config_rejected() -> None:
                 },
             }
         )
+
 
 def test_late_consensus_stop_loss_config_rejects_malformed_entry() -> None:
     with pytest.raises(ValidationError):
@@ -149,8 +131,9 @@ def test_late_consensus_stop_loss_config_rejects_malformed_entry() -> None:
         )
 
 
-
-def test_late_consensus_policy_uses_model_defaults_when_yaml_omits_fields(tmp_path: Path) -> None:
+def test_late_consensus_policy_uses_model_defaults_when_yaml_omits_fields(
+    tmp_path: Path,
+) -> None:
     config_path = tmp_path / "signal_bot.yaml"
     config_path.write_text(
         """
@@ -168,7 +151,9 @@ strategies:
     assert settings.strategies.late_consensus.max_spot_staleness_ms == 1_500
 
 
-def test_ptb_diff_policy_uses_exit_lag_default_when_yaml_omits_fields(tmp_path: Path) -> None:
+def test_ptb_diff_policy_uses_exit_lag_default_when_yaml_omits_fields(
+    tmp_path: Path,
+) -> None:
     config_path = tmp_path / "signal_bot.yaml"
     config_path.write_text(
         """

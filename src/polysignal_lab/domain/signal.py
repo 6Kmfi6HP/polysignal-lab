@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.datetime, types, types.MappingProxyType, typing
-Output: SignalCandidate, RejectedSignal
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -15,7 +5,14 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import Annotated, Any, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    field_validator,
+    model_validator,
+)
 
 from polysignal_lab.domain.enums import Action, OrderIntent, Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
@@ -132,8 +129,13 @@ class SignalCandidate(BaseModel):
     ) -> "SignalCandidate":
         event_time = created_at if created_at is not None else utc_now()
         dedupe_scope = "exit" if reduce_only else "entry"
-        dedupe_key = f"{asset}:{timeframe}:{market_id}:{side.value}:{strategy}:{dedupe_scope}"
-        sid = signal_id or f"sig_{stable_hash(strategy, asset, timeframe, market_id, side.value, event_time.isoformat(), length=20)}"
+        dedupe_key = (
+            f"{asset}:{timeframe}:{market_id}:{side.value}:{strategy}:{dedupe_scope}"
+        )
+        sid = (
+            signal_id
+            or f"sig_{stable_hash(strategy, asset, timeframe, market_id, side.value, event_time.isoformat(), length=20)}"
+        )
         return cls(
             signal_id=sid,
             created_at=event_time,

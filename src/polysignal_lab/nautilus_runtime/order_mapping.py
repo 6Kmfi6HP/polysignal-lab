@@ -1,16 +1,10 @@
-"""
-Input: __future__, __future__.annotations, polysignal_lab.alpha.types, polysignal_lab.nautilus_runtime.order_plan
-Output: order_spec_from_decision
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from polysignal_lab.alpha.types import AlphaDecision
-from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan, build_order_spec
+from polysignal_lab.nautilus_runtime.order_plan import (
+    OrderSubmissionPlan,
+    build_order_spec,
+)
 
 
 def order_spec_from_decision(

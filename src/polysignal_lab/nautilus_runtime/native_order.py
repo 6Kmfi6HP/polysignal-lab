@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, dataclasses, datetime, decimal, typing, nautilus_trader
-Output: submit_approved_decision, NautilusOrderFactory, OrderSubmittingStrategy
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -143,7 +134,9 @@ def _validate_entry_price_ceiling(price: object, ceiling: float | None) -> None:
         native = Decimal(str(price))
         maximum = Decimal(str(ceiling))
     except (InvalidOperation, ValueError) as exc:
-        raise ValueError("Nautilus Price must be comparable to max_entry_price") from exc
+        raise ValueError(
+            "Nautilus Price must be comparable to max_entry_price"
+        ) from exc
     if native > maximum:
         raise ValueError(
             f"native price {native} exceeds max entry price {maximum} after quantization"

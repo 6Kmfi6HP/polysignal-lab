@@ -1,19 +1,3 @@
-/**
- * Input: * as React from 'react', { Eye, EyeOff } from 'lucide-react', { cn } from '@/lib/utils', { Button } from './ui/button', react, lucide-react, @/lib/utils, ./ui/button
- * Output: PasswordInput
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import * as React from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 import { cn } from '@/lib/utils'

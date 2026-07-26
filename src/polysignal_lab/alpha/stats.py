@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections, collections.defaultdict, collections.deque, statistics, statistics.mean, statistics.pstdev, typing, typing.TypedDict
-Output: RollingStatsResult, RollingPriceStats
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections import defaultdict, deque

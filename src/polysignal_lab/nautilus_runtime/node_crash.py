@@ -1,15 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, atexit, sys, traceback, collections.abc, collections.abc.Sequence
-Output: None
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -37,7 +25,9 @@ def _dump_thread_stacks(log_path: str) -> None:
         ]
         for tid, stack in frames.items():
             lines.append(f"\n--- thread {tid} ---")
-            stack_summary = cast(Sequence[traceback.FrameSummary], traceback.extract_stack(stack))
+            stack_summary = cast(
+                Sequence[traceback.FrameSummary], traceback.extract_stack(stack)
+            )
             for frame in stack_summary:
                 lines.append(f"  {frame.filename}:{frame.lineno} {frame.name}")
                 if frame.line:
@@ -51,7 +41,9 @@ def _dump_thread_stacks(log_path: str) -> None:
 def _install_crash_logger(log_dir: str) -> None:
     crash_path = f"{log_dir.rstrip('/')}/crash.log"
 
-    def crash_excepthook(typ: type[BaseException], val: BaseException, tb: TracebackType | None) -> None:
+    def crash_excepthook(
+        typ: type[BaseException], val: BaseException, tb: TracebackType | None
+    ) -> None:
         _dump_thread_stacks(crash_path)
         try:
             with open(crash_path, "a", encoding="utf-8") as fh:

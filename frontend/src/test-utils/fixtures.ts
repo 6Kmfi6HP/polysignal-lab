@@ -1,19 +1,3 @@
-/**
- * Input: type {, @/lib/api/types
- * Output: makeSignal, makeRejectedSignal, makeReportOrder, makeReportPosition, makeReportTradeResult, makeDailyReport, makeOverviewResponse, makeHealthResponse, makeStrategyStatusRow, makeLeaderboardResponse
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import type {
   DailyReport,
   HealthResponse,
@@ -27,7 +11,9 @@ import type {
   StrategyStatusRow,
 } from '@/lib/api/types'
 
-export function makeSignal(overrides: Partial<SignalCandidate> = {}): SignalCandidate {
+export function makeSignal(
+  overrides: Partial<SignalCandidate> = {}
+): SignalCandidate {
   return {
     schema_version: 1,
     signal_id: 'sig-1',
@@ -74,7 +60,9 @@ export function makeRejectedSignal(
   }
 }
 
-export function makeReportOrder(overrides: Partial<ReportOrder> = {}): ReportOrder {
+export function makeReportOrder(
+  overrides: Partial<ReportOrder> = {}
+): ReportOrder {
   return {
     schema_version: 1,
     report_order_id: 'ro-1',
@@ -158,7 +146,9 @@ export function makeReportTradeResult(
   }
 }
 
-export function makeDailyReport(overrides: Partial<DailyReport> = {}): DailyReport {
+export function makeDailyReport(
+  overrides: Partial<DailyReport> = {}
+): DailyReport {
   return {
     report_id: 'dr-1',
     report_date: '2026-06-30',

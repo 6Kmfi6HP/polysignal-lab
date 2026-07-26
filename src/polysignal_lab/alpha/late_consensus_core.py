@@ -1,20 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.domain.enums
-Output: _EvalContext, LateConsensusAlphaCore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -144,14 +127,18 @@ class LateConsensusAlphaCore:
             ctx.seconds, high_threshold, mid_threshold
         )
 
-        sequence = len(
-            view.trading.accepted_entry_orders(self.name, ctx.market_id)
-        )
+        sequence = len(view.trading.accepted_entry_orders(self.name, ctx.market_id))
         effective_confidence = min(0.95, confidence_value + 0.35)
 
         return self._build_decision(
-            view, ctx, favorite_side, favorite_price,
-            ask_sum, confidence_value, contracts, sequence,
+            view,
+            ctx,
+            favorite_side,
+            favorite_price,
+            ask_sum,
+            confidence_value,
+            contracts,
+            sequence,
             effective_confidence,
         )
 
@@ -221,7 +208,10 @@ class LateConsensusAlphaCore:
     # ------------------------------------------------------------------
 
     def _dynamic_position_size(
-        self, seconds_remaining: int, high_threshold: int = 180, mid_threshold: int = 120
+        self,
+        seconds_remaining: int,
+        high_threshold: int = 180,
+        mid_threshold: int = 120,
     ) -> int:
         if seconds_remaining > high_threshold:
             return self.config.sizing_above_180
@@ -245,6 +235,10 @@ class LateConsensusAlphaCore:
             return False
         previous = view.trading.latest_accepted_entry(self.name, market_id)
         if previous is not None and previous.ts_event is not None:
-            if previous.side != side and (now - previous.ts_event).total_seconds() <= self.config.flip_guard_window_sec:
+            if (
+                previous.side != side
+                and (now - previous.ts_event).total_seconds()
+                <= self.config.flip_guard_window_sec
+            ):
                 return True
         return False

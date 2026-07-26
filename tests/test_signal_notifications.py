@@ -1,11 +1,3 @@
-"""
-Input: pytest, threading, time, types
-Output: accepted-signal and report-result Telegram outbox regression coverage
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from __future__ import annotations
 
 import threading
@@ -89,7 +81,9 @@ def _services(
         def insert_telegram_publish(self, result: dict[str, object]) -> None:
             audit.append({"kind": "telegram_publish", **dict(result)})
 
-    async def publish_signal_once(signal: SignalCandidate, stake_usdc: float) -> PublishResult:
+    async def publish_signal_once(
+        signal: SignalCandidate, stake_usdc: float
+    ) -> PublishResult:
         if raise_on_publish is not None:
             raise raise_on_publish
         if publish is not None:
@@ -117,7 +111,9 @@ def _services(
                 send_signals=send_signals,
             )
         ),
-        logger=SimpleNamespace(warning=lambda *_a, **_k: None, debug=lambda *_a, **_k: None),
+        logger=SimpleNamespace(
+            warning=lambda *_a, **_k: None, debug=lambda *_a, **_k: None
+        ),
         health=health,
         persistence=Persistence(),
         publish_signal_once=publish_signal_once,
@@ -161,7 +157,9 @@ def test_dead_outbox_worker_is_restarted_on_next_notify() -> None:
     """
     services = _services()
     sn._notify_accepted_signal(services, _signal("sig_before_death"), 10.0)
-    assert _wait_until(lambda: "sig_before_death" in {s for s, _ in services._published})
+    assert _wait_until(
+        lambda: "sig_before_death" in {s for s, _ in services._published}
+    )
 
     # Stop the worker the way a crashed/exited thread leaves the flag set.
     sn._OUTBOX.put(sn._STOP)

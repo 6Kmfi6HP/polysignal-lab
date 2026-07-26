@@ -1,19 +1,3 @@
-/**
- * Input: { createContext, useContext, useEffect, useState, useMemo } from 'react', { getCookie, setCookie, removeCookie } from '@/lib/cookies', react, @/lib/cookies
- * Output: ThemeProvider, useTheme
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { createContext, useContext, useEffect, useState, useMemo } from 'react'
 import { getCookie, setCookie, removeCookie } from '@/lib/cookies'
 

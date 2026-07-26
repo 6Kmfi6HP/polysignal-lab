@@ -1,19 +1,3 @@
-/**
- * Input: { useHealthQuery, useOverviewQuery } from '@/lib/api/hooks', { Badge } from '@/components/ui/badge', {, { Skeleton } from '@/components/ui/skeleton', { Header } from '@/components/layout/header', { Main } from '@/components/layout/main', { Search } from '@/components/search', { ThemeSwitch } from '@/components/theme-switch', @/lib/api/hooks, @/components/ui/badge
- * Output: OverviewPage, equitySourceLabel, telemetryStatusLabel, telemetryReasonsLabel
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { useHealthQuery, useOverviewQuery } from '@/lib/api/hooks'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -131,9 +115,7 @@ export function OverviewPage() {
                       </dd>
                     </div>
                     <div>
-                      <dt className='text-sm text-muted-foreground'>
-                        Net PnL
-                      </dt>
+                      <dt className='text-sm text-muted-foreground'>Net PnL</dt>
                       <dd className='font-semibold'>
                         {overview.data.latest_report.net_pnl.toFixed(2)}{' '}
                         {overview.data.latest_report.equity_currency ??

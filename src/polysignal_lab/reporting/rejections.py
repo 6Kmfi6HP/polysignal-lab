@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, typing, typing.Any
-Output: normalize_reject_reason, is_rejected_order_payload
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from typing import Any
@@ -24,9 +15,7 @@ def normalize_reject_reason(reason: RejectReason) -> str:
     return normalized or ORDER_REJECTED
 
 
-def is_rejected_order_payload(
-    order: dict[str, Any], metrics: dict[str, Any]
-) -> bool:
+def is_rejected_order_payload(order: dict[str, Any], metrics: dict[str, Any]) -> bool:
     status = order.get("status")
     if status == "REJECTED":
         return True

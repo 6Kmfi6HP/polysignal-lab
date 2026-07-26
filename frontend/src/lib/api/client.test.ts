@@ -1,19 +1,3 @@
-/**
- * Input: { afterEach, describe, expect, it, vi } from 'vitest', { ApiError, getOverview } from './client', vitest, ./client
- * Output: None
- * Pos: Library - Shared code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, getOverview } from './client'
 
@@ -47,7 +31,9 @@ describe('getOverview', () => {
   it('throws ApiError when the response is not ok', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) })
+      vi
+        .fn()
+        .mockResolvedValue({ ok: false, status: 500, json: async () => ({}) })
     )
 
     await expect(getOverview()).rejects.toBeInstanceOf(ApiError)

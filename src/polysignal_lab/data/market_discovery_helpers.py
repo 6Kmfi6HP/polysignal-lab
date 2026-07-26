@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, json, re, collections.abc, collections.abc.Awaitable, collections.abc.Callable, datetime, datetime.datetime, datetime.timedelta
-Output: gamma_events_from_json, json_list, timeframe_seconds, gamma_events_query_params, gamma_markets_slug_query_params, paginate_gamma_events, paginate_gamma_events_async, build_current_slot_slugs, flatten_gamma_markets, parse_gamma_markets
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import json
@@ -59,7 +49,9 @@ def timeframe_seconds(timeframe: str) -> int | None:
     return int(match.group(1)) * 60
 
 
-def gamma_events_query_params(market_config: MarketConfig, offset: int) -> dict[str, str]:
+def gamma_events_query_params(
+    market_config: MarketConfig, offset: int
+) -> dict[str, str]:
     """Build /events query params for crypto-updown discovery.
 
     /events is project-owned business transport (official gamma_markets only
@@ -228,18 +220,35 @@ def match_crypto_updown(
         return None
     asset = match.group(1).upper()
     timeframe = match.group(2)
-    if asset in {configured.upper() for configured in assets} and timeframe in timeframes:
+    if (
+        asset in {configured.upper() for configured in assets}
+        and timeframe in timeframes
+    ):
         return asset, timeframe
     return None
 
 
 def infer_outcome_tokens(payload: JsonObject, market_id: str) -> list[OutcomeToken]:
-    token_ids = json_list(payload.get("clobTokenIds") or payload.get("clob_token_ids") or payload.get("tokenIds"))
+    token_ids = json_list(
+        payload.get("clobTokenIds")
+        or payload.get("clob_token_ids")
+        or payload.get("tokenIds")
+    )
     if len(token_ids) < 2:
         return []
     return [
-        OutcomeToken(token_id=str(token_ids[0]), side=Side.UP, outcome_name="Up", market_id=market_id),
-        OutcomeToken(token_id=str(token_ids[1]), side=Side.DOWN, outcome_name="Down", market_id=market_id),
+        OutcomeToken(
+            token_id=str(token_ids[0]),
+            side=Side.UP,
+            outcome_name="Up",
+            market_id=market_id,
+        ),
+        OutcomeToken(
+            token_id=str(token_ids[1]),
+            side=Side.DOWN,
+            outcome_name="Down",
+            market_id=market_id,
+        ),
     ]
 
 
@@ -249,7 +258,9 @@ def is_allowed_active_market(
     active_only: bool,
     closed: bool,
 ) -> bool:
-    is_closed = bool(payload.get("closed") or payload.get("archived") or payload.get("resolved"))
+    is_closed = bool(
+        payload.get("closed") or payload.get("archived") or payload.get("resolved")
+    )
     active = bool(payload.get("active", not is_closed))
     if active_only and not active:
         return False
@@ -274,4 +285,6 @@ def is_allowed_window(
         timeframe_seconds(market.timeframe) or 0
     )
     future_window = timedelta(seconds=future_seconds)
-    return market.start_ts <= now + future_window and market.end_ts >= now - grace_window
+    return (
+        market.start_ts <= now + future_window and market.end_ts >= now - grace_window
+    )

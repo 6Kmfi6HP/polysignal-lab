@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, re, dataclasses, dataclasses.dataclass, typing, typing.Final, anyio, httpx, pydantic
-Output: invalid_telegram_credential_fields, PublishResult, TelegramPublisher
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import re
@@ -89,9 +73,21 @@ class TelegramPublisher:
     ) -> PublishResult:
         publish_id = publish_id or new_id("tg")
         if not self.config.enabled or self.config.dry_run:
-            return PublishResult(publish_id=publish_id, message_type=message_type, status="DRY_RUN", signal_id=signal_id, sent_at=utc_iso())
+            return PublishResult(
+                publish_id=publish_id,
+                message_type=message_type,
+                status="DRY_RUN",
+                signal_id=signal_id,
+                sent_at=utc_iso(),
+            )
         if not self.bot_token or not self.channel_id:
-            return PublishResult(publish_id=publish_id, message_type=message_type, status="FAILED", signal_id=signal_id, error="TELEGRAM_NOT_CONFIGURED")
+            return PublishResult(
+                publish_id=publish_id,
+                message_type=message_type,
+                status="FAILED",
+                signal_id=signal_id,
+                error="TELEGRAM_NOT_CONFIGURED",
+            )
         invalid = invalid_telegram_credential_fields(self.bot_token, self.channel_id)
         if invalid:
             return PublishResult(
@@ -103,7 +99,11 @@ class TelegramPublisher:
             )
         text = message[: self.config.max_message_chars]
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-        payload = {"chat_id": self.channel_id, "text": text, "parse_mode": self.config.parse_mode}
+        payload = {
+            "chat_id": self.channel_id,
+            "text": text,
+            "parse_mode": self.config.parse_mode,
+        }
         last_error: str | None = None
         for attempt in range(max(1, self.config.retry_attempts)):
             try:
@@ -116,11 +116,24 @@ class TelegramPublisher:
                     message_id = result.get("message_id")
                     if message_id is not None:
                         msg_id = str(message_id)
-                return PublishResult(publish_id=publish_id, message_type=message_type, status="SENT", signal_id=signal_id, telegram_message_id=msg_id, sent_at=utc_iso())
+                return PublishResult(
+                    publish_id=publish_id,
+                    message_type=message_type,
+                    status="SENT",
+                    signal_id=signal_id,
+                    telegram_message_id=msg_id,
+                    sent_at=utc_iso(),
+                )
             except (httpx.HTTPError, ValueError) as exc:
                 last_error = _redact_telegram_error(exc, self.bot_token)
-                await anyio.sleep(min(2 ** attempt, 5))
-        return PublishResult(publish_id=publish_id, message_type=message_type, status="FAILED", signal_id=signal_id, error=last_error)
+                await anyio.sleep(min(2**attempt, 5))
+        return PublishResult(
+            publish_id=publish_id,
+            message_type=message_type,
+            status="FAILED",
+            signal_id=signal_id,
+            error=last_error,
+        )
 
 
 def _redact_telegram_error(exc: httpx.HTTPError | ValueError, bot_token: str) -> str:

@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, math
-Output: thresholds_from_metrics, PositionExitThresholds, NativeExitPolicy
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -196,13 +186,18 @@ class NativeExitPolicy:
             and bid >= take_profit_price
         ):
             return "TAKE_PROFIT"
-        if opened_at is not None and (now - opened_at).total_seconds() >= self.max_hold_time_sec:
+        if (
+            opened_at is not None
+            and (now - opened_at).total_seconds() >= self.max_hold_time_sec
+        ):
             return "MAX_HOLD_TIME"
         _ = entry_price
         return None
 
 
-def thresholds_from_metrics(metrics: Mapping[str, object]) -> PositionExitThresholds | None:
+def thresholds_from_metrics(
+    metrics: Mapping[str, object],
+) -> PositionExitThresholds | None:
     """Extract entry-time exit thresholds from strategy signal metrics / order tags."""
     take_profit = _positive_optional(
         metrics.get("tp_sl_tp_prob"),

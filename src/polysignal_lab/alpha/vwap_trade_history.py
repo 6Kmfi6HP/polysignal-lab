@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, typing, typing.Protocol
-Output: samples_from_trade_views, latest_price, trades_in_window, vwap, momentum, _TradeLike, TradeSample
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -90,9 +80,7 @@ def momentum(
     band_start = now - window_sec - 1.5
     band_end = now - window_sec + 1.5
     band_prices = [
-        trade.price
-        for trade in trades
-        if band_start <= trade.timestamp <= band_end
+        trade.price for trade in trades if band_start <= trade.timestamp <= band_end
     ]
     if not band_prices:
         return None

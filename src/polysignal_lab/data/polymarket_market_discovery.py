@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, typing, typing.Final, typing.Protocol, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.config
-Output: _JsonResponse, _AsyncJsonClient, _HttpxJsonResponse, _HttpxAsyncJsonClient, MarketDiscovery
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from typing import Final, Protocol
@@ -45,7 +29,9 @@ class _JsonResponse(Protocol):
 
 
 class _AsyncJsonClient(Protocol):
-    async def get(self, url: str, *, params: dict[str, str] | None = None) -> _JsonResponse: ...
+    async def get(
+        self, url: str, *, params: dict[str, str] | None = None
+    ) -> _JsonResponse: ...
 
 
 class _HttpxJsonResponse:
@@ -63,7 +49,9 @@ class _HttpxAsyncJsonClient:
     def __init__(self) -> None:
         self._client: httpx.AsyncClient = httpx.AsyncClient(timeout=15.0)
 
-    async def get(self, url: str, *, params: dict[str, str] | None = None) -> _JsonResponse:
+    async def get(
+        self, url: str, *, params: dict[str, str] | None = None
+    ) -> _JsonResponse:
         return _HttpxJsonResponse(await self._client.get(url, params=params))
 
 
@@ -88,7 +76,9 @@ class MarketDiscovery:
         self.market_config: MarketConfig = market_config
         self.client: _AsyncJsonClient = client or _HttpxAsyncJsonClient()
 
-    def replace_client(self, client: _AsyncJsonClient | None = None) -> _AsyncJsonClient:
+    def replace_client(
+        self, client: _AsyncJsonClient | None = None
+    ) -> _AsyncJsonClient:
         self.client = client or _HttpxAsyncJsonClient()
         return self.client
 
@@ -157,7 +147,9 @@ class MarketDiscovery:
         sync_client: httpx.Client,
         params: dict[str, str] | None = None,
     ) -> JsonValue:
-        return self._parse_response(_HttpxJsonResponse(sync_client.get(url, params=params)))
+        return self._parse_response(
+            _HttpxJsonResponse(sync_client.get(url, params=params))
+        )
 
     def _markets_from_payloads(
         self,
@@ -195,7 +187,9 @@ class MarketDiscovery:
             max_pages=max_pages,
         )
 
-    def _fetch_gamma_events_page_sync(self, client: httpx.Client, offset: int) -> list[JsonObject]:
+    def _fetch_gamma_events_page_sync(
+        self, client: httpx.Client, offset: int
+    ) -> list[JsonObject]:
         params = gamma_events_query_params(self.market_config, offset)
         payload = self._request_sync(
             f"{self.config.gamma_base_url}/events",
@@ -253,7 +247,6 @@ class MarketDiscovery:
                 payloads.append(payload)
         return payloads
 
-
     def _current_slot_slugs(
         self,
         *,
@@ -269,7 +262,9 @@ class MarketDiscovery:
         )
 
     async def _fetch_gamma_event_by_slug(self, slug: str) -> JsonObject | None:
-        return await self._fetch_gamma_slug_payload(f"{self.config.gamma_base_url}/events/slug/{slug}")
+        return await self._fetch_gamma_slug_payload(
+            f"{self.config.gamma_base_url}/events/slug/{slug}"
+        )
 
     async def _fetch_gamma_market_by_slug(self, slug: str) -> JsonObject | None:
         try:
@@ -289,10 +284,16 @@ class MarketDiscovery:
             return None
         return payload if isinstance(payload, dict) else None
 
-    def _fetch_gamma_event_by_slug_sync(self, client: httpx.Client, slug: str) -> JsonObject | None:
-        return self._fetch_gamma_slug_payload_sync(client, f"{self.config.gamma_base_url}/events/slug/{slug}")
+    def _fetch_gamma_event_by_slug_sync(
+        self, client: httpx.Client, slug: str
+    ) -> JsonObject | None:
+        return self._fetch_gamma_slug_payload_sync(
+            client, f"{self.config.gamma_base_url}/events/slug/{slug}"
+        )
 
-    def _fetch_gamma_market_by_slug_sync(self, client: httpx.Client, slug: str) -> JsonObject | None:
+    def _fetch_gamma_market_by_slug_sync(
+        self, client: httpx.Client, slug: str
+    ) -> JsonObject | None:
         try:
             payload = self._request_sync(
                 f"{self.config.gamma_base_url}/markets",
@@ -304,7 +305,9 @@ class MarketDiscovery:
         payloads = gamma_events_from_json(payload)
         return payloads[0] if payloads else None
 
-    def _fetch_gamma_slug_payload_sync(self, client: httpx.Client, url: str) -> JsonObject | None:
+    def _fetch_gamma_slug_payload_sync(
+        self, client: httpx.Client, url: str
+    ) -> JsonObject | None:
         try:
             payload = self._request_sync(url, sync_client=client)
         except (httpx.HTTPError, TypeError, ValueError):

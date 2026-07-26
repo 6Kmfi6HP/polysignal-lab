@@ -1,27 +1,11 @@
-/**
- * Input: { Header } from '@/components/layout/header', { Main } from '@/components/layout/main', { Search } from '@/components/search', { ThemeSwitch } from '@/components/theme-switch', { Badge } from '@/components/ui/badge', { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card', { Skeleton } from '@/components/ui/skeleton', { useHealthQuery } from '@/lib/api/hooks', @/components/layout/header, @/components/layout/main
- * Output: SystemHealthPage
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
+import { useHealthQuery } from '@/lib/api/hooks'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
-import { useHealthQuery } from '@/lib/api/hooks'
 
 export function SystemHealthPage() {
   const health = useHealthQuery()
@@ -35,11 +19,15 @@ export function SystemHealthPage() {
         </div>
       </Header>
       <Main>
-        <h1 className='mb-4 text-2xl font-bold tracking-tight'>System Health</h1>
+        <h1 className='mb-4 text-2xl font-bold tracking-tight'>
+          System Health
+        </h1>
 
         {health.isPending && <Skeleton className='h-64 w-full' />}
         {health.isError && (
-          <p className='text-destructive'>Failed to load health: {health.error.message}</p>
+          <p className='text-destructive'>
+            Failed to load health: {health.error.message}
+          </p>
         )}
 
         {health.data && (
@@ -51,11 +39,15 @@ export function SystemHealthPage() {
                     <CardTitle className='text-sm font-medium'>
                       {component.name}
                     </CardTitle>
-                    <Badge variant={component.status === 'ok' ? 'default' : 'destructive'}>
+                    <Badge
+                      variant={
+                        component.status === 'ok' ? 'default' : 'destructive'
+                      }
+                    >
                       {component.status}
                     </Badge>
                   </CardHeader>
-                  <CardContent className='text-muted-foreground text-sm'>
+                  <CardContent className='text-sm text-muted-foreground'>
                     {component.last_error ?? 'No recent errors.'}
                   </CardContent>
                 </Card>
@@ -73,7 +65,9 @@ export function SystemHealthPage() {
               </CardHeader>
               <CardContent>
                 {health.data.recent_system_events.length === 0 ? (
-                  <p className='text-muted-foreground'>No system events recorded yet.</p>
+                  <p className='text-muted-foreground'>
+                    No system events recorded yet.
+                  </p>
                 ) : (
                   <ul className='space-y-2'>
                     {health.data.recent_system_events.map((event, index) => (

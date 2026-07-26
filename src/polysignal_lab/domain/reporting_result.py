@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, math, typing
-Output: trade_result_status, trade_result_text, trade_result_float, parse_report_result_row, trade_result_details, InvalidReportResultRow, ReportResultRow
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -143,7 +133,12 @@ def parse_report_result_row(row: Mapping[str, Any]) -> ReportResultRow:
 
     status = trade_result_status(payload)
     match status:
-        case TradeResultStatus.WIN | TradeResultStatus.LOSS | TradeResultStatus.VOID | TradeResultStatus.SPLIT:
+        case (
+            TradeResultStatus.WIN
+            | TradeResultStatus.LOSS
+            | TradeResultStatus.VOID
+            | TradeResultStatus.SPLIT
+        ):
             payload["result"] = status.value
         case TradeResultStatus.UNKNOWN:
             raise InvalidReportResultRow("result", "unknown")
@@ -164,9 +159,13 @@ def parse_report_result_row(row: Mapping[str, Any]) -> ReportResultRow:
         raise InvalidReportResultRow("exit_mode", "unknown") from exc
 
     for key in ("entry_price", "shares", "stake_usdc"):
-        payload[key] = _finite_float(payload, key, allow_negative=False, allow_zero=False)
+        payload[key] = _finite_float(
+            payload, key, allow_negative=False, allow_zero=False
+        )
     for key in ("outcome_value", "settlement_value"):
-        payload[key] = _finite_float(payload, key, allow_negative=False, allow_zero=True)
+        payload[key] = _finite_float(
+            payload, key, allow_negative=False, allow_zero=True
+        )
     for key in ("pnl_usdc", "roi"):
         payload[key] = _finite_float(payload, key, allow_negative=True)
 

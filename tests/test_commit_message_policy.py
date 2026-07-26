@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, subprocess, sys, pathlib, pathlib.Path
-Output: test_accepts_project_conventional_commit_with_scope, test_rejects_missing_conventional_type, test_rejects_vague_subject, test_rejects_long_subject, test_allows_git_generated_merge_and_revert_messages, test_new_branch_range_starts_at_default_branch_merge_base
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import subprocess

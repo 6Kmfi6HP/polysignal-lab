@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.market_catalog.(
-Output: test_trading_state_is_rebuilt_from_cache_orders_positions_and_tags, test_trading_state_empty_when_cache_has_no_supported_query_surface, test_active_dedupe_guard_reads_cache_order_tags
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -161,10 +152,13 @@ def test_latest_accepted_entry_uses_order_acceptance_time() -> None:
         registry=_catalog(),
     )
 
-    assert state.latest_accepted_entry(
-        "late_consensus",
-        "market-1",
-    ) == state.orders[1]
+    assert (
+        state.latest_accepted_entry(
+            "late_consensus",
+            "market-1",
+        )
+        == state.orders[1]
+    )
 
 
 def test_trading_state_empty_when_cache_has_no_supported_query_surface() -> None:

@@ -1,20 +1,3 @@
-"""
-Input: pytest, factories, factories.sample_report_result, polysignal_lab.app.services.publish_service, polysignal_lab.app.services.publish_service.PublishService, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.domain.market, polysignal_lab.domain.market.Market, polysignal_lab.domain.market.OutcomeToken
-Output: test_publish_service_health_starts_ok, test_deliver_daily_report_uses_durable_idempotency_key, test_publish_signal_persists_publish_audit, test_publish_report_result_rejects_invalid_payload, test_publish_nautilus_fill_persists_publish_audit, test_publish_nautilus_fill_normalizes_projected_rows, _Publish, _Formatter, _Publisher, _Persistence
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
-
 import pytest
 
 from factories import sample_report_result
@@ -68,9 +51,6 @@ class _Publisher:
         return _Publish()
 
 
-
-
-
 class _Persistence:
     def __init__(self) -> None:
         self.logs = []
@@ -115,7 +95,9 @@ async def test_publish_signal_persists_publish_audit() -> None:
 
     assert publish.status == "dry_run"
     assert publisher.last == ("signal 5.0", "signal", "sig-1")
-    assert persistence.logs == [("telegram_publishes", {"publish_id": "pub-1", "status": "dry_run"})]
+    assert persistence.logs == [
+        ("telegram_publishes", {"publish_id": "pub-1", "status": "dry_run"})
+    ]
     assert persistence.publishes == [{"publish_id": "pub-1", "status": "dry_run"}]
 
 
@@ -148,7 +130,9 @@ async def test_publish_nautilus_fill_persists_publish_audit() -> None:
     assert publisher.last == ("fill 0.5", "nautilus_fill", "sig-fill-1")
     assert formatter.last_fill is not None
     assert formatter.last_fill["fill_price"] == 0.5
-    assert persistence.logs == [("telegram_publishes", {"publish_id": "pub-1", "status": "dry_run"})]
+    assert persistence.logs == [
+        ("telegram_publishes", {"publish_id": "pub-1", "status": "dry_run"})
+    ]
     assert persistence.publishes == [{"publish_id": "pub-1", "status": "dry_run"}]
 
 

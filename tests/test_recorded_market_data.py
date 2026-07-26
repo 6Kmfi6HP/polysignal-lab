@@ -1,11 +1,3 @@
-"""
-Input: pathlib, pytest, nautilus_trader, polysignal_lab.nautilus_runtime
-Output: Recorded market data round-trip and fail-open contract tests
-Pos: Test Layer - Unit/contract tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -156,7 +148,10 @@ def test_recorded_data_preserves_only_prior_market_context_for_oos(
         store.record(item)
     window = store.read(start_ns=20, include_prior_context=True)
 
-    assert [type(item) for item in window.data] == [PolySignalMarketMetaData, pyo3.QuoteTick]
+    assert [type(item) for item in window.data] == [
+        PolySignalMarketMetaData,
+        pyo3.QuoteTick,
+    ]
     assert [int(getattr(item, "ts_init")) for item in window.data] == [10, 20]
 
 

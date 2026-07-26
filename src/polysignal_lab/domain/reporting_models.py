@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, datetime, datetime.date, datetime.datetime, math, typing, typing.Any
-Output: account_float, report_float, report_text, report_date_text, report_nested_mapping, daily_report_row, ReportAccountSnapshotRow, DailyReportRow, ReportAccountSnapshot, DailyReport
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -85,7 +75,9 @@ def _row_value(row: Mapping[str, Any] | Any, key: str, default: Any = None) -> A
     return getattr(row, key, default)
 
 
-def account_float(row: Mapping[str, Any] | Any, key: str, default: float = 0.0) -> float:
+def account_float(
+    row: Mapping[str, Any] | Any, key: str, default: float = 0.0
+) -> float:
     value = _row_value(row, key, default)
     if isinstance(value, bool):
         return default

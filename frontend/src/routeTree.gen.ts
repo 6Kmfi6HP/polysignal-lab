@@ -1,12 +1,3 @@
-/**
- * Input: { Route as rootRouteImport } from './routes/__root', { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route', { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index', { Route as AuthenticatedSystemHealthRouteImport } from './routes/_authenticated/system-health', { Route as AuthenticatedStrategyStatusRouteImport } from './routes/_authenticated/strategy-status', { Route as AuthenticatedSignalsRouteImport } from './routes/_authenticated/signals', { Route as AuthenticatedReportingRouteImport } from './routes/_authenticated/reporting', { Route as AuthenticatedLeaderboardRouteImport } from './routes/_authenticated/leaderboard', { Route as errors503RouteImport } from './routes/(errors)/503', { Route as errors500RouteImport } from './routes/(errors)/500'
- * Output: routeTree
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
 /* eslint-disable */
 
 // @ts-nocheck

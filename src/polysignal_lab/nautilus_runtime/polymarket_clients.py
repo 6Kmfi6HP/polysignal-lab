@@ -1,11 +1,3 @@
-"""
-Input: collections.abc.Sequence, nautilus_trader.core.nautilus_pyo3.ClientId
-Output: polymarket_data_client_name, polymarket_data_client_id, polymarket_rtds_data_client_name, polymarket_rtds_data_client_id
-Pos: Nautilus runtime data-client routing
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

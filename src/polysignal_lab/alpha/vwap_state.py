@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, typing, typing.Mapping
-Output: encode_vwap_state, decode_vwap_state, restore_vwap_state_fields
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from typing import Mapping

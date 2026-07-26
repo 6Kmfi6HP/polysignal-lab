@@ -1,28 +1,12 @@
-/**
- * Input: { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', * as client from '@/lib/api/client', { makeRejectedSignal, makeSignal } from '@/test-utils/fixtures', { renderWithQueryClient } from '@/test-utils/render-with-query-client', { SidebarProvider } from '@/components/ui/sidebar', { within } from '@testing-library/react', userEvent from '@testing-library/user-event', { afterEach, describe, expect, it, vi } from 'vitest', { SignalsPage } from './index'
- * Output: renderSignalsPage
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
-import { SearchProvider } from '@/context/search-provider'
-import { ThemeProvider } from '@/context/theme-provider'
-import * as client from '@/lib/api/client'
 import { makeRejectedSignal, makeSignal } from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
-import { SidebarProvider } from '@/components/ui/sidebar'
 import { within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as client from '@/lib/api/client'
+import { SearchProvider } from '@/context/search-provider'
+import { ThemeProvider } from '@/context/theme-provider'
+import { SidebarProvider } from '@/components/ui/sidebar'
 import { SignalsPage } from './index'
 
 function renderSignalsPage() {
@@ -129,6 +113,8 @@ describe('SignalsPage', () => {
 
     await user.click(view.getByRole('tab', { name: 'Rejected' }))
 
-    expect(await view.findByText('No rejected signals yet.')).toBeInTheDocument()
+    expect(
+      await view.findByText('No rejected signals yet.')
+    ).toBeInTheDocument()
   })
 })

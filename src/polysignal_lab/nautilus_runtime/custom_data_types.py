@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Mapping, json, dataclasses, dataclasses.field, types, types.MappingProxyType
-Output: is_polymarket_rtds_crypto_price, polymarket_rtds_crypto_price_type, polymarket_rtds_crypto_price_data_type, polymarket_rtds_crypto_symbols, custom_data_type, polymarket_rtds_spot_identity, wrap_custom_data, unwrap_custom_data, register_custom_data_type, PolymarketRtdsCryptoPriceData, _FrozenData, PolySignalPriceToBeatData
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
@@ -25,6 +15,7 @@ _register_custom_data_class = cast(
     Callable[[type[object]], None],
     getattr(nautilus_pyo3, "register_custom_data_class"),
 )
+
 
 def _arrow_record(data: object) -> dict[str, object]:
     values = data.to_dict()
@@ -85,7 +76,6 @@ def is_polymarket_rtds_crypto_price(
 
 def polymarket_rtds_crypto_price_type() -> type[object]:
     return _POLYMARKET_RTDS_CRYPTO_PRICE_TYPE
-
 
 
 # Frozen mixin -- provides __setattr__-based immutability.
@@ -234,13 +224,33 @@ class PolySignalMarketUniverseData(Data, _FrozenData):
     decode_record_batch_py = classmethod(_decode_record_batch_py)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "active_condition_ids", tuple(self.active_condition_ids))
-        object.__setattr__(self, "entered_condition_ids", tuple(self.entered_condition_ids))
-        object.__setattr__(self, "exited_condition_ids", tuple(self.exited_condition_ids))
-        object.__setattr__(self, "condition_to_up_token", MappingProxyType(dict(self.condition_to_up_token)))
-        object.__setattr__(self, "condition_to_down_token", MappingProxyType(dict(self.condition_to_down_token)))
-        object.__setattr__(self, "condition_to_asset", MappingProxyType(dict(self.condition_to_asset)))
-        object.__setattr__(self, "condition_to_timeframe", MappingProxyType(dict(self.condition_to_timeframe)))
+        object.__setattr__(
+            self, "active_condition_ids", tuple(self.active_condition_ids)
+        )
+        object.__setattr__(
+            self, "entered_condition_ids", tuple(self.entered_condition_ids)
+        )
+        object.__setattr__(
+            self, "exited_condition_ids", tuple(self.exited_condition_ids)
+        )
+        object.__setattr__(
+            self,
+            "condition_to_up_token",
+            MappingProxyType(dict(self.condition_to_up_token)),
+        )
+        object.__setattr__(
+            self,
+            "condition_to_down_token",
+            MappingProxyType(dict(self.condition_to_down_token)),
+        )
+        object.__setattr__(
+            self, "condition_to_asset", MappingProxyType(dict(self.condition_to_asset))
+        )
+        object.__setattr__(
+            self,
+            "condition_to_timeframe",
+            MappingProxyType(dict(self.condition_to_timeframe)),
+        )
         object.__setattr__(self, "_frozen", True)
 
     def to_dict(self) -> dict[str, object]:

@@ -1,27 +1,15 @@
-"""
-Input: __future__, __future__.annotations, collections, collections.deque, typing, typing.TYPE_CHECKING, polysignal_lab.alpha.stats, polysignal_lab.alpha.stats._RollingPriceStats, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.BinaryMomentumConfig
-Output: BinaryMomentumAlphaCore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from collections import deque
 from typing import TYPE_CHECKING
 
 from polysignal_lab.alpha.stats import _RollingPriceStats
-from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec, SideBookView
+from polysignal_lab.alpha.types import (
+    AlphaDecision,
+    MarketView,
+    OrderIntentSpec,
+    SideBookView,
+)
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.strategy_config import BinaryMomentumConfig
 
@@ -129,8 +117,13 @@ class BinaryMomentumAlphaCore:
 
         for direction_side in (Side.UP, Side.DOWN):
             decision = self._evaluate_direction(
-                view, direction_side, macd_line, signal, histogram,
-                rsi_val, already_in,
+                view,
+                direction_side,
+                macd_line,
+                signal,
+                histogram,
+                rsi_val,
+                already_in,
             )
             if decision is not None:
                 decisions.append(decision)
@@ -202,9 +195,7 @@ class BinaryMomentumAlphaCore:
 
         rsi_mid = abs(rsi_val - 50.0) / 50.0
         macd_strength = (
-            abs(histogram) / (abs(macd_line) + 1e-10)
-            if abs(macd_line) > 1e-10
-            else 0.5
+            abs(histogram) / (abs(macd_line) + 1e-10) if abs(macd_line) > 1e-10 else 0.5
         )
         macd_strength = min(1.0, macd_strength)
         confidence = 0.50 + 0.20 * rsi_mid + 0.10 * macd_strength
@@ -220,8 +211,12 @@ class BinaryMomentumAlphaCore:
             token_id=book.token_id,
             side=direction_side,
             confidence=confidence,
-            entry_reference_price=book.best_ask if book.best_ask is not None else (mid * 1.05),
-            max_entry_price=book.best_ask if book.best_ask is not None else (mid * 1.05),
+            entry_reference_price=book.best_ask
+            if book.best_ask is not None
+            else (mid * 1.05),
+            max_entry_price=book.best_ask
+            if book.best_ask is not None
+            else (mid * 1.05),
             seconds_to_close=view.seconds_to_close,
             data_freshness_ms=view.freshness.max_ms,
             reason_codes=(

@@ -1,19 +1,3 @@
-/**
- * Input: { AxiosError } from 'axios', { beforeEach, describe, expect, it, vi } from 'vitest', { handleServerError } from './handle-server-error', axios, vitest, ./handle-server-error
- * Output: None
- * Pos: Library - Shared code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { AxiosError } from 'axios'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { handleServerError } from './handle-server-error'

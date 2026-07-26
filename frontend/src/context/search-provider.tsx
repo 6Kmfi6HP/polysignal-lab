@@ -1,19 +1,3 @@
-/**
- * Input: { createContext, useContext, useEffect, useState } from 'react', { CommandMenu } from '@/components/command-menu', react, @/components/command-menu
- * Output: SearchProvider, useSearch
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { createContext, useContext, useEffect, useState } from 'react'
 import { CommandMenu } from '@/components/command-menu'
 

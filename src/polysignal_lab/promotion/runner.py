@@ -1,11 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, typing, typing.Any, typing.cast, nautilus_trader.adapters.polymarket, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.nautilus_runtime.backtest_node, polysignal_lab.nautilus_runtime.custom_data_types, polysignal_lab.nautilus_runtime.projections, polysignal_lab.nautilus_runtime.recorded_market_data, polysignal_lab.promotion.report, polysignal_lab.utils
-Output: run_promotion, PromotionRequest, collect_segment_stats
-Pos: Application code — single promotion entry function (highest test seam)
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -215,7 +207,9 @@ def _replay_segment(
     instruments: tuple[object, ...],
     data: tuple[object, ...],
 ) -> tuple[Any, tuple[object, ...]]:
-    engine = cast(Any, build_backtest_engine(settings, instruments=instruments, data=data))
+    engine = cast(
+        Any, build_backtest_engine(settings, instruments=instruments, data=data)
+    )
     try:
         engine.run()
         return engine, tuple(engine.cache.positions())
@@ -280,7 +274,9 @@ def _validated_report_path(path: Path) -> Path:
         raise ValueError("Promotion Report must be written under reports/promotion")
     root = _repository_root() / _REPORT_ROOT
     if root.exists() and root.is_symlink():
-        raise ValueError("Promotion report directory must be a real in-repository directory")
+        raise ValueError(
+            "Promotion report directory must be a real in-repository directory"
+        )
     candidate_raw = _repository_root() / path
     if candidate_raw.exists() and candidate_raw.is_symlink():
         raise ValueError("Promotion report target must not be a symlink")
@@ -288,7 +284,9 @@ def _validated_report_path(path: Path) -> Path:
     try:
         candidate.relative_to(root.resolve())
     except ValueError as exc:
-        raise ValueError("Promotion Report must be written under reports/promotion") from exc
+        raise ValueError(
+            "Promotion Report must be written under reports/promotion"
+        ) from exc
     root.mkdir(parents=True, exist_ok=True)
     return candidate
 
@@ -318,9 +316,14 @@ def run_promotion(request: PromotionRequest, settings: Settings) -> PromotionRep
             label="IS (70%)",
             start_ns=full.start_ns,
             end_ns=split_ns,
-            instrument_combinations={instrument_id: (condition, combo) for instrument_id, (condition, combo) in context.items()},
+            instrument_combinations={
+                instrument_id: (condition, combo)
+                for instrument_id, (condition, combo) in context.items()
+            },
             known_combinations=known_combinations,
-            settlement_rounds=_settlement_rounds(is_window.data, context, known_combinations),
+            settlement_rounds=_settlement_rounds(
+                is_window.data, context, known_combinations
+            ),
         )
         oos_stats = collect_segment_stats(
             promotion_settings,
@@ -329,11 +332,31 @@ def run_promotion(request: PromotionRequest, settings: Settings) -> PromotionRep
             label="OOS (30%)",
             start_ns=split_ns,
             end_ns=full.end_ns,
-            instrument_combinations={instrument_id: (condition, combo) for instrument_id, (condition, combo) in context.items()},
+            instrument_combinations={
+                instrument_id: (condition, combo)
+                for instrument_id, (condition, combo) in context.items()
+            },
             known_combinations=known_combinations,
-            settlement_rounds=_settlement_rounds(oos_window.data, context, known_combinations),
+            settlement_rounds=_settlement_rounds(
+                oos_window.data, context, known_combinations
+            ),
         )
-    report = PromotionReport(request.strategy_name, request.dataset_dir, full.start_ns, full.end_ns, full.markets, split_ns, is_stats, oos_stats, request.is_floor, request.oos_floor, evaluate_verdict(is_stats, oos_stats, is_floor=request.is_floor, oos_floor=request.oos_floor), utc_iso())
+    report = PromotionReport(
+        request.strategy_name,
+        request.dataset_dir,
+        full.start_ns,
+        full.end_ns,
+        full.markets,
+        split_ns,
+        is_stats,
+        oos_stats,
+        request.is_floor,
+        request.oos_floor,
+        evaluate_verdict(
+            is_stats, oos_stats, is_floor=request.is_floor, oos_floor=request.oos_floor
+        ),
+        utc_iso(),
+    )
     report_path.parent.mkdir(parents=True, exist_ok=True)
     _ = report_path.write_text(render_promotion_markdown(report), encoding="utf-8")
     return report

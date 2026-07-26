@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, typing, typing.Protocol, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.domain.enums
-Output: should_notify_fill, handle_order_lifecycle_event, handle_order_filled, handle_position_event, handle_position_closed, _OrderEventStrategy
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -51,15 +41,16 @@ class _OrderEventStrategy(Protocol):
     def _handle_decision(self, decision: AlphaDecision, view: MarketView) -> None: ...
 
 
-def should_notify_fill(strategy: _OrderEventStrategy, metrics: Mapping[str, object]) -> bool:
+def should_notify_fill(
+    strategy: _OrderEventStrategy, metrics: Mapping[str, object]
+) -> bool:
     if str(metrics.get("strategy") or strategy.strategy_name) != "vwap_momentum":
         return True
     intent = metrics.get("order_intent")
     if isinstance(intent, OrderIntent):
         intent = intent.value
     return not (
-        bool(metrics.get("hedge_leg"))
-        or intent == OrderIntent.PASSIVE_GTD.value
+        bool(metrics.get("hedge_leg")) or intent == OrderIntent.PASSIVE_GTD.value
     )
 
 

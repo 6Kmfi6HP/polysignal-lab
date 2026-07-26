@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, math, typing, typing.Any, typing.assert_never, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus
-Output: calibration_breakdown, optional_float, average, confidence_bucket, is_closed_result
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping

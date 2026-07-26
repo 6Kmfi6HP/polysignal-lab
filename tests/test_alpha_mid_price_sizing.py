@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, polysignal_lab.alpha.mid_price_sizing_core, polysignal_lab.alpha.mid_price_sizing_core.MidPriceSizingAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.config
-Output: test_mid_price_exit_bypasses_entry_regime_and_uses_exit_confidence, test_mid_price_entry_and_addition_export_configured_notional_contracts, test_mid_price_without_cache_position_has_no_shadow_state
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -22,7 +13,9 @@ from polysignal_lab.config import Settings
 from alpha_helpers import with_open_position
 
 
-def _view(*, up_ask: float, up_bid: float, down_ask: float = 0.45, down_bid: float = 0.44) -> MarketView:
+def _view(
+    *, up_ask: float, up_bid: float, down_ask: float = 0.45, down_bid: float = 0.44
+) -> MarketView:
     now = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
     up = SideBookView(
         token_id="token-up",
@@ -84,7 +77,9 @@ def test_mid_price_exit_bypasses_entry_regime_and_uses_exit_confidence() -> None
 
 
 def test_mid_price_entry_and_addition_export_configured_notional_contracts() -> None:
-    config = Settings().strategies.mid_price_sizing.model_copy(update={"adverse_step": 0.04})
+    config = Settings().strategies.mid_price_sizing.model_copy(
+        update={"adverse_step": 0.04}
+    )
     core = MidPriceSizingAlphaCore(config)
 
     entry = core.evaluate(_view(up_ask=0.45, up_bid=0.44))[0]

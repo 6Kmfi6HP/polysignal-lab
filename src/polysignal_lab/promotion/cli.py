@@ -1,11 +1,3 @@
-"""
-Input: __future__, __future__.annotations, argparse, collections.abc, pathlib, polysignal_lab.config
-Output: PromotionCliOptions, build_parser, parse_cli, main
-Pos: Application code — thin promotion CLI shell
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from __future__ import annotations
 
 import argparse

@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, typing, typing.Protocol, polysignal_lab.alpha.types
-Output: event_datetime, PriceToBeatView, CustomDataApplyResult, CustomDataSnapshotProvider, StrategyCustomDataState
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -42,7 +26,9 @@ def event_datetime(value: object) -> datetime:
     try:
         return datetime.fromtimestamp(value / 1_000_000_000, UTC)
     except (OverflowError, OSError, ValueError) as exc:
-        raise ValueError("ts_event must be a positive Unix nanosecond timestamp") from exc
+        raise ValueError(
+            "ts_event must be a positive Unix nanosecond timestamp"
+        ) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,9 +72,7 @@ class StrategyCustomDataState:
                 source="polymarket_rtds",
                 freshness_ms=0,
                 received_at=(
-                    event_datetime(data.ts_init)
-                    if data.ts_init > 0
-                    else None
+                    event_datetime(data.ts_init) if data.ts_init > 0 else None
                 ),
             )
             self._spots[spot.asset.upper()] = spot

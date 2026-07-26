@@ -1,11 +1,3 @@
-"""
-Input: json, logging, pathlib, queue, threading, nautilus_trader, polysignal_lab.config
-Output: RecordedMarketDataStore, RecordedMarketDataSet, RecordedMarketDataActor
-Pos: Nautilus runtime recording boundary
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from __future__ import annotations
 
 import json
@@ -68,7 +60,6 @@ class RecordedMarketDataStore:
     Not a `ParquetDataCatalog`: the recorded stream must carry pyo3
     `InstrumentClose` and `PolymarketRtdsCryptoPrice`, and neither has an arrow
     serializer registered (the registry holds the Cython `InstrumentClose`).
-    See the data-catalog row in `docs/NAUTILUS_CAPABILITY_MATRIX.md`.
     """
 
     def __init__(self, directory: str | Path) -> None:
@@ -130,7 +121,9 @@ class RecordedMarketDataStore:
             try:
                 self._queue.put_nowait(None)
             except Full:
-                logger.error("recorded market data shutdown queue full; abandoning writer")
+                logger.error(
+                    "recorded market data shutdown queue full; abandoning writer"
+                )
                 return
             self._writer = None
         writer.join(timeout=1.0)
@@ -213,7 +206,9 @@ def _encode_record(data: object) -> dict[str, object] | None:
         else json.loads(cast(str, getattr(payload, "to_json")()))
     )
     return {
-        "kind": "instrument" if isinstance(payload, nautilus_pyo3.BinaryOption) else "data",
+        "kind": "instrument"
+        if isinstance(payload, nautilus_pyo3.BinaryOption)
+        else "data",
         "type": type(payload).__name__,
         "payload": values,
     }
@@ -244,7 +239,11 @@ def _market_ids(item: object) -> tuple[str, ...]:
     if isinstance(item, PolySignalMarketUniverseData):
         return tuple(
             dict.fromkeys(
-                (*item.active_condition_ids, *item.entered_condition_ids, *item.exited_condition_ids)
+                (
+                    *item.active_condition_ids,
+                    *item.entered_condition_ids,
+                    *item.exited_condition_ids,
+                )
             )
         )
     instrument_id = getattr(item, "instrument_id", getattr(item, "id", None))
@@ -310,7 +309,9 @@ class RecordedMarketDataActor(nautilus_pyo3.DataActor):
         super().__init__(actor_config)
         self.settings = Settings.model_validate_json(config.settings_json)
         self.store = RecordedMarketDataStore(config.directory)
-        self._instrument_markets = PolymarketInstrumentMarketBuilder(self.settings.markets)
+        self._instrument_markets = PolymarketInstrumentMarketBuilder(
+            self.settings.markets
+        )
 
     def on_start(self) -> None:
         self.store.start()

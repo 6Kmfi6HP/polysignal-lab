@@ -1,19 +1,3 @@
-/**
- * Input: { useMemo, useState } from 'react', type {, react, @tanstack/react-table
- * Output: useTableUrlState
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { useMemo, useState } from 'react'
 import type {
   ColumnFiltersState,

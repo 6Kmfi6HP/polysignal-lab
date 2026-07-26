@@ -1,19 +1,3 @@
-/**
- * Input: { describe, expect, it } from 'vitest', { getPageNumbers } from './utils', vitest, ./utils
- * Output: None
- * Pos: Library - Shared code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { describe, expect, it } from 'vitest'
 import { getPageNumbers } from './utils'
 
