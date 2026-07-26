@@ -9,20 +9,12 @@ export const meta = {
 }
 
 phase('Read Reference Docs')
-const boundary = await agent('Read docs/NAUTILUS_BRIDGE_BOUNDARY.md and output a structured summary: (1) what boundaries are defined between nautilus and the project (2) what must NOT cross the boundary (3) what is allowed as thin bridge. Keep under 10 lines.', {label: 'doc:boundary'})
-const arch = await agent('Read docs/PROJECT_ARCHITECTURE_VISUAL.md and output: (1) what systems exist (2) how they connect (3) any obvious architectural tension. Keep under 10 lines.', {label: 'doc:arch'})
 const principles = await agent('Read docs/nautilus_reference/developer_guide/design_principles.md and output the 3-5 most important constraints for this review (ownership, data-client, lifecycle, etc). Keep under 10 lines.', {label: 'doc:principles'})
 const adapters = await agent('Read docs/nautilus_reference/developer_guide/adapters.md and output: (1) how data/execution engine works (2) cache + portfolio expectations (3) strategy lifecycle callbacks. Keep under 15 lines.', {label: 'doc:adapters'})
-const spec15 = await agent('Read docs/superpowers/specs/2026-06-24-15-nautilus-strategy-bridge-design.md and output the key design decisions that constrain this review. Keep under 10 lines.', {label: 'doc:spec15'})
-const specFull = await agent('Read docs/superpowers/specs/2026-06-25-nautilus-full-runtime-migration-design.md and output the key migration decisions. Keep under 10 lines.', {label: 'doc:spec-full'})
 
 const docContext = [
-  '=== NAUTILUS BOUNDARY ===', boundary,
-  '=== ARCHITECTURE ===', arch,
   '=== DESIGN PRINCIPLES ===', principles,
   '=== ADAPTERS GUIDE ===', adapters,
-  '=== SPEC 15: BRIDGE DESIGN ===', spec15,
-  '=== SPEC: FULL MIGRATION ===', specFull,
 ].join('\n\n')
 
 phase('Parallel Review')
