@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, datetime.timezone, datetime.tzinfo, types, types.SimpleNamespace
-Output: test_project_order_event_converts_nautilus_nanoseconds_to_utc, test_project_order_event_normalizes_malformed_timezone_error, test_project_order_event_normalizes_runtime_timezone_error, test_project_order_event_rejects_invalid_event_time, test_project_order_event_rejects_missing_event_time, test_project_order_event_normalizes_timezone_aware_test_double, test_fill_records_metrics_from_tags_without_core_follow_up, test_project_order_event_uses_nautilus_event_fields, test_project_fill_event_uses_nautilus_fill_fields, test_project_fill_event_accepts_nautilus_price_quantity_objects
+Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, datetime.timezone, datetime.tzinfo, types, types.SimpleNamespace, nautilus_optional, nautilus_optional.require_nautilus, nautilus_trader.test_kit.rust.events_pyo3
+Output: test_project_order_event_converts_nautilus_nanoseconds_to_utc, test_project_order_event_normalizes_malformed_timezone_error, test_project_order_event_normalizes_runtime_timezone_error, test_project_order_event_rejects_invalid_event_time, test_project_order_event_rejects_missing_event_time, test_project_order_event_normalizes_timezone_aware_test_double, test_fill_records_metrics_from_tags_without_core_follow_up, test_project_order_event_uses_nautilus_event_fields, test_project_fill_event_uses_nautilus_fill_fields, test_project_fill_event_accepts_nautilus_price_quantity_objects, test_project_portfolio_snapshot_without_account_reports_no_equity
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from nautilus_optional import require_nautilus
 from polysignal_lab.nautilus_runtime.strategy import event_projection
 from polysignal_lab.nautilus_runtime.projections import (
     project_fill_event,
@@ -448,28 +449,29 @@ class _MoneyLike:
 
 
 def test_project_order_event_uses_nautilus_event_fields() -> None:
-    event = SimpleNamespace(
-        client_order_id="C-001",
-        instrument_id="up-token.POLYMARKET",
-        order_side="BUY",
-        order_type="LIMIT",
-        time_in_force="IOC",
-        quantity=20.0,
-        price=0.50,
-        tags=["strategy=ptb_diff", "condition_id=condition-btc-5m", "signal_id=sig-001"],
+    """`OrderUpdated` is the one order event carrying its own economics, so its
+    quantity/price win; business metadata still arrives via metrics."""
+    require_nautilus()
+    from nautilus_trader.test_kit.rust.events_pyo3 import TestEventsProviderPyo3
+
+    event = TestEventsProviderPyo3.order_updated()
+
+    row = project_order_event(
+        event,
+        metrics={
+            "strategy": "ptb_diff",
+            "condition_id": "condition-btc-5m",
+            "signal_id": "sig-001",
+        },
     )
 
-    row = project_order_event(event)
-
-    assert row["report_order_id"] == "C-001"
-    assert row["client_order_id"] == "C-001"
-    assert row["instrument_id"] == "up-token.POLYMARKET"
-    assert row["side"] == "BUY"
-    assert row["order_type"] == "LIMIT"
-    assert row["time_in_force"] == "IOC"
+    assert row["report_order_id"] == str(event.client_order_id)
+    assert row["client_order_id"] == str(event.client_order_id)
+    assert row["instrument_id"] == str(event.instrument_id)
+    assert row["status"] == "UPDATED"
     assert row["order_intent"] == "default"
-    assert row["quantity"] == 20.0
-    assert row["price"] == 0.50
+    assert row["quantity"] == 1.5
+    assert row["price"] == 1500.0
     assert row["strategy"] == "ptb_diff"
     assert row["condition_id"] == "condition-btc-5m"
     assert row["signal_id"] == "sig-001"
@@ -607,3 +609,22 @@ def test_project_portfolio_snapshot_sums_currency_equity_mapping() -> None:
     row = project_portfolio_snapshot(Portfolio(), account=account)
 
     assert row["equity"] == 103.75
+
+
+def test_project_portfolio_snapshot_without_account_reports_no_equity() -> None:
+    """`Portfolio.equity(venue=None, account_id=None)` needs an account to scope
+    the total; with none available we report nothing rather than guess."""
+
+    class Portfolio:
+        id: str = "portfolio-001"
+
+        def equity(
+            self, venue: object = None, account_id: object = None
+        ) -> dict[str, _MoneyLike]:
+            _ = venue, account_id
+            raise AssertionError("must not ask for a venue-wide equity total")
+
+    row = project_portfolio_snapshot(Portfolio(), account=None, currency="USDC")
+
+    assert row["portfolio_id"] == "portfolio-001"
+    assert row["equity"] is None

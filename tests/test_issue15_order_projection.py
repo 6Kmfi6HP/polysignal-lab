@@ -1,6 +1,6 @@
 """
-Input: __future__, __future__.annotations, json, pathlib, pathlib.Path, types, types.SimpleNamespace, nautilus_optional, nautilus_optional.require_nautilus, polysignal_lab.nautilus_runtime.projections
-Output: test_project_order_event_derives_status_from_event_type, test_event_store_adapter_uses_explicit_id_and_safe_lifecycle_fallback, test_real_nautilus_order_lifecycle_uses_unique_durable_event_ids, test_upsert_order_and_fill_projection_stays_valid, test_normalize_report_order_uses_metrics_side_and_contracts, test_partial_fill_does_not_mark_report_order_filled, OrderSubmitted
+Input: __future__, __future__.annotations, json, pathlib, pathlib.Path, types, types.SimpleNamespace, nautilus_optional, nautilus_optional.require_nautilus, nautilus_trader.test_kit.rust.events_pyo3, polysignal_lab.nautilus_runtime.projections
+Output: test_project_order_event_reads_event_facts_and_metrics, test_event_store_adapter_uses_explicit_id_and_safe_lifecycle_fallback, test_real_nautilus_order_lifecycle_uses_unique_durable_event_ids, test_upsert_order_and_fill_projection_stays_valid, test_normalize_report_order_uses_metrics_side_and_contracts, test_partial_fill_does_not_mark_report_order_filled
 Pos: Test Layer - Unit/Integration tests
 
 🔄 Self-reference: When this file changes, update this header
@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 from nautilus_optional import require_nautilus
 from polysignal_lab.nautilus_runtime.projections import (
@@ -22,37 +23,43 @@ from polysignal_lab.storage.event_projection import normalize_report_order
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 
 
-class OrderSubmitted:
-    def __init__(self) -> None:
-        self.client_order_id = "O-test-1"
-        self.instrument_id = "token-up.POLYMARKET"
-        self.order_side = "BUY"
-        self.order_type = "LIMIT"
-        self.time_in_force = "GTC"
-        self.quantity = 12.0
-        self.price = 0.55
-        self.tags = (
-            "signal_id=sig_test",
-            "strategy=late_consensus",
-            "market_id=1",
-            "condition_id=cond-1",
-        )
-        self.ts_event = 1_784_000_000_000_000_000
+if TYPE_CHECKING:
+    from nautilus_trader.core.nautilus_pyo3 import OrderSubmitted
 
 
-def test_project_order_event_derives_status_from_event_type() -> None:
+def _submitted_event() -> OrderSubmitted:
+    """A real pyo3 OrderSubmitted — the type the runtime Strategy actually receives."""
+    require_nautilus()
+    from nautilus_trader.test_kit.rust.events_pyo3 import TestEventsProviderPyo3
+
+    return TestEventsProviderPyo3.order_submitted()
+
+
+def test_project_order_event_reads_event_facts_and_metrics() -> None:
+    event = _submitted_event()
     metrics = {
         "signal_id": "sig_test",
         "strategy": "late_consensus",
         "market_id": "1",
+        "condition_id": "cond-1",
         "side": "UP",
-        "contracts": 12,
+        "contracts": 12.0,
+        "level_price": 0.55,
     }
-    row = project_order_event(OrderSubmitted(), metrics=metrics)
+    row = project_order_event(event, metrics=metrics)
+    # Event facts come from the event itself.
     assert row["status"] == "SUBMITTED"
+    assert row["event_id"] == str(event.event_id)
+    assert row["client_order_id"] == str(event.client_order_id)
+    assert row["instrument_id"] == str(event.instrument_id)
+    # Business metadata and order economics come from metrics: a submitted
+    # event carries no tags, price, or quantity.
+    assert row["signal_id"] == "sig_test"
+    assert row["strategy"] == "late_consensus"
+    assert row["condition_id"] == "cond-1"
+    assert row["market_id"] == "1"
     assert row["price"] == 0.55
     assert row["quantity"] == 12.0
-    assert row["signal_id"] == "sig_test"
 
 
 def test_event_store_adapter_uses_explicit_id_and_safe_lifecycle_fallback(
@@ -265,10 +272,12 @@ def test_upsert_order_and_fill_projection_stays_valid(tmp_path: Path) -> None:
             "up_ask": 0.55,
             "token_id": "token-up",
         }
-        order_event = project_order_event(OrderSubmitted(), metrics=metrics)
+        event = _submitted_event()
+        order_id = str(event.client_order_id)
+        order_event = project_order_event(event, metrics=metrics)
         store.insert_system_event(
             {
-                "event_id": "nautilus_order:O-test-1:1",
+                "event_id": f"nautilus_order:{order_id}:1",
                 "event_type": "nautilus_order",
                 "severity": "info",
                 "created_at": "2026-07-14T07:00:00Z",
@@ -281,8 +290,8 @@ def test_upsert_order_and_fill_projection_stays_valid(tmp_path: Path) -> None:
                 "event_type": "nautilus_fill",
                 "severity": "info",
                 "created_at": "2026-07-14T07:00:01Z",
-                "client_order_id": "O-test-1",
-                "report_order_id": "O-test-1",
+                "client_order_id": order_id,
+                "report_order_id": order_id,
                 "trade_id": "T-1",
                 "price": 0.55,
                 "quantity": 12.0,
@@ -294,12 +303,12 @@ def test_upsert_order_and_fill_projection_stays_valid(tmp_path: Path) -> None:
         # Incomplete later order lifecycle event must not wipe known fields.
         store.insert_system_event(
             {
-                "event_id": "nautilus_order:O-test-1:2",
+                "event_id": f"nautilus_order:{order_id}:2",
                 "event_type": "nautilus_order",
                 "severity": "info",
                 "created_at": "2026-07-14T07:00:02Z",
-                "client_order_id": "O-test-1",
-                "report_order_id": "O-test-1",
+                "client_order_id": order_id,
+                "report_order_id": order_id,
                 "status": "",
                 "price": 0.0,
                 "quantity": 0.0,
@@ -312,7 +321,7 @@ def test_upsert_order_and_fill_projection_stays_valid(tmp_path: Path) -> None:
         )
         row = store._conn.execute(
             "SELECT status,payload_json FROM report_orders WHERE report_order_id=?",
-            ("O-test-1",),
+            (order_id,),
         ).fetchone()
         assert row is not None
         payload = json.loads(row["payload_json"])

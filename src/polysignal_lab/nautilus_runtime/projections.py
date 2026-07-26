@@ -28,14 +28,16 @@ def project_order_event(
     *,
     metrics: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    tags = _tags(getattr(event, "tags", None))
+    """Project a Nautilus order lifecycle event into a reporting row.
+
+    Order events carry no `tags`, `price`, or `quantity` — those belong to the
+    `Order` and reach us already resolved in `metrics` (see
+    `strategy/event_projection.py:project_order_metrics`). Only read event-owned
+    facts from `event`.
+    """
     merged_metrics = _metrics(event)
     if metrics is not None:
         merged_metrics.update(dict(metrics))
-    signal_id = tags.get("signal_id", str(merged_metrics.get("signal_id") or ""))
-    order_intent = tags.get("order_intent", str(merged_metrics.get("order_intent") or ""))
-    if order_intent:
-        merged_metrics.setdefault("order_intent", order_intent)
     client_order_id = _text_attr(event, "client_order_id")
     return {
         "event_id": _text_attr(event, "event_id") or _text_attr(event, "id"),
@@ -45,15 +47,19 @@ def project_order_event(
         "side": _text_attr(event, "order_side") or _text_attr(event, "side"),
         "order_type": _text_attr(event, "order_type"),
         "time_in_force": _text_attr(event, "time_in_force"),
-        "order_intent": order_intent or "default",
-        "quantity": _float_attr(event, "quantity"),
-        "price": _float_attr(event, "price"),
+        "order_intent": _metric_text(merged_metrics, "order_intent") or "default",
+        # Only `OrderUpdated` carries its own economics, and there they are the
+        # authoritative new values; every other event falls back to metrics.
+        "quantity": _float_attr(event, "quantity")
+        or _metric_float(merged_metrics, "contracts", "shares", "quantity"),
+        "price": _float_attr(event, "price")
+        or _metric_float(merged_metrics, "level_price", "price"),
         "status": _order_status(event),
         "reject_reason": _text_attr(event, "reason"),
-        "strategy": tags.get("strategy", ""),
-        "condition_id": tags.get("condition_id", ""),
-        "market_id": tags.get("market_id", ""),
-        "signal_id": signal_id,
+        "strategy": _metric_text(merged_metrics, "strategy"),
+        "condition_id": _metric_text(merged_metrics, "condition_id"),
+        "market_id": _metric_text(merged_metrics, "market_id"),
+        "signal_id": _metric_text(merged_metrics, "signal_id"),
         "metrics": merged_metrics,
         "ts": _timestamp_text(event, "ts_event", "timestamp"),
     }
@@ -178,6 +184,13 @@ def _portfolio_equity(
     *,
     currency: str | None = None,
 ) -> float | None:
+    """Read equity from either portfolio shape.
+
+    Nautilus `Portfolio.equity(venue=None, account_id=None) -> dict` must be
+    scoped by account, so without one we report nothing rather than guess a
+    venue-wide total. Project-side portfolio wrappers expose a no-arg `equity()`
+    that needs no scoping. The signature tells the two apart.
+    """
     equity = getattr(portfolio, "equity", None)
     if callable(equity):
         account_id = getattr(account, "id", None)
@@ -302,17 +315,25 @@ def _metrics(source: object) -> dict[str, object]:
     return {}
 
 
+def _metric_text(metrics: Mapping[str, object], key: str) -> str:
+    value = metrics.get(key)
+    return "" if value is None else str(value)
+
+
+def _metric_float(metrics: Mapping[str, object], *keys: str) -> float:
+    """First non-zero metric value; 0.0 means the economics never arrived."""
+    for key in keys:
+        parsed = _to_float_or_none(metrics.get(key))
+        if parsed:
+            return parsed
+    return 0.0
+
+
 def _order_status(event: object) -> str:
-    status: object = getattr(event, "status", None)
-    if status is not None and status != "":
-        name: object = getattr(status, "name", None)
-        value = name if name not in (None, "") else status
-        text = str(value)
-        if text:
-            return text
-    event_type_name = getattr(event, "event_type_name", None)
-    if isinstance(event_type_name, str) and event_type_name.startswith("Order"):
-        return event_type_name.removeprefix("Order").upper()
+    """Order events name their own status: `OrderSubmitted` → `SUBMITTED`.
+
+    Neither the pyo3 nor the Cython event classes expose a `status` attribute.
+    """
     event_name = type(event).__name__
     if event_name.startswith("Order"):
         return event_name.removeprefix("Order").upper()

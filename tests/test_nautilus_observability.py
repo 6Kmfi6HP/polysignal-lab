@@ -26,6 +26,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from nautilus_optional import require_nautilus
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.domain.enums import Side
@@ -610,20 +611,18 @@ def test_record_nautilus_projection_events_write_projected_rows() -> None:
     store = FakeStore()
     actor = ObservabilityService(store=store)
 
+    require_nautilus()
+    from nautilus_trader.test_kit.rust.events_pyo3 import TestEventsProviderPyo3
+
+    # A real order event: it names its own status and carries no tags/economics.
+    accepted = TestEventsProviderPyo3.order_accepted()
     actor.record_nautilus_order_event(
-        SimpleNamespace(
-            client_order_id="C-001",
-            instrument_id="up-token.POLYMARKET",
-            order_side="BUY",
-            order_type="LIMIT",
-            time_in_force="GTD",
-            quantity=10.0,
-            price=0.01,
-            status="ACCEPTED",
-            metrics={"level_price": 0.01},
-            tags=["strategy=one_cent_buy", "condition_id=condition-btc-5m"],
-            ts_event=datetime(2026, 6, 27, tzinfo=UTC),
-        )
+        accepted,
+        {
+            "level_price": 0.01,
+            "strategy": "one_cent_buy",
+            "condition_id": "condition-btc-5m",
+        },
     )
     actor.record_nautilus_fill_event(
         SimpleNamespace(
@@ -653,9 +652,11 @@ def test_record_nautilus_projection_events_write_projected_rows() -> None:
     fill_rows = store.tables["nautilus_fill"]
     position_rows = store.tables["nautilus_position"]
 
-    assert order_rows[0]["client_order_id"] == "C-001"
-    assert order_rows[0]["report_order_id"] == "C-001"
+    assert order_rows[0]["client_order_id"] == str(accepted.client_order_id)
+    assert order_rows[0]["report_order_id"] == str(accepted.client_order_id)
     assert order_rows[0]["status"] == "ACCEPTED"
+    assert order_rows[0]["strategy"] == "one_cent_buy"
+    assert order_rows[0]["condition_id"] == "condition-btc-5m"
     assert order_rows[0]["metrics"]["level_price"] == 0.01
     assert fill_rows[0]["client_order_id"] == "C-001"
     assert fill_rows[0]["trade_id"] == "T-001"
