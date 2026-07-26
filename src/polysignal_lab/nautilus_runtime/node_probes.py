@@ -42,6 +42,24 @@ def _log_probe_write_failure(path: Path) -> None:
     logger.warning("Failed to write runtime probe state: %s", path, exc_info=True)
 
 
+def _log_readiness_transitions(
+    previous: frozenset[str] | None,
+    current: frozenset[str],
+) -> None:
+    """Put readiness transitions on the log stream, not just in the heartbeat file.
+
+    The heartbeat JSON is the liveness probe's truth source, but it is invisible
+    to `docker logs`: a container could sit unhealthy on `readiness_miss` for
+    hours without emitting a single ERROR. Only transitions are logged — this
+    runs on the market-data hot path.
+    """
+    known = frozenset() if previous is None else previous
+    for condition_id in sorted(current - known):
+        logger.error("Runtime readiness miss started: condition_id=%s", condition_id)
+    for condition_id in sorted(known - current):
+        logger.info("Runtime readiness recovered: condition_id=%s", condition_id)
+
+
 def _write_runtime_startup_marker_best_effort(path: Path) -> None:
     try:
         _ = write_runtime_startup_marker(path)
@@ -89,6 +107,7 @@ def _write_runtime_heartbeat_best_effort(
         readiness_ok=readiness_ok,
     ):
         return
+    previous_gate = _HEARTBEAT_WRITE_GATES.get(path)
     try:
         heartbeat = write_runtime_heartbeat(
             path,
@@ -102,10 +121,12 @@ def _write_runtime_heartbeat_best_effort(
     except OSError:
         _log_probe_write_failure(path)
         return
-    _HEARTBEAT_WRITE_GATES[path] = (
-        _monotonic(),
-        frozenset(heartbeat.readiness_miss_started_at_by_key),
+    miss_keys = frozenset(heartbeat.readiness_miss_started_at_by_key)
+    _log_readiness_transitions(
+        None if previous_gate is None else previous_gate[1],
+        miss_keys,
     )
+    _HEARTBEAT_WRITE_GATES[path] = (_monotonic(), miss_keys)
 
 
 def _runtime_progress_callback(settings: Settings) -> Callable[[str], None]:

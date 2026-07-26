@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -123,3 +124,43 @@ def test_fatal_bypasses_throttle(probe_env, tmp_path: Path) -> None:
 
     assert writes["count"] == 2
     assert _read(heartbeat_path)["fatal"] is True
+
+
+def test_readiness_miss_is_logged_as_error(probe_env, caplog) -> None:
+    """
+    User symptom: the container sat `unhealthy` for hours on
+    `liveness failed: readiness_miss` while `docker logs` held zero ERROR
+    lines — the failure only ever reached state/runtime_heartbeat.json.
+    A new miss must surface on the log stream.
+    """
+    _, note_readiness, _, _, _ = probe_env
+
+    with caplog.at_level(logging.ERROR, logger=node_probes.logger.name):
+        note_readiness("cond-1", False, {"asset": "BTC"})
+
+    assert [r.message for r in caplog.records if r.levelno == logging.ERROR] == [
+        "Runtime readiness miss started: condition_id=cond-1"
+    ]
+
+
+def test_repeated_readiness_miss_logs_once(probe_env, caplog) -> None:
+    """Hot-path callback: only the transition logs, never every event."""
+    _, note_readiness, _, _, _ = probe_env
+
+    with caplog.at_level(logging.ERROR, logger=node_probes.logger.name):
+        for _ in range(50):
+            note_readiness("cond-1", False, {"asset": "BTC"})
+
+    assert len([r for r in caplog.records if r.levelno == logging.ERROR]) == 1
+
+
+def test_readiness_recovery_is_logged(probe_env, caplog) -> None:
+    _, note_readiness, _, _, _ = probe_env
+
+    note_readiness("cond-1", False, {"asset": "BTC"})
+    with caplog.at_level(logging.INFO, logger=node_probes.logger.name):
+        note_readiness("cond-1", True, {"asset": "BTC"})
+
+    assert "Runtime readiness recovered: condition_id=cond-1" in [
+        r.message for r in caplog.records
+    ]

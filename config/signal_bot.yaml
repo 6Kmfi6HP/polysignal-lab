@@ -4,6 +4,17 @@ app:
   timezone: Asia/Bangkok
   log_level: INFO
 
+# Rotating JSONL for postmortems; app.log_level above stays the stdout level.
+# Set file_level to OFF to disable file output, DEBUG when hunting a bug.
+logging:
+  directory: logs/runtime
+  file_level: INFO
+  file_max_bytes: 50000000
+  file_backup_count: 5
+  colors: false
+  component_levels:
+    nautilus_common::actor::data_actor: WARN
+
 safety:
   allow_secret_key_material: false
   allow_secure_polymarket_client: false

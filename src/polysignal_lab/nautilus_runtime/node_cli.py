@@ -6,6 +6,11 @@ from collections.abc import Callable
 from typing import cast
 
 from polysignal_lab.config import Settings, load_settings
+from polysignal_lab.nautilus_runtime.node_crash import (
+    _asyncio_exception_handler,
+    _crash_log_path,
+    _install_crash_logger,
+)
 from polysignal_lab.nautilus_runtime.node_probes import (
     _runtime_heartbeat_path,
     _runtime_startup_marker_path,
@@ -16,6 +21,7 @@ from polysignal_lab.nautilus_runtime.os_signals import (
     _install_async_os_signal_handlers,
     _runtime_intercepts_os_signals,
 )
+from polysignal_lab.nautilus_runtime.runtime_logging import configure_runtime_logging
 
 logger = logging.getLogger("polysignal_lab.nautilus_runtime.node_cli")
 
@@ -40,6 +46,11 @@ async def run_nautilus_cli_async(
     event = stop_event or asyncio.Event()
     if settings is None:
         settings = load_settings()
+    configure_runtime_logging(settings)
+    _install_crash_logger(settings.logging.directory)
+    asyncio.get_running_loop().set_exception_handler(
+        _asyncio_exception_handler(_crash_log_path(settings.logging.directory))
+    )
     _write_runtime_startup_marker_best_effort(_runtime_startup_marker_path(settings))
     bundle = await build_nautilus_runtime(settings)
     _write_runtime_heartbeat_best_effort(

@@ -13,6 +13,7 @@ from polysignal_lab.nautilus_runtime.node_builder import (
     _Disposable,
 )
 from polysignal_lab.nautilus_runtime.node_crash import (
+    _crash_log_path,
     _dump_thread_stacks,
     _install_crash_logger,
 )
@@ -151,14 +152,14 @@ def _run_sync_cli_main(
     except Exception:
         runtime_logger.exception("Nautilus startup notification failed")
     print(f"Nautilus runtime ready — {len(strategy_names)} strategies")
-    _install_crash_logger(settings.storage.jsonl_dir)
+    _install_crash_logger(settings.logging.directory)
     run_method = cast(Callable[..., None], getattr(node, "run"))
     if "raise_exception" in inspect.signature(run_method).parameters:
         run_method(raise_exception=True)
     else:
         run_method()
     if strategy_names:
-        _dump_thread_stacks(f"{settings.storage.jsonl_dir.rstrip('/')}/crash.log")
+        _dump_thread_stacks(_crash_log_path(settings.logging.directory))
         runtime_logger.warning(
             "LiveNode.run returned unexpectedly with %d strategies active",
             len(strategy_names),

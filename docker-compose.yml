@@ -25,6 +25,14 @@ services:
       - ./state:/app/state
       - ./config:/app/config:ro
     command: ["nautilus"]
+    # Default 10m x 3 held under two days of a six-day run; the failure window
+    # had rotated away before anyone looked. Files under ./logs/runtime are the
+    # durable copy, this is the live view.
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "python", "-m", "polysignal_lab.healthcheck", "liveness", "--config", "config/signal_bot.yaml"]
       interval: 30s
@@ -50,6 +58,11 @@ services:
       - ./state:/app/state:ro
       - ./config:/app/config:ro
     command: ["dashboard"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     depends_on:
       polysignal-lab:
         condition: service_started

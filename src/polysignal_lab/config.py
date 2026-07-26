@@ -72,6 +72,30 @@ class AppConfig(BaseModel):
     log_level: str = "INFO"
 
 
+class LoggingConfig(BaseModel):
+    """File logging for postmortems. `app.log_level` stays the stdout level.
+
+    Both the Python logger and the Nautilus Rust logger write rotating JSONL
+    into `directory`, so `docker logs` survives as the live human view while
+    agents query the files with `jq`.
+    """
+
+    directory: str = "logs/runtime"
+    # "OFF" disables file output entirely.
+    file_level: str = "INFO"
+    file_max_bytes: int = 50_000_000
+    # Python and Nautilus each keep their own set, so this caps disk at
+    # 2 x 50MB x (5 + 1) = 600MB.
+    file_backup_count: int = 5
+    # Containers have no TTY; ANSI codes only make the stream harder to parse.
+    colors: bool = False
+    # data_actor emitted 70% of all log lines (subscribe/unsubscribe commands),
+    # pushing the failure window out of Docker's rotation before it was read.
+    component_levels: dict[str, str] = Field(
+        default_factory=lambda: {"nautilus_common::actor::data_actor": "WARN"}
+    )
+
+
 class SafetyConfig(BaseModel):
     allow_secret_key_material: bool = False
     allow_secure_polymarket_client: bool = False
@@ -312,6 +336,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="forbid")
 
     app: AppConfig = Field(default_factory=AppConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     markets: MarketConfig = Field(default_factory=MarketConfig)

@@ -44,6 +44,7 @@ from polysignal_lab.nautilus_runtime.observability import (
     ObservabilityService,
     bind_runtime_observability,
 )
+from polysignal_lab.nautilus_runtime.runtime_logging import configure_runtime_logging
 from polysignal_lab.nautilus_runtime.runtime_registration import enabled_strategy_names
 from polysignal_lab.nautilus_runtime.signal_notifications import (
     _notify_accepted_signal,
@@ -100,6 +101,7 @@ def _prepare_sync_cli_bundle(settings: Settings) -> NautilusRuntimeBundle:
 
 def run_nautilus_cli(settings: Settings | None = None) -> None:
     resolved = settings or load_settings()
+    configure_runtime_logging(resolved)
     bundle = _prepare_sync_cli_bundle(resolved)
     node = bundle.node
 
