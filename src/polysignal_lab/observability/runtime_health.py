@@ -24,6 +24,10 @@ class RuntimeHeartbeat:
     fatal: bool = False
     fatal_reason: str | None = None
     phase_started_at: str | None = None
+    # Monotonic across market rotations: the last time ANY market data
+    # arrived. Per-condition readiness resets every cycle, so it can never
+    # show that the runtime has been receiving nothing at all.
+    last_data_at: str | None = None
     readiness_miss_started_at_by_key: dict[str, str] = field(default_factory=dict)
     readiness_detail_by_key: dict[str, dict[str, object]] = field(default_factory=dict)
 
@@ -58,6 +62,30 @@ def _write_json_atomically(path: Path, payload: dict[str, object]) -> None:
             tmp.unlink()
 
 
+def _latest_book_timestamp(detail: dict[str, object] | None) -> str | None:
+    """Newest `last_book_at_by_side` entry in a readiness detail payload."""
+    if detail is None:
+        return None
+    sides = detail.get("last_book_at_by_side")
+    if not isinstance(sides, dict):
+        return None
+    stamps = [value for value in sides.values() if isinstance(value, str) and value]
+    return max(stamps) if stamps else None
+
+
+def _advance_last_data_at(
+    previous: str | None,
+    detail: dict[str, object] | None,
+) -> str | None:
+    """Carry the data clock forward; a rotation must never wind it back."""
+    latest = _latest_book_timestamp(detail)
+    if latest is None:
+        return previous
+    if previous is None:
+        return latest
+    return max(previous, latest)
+
+
 def write_runtime_heartbeat(
     path: Path,
     *,
@@ -82,9 +110,12 @@ def write_runtime_heartbeat(
         if previous is not None
         else {}
     )
+    last_data_at = previous.last_data_at if previous is not None else None
     if phase in {"start", "starting"}:
         readiness_misses.clear()
         readiness_details.clear()
+        # A restart has received nothing yet; the startup grace covers it.
+        last_data_at = None
     elif readiness_key is not None:
         _ = readiness_misses.pop(_GLOBAL_READINESS_KEY, None)
         _ = readiness_details.pop(_GLOBAL_READINESS_KEY, None)
@@ -106,6 +137,7 @@ def write_runtime_heartbeat(
         fatal=bool(fatal),
         fatal_reason=fatal_reason,
         phase_started_at=phase_started_at,
+        last_data_at=_advance_last_data_at(last_data_at, readiness_detail),
         readiness_miss_started_at_by_key=readiness_misses,
         readiness_detail_by_key=readiness_details,
     )
@@ -158,6 +190,10 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
     if phase_started_at is None:
         phase_started_at = updated_at
 
+    last_data_at = payload.get("last_data_at")
+    if last_data_at is not None and not isinstance(last_data_at, str):
+        raise TypeError("heartbeat last_data_at must be a string or null")
+
     readiness_raw = payload.get("readiness_miss_started_at_by_key", {})
     if not isinstance(readiness_raw, dict):
         raise TypeError("heartbeat readiness misses must be a JSON object")
@@ -183,6 +219,7 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
         fatal=fatal,
         fatal_reason=fatal_reason,
         phase_started_at=phase_started_at,
+        last_data_at=last_data_at,
         readiness_miss_started_at_by_key=readiness_misses,
         readiness_detail_by_key=readiness_details,
     )
@@ -217,6 +254,50 @@ def _inside_startup_grace(
     return elapsed <= int(startup_grace_sec)
 
 
+def _data_starvation_result(
+    last_data_at: str | None,
+    *,
+    observed_at: datetime,
+    max_data_starvation_sec: int | None,
+    inside_startup_grace: bool,
+    startup_started_at: datetime | None,
+    readiness_details: dict[str, dict[str, object]],
+    heartbeat_age_sec: int,
+) -> LivenessResult | None:
+    """Fail liveness when no market data has arrived for too long.
+
+    A fresh heartbeat and churning readiness state say only that the process
+    is running and re-subscribing. They stayed green through a six-day outage
+    in which the runtime received no book updates at all, because rotation
+    resets per-condition readiness before its window can elapse.
+    """
+    if max_data_starvation_sec is None or int(max_data_starvation_sec) <= 0:
+        return None
+    if inside_startup_grace:
+        return None
+    if last_data_at is None:
+        # Never received data. Measure from process start, so "still booting"
+        # is not confused with "never got anything"; with no startup marker
+        # there is no anchor and the check cannot speak.
+        if startup_started_at is None:
+            return None
+        since = startup_started_at.astimezone(UTC)
+    else:
+        try:
+            since = datetime.fromisoformat(last_data_at).astimezone(UTC)
+        except ValueError:
+            return LivenessResult(ok=False, reason="heartbeat_unreadable")
+    starved_sec = int((observed_at - since).total_seconds())
+    if starved_sec <= int(max_data_starvation_sec):
+        return None
+    return LivenessResult(
+        ok=False,
+        reason="data_starvation",
+        heartbeat_age_sec=heartbeat_age_sec,
+        readiness_detail_by_key=readiness_details,
+    )
+
+
 def evaluate_liveness(
     path: Path,
     *,
@@ -224,6 +305,7 @@ def evaluate_liveness(
     startup_started_at: datetime | None = None,
     startup_grace_sec: int = 0,
     max_readiness_miss_sec: int | None = None,
+    max_data_starvation_sec: int | None = None,
     now: datetime | None = None,
 ) -> LivenessResult:
     observed_at = (now or _utc_now()).astimezone(UTC)
@@ -269,6 +351,18 @@ def evaluate_liveness(
             heartbeat_age_sec=age,
             readiness_detail_by_key=readiness_details,
         )
+
+    starvation = _data_starvation_result(
+        heartbeat.last_data_at,
+        observed_at=observed_at,
+        max_data_starvation_sec=max_data_starvation_sec,
+        inside_startup_grace=inside_startup_grace,
+        startup_started_at=startup_started_at,
+        readiness_details=readiness_details,
+        heartbeat_age_sec=age,
+    )
+    if starvation is not None:
+        return starvation
 
     if (
         max_readiness_miss_sec is not None

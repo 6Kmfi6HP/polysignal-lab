@@ -67,6 +67,7 @@ class LivenessWatchdog:
             startup_started_at=self._startup_started_at(),
             startup_grace_sec=health.startup_grace_sec,
             max_readiness_miss_sec=health.liveness.max_readiness_miss_sec,
+            max_data_starvation_sec=health.liveness.max_data_starvation_sec,
             now=now,
         )
         previous = self._state

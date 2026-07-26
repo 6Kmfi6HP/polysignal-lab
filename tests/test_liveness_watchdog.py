@@ -37,6 +37,9 @@ def _write_heartbeat(
         "phase": "readiness_miss" if misses else "readiness_ok",
         "fatal": False,
         "fatal_reason": None,
+        # Book data keeps flowing in these cases; the starvation check is
+        # exercised separately in test_data_starvation_liveness.py.
+        "last_data_at": updated_at.isoformat(),
         "readiness_miss_started_at_by_key": misses,
         "readiness_detail_by_key": {"cond-1": {"asset": "SOL"}} if misses else {},
     }

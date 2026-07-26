@@ -49,6 +49,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             startup_started_at=startup_started_at,
             startup_grace_sec=settings.health.startup_grace_sec,
             max_readiness_miss_sec=settings.health.liveness.max_readiness_miss_sec,
+            max_data_starvation_sec=settings.health.liveness.max_data_starvation_sec,
         )
         if not result.ok:
             print(f"liveness failed: {result.reason}")

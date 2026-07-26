@@ -242,6 +242,11 @@ class DashboardConfig(BaseModel):
 class HealthLivenessConfig(BaseModel):
     heartbeat_max_age_sec: int = 120
     max_readiness_miss_sec: int = 300
+    # Rotation resets per-condition readiness every cycle, so the window above
+    # can never elapse while the runtime re-subscribes to nothing. This one
+    # measures the last book update across all rotations and does not reset.
+    # 0 disables the check.
+    max_data_starvation_sec: int = 900
 
 
 class HealthRestartGateConfig(BaseModel):
