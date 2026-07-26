@@ -1,5 +1,5 @@
 """
-Input: __future__, __future__.annotations, json, types, types.SimpleNamespace, httpx, pytest, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.config.TelegramConfig
+Input: __future__, __future__.annotations, json, shlex, types, types.SimpleNamespace, httpx, pytest, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.config.TelegramConfig
 Output: test_runtime_uses_configured_telegram_publish_timeout, test_runtime_owns_scoped_signal_publisher_lifecycle, test_nautilus_runtime_context_has_no_parallel_market_registry, test_nautilus_runtime_rejects_unreachable_interactive_telegram_control, test_telegram_qa_default_message_is_compact, test_missing_telegram_credentials_fail_live_publish, test_malformed_telegram_credentials_fail_live_publish, test_mocked_telegram_send_returns_sent_and_redacts_token, test_daily_report_publish_id_is_stable_across_retries, test_failed_telegram_response_redacts_token
 Pos: Test Layer - Unit/Integration tests
 
@@ -11,6 +11,7 @@ Pos: Test Layer - Unit/Integration tests
 from __future__ import annotations
 
 import json
+import shlex
 from types import SimpleNamespace
 
 import httpx
@@ -274,9 +275,14 @@ async def test_telegram_qa_records_actual_dry_run_invocation(
     assert evidence["dry_run"] is True
     assert evidence["mode"] == "dry_run"
     assert evidence["evidence_path"] == str(evidence_path)
-    assert evidence["command"] == (
-        ".venv/bin/python -m polysignal_lab.publish.telegram_qa "
-        f"--evidence {evidence_path}"
+    assert evidence["command"] == shlex.join(
+        [
+            ".venv/bin/python",
+            "-m",
+            "polysignal_lab.publish.telegram_qa",
+            "--evidence",
+            str(evidence_path),
+        ]
     )
 
 
@@ -296,8 +302,14 @@ async def test_telegram_qa_records_actual_live_failure_invocation(
     assert evidence["dry_run"] is False
     assert evidence["mode"] == "live"
     assert evidence["evidence_path"] == str(evidence_path)
-    assert evidence["command"] == (
-        ".venv/bin/python -m polysignal_lab.publish.telegram_qa --live "
-        f"--evidence {evidence_path}"
+    assert evidence["command"] == shlex.join(
+        [
+            ".venv/bin/python",
+            "-m",
+            "polysignal_lab.publish.telegram_qa",
+            "--live",
+            "--evidence",
+            str(evidence_path),
+        ]
     )
     assert evidence["error"] == "TELEGRAM_NOT_CONFIGURED"
