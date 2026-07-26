@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.date, typing, typing.Any, typing.assert_never, factories
-Output: test_daily_report_includes_strategy_win_rate_and_pnl, test_daily_report_counts_split_as_closed_without_win_loss_void, test_daily_report_includes_strategy_asset_timeframe_calibration, test_daily_report_aggregates_paper_execution_quality, ResultSpec
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -24,7 +8,7 @@ from factories import sample_report_result
 
 from polysignal_lab.domain.enums import TradeResultStatus
 from polysignal_lab.reporting.daily_report import DailyReportService
-from polysignal_lab.signal_layer.formatter import MessageFormatter
+from polysignal_lab.publish.message_formatter import MessageFormatter
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +26,12 @@ def _outcome_value(status: TradeResultStatus) -> float:
     match status:
         case TradeResultStatus.WIN:
             return 1.0
-        case TradeResultStatus.LOSS | TradeResultStatus.VOID | TradeResultStatus.UNKNOWN | TradeResultStatus.SPLIT:
+        case (
+            TradeResultStatus.LOSS
+            | TradeResultStatus.VOID
+            | TradeResultStatus.UNKNOWN
+            | TradeResultStatus.SPLIT
+        ):
             return 0.0
         case unreachable:
             assert_never(unreachable)
@@ -72,7 +61,13 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
         _result(ResultSpec("win", TradeResultStatus.WIN, 6.0, 0.60)),
         _result(
             ResultSpec(
-                "loss", TradeResultStatus.LOSS, -10.0, -1.0, "vwap_momentum", "ETH", "15m"
+                "loss",
+                TradeResultStatus.LOSS,
+                -10.0,
+                -1.0,
+                "vwap_momentum",
+                "ETH",
+                "15m",
             )
         ),
         _result(ResultSpec("void", TradeResultStatus.VOID, 0.0, 0.0)),

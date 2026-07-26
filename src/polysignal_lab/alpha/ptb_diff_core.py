@@ -1,28 +1,16 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, typing, typing.assert_never, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.enabled_for_view, polysignal_lab.alpha.helpers.entry_ask_at_or_below, polysignal_lab.alpha.types
-Output: compute_tp_sl_thresholds, TpSlThresholds, _EvalContext, PTBDiffAlphaCore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import assert_never
 
-from polysignal_lab.alpha.helpers import enabled_for_view, entry_ask_at_or_below
+from polysignal_lab.alpha.decisions import enabled_for_view, entry_ask_at_or_below
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, SideBookView
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.domain.strategy_config import PTBDiffConfig, PTBExitConfig, PTBTriggerConfig
+from polysignal_lab.domain.strategy_config import (
+    PTBDiffConfig,
+    PTBExitConfig,
+    PTBTriggerConfig,
+)
 
 
 class TpSlThresholds(dict[str, float | None]):
@@ -44,7 +32,9 @@ class _EvalContext:
     max_spread: float
 
 
-def compute_tp_sl_thresholds(entry_prob: float, stop_loss_pct: float, tp_rr: float, tp_cap: float) -> TpSlThresholds:
+def compute_tp_sl_thresholds(
+    entry_prob: float, stop_loss_pct: float, tp_rr: float, tp_cap: float
+) -> TpSlThresholds:
     if entry_prob <= 0.0:
         return TpSlThresholds(stop_prob=0.0, tp_trigger_prob=None, risk_abs=0.0)
 
@@ -53,7 +43,9 @@ def compute_tp_sl_thresholds(entry_prob: float, stop_loss_pct: float, tp_rr: flo
     raw_tp = entry_prob + risk_abs * tp_rr
 
     if raw_tp <= entry_prob:
-        return TpSlThresholds(stop_prob=stop_prob, tp_trigger_prob=None, risk_abs=risk_abs)
+        return TpSlThresholds(
+            stop_prob=stop_prob, tp_trigger_prob=None, risk_abs=risk_abs
+        )
 
     tp_trigger_prob = min(tp_cap, raw_tp)
 
@@ -70,7 +62,9 @@ def compute_tp_sl_thresholds(entry_prob: float, stop_loss_pct: float, tp_rr: flo
                 balanced_stop=balanced_stop,
             )
 
-    return TpSlThresholds(stop_prob=stop_prob, tp_trigger_prob=tp_trigger_prob, risk_abs=risk_abs)
+    return TpSlThresholds(
+        stop_prob=stop_prob, tp_trigger_prob=tp_trigger_prob, risk_abs=risk_abs
+    )
 
 
 class PTBDiffAlphaCore:
@@ -97,12 +91,20 @@ class PTBDiffAlphaCore:
             return None
         if view.spot is None or view.price_to_beat is None:
             return None
-        if cfg.require_verified_ptb_source and view.metrics.get("price_to_beat_verified") is not True:
+        if (
+            cfg.require_verified_ptb_source
+            and view.metrics.get("price_to_beat_verified") is not True
+        ):
             return None
-        if cfg.require_anchor_price_source and not view.metrics.get("price_to_beat_from_anchor_service"):
+        if cfg.require_anchor_price_source and not view.metrics.get(
+            "price_to_beat_from_anchor_service"
+        ):
             return None
         spot_source = str(view.metrics.get("spot_source") or view.spot.source)
-        if cfg.require_chainlink_spot_source and spot_source not in cfg.chainlink_spot_sources:
+        if (
+            cfg.require_chainlink_spot_source
+            and spot_source not in cfg.chainlink_spot_sources
+        ):
             return None
 
         seconds = view.seconds_to_close
@@ -118,13 +120,17 @@ class PTBDiffAlphaCore:
             max_spread=cfg.max_spread,
         )
 
-    def _evaluate_trigger(self, ctx: _EvalContext, trigger: PTBTriggerConfig) -> AlphaDecision | None:
+    def _evaluate_trigger(
+        self, ctx: _EvalContext, trigger: PTBTriggerConfig
+    ) -> AlphaDecision | None:
         """Evaluate a single trigger and return a decision if all conditions are met."""
         view = ctx.view
         wanted_side = trigger.side
         if not self._diff_supports_side(ctx.diff, wanted_side):
             return None
-        if not (trigger.min_seconds_to_close <= ctx.seconds <= trigger.max_seconds_to_close):
+        if not (
+            trigger.min_seconds_to_close <= ctx.seconds <= trigger.max_seconds_to_close
+        ):
             return None
         if abs(ctx.diff) < trigger.min_diff_usd:
             return None
@@ -133,7 +139,9 @@ class PTBDiffAlphaCore:
         if entry_price is None:
             return None
 
-        prob_result = self._resolve_probability(ctx.diff, wanted_side, entry_price, trigger)
+        prob_result = self._resolve_probability(
+            ctx.diff, wanted_side, entry_price, trigger
+        )
         if prob_result is None:
             return None
         directional_probability, probability_edge, prob_ok_code = prob_result
@@ -144,12 +152,21 @@ class PTBDiffAlphaCore:
         if side_book.spread is None or side_book.spread > ctx.max_spread:
             return None
 
-        return self._build_decision(ctx, trigger, wanted_side, entry_price,
-                                    directional_probability, probability_edge, prob_ok_code, side_book)
+        return self._build_decision(
+            ctx,
+            trigger,
+            wanted_side,
+            entry_price,
+            directional_probability,
+            probability_edge,
+            prob_ok_code,
+            side_book,
+        )
 
     @staticmethod
-    def _resolve_probability(diff: float, side: Side, entry_price: float,
-                             trigger: PTBTriggerConfig) -> tuple[float, float, str] | None:
+    def _resolve_probability(
+        diff: float, side: Side, entry_price: float, trigger: PTBTriggerConfig
+    ) -> tuple[float, float, str] | None:
         """Calculate directional probability and edge for a trigger."""
         if trigger.min_token_price > 0.0:
             if not (trigger.min_token_price <= entry_price <= trigger.max_token_price):
@@ -157,7 +174,9 @@ class PTBDiffAlphaCore:
             probability_edge = max(0.0, entry_price - trigger.min_token_price)
             return entry_price, probability_edge, "PTB_PROB_RANGE_OK"
         else:
-            directional_probability = PTBDiffAlphaCore._directional_probability(diff, side)
+            directional_probability = PTBDiffAlphaCore._directional_probability(
+                diff, side
+            )
             probability_edge = max(0.0, directional_probability - entry_price)
             if probability_edge < trigger.min_probability_edge:
                 return None
@@ -185,7 +204,9 @@ class PTBDiffAlphaCore:
             tp_rr=ctx.exit_cfg.take_profit_rr,
             tp_cap=ctx.exit_cfg.take_profit_cap,
         )
-        confidence = min(0.98, 0.55 + min(0.25, abs(ctx.diff) / 500) + min(0.18, probability_edge))
+        confidence = min(
+            0.98, 0.55 + min(0.25, abs(ctx.diff) / 500) + min(0.18, probability_edge)
+        )
         return AlphaDecision(
             strategy=self.name,
             asset=view.asset,

@@ -1,19 +1,9 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.date, factories, factories.MarketFactoryConfig, factories.sample_market, polysignal_lab.app.reporting_projection, polysignal_lab.app.reporting_projection.report_result_from_projection, polysignal_lab.domain.enums
-Output: test_fee_fields_v1_marker, test_resolution_result_writes_fee_model_ignored_v1, test_early_exit_take_profit_builds_win_result, test_early_exit_stop_loss_builds_loss_result, test_early_exit_ignores_non_exit_fills
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from datetime import date
 
 from factories import MarketFactoryConfig, sample_market
-from polysignal_lab.app.reporting_projection import report_result_from_projection
+from polysignal_lab.app.daily_report.projection import report_result_from_projection
 from polysignal_lab.domain.enums import ExitMode, MarketStatus, Side, TradeResultStatus
 from polysignal_lab.reporting.exit_result import (
     FEE_MODEL_IGNORED_V1,
@@ -31,9 +21,7 @@ def test_fee_fields_v1_marker() -> None:
 def test_resolution_result_writes_fee_model_ignored_v1() -> None:
     market = sample_market(
         MarketFactoryConfig(asset="BTC", timeframe="5m", seconds_to_close=-1)
-    ).model_copy(
-        update={"status": MarketStatus.RESOLVED, "resolved_outcome": Side.UP}
-    )
+    ).model_copy(update={"status": MarketStatus.RESOLVED, "resolved_outcome": Side.UP})
     result = report_result_from_projection(
         {
             "position_id": "pos-fee",

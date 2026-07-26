@@ -1,22 +1,7 @@
-"""
-Input: __future__, __future__.annotations, json, datetime, datetime.UTC, datetime.datetime, pathlib, pathlib.Path, httpx, polysignal_lab.app.readonly_smoke_public
-Output: collect_readonly_smoke, write_evidence
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -56,7 +41,10 @@ async def _check_health_snapshot_retired(request: object) -> dict[str, object]:
 
 
 async def _check_scheduler_snapshot_retired(
-    request: object, markets: list[object], book_payload: object, spot_payload: object,
+    request: object,
+    markets: list[object],
+    book_payload: object,
+    spot_payload: object,
 ) -> dict[str, object]:
     _ = request
     _ = markets
@@ -82,15 +70,15 @@ def _check_safety_scan_retired() -> dict[str, object]:
 
 
 def _failure_count_retired(
-    surfaces: dict[str, object],
+    surfaces: Mapping[str, Mapping[str, object]],
     scheduler_snapshot: dict[str, object],
     health_snapshot: dict[str, object],
     dashboard_reads: dict[str, object],
     safety_scan: dict[str, object],
 ) -> int:
-    return sum(
-        1 for surface in surfaces.values() if not surface.get("ok")
-    ) + (0 if health_snapshot.get("status") != "down" else 1)
+    return sum(1 for surface in surfaces.values() if not surface.get("ok")) + (
+        0 if health_snapshot.get("status") != "down" else 1
+    )
 
 
 check_dashboard_reads = _check_dashboard_reads_retired

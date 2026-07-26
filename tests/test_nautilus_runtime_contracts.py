@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, decimal, decimal.Decimal, types, types.SimpleNamespace, pytest, nautilus_optional, nautilus_optional.require_nautilus, nautilus_trader.core
-Output: test_nautilus_version_has_native_strategy_messaging, test_message_and_market_view_immutability, test_backtest_dataengine_dispatch_and_order_lifecycle, test_backtest_cache_portfolio_updates_after_fill, test_multi_strategy_isolation_unique_ids_and_positions, test_strategy_state_save_load_bytes_round_trip, test_backtest_settlement_close_via_strategy_api, test_instrument_close_contract_expired_closes_position_in_backtest, test_same_strategy_registers_on_livenode_sandbox, test_backtest_live_strategy_surface_equivalence
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 # ruff: noqa: E402
@@ -35,7 +25,10 @@ from nautilus_runtime_contracts_harness import (
 )
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.nautilus_runtime.polymarket_adapter import PolymarketEnumParser
-from polysignal_lab.nautilus_runtime.state import decode_state, save_strategy_state
+from polysignal_lab.nautilus_runtime.strategy_state import (
+    decode_state,
+    save_strategy_state,
+)
 from polysignal_lab.nautilus_runtime.live_node import (
     SANDBOX_EXEC_CLIENT_ID,
     POLYMARKET_CLIENT_ID,
@@ -227,7 +220,9 @@ def test_backtest_reduce_only_exit_cannot_reverse_position() -> None:
 
     assert strategy.exit_order is not None
     assert bool(getattr(strategy.exit_order, "is_reduce_only", False)) is True
-    assert all(float(position.signed_qty) >= 0 for position in engine.cache.positions_open())
+    assert all(
+        float(position.signed_qty) >= 0 for position in engine.cache.positions_open()
+    )
     safe_dispose(engine)
 
 

@@ -1,19 +1,9 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, datetime, datetime.timedelta, polysignal_lab.alpha.state, polysignal_lab.alpha.state.restore_utc_datetime, polysignal_lab.alpha.types, polysignal_lab.alpha.types.TradeView
-Output: test_vwap_entry_guard_not_consumed_until_acceptance, test_vwap_core_accepts_trade_view_events, test_vwap_core_skips_entry_when_favorite_ask_missing, test_vwap_cache_position_creates_hedge_decision, test_vwap_active_hedge_order_prevents_reverse_hedge, test_vwap_evaluate_requires_projected_trades, test_vwap_core_state_roundtrip_is_empty, test_vwap_duplicate_trade_view_payload_is_stateless, test_vwap_state_round_trip_excludes_trading_state
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from dataclasses import replace
 from datetime import timedelta
 
-from polysignal_lab.alpha.state import restore_utc_datetime
+from polysignal_lab.alpha.state_json import restore_utc_datetime
 from polysignal_lab.alpha.types import TradeView
 from polysignal_lab.alpha.vwap_momentum_core import VWAPMomentumAlphaCore
 from polysignal_lab.domain.enums import OrderIntent, Side
@@ -92,7 +82,9 @@ def test_vwap_core_skips_entry_when_favorite_ask_missing() -> None:
 
 
 def test_vwap_cache_position_creates_hedge_decision() -> None:
-    config = _fast_config(hedge_enabled=True, hedge_price=0.02, hedge_expiry_seconds=3600)
+    config = _fast_config(
+        hedge_enabled=True, hedge_price=0.02, hedge_expiry_seconds=3600
+    )
     core = VWAPMomentumAlphaCore(config)
     view = _snapshot_with_trades()
     cached = with_open_position(
@@ -122,7 +114,9 @@ def test_vwap_cache_position_creates_hedge_decision() -> None:
 
 
 def test_vwap_active_hedge_order_prevents_reverse_hedge() -> None:
-    config = _fast_config(hedge_enabled=True, hedge_price=0.02, hedge_expiry_seconds=3600)
+    config = _fast_config(
+        hedge_enabled=True, hedge_price=0.02, hedge_expiry_seconds=3600
+    )
     core = VWAPMomentumAlphaCore(config)
     view = with_open_position(
         _snapshot_with_trades(),

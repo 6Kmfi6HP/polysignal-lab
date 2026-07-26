@@ -1,25 +1,15 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, zoneinfo, zoneinfo.ZoneInfo, zoneinfo.ZoneInfoNotFoundError, polysignal_lab.app.reporting_build, polysignal_lab.app.reporting_build.(
-Output: generate_daily_report
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from polysignal_lab.app.reporting_build import (
+from polysignal_lab.app.daily_report.build import (
     _build_daily_report_from_inputs,
     _retry_pending_daily_report_publishes,
 )
-from polysignal_lab.app.reporting_equity import _report_equity_inputs
-from polysignal_lab.app.reporting_sources import _collect_daily_report_inputs
-from polysignal_lab.app.reporting_types import DailyReportInputs, _ReportScheduler
+from polysignal_lab.app.daily_report.equity import _report_equity_inputs
+from polysignal_lab.app.daily_report.sources import _collect_daily_report_inputs
+from polysignal_lab.app.daily_report.types import DailyReportInputs, _ReportScheduler
 from polysignal_lab.domain.reporting_result import DailyReport
 
 

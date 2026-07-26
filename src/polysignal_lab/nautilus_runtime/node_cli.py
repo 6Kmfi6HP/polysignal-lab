@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, asyncio, logging, collections.abc, collections.abc.Callable, typing, typing.cast, polysignal_lab.config, polysignal_lab.config.Settings
-Output: run_nautilus_cli_async
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import asyncio
@@ -28,7 +12,7 @@ from polysignal_lab.nautilus_runtime.node_probes import (
     _write_runtime_startup_marker_best_effort,
     _write_runtime_heartbeat_best_effort,
 )
-from polysignal_lab.nautilus_runtime.node_signals import (
+from polysignal_lab.nautilus_runtime.os_signals import (
     _install_async_os_signal_handlers,
     _runtime_intercepts_os_signals,
 )
@@ -67,6 +51,7 @@ async def run_nautilus_cli_async(
 
     request_stop: Callable[[], None] = event.set
     runtime_logger = cast(logging.Logger, getattr(bundle.context, "logger", logger))
+
     def cleanup_signals() -> None:
         return None
 

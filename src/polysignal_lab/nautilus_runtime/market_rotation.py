@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, typing, typing.Protocol
-Output: _Health, MarketRotationActor
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import logging
@@ -46,7 +36,11 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_rtds_data_client_id,
 )
 from polysignal_lab.nautilus_runtime.spot_anchor_state import SpotAnchorState
-from polysignal_lab.nautilus_runtime.state import JsonValue, decode_state, encode_state
+from polysignal_lab.nautilus_runtime.strategy_state import (
+    JsonValue,
+    decode_state,
+    encode_state,
+)
 
 logger = logging.getLogger("polysignal_lab.nautilus.market_rotation")
 
@@ -77,7 +71,9 @@ class _Health(Protocol):
         error: str | None = None,
         **metrics: object,
     ) -> None: ...
-    def mark_down(self, name: str, error: str | None = None, **metrics: object) -> None: ...
+    def mark_down(
+        self, name: str, error: str | None = None, **metrics: object
+    ) -> None: ...
 
 
 class MarketRotationActor(DataActor):
@@ -151,7 +147,9 @@ class MarketRotationActor(DataActor):
     ) -> None:
         self._epoch += 1
         for market in self.active_markets():
-            self.publisher.publish_market_metadata(market_metadata(market, timestamp=now))
+            self.publisher.publish_market_metadata(
+                market_metadata(market, timestamp=now)
+            )
         self.publisher.publish_market_universe(
             _market_universe(
                 self.active_markets(),
@@ -226,9 +224,7 @@ class MarketRotationActor(DataActor):
         if market is None:
             return
         exited_condition_ids = list(self._retire_expired_markets(now))
-        if not market.is_active or (
-            market.end_ts is not None and now >= market.end_ts
-        ):
+        if not market.is_active or (market.end_ts is not None and now >= market.end_ts):
             self._retire_condition(market.condition_id, exited_condition_ids)
             self._publish_market_exits(tuple(exited_condition_ids), now=now)
             return
@@ -240,13 +236,13 @@ class MarketRotationActor(DataActor):
             if condition_id != market.condition_id
         )
         self._active_by_condition[market.condition_id] = market
-        if previous is None or _market_metadata_signature(previous) != _market_metadata_signature(
-            market
-        ):
-            self.publisher.publish_market_metadata(market_metadata(market, timestamp=now))
-        entered_condition_ids = (
-            (market.condition_id,) if previous is None else ()
-        )
+        if previous is None or _market_metadata_signature(
+            previous
+        ) != _market_metadata_signature(market):
+            self.publisher.publish_market_metadata(
+                market_metadata(market, timestamp=now)
+            )
+        entered_condition_ids = (market.condition_id,) if previous is None else ()
         if entered_condition_ids or exited_condition_ids:
             self._epoch += 1
             self.publisher.publish_market_universe(

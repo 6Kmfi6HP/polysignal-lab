@@ -1,25 +1,12 @@
-"""
-Input: __future__, __future__.annotations, json, collections.abc, collections.abc.Mapping, collections.abc.Sequence, typing, typing.TypeAlias, typing.cast
-Output: state_key, encode_state, decode_state, save_strategy_state, load_strategy_state, StateSchemaError
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
 from typing import TypeAlias, cast
 
-JsonValue: TypeAlias = str | int | float | bool | None | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
+JsonValue: TypeAlias = (
+    str | int | float | bool | None | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
+)
 JsonObject: TypeAlias = Mapping[str, JsonValue]
 
 STRATEGY_STATE_VERSION = 3
@@ -40,7 +27,9 @@ def encode_state(
 ) -> dict[str, bytes]:
     key = state_key(strategy_name, version)
     body: JsonObject = {"schema_version": version, "payload": dict(payload)}
-    return {key: json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")}
+    return {
+        key: json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    }
 
 
 def decode_state(
@@ -51,13 +40,12 @@ def decode_state(
     key = state_key(strategy_name, version)
     same_strategy_prefix = f"polysignal.{strategy_name}.state.v"
     unknown_keys = sorted(
-        name
-        for name in state
-        if name.startswith(same_strategy_prefix)
-        and name != key
+        name for name in state if name.startswith(same_strategy_prefix) and name != key
     )
     if unknown_keys:
-        raise StateSchemaError(f"Unsupported state schema for {strategy_name}: {unknown_keys[0]}")
+        raise StateSchemaError(
+            f"Unsupported state schema for {strategy_name}: {unknown_keys[0]}"
+        )
     if key in state:
         return _decode_envelope(strategy_name, state[key], expected_version=version)
 

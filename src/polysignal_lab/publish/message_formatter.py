@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, html, typing, typing.Literal, collections.abc, collections.abc.Mapping, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.reporting_result
-Output: MessageFormatter
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import html
@@ -166,19 +150,19 @@ FillID <code>{html.escape(str(fill.get("report_fill_id", "")))}</code>"""
         message = f"""<b>{title}</b>
 {report_date_text(report)}
 
-Equity  {report_float(report, 'starting_equity'):.2f} → {report_float(report, 'ending_equity'):.2f} {html.escape(equity_currency)}{source_line}
-PnL     {report_float(report, 'net_pnl'):+.2f} {html.escape(equity_currency)}
-ROI     {report_float(report, 'return_rate'):+.2%}
+Equity  {report_float(report, "starting_equity"):.2f} → {report_float(report, "ending_equity"):.2f} {html.escape(equity_currency)}{source_line}
+PnL     {report_float(report, "net_pnl"):+.2f} {html.escape(equity_currency)}
+ROI     {report_float(report, "return_rate"):+.2%}
 
-Signals {int(report_float(report, 'total_signals'))}
-Orders  {int(report_float(report, 'order_count'))}
-Rejects {int(report_float(report, 'rejected_order_count'))} ({reject_text})
+Signals {int(report_float(report, "total_signals"))}
+Orders  {int(report_float(report, "order_count"))}
+Rejects {int(report_float(report, "rejected_order_count"))} ({reject_text})
 ExecLag {exec_lag}
 Telemetry {html.escape(telemetry_text)}
-Filled  {int(report_float(report, 'fill_count'))}
-Closed  {int(report_float(report, 'closed_positions'))}
-W/L     {int(report_float(report, 'win_count'))} / {int(report_float(report, 'loss_count'))}
-WR      {report_float(report, 'win_rate'):.2%}
+Filled  {int(report_float(report, "fill_count"))}
+Closed  {int(report_float(report, "closed_positions"))}
+W/L     {int(report_float(report, "win_count"))} / {int(report_float(report, "loss_count"))}
+WR      {report_float(report, "win_rate"):.2%}
 
 <b>Strategies</b>
 {strategy_text}"""

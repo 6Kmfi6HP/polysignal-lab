@@ -1,28 +1,18 @@
-"""
-Input: __future__, __future__.annotations, asyncio, sqlite3, polysignal_lab.app, polysignal_lab.app.scheduler_health, polysignal_lab.app.reporting_equity, polysignal_lab.app.reporting_equity.(, polysignal_lab.app.reporting_sources, polysignal_lab.app.reporting_sources.(
-Output: None
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import asyncio
 import sqlite3
 
 from polysignal_lab.app import scheduler_health
-from polysignal_lab.app.reporting_equity import (
+from polysignal_lab.app.daily_report.equity import (
     _report_equity_inputs,
     _sandbox_base_currency,
 )
-from polysignal_lab.app.reporting_sources import (
+from polysignal_lab.app.daily_report.sources import (
     _fill_payloads_with_order_intents,
     _order_metrics,
 )
-from polysignal_lab.app.reporting_types import DailyReportInputs, _ReportScheduler
+from polysignal_lab.app.daily_report.types import DailyReportInputs, _ReportScheduler
 from polysignal_lab.domain.reporting_result import DailyReport
 from polysignal_lab.reporting.daily_report import DailyReportService
 from polysignal_lab.reporting.rejections import is_rejected_order_payload

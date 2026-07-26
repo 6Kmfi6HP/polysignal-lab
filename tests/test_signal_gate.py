@@ -1,30 +1,18 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.FreshnessView, polysignal_lab.alpha.types.MarketView, polysignal_lab.config, polysignal_lab.config.BinanceDataConfig, polysignal_lab.config.PolymarketDataConfig
-Output: test_signal_gate_records_prd_reason_details, test_signal_gate_does_not_apply_channel_rate_limit, test_signal_candidate_carries_freshness_policy, test_gate_rejects_strategy_policy_stale_orderbook_with_details, test_gate_uses_strictest_threshold_when_global_is_lower, test_gate_uses_global_threshold_when_strategy_has_no_policy, test_gate_distinguishes_missing_orderbook_from_stale_orderbook, test_gate_distinguishes_missing_spot_from_stale_spot, test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason, test_ptb_diff_stale_spot_candidate_is_rejected_by_gate
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from dataclasses import replace
 
-from polysignal_lab.alpha.types import AlphaDecision, FreshnessView, MarketView, OrderIntentSpec
+from polysignal_lab.alpha.types import (
+    AlphaDecision,
+    FreshnessView,
+    MarketView,
+    OrderIntentSpec,
+)
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.signal_layer.gate import SignalGate
+from polysignal_lab.pretrade.gate import SignalGate
 from factories import sample_market_view
 from signal_helpers import (
     ptb_decision_from_view,
@@ -221,7 +209,9 @@ def test_gate_rejects_strategy_policy_stale_orderbook_with_details() -> None:
         PolymarketDataConfig(max_book_staleness_ms=60_000),
         BinanceDataConfig(max_price_staleness_ms=60_000),
     )
-    policy = FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
+    policy = FreshnessPolicy(
+        max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500
+    )
     signal = _freshness_signal(policy)
     view = _freshness_view(book_age_ms=2_000, spot_age_ms=100)
 
@@ -242,7 +232,9 @@ def test_gate_uses_strictest_threshold_when_global_is_lower() -> None:
         PolymarketDataConfig(max_book_staleness_ms=1_000),
         BinanceDataConfig(max_price_staleness_ms=60_000),
     )
-    policy = FreshnessPolicy(max_orderbook_staleness_ms=5_000, max_spot_staleness_ms=5_000)
+    policy = FreshnessPolicy(
+        max_orderbook_staleness_ms=5_000, max_spot_staleness_ms=5_000
+    )
     signal = _freshness_signal(policy)
     view = _freshness_view(book_age_ms=2_000, spot_age_ms=100)
 
@@ -271,8 +263,12 @@ def test_gate_uses_global_threshold_when_strategy_has_no_policy() -> None:
 
 
 def test_gate_distinguishes_missing_orderbook_from_stale_orderbook() -> None:
-    gate = SignalGate(SignalConfig(dedupe_enabled=False), PolymarketDataConfig(), BinanceDataConfig())
-    policy = FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
+    gate = SignalGate(
+        SignalConfig(dedupe_enabled=False), PolymarketDataConfig(), BinanceDataConfig()
+    )
+    policy = FreshnessPolicy(
+        max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500
+    )
     signal = _freshness_signal(policy)
     view = _freshness_view(book_age_ms=None, spot_age_ms=100)
 
@@ -286,14 +282,22 @@ def test_gate_distinguishes_missing_orderbook_from_stale_orderbook() -> None:
 
 
 def test_gate_distinguishes_missing_spot_from_stale_spot() -> None:
-    gate = SignalGate(SignalConfig(dedupe_enabled=False), PolymarketDataConfig(), BinanceDataConfig())
-    policy = FreshnessPolicy(max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500)
+    gate = SignalGate(
+        SignalConfig(dedupe_enabled=False), PolymarketDataConfig(), BinanceDataConfig()
+    )
+    policy = FreshnessPolicy(
+        max_orderbook_staleness_ms=1_500, max_spot_staleness_ms=1_500
+    )
     signal = _freshness_signal(policy)
     missing = gate.evaluate(
-        signal, _freshness_view(book_age_ms=100, spot_age_ms=None), freshness_policy=policy
+        signal,
+        _freshness_view(book_age_ms=100, spot_age_ms=None),
+        freshness_policy=policy,
     )
     stale = gate.evaluate(
-        signal, _freshness_view(book_age_ms=100, spot_age_ms=2_000), freshness_policy=policy
+        signal,
+        _freshness_view(book_age_ms=100, spot_age_ms=2_000),
+        freshness_policy=policy,
     )
 
     assert missing.rejected is not None
@@ -319,7 +323,9 @@ async def test_ptb_diff_fresh_orderbook_candidate_has_metrics_not_fresh_reason(
     assert "PTB_ORDERBOOK_FRESH" not in signals[0].reason_codes
 
 
-async def test_ptb_diff_stale_spot_candidate_is_rejected_by_gate(market_view, settings) -> None:
+async def test_ptb_diff_stale_spot_candidate_is_rejected_by_gate(
+    market_view, settings
+) -> None:
     assert market_view.spot is not None
     stale_view = replace(
         market_view,
@@ -333,7 +339,9 @@ async def test_ptb_diff_stale_spot_candidate_is_rejected_by_gate(market_view, se
     )
     decisions = ptb_decisions_from_view(stale_view, settings)
     assert decisions
-    lag_ms = int(settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000)
+    lag_ms = int(
+        settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000
+    )
     policy = FreshnessPolicy(
         max_orderbook_staleness_ms=lag_ms,
         max_spot_staleness_ms=lag_ms,
@@ -366,7 +374,9 @@ async def test_ptb_diff_stale_orderbook_candidate_has_no_fresh_reason(
     decisions = ptb_decisions_from_view(stale_view, settings)
     assert decisions
     assert "PTB_ORDERBOOK_FRESH" not in decisions[0].reason_codes
-    lag_ms = int(settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000)
+    lag_ms = int(
+        settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000
+    )
     policy = FreshnessPolicy(
         max_orderbook_staleness_ms=lag_ms,
         max_spot_staleness_ms=lag_ms,

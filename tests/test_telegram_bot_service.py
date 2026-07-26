@@ -1,38 +1,23 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timezone, types, types.SimpleNamespace, pytest, telegram.ext
-Output: test_telegram_bot_registers_ptb_handlers, test_telegram_bot_start_uses_embedded_ptb_lifecycle, test_telegram_bot_start_polling_uses_drop_pending_updates, test_telegram_bot_stop_uses_ptb_shutdown_order, test_telegram_bot_rejects_group_chat, test_telegram_bot_rejects_private_chat_not_in_allowlist, test_telegram_bot_uses_ptb_inline_keyboard_markup, test_telegram_bot_callback_always_answers, test_telegram_bot_callback_answers_before_rendering, test_telegram_bot_status_replies_before_rendering
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
-from telegram.ext import CallbackQueryHandler, CommandHandler
+from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from factories import sample_report_result
 
 from polysignal_lab.config import TelegramConfig
-from polysignal_lab.data.state import MarketRegistry
+from polysignal_lab.data.registries import MarketRegistry
 from polysignal_lab.domain.enums import PositionStatus, Side
 from polysignal_lab.alpha.types import SideBookView
 from polysignal_lab.domain.market import Market, OutcomeToken
 from polysignal_lab.domain.reporting_result import DailyReport
 from polysignal_lab.publish.telegram_bot import TelegramBotService
-from polysignal_lab.signal_layer.formatter import MessageFormatter
-from telegram import InlineKeyboardMarkup
+from polysignal_lab.publish.message_formatter import MessageFormatter
+from telegram import InlineKeyboardMarkup, Update
 
 
 class _FakeBooks:
@@ -105,7 +90,9 @@ class _FakePersistence:
     def query_daily_reports(self, limit: int = 100) -> list[dict[str, object]]:
         return []
 
-    def query_json(self, table: str, limit: int = 100, where: str = "", params=()) -> list[dict[str, object]]:
+    def query_json(
+        self, table: str, limit: int = 100, where: str = "", params=()
+    ) -> list[dict[str, object]]:
         return []
 
     def read_state(self, name: str, default: object = None) -> object:
@@ -187,10 +174,14 @@ def test_telegram_bot_registers_ptb_handlers() -> None:
     assert any(isinstance(handler, CallbackQueryHandler) for handler in app.handlers)
 
 
-async def test_telegram_bot_start_uses_embedded_ptb_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_telegram_bot_start_uses_embedded_ptb_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = _FakeApplication()
     service = _service(application=app)
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
+    monkeypatch.setenv(
+        "TELEGRAM_BOT_TOKEN", "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
+    )
 
     await service.start()
 
@@ -202,10 +193,14 @@ async def test_telegram_bot_start_uses_embedded_ptb_lifecycle(monkeypatch: pytes
     assert service.health()["status"] == "ok"
 
 
-async def test_telegram_bot_start_polling_uses_drop_pending_updates(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_telegram_bot_start_polling_uses_drop_pending_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = _FakeApplication()
     service = _service(application=app)
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
+    monkeypatch.setenv(
+        "TELEGRAM_BOT_TOKEN", "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
+    )
 
     await service.start()
 
@@ -216,10 +211,14 @@ async def test_telegram_bot_start_polling_uses_drop_pending_updates(monkeypatch:
     assert polling["timeout"] == 30
 
 
-async def test_telegram_bot_stop_uses_ptb_shutdown_order(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_telegram_bot_stop_uses_ptb_shutdown_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = _FakeApplication()
     service = _service(application=app)
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
+    monkeypatch.setenv(
+        "TELEGRAM_BOT_TOKEN", "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
+    )
     await service.start()
 
     await service.stop()
@@ -264,7 +263,13 @@ class _FakeCallbackQuery:
         self.edits.append({"text": text, **kwargs})
 
 
-def _callback_update(query: _FakeCallbackQuery, *, chat_id: int = 123, user_id: int = 123, chat_type: str = "private") -> SimpleNamespace:
+def _callback_update(
+    query: _FakeCallbackQuery,
+    *,
+    chat_id: int = 123,
+    user_id: int = 123,
+    chat_type: str = "private",
+) -> SimpleNamespace:
     return SimpleNamespace(
         update_id=42,
         effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
@@ -280,7 +285,9 @@ def test_telegram_bot_uses_ptb_inline_keyboard_markup() -> None:
     keyboard = service._main_keyboard()
 
     assert isinstance(keyboard, InlineKeyboardMarkup)
-    callback_values = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    callback_values = [
+        button.callback_data for row in keyboard.inline_keyboard for button in row
+    ]
     assert callback_values == ["p", "st", "sg", "str", "dy", "lb"]
     assert all(1 <= len(value.encode("utf-8")) <= 64 for value in callback_values)
 
@@ -293,7 +300,12 @@ async def test_telegram_bot_callback_always_answers() -> None:
     unknown = _FakeCallbackQuery("unknown")
     await service._callback(_callback_update(unknown), SimpleNamespace())
     unauthorized = _FakeCallbackQuery("st", user_id=999)
-    await service._callback(_callback_update(unauthorized, user_id=999), SimpleNamespace())
+    # Duck-typed test doubles: _callback only reads the attributes these
+    # namespaces provide, and never touches the PTB context.
+    await service._callback(
+        cast(Update, cast(object, _callback_update(unauthorized, user_id=999))),
+        cast(ContextTypes.DEFAULT_TYPE, cast(object, SimpleNamespace())),
+    )
 
     assert len(known.answers) == 1
     assert known.answers[0]["text"] is None
@@ -302,6 +314,7 @@ async def test_telegram_bot_callback_always_answers() -> None:
     assert unknown.answers[0]["show_alert"] is True
     assert unauthorized.answers[0]["text"] == "Unauthorized"
     assert unauthorized.answers[0]["show_alert"] is True
+
 
 async def test_telegram_bot_callback_answers_before_rendering() -> None:
     service = _service()
@@ -323,6 +336,7 @@ async def test_telegram_bot_callback_answers_before_rendering() -> None:
     await service._callback(_callback_update(known), SimpleNamespace())
 
     assert events[:2] == ["answer", "render"]
+
 
 async def test_telegram_bot_status_replies_before_rendering() -> None:
     service = _service()
@@ -354,7 +368,9 @@ async def test_telegram_bot_status_replies_before_rendering() -> None:
     assert len(update.effective_message.replies) == 1
 
 
-async def test_telegram_bot_interactive_dry_run_logs_no_send(caplog: pytest.LogCaptureFixture) -> None:
+async def test_telegram_bot_interactive_dry_run_logs_no_send(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     import logging
 
     caplog.set_level(logging.INFO)
@@ -366,6 +382,8 @@ async def test_telegram_bot_interactive_dry_run_logs_no_send(caplog: pytest.LogC
     assert update.effective_message.replies == []
     assert "telegram interactive_dry_run reply" in caplog.text
     assert service.health()["metrics"]["send_success"] == 0
+
+
 class _FakeStrategyControl:
     def __init__(self, disabled: list[str] | None = None) -> None:
         self.disabled = set(disabled or [])
@@ -439,7 +457,9 @@ class _FormattingPersistence(_FakePersistence):
             filtered.append(row)
         return filtered[:limit]
 
-    def query_json(self, table: str, limit: int = 100, where: str = "", params=()) -> list[dict[str, object]]:
+    def query_json(
+        self, table: str, limit: int = 100, where: str = "", params=()
+    ) -> list[dict[str, object]]:
         if table == "signals":
             return self.signals[:limit]
         if table == "rejected_signals":
@@ -456,7 +476,9 @@ def _formatting_service(
     strategy_names: list[str] | None = None,
 ) -> TelegramBotService:
     return TelegramBotService(
-        config=TelegramConfig(interactive_enabled=True, interactive_allowed_chat_ids=(123,)),
+        config=TelegramConfig(
+            interactive_enabled=True, interactive_allowed_chat_ids=(123,)
+        ),
         persistence=persistence,
         strategy_control=strategy_control or _FakeStrategyControl(),
         strategy_names=strategy_names or [],
@@ -683,16 +705,26 @@ def test_telegram_bot_daily_validates_payload_before_formatter() -> None:
     assert "2026-06-24" in text
 
 
-def test_telegram_bot_status_includes_health_wallet_counts_and_disabled_strategies() -> None:
+def test_telegram_bot_status_includes_health_wallet_counts_and_disabled_strategies() -> (
+    None
+):
     persistence = _FormattingPersistence()
     persistence.table_counts = {"signals": 142, "rejected_signals": 91}
-    persistence.wallet = {"equity": 987.5, "cash_balance": 900.0, "open_position_count": 3}
+    persistence.wallet = {
+        "equity": 987.5,
+        "cash_balance": 900.0,
+        "open_position_count": 3,
+    }
     persistence.health_event = {
         "status": "ok",
         "created_at": "2026-06-24T12:00:00Z",
         "components": [],
     }
-    service = _formatting_service(persistence, strategy_names=["a", "b"], strategy_control=_FakeStrategyControl(["b"]))
+    service = _formatting_service(
+        persistence,
+        strategy_names=["a", "b"],
+        strategy_control=_FakeStrategyControl(["b"]),
+    )
     persistence.positions = [{}, {}, {}]
     service.markets.markets["m1"] = object()
     service.markets.markets["m2"] = object()
@@ -705,6 +737,7 @@ def test_telegram_bot_status_includes_health_wallet_counts_and_disabled_strategi
     assert "Account     987.50 USDC equity" in text
     assert "Signals     142 accepted / 91 rejected" in text
     assert "Strategies  1/2 enabled" in text
+
 
 def test_telegram_bot_strategies_menu_uses_short_callback_data() -> None:
     persistence = _FormattingPersistence()
@@ -719,7 +752,9 @@ def test_telegram_bot_strategies_menu_uses_short_callback_data() -> None:
     assert "✅ vwap_momentum" in text
     assert "✅ late_consensus" in text
     assert "cannot be toggled from Telegram" in text
-    values = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    values = [
+        button.callback_data for row in keyboard.inline_keyboard for button in row
+    ]
     assert "tg:vwap_momentum" in values
     assert "tg:late_consensus" in values
     assert all(len(value.encode("utf-8")) <= 64 for value in values)
@@ -733,7 +768,9 @@ def test_telegram_bot_strategy_toggle_persists_state_and_event() -> None:
     text, keyboard = service._toggle_strategy("tg:vwap_momentum")
 
     assert "⏸ vwap_momentum" in text
-    assert "vwap_momentum" in service.strategy_control.status_payload()["disabled_strategies"]
+    disabled = service.strategy_control.status_payload()["disabled_strategies"]
+    assert isinstance(disabled, list)
+    assert "vwap_momentum" in disabled
     assert persistence.state["telegram_disabled_strategies"] == ["vwap_momentum"]
     event = persistence.state["last_event"]
     assert event["event_type"] == "strategy_toggle"
@@ -795,7 +832,9 @@ def test_telegram_bot_leaderboard_all_time() -> None:
     assert "1W" in text or "1W/" in text
 
 
-def test_telegram_bot_leaderboard_today_filters_by_closed_at(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_telegram_bot_leaderboard_today_filters_by_closed_at(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from polysignal_lab.domain.enums import TradeResultStatus
 
     persistence = _FormattingPersistence()
@@ -870,6 +909,8 @@ def test_telegram_bot_leaderboard_callback_renders_today() -> None:
 
     assert "今日" in text
     assert keyboard is not None
-    values = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    values = [
+        button.callback_data for row in keyboard.inline_keyboard for button in row
+    ]
     assert "lbt" in values
     assert "lb" in values

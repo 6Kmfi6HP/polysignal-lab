@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, asyncio, logging, datetime, datetime.timezone, typing, typing.cast, polysignal_lab.config, polysignal_lab.config.Settings
-Output: run_nautilus_cli, main
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 import asyncio
@@ -34,9 +25,6 @@ from polysignal_lab.nautilus_runtime.node_probes import (
     _write_runtime_heartbeat_best_effort,
     _write_runtime_startup_marker_best_effort,
 )
-from polysignal_lab.nautilus_runtime.node_shared import (
-    _install_sync_os_signal_handlers,
-)
 from polysignal_lab.nautilus_runtime.node_lifecycle import (
     _finalize_async_cli_runtime as _finalize_async_cli_runtime,
     _finalize_sync_cli_runtime,
@@ -46,7 +34,10 @@ from polysignal_lab.nautilus_runtime.node_lifecycle import (
     _start_runtime_observability as _start_runtime_observability,
     _strategy_names_from_bundle,
 )
-from polysignal_lab.nautilus_runtime.node_signals import _runtime_intercepts_os_signals
+from polysignal_lab.nautilus_runtime.os_signals import (
+    _install_sync_os_signal_handlers,
+    _runtime_intercepts_os_signals,
+)
 from polysignal_lab.nautilus_runtime.observability import (
     NautilusEventStoreAdapter,
     NautilusNotifierAdapter,

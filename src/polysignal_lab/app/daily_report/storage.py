@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, sqlite3, collections.abc, collections.abc.Mapping, typing, typing.Any, polysignal_lab.domain.reporting_result, polysignal_lab.domain.reporting_result.DailyReport
-Output: delete_report_result_rows, delete_daily_report_rows
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import sqlite3

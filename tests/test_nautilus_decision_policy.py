@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, importlib, dataclasses, dataclasses.replace, pathlib, pathlib.Path, pytest, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(
-Output: test_decision_policy_preserves_gate_first_failure_reasons, test_manual_disable_uses_pipeline_reason_without_touching_gate, test_approved_decision_preserves_order_intent_fields, test_candidate_from_decision_uses_market_view_time_for_identity, test_candidate_from_decision_preserves_reduce_only_intent, test_decision_policy_module_imports_without_nautilus_dependency, test_decision_policy_exposes_domain_state_not_nautilus_lifecycle, test_decision_policy_is_owned_by_strategy_not_separate_actor, test_state_round_trips_disabled_strategies, test_decision_policy_preserves_strategy_freshness_policy
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import importlib
@@ -33,7 +23,7 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     RejectedDecision,
     candidate_from_decision,
 )
-from polysignal_lab.signal_layer.gate import SignalGate
+from polysignal_lab.pretrade.gate import SignalGate
 from polysignal_lab.utils import utc_now
 
 
@@ -157,11 +147,15 @@ def test_batch_arbitration_keeps_opposite_legs_in_same_pair() -> None:
     actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
     up = _decision(
         side=Side.UP,
-        order_intent=OrderIntentSpec(OrderIntent.PASSIVE_GTD, expiry_seconds=300, pair_id="p1"),
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD, expiry_seconds=300, pair_id="p1"
+        ),
     )
     down = _decision(
         side=Side.DOWN,
-        order_intent=OrderIntentSpec(OrderIntent.PASSIVE_GTD, expiry_seconds=300, pair_id="p1"),
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD, expiry_seconds=300, pair_id="p1"
+        ),
     )
     view = _view()
     result = actor.batch_arbitrate([(up, view), (down, view)])
@@ -172,7 +166,9 @@ def test_batch_arbitration_rejects_incomplete_pair() -> None:
     actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
     up = _decision(
         side=Side.UP,
-        order_intent=OrderIntentSpec(OrderIntent.PASSIVE_GTD, expiry_seconds=300, pair_id="p1"),
+        order_intent=OrderIntentSpec(
+            OrderIntent.PASSIVE_GTD, expiry_seconds=300, pair_id="p1"
+        ),
     )
     result = actor.batch_arbitrate([(up, _view())])
     assert result.approvals == ()
@@ -183,7 +179,9 @@ def test_batch_arbitration_returns_survivors_in_input_order() -> None:
     actor = DecisionPolicy(gate=_gate(dedupe_enabled=False))
     beta = _decision(strategy="beta", market_id="market-2")
     alpha = _decision(strategy="alpha", market_id="market-1")
-    result = actor.batch_arbitrate([(beta, _view(market_id="market-2")), (alpha, _view())])
+    result = actor.batch_arbitrate(
+        [(beta, _view(market_id="market-2")), (alpha, _view())]
+    )
     assert [approved.decision for approved in result.approvals] == [beta, alpha]
 
 

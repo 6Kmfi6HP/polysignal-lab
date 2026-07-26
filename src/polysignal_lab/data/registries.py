@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, dataclasses.field, datetime, datetime.datetime, datetime.timezone, threading, threading.Lock
-Output: parse_source_timestamp, append_spot_history, MarketRegistry, SpotRegistry
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -85,7 +75,9 @@ class MarketRegistry:
                 (
                     market
                     for market in self.markets.values()
-                    if any(token.token_id == token_id for token in market.outcome_tokens)
+                    if any(
+                        token.token_id == token_id for token in market.outcome_tokens
+                    )
                 ),
                 None,
             )

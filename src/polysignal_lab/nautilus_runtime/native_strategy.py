@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.datetime, typing
-Output: PolySignalNativeStrategy
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import logging
@@ -28,7 +18,10 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     RejectedDecision,
 )
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
-from polysignal_lab.nautilus_runtime.state import load_strategy_state, save_strategy_state
+from polysignal_lab.nautilus_runtime.strategy_state import (
+    load_strategy_state,
+    save_strategy_state,
+)
 from polysignal_lab.nautilus_runtime.strategy import condition_evaluation as cond
 from polysignal_lab.nautilus_runtime.strategy import lifecycle as life
 from polysignal_lab.nautilus_runtime.strategy import market_data_events as mde
@@ -36,17 +29,25 @@ from polysignal_lab.nautilus_runtime.strategy import observability_hooks as obs
 from polysignal_lab.nautilus_runtime.strategy import order_events as oev
 from polysignal_lab.nautilus_runtime.strategy import readiness as readiness_mod
 from polysignal_lab.nautilus_runtime.strategy import subscriptions as subs
-from polysignal_lab.nautilus_runtime.strategy.custom_data_handlers import route_strategy_data
-from polysignal_lab.nautilus_runtime.strategy.helpers import (
+from polysignal_lab.nautilus_runtime.strategy.custom_data_handlers import (
+    route_strategy_data,
+)
+from polysignal_lab.nautilus_runtime.strategy.constants import (
     DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
     DEFAULT_NATIVE_DATA_NAMES,
     EVALUATION_HEARTBEAT_INTERVAL,
     EVALUATION_HEARTBEAT_TIMER_NAME,
     MISSING_PROJECTIONS_ERROR,
+)
+from polysignal_lab.nautilus_runtime.strategy.data_boundary import (
+    classify_project_owned_data,
+)
+from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
+    _nautilus_instrument_id,
+)
+from polysignal_lab.nautilus_runtime.strategy.protocols import (
     _Assembler,
     _Observability,
-    _nautilus_instrument_id,
-    classify_project_owned_data,
 )
 from polysignal_lab.nautilus_runtime.strategy.host_init import (
     HostInitRequest,
@@ -89,7 +90,8 @@ class PolySignalNativeStrategy(Strategy):
         registry: MarketCatalog | None = None,
         observability: _Observability | None = None,
         progress_callback: Callable[[str], None] | None = None,
-        readiness_callback: Callable[[str, bool, dict[str, object]], None] | None = None,
+        readiness_callback: Callable[[str, bool, dict[str, object]], None]
+        | None = None,
         unsubscribe_exited: bool = True,
         l1_book_snapshot_interval_ms: int = DEFAULT_L1_BOOK_SNAPSHOT_INTERVAL_MS,
         policy: DecisionPolicy | None = None,
@@ -134,7 +136,9 @@ class PolySignalNativeStrategy(Strategy):
     def _note_runtime_readiness(self, condition_id: str, *, ready: bool) -> None:
         readiness_mod.note_runtime_readiness(self, condition_id, ready=ready)
 
-    def _readiness_detail(self, condition_id: str, *, now: datetime) -> dict[str, object]:
+    def _readiness_detail(
+        self, condition_id: str, *, now: datetime
+    ) -> dict[str, object]:
         return readiness_mod.readiness_detail(self, condition_id, now=now)
 
     def _framework_now(self) -> datetime:
@@ -317,9 +321,7 @@ class PolySignalNativeStrategy(Strategy):
         subs.refresh_asset_conditions(self)
 
     def _subscribe_market_conditions(self, condition_ids: Sequence[str]) -> None:
-        subs.subscribe_market_conditions(
-            self, condition_ids, now=self._framework_now()
-        )
+        subs.subscribe_market_conditions(self, condition_ids, now=self._framework_now())
 
     def _subscribe_market_instrument(self, instrument_id: object) -> bool:
         return subs.subscribe_market_instrument(self, instrument_id)

@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, dataclasses, typing, polysignal_lab.alpha.types
-Output: decision_policy_from_settings, candidate_from_decision, publish_from_approved, ApprovedDecision, RejectedDecision, BatchArbitrationResult, DecisionPolicy
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -18,7 +9,7 @@ from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, Signa
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.freshness import FreshnessPolicy
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.signal_layer.gate import SignalGate
+from polysignal_lab.pretrade.gate import SignalGate
 
 
 def decision_policy_from_settings(settings: object) -> DecisionPolicy:
@@ -38,7 +29,9 @@ def decision_policy_from_settings(settings: object) -> DecisionPolicy:
     return DecisionPolicy(gate=SignalGate(signal, poly, binance))
 
 
-def candidate_from_decision(decision: AlphaDecision, view: MarketView) -> SignalCandidate:
+def candidate_from_decision(
+    decision: AlphaDecision, view: MarketView
+) -> SignalCandidate:
     """Publish/projection DTO only — never used as order-routing SoT."""
     view_id = str(getattr(view, "view_id", "") or "")
     return SignalCandidate.build(
@@ -61,7 +54,9 @@ def candidate_from_decision(decision: AlphaDecision, view: MarketView) -> Signal
         created_at=getattr(view, "created_at", None),
         snapshot_id=view_id,
         order_intent=decision.order_intent.intent if decision.order_intent else None,
-        expiry_seconds=decision.order_intent.expiry_seconds if decision.order_intent else None,
+        expiry_seconds=decision.order_intent.expiry_seconds
+        if decision.order_intent
+        else None,
         pair_id=decision.order_intent.pair_id if decision.order_intent else None,
         reduce_only=decision.reduce_only,
         hedge_leg=decision.hedge_leg,
@@ -140,7 +135,9 @@ class DecisionPolicy:
     def load_state(self, payload: Mapping[str, object]) -> None:
         disabled = payload.get("disabled_strategies", ()) or ()
         if isinstance(disabled, Iterable) and not isinstance(disabled, (str, bytes)):
-            self.disabled_strategies |= {str(name) for name in cast(Iterable[object], disabled)}
+            self.disabled_strategies |= {
+                str(name) for name in cast(Iterable[object], disabled)
+            }
 
     def decide(
         self, decision: AlphaDecision, view: MarketView
@@ -235,7 +232,9 @@ class DecisionPolicy:
         rejections: list[tuple[AlphaDecision, RejectedDecision]],
     ) -> None:
         sides = {decision.side for decision, _ in members}
-        malformed = len(members) > 2 or (len(members) == 2 and sides != {Side.UP, Side.DOWN})
+        malformed = len(members) > 2 or (
+            len(members) == 2 and sides != {Side.UP, Side.DOWN}
+        )
         if not malformed and len(members) == 2:
             unpaired.extend(members)
             return
@@ -266,10 +265,14 @@ class DecisionPolicy:
             gate_decision = self.gate.evaluate(
                 decision,
                 view,
-                freshness_policy=self.strategy_freshness_policies.get(decision.strategy),
+                freshness_policy=self.strategy_freshness_policies.get(
+                    decision.strategy
+                ),
             )
             if gate_decision.accepted:
-                publish = gate_decision.publish or candidate_from_decision(decision, view)
+                publish = gate_decision.publish or candidate_from_decision(
+                    decision, view
+                )
                 committed.append((decision, view, publish))
                 continue
             if gate_decision.rejected is not None:

@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, argparse, ast, pathlib, pathlib.Path, typing, typing.Final
-Output: blocked_symbols, scan, skip_path, main
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import argparse
@@ -76,8 +60,8 @@ LEGACY_TRADING_ISOLATION_SYMBOLS: Final = (
 )
 # Dual-path residue that must not re-enter live runtime / decision / trading wiring.
 LEGACY_DUAL_PATH_SYMBOLS: Final = (
-    "from polysignal_lab.data.state import " + "OrderBookRegistry",
-    "from polysignal_lab.data.state import " + "OrderBookRegistry,",
+    "from polysignal_lab.data.registries import " + "OrderBookRegistry",
+    "from polysignal_lab.data.registries import " + "OrderBookRegistry,",
     "OrderBook" + "Registry()",
     "from polysignal_lab.data.polymarket_clob_ws import",
     "from polysignal_lab.data.polymarket_clob_rest import",
@@ -134,7 +118,10 @@ def scan(root: str | Path) -> list[tuple[str, str]]:
             symbols.extend(LEGACY_DUAL_PATH_SYMBOLS)
         for symbol in symbols:
             if symbol in text:
-                if _is_submit_order_allowed_for_nautilus_strategy(path) and symbol == "submit_order":
+                if (
+                    _is_submit_order_allowed_for_nautilus_strategy(path)
+                    and symbol == "submit_order"
+                ):
                     continue
                 findings.append((report_path, symbol))
         if _is_legacy_dual_path_guarded(base, path):
@@ -157,7 +144,9 @@ def skip_path(base: Path, path: Path) -> bool:
         return True
     if rel.parts and rel.parts[0] in SKIP_TOP_LEVEL_DIRS:
         return True
-    return any(part in SKIP_DIR_NAMES or part.endswith(".egg-info") for part in rel.parts)
+    return any(
+        part in SKIP_DIR_NAMES or part.endswith(".egg-info") for part in rel.parts
+    )
 
 
 def _is_project_source(path: Path) -> bool:
@@ -185,10 +174,7 @@ def _is_legacy_dual_path_guarded(base: Path, path: Path) -> bool:
     _ = base
     if path.suffix != ".py":
         return False
-    return any(
-        part in {"alpha", "nautilus_runtime", "nautilus_runtime", "signal_layer"}
-        for part in path.parts
-    )
+    return any(part in {"alpha", "nautilus_runtime", "pretrade"} for part in path.parts)
 
 
 def _legacy_dual_path_imports(text: str) -> list[str]:
@@ -202,15 +188,13 @@ def _legacy_dual_path_imports(text: str) -> list[str]:
         if isinstance(node, ast.ImportFrom) and node.module:
             relative_prefix = "." * node.level
             import_module = f"{relative_prefix}{node.module}"
-            state_module = (
-                f"{relative_prefix}data.state"
+            registries_module = (
+                f"{relative_prefix}data.registries"
                 if node.level
-                else "polysignal_lab.data.state"
+                else "polysignal_lab.data.registries"
             )
             data_module = (
-                f"{relative_prefix}data"
-                if node.level
-                else "polysignal_lab.data"
+                f"{relative_prefix}data" if node.level else "polysignal_lab.data"
             )
             clob_modules = {
                 f"{relative_prefix}data.polymarket_clob_ws"
@@ -231,12 +215,10 @@ def _legacy_dual_path_imports(text: str) -> list[str]:
                 else f"polysignal_lab.{_bridge}",
             }
             paper_modules_prefix = (
-                f"{relative_prefix}paper"
-                if node.level
-                else "polysignal_lab.paper"
+                f"{relative_prefix}paper" if node.level else "polysignal_lab.paper"
             )
             imported_names = {alias.name for alias in node.names}
-            if import_module == state_module and (
+            if import_module == registries_module and (
                 _book_reg in imported_names or "*" in imported_names
             ):
                 symbol = "*" if "*" in imported_names else _book_reg
@@ -252,7 +234,11 @@ def _legacy_dual_path_imports(text: str) -> list[str]:
             ):
                 findings.append(f"from {import_module} import")
             elif import_module == data_module:
-                for name in ("state", "polymarket_clob_ws", "polymarket_clob_rest"):
+                for name in (
+                    "registries",
+                    "polymarket_clob_ws",
+                    "polymarket_clob_rest",
+                ):
                     if name in imported_names:
                         findings.append(f"from {import_module} import {name}")
                 if _book_reg in imported_names or "*" in imported_names:
@@ -263,7 +249,7 @@ def _legacy_dual_path_imports(text: str) -> list[str]:
         elif isinstance(node, ast.Import):
             _bridge = "nautilus_" + "bridge"
             blocked_imports = {
-                "polysignal_lab.data.state",
+                "polysignal_lab.data.registries",
                 "polysignal_lab.data.polymarket_clob_ws",
                 "polysignal_lab.data.polymarket_clob_rest",
                 f"polysignal_lab.{_bridge}",
@@ -281,7 +267,6 @@ def _legacy_dual_path_imports(text: str) -> list[str]:
     return findings
 
 
-
 def _is_submit_order_allowed_for_nautilus_strategy(path: Path) -> bool:
     """submit_order is legitimate on Nautilus strategy and test objects."""
     if path.suffix != ".py":
@@ -295,7 +280,9 @@ def _is_submit_order_allowed_for_nautilus_strategy(path: Path) -> bool:
     # Also allow test files matching the nautilus test pattern
     if len(parts) >= 2 and parts[-2] == "tests":
         name = parts[-1]
-        if name.endswith(".py") and ("nautilus" in name or name.startswith("test_nautilus")):
+        if name.endswith(".py") and (
+            "nautilus" in name or name.startswith("test_nautilus")
+        ):
             return True
     return False
 

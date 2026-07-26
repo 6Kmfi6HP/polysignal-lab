@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, datetime, datetime.UTC, datetime.datetime, typing, typing.Protocol, polysignal_lab.nautilus_runtime.custom_data_types
-Output: framework_now, start_evaluation_heartbeat, stop_evaluation_heartbeat, on_strategy_start, on_evaluation_heartbeat, _LifecycleStrategy
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -27,13 +17,17 @@ from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_rtds_data_client_id,
 )
-from polysignal_lab.nautilus_runtime.strategy.subscriptions import MarketSubscriptionState
+from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    MarketSubscriptionState,
+)
 from polysignal_lab.nautilus_runtime.strategy.condition_evaluation import (
     retire_expired_condition,
 )
-from polysignal_lab.nautilus_runtime.strategy.helpers import (
+from polysignal_lab.nautilus_runtime.strategy.constants import (
     EVALUATION_HEARTBEAT_INTERVAL,
     EVALUATION_HEARTBEAT_TIMER_NAME,
+)
+from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
     _subscribe_custom_data,
     unsubscribe_custom_data,
 )

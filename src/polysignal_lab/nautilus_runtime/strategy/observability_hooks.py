@@ -1,15 +1,3 @@
-"""
-Input: __future__, __future__.annotations, sqlite3, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.Protocol, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision
-Output: record_observability, record_signal, notify_accepted_signal, record_decision, record_rejected, record_nautilus_order, record_nautilus_fill, record_nautilus_position, _ObservabilityStrategy
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
 from __future__ import annotations
 
 import sqlite3
@@ -19,7 +7,7 @@ from typing import Protocol
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import RejectedDecision
-from polysignal_lab.nautilus_runtime.strategy.helpers import _Observability
+from polysignal_lab.nautilus_runtime.strategy.protocols import _Observability
 
 
 class _ObservabilityStrategy(Protocol):

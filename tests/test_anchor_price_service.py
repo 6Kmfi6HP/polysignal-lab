@@ -1,25 +1,12 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.datetime, datetime.timezone, polysignal_lab.data.anchor_price_service, polysignal_lab.data.anchor_price_service.capture_anchor_price, polysignal_lab.data.anchor_price_service.window_for_market, polysignal_lab.nautilus_runtime.spot_anchor_state, polysignal_lab.nautilus_runtime.spot_anchor_state.SpotAnchorState
-Output: test_window_for_market_prefers_event_window, test_window_for_market_derives_from_slug_when_event_start_missing, test_capture_for_market_persists_verified_spot_anchor, test_capture_for_market_keeps_verified_anchor_when_later_sample_is_stale, test_capture_anchor_price_tracks_latest_anchor_by_key, _Store
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from polysignal_lab.data.anchor_price_service import capture_anchor_price, window_for_market
-from polysignal_lab.data.state import SpotPrice
+from polysignal_lab.data.anchor_price_service import (
+    capture_anchor_price,
+    window_for_market,
+)
+from polysignal_lab.data.registries import SpotPrice
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_runtime.spot_anchor_state import SpotAnchorState

@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.replace, datetime, datetime.datetime, typing, typing.Protocol
-Output: skip_preloaded_condition, retire_expired_condition, mark_condition_unready, evaluate_condition, evaluate_ready_condition, evaluate_decisions, handle_decision, _EvaluationStrategy
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -15,13 +5,19 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Protocol, cast
 
-from polysignal_lab.alpha.types import AlphaCore, AlphaDecision, MarketView, TradingStateView
+from polysignal_lab.alpha.types import (
+    AlphaCore,
+    AlphaDecision,
+    MarketView,
+    TradingStateView,
+)
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.native_strategy_exit import NativeExitPolicy
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import DecisionPipeline
-from polysignal_lab.nautilus_runtime.strategy.helpers import _Assembler, _market_view_ready
+from polysignal_lab.nautilus_runtime.strategy.data_boundary import _market_view_ready
+from polysignal_lab.nautilus_runtime.strategy.protocols import _Assembler
 from polysignal_lab.nautilus_runtime.strategy.readiness import (
     orderbook_readiness_threshold_ms,
     orderbook_trade_threshold_ms,

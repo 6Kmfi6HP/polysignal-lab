@@ -1,21 +1,6 @@
-"""
-Input: __future__, __future__.annotations, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.LowSideDualReversionConfig
-Output: LowSideDualReversionAlphaCore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
-from polysignal_lab.alpha.helpers import (
+from polysignal_lab.alpha.decisions import (
     HedgeDecisionContext,
     HedgeDecisionSpec,
     SIDES,
@@ -85,7 +70,9 @@ class LowSideDualReversionAlphaCore:
 
     # -- decision helpers ----------------------------------------------------
 
-    def _build_decisions(self, view: MarketView, best_price: float) -> list[AlphaDecision]:
+    def _build_decisions(
+        self, view: MarketView, best_price: float
+    ) -> list[AlphaDecision]:
         seconds_to_close = view.seconds_to_close
         if seconds_to_close is None:
             return []
@@ -136,7 +123,9 @@ class LowSideDualReversionAlphaCore:
         best_price = self._find_best_price(view)
         return [] if best_price is None else self._build_decisions(view, best_price)
 
-    def _try_hedge(self, view: MarketView, position: CachedPositionView) -> list[AlphaDecision]:
+    def _try_hedge(
+        self, view: MarketView, position: CachedPositionView
+    ) -> list[AlphaDecision]:
         if view.trading.has_hedge_order(self.name, view.market_id):
             return []
         hedge = hedge_context_from_position(position, view.created_at)
@@ -166,8 +155,13 @@ class LowSideDualReversionAlphaCore:
                         pair_cost=cost,
                         cap_metric="pair_cost_cap",
                         cap_value=self.config.pair_cost_cap,
-                        reason_codes=("DUAL_REVERSION_HEDGE", f"HEDGE_{hedge.hedge_side.value}"),
-                        order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dual"),
+                        reason_codes=(
+                            "DUAL_REVERSION_HEDGE",
+                            f"HEDGE_{hedge.hedge_side.value}",
+                        ),
+                        order_intent=OrderIntentSpec(
+                            OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dual"
+                        ),
                         hedge_price_metric="hedge_weighted_ask",
                     ),
                 )
@@ -198,12 +192,15 @@ class LowSideDualReversionAlphaCore:
                             pair_cost=cost,
                             cap_metric="stop_loss_cap",
                             cap_value=self.config.stop_loss_hedge_cap,
-                            reason_codes=("DUAL_REVERSION_STOP_LOSS", f"UNHEDGED_{hedge.elapsed_seconds:.0f}s"),
-                            order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dual"),
+                            reason_codes=(
+                                "DUAL_REVERSION_STOP_LOSS",
+                                f"UNHEDGED_{hedge.elapsed_seconds:.0f}s",
+                            ),
+                            order_intent=OrderIntentSpec(
+                                OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:dual"
+                            ),
                         ),
                     )
                     if decision:
                         decisions.append(decision)
         return decisions
-
-

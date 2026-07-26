@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Sequence, dataclasses, dataclasses.dataclass, typing, typing.Protocol, typing.cast
-Output: build_runtime_node, build_live_node, build_nautilus_runtime, _Disposable, NautilusRuntimeBundle
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -18,7 +9,7 @@ from nautilus_trader.core.nautilus_pyo3 import InstrumentId
 
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.domain.market import Market
-from polysignal_lab.nautilus_runtime.node_builder_components import (
+from polysignal_lab.nautilus_runtime.configured_markets import (
     configured_condition_ids,
     instrument_load_ids,
 )

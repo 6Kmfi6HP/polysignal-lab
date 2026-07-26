@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, logging, collections.abc, dataclasses, datetime
-Output: GateDecision, GateRejection, SignalGate
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 import logging
@@ -205,7 +196,9 @@ class SignalGate:
         self, decision: AlphaDecision, view: MarketView
     ) -> SignalCandidate:
         # Local import avoids gate → decision_policy cycle.
-        from polysignal_lab.nautilus_runtime.decision_policy import candidate_from_decision
+        from polysignal_lab.nautilus_runtime.decision_policy import (
+            candidate_from_decision,
+        )
 
         return candidate_from_decision(decision, view)
 
@@ -311,9 +304,7 @@ class SignalGate:
         return None
 
     @staticmethod
-    def _identity(
-        decision: AlphaDecision, view: MarketView
-    ) -> GateRejection | None:
+    def _identity(decision: AlphaDecision, view: MarketView) -> GateRejection | None:
         if decision.market_id != view.market_id:
             return GateRejection("MARKET_ID_MISMATCH")
         if decision.condition_id != view.condition_id:
@@ -392,7 +383,11 @@ class SignalGate:
             return None
         book = view.book_for(decision.side)
         max_spread = decision.metrics.get("max_spread", 0.12)
-        if _book_present(book) and book.spread is not None and book.spread <= max_spread:
+        if (
+            _book_present(book)
+            and book.spread is not None
+            and book.spread <= max_spread
+        ):
             return None
         return GateRejection("SPREAD_TOO_WIDE")
 

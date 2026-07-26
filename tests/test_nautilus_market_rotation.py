@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, types, types.SimpleNamespace, nautilus_polymarket_fixtures, polysignal_lab.config, polysignal_lab.config.Settings
-Output: test_spot_anchor_state_captures_actor_local_history_without_trading_projection, test_market_rotation_publishes_ptb_for_startup_markets, test_market_rotation_publishes_provider_instrument_market, test_market_rotation_state_roundtrip_preserves_markets, test_market_rotation_rejects_discovery_worker_kwarg, _HealthRecorder, _RecordingActor
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -67,7 +57,9 @@ class _HealthRecorder:
     def mark_ok(self, name: str, **metrics: object) -> None:
         self.ok.append((name, dict(metrics)))
 
-    def mark_degraded(self, name: str, error: str | None = None, **metrics: object) -> None:
+    def mark_degraded(
+        self, name: str, error: str | None = None, **metrics: object
+    ) -> None:
         _ = name, error, metrics
 
     def mark_down(self, name: str, error: str | None = None, **metrics: object) -> None:
@@ -168,6 +160,7 @@ class _RecordingActor(MarketRotationActor):
             (str(venue), None if client_id is None else str(client_id))
         )
         return "request-instruments"
+
     @override
     def subscribe_data(
         self,
@@ -179,6 +172,7 @@ class _RecordingActor(MarketRotationActor):
         self.custom_data_subscriptions.append(
             (data_type, None if client_id is None else str(client_id))
         )
+
     @override
     def unsubscribe_data(
         self,
@@ -200,7 +194,9 @@ def _fire_startup_replay(actor: _RecordingActor) -> None:
     _ = callback(object())
 
 
-def test_spot_anchor_state_captures_actor_local_history_without_trading_projection() -> None:
+def test_spot_anchor_state_captures_actor_local_history_without_trading_projection() -> (
+    None
+):
     state = SpotAnchorState(anchor_store=None)
     market = _market("cond-a")
     spot = SpotPrice(
@@ -435,9 +431,7 @@ def test_market_rotation_terminal_first_leg_retires_restored_active_market() -> 
     actor = _RecordingActor(
         settings=settings,
         startup_markets=(
-            _market("0xcondition1").model_copy(
-                update={"status": MarketStatus.ACTIVE}
-            ),
+            _market("0xcondition1").model_copy(update={"status": MarketStatus.ACTIVE}),
         ),
     )
 
@@ -459,15 +453,15 @@ def test_market_rotation_terminal_first_leg_retires_restored_active_market() -> 
     assert universe.exited_condition_ids == ("0xcondition1",)
 
 
-def test_market_rotation_terminal_before_startup_replay_is_included_in_snapshot() -> None:
+def test_market_rotation_terminal_before_startup_replay_is_included_in_snapshot() -> (
+    None
+):
     settings = Settings()
     settings.runtime.nautilus.spot_data.source = "disabled"
     actor = _RecordingActor(
         settings=settings,
         startup_markets=(
-            _market("0xcondition1").model_copy(
-                update={"status": MarketStatus.ACTIVE}
-            ),
+            _market("0xcondition1").model_copy(update={"status": MarketStatus.ACTIVE}),
         ),
     )
     actor.on_start()
@@ -570,7 +564,9 @@ def test_market_rotation_restored_state_retires_expired_market() -> None:
     assert universe.epoch == 8
 
 
-def test_market_rotation_restored_state_replays_live_survivor_with_expired_exit() -> None:
+def test_market_rotation_restored_state_replays_live_survivor_with_expired_exit() -> (
+    None
+):
     settings = Settings()
     settings.runtime.nautilus.spot_data.source = "disabled"
     expired = _market("cond-expired")
@@ -781,7 +777,9 @@ def test_market_rotation_state_roundtrip_preserves_terminal_tombstones() -> None
     assert restored.published == []
 
 
-def test_market_rotation_restored_active_state_fails_closed_until_provider_refresh() -> None:
+def test_market_rotation_restored_active_state_fails_closed_until_provider_refresh() -> (
+    None
+):
     settings = Settings()
     settings.runtime.nautilus.spot_data.source = "disabled"
     market = _market("cond-stale").model_copy(
@@ -807,7 +805,10 @@ def test_market_rotation_restored_active_state_fails_closed_until_provider_refre
 def test_market_rotation_rejects_pre_tombstone_state_schema() -> None:
     import pytest
 
-    from polysignal_lab.nautilus_runtime.state import StateSchemaError, encode_state
+    from polysignal_lab.nautilus_runtime.strategy_state import (
+        StateSchemaError,
+        encode_state,
+    )
 
     settings = Settings()
     settings.runtime.nautilus.spot_data.source = "disabled"

@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, importlib, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.cast, nautilus_trader.core.nautilus_pyo3, polysignal_lab.config, polysignal_lab.nautilus_runtime.optional_imports, polysignal_lab.nautilus_runtime.polymarket_clients
-Output: assert_no_live_polymarket_execution, build_sandbox_live_node, build_live_execution_node, build_runtime_node, build_cache_config, build_data_engine_config, build_exec_engine_config, build_risk_engine_config, build_polymarket_data_client_config, build_sandbox_exec_client_config, build_polymarket_exec_client_config
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import importlib
@@ -108,6 +98,29 @@ def build_runtime_node(
     raise RuntimeError("live_node.build_runtime_node requires sandbox or live mode")
 
 
+def _client_factories(
+    *, live: bool
+) -> tuple[Callable[[], object], Callable[[], object]]:
+    """Resolve the pyo3 data/exec client factories, which optional_imports types as `object`.
+
+    Both are factory classes constructed with no arguments.
+    """
+    data_factory = cast(
+        Callable[[], object],
+        _required(PolymarketDataClientFactory, "PolymarketDataClientFactory"),
+    )
+    exec_factory = cast(
+        Callable[[], object],
+        _required(
+            PolymarketExecutionClientFactory if live else SandboxExecutionClientFactory,
+            "PolymarketExecutionClientFactory"
+            if live
+            else "SandboxExecutionClientFactory",
+        ),
+    )
+    return data_factory, exec_factory
+
+
 def _build_live_node(
     settings: Settings,
     data_configs: Mapping[str, object],
@@ -121,14 +134,7 @@ def _build_live_node(
     trader_id_text = settings.runtime.nautilus.trader_id
     trader_id = trader_id_cls(trader_id_text)
     exec_engine_config = build_exec_engine_config(reconciliation=live)
-    data_factory_cls = cast(
-        Callable[[], object],
-        _required(PolymarketDataClientFactory, "PolymarketDataClientFactory"),
-    )
-    exec_factory = _required(
-        PolymarketExecutionClientFactory if live else SandboxExecutionClientFactory,
-        "PolymarketExecutionClientFactory" if live else "SandboxExecutionClientFactory",
-    )
+    data_factory_cls, exec_factory = _client_factories(live=live)
     execution_environment = getattr(environment, "LIVE" if live else "SANDBOX")
     builder = (
         live_node_cls.builder(trader_id_text, trader_id, execution_environment)
@@ -151,7 +157,9 @@ def _build_live_node(
         )
     builder = with_risk(build_risk_engine_config(settings))
     if live:
-        builder = builder.add_exec_client(LIVE_EXEC_CLIENT_ID, exec_factory(), exec_config)
+        builder = builder.add_exec_client(
+            LIVE_EXEC_CLIENT_ID, exec_factory(), exec_config
+        )
     else:
         builder = builder.add_simulated_exec_client(
             SANDBOX_EXEC_CLIENT_ID, exec_factory(), exec_config
@@ -160,9 +168,7 @@ def _build_live_node(
 
 
 def build_cache_config() -> object:
-    cache_config = _import_callable(
-        "nautilus_trader.core.nautilus_pyo3", "CacheConfig"
-    )
+    cache_config = _import_callable("nautilus_trader.core.nautilus_pyo3", "CacheConfig")
     return cache_config()
 
 

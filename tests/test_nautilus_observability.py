@@ -1,25 +1,9 @@
-"""
-Input: __future__, __future__.annotations, asyncio, sqlite3, threading, collections.abc, collections.abc.Mapping, collections.abc.Sequence, datetime, datetime.UTC
-Output: test_startup_message_includes_sandbox_book_type, test_record_decision_writes_to_nautilus_decision_stream, test_observability_actor_isolates_best_effort_telemetry_write_failure, test_observability_actor_isolates_accepted_signal_notifier_failure, test_observability_actor_isolates_report_result_notifier_failure, test_notify_report_result_suppresses_duplicate_trade_ids, test_best_effort_telemetry_queue_drops_when_full_and_marks_health, test_best_effort_telemetry_writer_drains_queued_events, test_telemetry_writer_retries_transient_sqlite_lock, test_telemetry_writer_stops_after_bounded_sqlite_lock_retries
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import asyncio
 import sqlite3
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,26 +24,41 @@ from polysignal_lab.nautilus_runtime.observability import (
     NautilusNotifierAdapter,
     ObservabilityService,
 )
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy, RejectedDecision
+from polysignal_lab.nautilus_runtime.decision_policy import (
+    DecisionPolicy,
+    RejectedDecision,
+)
 
 
 class FakeStore:
     def __init__(self) -> None:
         self.tables: dict[str, list[dict[str, Any]]] = {}
 
-    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+    def insert_json(
+        self,
+        table: str,
+        data: Mapping[str, object],
+        *,
+        suppress_best_effort_locks: bool = True,
+    ) -> bool:
+        _ = suppress_best_effort_locks
         self.tables.setdefault(table, []).append(dict(data))
-
-    def insert_many_json(self, table: str, rows: Sequence[Mapping[str, object]]) -> None:
-        for row in rows:
-            self.insert_json(table, row)
+        return True
 
 
 class FailingTelemetryStore(FakeStore):
-    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+    def insert_json(
+        self,
+        table: str,
+        data: Mapping[str, object],
+        *,
+        suppress_best_effort_locks: bool = True,
+    ) -> bool:
         if table.startswith("nautilus_"):
             raise OSError("jsonl unavailable")
-        super().insert_json(table, data)
+        return super().insert_json(
+            table, data, suppress_best_effort_locks=suppress_best_effort_locks
+        )
 
 
 class BlockingTelemetryStore(FakeStore):
@@ -68,10 +67,18 @@ class BlockingTelemetryStore(FakeStore):
         self.insert_started = threading.Event()
         self.release_insert = threading.Event()
 
-    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+    def insert_json(
+        self,
+        table: str,
+        data: Mapping[str, object],
+        *,
+        suppress_best_effort_locks: bool = True,
+    ) -> bool:
         self.insert_started.set()
         _ = self.release_insert.wait(timeout=10.0)
-        super().insert_json(table, data)
+        return super().insert_json(
+            table, data, suppress_best_effort_locks=suppress_best_effort_locks
+        )
 
 
 class FlakyLockedTelemetryStore(FakeStore):
@@ -79,11 +86,19 @@ class FlakyLockedTelemetryStore(FakeStore):
         super().__init__()
         self.calls = 0
 
-    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+    def insert_json(
+        self,
+        table: str,
+        data: Mapping[str, object],
+        *,
+        suppress_best_effort_locks: bool = True,
+    ) -> bool:
         self.calls += 1
         if self.calls == 1:
             raise sqlite3.OperationalError("database is locked")
-        super().insert_json(table, data)
+        return super().insert_json(
+            table, data, suppress_best_effort_locks=suppress_best_effort_locks
+        )
 
 
 class AlwaysLockedTelemetryStore(FakeStore):
@@ -91,7 +106,13 @@ class AlwaysLockedTelemetryStore(FakeStore):
         super().__init__()
         self.calls = 0
 
-    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+    def insert_json(
+        self,
+        table: str,
+        data: Mapping[str, object],
+        *,
+        suppress_best_effort_locks: bool = True,
+    ) -> bool:
         self.calls += 1
         raise sqlite3.OperationalError("database is locked")
 
@@ -101,12 +122,19 @@ class NonLockingOperationalErrorTelemetryStore(FakeStore):
         super().__init__()
         self.calls = 0
 
-    def insert_json(self, table: str, data: Mapping[str, object]) -> None:
+    def insert_json(
+        self,
+        table: str,
+        data: Mapping[str, object],
+        *,
+        suppress_best_effort_locks: bool = True,
+    ) -> bool:
         self.calls += 1
         raise sqlite3.OperationalError("disk I/O error")
 
 
 # ── ObservabilityService tests ──────────────────────────────────────────────────
+
 
 def test_startup_message_includes_sandbox_book_type() -> None:
     publisher = FakePublisher()
@@ -129,18 +157,26 @@ def test_startup_message_includes_sandbox_book_type() -> None:
     assert component.metrics["sandbox_book_type"] == "L2_MBP"
 
 
-
 def test_record_decision_writes_to_nautilus_decision_stream() -> None:
     store = FakeStore()
     actor = ObservabilityService(store=store)
 
     decision = AlphaDecision(
-        strategy="test", asset="BTC", timeframe="5m",
-        market_id="m1", market_slug="s1", condition_id="c1",
-        token_id="t1", side=Side.UP, confidence=0.8,
-        entry_reference_price=0.5, max_entry_price=0.55,
-        seconds_to_close=120, data_freshness_ms=100,
-        reason_codes=("EDGE",), metrics={},
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m1",
+        market_slug="s1",
+        condition_id="c1",
+        token_id="t1",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=("EDGE",),
+        metrics={},
     )
     actor.record_decision(decision, accepted=True)
     actor.drain_telemetry_once()
@@ -168,13 +204,26 @@ def test_observability_actor_isolates_best_effort_telemetry_write_failure() -> N
 
 def test_observability_actor_isolates_accepted_signal_notifier_failure() -> None:
     signal = SignalCandidate.build(
-        strategy="test", asset="BTC", timeframe="5m", market_id="m1", market_slug="s1",
-        condition_id="c1", token_id="t1", side=Side.UP, confidence=0.8,
-        entry_reference_price=0.5, max_entry_price=0.55,
-        seconds_to_close=120, data_freshness_ms=100, reason_codes=["EDGE"], metrics={},
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m1",
+        market_slug="s1",
+        condition_id="c1",
+        token_id="t1",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=["EDGE"],
+        metrics={},
     )
     actor = ObservabilityService(
-        accepted_signal_notifier=lambda _signal, _stake: (_ for _ in ()).throw(RuntimeError("telegram failed"))
+        accepted_signal_notifier=lambda signal, stake_usdc: (_ for _ in ()).throw(
+            RuntimeError("telegram failed")
+        )
     )
 
     actor.notify_accepted_signal(signal, 10.0)
@@ -212,14 +261,13 @@ def test_notify_report_result_suppresses_duplicate_trade_ids() -> None:
     assert len(calls) == 1
 
 
-
-
-
-
-
 def test_best_effort_telemetry_queue_drops_when_full_and_marks_health() -> None:
     store = FakeStore()
-    actor = ObservabilityService(store=store, telemetry_queue_size=1, telemetry_autostart=False)
+    actor = ObservabilityService(
+        store=store,
+        telemetry_queue_size=1,
+        telemetry_autostart=False,
+    )
 
     actor.record_decision(_decision(market_id="m1"), accepted=True)
     actor.record_decision(_decision(market_id="m2"), accepted=True)
@@ -249,7 +297,11 @@ def test_best_effort_telemetry_queue_drops_when_full_and_marks_health() -> None:
 
 def test_best_effort_telemetry_writer_drains_queued_events() -> None:
     store = FakeStore()
-    actor = ObservabilityService(store=store, telemetry_queue_size=8, telemetry_autostart=False)
+    actor = ObservabilityService(
+        store=store,
+        telemetry_queue_size=8,
+        telemetry_autostart=False,
+    )
 
     actor.record_decision(_decision(), accepted=True)
     actor.drain_telemetry_once()
@@ -259,7 +311,11 @@ def test_best_effort_telemetry_writer_drains_queued_events() -> None:
 
 def test_telemetry_writer_retries_transient_sqlite_lock() -> None:
     store = FlakyLockedTelemetryStore()
-    actor = ObservabilityService(store=store, telemetry_queue_size=8, telemetry_autostart=False)
+    actor = ObservabilityService(
+        store=store,
+        telemetry_queue_size=8,
+        telemetry_autostart=False,
+    )
 
     actor.record_decision(_decision(), accepted=True)
     actor.drain_telemetry_once()
@@ -314,7 +370,11 @@ def test_telemetry_writer_does_not_retry_non_lock_sqlite_operational_error() -> 
 
 def test_stop_returns_without_sync_drain_when_best_effort_store_blocks() -> None:
     store = BlockingTelemetryStore()
-    actor = ObservabilityService(store=store, telemetry_queue_size=8, telemetry_autostart=False)
+    actor = ObservabilityService(
+        store=store,
+        telemetry_queue_size=8,
+        telemetry_autostart=False,
+    )
     actor.record_decision(_decision(), accepted=True)
 
     stop_thread = threading.Thread(target=actor.stop)
@@ -331,6 +391,7 @@ def test_stop_returns_without_sync_drain_when_best_effort_store_blocks() -> None
     finally:
         store.release_insert.set()
         stop_thread.join(timeout=1.0)
+
 
 def test_record_signal_writes_to_signal_stream() -> None:
     store = FakeStore()
@@ -372,12 +433,21 @@ def test_record_decision_event_store_persists_system_event_without_signal_id(
     actor = ObservabilityService(store=NautilusEventStoreAdapter(persistence))
 
     decision = AlphaDecision(
-        strategy="test", asset="BTC", timeframe="5m",
-        market_id="m1", market_slug="s1", condition_id="c1",
-        token_id="t1", side=Side.UP, confidence=0.8,
-        entry_reference_price=0.5, max_entry_price=0.55,
-        seconds_to_close=120, data_freshness_ms=100,
-        reason_codes=("EDGE",), metrics={},
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m1",
+        market_slug="s1",
+        condition_id="c1",
+        token_id="t1",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=("EDGE",),
+        metrics={},
     )
     actor.record_decision(decision, accepted=True)
     actor.drain_telemetry_once()
@@ -392,6 +462,7 @@ def test_record_decision_event_store_persists_system_event_without_signal_id(
     assert rows[0]["accepted"] is True
     assert rows[0]["side"] == "UP"
     assert rows[0]["event_type"] == "nautilus_decision"
+
 
 def test_record_rejected_decision_writes_publish_projection_payload() -> None:
     store = FakeStore()
@@ -429,7 +500,10 @@ def test_record_rejected_decision_writes_publish_projection_payload() -> None:
     assert rows[0]["candidate"]["condition_id"] == "c1"
     assert rows[0]["candidate"]["token_id"] == "t1"
 
-def test_record_decision_uses_sqlite_and_rejection_keeps_jsonl_audit(tmp_path: Path) -> None:
+
+def test_record_decision_uses_sqlite_and_rejection_keeps_jsonl_audit(
+    tmp_path: Path,
+) -> None:
     persistence = PersistenceService(
         JSONLStore(tmp_path / "logs"),
         SQLiteStore(tmp_path / "nautilus-observability.sqlite3"),
@@ -503,14 +577,24 @@ def test_record_decision_uses_sqlite_and_rejection_keeps_jsonl_audit(tmp_path: P
     assert rejection_rows[0]["candidate"]["condition_id"] == "c1"
     assert rejection_rows[0]["candidate"]["token_id"] == "t1"
 
+
 def _decision(**overrides: object) -> AlphaDecision:
     base: dict[str, Any] = dict(
-        strategy="test", asset="BTC", timeframe="5m",
-        market_id="m1", market_slug="s1", condition_id="c1",
-        token_id="t1", side=Side.UP, confidence=0.8,
-        entry_reference_price=0.5, max_entry_price=0.55,
-        seconds_to_close=120, data_freshness_ms=100,
-        reason_codes=("EDGE",), metrics={},
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m1",
+        market_slug="s1",
+        condition_id="c1",
+        token_id="t1",
+        side=Side.UP,
+        confidence=0.8,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=("EDGE",),
+        metrics={},
     )
     base.update(overrides)
     return AlphaDecision(**base)
@@ -561,7 +645,9 @@ def test_rejected_decision_with_different_reason_is_persisted() -> None:
     assert len(store.tables.get("rejected_signals", [])) == 2
 
 
-def test_rejected_decision_is_persisted_again_after_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rejected_decision_is_persisted_again_after_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from polysignal_lab.nautilus_runtime import observability as obs_module
 
     clock = {"now": 1000.0}
@@ -576,7 +662,9 @@ def test_rejected_decision_is_persisted_again_after_ttl(monkeypatch: pytest.Monk
     assert len(store.tables.get("rejected_signals", [])) == 2
 
 
-def test_repeated_identical_rejected_nautilus_decision_is_persisted_once_within_ttl() -> None:
+def test_repeated_identical_rejected_nautilus_decision_is_persisted_once_within_ttl() -> (
+    None
+):
     store = FakeStore()
     actor = ObservabilityService(store=store)
 
@@ -597,14 +685,6 @@ def test_accepted_decisions_are_never_suppressed() -> None:
         pass
 
     assert len(store.tables.get("nautilus_decision", [])) == 2
-
-
-
-
-
-
-
-
 
 
 def test_record_nautilus_projection_events_write_projected_rows() -> None:
@@ -666,7 +746,10 @@ def test_record_nautilus_projection_events_write_projected_rows() -> None:
     assert position_rows[0]["report_position_id"] == "P-001"
     assert position_rows[0]["is_closed"] is False
 
-def test_nautilus_projection_events_with_integer_timestamps_get_unique_event_ids() -> None:
+
+def test_nautilus_projection_events_with_integer_timestamps_get_unique_event_ids() -> (
+    None
+):
     persistence = FakePersistence()
     actor = ObservabilityService(store=NautilusEventStoreAdapter(persistence))
 
@@ -704,9 +787,7 @@ def test_nautilus_projection_events_with_integer_timestamps_get_unique_event_ids
         pass
 
     system_events = [
-        payload
-        for name, payload in persistence.calls
-        if name == "insert_system_event"
+        payload for name, payload in persistence.calls if name == "insert_system_event"
     ]
     assert len(system_events) == 2
     first_event = cast(dict[str, object], system_events[0])
@@ -716,17 +797,25 @@ def test_nautilus_projection_events_with_integer_timestamps_get_unique_event_ids
     assert first_event["event_id"] != second_event["event_id"]
 
 
-
 def test_event_count_increments() -> None:
     actor = ObservabilityService()
     assert actor.event_count == 0
     decision = AlphaDecision(
-        strategy="t", asset="BTC", timeframe="5m",
-        market_id="m", market_slug="s", condition_id="c",
-        token_id="t", side=Side.UP, confidence=0.5,
-        entry_reference_price=0.5, max_entry_price=0.55,
-        seconds_to_close=120, data_freshness_ms=100,
-        reason_codes=(), metrics={},
+        strategy="t",
+        asset="BTC",
+        timeframe="5m",
+        market_id="m",
+        market_slug="s",
+        condition_id="c",
+        token_id="t",
+        side=Side.UP,
+        confidence=0.5,
+        entry_reference_price=0.5,
+        max_entry_price=0.55,
+        seconds_to_close=120,
+        data_freshness_ms=100,
+        reason_codes=(),
+        metrics={},
     )
     actor.record_decision(decision, accepted=True)
     assert actor.event_count == 1
@@ -798,19 +887,41 @@ class FakePublisher:
         return None
 
 
-def test_nautilus_persistence_table_classification_separates_telemetry_from_critical_state() -> None:
+def test_nautilus_persistence_table_classification_separates_telemetry_from_critical_state() -> (
+    None
+):
     from polysignal_lab.nautilus_runtime.observability import (
         PersistenceClass,
         persistence_class_for_table,
     )
 
-    assert persistence_class_for_table("nautilus_decision") is PersistenceClass.BEST_EFFORT_TELEMETRY
-    assert persistence_class_for_table("nautilus_fill") is PersistenceClass.BEST_EFFORT_TELEMETRY
-    assert persistence_class_for_table("health_snapshot") is PersistenceClass.BEST_EFFORT_TELEMETRY
-    assert persistence_class_for_table("signals") is PersistenceClass.DURABLE_OR_DEGRADED
-    assert persistence_class_for_table("rejected_signals") is PersistenceClass.DURABLE_OR_DEGRADED
-    assert persistence_class_for_table("nautilus_order") is PersistenceClass.DURABLE_OR_DEGRADED
-    assert persistence_class_for_table("nautilus_position") is PersistenceClass.DURABLE_OR_DEGRADED
+    assert (
+        persistence_class_for_table("nautilus_decision")
+        is PersistenceClass.BEST_EFFORT_TELEMETRY
+    )
+    assert (
+        persistence_class_for_table("nautilus_fill")
+        is PersistenceClass.BEST_EFFORT_TELEMETRY
+    )
+    assert (
+        persistence_class_for_table("health_snapshot")
+        is PersistenceClass.BEST_EFFORT_TELEMETRY
+    )
+    assert (
+        persistence_class_for_table("signals") is PersistenceClass.DURABLE_OR_DEGRADED
+    )
+    assert (
+        persistence_class_for_table("rejected_signals")
+        is PersistenceClass.DURABLE_OR_DEGRADED
+    )
+    assert (
+        persistence_class_for_table("nautilus_order")
+        is PersistenceClass.DURABLE_OR_DEGRADED
+    )
+    assert (
+        persistence_class_for_table("nautilus_position")
+        is PersistenceClass.DURABLE_OR_DEGRADED
+    )
     assert persistence_class_for_table("orders") is PersistenceClass.FATAL_ON_LOSS
     assert persistence_class_for_table("fills") is PersistenceClass.FATAL_ON_LOSS
     assert persistence_class_for_table("positions") is PersistenceClass.FATAL_ON_LOSS
@@ -823,7 +934,10 @@ def test_unknown_nautilus_persistence_table_remains_fatal() -> None:
         persistence_class_for_table,
     )
 
-    assert persistence_class_for_table("schema_migration") is PersistenceClass.FATAL_ON_LOSS
+    assert (
+        persistence_class_for_table("schema_migration")
+        is PersistenceClass.FATAL_ON_LOSS
+    )
 
 
 class LockingSystemEventPersistence(FakePersistence):
@@ -843,7 +957,9 @@ def test_event_store_raises_on_critical_paper_state_sqlite_lock() -> None:
         adapter.insert_json("settlements", {"report_result_id": "trade-1"})
 
 
-def test_nautilus_event_store_surfaces_lifecycle_sqlite_lock_for_runtime_degradation() -> None:
+def test_nautilus_event_store_surfaces_lifecycle_sqlite_lock_for_runtime_degradation() -> (
+    None
+):
     persistence = LockingSystemEventPersistence()
     adapter = NautilusEventStoreAdapter(persistence)
 
@@ -864,7 +980,15 @@ def test_event_store_routes_known_tables_and_rejects_unknown() -> None:
     adapter.insert_json("signals", {"signal_id": "s1"})
     adapter.insert_json("rejected_signals", {"rejected_id": "r1"})
     adapter.insert_json("settlements", {"report_result_id": "t1"})
-    adapter.insert_json("health_snapshot", {"event_id": "h1", "event_type": "health_snapshot", "severity": "info", "created_at": "now"})
+    adapter.insert_json(
+        "health_snapshot",
+        {
+            "event_id": "h1",
+            "event_type": "health_snapshot",
+            "severity": "info",
+            "created_at": "now",
+        },
+    )
 
     assert [name for name, _ in persistence.calls] == [
         "insert_signal",
@@ -905,8 +1029,7 @@ def test_best_effort_telemetry_uses_single_sink_and_enforces_retention(
                 "event_type": "health_snapshot",
                 "severity": "info",
                 "created_at": (
-                    datetime(2026, 7, 13, tzinfo=UTC)
-                    + timedelta(seconds=index)
+                    datetime(2026, 7, 13, tzinfo=UTC) + timedelta(seconds=index)
                 ).isoformat(),
             }
         )
@@ -941,16 +1064,32 @@ def test_event_store_writes_nautilus_order_to_system_events(tmp_path) -> None:
     )
     adapter = NautilusEventStoreAdapter(persistence)
 
-    adapter.insert_json("nautilus_order", {
-        "client_order_id": "order-1", "event_type": "nautilus_order", "severity": "info",
-        "status": "FILLED", "ts": "2026-07-01T00:00:00Z",
-    })
-    adapter.insert_json("nautilus_order", {
-        "client_order_id": "order-2", "event_type": "nautilus_order", "severity": "info",
-        "status": "REJECTED", "ts": "2026-07-01T00:01:00Z",
-    })
+    adapter.insert_json(
+        "nautilus_order",
+        {
+            "client_order_id": "order-1",
+            "event_type": "nautilus_order",
+            "severity": "info",
+            "status": "FILLED",
+            "ts": "2026-07-01T00:00:00Z",
+        },
+    )
+    adapter.insert_json(
+        "nautilus_order",
+        {
+            "client_order_id": "order-2",
+            "event_type": "nautilus_order",
+            "severity": "info",
+            "status": "REJECTED",
+            "ts": "2026-07-01T00:01:00Z",
+        },
+    )
 
-    rows = persistence.query_json("system_events", where="WHERE event_type = ? ORDER BY created_at ASC", params=("nautilus_order",))
+    rows = persistence.query_json(
+        "system_events",
+        where="WHERE event_type = ? ORDER BY created_at ASC",
+        params=("nautilus_order",),
+    )
     assert len(rows) == 2
     assert rows[0]["client_order_id"] == "order-1"
     assert rows[0]["status"] == "FILLED"

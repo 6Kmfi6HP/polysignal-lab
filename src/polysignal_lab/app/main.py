@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, argparse, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, enum, enum.StrEnum, pathlib
-Output: build_parser, parse_cli, run_dashboard_cli, run_readonly_smoke, main, RuntimeMode, CliOptions
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import argparse
@@ -21,9 +11,12 @@ import anyio
 import uvicorn
 
 from polysignal_lab.config import Settings, load_settings
-from polysignal_lab.app.readonly_smoke_types import ReadonlySmokeEvidence, ReadonlySmokeRequest
+from polysignal_lab.app.readonly_smoke_types import (
+    ReadonlySmokeEvidence,
+    ReadonlySmokeRequest,
+)
 from polysignal_lab.dashboard.app import create_dashboard_app
-from polysignal_lab.dashboard.reporting_read import FileRuntimeHealthReader
+from polysignal_lab.dashboard.ports import FileRuntimeHealthReader
 from polysignal_lab.observability.logger import configure_logging
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 
@@ -102,7 +95,9 @@ def parse_cli(argv: Sequence[str] | None = None) -> CliOptions:
     return CliOptions(
         config=Path(args.config),
         mode=mode,
-        use_config_default_runtime=not runtime_selected and not args.once and not args.real_readonly_smoke,
+        use_config_default_runtime=not runtime_selected
+        and not args.once
+        and not args.real_readonly_smoke,
         once=bool(args.once or mode is RuntimeMode.SMOKE),
         real_readonly_smoke=bool(args.real_readonly_smoke or mode is RuntimeMode.SMOKE),
         evidence=Path(args.evidence) if args.evidence else None,
@@ -132,7 +127,9 @@ def run_dashboard_cli(settings: Settings) -> None:
     uvicorn.run(app, host=settings.dashboard.host, port=settings.dashboard.port)
 
 
-async def _collect_readonly_smoke(request: ReadonlySmokeRequest) -> ReadonlySmokeEvidence:
+async def _collect_readonly_smoke(
+    request: ReadonlySmokeRequest,
+) -> ReadonlySmokeEvidence:
     from polysignal_lab.app.readonly_smoke import collect_readonly_smoke
 
     return await collect_readonly_smoke(request)
@@ -147,8 +144,13 @@ def run_readonly_smoke(settings: Settings, options: CliOptions) -> None:
         base_dir=Path(".omo/evidence/readonly-smoke-runtime"),
     )
     evidence = anyio.run(_collect_readonly_smoke, request)
-    status = "passed" if evidence["passed"] else f"completed with {evidence['failure_count']} degraded surface(s)"
+    status = (
+        "passed"
+        if evidence["passed"]
+        else f"completed with {evidence['failure_count']} degraded surface(s)"
+    )
     print(f"Bounded read-only smoke {status}")
+
 
 def _resolve_runtime_mode(settings: Settings, options: CliOptions) -> RuntimeMode:
     _ = settings
@@ -171,13 +173,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_readonly_smoke(settings, options)
             return 0
         case RuntimeMode.NAUTILUS:
-            from polysignal_lab.nautilus_runtime.node import run_nautilus_cli
+            from polysignal_lab.nautilus_runtime import run_nautilus_cli
 
             run_nautilus_cli(settings)
             return 0
         case RuntimeMode.SANDBOX | RuntimeMode.LIVE | RuntimeMode.BACKTEST:
             settings.runtime.nautilus.execution_mode = mode.value
-            from polysignal_lab.nautilus_runtime.node import run_nautilus_cli
+            from polysignal_lab.nautilus_runtime import run_nautilus_cli
 
             run_nautilus_cli(settings)
             return 0
