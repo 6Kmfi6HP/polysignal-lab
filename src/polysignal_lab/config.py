@@ -113,6 +113,7 @@ class TelegramConfig(BaseModel):
     send_consensus_signals: bool = True
     send_report_results: bool = True
     send_daily_report: bool = True
+    send_health_alerts: bool = True
     max_message_chars: int = 4096
     retry_attempts: int = 3
     publish_timeout_sec: float = 20.0
@@ -251,8 +252,26 @@ class HealthRestartGateConfig(BaseModel):
     docker_healthcheck_fails_on_restart_recommended: bool = False
 
 
+class HealthAlertConfig(BaseModel):
+    """Push a Telegram alert when the runtime stays un-live.
+
+    The runtime already reports startup, shutdown and signals, but said nothing
+    while sitting unhealthy — the failure only reached the heartbeat file.
+    Thresholds mirror the restart gate so a brief flap never pages anyone.
+    """
+
+    enabled: bool = True
+    poll_interval_sec: int = 30
+    # evaluate_liveness already absorbs the readiness tolerance window
+    # (liveness.max_readiness_miss_sec), so this only has to outlast a
+    # flapping healthcheck — not repeat that wait.
+    min_unhealthy_sec: int = 60
+    min_consecutive_failures: int = 3
+
+
 class HealthConfig(BaseModel):
     startup_grace_sec: int = 180
+    alert: HealthAlertConfig = Field(default_factory=HealthAlertConfig)
     liveness: HealthLivenessConfig = Field(default_factory=HealthLivenessConfig)
     restart_gate: HealthRestartGateConfig = Field(
         default_factory=HealthRestartGateConfig

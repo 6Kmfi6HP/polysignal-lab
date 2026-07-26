@@ -45,6 +45,7 @@ from polysignal_lab.nautilus_runtime.observability import (
     bind_runtime_observability,
 )
 from polysignal_lab.nautilus_runtime.runtime_logging import configure_runtime_logging
+from polysignal_lab.observability.liveness_watchdog import LivenessWatchdog
 from polysignal_lab.nautilus_runtime.runtime_registration import enabled_strategy_names
 from polysignal_lab.nautilus_runtime.signal_notifications import (
     _notify_accepted_signal,
@@ -55,14 +56,38 @@ UTC = timezone.utc
 logger = logging.getLogger(__name__)
 
 
+def _build_liveness_watchdog(
+    settings: Settings,
+    notifier: NautilusNotifierAdapter,
+) -> LivenessWatchdog | None:
+    """Wire the health watchdog to the Telegram channel the runtime already uses."""
+    telegram = settings.telegram
+    if not (telegram.enabled and telegram.send_health_alerts):
+        return None
+
+    # One long-lived loop for the watchdog thread, matching the notify outbox:
+    # the publisher's httpx client is shared with the startup and signal paths,
+    # and asyncio.run() per alert would bind it to a loop it then tears down.
+    loop: list[asyncio.AbstractEventLoop] = []
+
+    def send(message: str) -> None:
+        if not loop:
+            loop.append(asyncio.new_event_loop())
+        _ = loop[0].run_until_complete(notifier.send(message, "health_alert"))
+
+    return LivenessWatchdog(settings, send)
+
+
 async def _prepare_nautilus_runtime_context(
     settings: Settings,
 ) -> tuple[NautilusRuntimeContext, ObservabilityService]:
     context = build_nautilus_runtime_context(settings)
+    notifier = NautilusNotifierAdapter(context.publisher)
     observability = ObservabilityService(
         health=context.health,
         store=NautilusEventStoreAdapter(context.persistence),
-        notifier=NautilusNotifierAdapter(context.publisher),
+        notifier=notifier,
+        liveness_watchdog=_build_liveness_watchdog(settings, notifier),
         accepted_signal_notifier=lambda signal, stake_usdc: _notify_accepted_signal(
             context,
             signal,

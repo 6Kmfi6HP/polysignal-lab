@@ -34,6 +34,7 @@ from polysignal_lab.nautilus_runtime.projections import (
     project_position,
 )
 from polysignal_lab.observability.health import HealthRegistry
+from polysignal_lab.observability.liveness_watchdog import LivenessWatchdog
 from polysignal_lab.utils import utc_iso
 
 
@@ -98,10 +99,12 @@ class ObservabilityService:
         telemetry_autostart: bool = False,
         telemetry_sqlite_lock_retries: int = 3,
         telemetry_retry_backoff_sec: float = 0.01,
+        liveness_watchdog: LivenessWatchdog | None = None,
     ) -> None:
         self.store: EventStore | None = store
         self.health: HealthRegistry = health or HealthRegistry()
         self.notifier: NautilusNotifierAdapter | None = notifier
+        self.liveness_watchdog: LivenessWatchdog | None = liveness_watchdog
         self.accepted_signal_notifier: AcceptedSignalNotifier | None = (
             accepted_signal_notifier
         )
@@ -141,6 +144,10 @@ class ObservabilityService:
     # ── Best-effort telemetry outbox (node-owned, not per-callback threads) ───
 
     def start(self) -> None:
+        # Started before the telemetry guard below: the watchdog must run even
+        # when there is no event store to drain.
+        if self.liveness_watchdog is not None:
+            self.liveness_watchdog.start()
         if self._telemetry_queue is None:
             return
         if self._telemetry_thread is not None and self._telemetry_thread.is_alive():
@@ -154,6 +161,8 @@ class ObservabilityService:
         self._telemetry_thread.start()
 
     def stop(self) -> None:
+        if self.liveness_watchdog is not None:
+            self.liveness_watchdog.stop()
         self._telemetry_stop.set()
         thread = self._telemetry_thread
         if thread is not None:

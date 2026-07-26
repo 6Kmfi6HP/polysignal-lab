@@ -4,16 +4,15 @@ app:
   timezone: Asia/Bangkok
   log_level: INFO
 
-# Rotating JSONL for postmortems; app.log_level above stays the stdout level.
-# Set file_level to OFF to disable file output, DEBUG when hunting a bug.
-logging:
-  directory: logs/runtime
-  file_level: INFO
-  file_max_bytes: 50000000
-  file_backup_count: 5
-  colors: false
-  component_levels:
-    nautilus_common::actor::data_actor: WARN
+# NOTE: config/ is bind-mounted read-only into the running container, and
+# Settings forbids extra keys. A section added here before the image is
+# rebuilt makes every in-container `load_settings` fail — which is how the
+# healthcheck broke once. New sections default in src/polysignal_lab/config.py
+# and only belong here once the running image understands them.
+#
+# File logging (LoggingConfig): directory=logs/runtime, file_level=INFO,
+# 50MB x 5 rotation, colors off, data_actor filtered to WARN.
+# Override per-run with POLYSIGNAL_LAB__LOGGING__FILE_LEVEL=DEBUG.
 
 safety:
   allow_secret_key_material: false
@@ -107,6 +106,9 @@ dashboard:
 
 health:
   startup_grace_sec: 180
+  # health.alert (see the note at the top of this file): Telegram alert when
+  # the runtime stays un-live — 30s polls, 60s sustain, 3 consecutive
+  # failures. Notify only; restarts stay a human decision.
   liveness:
     heartbeat_max_age_sec: 120
   restart_gate:
