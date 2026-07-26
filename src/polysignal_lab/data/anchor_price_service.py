@@ -1,6 +1,6 @@
 """
 Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone
-Output: window_for_market, capture_anchor_price, AnchorWindow, AnchorPriceStore, AnchorPriceService
+Output: window_for_market, capture_anchor_price, AnchorWindow, AnchorPriceStore
 Pos: Application code
 
 🔄 Self-reference: When this file changes, update this header
@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Protocol, cast
+from typing import Protocol
 
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.market import Market
@@ -112,41 +112,3 @@ def capture_anchor_price(
         latest_by_key[f"{anchor.asset}:{anchor.timeframe}"] = anchor
     return anchor
 
-
-class AnchorPriceService:
-    def __init__(self, spots, store: AnchorPriceStore, max_lag_ms: int = 2_000) -> None:
-        self.spots = spots
-        self.store = store
-        self.max_lag_ms = max_lag_ms
-        self._latest_by_key: dict[str, AnchorPrice] = {}
-
-    def capture_for_market(self, market: Market) -> AnchorPrice | None:
-        return capture_anchor_price(
-            self._spot_history(market.asset),
-            market,
-            self.store,
-            max_lag_ms=self.max_lag_ms,
-            latest_by_key=self._latest_by_key,
-        )
-
-
-    def health_metrics(self) -> dict[str, dict[str, int | float | str | bool | None]]:
-        return {
-            key: {
-                "source": anchor.source,
-                "lag_ms": anchor.lag_ms,
-                "verified": anchor.verified,
-                "market_slug": anchor.market_slug,
-            }
-            for key, anchor in self._latest_by_key.items()
-        }
-
-    def _spot_history(self, asset: str) -> list[SpotPrice]:
-        history = getattr(self.spots, "history", None)
-        if callable(history):
-            history_reader = cast(Callable[[str], Sequence[SpotPrice]], history)
-            return list(history_reader(asset))
-        if isinstance(history, dict):
-            histories = cast(dict[str, Sequence[SpotPrice]], history)
-            return list(histories.get(asset.upper(), ()))
-        return []
