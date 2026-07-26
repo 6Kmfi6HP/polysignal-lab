@@ -124,7 +124,7 @@ def scan(root: str | Path) -> list[tuple[str, str]]:
         if path.suffix not in SCANNED_SUFFIXES:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        report_path = path.name if base_is_file else str(path.relative_to(base))
+        report_path = path.name if base_is_file else path.relative_to(base).as_posix()
         symbols = list(blocked_symbols())
         if _is_project_source(path):
             symbols.extend(LEGACY_TRADING_ISOLATION_SYMBOLS)
