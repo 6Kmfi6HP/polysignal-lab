@@ -1,18 +1,3 @@
-"""
-Input: __future__, __future__.annotations, asyncio, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, json, pathlib, pathlib.Path
-Output: test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet, test_report_equity_inputs_selects_pusd_portfolio_equity, test_report_equity_inputs_requires_exact_usdc_portfolio_currency, test_report_equity_inputs_keeps_portfolio_equity_equal_to_starting_equity, test_report_equity_inputs_keeps_zero_portfolio_equity, test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing, test_report_equity_inputs_uses_native_cache_accounts_api, test_generate_daily_report_uses_configured_pusd_equity, test_daily_report_accepts_legacy_payload_without_equity_source
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import asyncio
@@ -22,17 +7,17 @@ from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
 
-from polysignal_lab.app.reporting import (
+from polysignal_lab.app.daily_report import (
     _report_equity_inputs,
     generate_daily_report,
 )
-from polysignal_lab.app.reporting_sources import _collect_daily_report_inputs
+from polysignal_lab.app.daily_report.sources import _collect_daily_report_inputs
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.reporting.daily_report import DailyReportService
 from polysignal_lab.publish.telegram_publisher import PublishResult
-from polysignal_lab.signal_layer.formatter import MessageFormatter
+from polysignal_lab.publish.message_formatter import MessageFormatter
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
@@ -69,16 +54,31 @@ def test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet() -> Non
         ],
         positions=lambda: [
             SimpleNamespace(
-                id="P-1", instrument_id="I", signed_qty=10, avg_px_open=0.5,
-                realized_pnl=0.0, is_closed=False, ts_event=ts,
+                id="P-1",
+                instrument_id="I",
+                signed_qty=10,
+                avg_px_open=0.5,
+                realized_pnl=0.0,
+                is_closed=False,
+                ts_event=ts,
             ),
             SimpleNamespace(
-                id="P-2", instrument_id="I", signed_qty=10, avg_px_open=0.5,
-                realized_pnl=0.0, is_closed=True, ts_event=ts,
+                id="P-2",
+                instrument_id="I",
+                signed_qty=10,
+                avg_px_open=0.5,
+                realized_pnl=0.0,
+                is_closed=True,
+                ts_event=ts,
             ),
             SimpleNamespace(
-                id="P-3", instrument_id="I", signed_qty=10, avg_px_open=0.5,
-                realized_pnl=0.0, is_closed=False, ts_event=ts,
+                id="P-3",
+                instrument_id="I",
+                signed_qty=10,
+                avg_px_open=0.5,
+                realized_pnl=0.0,
+                is_closed=False,
+                ts_event=ts,
             ),
         ],
     )
@@ -205,7 +205,9 @@ def test_report_equity_inputs_keeps_zero_portfolio_equity() -> None:
     assert _report_equity_inputs(scheduler) == (1_000.0, 0.0, 0, "portfolio")
 
 
-def test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing() -> None:
+def test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equity_missing() -> (
+    None
+):
     ts = datetime.now(UTC)
     cache = SimpleNamespace(
         accounts=lambda: [
@@ -219,8 +221,13 @@ def test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equit
         ],
         positions=lambda: [
             SimpleNamespace(
-                id="P-1", instrument_id="I", signed_qty=10, avg_px_open=0.5,
-                realized_pnl=0.0, is_closed=False, ts_event=ts,
+                id="P-1",
+                instrument_id="I",
+                signed_qty=10,
+                avg_px_open=0.5,
+                realized_pnl=0.0,
+                is_closed=False,
+                ts_event=ts,
             ),
         ],
     )
@@ -238,7 +245,9 @@ def test_report_equity_inputs_uses_nautilus_account_balance_when_portfolio_equit
     )
 
 
-def test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing() -> None:
+def test_report_equity_inputs_uses_pusd_account_balance_when_portfolio_equity_missing() -> (
+    None
+):
     cache = SimpleNamespace(
         accounts=lambda: [
             SimpleNamespace(
@@ -340,7 +349,9 @@ def test_generate_daily_report_uses_configured_pusd_equity(tmp_path: Path) -> No
     assert stored[0]["equity_source"] == "account_balance"
 
 
-def test_daily_report_accepts_legacy_payload_without_equity_source(tmp_path: Path) -> None:
+def test_daily_report_accepts_legacy_payload_without_equity_source(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "reports.sqlite3"
     store = SQLiteStore(db_path)
     report = DailyReportService().build_daily_report(
@@ -379,7 +390,9 @@ def test_daily_report_accepts_legacy_payload_without_equity_source(tmp_path: Pat
     assert persisted.revision == 1
 
 
-def test_daily_report_revises_legacy_payload_for_new_equity_source(tmp_path: Path) -> None:
+def test_daily_report_revises_legacy_payload_for_new_equity_source(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "reports.sqlite3"
     store = SQLiteStore(db_path)
     report = DailyReportService().build_daily_report(
@@ -543,7 +556,9 @@ def test_generate_daily_report_uses_canonical_order_state_and_marks_telemetry_lo
     ]
 
 
-def test_daily_report_orders_use_creation_day_after_cross_day_update(tmp_path: Path) -> None:
+def test_daily_report_orders_use_creation_day_after_cross_day_update(
+    tmp_path: Path,
+) -> None:
     store = SQLiteStore(tmp_path / "reports.sqlite3")
     persistence = PersistenceService(
         JSONLStore(tmp_path / "logs"),
@@ -639,9 +654,7 @@ def test_daily_report_marks_inferred_legacy_order_creation_time(tmp_path: Path) 
     )
     store.close()
     with sqlite3.connect(db_path) as connection:
-        connection.execute(
-            "UPDATE report_orders SET created_event_at=''"
-        )
+        connection.execute("UPDATE report_orders SET created_event_at=''")
         connection.execute("DELETE FROM system_events")
         connection.execute("PRAGMA user_version = 1")
 
@@ -876,7 +889,9 @@ def test_generate_daily_report_revises_after_late_settlement(tmp_path: Path) -> 
     assert len(logs.read_all("daily_reports")) == 2
 
 
-def test_generate_daily_report_retries_prior_day_pending_publish(tmp_path: Path) -> None:
+def test_generate_daily_report_retries_prior_day_pending_publish(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "reports.sqlite3"
     store = SQLiteStore(db_path)
     prior_report = DailyReportService().build_daily_report(
@@ -952,7 +967,9 @@ def test_generate_daily_report_retries_prior_day_pending_publish(tmp_path: Path)
     assert published_report_ids == [prior_report.report_id]
 
 
-def test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity() -> None:
+def test_report_equity_inputs_uses_account_balance_for_non_numeric_portfolio_equity() -> (
+    None
+):
     cache = SimpleNamespace(
         accounts=lambda: [
             SimpleNamespace(
@@ -1016,7 +1033,9 @@ def test_report_equity_inputs_uses_no_arg_portfolio_equity_without_account() -> 
     )
 
 
-def test_report_equity_inputs_uses_starting_balance_for_named_portfolio_without_account() -> None:
+def test_report_equity_inputs_uses_starting_balance_for_named_portfolio_without_account() -> (
+    None
+):
     def unavailable_equity(
         venue: object | None = None,
         account_id: object | None = None,
@@ -1042,7 +1061,9 @@ def test_report_equity_inputs_uses_starting_balance_for_named_portfolio_without_
     )
 
 
-def test_report_equity_inputs_uses_starting_balance_for_wrapped_portfolio_without_account() -> None:
+def test_report_equity_inputs_uses_starting_balance_for_wrapped_portfolio_without_account() -> (
+    None
+):
     def unavailable_equity(**_kwargs: object) -> float:
         raise TypeError("venue or account_id must be provided")
 
@@ -1102,7 +1123,9 @@ def test_report_equity_inputs_requires_reporting_cache_protocol() -> None:
 def test_report_equity_inputs_ignores_shadow_wallet_without_cache() -> None:
     scheduler = SimpleNamespace(
         settings=_settings(),
-        wallet=SimpleNamespace(starting_balance=1_000.0, equity=1_025.0, open_position_count=3),
+        wallet=SimpleNamespace(
+            starting_balance=1_000.0, equity=1_025.0, open_position_count=3
+        ),
     )
 
     assert _report_equity_inputs(scheduler) == (

@@ -1,19 +1,3 @@
-/**
- * Input: { SearchIcon } from 'lucide-react', { cn } from '@/lib/utils', { useSearch } from '@/context/search-provider', { Button } from './ui/button', lucide-react, @/lib/utils, @/context/search-provider, ./ui/button
- * Output: Search
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { SearchIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSearch } from '@/context/search-provider'

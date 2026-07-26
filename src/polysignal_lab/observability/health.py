@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, dataclasses.field, typing, typing.Literal, typing.TypeAlias, pydantic, pydantic.JsonValue
-Output: ComponentHealth, HealthSnapshot, HealthRegistry
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -70,10 +54,14 @@ class HealthRegistry:
     def mark_ok(self, name: str, **metrics: MetricValue) -> None:
         self._set(name, "ok", None, **metrics)
 
-    def mark_degraded(self, name: str, error: str | None = None, **metrics: MetricValue) -> None:
+    def mark_degraded(
+        self, name: str, error: str | None = None, **metrics: MetricValue
+    ) -> None:
         self._set(name, "degraded", error, **metrics)
 
-    def mark_down(self, name: str, error: str | None = None, **metrics: MetricValue) -> None:
+    def mark_down(
+        self, name: str, error: str | None = None, **metrics: MetricValue
+    ) -> None:
         self._set(name, "down", error, **metrics)
 
     def set(self, name: str, status: str, **details: MetricValue) -> None:
@@ -120,7 +108,13 @@ class HealthRegistry:
         self._pending_transitions.clear()
         return events
 
-    def _set(self, name: str, status: ComponentStatus, error: str | None, **metrics: MetricValue) -> None:
+    def _set(
+        self,
+        name: str,
+        status: ComponentStatus,
+        error: str | None,
+        **metrics: MetricValue,
+    ) -> None:
         now = utc_iso()
         previous = self.components.get(name)
         merged_metrics = dict(previous.metrics if previous else {})
@@ -128,15 +122,25 @@ class HealthRegistry:
         component = ComponentHealth(
             name=name,
             status=status,
-            last_success_at=now if status == "ok" else (previous.last_success_at if previous else None),
-            last_error_at=now if status != "ok" else (previous.last_error_at if previous else None),
+            last_success_at=now
+            if status == "ok"
+            else (previous.last_success_at if previous else None),
+            last_error_at=now
+            if status != "ok"
+            else (previous.last_error_at if previous else None),
             last_error=error if status != "ok" else None,
             metrics=merged_metrics,
         )
         self.components[name] = component
         if self._last_statuses.get(name) != status:
             self._last_statuses[name] = status
-            severity = "ERROR" if status == "down" else "WARNING" if status == "degraded" else "INFO"
+            severity = (
+                "ERROR"
+                if status == "down"
+                else "WARNING"
+                if status == "degraded"
+                else "INFO"
+            )
             self._pending_transitions.append(
                 {
                     "event_id": new_id("health"),

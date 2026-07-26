@@ -1,17 +1,10 @@
-"""
-Input: __future__, __future__.annotations, polysignal_lab.data.anchor_price_service, polysignal_lab.data.anchor_price_service.AnchorPriceStore, polysignal_lab.data.anchor_price_service.capture_anchor_price, polysignal_lab.data.state, polysignal_lab.data.state.append_spot_history, polysignal_lab.domain.anchor_price, polysignal_lab.domain.anchor_price.AnchorPrice, polysignal_lab.domain.market
-Output: SpotAnchorState
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
-from polysignal_lab.data.anchor_price_service import AnchorPriceStore, capture_anchor_price
-from polysignal_lab.data.state import append_spot_history
+from polysignal_lab.data.anchor_price_service import (
+    AnchorPriceStore,
+    capture_anchor_price,
+)
+from polysignal_lab.data.registries import append_spot_history
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.market import Market
 from polysignal_lab.domain.spot import SpotPrice

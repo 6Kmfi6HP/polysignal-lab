@@ -1,19 +1,3 @@
-/**
- * Input: { type SVGProps } from 'react', react
- * Output: IconSidebarSidebar
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { type SVGProps } from 'react'
 
 export function IconSidebarSidebar(props: SVGProps<SVGSVGElement>) {

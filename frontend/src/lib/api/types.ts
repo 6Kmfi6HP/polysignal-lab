@@ -1,35 +1,10 @@
-/**
- * Input: None
- * Output: None
- * Pos: Library - Shared code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 export type Side = 'UP' | 'DOWN'
 export type OrderStatus =
-  | 'PENDING'
-  | 'FILLED'
-  | 'REJECTED'
-  | 'RESTING'
-  | 'CANCELLED'
-  | 'PARTIAL'
+  'PENDING' | 'FILLED' | 'REJECTED' | 'RESTING' | 'CANCELLED' | 'PARTIAL'
 export type PositionStatus = 'OPEN' | 'CLOSED'
 export type TradeResultStatus = 'WIN' | 'LOSS' | 'VOID' | 'SPLIT' | 'UNKNOWN'
 export type ExitMode =
-  | 'RESOLUTION'
-  | 'TAKE_PROFIT'
-  | 'STOP_LOSS'
-  | 'MAX_HOLD_TIME'
-  | 'UNKNOWN'
+  'RESOLUTION' | 'TAKE_PROFIT' | 'STOP_LOSS' | 'MAX_HOLD_TIME' | 'UNKNOWN'
 export type CalibrationStatus = 'unknown' | 'insufficient_data' | 'calibrated'
 export type StrategyStatus =
   | 'active'

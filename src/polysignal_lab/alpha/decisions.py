@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, typing, typing.Any
-Output: enabled_for_view, depth_weighted_ask, binary_pair_effective_cost, build_order_decision, build_hedge_order_decision, entry_ask_at_or_below, hedge_context_from_position, MarketFilterConfig, OrderDecisionSpec, PositionHedgeContext
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections.abc import Sequence

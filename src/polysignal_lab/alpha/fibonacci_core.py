@@ -1,31 +1,14 @@
-"""
-Input: __future__, __future__.annotations, collections, collections.deque, typing, typing.Any, typing.Mapping, typing.Sequence, typing.TypedDict, polysignal_lab.alpha.helpers
-Output: _FibState, _FibSetup, ZigZagDetector, FibonacciCalculator, FibonacciAlphaCore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from collections import deque
 from typing import Any, Mapping, Sequence, TypedDict
 
-from polysignal_lab.alpha.helpers import (
+from polysignal_lab.alpha.decisions import (
     OrderDecisionSpec,
     build_order_decision,
     enabled_for_view,
 )
-from polysignal_lab.alpha.state import json_safe_state
+from polysignal_lab.alpha.state_json import json_safe_state
 from polysignal_lab.alpha.stats import _RollingPriceStats
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
@@ -170,9 +153,7 @@ class FibonacciAlphaCore:
             return False
         return abs(z) >= self.config.min_momentum_zscore
 
-    def _determine_side(
-        self, spot_price: float, fib_level_price: float
-    ) -> Side | None:
+    def _determine_side(self, spot_price: float, fib_level_price: float) -> Side | None:
         if spot_price <= fib_level_price:
             return Side.UP
         return Side.DOWN
@@ -205,7 +186,11 @@ class FibonacciAlphaCore:
         fib_levels = self._fib_calc.retracement_levels(swing_high, swing_low)
         if not fib_levels:
             return None
-        return {"swing_high": swing_high, "swing_low": swing_low, "fib_levels": fib_levels}
+        return {
+            "swing_high": swing_high,
+            "swing_low": swing_low,
+            "fib_levels": fib_levels,
+        }
 
     # -- decision helpers ----------------------------------------------------
 
@@ -236,9 +221,7 @@ class FibonacciAlphaCore:
 
             weight_idx = min(idx, len(cfg.fib_size_weights) - 1)
             weight = cfg.fib_size_weights[weight_idx]
-            confidence = max(
-                0.45, min(0.85, 0.70 + (0.236 - ratio) / 0.236 * 0.15)
-            )
+            confidence = max(0.45, min(0.85, 0.70 + (0.236 - ratio) / 0.236 * 0.15))
 
             mom_stats = self._momentum.stats(symbol)
             metrics: dict[str, Any] = {
@@ -262,7 +245,9 @@ class FibonacciAlphaCore:
                 side,
                 OrderDecisionSpec(
                     confidence=confidence,
-                    max_entry_price=min(token_ask + cfg.offset_from_fib, cfg.max_token_price),
+                    max_entry_price=min(
+                        token_ask + cfg.offset_from_fib, cfg.max_token_price
+                    ),
                     reason_codes=(
                         "FIBONACCI_ZONE",
                         f"RATIO_{ratio:.3f}",
@@ -286,7 +271,9 @@ class FibonacciAlphaCore:
         if not self._validate_inputs(view):
             return []
         state = self._update_state(view)
-        if state is None or not self._check_momentum(state["symbol"], state["spot_price"]):
+        if state is None or not self._check_momentum(
+            state["symbol"], state["spot_price"]
+        ):
             return []
         setup = self._compute_fib_setup(state["symbol"], state["spot_price"])
         if setup is None:
@@ -345,7 +332,9 @@ class FibonacciAlphaCore:
             if isinstance(swing_lows, Sequence) and not isinstance(swing_lows, str):
                 det._swing_lows.extend(float(str(item)) for item in swing_lows)
             current_trend = d.get("current_trend")
-            det._current_trend = current_trend if isinstance(current_trend, str) else None
+            det._current_trend = (
+                current_trend if isinstance(current_trend, str) else None
+            )
             extreme_price = d.get("extreme_price")
             det._extreme_price = (
                 float(str(extreme_price)) if extreme_price is not None else None

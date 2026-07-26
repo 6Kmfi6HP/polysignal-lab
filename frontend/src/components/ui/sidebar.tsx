@@ -1,19 +1,3 @@
-/**
- * Input: * as React from 'react', { Slot } from '@radix-ui/react-slot', { VariantProps, cva } from 'class-variance-authority', { PanelLeftIcon } from 'lucide-react', { cn } from '@/lib/utils', { useIsMobile } from '@/hooks/use-mobile', { Button } from '@/components/ui/button', { Input } from '@/components/ui/input', { Separator } from '@/components/ui/separator', {
- * Output: useSidebar, SidebarProvider, Sidebar, SidebarTrigger, SidebarRail, SidebarInset, SidebarInput, SidebarHeader, SidebarFooter, SidebarSeparator
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
 import { VariantProps, cva } from 'class-variance-authority'

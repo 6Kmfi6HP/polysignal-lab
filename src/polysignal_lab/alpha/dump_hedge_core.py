@@ -1,21 +1,6 @@
-"""
-Input: __future__, __future__.annotations, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.stats, polysignal_lab.alpha.stats.RollingPriceStats, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.DumpHedgeConfig
-Output: DumpHedgeAlphaCore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
-from polysignal_lab.alpha.helpers import (
+from polysignal_lab.alpha.decisions import (
     HedgeDecisionContext,
     HedgeDecisionSpec,
     SIDES,
@@ -78,7 +63,11 @@ class DumpHedgeAlphaCore:
                     OrderDecisionSpec(
                         confidence=0.75,
                         max_entry_price=current_ask,
-                        reason_codes=("DUMP_DETECTED", f"DROP_{drop_ratio:.1%}", f"SIDE_{side.value}"),
+                        reason_codes=(
+                            "DUMP_DETECTED",
+                            f"DROP_{drop_ratio:.1%}",
+                            f"SIDE_{side.value}",
+                        ),
                         metrics={
                             "vwap": round(vwap, 4),
                             "current_ask": round(current_ask, 4),
@@ -118,7 +107,9 @@ class DumpHedgeAlphaCore:
             return []
         return self._evaluate_sides(view)
 
-    def _try_hedge_or_stop(self, view: MarketView, position: CachedPositionView) -> list[AlphaDecision]:
+    def _try_hedge_or_stop(
+        self, view: MarketView, position: CachedPositionView
+    ) -> list[AlphaDecision]:
         if view.trading.has_hedge_order(self.name, view.market_id):
             return []
         hedge = hedge_context_from_position(position, view.created_at)
@@ -143,14 +134,19 @@ class DumpHedgeAlphaCore:
                         cap_metric="pair_cost_cap",
                         cap_value=self.config.pair_cost_cap,
                         reason_codes=("DUMP_HEDGE", f"HEDGE_{hedge.hedge_side.value}"),
-                        order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK, pair_id=f"{view.market_id}:dump"),
+                        order_intent=OrderIntentSpec(
+                            OrderIntent.TAKER_FOK, pair_id=f"{view.market_id}:dump"
+                        ),
                         hedge_price_metric="hedge_ask",
                     ),
                 )
                 if decision:
                     decisions.append(decision)
 
-        if hedge.elapsed_seconds >= self.config.stop_loss_max_wait_seconds and hedge_ask is not None:
+        if (
+            hedge.elapsed_seconds >= self.config.stop_loss_max_wait_seconds
+            and hedge_ask is not None
+        ):
             cost = binary_pair_effective_cost(hedge.filled_price, hedge_ask)
             if cost <= self.config.stop_loss_pair_cap:
                 decision = build_hedge_order_decision(
@@ -167,12 +163,15 @@ class DumpHedgeAlphaCore:
                         pair_cost=cost,
                         cap_metric="stop_loss_cap",
                         cap_value=self.config.stop_loss_pair_cap,
-                        reason_codes=("DUMP_HEDGE_STOP_LOSS", f"WAITED_{hedge.elapsed_seconds:.0f}s"),
-                        order_intent=OrderIntentSpec(OrderIntent.TAKER_FOK, pair_id=f"{view.market_id}:dump"),
+                        reason_codes=(
+                            "DUMP_HEDGE_STOP_LOSS",
+                            f"WAITED_{hedge.elapsed_seconds:.0f}s",
+                        ),
+                        order_intent=OrderIntentSpec(
+                            OrderIntent.TAKER_FOK, pair_id=f"{view.market_id}:dump"
+                        ),
                     ),
                 )
                 if decision:
                     decisions.append(decision)
         return decisions
-
-

@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, datetime, datetime.UTC, datetime.datetime, inspect, inspect.Parameter
-Output: project_order_event, project_fill_event, project_position, project_account, project_portfolio_snapshot
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -82,7 +66,9 @@ def project_fill_event(
     if price == 0.0:
         price = _float_attr(event, "fill_price") or _float_attr(event, "price")
     if price <= 0.0:
-        raise ValueError("missing positive fill price; refusing fabricated execution truth")
+        raise ValueError(
+            "missing positive fill price; refusing fabricated execution truth"
+        )
     trade_id = _text_attr(event, "trade_id") or _text_attr(event, "fill_id")
     client_order_id = _text_attr(event, "client_order_id")
     leaves_qty = _optional_float_attr(event, "leaves_qty")
@@ -151,7 +137,9 @@ def project_account(account: object) -> dict[str, object]:
     if isinstance(balances_raw, Mapping):
         balances_raw = balances_raw.values()
     balances: list[dict[str, object]] = []
-    if isinstance(balances_raw, Iterable) and not isinstance(balances_raw, (str, bytes)):
+    if isinstance(balances_raw, Iterable) and not isinstance(
+        balances_raw, (str, bytes)
+    ):
         for balance in cast(Iterable[object], balances_raw):
             balances.append(
                 {
@@ -203,7 +191,8 @@ def _portfolio_equity(
                 except (TypeError, ValueError):
                     raise
                 if any(
-                    parameter.kind == Parameter.VAR_KEYWORD or parameter.name == "account_id"
+                    parameter.kind == Parameter.VAR_KEYWORD
+                    or parameter.name == "account_id"
                     for parameter in parameters
                 ):
                     raise
@@ -233,7 +222,9 @@ def _equity_float(value: object, currency: str | None) -> float | None:
 
 def _to_float(value: object) -> float:
     if isinstance(value, Mapping):
-        return sum(_to_float(item) for item in cast(Mapping[object, object], value).values())
+        return sum(
+            _to_float(item) for item in cast(Mapping[object, object], value).values()
+        )
 
     for name in ("as_double", "as_decimal"):
         numeric = getattr(value, name, None)
@@ -344,11 +335,17 @@ def _timestamp_text(source: object, *names: str) -> str:
     for name in names:
         value = getattr(source, name, None)
         if isinstance(value, datetime):
-            return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+            return (
+                value.astimezone(UTC)
+                .isoformat(timespec="microseconds")
+                .replace("+00:00", "Z")
+            )
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return datetime.fromtimestamp(float(value) / 1_000_000_000, tz=UTC).isoformat(
-                timespec="microseconds"
-            ).replace("+00:00", "Z")
+            return (
+                datetime.fromtimestamp(float(value) / 1_000_000_000, tz=UTC)
+                .isoformat(timespec="microseconds")
+                .replace("+00:00", "Z")
+            )
         if isinstance(value, str) and value:
             return value
     return ""

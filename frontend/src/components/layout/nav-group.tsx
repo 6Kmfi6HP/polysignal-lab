@@ -1,19 +1,3 @@
-/**
- * Input: { type ReactNode } from 'react', { Link, useLocation } from '@tanstack/react-router', { ChevronRight } from 'lucide-react', {, { Badge } from '../ui/badge', react, @tanstack/react-router, lucide-react, ../ui/badge, @/components/ui/collapsible
- * Output: NavGroup, NavBadge, SidebarMenuLink, SidebarMenuCollapsible, SidebarMenuCollapsedDropdown, checkIsActive
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { type ReactNode } from 'react'
 import { Link, useLocation } from '@tanstack/react-router'
 import { ChevronRight } from 'lucide-react'

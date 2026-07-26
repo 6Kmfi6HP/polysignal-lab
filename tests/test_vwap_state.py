@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, pytest, polysignal_lab.alpha.vwap_state, polysignal_lab.alpha.vwap_state.(
-Output: test_encode_vwap_state_preserves_flat_payload, test_decode_vwap_state_accepts_flat_payload, test_decode_vwap_state_unwraps_nested_envelope, test_decode_vwap_state_rejects_unknown_version, test_restore_vwap_state_fields_drops_legacy_trade_ledger
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import pytest

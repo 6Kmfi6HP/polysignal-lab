@@ -78,7 +78,7 @@ class _Policy:
                 if id(decision) in self.approvals
             ),
             rejections=tuple(
-                (decision, self.rejections[ id(decision)])
+                (decision, self.rejections[id(decision)])
                 for decision, _ in decisions
                 if id(decision) in self.rejections
             ),
@@ -101,7 +101,9 @@ class _Submitter:
 @dataclass
 class _Telemetry:
     accepted_calls: list[tuple[ApprovedDecision, object]] = field(default_factory=list)
-    rejected_calls: list[tuple[RejectedDecision, AlphaDecision]] = field(default_factory=list)
+    rejected_calls: list[tuple[RejectedDecision, AlphaDecision]] = field(
+        default_factory=list
+    )
 
     def accepted(self, approved: ApprovedDecision, order: object) -> None:
         self.accepted_calls.append((approved, order))
@@ -164,7 +166,9 @@ def test_apply_rejects_view_and_batch_duplicates() -> None:
         }
     )
     telemetry = _Telemetry()
-    pipeline = DecisionPipeline(policy=policy, submitter=_Submitter(), telemetry=telemetry)
+    pipeline = DecisionPipeline(
+        policy=policy, submitter=_Submitter(), telemetry=telemetry
+    )
 
     view_results = pipeline.apply((first,), _view(first.dedupe_key()))
     batch_results = pipeline.apply((first, duplicate), _view())

@@ -1,16 +1,7 @@
-"""
-Input: __future__, __future__.annotations, collections, collections.abc, dataclasses, datetime, typing
-Output: DecisionPipeline, SubmittedDecision, NautilusOrderSubmitter, NativeDecisionTelemetry, OrderSubmitter, DecisionTelemetry
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
@@ -114,52 +105,77 @@ class DecisionPipeline:
     ) -> list[SubmittedDecision | RejectedDecision]:
         if not decisions:
             return []
-        arbitration = self.policy.batch_arbitrate([(decision, view) for decision in decisions])
+        arbitration = self.policy.batch_arbitrate(
+            [(decision, view) for decision in decisions]
+        )
         approved_by_id, rejected_by_id = _arbitration_results(arbitration)
         active_dedupe_keys = _active_dedupe_keys(view)
-        results: list[SubmittedDecision | RejectedDecision] = []
-        for decision in decisions:
-            approved = approved_by_id.get(id(decision))
-            if approved is None:
-                rejected = rejected_by_id.get(id(decision)) or RejectedDecision(
+        return [
+            self._apply_one(
+                decision,
+                view,
+                approved_by_id=approved_by_id,
+                rejected_by_id=rejected_by_id,
+                active_dedupe_keys=active_dedupe_keys,
+            )
+            for decision in decisions
+        ]
+
+    def _apply_one(
+        self,
+        decision: AlphaDecision,
+        view: MarketView,
+        *,
+        approved_by_id: Mapping[int, ApprovedDecision],
+        rejected_by_id: Mapping[int, RejectedDecision],
+        active_dedupe_keys: set[str],
+    ) -> SubmittedDecision | RejectedDecision:
+        """Resolve one decision. Rejections are recorded here; ``active_dedupe_keys``
+        is mutated so later decisions in the same batch see this one in flight."""
+        approved = approved_by_id.get(id(decision))
+        if approved is None:
+            return self._reject(
+                rejected_by_id.get(id(decision))
+                or RejectedDecision(
                     reason_code="ARBITRATION_SUPPRESSED",
                     detail={},
                     decision=decision,
-                )
-                self._reject(rejected, decision)
-                results.append(rejected)
-                continue
-            dedupe_key = approved.decision.dedupe_key()
-            if dedupe_key in active_dedupe_keys:
-                rejected = RejectedDecision(
+                ),
+                decision,
+            )
+        dedupe_key = approved.decision.dedupe_key()
+        if dedupe_key in active_dedupe_keys:
+            return self._reject(
+                RejectedDecision(
                     reason_code="DUPLICATE_IN_FLIGHT_SIGNAL",
                     detail={"dedupe_key": dedupe_key},
                     decision=approved.decision,
                     publish=approved.publish,
-                )
-                self._reject(rejected, decision)
-                results.append(rejected)
-                continue
-            try:
-                order = self.submitter.submit(approved, view)
-            except ValueError as exc:
-                rejected = RejectedDecision(
+                ),
+                decision,
+            )
+        try:
+            order = self.submitter.submit(approved, view)
+        except ValueError as exc:
+            return self._reject(
+                RejectedDecision(
                     reason_code="ORDER_MAPPING_FAILED",
                     detail={"error": str(exc)},
                     decision=approved.decision,
                     publish=approved.publish,
-                )
-                self._reject(rejected, decision)
-                results.append(rejected)
-                continue
-            active_dedupe_keys.add(dedupe_key)
-            self.telemetry.accepted(approved, order)
-            results.append(SubmittedDecision(approved=approved, order=order))
-        return results
+                ),
+                decision,
+            )
+        active_dedupe_keys.add(dedupe_key)
+        self.telemetry.accepted(approved, order)
+        return SubmittedDecision(approved=approved, order=order)
 
-    def _reject(self, rejected: RejectedDecision, decision: AlphaDecision) -> None:
+    def _reject(
+        self, rejected: RejectedDecision, decision: AlphaDecision
+    ) -> RejectedDecision:
         self.rejected_decisions.append(rejected)
         self.telemetry.rejected(rejected, decision)
+        return rejected
 
 
 def _arbitration_results(

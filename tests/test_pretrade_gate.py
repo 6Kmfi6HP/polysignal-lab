@@ -1,18 +1,8 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.replace, polysignal_lab.signal_layer.gate, polysignal_lab.signal_layer.gate.SignalGate, signal_helpers, signal_helpers.ptb_signal_from_view
-Output: test_signal_gate_accepts_good_signal, test_signal_gate_rejects_inactive_market, test_signal_gate_rejects_low_confidence, test_signal_candidate_containers_are_immutable
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from dataclasses import replace
 
-from polysignal_lab.signal_layer.gate import SignalGate
+from polysignal_lab.pretrade.gate import SignalGate
 from signal_helpers import ptb_decision_from_view, ptb_signal_from_view
 
 
@@ -29,7 +19,9 @@ async def test_signal_gate_accepts_good_signal(market_view, settings):
 
 async def test_signal_gate_rejects_inactive_market(market_view, settings):
     decision_in = await _ptb_decision(market_view, settings)
-    bad = replace(market_view, metrics={**dict(market_view.metrics), "market_is_active": False})
+    bad = replace(
+        market_view, metrics={**dict(market_view.metrics), "market_is_active": False}
+    )
     gate = SignalGate(settings.signal, settings.data.polymarket, settings.data.binance)
     decision = gate.evaluate(decision_in, bad)
     assert not decision.accepted

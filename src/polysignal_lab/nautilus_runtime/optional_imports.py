@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, dataclasses, dataclasses.dataclass, importlib, importlib.import_module
-Output: load_live_runtime_symbols, LiveRuntimeSymbols
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections.abc import Callable

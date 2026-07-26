@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, json, datetime, datetime.datetime, datetime.timedelta, math, sqlite3, dataclasses, dataclasses.dataclass
-Output: DuplicateRecordError, MalformedSQLitePayloadError, UnknownSQLiteTableError, SQLiteStore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import json
@@ -55,7 +39,7 @@ from polysignal_lab.storage.sqlite_schema import (
 from polysignal_lab.utils import stable_hash, to_jsonable, utc_iso, utc_now
 
 if TYPE_CHECKING:
-    from polysignal_lab.dashboard.reporting_read import StorageHealthRead
+    from polysignal_lab.dashboard.ports import StorageHealthRead
 
 
 _REPORT_CURRENT_STATE_SCHEMA_VERSION = 2
@@ -125,7 +109,11 @@ def _valid_position_event(row: Mapping[str, Any]) -> bool:
     side = str(row.get("side") or "").upper()
     if (is_open or is_closed) and side not in {Side.UP.value, Side.DOWN.value}:
         return False
-    timestamp_keys = ("opened_at", "ts", "created_at") if is_open else ("closed_at", "ts", "created_at")
+    timestamp_keys = (
+        ("opened_at", "ts", "created_at")
+        if is_open
+        else ("closed_at", "ts", "created_at")
+    )
     if (is_open or is_closed) and (
         _row_positive_float(row, "shares", "quantity", "signed_qty") is None
         or _row_positive_float(row, "entry_price", "avg_entry_price") is None
@@ -133,7 +121,14 @@ def _valid_position_event(row: Mapping[str, Any]) -> bool:
         or _row_timestamp(row, *timestamp_keys) is None
     ):
         return False
-    for key in ("shares", "quantity", "signed_qty", "entry_price", "avg_entry_price", "stake_usdc"):
+    for key in (
+        "shares",
+        "quantity",
+        "signed_qty",
+        "entry_price",
+        "avg_entry_price",
+        "stake_usdc",
+    ):
         value = row.get(key)
         if value in (None, ""):
             continue
@@ -209,7 +204,9 @@ def _merge_report_order_payload(
     Explicit unmapped statuses such as ``UNKNOWN`` still mark INVALID.
     """
     merged = dict(existing)
-    explicit_invalid = bool(raw_status) and str(incoming.get("status") or "").upper() == "INVALID"
+    explicit_invalid = (
+        bool(raw_status) and str(incoming.get("status") or "").upper() == "INVALID"
+    )
     for key, value in incoming.items():
         if key == "metrics":
             existing_metrics = existing.get("metrics")
@@ -254,13 +251,13 @@ def _merge_report_order_payload(
             prior = str(existing.get("status") or "").upper()
             if prior and prior != "INVALID":
                 continue
-        if (
-            key == "_projection_invalid"
-            and value is True
-            and not explicit_invalid
-        ):
+        if key == "_projection_invalid" and value is True and not explicit_invalid:
             prior = str(existing.get("status") or "").upper()
-            if prior and prior != "INVALID" and existing.get("_projection_invalid") is not True:
+            if (
+                prior
+                and prior != "INVALID"
+                and existing.get("_projection_invalid") is not True
+            ):
                 continue
         merged[key] = value
     if merged.get("status") not in (None, "", "INVALID"):
@@ -286,7 +283,10 @@ def _invalid_position_state_source(row: Mapping[str, Any]) -> bool:
                 return True
     status = str(row.get("status") or metric_values.get("status") or "").upper()
     is_closed = row.get("is_closed")
-    if status and status not in {PositionStatus.OPEN.value, PositionStatus.CLOSED.value}:
+    if status and status not in {
+        PositionStatus.OPEN.value,
+        PositionStatus.CLOSED.value,
+    }:
         return True
     if is_closed not in (None, "") and not isinstance(is_closed, bool):
         return True
@@ -316,7 +316,9 @@ def _valid_count_value(value: Any) -> bool:
     if isinstance(value, int):
         return 0 <= value <= 1_000_000
     if isinstance(value, float):
-        return math.isfinite(value) and value.is_integer() and 0.0 <= value <= 1_000_000.0
+        return (
+            math.isfinite(value) and value.is_integer() and 0.0 <= value <= 1_000_000.0
+        )
     if not isinstance(value, str):
         return False
     text = value.strip()
@@ -334,11 +336,15 @@ def _valid_account_snapshot_payload(payload: Mapping[str, Any]) -> bool:
         return False
     for key in ("starting_balance", "cash_balance", "equity"):
         value = payload.get(key)
-        if value not in (None, "") and not _valid_money_value(value, allow_negative=False):
+        if value not in (None, "") and not _valid_money_value(
+            value, allow_negative=False
+        ):
             return False
     for key in ("realized_pnl", "unrealized_pnl"):
         value = payload.get(key)
-        if value not in (None, "") and not _valid_money_value(value, allow_negative=True):
+        if value not in (None, "") and not _valid_money_value(
+            value, allow_negative=True
+        ):
             return False
     count = payload.get("open_position_count")
     return count in (None, "") or _valid_count_value(count)
@@ -351,17 +357,38 @@ def _valid_strategy_breakdown(row: Mapping[str, Any]) -> bool:
             return False
     for key in ("total_pnl_usdc", "average_roi", "win_rate"):
         value = row.get(key)
-        if value not in (None, "") and not _valid_money_value(value, allow_negative=True):
+        if value not in (None, "") and not _valid_money_value(
+            value, allow_negative=True
+        ):
             return False
     return True
 
 
 def _valid_daily_report_payload(payload: Mapping[str, Any]) -> bool:
-    for key in ("net_pnl", "return_rate", "total_pnl_usdc", "average_roi", "win_rate", "max_drawdown"):
+    for key in (
+        "net_pnl",
+        "return_rate",
+        "total_pnl_usdc",
+        "average_roi",
+        "win_rate",
+        "max_drawdown",
+    ):
         value = payload.get(key)
-        if value not in (None, "") and not _valid_money_value(value, allow_negative=True):
+        if value not in (None, "") and not _valid_money_value(
+            value, allow_negative=True
+        ):
             return False
-    for key in ("total_signals", "order_count", "fill_count", "rejected_order_count", "open_positions", "closed_positions", "win_count", "loss_count", "void_count"):
+    for key in (
+        "total_signals",
+        "order_count",
+        "fill_count",
+        "rejected_order_count",
+        "open_positions",
+        "closed_positions",
+        "win_count",
+        "loss_count",
+        "void_count",
+    ):
         value = payload.get(key)
         if value not in (None, "") and not _valid_count_value(value):
             return False
@@ -423,7 +450,9 @@ class SQLiteStore:
     def migrate(self) -> None:
         self._backup_legacy_database()
         with self._lock, self._conn:
-            initial_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            initial_version = int(
+                self._conn.execute("PRAGMA user_version").fetchone()[0]
+            )
             for statement in TABLE_DDL_STATEMENTS:
                 self._conn.execute(statement)
             revision_added = self._add_column_if_missing(
@@ -464,14 +493,9 @@ class SQLiteStore:
             )
         )
         if (
-            (
-                not present.intersection(LEGACY_REPORTING_TABLES)
-                and not (
-                    version < PROJECTION_SCHEMA_VERSION and has_reporting_data
-                )
-            )
-            or str(self.path) == ":memory:"
-        ):
+            not present.intersection(LEGACY_REPORTING_TABLES)
+            and not (version < PROJECTION_SCHEMA_VERSION and has_reporting_data)
+        ) or str(self.path) == ":memory:":
             return
         backup_path = self.path.with_name(
             f"{self.path.name}.pre-report-v{PROJECTION_SCHEMA_VERSION}.bak"
@@ -602,9 +626,17 @@ class SQLiteStore:
             self._conn.execute(
                 """INSERT OR REPLACE INTO markets(market_id,asset,timeframe,market_slug,status,end_ts,payload_json,updated_at)
                 VALUES(?,?,?,?,?,?,?,?)""",
-                (payload["market_id"], payload["asset"], payload["timeframe"], payload["market_slug"], payload.get("status"), payload.get("end_ts"), self._json(payload), utc_iso()),
+                (
+                    payload["market_id"],
+                    payload["asset"],
+                    payload["timeframe"],
+                    payload["market_slug"],
+                    payload.get("status"),
+                    payload.get("end_ts"),
+                    self._json(payload),
+                    utc_iso(),
+                ),
             )
-
 
     def upsert_anchor_price(self, anchor: AnchorPrice) -> None:
         payload = {
@@ -681,7 +713,9 @@ class SQLiteStore:
             source=str(payload["source"]),
             verified=bool(payload["verified"]),
             captured_at=datetime.fromisoformat(str(payload["captured_at"])),
-            lag_ms=int(payload["lag_ms"]) if payload.get("lag_ms") is not None else None,
+            lag_ms=int(payload["lag_ms"])
+            if payload.get("lag_ms") is not None
+            else None,
         )
 
     def insert_signal(self, signal: Any) -> None:
@@ -691,8 +725,28 @@ class SQLiteStore:
                 "signals",
                 "signal_id",
                 p["signal_id"],
-                ("signal_id", "strategy", "asset", "timeframe", "market_id", "side", "confidence", "created_at", "payload_json"),
-                (p["signal_id"], p["strategy"], p["asset"], p["timeframe"], p["market_id"], p["side"], p["confidence"], p["created_at"], self._json(p)),
+                (
+                    "signal_id",
+                    "strategy",
+                    "asset",
+                    "timeframe",
+                    "market_id",
+                    "side",
+                    "confidence",
+                    "created_at",
+                    "payload_json",
+                ),
+                (
+                    p["signal_id"],
+                    p["strategy"],
+                    p["asset"],
+                    p["timeframe"],
+                    p["market_id"],
+                    p["side"],
+                    p["confidence"],
+                    p["created_at"],
+                    self._json(p),
+                ),
             )
 
     def insert_rejected_signal(self, rejected: Any) -> None:
@@ -702,8 +756,22 @@ class SQLiteStore:
                 "rejected_signals",
                 "rejected_id",
                 p["rejected_id"],
-                ("rejected_id", "signal_id", "reason_code", "gate_name", "rejected_at", "payload_json"),
-                (p["rejected_id"], p["candidate"]["signal_id"], p["reason_code"], p["gate_name"], p["rejected_at"], self._json(p)),
+                (
+                    "rejected_id",
+                    "signal_id",
+                    "reason_code",
+                    "gate_name",
+                    "rejected_at",
+                    "payload_json",
+                ),
+                (
+                    p["rejected_id"],
+                    p["candidate"]["signal_id"],
+                    p["reason_code"],
+                    p["gate_name"],
+                    p["rejected_at"],
+                    self._json(p),
+                ),
             )
 
     def insert_strategy_status(self, status: Any) -> None:
@@ -776,7 +844,15 @@ class SQLiteStore:
             self._conn.execute(
                 """INSERT INTO report_account_snapshots(account_id,equity,cash_balance,realized_pnl,open_position_count,created_at,payload_json)
                 VALUES(?,?,?,?,?,?,?)""",
-                (p["account_id"], p["equity"], p["cash_balance"], p["realized_pnl"], p["open_position_count"], p["created_at"], self._json(p)),
+                (
+                    p["account_id"],
+                    p["equity"],
+                    p["cash_balance"],
+                    p["realized_pnl"],
+                    p["open_position_count"],
+                    p["created_at"],
+                    self._json(p),
+                ),
             )
 
     def insert_daily_report(self, report: Any) -> None:
@@ -786,8 +862,26 @@ class SQLiteStore:
                 "daily_reports",
                 "report_id",
                 p["report_id"],
-                ("report_id", "report_date", "revision", "total_signals", "total_pnl_usdc", "win_rate", "created_at", "payload_json"),
-                (p["report_id"], p["report_date"], p.get("revision", 1), p["total_signals"], p["total_pnl_usdc"], p["win_rate"], p["created_at"], self._json(p)),
+                (
+                    "report_id",
+                    "report_date",
+                    "revision",
+                    "total_signals",
+                    "total_pnl_usdc",
+                    "win_rate",
+                    "created_at",
+                    "payload_json",
+                ),
+                (
+                    p["report_id"],
+                    p["report_date"],
+                    p.get("revision", 1),
+                    p["total_signals"],
+                    p["total_pnl_usdc"],
+                    p["win_rate"],
+                    p["created_at"],
+                    self._json(p),
+                ),
             )
 
     def claim_daily_report(
@@ -1204,13 +1298,16 @@ class SQLiteStore:
                     return "STALE"
                 if row["lease_until"] is None or str(row["lease_until"]) <= now:
                     return "EXPIRED"
-                if self._conn.execute(
-                    """SELECT 1 FROM report_publish_outbox
+                if (
+                    self._conn.execute(
+                        """SELECT 1 FROM report_publish_outbox
                     WHERE report_date=? AND intent_id<>?
                       AND status='SENDING' AND lease_until IS NOT NULL
                       AND lease_until>?""",
-                    (str(row["report_date"]), intent_id, now),
-                ).fetchone() is not None:
+                        (str(row["report_date"]), intent_id, now),
+                    ).fetchone()
+                    is not None
+                ):
                     return "BUSY"
                 return "STALE"
             row = self._conn.execute(
@@ -1506,8 +1603,22 @@ class SQLiteStore:
                 "telegram_publishes",
                 "publish_id",
                 p["publish_id"],
-                ("publish_id", "message_type", "signal_id", "status", "sent_at", "payload_json"),
-                (p["publish_id"], p["message_type"], p.get("signal_id"), p["status"], p.get("sent_at"), self._json(p)),
+                (
+                    "publish_id",
+                    "message_type",
+                    "signal_id",
+                    "status",
+                    "sent_at",
+                    "payload_json",
+                ),
+                (
+                    p["publish_id"],
+                    p["message_type"],
+                    p.get("signal_id"),
+                    p["status"],
+                    p.get("sent_at"),
+                    self._json(p),
+                ),
             )
 
     def insert_system_event(self, event: dict[str, Any]) -> None:
@@ -1518,7 +1629,13 @@ class SQLiteStore:
                 "event_id",
                 p["event_id"],
                 ("event_id", "event_type", "severity", "created_at", "payload_json"),
-                (p["event_id"], p["event_type"], p["severity"], p["created_at"], self._json(p)),
+                (
+                    p["event_id"],
+                    p["event_type"],
+                    p["severity"],
+                    p["created_at"],
+                    self._json(p),
+                ),
             )
             self._upsert_report_current_state(p)
 
@@ -1547,7 +1664,9 @@ class SQLiteStore:
         event_type = str(event.get("event_type") or "")
         raw_status = ""
         if event_type == "nautilus_order":
-            raw_status = str(event.get("status") or event.get("order_status") or "").strip()
+            raw_status = str(
+                event.get("status") or event.get("order_status") or ""
+            ).strip()
             payload = normalize_report_order(event)
             if not payload.get("status"):
                 payload["_projection_invalid"] = True
@@ -1569,9 +1688,7 @@ class SQLiteStore:
             table = "report_positions"
             id_column = "report_position_id"
             record_id = str(
-                payload.get("report_position_id")
-                or payload.get("position_id")
-                or ""
+                payload.get("report_position_id") or payload.get("position_id") or ""
             )
             payload["report_position_id"] = record_id
             payload.setdefault("position_id", record_id)
@@ -1590,9 +1707,7 @@ class SQLiteStore:
                 (record_id,),
             ).fetchone()
             existing_payload = (
-                _payload_json(existing_row)
-                if existing_row is not None
-                else None
+                _payload_json(existing_row) if existing_row is not None else None
             )
             if isinstance(existing_payload, dict):
                 existing_status = str(existing_payload.get("status") or "").upper()
@@ -1608,9 +1723,7 @@ class SQLiteStore:
                     payload,
                     raw_status=raw_status if event_type == "nautilus_order" else "",
                 )
-                if (
-                    existing_payload.get("_creation_event_at_inferred") is True
-                ):
+                if existing_payload.get("_creation_event_at_inferred") is True:
                     payload["_creation_event_at_inferred"] = True
                 status = str(payload.get("status") or status).upper()
         columns = [
@@ -1639,7 +1752,7 @@ class SQLiteStore:
             values.insert(2, source_event_at)
         placeholders = ",".join("?" for _ in columns)
         self._conn.execute(
-            f"""INSERT INTO {table}({','.join(columns)})
+            f"""INSERT INTO {table}({",".join(columns)})
             VALUES({placeholders})
             ON CONFLICT({id_column}) DO UPDATE SET
                 status=excluded.status,
@@ -1801,7 +1914,9 @@ class SQLiteStore:
         if isinstance(metrics, Mapping):
             contracts = metrics.get("contracts")
         if contracts is None:
-            contracts = existing_payload.get("shares") or existing_payload.get("quantity")
+            contracts = existing_payload.get("shares") or existing_payload.get(
+                "quantity"
+            )
         last_qty = fill.get("shares") or event.get("quantity")
         if contracts is not None and last_qty is not None:
             try:
@@ -1893,7 +2008,9 @@ class SQLiteStore:
             return None
         return payload
 
-    def query_json(self, table: str, limit: int = 100, where: str = "", params: Iterable[Any] = ()) -> list[dict[str, Any]]:
+    def query_json(
+        self, table: str, limit: int = 100, where: str = "", params: Iterable[Any] = ()
+    ) -> list[dict[str, Any]]:
         return self._query_json_table(table, limit=limit, where=where, params=params)
 
     def _query_json_table(
@@ -1925,7 +2042,9 @@ class SQLiteStore:
                 payload = _payload_json(row)
                 if not isinstance(payload, dict):
                     continue
-                if table == "daily_reports" and not _valid_daily_report_payload(payload):
+                if table == "daily_reports" and not _valid_daily_report_payload(
+                    payload
+                ):
                     continue
                 valid_rows.append(payload)
             return valid_rows
@@ -2049,7 +2168,12 @@ class SQLiteStore:
 
     def counts(self) -> dict[str, int]:
         with self._lock:
-            return {t: int(self._conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"]) for t in COUNT_TABLES}
+            return {
+                t: int(
+                    self._conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"]
+                )
+                for t in COUNT_TABLES
+            }
 
     def query_latest_report_account_snapshot(self) -> dict[str, Any] | None:
         sql, params = self._build_query(

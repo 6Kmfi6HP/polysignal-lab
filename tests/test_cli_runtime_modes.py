@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, json, os, subprocess, sys, pathlib, pathlib.Path, types, types.ModuleType
-Output: test_cli_help_lists_supported_runtime_modes_without_removed_alias, test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given, test_main_uses_nautilus_when_no_mode_is_given, test_main_selects_explicit_nautilus_trading_mode, test_main_import_does_not_load_legacy_scheduler_stack, test_scheduler_mode_is_rejected, test_dashboard_flag_is_rejected, test_smoke_flags_require_explicit_smoke_mode, test_explicit_smoke_writes_bounded_evidence, _FakeSettings
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import json
@@ -20,7 +10,10 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from polysignal_lab.app import main as app_main
-from polysignal_lab.app.readonly_smoke_types import ReadonlySmokeEvidence, ReadonlySmokeRequest
+from polysignal_lab.app.readonly_smoke_types import (
+    ReadonlySmokeEvidence,
+    ReadonlySmokeRequest,
+)
 
 
 class _FakeSettings:
@@ -30,6 +23,7 @@ class _FakeSettings:
     def validate_runtime_environment(self) -> None:
         return None
 
+
 def _worktree_env() -> dict[str, str]:
     return {
         **os.environ,
@@ -37,11 +31,12 @@ def _worktree_env() -> dict[str, str]:
     }
 
 
-
 def test_cli_help_lists_supported_runtime_modes_without_removed_alias() -> None:
     command = [sys.executable, "-m", "polysignal_lab.app.main", "--help"]
 
-    result = subprocess.run(command, capture_output=True, check=True, text=True, env=_worktree_env())
+    result = subprocess.run(
+        command, capture_output=True, check=True, text=True, env=_worktree_env()
+    )
 
     assert "--mode {dashboard,smoke,nautilus,sandbox,live,backtest}" in result.stdout
     assert "--once" in result.stdout
@@ -66,12 +61,15 @@ def test_main_uses_config_default_nautilus_runtime_when_no_mode_is_given(
     )
 
     monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
-    monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
+    monkeypatch.setitem(
+        sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module
+    )
 
     exit_code = app_main.main([])
 
     assert exit_code == 0
     assert calls == ["nautilus"]
+
 
 def test_main_uses_nautilus_when_no_mode_is_given(
     monkeypatch: pytest.MonkeyPatch,
@@ -86,7 +84,9 @@ def test_main_uses_nautilus_when_no_mode_is_given(
     )
 
     monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
-    monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
+    monkeypatch.setitem(
+        sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module
+    )
 
     exit_code = app_main.main([])
 
@@ -109,7 +109,9 @@ def test_main_selects_explicit_nautilus_trading_mode(
     )
 
     monkeypatch.setattr(app_main, "load_settings", lambda path: fake_settings)
-    monkeypatch.setitem(sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module)
+    monkeypatch.setitem(
+        sys.modules, "polysignal_lab.nautilus_runtime.node", fake_module
+    )
 
     exit_code = app_main.main(["--mode", mode])
 
@@ -128,7 +130,9 @@ def test_main_import_does_not_load_legacy_scheduler_stack() -> None:
         ),
     ]
 
-    result = subprocess.run(command, capture_output=True, check=True, text=True, env=_worktree_env())
+    result = subprocess.run(
+        command, capture_output=True, check=True, text=True, env=_worktree_env()
+    )
 
     assert result.stdout.strip() == "False"
 
@@ -137,14 +141,20 @@ def test_scheduler_mode_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         app_main.parse_cli(["--mode", "scheduler"])
 
-    assert "invalid choice" in capsys.readouterr().err.lower() or "scheduler" in capsys.readouterr().err
+    assert (
+        "invalid choice" in capsys.readouterr().err.lower()
+        or "scheduler" in capsys.readouterr().err
+    )
 
 
 def test_dashboard_flag_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         app_main.parse_cli(["--dashboard"])
 
-    assert "unrecognized arguments" in capsys.readouterr().err.lower() or "dashboard" in capsys.readouterr().err
+    assert (
+        "unrecognized arguments" in capsys.readouterr().err.lower()
+        or "dashboard" in capsys.readouterr().err
+    )
 
 
 @pytest.mark.parametrize("flag", ["--once", "--real-readonly-smoke"])
@@ -200,7 +210,12 @@ def test_explicit_smoke_writes_bounded_evidence(
                 }
             ],
         },
-        "dashboard_reads": {"status": "ok", "ok": True, "endpoint_count": 4, "detail": None},
+        "dashboard_reads": {
+            "status": "ok",
+            "ok": True,
+            "endpoint_count": 4,
+            "detail": None,
+        },
         "safety_scan": {"status": "ok", "ok": True, "finding_count": 0, "detail": None},
     }
 

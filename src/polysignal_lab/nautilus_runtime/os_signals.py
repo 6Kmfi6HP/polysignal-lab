@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, asyncio, signal, collections.abc, collections.abc.Callable, collections.abc.Sequence, contextlib, contextlib.suppress
-Output: None
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import asyncio
@@ -38,6 +22,16 @@ def _restore_os_signal_handlers(
     for sig, previous in reversed(previous_handlers):
         with suppress(ValueError, OSError, RuntimeError):
             _ = signal.signal(sig, previous)
+
+
+def _install_sync_os_signal_handlers(
+    request_stop: Callable[[], None],
+) -> Callable[[], None]:
+    previous_handlers: list[_SignalHandlerSnapshot] = []
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        previous_handlers.append((sig, signal.getsignal(sig)))
+        _ = signal.signal(sig, lambda _signum, _frame: request_stop())
+    return lambda: _restore_os_signal_handlers(previous_handlers)
 
 
 def _install_async_os_signal_handlers(

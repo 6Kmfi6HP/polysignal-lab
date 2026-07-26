@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, factories, factories.sample_report_result, polysignal_lab.domain.enums, polysignal_lab.domain.enums.TradeResultStatus, polysignal_lab.domain.reporting_models
-Output: test_daily_report_ignores_boolean_execution_depth, test_daily_report_handles_non_string_reject_reason, test_daily_report_preserves_native_reject_reason, test_daily_report_counts_cancelled_rejects_with_reasons, test_daily_report_ignores_boolean_trade_result_numbers, test_strategy_leaderboard_ignores_boolean_trade_result_numbers, test_report_numeric_accessors_ignore_booleans, test_confidence_bucket_ignores_boolean_confidence, test_confidence_bucket_ignores_non_numeric_confidence, test_report_numeric_accessors_ignore_non_finite_values
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from datetime import date
@@ -17,7 +8,7 @@ from factories import sample_report_result
 from polysignal_lab.domain.enums import TradeResultStatus
 from polysignal_lab.domain.reporting_models import report_float, account_float
 from polysignal_lab.domain.reporting_result import trade_result_float
-from polysignal_lab.app.reporting_sources import _order_terminal_at
+from polysignal_lab.app.daily_report.sources import _order_terminal_at
 from polysignal_lab.reporting.aggregates import confidence_bucket, optional_float
 from polysignal_lab.reporting.daily_report import DailyReportService
 from polysignal_lab.reporting.strategy_stats import build_strategy_leaderboard_rows
@@ -229,8 +220,16 @@ def test_daily_report_ignores_non_finite_trade_and_execution_numbers() -> None:
         open_positions=0,
         results=[result],
         order_payloads=[
-            {"report_order_id": "bad-depth", "status": "FILLED", "metrics": {"available_depth_usdc": "Infinity"}},
-            {"report_order_id": "good-depth", "status": "FILLED", "metrics": {"available_depth_usdc": 8.0}},
+            {
+                "report_order_id": "bad-depth",
+                "status": "FILLED",
+                "metrics": {"available_depth_usdc": "Infinity"},
+            },
+            {
+                "report_order_id": "good-depth",
+                "status": "FILLED",
+                "metrics": {"available_depth_usdc": 8.0},
+            },
         ],
     )
 
@@ -301,4 +300,7 @@ def test_order_terminal_at_ignores_malformed_timestamp() -> None:
     order = {"metrics": {"terminal_at": "not-a-date"}}
 
     assert _order_terminal_at(order) is None
-    assert _order_terminal_at({"metrics": {"terminal_at": datetime(2026, 6, 22)}}) is not None
+    assert (
+        _order_terminal_at({"metrics": {"terminal_at": datetime(2026, 6, 22)}})
+        is not None
+    )

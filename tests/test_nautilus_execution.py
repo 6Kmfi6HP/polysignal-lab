@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, pathlib, pathlib.Path
-Output: test_project_source_contains_no_local_paper_symbols, test_native_runtime_contains_no_legacy_market_state_symbols
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from pathlib import Path

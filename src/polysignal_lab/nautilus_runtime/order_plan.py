@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, dataclasses, typing, polysignal_lab.alpha.types
-Output: build_order_spec, OrderSubmissionPlan, resolve_order_intent, resolve_order_price, resolve_order_quantity, build_order_tags
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -97,7 +88,9 @@ def resolve_order_price(
 ) -> float:
     if reduce_only:
         if best_bid is None:
-            raise ValueError(f"{intent.value} reduce-only close requires best bid depth")
+            raise ValueError(
+                f"{intent.value} reduce-only close requires best bid depth"
+            )
         return positive_float(best_bid, "best_bid")
     max_price = positive_float(decision.max_entry_price, "max_entry_price")
     explicit_intent = explicit_order_intent(decision)

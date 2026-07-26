@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, dataclasses.field, datetime, datetime.UTC, datetime.datetime
-Output: refresh_asset_conditions, subscribe_market_conditions, instrument_visible_in_cache, subscribe_market_instrument, on_instrument_available, unsubscribe_market_conditions, condition_instruments, clear_condition_subscription_state, begin_market_book_generation
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -20,9 +10,11 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_data_client_id,
 )
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.nautilus_runtime.strategy.helpers import (
+from polysignal_lab.nautilus_runtime.strategy.catalog_lookups import (
     _asset_conditions,
     _instrument_ids,
+)
+from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
     _nautilus_book_type,
     _nautilus_instrument_id,
 )
@@ -39,8 +31,12 @@ class MarketSubscriptionState:
     # Instrument-level intent keeps repeated provider updates idempotent.
     subscribed_instrument_ids: set[str] = field(default_factory=set)
     awaiting_book_sides_by_condition: dict[str, set[Side]] = field(default_factory=dict)
-    book_generation_started_at_by_condition: dict[str, datetime] = field(default_factory=dict)
-    last_book_at_by_condition: dict[str, dict[Side, datetime]] = field(default_factory=dict)
+    book_generation_started_at_by_condition: dict[str, datetime] = field(
+        default_factory=dict
+    )
+    last_book_at_by_condition: dict[str, dict[Side, datetime]] = field(
+        default_factory=dict
+    )
     last_book_received_at_by_condition: dict[str, dict[Side, datetime]] = field(
         default_factory=dict
     )
@@ -55,6 +51,7 @@ class _SubscriptionStrategy(Protocol):
     def registry(self) -> MarketCatalog | None: ...
     @property
     def cache(self) -> object | None: ...
+
     book_type: str
     unsubscribe_exited: bool
     _startup_condition_ids: tuple[str, ...]
@@ -106,7 +103,9 @@ class _SubscriptionStrategy(Protocol):
 
 def refresh_asset_conditions(strategy: _SubscriptionStrategy) -> None:
     tracked_condition_ids = tuple(
-        dict.fromkeys((*strategy._startup_condition_ids, *strategy._active_condition_ids))
+        dict.fromkeys(
+            (*strategy._startup_condition_ids, *strategy._active_condition_ids)
+        )
     )
     strategy._asset_condition_ids = _asset_conditions(
         strategy.registry, tracked_condition_ids
@@ -260,7 +259,10 @@ def on_instrument_available(
         _instrument_key(iid)
         for iid in _instrument_ids(
             strategy.registry,
-            tuple(strategy._active_condition_ids | strategy._subscription_state.subscribe_intent_condition_ids),
+            tuple(
+                strategy._active_condition_ids
+                | strategy._subscription_state.subscribe_intent_condition_ids
+            ),
         )
     }
     if key not in wanted:

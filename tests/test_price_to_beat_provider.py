@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, polysignal_lab.data.price_to_beat_provider, polysignal_lab.data.price_to_beat_provider.PriceToBeatProvider, polysignal_lab.domain.anchor_price, polysignal_lab.domain.anchor_price.AnchorPrice, polysignal_lab.domain.enums
-Output: test_ptb_provider_prefers_verified_anchor_over_metadata, _AnchorStore
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -31,6 +15,7 @@ class _AnchorStore:
     def get_verified_anchor_price(self, asset, timeframe, market_slug):
         return self.anchor
 
+
 def _market(*, asset: str = "ETH", timeframe: str = "5m") -> Market:
     market_id = f"{asset.lower()}-{timeframe}"
     return Market(
@@ -45,8 +30,18 @@ def _market(*, asset: str = "ETH", timeframe: str = "5m") -> Market:
         status=MarketStatus.ACTIVE,
         price_to_beat=None,
         outcome_tokens=[
-            OutcomeToken(token_id=f"{market_id}-UP", side=Side.UP, outcome_name="Up", market_id=market_id),
-            OutcomeToken(token_id=f"{market_id}-DOWN", side=Side.DOWN, outcome_name="Down", market_id=market_id),
+            OutcomeToken(
+                token_id=f"{market_id}-UP",
+                side=Side.UP,
+                outcome_name="Up",
+                market_id=market_id,
+            ),
+            OutcomeToken(
+                token_id=f"{market_id}-DOWN",
+                side=Side.DOWN,
+                outcome_name="Down",
+                market_id=market_id,
+            ),
         ],
         raw={"eventStartTime": "2026-06-24T10:30:00Z"},
     )

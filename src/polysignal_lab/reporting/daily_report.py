@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections, collections.Counter, collections.defaultdict, datetime, datetime.date, collections.abc, collections.abc.Iterable, collections.abc.Mapping
-Output: DailyReportService
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from collections import Counter, defaultdict
@@ -68,14 +52,32 @@ class DailyReportService:
         incomplete_reasons = sorted(set(telemetry_incomplete_reasons))
         closed = [r for r in result_list if _is_closed_result(r)]
         wins = sum(1 for r in closed if trade_result_status(r) == TradeResultStatus.WIN)
-        losses = sum(1 for r in closed if trade_result_status(r) == TradeResultStatus.LOSS)
-        voids = sum(1 for r in closed if trade_result_status(r) == TradeResultStatus.VOID)
+        losses = sum(
+            1 for r in closed if trade_result_status(r) == TradeResultStatus.LOSS
+        )
+        voids = sum(
+            1 for r in closed if trade_result_status(r) == TradeResultStatus.VOID
+        )
         denominator = len(closed)
         win_rate = wins / denominator if denominator else 0.0
         total_pnl = sum(trade_result_float(r, "pnl_usdc") for r in closed)
-        avg_roi = sum(trade_result_float(r, "roi") for r in closed) / len(closed) if closed else 0.0
-        profit = sum(trade_result_float(r, "pnl_usdc") for r in closed if trade_result_float(r, "pnl_usdc") > 0)
-        loss = abs(sum(trade_result_float(r, "pnl_usdc") for r in closed if trade_result_float(r, "pnl_usdc") < 0))
+        avg_roi = (
+            sum(trade_result_float(r, "roi") for r in closed) / len(closed)
+            if closed
+            else 0.0
+        )
+        profit = sum(
+            trade_result_float(r, "pnl_usdc")
+            for r in closed
+            if trade_result_float(r, "pnl_usdc") > 0
+        )
+        loss = abs(
+            sum(
+                trade_result_float(r, "pnl_usdc")
+                for r in closed
+                if trade_result_float(r, "pnl_usdc") < 0
+            )
+        )
         profit_factor = profit / loss if loss else None
         curve = equity_curve or [starting_equity, ending_equity]
         max_drawdown = self._max_drawdown(curve)
@@ -92,7 +94,9 @@ class DailyReportService:
             equity_currency=equity_currency,
             equity_source=equity_source,
             net_pnl=ending_equity - starting_equity,
-            return_rate=(ending_equity - starting_equity) / starting_equity if starting_equity else 0.0,
+            return_rate=(ending_equity - starting_equity) / starting_equity
+            if starting_equity
+            else 0.0,
             total_signals=total_signals,
             order_count=order_count,
             fill_count=fill_count,
@@ -100,9 +104,7 @@ class DailyReportService:
             stale_fill_count=stale_fill_count,
             order_attempts_by_intent=execution_aggregates["order_attempts_by_intent"],
             fills_by_intent=execution_aggregates["fills_by_intent"],
-            partial_fills_by_intent=execution_aggregates[
-                "partial_fills_by_intent"
-            ],
+            partial_fills_by_intent=execution_aggregates["partial_fills_by_intent"],
             rejects_by_reason=execution_aggregates["rejects_by_reason"],
             rejects_by_original_reason=execution_aggregates[
                 "rejects_by_original_reason"
@@ -113,12 +115,8 @@ class DailyReportService:
             average_executable_depth_usdc=execution_aggregates[
                 "average_executable_depth_usdc"
             ],
-            execution_assumptions=execution_aggregates[
-                "execution_assumptions"
-            ],
-            telemetry_status=(
-                "incomplete" if incomplete_reasons else "complete"
-            ),
+            execution_assumptions=execution_aggregates["execution_assumptions"],
+            telemetry_status=("incomplete" if incomplete_reasons else "complete"),
             telemetry_incomplete_reasons=incomplete_reasons,
             open_positions=open_positions,
             closed_positions=len(closed),
@@ -145,11 +143,7 @@ class DailyReportService:
         reject_payloads: Iterable[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         orders = list(order_payloads)
-        reject_orders = (
-            list(reject_payloads)
-            if reject_payloads is not None
-            else orders
-        )
+        reject_orders = list(reject_payloads) if reject_payloads is not None else orders
         fills = list(fill_payloads)
         order_intents: dict[str, str] = {}
         attempts: Counter[str] = Counter()
@@ -161,9 +155,7 @@ class DailyReportService:
             metrics_payload = order.get("metrics")
             metrics = metrics_payload if isinstance(metrics_payload, dict) else {}
             intent = str(
-                metrics.get("order_intent")
-                or order.get("order_intent")
-                or "default"
+                metrics.get("order_intent") or order.get("order_intent") or "default"
             )
             order_id = str(order.get("report_order_id") or "")
             if order_id:
@@ -180,8 +172,7 @@ class DailyReportService:
             metrics = metrics_payload if isinstance(metrics_payload, dict) else {}
             if is_rejected_order_payload(order, metrics):
                 normalized = normalize_reject_reason(
-                    metrics.get("normalized_reason")
-                    or order.get("reject_reason")
+                    metrics.get("normalized_reason") or order.get("reject_reason")
                 )
                 original = str(
                     metrics.get("original_reason")
@@ -195,8 +186,7 @@ class DailyReportService:
         for fill in fills:
             order_id = str(fill.get("report_order_id") or "")
             intent = str(
-                fill.get("order_intent")
-                or order_intents.get(order_id, "default")
+                fill.get("order_intent") or order_intents.get(order_id, "default")
             )
             fills_by_intent[intent] += 1
             fill_ratio = _optional_float(fill.get("fill_ratio"))
@@ -213,9 +203,19 @@ class DailyReportService:
             "execution_assumptions": dict(sorted(assumptions.items())),
         }
 
-
-    def _breakdown(self, results: list[Mapping[str, Any]], attr: str) -> dict[str, dict[str, float | int]]:
-        rows: dict[str, dict[str, float | int]] = defaultdict(lambda: {"closed_positions": 0, "win_count": 0, "loss_count": 0, "void_count": 0, "total_pnl_usdc": 0.0, "average_roi": 0.0})
+    def _breakdown(
+        self, results: list[Mapping[str, Any]], attr: str
+    ) -> dict[str, dict[str, float | int]]:
+        rows: dict[str, dict[str, float | int]] = defaultdict(
+            lambda: {
+                "closed_positions": 0,
+                "win_count": 0,
+                "loss_count": 0,
+                "void_count": 0,
+                "total_pnl_usdc": 0.0,
+                "average_roi": 0.0,
+            }
+        )
         roi_sum: dict[str, float] = defaultdict(float)
         for r in results:
             key = trade_result_text(r, attr)

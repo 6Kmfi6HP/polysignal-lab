@@ -1,19 +1,3 @@
-/**
- * Input: { Outlet } from '@tanstack/react-router', { getCookie } from '@/lib/cookies', { cn } from '@/lib/utils', { LayoutProvider } from '@/context/layout-provider', { SearchProvider } from '@/context/search-provider', { SidebarInset, SidebarProvider } from '@/components/ui/sidebar', { AppSidebar } from '@/components/layout/app-sidebar', { SkipToMain } from '@/components/skip-to-main', @tanstack/react-router, @/lib/cookies
- * Output: AuthenticatedLayout
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { Outlet } from '@tanstack/react-router'
 import { getCookie } from '@/lib/cookies'
 import { cn } from '@/lib/utils'

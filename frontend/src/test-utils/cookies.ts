@@ -1,19 +1,3 @@
-/**
- * Input: { removeCookie } from '@/lib/cookies', @/lib/cookies
- * Output: clearCookies
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { removeCookie } from '@/lib/cookies'
 
 /**

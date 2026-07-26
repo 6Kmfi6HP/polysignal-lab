@@ -1,19 +1,3 @@
-/**
- * Input: { createFileRoute } from '@tanstack/react-router', { ConfigDrawer } from '@/components/config-drawer', { Header } from '@/components/layout/header', { Search } from '@/components/search', { ThemeSwitch } from '@/components/theme-switch', { ForbiddenError } from '@/features/errors/forbidden', { GeneralError } from '@/features/errors/general-error', { MaintenanceError } from '@/features/errors/maintenance-error', { NotFoundError } from '@/features/errors/not-found-error', { UnauthorisedError } from '@/features/errors/unauthorized-error'
- * Output: Route, RouteComponent
- * Pos: API Layer - Route definitions
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { createFileRoute } from '@tanstack/react-router'
 import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'

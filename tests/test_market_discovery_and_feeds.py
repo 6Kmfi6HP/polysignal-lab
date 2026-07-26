@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, unittest.mock, unittest.mock.patch, polysignal_lab.config, polysignal_lab.config.MarketConfig, polysignal_lab.config.PolymarketDataConfig
-Output: test_market_discovery_current_slot_slugs_uses_shared_helper, test_market_discovery_flattens_and_parses_crypto_updown, test_gamma_page_limit_matches_official_markets_cap, test_gamma_markets_slug_query_uses_official_builder, test_paginate_gamma_events_continues_when_page_is_full_cap
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime

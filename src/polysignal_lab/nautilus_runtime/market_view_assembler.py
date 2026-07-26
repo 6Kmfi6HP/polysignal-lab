@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.datetime, collections.abc, collections.abc.Sequence, typing, typing.TYPE_CHECKING, typing.Protocol, typing.runtime_checkable
-Output: build_alpha_snapshot, BookReceiptObserver, BookDataProvider, MarketViewAssembler
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -22,12 +6,19 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from typing_extensions import final
 
-from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView, TradeView
+from polysignal_lab.alpha.types import (
+    FreshnessView,
+    MarketView,
+    SideBookView,
+    TradeView,
+)
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.utils import stable_hash
 
 if TYPE_CHECKING:
-    from polysignal_lab.nautilus_runtime.custom_data_state import CustomDataSnapshotProvider
+    from polysignal_lab.nautilus_runtime.custom_data_state import (
+        CustomDataSnapshotProvider,
+    )
 
 
 @runtime_checkable
@@ -89,7 +80,9 @@ class MarketViewAssembler:
         if isinstance(self.books, BookReceiptObserver):
             self.books.observe_book_received(token_id, received_at=received_at)
 
-    def with_custom_data(self, custom_data: CustomDataSnapshotProvider) -> MarketViewAssembler:
+    def with_custom_data(
+        self, custom_data: CustomDataSnapshotProvider
+    ) -> MarketViewAssembler:
         return MarketViewAssembler(
             catalog=self.catalog,
             books=self.books,
@@ -156,11 +149,15 @@ def _freshness_view(
     *,
     now: datetime,
 ) -> FreshnessView:
-    dynamic_freshness = getattr(spot, "freshness_ms_at", None) if spot is not None else None
+    dynamic_freshness = (
+        getattr(spot, "freshness_ms_at", None) if spot is not None else None
+    )
     spot_freshness = (
         dynamic_freshness(now)
         if callable(dynamic_freshness)
-        else getattr(spot, "freshness_ms", None) if spot is not None else None
+        else getattr(spot, "freshness_ms", None)
+        if spot is not None
+        else None
     )
     freshness_values = [
         value
@@ -175,7 +172,9 @@ def _freshness_view(
     )
 
 
-def _view_metrics(pair: object, spot: object | None, ptb: object | None) -> dict[str, object]:
+def _view_metrics(
+    pair: object, spot: object | None, ptb: object | None
+) -> dict[str, object]:
     metrics: dict[str, object] = {
         "up_token_id": pair.up.token_id,
         "down_token_id": pair.down.token_id,

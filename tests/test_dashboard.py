@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timedelta, datetime.timezone, unittest.mock, unittest.mock.Mock, httpx
-Output: test_dashboard_uses_injected_reporting_read_port, test_dashboard_readonly_endpoints_return_stored_data, test_dashboard_positions_returns_latest_metadata_first, test_dashboard_reduces_order_and_position_lifecycle_to_current_state, test_dashboard_positions_normalize_nautilus_rows_with_market_lookup, test_dashboard_health_reports_missing_runtime_as_unknown, test_dashboard_health_reports_stale_runtime_as_degraded, test_dashboard_health_reports_persistent_readiness_detail, test_dashboard_health_keeps_fresh_runtime_ok_when_storage_fails, test_dashboard_health_ignores_superseded_runtime_snapshot_status
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
@@ -25,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from polysignal_lab.dashboard.app import create_dashboard_app
-from polysignal_lab.dashboard.reporting_read import (
+from polysignal_lab.dashboard.ports import (
     FileRuntimeHealthReader,
     ReportingReadPort,
 )
@@ -39,7 +23,9 @@ from signal_helpers import ptb_signal_from_view
 from factories import sample_report_result, sample_storage_lifecycle
 
 
-def _client_with_store(tmp_path, market_view, settings) -> tuple[TestClient, SQLiteStore]:
+def _client_with_store(
+    tmp_path, market_view, settings
+) -> tuple[TestClient, SQLiteStore]:
     store = SQLiteStore(tmp_path / "dashboard.sqlite3")
     signal = ptb_signal_from_view(market_view, settings)
     lifecycle = sample_storage_lifecycle(signal)
@@ -58,33 +44,39 @@ def _client_with_store(tmp_path, market_view, settings) -> tuple[TestClient, SQL
     )
     store.insert_signal(signal)
     store.insert_rejected_signal(rejected)
-    store.insert_system_event({
-        "event_id": "evt-order-1",
-        "event_type": "nautilus_order",
-        "severity": "info",
-        "created_at": str(lifecycle.order["created_at"]),
-        **lifecycle.order,
-    })
-    store.insert_system_event({
-        "event_id": "evt-fill-1",
-        "event_type": "nautilus_fill",
-        "severity": "info",
-        "created_at": str(lifecycle.fill["created_at"]),
-        **lifecycle.fill,
-    })
+    store.insert_system_event(
+        {
+            "event_id": "evt-order-1",
+            "event_type": "nautilus_order",
+            "severity": "info",
+            "created_at": str(lifecycle.order["created_at"]),
+            **lifecycle.order,
+        }
+    )
+    store.insert_system_event(
+        {
+            "event_id": "evt-fill-1",
+            "event_type": "nautilus_fill",
+            "severity": "info",
+            "created_at": str(lifecycle.fill["created_at"]),
+            **lifecycle.fill,
+        }
+    )
     store.insert_report_result(lifecycle.result)
     store.insert_report_account_snapshot(lifecycle.account_snapshot)
     store.insert_daily_report(lifecycle.report)
     store.insert_telegram_publish(lifecycle.publish)
     store.insert_system_event(lifecycle.event)
-    store.insert_system_event({
-        "event_id": "evt-nautilus-pos-1",
-        "event_type": "nautilus_position",
-        "severity": "info",
-        "created_at": lifecycle.position["opened_at"],
-        **lifecycle.position,
-        "ts": lifecycle.position["opened_at"],
-    })
+    store.insert_system_event(
+        {
+            "event_id": "evt-nautilus-pos-1",
+            "event_type": "nautilus_position",
+            "severity": "info",
+            "created_at": lifecycle.position["opened_at"],
+            **lifecycle.position,
+            "ts": lifecycle.position["opened_at"],
+        }
+    )
     return TestClient(create_dashboard_app(store)), store
 
 
@@ -114,7 +106,9 @@ def test_dashboard_uses_injected_reporting_read_port() -> None:
     reporting.signal_rows.assert_called_once_with(7)
 
 
-async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, market_view, settings) -> None:
+async def test_dashboard_readonly_endpoints_return_stored_data(
+    tmp_path, market_view, settings
+) -> None:
     # Given: a temp SQLite dashboard store populated through the public storage API.
     client, store = _client_with_store(tmp_path, market_view, settings)
     signal = store.query_json("signals")[0]
@@ -146,7 +140,6 @@ async def test_dashboard_readonly_endpoints_return_stored_data(tmp_path, market_
     assert positions.json()[0]["report_position_id"] == "pp-1"
     assert trades.json()[0]["report_result_id"] == "pt-1"
     assert root.status_code == 404
-
 
 
 async def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> None:
@@ -192,14 +185,16 @@ async def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> No
         "is_closed": False,
     }
     for pos in (old, latest):
-        store.insert_system_event({
-            "event_id": f"evt-{pos['report_position_id']}",
-            "event_type": "nautilus_position",
-            "severity": "info",
-            "created_at": pos["opened_at"],
-            **pos,
-            "ts": pos["opened_at"],
-        })
+        store.insert_system_event(
+            {
+                "event_id": f"evt-{pos['report_position_id']}",
+                "event_type": "nautilus_position",
+                "severity": "info",
+                "created_at": pos["opened_at"],
+                **pos,
+                "ts": pos["opened_at"],
+            }
+        )
     response = await _dashboard_get(store, "/api/positions")
 
     assert response.status_code == 200
@@ -210,7 +205,9 @@ async def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> No
     assert rows[0]["position_id"] == "latest-pos"
 
 
-async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(tmp_path) -> None:
+async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(
+    tmp_path,
+) -> None:
     store = SQLiteStore(tmp_path / "dashboard-current-state.sqlite3")
     order_id = "order-current"
     position_id = "position-current"
@@ -312,7 +309,9 @@ async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(t
     assert store.counts()["system_events"] == 5
 
 
-async def test_dashboard_positions_normalize_nautilus_rows_with_market_lookup(tmp_path) -> None:
+async def test_dashboard_positions_normalize_nautilus_rows_with_market_lookup(
+    tmp_path,
+) -> None:
     store = SQLiteStore(tmp_path / "dashboard-normalized-positions.sqlite3")
     store.upsert_market(
         Market(
@@ -368,6 +367,7 @@ async def test_dashboard_positions_normalize_nautilus_rows_with_market_lookup(tm
     assert row["entry_price"] == 0.6
     assert row["shares"] == 12.0
     assert row["stake_usdc"] == pytest.approx(7.2)
+
 
 def test_dashboard_health_reports_missing_runtime_as_unknown(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
@@ -527,7 +527,9 @@ def test_dashboard_health_ignores_superseded_runtime_snapshot_status(
     assert components["sqlite_storage"]["status"] == "ok"
 
 
-def test_dashboard_health_returns_component_snapshot_from_system_events(tmp_path) -> None:
+def test_dashboard_health_returns_component_snapshot_from_system_events(
+    tmp_path,
+) -> None:
     store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
     store.insert_system_event(
         {
@@ -560,6 +562,7 @@ def test_dashboard_health_returns_component_snapshot_from_system_events(tmp_path
     assert payload["components"][0]["metrics"]["btc_spot_lag_ms"] == 61000
     assert "counts" in payload
     assert payload["recent_system_events"][0]["event_id"] == "health-snap-1"
+
 
 async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
     # Given: a rejected paper order and daily report with paper execution aggregates.
@@ -608,23 +611,27 @@ async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
         rejects_by_reason={"ENTRY_PRICE_MOVED": 1},
         average_execution_staleness_ms=25.0,
     )
-    store.insert_system_event({
-        "event_id": "evt-po-rejected",
-        "event_type": "nautilus_order",
-        "severity": "info",
-        "created_at": order["created_at"],
-        "report_order_id": order["report_order_id"],
-        "client_order_id": order["report_order_id"],
-        "status": order["status"],
-        "reject_reason": order["reject_reason"],
-        "strategy": order["strategy"],
-        "market_id": order["market_id"],
-        "signal_id": order["signal_id"],
-        "ts": order["created_at"],
-    })
+    store.insert_system_event(
+        {
+            "event_id": "evt-po-rejected",
+            "event_type": "nautilus_order",
+            "severity": "info",
+            "created_at": order["created_at"],
+            "report_order_id": order["report_order_id"],
+            "client_order_id": order["report_order_id"],
+            "status": order["status"],
+            "reject_reason": order["reject_reason"],
+            "strategy": order["strategy"],
+            "market_id": order["market_id"],
+            "signal_id": order["signal_id"],
+            "ts": order["created_at"],
+        }
+    )
     store.insert_daily_report(report)
     # When: paper execution quality surfaces are read from the dashboard API.
-    orders = await _dashboard_get(store, "/api/report-orders", params={"status": "rejected"})
+    orders = await _dashboard_get(
+        store, "/api/report-orders", params={"status": "rejected"}
+    )
     overview = await _dashboard_get(store, "/api/overview")
 
     # Then: paper order rows and latest report aggregates expose them.
@@ -811,7 +818,9 @@ async def test_dashboard_excludes_open_position_without_resolvable_side() -> Non
     assert positions.json() == []
 
 
-async def test_leaderboard_uses_closed_trade_results_not_report_snapshots(tmp_path) -> None:
+async def test_leaderboard_uses_closed_trade_results_not_report_snapshots(
+    tmp_path,
+) -> None:
     store = SQLiteStore(tmp_path / "dashboard-leaderboard.sqlite3")
     store.insert_report_result(
         sample_report_result(
@@ -895,12 +904,17 @@ async def test_leaderboard_uses_closed_trade_results_not_report_snapshots(tmp_pa
             "win_rate": 0.5,
         }
     ]
-    assert response.json()["calibration_breakdown"]["late_consensus|BTC|5m|high"][
-        "sample_size"
-    ] == 2
+    assert (
+        response.json()["calibration_breakdown"]["late_consensus|BTC|5m|high"][
+            "sample_size"
+        ]
+        == 2
+    )
 
 
-async def test_leaderboard_recomputes_calibration_status_after_aggregation(tmp_path) -> None:
+async def test_leaderboard_recomputes_calibration_status_after_aggregation(
+    tmp_path,
+) -> None:
     # Given: two insufficient daily rows for one bucket that cross calibration threshold when merged.
     store = SQLiteStore(tmp_path / "db.sqlite3")
     first_report = DailyReport(

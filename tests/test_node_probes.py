@@ -1,11 +1,3 @@
-"""
-Input: pytest, polysignal_lab.config, polysignal_lab.nautilus_runtime.node_probes
-Output: heartbeat probe write-throttle regression coverage
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from __future__ import annotations
 
 import json

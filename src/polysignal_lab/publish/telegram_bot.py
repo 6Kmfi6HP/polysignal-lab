@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Callable, datetime, datetime.UTC, datetime.datetime, datetime.time, datetime.timedelta
-Output: TelegramBotService
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import logging
@@ -36,12 +20,12 @@ from telegram.ext import (
 
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.config import TelegramConfig
-from polysignal_lab.data.state import MarketRegistry
+from polysignal_lab.data.registries import MarketRegistry
 from polysignal_lab.nautilus_runtime.observability import StrategyControl
 from polysignal_lab.storage.event_projection import report_token_id
 from polysignal_lab.reporting.strategy_stats import build_strategy_leaderboard_rows
 from polysignal_lab.publish import telegram_render
-from polysignal_lab.signal_layer.formatter import MessageFormatter
+from polysignal_lab.publish.message_formatter import MessageFormatter
 from polysignal_lab.utils import new_id, utc_iso
 
 
@@ -87,6 +71,7 @@ class TelegramBotService:
         if self.application is None or self.application.bot is None:
             return
         from telegram import BotCommand
+
         commands = [
             BotCommand("start", "主菜单 / 选择操作"),
             BotCommand("positions", "查看 open 持仓"),
@@ -124,7 +109,9 @@ class TelegramBotService:
             return
         if not self.config.interactive_allowed_chat_ids:
             self._error = "no allowed chat ids"
-            self.logger.warning("Telegram interactive bot disabled: no allowed chat ids")
+            self.logger.warning(
+                "Telegram interactive bot disabled: no allowed chat ids"
+            )
             return
         self.application = self.application or (
             ApplicationBuilder()
@@ -155,7 +142,9 @@ class TelegramBotService:
         except (TimedOut, NetworkError, TelegramError, RuntimeError) as exc:
             self._poll_failure += 1
             self._error = type(exc).__name__
-            self.logger.warning("Telegram interactive bot start failed: %s", type(exc).__name__)
+            self.logger.warning(
+                "Telegram interactive bot start failed: %s", type(exc).__name__
+            )
             return
         self._running = True
         self._poll_success += 1
@@ -231,27 +220,37 @@ class TelegramBotService:
             return
         await self._reply_rendered(update, self._format_status, self._back_keyboard)
 
-    async def _positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _positions(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         if not self._authorized(update):
             return
         await self._reply_rendered(update, self._format_positions, self._back_keyboard)
 
-    async def _signals(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _signals(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         if not self._authorized(update):
             return
         await self._reply_rendered(update, self._format_signals, self._back_keyboard)
 
-    async def _strategies(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _strategies(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         if not self._authorized(update):
             return
-        await self._reply_rendered(update, self._format_strategies, self._strategies_keyboard)
+        await self._reply_rendered(
+            update, self._format_strategies, self._strategies_keyboard
+        )
 
     async def _daily(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
         await self._reply_rendered(update, self._format_daily, self._back_keyboard)
 
-    async def _leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _leaderboard(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         if not self._authorized(update):
             return
         await self._reply_rendered(
@@ -273,15 +272,21 @@ class TelegramBotService:
             case "dy":
                 return self._format_daily(), self._back_keyboard()
             case "lb":
-                return self._format_leaderboard("all"), self._leaderboard_keyboard("all")
+                return self._format_leaderboard("all"), self._leaderboard_keyboard(
+                    "all"
+                )
             case "lbt":
-                return self._format_leaderboard("today"), self._leaderboard_keyboard("today")
+                return self._format_leaderboard("today"), self._leaderboard_keyboard(
+                    "today"
+                )
             case "str":
                 return self._format_strategies(), self._strategies_keyboard()
             case _:
                 raise ValueError("Unknown action")
 
-    async def _callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         query = update.callback_query
         if query is None:
             return
@@ -414,14 +419,21 @@ class TelegramBotService:
         )
         items: list[tuple[datetime, str]] = []
         for row in accepted:
-            ts = self._parse_time(row.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)
+            ts = self._parse_time(row.get("created_at")) or datetime.min.replace(
+                tzinfo=timezone.utc
+            )
             items.append((ts, self._format_accepted_signal(row)))
         for row in rejected:
-            ts = self._parse_time(row.get("rejected_at")) or datetime.min.replace(tzinfo=timezone.utc)
+            ts = self._parse_time(row.get("rejected_at")) or datetime.min.replace(
+                tzinfo=timezone.utc
+            )
             items.append((ts, self._format_rejected_signal(row)))
         if not items:
             return "暂无 recent signals。"
-        return "\n\n".join(text for _, text in sorted(items, key=lambda item: item[0], reverse=True)[:5])
+        return "\n\n".join(
+            text
+            for _, text in sorted(items, key=lambda item: item[0], reverse=True)[:5]
+        )
 
     def _format_accepted_signal(self, row: dict[str, Any]) -> str:
         return "\n".join(
@@ -465,7 +477,9 @@ class TelegramBotService:
     def _report_timezone(self) -> ZoneInfo:
         timezone_name = "Asia/Bangkok"
         if self.scheduler is not None and hasattr(self.scheduler, "settings"):
-            timezone_name = getattr(self.scheduler.settings.app, "timezone", timezone_name)
+            timezone_name = getattr(
+                self.scheduler.settings.app, "timezone", timezone_name
+            )
         try:
             return ZoneInfo(timezone_name)
         except ZoneInfoNotFoundError:
@@ -475,7 +489,9 @@ class TelegramBotService:
         report_tz = self._report_timezone()
         today = datetime.now(report_tz).date()
         day_start_local = datetime.combine(today, time.min, tzinfo=report_tz)
-        day_end_local = datetime.combine(today + timedelta(days=1), time.min, tzinfo=report_tz)
+        day_end_local = datetime.combine(
+            today + timedelta(days=1), time.min, tzinfo=report_tz
+        )
         return day_start_local.astimezone(UTC), day_end_local.astimezone(UTC)
 
     def _format_leaderboard(self, scope: Literal["all", "today"]) -> str:
@@ -505,7 +521,6 @@ class TelegramBotService:
         if isinstance(disabled, list):
             return sorted(str(name) for name in disabled)
         return []
-
 
     def _format_strategies(self) -> str:
         lines = ["⚙️ Strategies"]
@@ -554,7 +569,9 @@ class TelegramBotService:
     def _main_keyboard(self) -> InlineKeyboardMarkup:
         return telegram_render.main_keyboard()
 
-    def _leaderboard_keyboard(self, scope: Literal["all", "today"]) -> InlineKeyboardMarkup:
+    def _leaderboard_keyboard(
+        self, scope: Literal["all", "today"]
+    ) -> InlineKeyboardMarkup:
         return telegram_render.leaderboard_keyboard(scope)
 
     def _back_keyboard(self) -> InlineKeyboardMarkup:

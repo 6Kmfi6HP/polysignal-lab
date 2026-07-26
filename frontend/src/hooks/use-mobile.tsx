@@ -1,19 +1,3 @@
-/**
- * Input: * as React from 'react', react
- * Output: useIsMobile
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import * as React from 'react'
 
 const MOBILE_BREAKPOINT = 768

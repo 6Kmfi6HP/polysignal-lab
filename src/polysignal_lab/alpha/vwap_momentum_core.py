@@ -1,20 +1,10 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, typing, typing.Any, typing.Mapping, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.enabled_for_view, polysignal_lab.alpha.state
-Output: _EvalContext, _HedgeDecisionContext, VWAPMomentumAlphaCore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from polysignal_lab.alpha.helpers import enabled_for_view
-from polysignal_lab.alpha.state import json_safe_state
+from polysignal_lab.alpha.decisions import enabled_for_view
+from polysignal_lab.alpha.state_json import json_safe_state
 from polysignal_lab.alpha.types import (
     AlphaDecision,
     MarketView,

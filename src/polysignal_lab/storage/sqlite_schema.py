@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, sqlite3, dataclasses, dataclasses.dataclass, typing, typing.Final
-Output: validate_sqlite_schema, SchemaValidationError
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import sqlite3
@@ -208,19 +192,133 @@ INDEX_DDL_STATEMENTS: Final = [
 ]
 
 REQUIRED_COLUMNS: Final[dict[str, frozenset[str]]] = {
-    "markets": frozenset({"market_id", "asset", "timeframe", "market_slug", "payload_json", "updated_at"}),
-    "signals": frozenset({"signal_id", "strategy", "asset", "timeframe", "market_id", "side", "confidence", "created_at", "payload_json"}),
-    "rejected_signals": frozenset({"rejected_id", "signal_id", "reason_code", "gate_name", "rejected_at", "payload_json"}),
-    "strategy_status": frozenset({"status_id", "strategy", "asset", "timeframe", "status", "created_at", "payload_json"}),
-    "report_account_snapshots": frozenset({"id", "account_id", "equity", "cash_balance", "realized_pnl", "open_position_count", "created_at", "payload_json"}),
-    "daily_reports": frozenset({"report_id", "report_date", "revision", "total_signals", "total_pnl_usdc", "win_rate", "created_at", "payload_json"}),
-    "report_publish_outbox": frozenset({"intent_id", "idempotency_key", "report_id", "report_date", "revision", "status", "attempt_count", "lease_until", "publish_id", "last_error", "created_at", "updated_at", "payload_json"}),
-    "telegram_publishes": frozenset({"publish_id", "message_type", "status", "payload_json"}),
-    "system_events": frozenset({"event_id", "event_type", "severity", "created_at", "payload_json"}),
-    "report_orders": frozenset({"report_order_id", "status", "created_event_at", "source_event_at", "source_event_id", "payload_json"}),
-    "report_fills": frozenset({"report_fill_id", "report_order_id", "source_event_at", "source_event_id", "payload_json"}),
-    "report_positions": frozenset({"report_position_id", "status", "source_event_at", "source_event_id", "payload_json"}),
-    "report_results": frozenset({"report_result_id", "signal_id", "strategy", "asset", "timeframe", "market_id", "result", "pnl_usdc", "roi", "closed_at", "payload_json"}),
+    "markets": frozenset(
+        {"market_id", "asset", "timeframe", "market_slug", "payload_json", "updated_at"}
+    ),
+    "signals": frozenset(
+        {
+            "signal_id",
+            "strategy",
+            "asset",
+            "timeframe",
+            "market_id",
+            "side",
+            "confidence",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "rejected_signals": frozenset(
+        {
+            "rejected_id",
+            "signal_id",
+            "reason_code",
+            "gate_name",
+            "rejected_at",
+            "payload_json",
+        }
+    ),
+    "strategy_status": frozenset(
+        {
+            "status_id",
+            "strategy",
+            "asset",
+            "timeframe",
+            "status",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "report_account_snapshots": frozenset(
+        {
+            "id",
+            "account_id",
+            "equity",
+            "cash_balance",
+            "realized_pnl",
+            "open_position_count",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "daily_reports": frozenset(
+        {
+            "report_id",
+            "report_date",
+            "revision",
+            "total_signals",
+            "total_pnl_usdc",
+            "win_rate",
+            "created_at",
+            "payload_json",
+        }
+    ),
+    "report_publish_outbox": frozenset(
+        {
+            "intent_id",
+            "idempotency_key",
+            "report_id",
+            "report_date",
+            "revision",
+            "status",
+            "attempt_count",
+            "lease_until",
+            "publish_id",
+            "last_error",
+            "created_at",
+            "updated_at",
+            "payload_json",
+        }
+    ),
+    "telegram_publishes": frozenset(
+        {"publish_id", "message_type", "status", "payload_json"}
+    ),
+    "system_events": frozenset(
+        {"event_id", "event_type", "severity", "created_at", "payload_json"}
+    ),
+    "report_orders": frozenset(
+        {
+            "report_order_id",
+            "status",
+            "created_event_at",
+            "source_event_at",
+            "source_event_id",
+            "payload_json",
+        }
+    ),
+    "report_fills": frozenset(
+        {
+            "report_fill_id",
+            "report_order_id",
+            "source_event_at",
+            "source_event_id",
+            "payload_json",
+        }
+    ),
+    "report_positions": frozenset(
+        {
+            "report_position_id",
+            "status",
+            "source_event_at",
+            "source_event_id",
+            "payload_json",
+        }
+    ),
+    "report_results": frozenset(
+        {
+            "report_result_id",
+            "signal_id",
+            "strategy",
+            "asset",
+            "timeframe",
+            "market_id",
+            "result",
+            "pnl_usdc",
+            "roi",
+            "closed_at",
+            "payload_json",
+        }
+    ),
     "anchor_prices": frozenset(
         {
             "anchor_id",

@@ -1,11 +1,3 @@
-"""
-Input: __future__, collections.abc, datetime, nautilus_trader, polysignal_lab
-Output: PolymarketInstrumentMarketBuilder, _payload_from_nautilus_instrument
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -88,7 +80,9 @@ class PolymarketInstrumentMarketBuilder:
                 "outcomes": [str(getattr(item, "outcome", "")) for item in ordered],
             }
         )
-        market = Market.from_gamma(cast(dict[str, JsonValue], payload), asset, timeframe)
+        market = Market.from_gamma(
+            cast(dict[str, JsonValue], payload), asset, timeframe
+        )
         if condition_id in self._terminal_condition_ids and market.is_active:
             return None
         return market
@@ -217,4 +211,3 @@ def _ns_to_datetime_text(value: object) -> str | None:
     if nanos <= 0:
         return None
     return datetime.fromtimestamp(nanos / 1_000_000_000, tz=UTC).isoformat()
-

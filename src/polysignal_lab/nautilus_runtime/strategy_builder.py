@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, typing, typing.cast, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaCore
-Output: AlphaCoreRegistry
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -41,7 +32,9 @@ class AlphaCoreRegistry:
         from polysignal_lab.alpha.one_cent_buy_core import OneCentBuyAlphaCore
         from polysignal_lab.alpha.pre_order_market_core import PreOrderMarketAlphaCore
         from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
-        from polysignal_lab.alpha.skew_mean_reversion_core import SkewMeanReversionAlphaCore
+        from polysignal_lab.alpha.skew_mean_reversion_core import (
+            SkewMeanReversionAlphaCore,
+        )
         from polysignal_lab.alpha.vwap_momentum_core import VWAPMomentumAlphaCore
 
         cls._registry.update(

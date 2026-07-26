@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, pydantic, pydantic.JsonValue, polysignal_lab.domain.enums, polysignal_lab.domain.enums.MarketStatus, polysignal_lab.domain.enums.Side
-Output: test_gamma_resolved_payload_sets_resolved_outcome, test_gamma_payload_uses_nautilus_parser_for_binary_option_tokens, test_gamma_crypto_payload_prefers_event_window_over_listing_start_date, test_gamma_down_resolution_can_be_parsed_from_winning_token_id, test_gamma_void_resolution_is_cancelled_without_winning_side, test_gamma_malformed_official_resolution_stays_unknown, test_gamma_uma_resolved_outcome_prices_sets_resolved_outcome, test_gamma_half_half_outcome_prices_resolved_without_side_winner
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -79,7 +63,9 @@ def test_gamma_resolved_payload_sets_resolved_outcome() -> None:
     assert market.token_for(Side.DOWN).token_id == "222"
 
 
-def test_gamma_payload_uses_nautilus_parser_for_binary_option_tokens(monkeypatch) -> None:
+def test_gamma_payload_uses_nautilus_parser_for_binary_option_tokens(
+    monkeypatch,
+) -> None:
     payload = _gamma_payload()
     payload["clobTokenIds"] = '["123", "456"]'
     seen: list[tuple[dict[str, object], str, str]] = []
@@ -156,8 +142,6 @@ def test_gamma_malformed_official_resolution_stays_unknown() -> None:
 
     assert market.status == MarketStatus.RESOLVED
     assert market.resolved_outcome is None
-
-
 
 
 def test_gamma_uma_resolved_outcome_prices_sets_resolved_outcome() -> None:

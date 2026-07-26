@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, hashlib, json, math, re, secrets, datetime, datetime.UTC, datetime.datetime
-Output: utc_now, utc_iso, parse_dt, stable_hash, new_id, safe_float, as_decimal, to_jsonable, compact_json, mask_secret
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import hashlib
@@ -99,7 +83,9 @@ def to_jsonable(value: Any) -> Any:
 
 
 def compact_json(value: Any) -> str:
-    return json.dumps(to_jsonable(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        to_jsonable(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
 
 
 def mask_secret(value: str | None) -> str:
@@ -117,5 +103,7 @@ def redact_text(text: str) -> str:
     ]
     out = text
     for pattern in patterns:
-        out = re.sub(pattern, lambda m: m.group(0).split("=")[0].split(":")[0] + "=***", out)
+        out = re.sub(
+            pattern, lambda m: m.group(0).split("=")[0].split(":")[0] + "=***", out
+        )
     return out

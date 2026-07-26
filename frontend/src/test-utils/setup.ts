@@ -1,19 +1,3 @@
-/**
- * Input: '@testing-library/jest-dom/vitest', { cleanup } from '@testing-library/react', { afterEach, vi } from 'vitest', @testing-library/react, vitest
- * Output: ResizeObserverMock
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
 import { afterEach, vi } from 'vitest'

@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, types, types.MappingProxyType, typing
-Output: SideBookView, SpotView, TradeView, FreshnessView, CachedOrderView, CachedPositionView, TradingStateView, MarketView, OrderIntentSpec, AlphaDecision
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -68,9 +52,7 @@ class SpotView:
         return max(
             0,
             int(
-                (
-                    current.astimezone(UTC) - received.astimezone(UTC)
-                ).total_seconds()
+                (current.astimezone(UTC) - received.astimezone(UTC)).total_seconds()
                 * 1000
             ),
         )
@@ -129,8 +111,7 @@ class CachedOrderView:
         if "REJECTED" in status or "DENIED" in status:
             return False
         return self.is_active or any(
-            name in status
-            for name in ("ACCEPTED", "CANCELED", "EXPIRED", "TRIGGERED")
+            name in status for name in ("ACCEPTED", "CANCELED", "EXPIRED", "TRIGGERED")
         )
 
 
@@ -309,7 +290,10 @@ class TradingStateView:
                 and order.strategy == position.strategy
                 and not order.reduce_only
             ),
-            key=lambda order: (order.ts_event or datetime.min.replace(tzinfo=UTC), order.client_order_id),
+            key=lambda order: (
+                order.ts_event or datetime.min.replace(tzinfo=UTC),
+                order.client_order_id,
+            ),
             reverse=True,
         )
         for order in orders:

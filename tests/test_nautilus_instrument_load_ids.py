@@ -1,17 +1,8 @@
-"""
-Input: __future__, __future__.annotations, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.market_catalog.MarketCatalog, polysignal_lab.nautilus_runtime.node_builder_components, polysignal_lab.nautilus_runtime.node_builder_components.instrument_load_ids, factories, factories.MarketFactoryConfig
-Output: test_instrument_load_ids_use_market_catalog
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
-from polysignal_lab.nautilus_runtime.node_builder_components import instrument_load_ids
+from polysignal_lab.nautilus_runtime.configured_markets import instrument_load_ids
 from factories import MarketFactoryConfig, sample_market
 
 

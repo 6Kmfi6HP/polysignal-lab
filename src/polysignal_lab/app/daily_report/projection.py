@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, math, datetime, datetime.datetime, typing, typing.Any, typing.cast, polysignal_lab.domain.enums, polysignal_lab.domain.enums.ExitMode
-Output: report_result_from_projection
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import math
@@ -38,7 +28,9 @@ def report_result_from_projection(
     outcome_value: float,
     details: dict[str, object],
 ) -> dict[str, Any] | None:
-    quantity = _projection_float(projection, "shares") or _projection_float(projection, "quantity")
+    quantity = _projection_float(projection, "shares") or _projection_float(
+        projection, "quantity"
+    )
     entry_price = _projection_float(projection, "entry_price") or _projection_float(
         projection, "avg_entry_price"
     )
@@ -84,9 +76,7 @@ def report_result_from_projection(
     result_details.setdefault("fee_model", fee["fee_model"])
     result_details.setdefault("entry_fee", entry_fee)
     position_id = str(
-        projection.get("report_position_id")
-        or projection.get("position_id")
-        or ""
+        projection.get("report_position_id") or projection.get("position_id") or ""
     )
     trade_id = new_id("rr")
     return {
@@ -117,7 +107,9 @@ def report_result_from_projection(
     }
 
 
-def _projection_side(projection: dict[str, object], market: Market, token_id: str) -> Side | None:
+def _projection_side(
+    projection: dict[str, object], market: Market, token_id: str
+) -> Side | None:
     raw_side = projection.get("side")
     if raw_side is not None:
         try:

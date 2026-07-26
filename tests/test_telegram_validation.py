@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, json, shlex, types, types.SimpleNamespace, httpx, pytest, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.config.TelegramConfig
-Output: test_runtime_uses_configured_telegram_publish_timeout, test_runtime_owns_scoped_signal_publisher_lifecycle, test_nautilus_runtime_context_has_no_parallel_market_registry, test_nautilus_runtime_rejects_unreachable_interactive_telegram_control, test_telegram_qa_default_message_is_compact, test_missing_telegram_credentials_fail_live_publish, test_malformed_telegram_credentials_fail_live_publish, test_mocked_telegram_send_returns_sent_and_redacts_token, test_daily_report_publish_id_is_stable_across_retries, test_failed_telegram_response_redacts_token
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import json
@@ -20,7 +10,9 @@ import pytest
 from polysignal_lab.config import Settings, TelegramConfig
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.signal import SignalCandidate
-from polysignal_lab.nautilus_runtime.runtime_context_factory import build_nautilus_runtime_context
+from polysignal_lab.nautilus_runtime.runtime_context_factory import (
+    build_nautilus_runtime_context,
+)
 from polysignal_lab.publish.telegram_qa import DEFAULT_MESSAGE, parse_args, run
 from polysignal_lab.publish.telegram_publisher import PublishResult, TelegramPublisher
 
@@ -183,7 +175,9 @@ async def test_mocked_telegram_send_returns_sent_and_redacts_token() -> None:
         client=client,
     )
 
-    result = await publisher.send("Paper-only QA signal. No profit guarantee.", "signal", "sig1")
+    result = await publisher.send(
+        "Paper-only QA signal. No profit guarantee.", "signal", "sig1"
+    )
 
     payload = result.as_dict()
     assert result.status == "SENT"

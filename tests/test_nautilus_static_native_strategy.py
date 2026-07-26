@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, types, types.SimpleNamespace, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaCore, polysignal_lab.nautilus_runtime.native_strategy, polysignal_lab.nautilus_runtime.native_strategy.PolySignalNativeStrategy
-Output: test_static_native_strategy_initializes_nautilus_base, _FakeAssembler, _FakeRegistry, _FakeCore
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from types import SimpleNamespace

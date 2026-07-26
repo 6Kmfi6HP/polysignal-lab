@@ -1,20 +1,3 @@
-"""
-Input: __future__, __future__.annotations, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.OrderIntentSpec, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.OneCentBuyConfig
-Output: OneCentBuyAlphaCore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
@@ -111,7 +94,9 @@ class OneCentBuyAlphaCore:
                         metrics=metrics,
                         order_intent=OrderIntentSpec(
                             intent=OrderIntent.PASSIVE_GTD,
-                            expiry_seconds=int(seconds_to_close - cfg.cancel_before_close_seconds),
+                            expiry_seconds=int(
+                                seconds_to_close - cfg.cancel_before_close_seconds
+                            ),
                             quantity=cfg.shares_per_level,
                         ),
                     )

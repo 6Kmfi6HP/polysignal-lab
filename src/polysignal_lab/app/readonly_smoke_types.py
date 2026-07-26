@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, typing, typing.Literal, typing.TypedDict, pydantic
-Output: ReadonlySmokeRequest, PublicEndpoint, SurfaceOutcome, SurfacePayload, SurfaceEvidence, SafetyEvidence, SchedulerSnapshotEvidence, HealthSnapshotEvidence, DashboardEvidence, ReadonlySmokeEvidence
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass

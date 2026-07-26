@@ -1,23 +1,8 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.datetime, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.(, polysignal_lab.alpha.types, polysignal_lab.alpha.types.(, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.strategy_config, polysignal_lab.domain.strategy_config.PreOrderMarketConfig
-Output: PreOrderMarketAlphaCore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import datetime
 
-from polysignal_lab.alpha.helpers import (
+from polysignal_lab.alpha.decisions import (
     HedgeDecisionContext,
     HedgeDecisionSpec,
     SIDES,
@@ -54,7 +39,11 @@ class PreOrderMarketAlphaCore:
         if view.start_ts is None:
             return False
         now_ts = self._now_from(view).timestamp()
-        return view.start_ts.timestamp() - self.config.seconds_before_open <= now_ts < view.start_ts.timestamp() + self.config.seconds_after_open_expiry
+        return (
+            view.start_ts.timestamp() - self.config.seconds_before_open
+            <= now_ts
+            < view.start_ts.timestamp() + self.config.seconds_after_open_expiry
+        )
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         if not enabled_for_view(self.config, view):
@@ -88,13 +77,23 @@ class PreOrderMarketAlphaCore:
                         reason_codes=("PRE_ORDER_BID", f"PRICE_{price}"),
                         metrics={
                             "pair_cost": round(cost, 4),
-                            "expiry_after_open": round(self.config.seconds_after_open_expiry),
+                            "expiry_after_open": round(
+                                self.config.seconds_after_open_expiry
+                            ),
                             "pre_order_shares": shares,
-                            "expiry_ts": view.start_ts.timestamp() + self.config.seconds_after_open_expiry,
+                            "expiry_ts": view.start_ts.timestamp()
+                            + self.config.seconds_after_open_expiry,
                         },
                         order_intent=OrderIntentSpec(
                             OrderIntent.PASSIVE_GTD,
-                            expiry_seconds=max(1, int(view.start_ts.timestamp() + self.config.seconds_after_open_expiry - now.timestamp())),
+                            expiry_seconds=max(
+                                1,
+                                int(
+                                    view.start_ts.timestamp()
+                                    + self.config.seconds_after_open_expiry
+                                    - now.timestamp()
+                                ),
+                            ),
                             pair_id=f"{view.market_id}:pre",
                             quantity=shares,
                         ),
@@ -104,7 +103,9 @@ class PreOrderMarketAlphaCore:
                     decisions.append(decision)
         return decisions
 
-    def _reconcile_after_open(self, view: MarketView, position: CachedPositionView) -> list[AlphaDecision]:
+    def _reconcile_after_open(
+        self, view: MarketView, position: CachedPositionView
+    ) -> list[AlphaDecision]:
         if view.trading.has_hedge_order(self.name, view.market_id):
             return []
         hedge_side = position.side.opposite
@@ -124,10 +125,10 @@ class PreOrderMarketAlphaCore:
                 cap_metric="reconcile_max_pair_cost",
                 cap_value=self.config.reconcile_max_pair_cost,
                 reason_codes=("PRE_ORDER_RECONCILE", f"HEDGE_{hedge_side.value}"),
-                order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:pre"),
+                order_intent=OrderIntentSpec(
+                    OrderIntent.TAKER_FAK, pair_id=f"{view.market_id}:pre"
+                ),
                 hedge_price_metric="hedge_ask",
             ),
         )
         return [decision] if decision else []
-
-

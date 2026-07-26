@@ -1,20 +1,3 @@
-"""
-Input: __future__, __future__.annotations, pytest, polysignal_lab.config, polysignal_lab.config.Settings, factories, factories.MarketFactoryConfig, factories.sample_market, factories.sample_market_view
-Output: settings, market, market_view
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import pytest
@@ -30,7 +13,11 @@ def settings() -> Settings:
 
 @pytest.fixture
 def market():
-    return sample_market(MarketFactoryConfig(asset="BTC", timeframe="5m", seconds_to_close=120, price_to_beat=100000.0))
+    return sample_market(
+        MarketFactoryConfig(
+            asset="BTC", timeframe="5m", seconds_to_close=120, price_to_beat=100000.0
+        )
+    )
 
 
 @pytest.fixture

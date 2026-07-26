@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta, datetime.timezone
-Output: window_for_market, capture_anchor_price, AnchorWindow, AnchorPriceStore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -81,7 +65,9 @@ def capture_anchor_price(
     best = min(
         spots,
         key=lambda spot: abs(
-            ((spot.event_time or spot.received_at) - window.window_start).total_seconds()
+            (
+                (spot.event_time or spot.received_at) - window.window_start
+            ).total_seconds()
         ),
     )
     best_time = best.event_time or best.received_at
@@ -111,4 +97,3 @@ def capture_anchor_price(
     if latest_by_key is not None:
         latest_by_key[f"{anchor.asset}:{anchor.timeframe}"] = anchor
     return anchor
-

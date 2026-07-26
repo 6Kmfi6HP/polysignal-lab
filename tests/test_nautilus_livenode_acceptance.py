@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.asdict, dataclasses.dataclass, nautilus_optional, nautilus_optional.require_nautilus, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3, polysignal_lab.nautilus_runtime.live_node
-Output: test_load_live_runtime_symbols_resolves_livenode, test_livenode_registers_unique_strategy_ids_and_factories, test_livenode_save_load_flags_round_trip_on_builder, test_livenode_registers_pyo3_strategy_without_registration_globals, _AcceptanceProbeConfig, _AcceptanceProbeStrategy
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 # ruff: noqa: E402
@@ -49,7 +39,13 @@ class _AcceptanceProbeStrategy(pyo3.Strategy):
 def test_load_live_runtime_symbols_resolves_livenode() -> None:
     symbols = load_live_runtime_symbols()
 
-    assert symbols.live_node is pyo3.LiveNode or symbols.live_node.__name__ == "LiveNode"
+    # LiveNode 运行时存在，但 pyo3 扩展模块的 stub 未导出它。
+    live_node_cls: object = getattr(pyo3, "LiveNode", None)
+
+    assert (
+        symbols.live_node is live_node_cls
+        or getattr(symbols.live_node, "__name__", "") == "LiveNode"
+    )
     assert symbols.polymarket_data_factory is pyo3.PolymarketDataClientFactory
     assert symbols.sandbox_exec_factory is pyo3.SandboxExecutionClientFactory
 
@@ -84,7 +80,9 @@ def test_livenode_registers_unique_strategy_ids_and_factories() -> None:
         starting_balances=[money],
     )
     node = (
-        pyo3.LiveNode.builder("ACCEPT", pyo3.TraderId("ACCEPT-001"), pyo3.Environment.SANDBOX)
+        pyo3.LiveNode.builder(
+            "ACCEPT", pyo3.TraderId("ACCEPT-001"), pyo3.Environment.SANDBOX
+        )
         .with_load_state(False)
         .with_save_state(False)
         .with_cache_config(pyo3.CacheConfig())
@@ -112,7 +110,9 @@ def test_livenode_registers_unique_strategy_ids_and_factories() -> None:
 
 def test_livenode_save_load_flags_round_trip_on_builder() -> None:
     builder = (
-        pyo3.LiveNode.builder("STATE", pyo3.TraderId("STATE-001"), pyo3.Environment.SANDBOX)
+        pyo3.LiveNode.builder(
+            "STATE", pyo3.TraderId("STATE-001"), pyo3.Environment.SANDBOX
+        )
         .with_load_state(True)
         .with_save_state(True)
     )
@@ -124,7 +124,9 @@ def test_livenode_save_load_flags_round_trip_on_builder() -> None:
 
 def test_livenode_registers_pyo3_strategy_without_registration_globals() -> None:
     node = (
-        pyo3.LiveNode.builder("CACHE", pyo3.TraderId("CACHE-001"), pyo3.Environment.SANDBOX)
+        pyo3.LiveNode.builder(
+            "CACHE", pyo3.TraderId("CACHE-001"), pyo3.Environment.SANDBOX
+        )
         .with_load_state(False)
         .with_save_state(False)
         .build()

@@ -1,18 +1,3 @@
-"""
-Input: __future__, __future__.annotations, asyncio, collections.abc, collections.abc.Callable, collections.abc.Mapping, typing, typing.Any, polysignal_lab.domain.reporting_result, polysignal_lab.domain.reporting_result.parse_report_result_row
-Output: PublishService
-Pos: Service Layer - Business logic
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import asyncio
@@ -48,7 +33,11 @@ class PublishService:
         return None
 
     def health(self) -> dict[str, object]:
-        return {"name": self.name, "status": "ok", "metrics": {"timeout_sec": self.timeout_sec}}
+        return {
+            "name": self.name,
+            "status": "ok",
+            "metrics": {"timeout_sec": self.timeout_sec},
+        }
 
     async def publish_signal(self, signal: Any, stake_usdc: float) -> Any:
         message = self.formatter.signal_message(signal, stake_usdc)
@@ -64,7 +53,9 @@ class PublishService:
         message = self.formatter.result_message(payload)
         signal_id = payload.get("signal_id")
         publish = await asyncio.wait_for(
-            self.publisher.send(message, "report_result", str(signal_id) if signal_id else None),
+            self.publisher.send(
+                message, "report_result", str(signal_id) if signal_id else None
+            ),
             timeout=self.timeout_sec,
         )
         self._persist_publish(publish)
@@ -76,7 +67,9 @@ class PublishService:
         *,
         idempotency_key: str | None = None,
     ) -> Any:
-        payload = report if isinstance(report, Mapping) else report.model_dump(mode="json")
+        payload = (
+            report if isinstance(report, Mapping) else report.model_dump(mode="json")
+        )
         message = self.formatter.daily_report_message(payload)
         revision = payload.get("revision")
         message_type = (

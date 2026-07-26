@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, os, pathlib, pathlib.Path, typing, typing.Final, typing.Literal, yaml, pydantic
-Output: load_settings, SecurityConfigError, AppConfig, SafetyConfig, TelegramConfig, MarketConfig, PolymarketDataConfig, BinanceDataConfig, DataConfig, SignalConfig
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import os
@@ -95,6 +79,7 @@ class SafetyConfig(BaseModel):
     allow_position_redemption: bool = False
     fail_on_disallowed_env_keys: bool = True
 
+
 class TelegramConfig(BaseModel):
     enabled: bool = True
     bot_token_env: str = "TELEGRAM_BOT_TOKEN"
@@ -158,6 +143,8 @@ class PolymarketDataConfig(BaseModel):
     rest_rate_limit_per_sec: float = 8.0
     max_book_staleness_ms: int = 60000  # 60s — books refetched every ~30-40s via REST
     max_market_metadata_staleness_ms: int = 10000
+
+
 class BinanceDataConfig(BaseModel):
     enabled: bool = True
     base_ws_url: str = "wss://stream.binance.com:9443/stream"
@@ -243,7 +230,9 @@ class HealthRestartGateConfig(BaseModel):
 class HealthConfig(BaseModel):
     startup_grace_sec: int = 180
     liveness: HealthLivenessConfig = Field(default_factory=HealthLivenessConfig)
-    restart_gate: HealthRestartGateConfig = Field(default_factory=HealthRestartGateConfig)
+    restart_gate: HealthRestartGateConfig = Field(
+        default_factory=HealthRestartGateConfig
+    )
 
 
 class NautilusSpotDataConfig(BaseModel):
@@ -309,9 +298,7 @@ class NautilusRuntimeConfig(BaseModel):
     @model_validator(mode="after")
     def validate_execution_mode(self) -> "NautilusRuntimeConfig":
         if self.execution_mode != "live" and self.allow_live_polymarket_execution:
-            raise ValueError(
-                "live Polymarket execution is invalid outside live mode"
-            )
+            raise ValueError("live Polymarket execution is invalid outside live mode")
         if self.execution_mode == "live" and not self.allow_live_polymarket_execution:
             raise ValueError("live mode requires allow_live_polymarket_execution")
         return self

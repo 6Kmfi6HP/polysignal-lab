@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, datetime, datetime.datetime, typing, typing.Any, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side
-Output: metrics_from_tags, project_order_metrics, project_fill_metrics, event_lookup_ids, fill_ts_event, fill_side
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -17,16 +7,18 @@ from typing import Any
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.custom_data_state import event_datetime
-from polysignal_lab.nautilus_runtime.strategy.helpers import (
+from polysignal_lab.nautilus_runtime.projections import _tags
+from polysignal_lab.nautilus_runtime.strategy.catalog_lookups import (
     _condition_id_from_catalog_instrument,
     _event_side,
+    _market_id_for_condition,
+    _token_id_from_catalog_instrument,
+)
+from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
     _identifier_text,
     _lookup_id_text,
-    _market_id_for_condition,
     _maybe_float,
     _optional_str,
-    _tags,
-    _token_id_from_catalog_instrument,
     _value,
 )
 
@@ -73,7 +65,9 @@ def _association_ids(
     metrics: Mapping[str, object],
 ) -> tuple[str | None, str | None, str | None, str | None]:
     instrument_id = _identifier_text(_value(event, "instrument_id"))
-    condition_id = _optional_str(tags.get("condition_id") or metrics.get("condition_id"))
+    condition_id = _optional_str(
+        tags.get("condition_id") or metrics.get("condition_id")
+    )
     if not condition_id and registry is not None and instrument_id is not None:
         condition_id = _condition_id_from_catalog_instrument(
             registry, registry.condition_ids(), instrument_id
@@ -83,7 +77,9 @@ def _association_ids(
         market_id = _market_id_for_condition(registry, condition_id)
     token_id = _optional_str(tags.get("token_id") or metrics.get("token_id"))
     if not token_id and registry is not None and condition_id and instrument_id:
-        token_id = _token_id_from_catalog_instrument(registry, condition_id, instrument_id)
+        token_id = _token_id_from_catalog_instrument(
+            registry, condition_id, instrument_id
+        )
     return instrument_id, condition_id, market_id, token_id
 
 
@@ -113,7 +109,9 @@ def project_order_metrics(
             "market_id": market_id or str(_value(event, "market_id", "")),
             "condition_id": condition_id or str(_value(event, "condition_id", "")),
             "token_id": token_id or str(_value(event, "token_id", instrument_id or "")),
-            "side": getattr(side, "value", side) if side is not None else metrics.get("side"),
+            "side": getattr(side, "value", side)
+            if side is not None
+            else metrics.get("side"),
             "order_id": str(_value(event, "order_id", _value(event, "id", ""))),
             "client_order_id": _optional_str(_value(event, "client_order_id")),
             "reason": _optional_str(_value(event, "reason")),
@@ -142,11 +140,15 @@ def project_fill_metrics(
         _value(event, "fill_price", _value(event, "last_px", _value(event, "price")))
     )
     if fill_price is None or fill_price <= 0.0:
-        raise ValueError("missing positive fill price; refusing fabricated execution truth")
+        raise ValueError(
+            "missing positive fill price; refusing fabricated execution truth"
+        )
     metrics["fill_price"] = fill_price
     metrics["shares"] = (
         _maybe_float(
-            _value(event, "shares", _value(event, "last_qty", _value(event, "quantity")))
+            _value(
+                event, "shares", _value(event, "last_qty", _value(event, "quantity"))
+            )
         )
         or 0.0
     )
@@ -165,7 +167,9 @@ def event_lookup_ids(event: object) -> tuple[str, ...]:
         tags.get("client_order_id"),
     )
     return tuple(
-        text for text in (_lookup_id_text(value) for value in values) if text is not None
+        text
+        for text in (_lookup_id_text(value) for value in values)
+        if text is not None
     )
 
 

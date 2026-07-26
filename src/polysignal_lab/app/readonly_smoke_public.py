@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, typing, typing.Final, httpx, pydantic, pydantic.JsonValue, pydantic.TypeAdapter, polysignal_lab.app.readonly_smoke_types, polysignal_lab.app.readonly_smoke_types.(
-Output: make_public_client, check_gamma_events, check_clob_book, check_clob_404, check_binance_spot, public_get, raw_public_get, response_json, surface, first_token_id
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from typing import Final
@@ -53,13 +37,17 @@ def make_public_client() -> httpx.AsyncClient:
     )
 
 
-async def check_gamma_events(settings: Settings, client: httpx.AsyncClient) -> SurfacePayload:
+async def check_gamma_events(
+    settings: Settings, client: httpx.AsyncClient
+) -> SurfacePayload:
     endpoint = PublicEndpoint(
         url=f"{settings.data.polymarket.gamma_base_url}/events",
         params=gamma_events_query_params(settings.markets, 0),
     )
     result = await public_get(client, endpoint)
-    record_count = len(gamma_events_from_json(result.payload)) if result.evidence["ok"] else 0
+    record_count = (
+        len(gamma_events_from_json(result.payload)) if result.evidence["ok"] else 0
+    )
     evidence = result.evidence
     evidence["record_count"] = record_count
     evidence["ok"] = evidence["ok"] and record_count > 0
@@ -74,16 +62,22 @@ async def check_clob_book(
     markets: list[Market],
 ) -> SurfacePayload:
     token_id = first_token_id(markets)
-    endpoint = PublicEndpoint(url=f"{settings.data.polymarket.clob_base_url}/book", params={})
+    endpoint = PublicEndpoint(
+        url=f"{settings.data.polymarket.clob_base_url}/book", params={}
+    )
     if token_id is None:
         return SurfacePayload(
             evidence=surface(
                 endpoint,
-                SurfaceOutcome(None, False, 0, "No discovered token id for CLOB book check"),
+                SurfaceOutcome(
+                    None, False, 0, "No discovered token id for CLOB book check"
+                ),
             ),
             payload=None,
         )
-    result = await public_get(client, PublicEndpoint(endpoint.url, {"token_id": token_id}))
+    result = await public_get(
+        client, PublicEndpoint(endpoint.url, {"token_id": token_id})
+    )
     book_ok = clob_book_payload_ok(result.payload)
     evidence = result.evidence
     evidence["record_count"] = 1 if book_ok else 0
@@ -93,7 +87,9 @@ async def check_clob_book(
     return SurfacePayload(evidence=evidence, payload=result.payload)
 
 
-async def check_clob_404(settings: Settings, client: httpx.AsyncClient) -> SurfacePayload:
+async def check_clob_404(
+    settings: Settings, client: httpx.AsyncClient
+) -> SurfacePayload:
     endpoint = PublicEndpoint(
         url=f"{settings.data.polymarket.clob_base_url}/book",
         params={"token_id": INVALID_CLOB_TOKEN_ID},
@@ -107,7 +103,9 @@ async def check_clob_404(settings: Settings, client: httpx.AsyncClient) -> Surfa
     return response
 
 
-async def check_binance_spot(settings: Settings, client: httpx.AsyncClient) -> SurfacePayload:
+async def check_binance_spot(
+    settings: Settings, client: httpx.AsyncClient
+) -> SurfacePayload:
     symbol = settings.data.binance.symbols.get("BTC", "BTCUSDT")
     endpoint = PublicEndpoint(
         url="https://api.binance.com/api/v3/ticker/bookTicker",
@@ -123,7 +121,9 @@ async def check_binance_spot(settings: Settings, client: httpx.AsyncClient) -> S
     return SurfacePayload(evidence=evidence, payload=result.payload)
 
 
-async def public_get(client: httpx.AsyncClient, endpoint: PublicEndpoint) -> SurfacePayload:
+async def public_get(
+    client: httpx.AsyncClient, endpoint: PublicEndpoint
+) -> SurfacePayload:
     response = await raw_public_get(client, endpoint)
     status_code = response.evidence["status_code"]
     if status_code is None or status_code >= 400:
@@ -138,12 +138,17 @@ async def public_get(client: httpx.AsyncClient, endpoint: PublicEndpoint) -> Sur
     return SurfacePayload(evidence=response.evidence, payload=payload)
 
 
-async def raw_public_get(client: httpx.AsyncClient, endpoint: PublicEndpoint) -> SurfacePayload:
+async def raw_public_get(
+    client: httpx.AsyncClient, endpoint: PublicEndpoint
+) -> SurfacePayload:
     try:
         response = await client.get(endpoint.url, params=endpoint.params)
     except httpx.HTTPError as exc:
         return SurfacePayload(
-            evidence=surface(endpoint, SurfaceOutcome(None, False, None, f"{exc.__class__.__name__}: {exc}")),
+            evidence=surface(
+                endpoint,
+                SurfaceOutcome(None, False, None, f"{exc.__class__.__name__}: {exc}"),
+            ),
             payload=None,
         )
     status_code = response.status_code
@@ -207,4 +212,9 @@ def spot_from_payload(payload: JsonValue | None, symbol: str) -> SpotPrice | Non
         price = round((bid + ask) / 2.0, 10)
     if price is None:
         return None
-    return SpotPrice(asset=symbol.removesuffix("USDT"), symbol=symbol, price=price, received_at=utc_now())
+    return SpotPrice(
+        asset=symbol.removesuffix("USDT"),
+        symbol=symbol,
+        price=price,
+        received_at=utc_now(),
+    )

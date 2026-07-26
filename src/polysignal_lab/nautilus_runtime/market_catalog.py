@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, importlib
-Output: InstrumentTokenMeta, MarketPairMeta, MarketCatalog
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -67,7 +51,9 @@ class MarketPairMeta:
     @classmethod
     def from_market(cls, market: Market) -> "MarketPairMeta":
         if len(market.outcome_tokens) != 2:
-            raise ValueError("Only binary YES/NO markets are supported by the Nautilus runtime")
+            raise ValueError(
+                "Only binary YES/NO markets are supported by the Nautilus runtime"
+            )
         up_token = market.token_for(Side.UP)
         down_token = market.token_for(Side.DOWN)
         return cls(
@@ -99,13 +85,9 @@ class MarketPairMeta:
         start_ts_ns = cast(int | float | None, getattr(meta, "start_ts_ns", None))
         end_ts_ns = cast(int | float | None, getattr(meta, "end_ts_ns", None))
         start_ts = (
-            datetime.fromtimestamp(start_ts_ns / 1e9, tz=UTC)
-            if start_ts_ns
-            else None
+            datetime.fromtimestamp(start_ts_ns / 1e9, tz=UTC) if start_ts_ns else None
         )
-        end_ts = (
-            datetime.fromtimestamp(end_ts_ns / 1e9, tz=UTC) if end_ts_ns else None
-        )
+        end_ts = datetime.fromtimestamp(end_ts_ns / 1e9, tz=UTC) if end_ts_ns else None
         asset = cast(str, getattr(meta, "asset"))
         return cls(
             market_id=cast(str, getattr(meta, "market_id")),

@@ -1,32 +1,16 @@
-/**
- * Input: type { ReactNode } from 'react', { SearchProvider } from '@/context/search-provider', { ThemeProvider } from '@/context/theme-provider', * as client from '@/lib/api/client', {, { renderWithQueryClient } from '@/test-utils/render-with-query-client', { SidebarProvider } from '@/components/ui/sidebar', userEvent from '@testing-library/user-event', { afterEach, describe, expect, it, vi } from 'vitest', { ReportingPage } from './index'
- * Output: renderReportingPage
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import type { ReactNode } from 'react'
-import { SearchProvider } from '@/context/search-provider'
-import { ThemeProvider } from '@/context/theme-provider'
-import * as client from '@/lib/api/client'
 import {
   makeReportOrder,
   makeReportPosition,
   makeReportTradeResult,
 } from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
-import { SidebarProvider } from '@/components/ui/sidebar'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as client from '@/lib/api/client'
+import { SearchProvider } from '@/context/search-provider'
+import { ThemeProvider } from '@/context/theme-provider'
+import { SidebarProvider } from '@/components/ui/sidebar'
 import { ReportingPage } from './index'
 
 vi.mock('recharts', () => ({
@@ -37,13 +21,7 @@ vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
-  LineChart: ({
-    children,
-    data,
-  }: {
-    children: ReactNode
-    data: unknown
-  }) => (
+  LineChart: ({ children, data }: { children: ReactNode; data: unknown }) => (
     <div data-testid='line-chart-data'>
       {JSON.stringify(data)}
       {children}
@@ -89,7 +67,9 @@ describe('ReportingPage', () => {
     expect(await view.findByText('rr-late')).toBeInTheDocument()
     expect(view.getByText('rr-early')).toBeInTheDocument()
     expect(view.getByText('4.00 USDC')).toBeInTheDocument()
-    expect(JSON.parse(view.getByTestId('line-chart-data').textContent ?? '[]')).toEqual([
+    expect(
+      JSON.parse(view.getByTestId('line-chart-data').textContent ?? '[]')
+    ).toEqual([
       { closed_at: '2026-06-30T00:05:00+00:00', cumulative_pnl: -1 },
       { closed_at: '2026-06-30T00:10:00+00:00', cumulative_pnl: 3 },
     ])
@@ -134,7 +114,9 @@ describe('ReportingPage', () => {
     expect(await view.findAllByText('No closed trades yet.')).toHaveLength(2)
 
     await user.click(view.getByRole('tab', { name: 'Positions' }))
-    expect(await view.findByText('No stored positions yet.')).toBeInTheDocument()
+    expect(
+      await view.findByText('No stored positions yet.')
+    ).toBeInTheDocument()
 
     await user.click(view.getByRole('tab', { name: 'Orders' }))
     expect(await view.findByText('No stored orders yet.')).toBeInTheDocument()
@@ -142,8 +124,12 @@ describe('ReportingPage', () => {
 
   it('renders load errors for trades, positions, and orders', async () => {
     vi.spyOn(client, 'getTrades').mockRejectedValue(new Error('trades boom'))
-    vi.spyOn(client, 'getPositions').mockRejectedValue(new Error('positions boom'))
-    vi.spyOn(client, 'getReportOrders').mockRejectedValue(new Error('orders boom'))
+    vi.spyOn(client, 'getPositions').mockRejectedValue(
+      new Error('positions boom')
+    )
+    vi.spyOn(client, 'getReportOrders').mockRejectedValue(
+      new Error('orders boom')
+    )
 
     const user = userEvent.setup()
     const view = renderReportingPage()

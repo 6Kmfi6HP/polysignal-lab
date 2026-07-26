@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.date, datetime.datetime, datetime.time, datetime.timedelta, datetime.timezone, math
-Output: None
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta, timezone
@@ -15,7 +5,7 @@ from math import isfinite
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from polysignal_lab.app.reporting_types import DailyReportInputs, _ReportScheduler
+from polysignal_lab.app.daily_report.types import DailyReportInputs, _ReportScheduler
 from polysignal_lab.reporting.rejections import is_rejected_order_payload
 from polysignal_lab.utils import parse_dt
 
@@ -47,11 +37,7 @@ def _order_terminal_at(order: dict[str, Any]) -> datetime | None:
 
 def _order_intent(order: dict[str, Any]) -> str:
     metrics = _order_metrics(order)
-    return str(
-        metrics.get("order_intent")
-        or order.get("order_intent")
-        or "default"
-    )
+    return str(metrics.get("order_intent") or order.get("order_intent") or "default")
 
 
 def _fill_payloads_with_order_intents(
@@ -216,13 +202,9 @@ def _telemetry_incomplete_reasons(
 ) -> tuple[str, ...]:
     reasons = [fill_source_reason] if fill_source_reason else []
     if invalid_fill_projections > 0:
-        reasons.append(
-            f"report_fill_projection_invalid:{invalid_fill_projections}"
-        )
+        reasons.append(f"report_fill_projection_invalid:{invalid_fill_projections}")
     if invalid_order_projections > 0:
-        reasons.append(
-            f"report_order_projection_invalid:{invalid_order_projections}"
-        )
+        reasons.append(f"report_order_projection_invalid:{invalid_order_projections}")
     if inferred_order_creation_times > 0:
         reasons.append(
             f"report_order_creation_time_inferred:{inferred_order_creation_times}"
@@ -233,9 +215,7 @@ def _telemetry_incomplete_reasons(
     health = getattr(scheduler, "health", None)
     components = getattr(health, "components", None)
     component = (
-        components.get("observability_actor")
-        if isinstance(components, dict)
-        else None
+        components.get("observability_actor") if isinstance(components, dict) else None
     )
     metrics = getattr(component, "metrics", None)
     if not isinstance(metrics, dict):
@@ -271,7 +251,9 @@ def _collect_daily_report_inputs(
 ) -> DailyReportInputs:
     today_iso = today.isoformat()
     day_start_local = datetime.combine(today, time.min, tzinfo=report_tz)
-    day_end_local = datetime.combine(today + timedelta(days=1), time.min, tzinfo=report_tz)
+    day_end_local = datetime.combine(
+        today + timedelta(days=1), time.min, tzinfo=report_tz
+    )
     day_start = day_start_local.astimezone(UTC)
     day_end = day_end_local.astimezone(UTC)
     day_params = (_utc_text_bound(day_start), _utc_text_bound(day_end))
@@ -352,8 +334,7 @@ def _collect_daily_report_inputs(
         limit=10_001,
     )
     order_projection_truncated = (
-        len(today_order_states) > 10_000
-        or len(invalid_updated_order_states) > 10_000
+        len(today_order_states) > 10_000 or len(invalid_updated_order_states) > 10_000
     )
     today_order_states = today_order_states[:10_000]
     invalid_updated_order_states = invalid_updated_order_states[:10_000]
@@ -365,8 +346,7 @@ def _collect_daily_report_inputs(
     invalid_order_ids = {
         str(order.get("report_order_id") or "")
         for order in today_order_states + invalid_updated_order_states
-        if order.get("_projection_invalid") is True
-        and order.get("report_order_id")
+        if order.get("_projection_invalid") is True and order.get("report_order_id")
     }
     invalid_order_projections = len(invalid_order_ids)
     today_orders_raw = [

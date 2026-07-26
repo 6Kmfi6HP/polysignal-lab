@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, json, nautilus_trader.common.config, nautilus_trader.common.config.ActorConfig, nautilus_trader.trading.config, nautilus_trader.trading.config.StrategyConfig, pydantic, pydantic.TypeAdapter, polysignal_lab.config
-Output: importable_config_dict, PolySignalStrategyConfig, MarketRotationActorConfig
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 import json

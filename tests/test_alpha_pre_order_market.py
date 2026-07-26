@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, polysignal_lab.alpha.pre_order_market_core, polysignal_lab.alpha.pre_order_market_core.PreOrderMarketAlphaCore, polysignal_lab.alpha.types, polysignal_lab.alpha.types.MarketView
-Output: test_pre_order_expiry_uses_fixed_view_time_when_wall_clock_is_unavailable, test_pre_order_candidates_repeat_until_order_submitted, test_pre_order_without_active_cache_order_remains_eligible, test_pre_order_reconcile_uses_cache_position_projection
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta

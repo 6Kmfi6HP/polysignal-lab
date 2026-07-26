@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, pytest, pydantic, pydantic.ValidationError, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.config.SecurityConfigError
-Output: test_settings_load_without_secret_key_material, test_settings_rejects_sensitive_env_key, test_safety_flags_default_disabled, test_safety_live_market_actions_can_unlock_for_gated_live
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import pytest

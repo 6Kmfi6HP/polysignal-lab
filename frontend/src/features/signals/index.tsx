@@ -1,23 +1,5 @@
-/**
- * Input: { Header } from '@/components/layout/header', { Main } from '@/components/layout/main', { Search } from '@/components/search', { ThemeSwitch } from '@/components/theme-switch', { Skeleton } from '@/components/ui/skeleton', {, { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs', { useRejectedSignalsQuery, useSignalsQuery } from '@/lib/api/hooks', type { RejectedSignal, SignalCandidate } from '@/lib/api/types', @/components/layout/header
- * Output: SignalsPage, SignalsTable, RejectedSignalsTable
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
-import { Header } from '@/components/layout/header'
-import { Main } from '@/components/layout/main'
-import { Search } from '@/components/search'
-import { ThemeSwitch } from '@/components/theme-switch'
+import { useRejectedSignalsQuery, useSignalsQuery } from '@/lib/api/hooks'
+import type { RejectedSignal, SignalCandidate } from '@/lib/api/types'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -28,8 +10,10 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useRejectedSignalsQuery, useSignalsQuery } from '@/lib/api/hooks'
-import type { RejectedSignal, SignalCandidate } from '@/lib/api/types'
+import { Header } from '@/components/layout/header'
+import { Main } from '@/components/layout/main'
+import { Search } from '@/components/search'
+import { ThemeSwitch } from '@/components/theme-switch'
 
 export function SignalsPage() {
   const signals = useSignalsQuery()
@@ -93,7 +77,9 @@ function SignalsTable({ signals }: { signals: SignalCandidate[] }) {
       <TableBody>
         {signals.map((signal) => (
           <TableRow key={signal.signal_id}>
-            <TableCell className='font-mono text-xs'>{signal.signal_id}</TableCell>
+            <TableCell className='font-mono text-xs'>
+              {signal.signal_id}
+            </TableCell>
             <TableCell>{signal.strategy}</TableCell>
             <TableCell>
               {signal.asset} {signal.timeframe}

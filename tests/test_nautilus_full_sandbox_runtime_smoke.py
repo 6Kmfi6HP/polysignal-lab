@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, typing, typing.Any, typing.cast, polysignal_lab.config
-Output: test_full_backtest_runtime_materializes_native_component_graph, test_full_runtime_registration_has_one_owner_per_native_responsibility, _RecordingRuntime
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -103,7 +94,7 @@ def test_full_runtime_registration_has_one_owner_per_native_responsibility() -> 
     assert names == ("one_cent_buy",)
     assert [getattr(config, "actor_path") for config in runtime.actors] == [
         "polysignal_lab.nautilus_runtime.market_rotation:MarketRotationActor",
-            ]
+    ]
     assert [getattr(config, "strategy_path") for config in runtime.strategies] == [
         "polysignal_lab.nautilus_runtime.native_strategy:PolySignalNativeStrategy"
     ]

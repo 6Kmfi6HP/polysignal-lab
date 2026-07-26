@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, time, collections.abc, collections.abc.Callable, collections.abc.Sequence, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3, nautilus_trader.test_kit.rust.instruments_pyo3, nautilus_trader.test_kit.rust.instruments_pyo3.TestInstrumentProviderPyo3
-Output: default_instrument, synthetic_quotes, build_backtest_engine, register_contract_probe, register_contract_probe_on_livenode, wait_until, order_statuses, safe_dispose
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import time

@@ -1,19 +1,3 @@
-/**
- * Input: * as React from 'react', * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog', { cn } from '@/lib/utils', { buttonVariants } from '@/components/ui/button', react, @radix-ui/react-alert-dialog, @/lib/utils, @/components/ui/button
- * Output: AlertDialog, AlertDialogTrigger, AlertDialogPortal, AlertDialogOverlay, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import * as React from 'react'
 import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog'
 import { cn } from '@/lib/utils'

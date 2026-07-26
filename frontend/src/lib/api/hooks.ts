@@ -1,19 +1,3 @@
-/**
- * Input: { useQuery } from '@tanstack/react-query', * as api from './client', @tanstack/react-query, ./client
- * Output: LIVE_REFRESH_MS, HEALTH_REFRESH_MS, useHealthQuery, useOverviewQuery, useSignalsQuery, useRejectedSignalsQuery, useReportOrdersQuery, usePositionsQuery, useTradesQuery, useLeaderboardQuery
- * Pos: Library - Shared code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { useQuery } from '@tanstack/react-query'
 import * as api from './client'
 

@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, typing, typing.Any, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.alpha.types.OrderIntentSpec, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent
-Output: MidPriceSizingAlphaCore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from typing import Any
@@ -56,7 +40,11 @@ class MidPriceSizingAlphaCore:
             ask = view.ask_for(side)
             if ask is None:
                 return False
-            if not (self.config.entry_center - self.config.entry_band <= ask <= self.config.entry_center + self.config.entry_band):
+            if not (
+                self.config.entry_center - self.config.entry_band
+                <= ask
+                <= self.config.entry_center + self.config.entry_band
+            ):
                 return False
         if view.spot is None or view.spot.price <= 0:
             return False
@@ -146,7 +134,9 @@ class MidPriceSizingAlphaCore:
             reduce_only=True,
         )
 
-    def _evaluate_entry(self, view: MarketView, side: Side, ask: float) -> list[AlphaDecision]:
+    def _evaluate_entry(
+        self, view: MarketView, side: Side, ask: float
+    ) -> list[AlphaDecision]:
         if ask > self.config.entry_center + self.config.entry_band:
             return []
         return self._make_signal(
@@ -166,18 +156,30 @@ class MidPriceSizingAlphaCore:
             notional=self.config.base_notional,
         )
 
-    def _evaluate_addition(self, view: MarketView, side: Side, ask: float, current_layers: int, avg_cost: float) -> list[AlphaDecision]:
+    def _evaluate_addition(
+        self,
+        view: MarketView,
+        side: Side,
+        ask: float,
+        current_layers: int,
+        avg_cost: float,
+    ) -> list[AlphaDecision]:
         mode = str(getattr(self.config.mode, "value", self.config.mode)).upper()
         setup = self._addition_setup(mode, side, ask, avg_cost)
         if setup is None:
             return []
-        action, move_key, move_value, step_key, step_value, multiplier, confidence = setup
+        action, move_key, move_value, step_key, step_value, multiplier, confidence = (
+            setup
+        )
         return self._make_signal(
             view,
             side,
             ask,
             confidence=confidence,
-            reason_codes=(action, f"LAYER_{current_layers + 1}_OF_{self.config.max_layers}"),
+            reason_codes=(
+                action,
+                f"LAYER_{current_layers + 1}_OF_{self.config.max_layers}",
+            ),
             metrics={
                 "action": action,
                 move_key: round(move_value, 4),
@@ -297,6 +299,8 @@ class MidPriceSizingAlphaCore:
             data_freshness_ms=view.freshness.max_ms,
             reason_codes=reason_codes,
             metrics=signal_metrics,
-            order_intent=OrderIntentSpec(OrderIntent.TAKER_FAK, reduce_only=reduce_only),
+            order_intent=OrderIntentSpec(
+                OrderIntent.TAKER_FAK, reduce_only=reduce_only
+            ),
         )
         return [decision]

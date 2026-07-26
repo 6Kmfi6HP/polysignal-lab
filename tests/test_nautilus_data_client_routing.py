@@ -1,11 +1,3 @@
-"""
-Input: types, types.SimpleNamespace, polysignal_lab.config, polysignal_lab.nautilus_runtime.node_builder, polysignal_lab.nautilus_runtime.polymarket_clients
-Output: test_default_timeframes_build_distinct_dynamic_provider_configs, test_data_client_ids_are_stable_per_timeframe
-Pos: Test Layer - Unit tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -106,7 +98,9 @@ def test_default_timeframes_build_distinct_dynamic_provider_configs(
         builders.append(config)
         return config
 
-    monkeypatch.setattr(node_builder, "PolymarketUpDownEventSlugConfig", build_slug_config)
+    monkeypatch.setattr(
+        node_builder, "PolymarketUpDownEventSlugConfig", build_slug_config
+    )
     monkeypatch.setattr(node_builder, "PolymarketInstrumentProviderConfig", _Config)
 
     configs = node_builder._polymarket_instrument_configs(  # pyright: ignore[reportPrivateUsage]
@@ -141,7 +135,9 @@ def test_startup_load_ids_are_partitioned_by_timeframe(
 
     five_minute = cast(_Config, configs["POLYMARKET-5M"])
     fifteen_minute = cast(_Config, configs["POLYMARKET-15M"])
-    assert {str(item) for item in cast(list[object], five_minute.kwargs["load_ids"])} == {
+    assert {
+        str(item) for item in cast(list[object], five_minute.kwargs["load_ids"])
+    } == {
         "condition5-down5.POLYMARKET",
         "condition5-up5.POLYMARKET",
     }

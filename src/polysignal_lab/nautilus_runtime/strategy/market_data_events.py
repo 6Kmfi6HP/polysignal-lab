@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.datetime, typing, typing.Protocol, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.market_catalog.MarketCatalog
-Output: condition_from_market_data, order_book_event_times, order_book_observation, evaluate_market_data_condition, evaluate_order_book_event, _MarketDataStrategy
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -17,11 +7,11 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.custom_data_state import event_datetime
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.market_view_assembler import BookReceiptObserver
-from polysignal_lab.nautilus_runtime.strategy.helpers import (
+from polysignal_lab.nautilus_runtime.strategy.catalog_lookups import (
     _condition_id_from_catalog_instrument,
-    _identifier_text,
     _token_id_from_catalog_instrument,
 )
+from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import _identifier_text
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     observe_market_book_side,
 )
@@ -82,9 +72,7 @@ def order_book_event_times(
     if raw_book_at is None:
         raw_book_at = getattr(event, "ts_last", None)
     observed_book_at = (
-        observed_received_at
-        if raw_book_at is None
-        else event_datetime(raw_book_at)
+        observed_received_at if raw_book_at is None else event_datetime(raw_book_at)
     )
     return observed_received_at, observed_book_at
 

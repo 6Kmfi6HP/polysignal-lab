@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, math, datetime, datetime.UTC, datetime.datetime, typing, typing.Any, typing.TypeAlias, fastapi
-Output: create_dashboard_app
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import math
@@ -22,7 +6,7 @@ from typing import Any, TypeAlias
 
 from fastapi import FastAPI
 
-from polysignal_lab.dashboard.reporting_read import (
+from polysignal_lab.dashboard.ports import (
     ReportingReadPort,
     RuntimeHealthPort,
     RuntimeHealthRead,
@@ -41,8 +25,6 @@ CALIBRATION_MIN_SAMPLE_SIZE = 30
 
 def _bounded_limit(limit: int) -> int:
     return max(1, min(limit, 500))
-
-
 
 
 def _fmt_money(value: JsonValue) -> str:
@@ -77,8 +59,7 @@ def _as_float(value: JsonValue) -> float:
 
 def _overall_health_status(components: list[dict[str, JsonValue]]) -> str:
     statuses = {
-        str(component.get("status") or "unknown").lower()
-        for component in components
+        str(component.get("status") or "unknown").lower() for component in components
     }
     if "down" in statuses:
         return "down"
@@ -179,7 +160,9 @@ def _health_payload(
     }
 
 
-def _calibration_from_reports(reports: list[dict[str, JsonValue]]) -> dict[str, JsonValue]:
+def _calibration_from_reports(
+    reports: list[dict[str, JsonValue]],
+) -> dict[str, JsonValue]:
     merged: dict[str, JsonValue] = {}
     average_weighted_sum: dict[str, dict[str, float]] = {}
     average_sample_size: dict[str, dict[str, int]] = {}
@@ -226,7 +209,9 @@ def _calibration_from_reports(reports: list[dict[str, JsonValue]]) -> dict[str, 
     return merged
 
 
-def _market_lookup(reporting: ReportingReadPort) -> tuple[dict[str, Market], dict[str, Market]]:
+def _market_lookup(
+    reporting: ReportingReadPort,
+) -> tuple[dict[str, Market], dict[str, Market]]:
     by_id: dict[str, Market] = {}
     by_token: dict[str, Market] = {}
     for row in reporting.market_rows(10_000):
@@ -313,7 +298,6 @@ def create_dashboard_app(
     def strategy_status_rows(limit: int = 100) -> list[dict[str, JsonValue]]:
         return reporting.strategy_status_rows(_bounded_limit(limit))
 
-
     @app.get("/health", response_model=None)
     async def health() -> dict[str, JsonValue]:
         return _health_payload(reporting, runtime_health)
@@ -345,7 +329,9 @@ def create_dashboard_app(
         return strategy_status_rows(limit)
 
     @app.get("/api/report-orders", response_model=None)
-    async def order_count(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
+    async def order_count(
+        status: str | None = None, limit: int = 100
+    ) -> list[dict[str, JsonValue]]:
         rows = reporting.report_order_rows(status, _bounded_limit(limit))
         by_id, by_token = _market_lookup(reporting)
         payloads = [
@@ -358,7 +344,9 @@ def create_dashboard_app(
         return [payload for payload in payloads if _valid_order_payload(payload)]
 
     @app.get("/api/positions", response_model=None)
-    async def positions(status: str | None = None, limit: int = 100) -> list[dict[str, JsonValue]]:
+    async def positions(
+        status: str | None = None, limit: int = 100
+    ) -> list[dict[str, JsonValue]]:
         rows = reporting.report_position_rows(status, _bounded_limit(limit))
         by_id, by_token = _market_lookup(reporting)
         payloads = [
@@ -382,6 +370,5 @@ def create_dashboard_app(
             "leaderboard": reporting.strategy_leaderboard(report_limit),
             "calibration_breakdown": _calibration_from_reports(reports),
         }
-
 
     return app

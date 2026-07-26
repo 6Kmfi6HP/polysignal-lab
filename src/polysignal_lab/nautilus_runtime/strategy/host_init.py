@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, typing
-Output: resolve_host_construction, bind_host_runtime, resolve_instrument_from_cache, HostInitRequest, HostConstruction
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
@@ -27,20 +17,24 @@ from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.native_strategy_exit import NativeExitPolicy
 from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
 from polysignal_lab.nautilus_runtime.strategy import subscriptions as subs
-from polysignal_lab.nautilus_runtime.strategy.config_deps import dependencies_from_config
+from polysignal_lab.nautilus_runtime.strategy.config_deps import (
+    dependencies_from_config,
+)
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
     DecisionPipeline,
     NautilusOrderSubmitter,
     NativeDecisionTelemetry,
 )
 
-from polysignal_lab.nautilus_runtime.strategy.helpers import (
-    MISSING_PROJECTIONS_ERROR,
+from polysignal_lab.nautilus_runtime.strategy.catalog_lookups import (
+    _asset_conditions,
+    catalog_instrument_id_resolver,
+)
+from polysignal_lab.nautilus_runtime.strategy.constants import MISSING_PROJECTIONS_ERROR
+from polysignal_lab.nautilus_runtime.strategy.protocols import (
     _Assembler,
     _Observability,
-    _asset_conditions,
     _assembler_with_custom_data,
-    catalog_instrument_id_resolver,
 )
 
 
@@ -286,5 +280,7 @@ def resolve_instrument_from_cache(
         except (LookupError, TypeError):
             cached = None
     if cached is None:
-        raise ValueError(f"Nautilus Instrument is not available in Cache for token {token_id!r}")
+        raise ValueError(
+            f"Nautilus Instrument is not available in Cache for token {token_id!r}"
+        )
     return cached

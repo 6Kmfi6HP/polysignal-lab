@@ -1,19 +1,3 @@
-/**
- * Input: { useNavigate, useRouter } from '@tanstack/react-router', { Button } from '@/components/ui/button', @tanstack/react-router, @/components/ui/button
- * Output: NotFoundError
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { useNavigate, useRouter } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
 

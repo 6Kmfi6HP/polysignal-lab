@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, json, pathlib, pathlib.Path, types, types.SimpleNamespace, nautilus_optional, nautilus_optional.require_nautilus, nautilus_trader.test_kit.rust.events_pyo3, polysignal_lab.nautilus_runtime.projections
-Output: test_project_order_event_reads_event_facts_and_metrics, test_event_store_adapter_uses_explicit_id_and_safe_lifecycle_fallback, test_real_nautilus_order_lifecycle_uses_unique_durable_event_ids, test_upsert_order_and_fill_projection_stays_valid, test_normalize_report_order_uses_metrics_side_and_contracts, test_partial_fill_does_not_mark_report_order_filled
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import json
@@ -352,7 +342,9 @@ def test_normalize_report_order_uses_metrics_side_and_contracts() -> None:
             },
         }
     )
-    assert payload["status"] in {"ACCEPTED", "SUBMITTED", "RESTING"} or payload["status"]
+    assert (
+        payload["status"] in {"ACCEPTED", "SUBMITTED", "RESTING"} or payload["status"]
+    )
     assert payload["side"] == "UP"
     assert payload["signal_id"] == "sig_1"
     assert float(payload.get("shares") or 0) == 8.0
@@ -375,7 +367,11 @@ def test_partial_fill_does_not_mark_report_order_filled(tmp_path: Path) -> None:
             "filled_qty": 4.0,
             "order_quantity": 12.0,
             "ts": "2026-07-18T00:00:00Z",
-            "metrics": {"contracts": 12.0, "signal_id": "sig-p", "strategy": "ptb_diff"},
+            "metrics": {
+                "contracts": 12.0,
+                "signal_id": "sig-p",
+                "strategy": "ptb_diff",
+            },
         }
         store.insert_system_event(
             {

@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, pyarrow, pytest, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3
-Output: custom_data_samples, test_custom_data_round_trips_arrow, test_custom_data_round_trips_catalog, test_strategy_custom_data_preserves_official_spot_receipt_time_for_dynamic_freshness, test_custom_market_meta_data_round_trips_dict
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -102,7 +86,9 @@ def test_custom_data_round_trips_catalog(tmp_path, custom_data_samples) -> None:
         assert unwrap_custom_data(restored[0]) == data
 
 
-def test_strategy_custom_data_preserves_official_spot_receipt_time_for_dynamic_freshness() -> None:
+def test_strategy_custom_data_preserves_official_spot_receipt_time_for_dynamic_freshness() -> (
+    None
+):
     received_at = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
     data = PolymarketRtdsCryptoPrice(
         "BTCUSD",
@@ -120,7 +106,6 @@ def test_strategy_custom_data_preserves_official_spot_receipt_time_for_dynamic_f
     assert spot is not None
     assert spot.received_at == received_at
     assert spot.freshness_ms_at(received_at + timedelta(milliseconds=250)) == 250
-
 
     data = PolySignalPriceToBeatData(
         condition_id="condition-1",

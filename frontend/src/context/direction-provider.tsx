@@ -1,19 +1,3 @@
-/**
- * Input: { createContext, useContext, useEffect, useState } from 'react', { DirectionProvider as RdxDirProvider } from '@radix-ui/react-direction', { getCookie, setCookie, removeCookie } from '@/lib/cookies', react, @radix-ui/react-direction, @/lib/cookies
- * Output: DirectionProvider, useDirection
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { createContext, useContext, useEffect, useState } from 'react'
 import { DirectionProvider as RdxDirProvider } from '@radix-ui/react-direction'
 import { getCookie, setCookie, removeCookie } from '@/lib/cookies'

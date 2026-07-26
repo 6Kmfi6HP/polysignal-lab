@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, polysignal_lab.observability.health, polysignal_lab.observability.health.HealthRegistry, polysignal_lab.storage.sqlite_store, polysignal_lab.storage.sqlite_store.SQLiteStore
-Output: test_health_registry_aggregates_component_status_and_transitions, test_health_registry_set_accepts_uppercase_status_and_error_details, test_health_registry_metric_helpers_preserve_status, test_sqlite_restores_latest_system_event_payload, test_runtime_records_gate_rejections_and_persists_health_snapshot
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from dataclasses import replace
@@ -91,8 +81,10 @@ async def test_runtime_records_gate_rejections_and_persists_health_snapshot(
     tmp_path, market_view, settings
 ) -> None:
     from polysignal_lab.app import scheduler_health
-    from polysignal_lab.nautilus_runtime.runtime_context_factory import build_nautilus_runtime_context
-    from polysignal_lab.signal_layer.gate import SignalGate
+    from polysignal_lab.nautilus_runtime.runtime_context_factory import (
+        build_nautilus_runtime_context,
+    )
+    from polysignal_lab.pretrade.gate import SignalGate
     from signal_helpers import ptb_decision_from_view
 
     runtime = build_nautilus_runtime_context(settings, base_dir=tmp_path)

@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Mapping, dataclasses, dataclasses.dataclass, pathlib, pathlib.Path, typing, typing.TYPE_CHECKING, typing.Final
-Output: validate_native_runtime_settings, build_nautilus_runtime_context, NautilusRuntimeContext
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import logging
@@ -25,7 +15,7 @@ from polysignal_lab.config import Settings
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.publish.telegram_publisher import PublishResult, TelegramPublisher
-from polysignal_lab.signal_layer.formatter import MessageFormatter
+from polysignal_lab.publish.message_formatter import MessageFormatter
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
@@ -147,14 +137,14 @@ class NautilusRuntimeContext:
             await publisher.client.aclose()
 
     async def generate_daily_report(self) -> DailyReport | None:
-        from polysignal_lab.app.reporting import generate_daily_report
+        from polysignal_lab.app.daily_report import generate_daily_report
 
         return await generate_daily_report(self)
 
 
 def build_nautilus_runtime_context(
     settings: Settings,
-    base_dir: str | Path = '.',
+    base_dir: str | Path = ".",
 ) -> NautilusRuntimeContext:
     """Build the services needed by the Nautilus runtime path."""
     validate_native_runtime_settings(settings)
@@ -165,7 +155,7 @@ def build_nautilus_runtime_context(
     state = StateStore(base / settings.storage.state_dir)
     sqlite = SQLiteStore(base / settings.storage.sqlite_path)
     persistence = PersistenceService(logs, sqlite, state)
-    runtime_logger = logging.getLogger('polysignal_lab.runtime')
+    runtime_logger = logging.getLogger("polysignal_lab.runtime")
     publish_service, publisher = _build_publish_service(
         settings,
         formatter,

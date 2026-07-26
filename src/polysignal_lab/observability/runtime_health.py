@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, contextlib, contextlib.suppress, dataclasses, dataclasses.asdict, dataclasses.dataclass, dataclasses.field, datetime, datetime.UTC
-Output: write_runtime_heartbeat, write_runtime_startup_marker, read_runtime_startup_started_at, read_runtime_heartbeat, evaluate_liveness, evaluate_restart_gate, RuntimeHeartbeat, LivenessResult, RestartGateResult
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from contextlib import suppress
@@ -62,6 +46,7 @@ class RestartGateResult:
     down_duration_sec: int = 0
     consecutive_failures: int = 0
 
+
 def _write_json_atomically(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
@@ -71,7 +56,6 @@ def _write_json_atomically(path: Path, payload: dict[str, object]) -> None:
     finally:
         with suppress(FileNotFoundError):
             tmp.unlink()
-
 
 
 def write_runtime_heartbeat(
@@ -91,15 +75,10 @@ def write_runtime_heartbeat(
     if previous is not None and previous.phase == phase:
         phase_started_at = previous.phase_started_at or previous.updated_at
     readiness_misses = (
-        dict(previous.readiness_miss_started_at_by_key)
-        if previous is not None
-        else {}
+        dict(previous.readiness_miss_started_at_by_key) if previous is not None else {}
     )
     readiness_details = (
-        {
-            key: dict(value)
-            for key, value in previous.readiness_detail_by_key.items()
-        }
+        {key: dict(value) for key, value in previous.readiness_detail_by_key.items()}
         if previous is not None
         else {}
     )
@@ -134,7 +113,9 @@ def write_runtime_heartbeat(
     return heartbeat
 
 
-def write_runtime_startup_marker(path: Path, *, now: datetime | None = None) -> datetime:
+def write_runtime_startup_marker(
+    path: Path, *, now: datetime | None = None
+) -> datetime:
     started_at = (now or _utc_now()).astimezone(UTC)
     _write_json_atomically(path, {"started_at": started_at.isoformat()})
     return started_at
@@ -210,7 +191,14 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
 def _read_runtime_heartbeat_optional(path: Path) -> RuntimeHeartbeat | None:
     try:
         return read_runtime_heartbeat(path)
-    except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError, FileNotFoundError):
+    except (
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        ValueError,
+        TypeError,
+        FileNotFoundError,
+    ):
         return None
 
 
@@ -227,7 +215,6 @@ def _inside_startup_grace(
         int((observed_at - startup_started_at.astimezone(UTC)).total_seconds()),
     )
     return elapsed <= int(startup_grace_sec)
-
 
 
 def evaluate_liveness(
@@ -340,11 +327,12 @@ def evaluate_restart_gate(
         if same_down_set and previous.first_down_at is not None
         else observed_at.isoformat()
     )
-    consecutive = (previous.consecutive_failures + 1) if same_down_set and previous else 1
+    consecutive = (
+        (previous.consecutive_failures + 1) if same_down_set and previous else 1
+    )
     duration = max(0, int((observed_at - _parse_iso(first_down_at)).total_seconds()))
-    recommended = (
-        duration >= int(critical_down_sec)
-        and consecutive >= int(min_consecutive_failures)
+    recommended = duration >= int(critical_down_sec) and consecutive >= int(
+        min_consecutive_failures
     )
     return RestartGateResult(
         restart_recommended=recommended,

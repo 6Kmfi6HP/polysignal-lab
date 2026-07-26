@@ -1,11 +1,3 @@
-"""
-Input: polysignal_lab.promotion.report, polysignal_lab.promotion.runner
-Output: ADR 0005 promotion gate (recorded-data replay → Promotion Report)
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from polysignal_lab.promotion.report import (
     ComboStats,
     PromotionReport,

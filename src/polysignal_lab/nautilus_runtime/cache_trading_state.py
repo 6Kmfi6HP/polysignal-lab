@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, datetime, datetime.UTC, datetime.datetime, typing, typing.cast, polysignal_lab.alpha.types
-Output: cache_has_active_order_dedupe_key, trading_state_from_cache
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -178,9 +169,7 @@ def _order_sort_key(order: object) -> tuple[int, str]:
         ts = int(raw_ts) if raw_ts is not None else 0
     except (TypeError, ValueError):
         ts = 0
-    order_id = _text(
-        getattr(order, "client_order_id", getattr(order, "id", ""))
-    )
+    order_id = _text(getattr(order, "client_order_id", getattr(order, "id", "")))
     return ts, order_id
 
 
@@ -211,9 +200,7 @@ def _instrument_identity(
     condition_id: str | None,
 ) -> tuple[str, str, Side] | None:
     condition_ids = (
-        (condition_id,)
-        if condition_id is not None
-        else registry.condition_ids()
+        (condition_id,) if condition_id is not None else registry.condition_ids()
     )
     for candidate_condition_id in condition_ids:
         pair = registry.by_condition(candidate_condition_id)
@@ -255,7 +242,11 @@ def _truthy(value: object) -> bool:
 
 def _timestamp(value: object) -> datetime | None:
     if isinstance(value, datetime):
-        return value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return (
+            value.astimezone(UTC)
+            if value.tzinfo is not None
+            else value.replace(tzinfo=UTC)
+        )
     number = _number(value)
     if number is None or number <= 0:
         return None

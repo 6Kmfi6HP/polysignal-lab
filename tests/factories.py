@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Mapping, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, datetime.timedelta
-Output: sample_market, sample_book, sample_spot, sample_market_view, sample_storage_lifecycle, sample_report_result, MarketFactoryConfig, BookFactoryConfig, SpotFactoryConfig, StorageLifecycle
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -15,7 +5,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Final
 
-from polysignal_lab.alpha.types import FreshnessView, MarketView, SideBookView, SpotView, TradeView
+from polysignal_lab.alpha.types import (
+    FreshnessView,
+    MarketView,
+    SideBookView,
+    SpotView,
+    TradeView,
+)
 from polysignal_lab.domain.enums import (
     ExitMode,
     MarketStatus,
@@ -86,13 +82,25 @@ def sample_market(config: MarketFactoryConfig = DEFAULT_MARKET) -> Market:
         resolution_source="test",
         price_to_beat=config.price_to_beat,
         outcome_tokens=[
-            OutcomeToken(token_id=f"{market_id}-UP", side=Side.UP, outcome_name="Up", market_id=market_id),
-            OutcomeToken(token_id=f"{market_id}-DOWN", side=Side.DOWN, outcome_name="Down", market_id=market_id),
+            OutcomeToken(
+                token_id=f"{market_id}-UP",
+                side=Side.UP,
+                outcome_name="Up",
+                market_id=market_id,
+            ),
+            OutcomeToken(
+                token_id=f"{market_id}-DOWN",
+                side=Side.DOWN,
+                outcome_name="Down",
+                market_id=market_id,
+            ),
         ],
     )
 
 
-def sample_book(token_id: str, config: BookFactoryConfig = DEFAULT_BOOK) -> SideBookView:
+def sample_book(
+    token_id: str, config: BookFactoryConfig = DEFAULT_BOOK
+) -> SideBookView:
     """Cache-projection shaped book fixture (not domain OrderBook)."""
     bid = config.bid if config.bid is not None else max(0.01, config.ask - 0.03)
     return _side_book_view(
@@ -284,7 +292,9 @@ def sample_market_view(
 
 def sample_storage_lifecycle(signal: SignalCandidate) -> StorageLifecycle:
     now = utc_now()
-    rejected = RejectedSignal(candidate=signal, gate_name="gate", reason_code="wide_spread")
+    rejected = RejectedSignal(
+        candidate=signal, gate_name="gate", reason_code="wide_spread"
+    )
     order = {
         "report_order_id": "po-1",
         "signal_id": signal.signal_id,
@@ -387,7 +397,14 @@ def sample_storage_lifecycle(signal: SignalCandidate) -> StorageLifecycle:
         average_roi=0.28,
         max_drawdown=0.0,
         profit_factor=None,
-        strategy_breakdown={signal.strategy: {"closed_positions": 1, "win_count": 1, "loss_count": 0, "total_pnl_usdc": 2.8}},
+        strategy_breakdown={
+            signal.strategy: {
+                "closed_positions": 1,
+                "win_count": 1,
+                "loss_count": 0,
+                "total_pnl_usdc": 2.8,
+            }
+        },
     )
     publish = {
         "publish_id": "pub-1",

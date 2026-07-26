@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, concurrent.futures, concurrent.futures.ThreadPoolExecutor, json, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, pathlib
-Output: test_liveness_passes_for_fresh_heartbeat, test_liveness_fails_for_stale_heartbeat, test_liveness_fails_for_fatal_heartbeat, test_liveness_fails_for_missing_heartbeat, test_liveness_allows_missing_heartbeat_during_startup_grace, test_liveness_fails_for_missing_heartbeat_after_startup_grace, test_liveness_allows_stale_heartbeat_during_startup_grace, test_liveness_fails_for_corrupt_heartbeat, test_liveness_fails_for_malformed_heartbeat_timestamp, test_liveness_fails_for_wrong_heartbeat_field_types
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -86,6 +70,7 @@ def test_liveness_fails_for_missing_heartbeat(tmp_path) -> None:
 
     assert result.ok is False
     assert result.reason == "heartbeat_missing"
+
 
 def test_liveness_allows_missing_heartbeat_during_startup_grace(tmp_path) -> None:
     result = evaluate_liveness(
@@ -216,7 +201,9 @@ def test_read_runtime_heartbeat_round_trips(tmp_path) -> None:
     assert read.fatal is False
 
 
-def test_read_runtime_heartbeat_supports_legacy_readiness_miss_payload(tmp_path) -> None:
+def test_read_runtime_heartbeat_supports_legacy_readiness_miss_payload(
+    tmp_path,
+) -> None:
     path = tmp_path / "runtime_heartbeat.json"
     started_at = _dt(0).isoformat()
     path.write_text(
@@ -234,9 +221,7 @@ def test_read_runtime_heartbeat_supports_legacy_readiness_miss_payload(tmp_path)
 
     heartbeat = read_runtime_heartbeat(path)
 
-    assert tuple(heartbeat.readiness_miss_started_at_by_key.values()) == (
-        started_at,
-    )
+    assert tuple(heartbeat.readiness_miss_started_at_by_key.values()) == (started_at,)
 
 
 def test_liveness_rejects_invalid_readiness_miss_timestamp(tmp_path) -> None:
@@ -246,9 +231,7 @@ def test_liveness_rejects_invalid_readiness_miss_timestamp(tmp_path) -> None:
             {
                 "updated_at": _dt(0).isoformat(),
                 "phase": "readiness_miss",
-                "readiness_miss_started_at_by_key": {
-                    "condition-a": "not-a-timestamp"
-                },
+                "readiness_miss_started_at_by_key": {"condition-a": "not-a-timestamp"},
             }
         ),
         encoding="utf-8",
@@ -290,6 +273,7 @@ def test_write_runtime_heartbeat_uses_independent_temp_files_for_concurrent_writ
             future.result()
 
     assert read_runtime_heartbeat(path).phase in {"phase-0", "phase-1"}
+
 
 def _snapshot(*components: ComponentHealth) -> HealthSnapshot:
     status = "ok"
@@ -443,7 +427,9 @@ def test_healthcheck_cli_liveness_returns_one_for_missing_heartbeat_without_star
     assert not (state_dir / "runtime_startup.json").exists()
 
 
-def test_healthcheck_cli_liveness_returns_zero_for_missing_heartbeat_with_fresh_startup_marker(tmp_path) -> None:
+def test_healthcheck_cli_liveness_returns_zero_for_missing_heartbeat_with_fresh_startup_marker(
+    tmp_path,
+) -> None:
     from polysignal_lab.healthcheck import main
 
     state_dir = tmp_path / "state"
@@ -494,11 +480,7 @@ def test_healthcheck_cli_liveness_returns_one_for_missing_heartbeat_with_expired
     )
     (state_dir / "runtime_startup.json").write_text(
         json.dumps(
-            {
-                "started_at": (
-                    datetime.now(UTC) - timedelta(seconds=61)
-                ).isoformat()
-            }
+            {"started_at": (datetime.now(UTC) - timedelta(seconds=61)).isoformat()}
         ),
         encoding="utf-8",
     )

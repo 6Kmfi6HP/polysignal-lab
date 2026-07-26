@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.UTC, datetime.datetime, types, types.SimpleNamespace, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, polysignal_lab.nautilus_runtime.market_catalog
-Output: test_reduce_only_fill_does_not_count_as_new_alpha_entry, test_position_closed_only_records_native_projection, _Core, _Metrics, _Strategy
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -50,6 +41,7 @@ class _Core:
 
     def on_order_filled(self, _event: object) -> None:
         self.fill_calls += 1
+
 
 class _Metrics:
     def metrics_for_event(self, _event: object) -> dict[str, object]:

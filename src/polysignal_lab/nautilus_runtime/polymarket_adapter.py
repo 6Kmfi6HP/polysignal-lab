@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, typing, typing.assert_never, nautilus_trader.model.enums, nautilus_trader.model.enums.OrderSide, nautilus_trader.model.enums.TimeInForce, polysignal_lab.domain.enums, polysignal_lab.domain.enums.OrderIntent, polysignal_lab.domain.enums.Side
-Output: PolymarketEnumParser
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from typing import assert_never

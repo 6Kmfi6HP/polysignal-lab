@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, logging, collections.abc, collections.abc.Sequence, polysignal_lab.domain.market, polysignal_lab.domain.market.Market, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.market_catalog.MarketCatalog, polysignal_lab.nautilus_runtime.market_catalog.MarketPairMeta
-Output: create_market_projection_components, register_markets, instrument_load_ids, configured_condition_ids
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 import logging
@@ -68,9 +59,7 @@ def configured_condition_ids(
     markets: Sequence[Market],
 ) -> tuple[str, ...]:
     explicit_ids = tuple(
-        str(condition_id)
-        for condition_id in condition_ids
-        if str(condition_id)
+        str(condition_id) for condition_id in condition_ids if str(condition_id)
     )
     if explicit_ids:
         return explicit_ids

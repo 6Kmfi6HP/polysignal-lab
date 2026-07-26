@@ -1,24 +1,7 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.date, datetime.datetime, datetime.timezone, zoneinfo, zoneinfo.ZoneInfo, zoneinfo.ZoneInfoNotFoundError
-Output: None
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
 
 
 def _configured_report_date(scheduler: object) -> date:

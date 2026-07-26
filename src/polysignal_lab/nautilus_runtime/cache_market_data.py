@@ -1,16 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Sequence, datetime, datetime.UTC, datetime.datetime, typing, typing.Callable
-Output: NautilusCacheMarketDataProvider
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
@@ -19,7 +6,10 @@ from typing import Callable, cast
 
 from polysignal_lab.alpha.types import SideBookView, TradeView
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
-from polysignal_lab.nautilus_runtime.strategy.helpers import _maybe_float, _nautilus_instrument_id
+from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
+    _maybe_float,
+    _nautilus_instrument_id,
+)
 
 
 class NautilusCacheMarketDataProvider:
@@ -61,7 +51,11 @@ class NautilusCacheMarketDataProvider:
         asks = _levels(getattr(book, "asks", ()))
         best_bid = bids[0][0] if bids else None
         best_ask = asks[0][0] if asks else None
-        spread = round(best_ask - best_bid, 10) if best_bid is not None and best_ask is not None else None
+        spread = (
+            round(best_ask - best_bid, 10)
+            if best_bid is not None and best_ask is not None
+            else None
+        )
         received_at = self._book_received_at_by_token.get(token_id)
         if received_at is None:
             received_at = _datetime_or_none(getattr(book, "received_at", None))
@@ -75,7 +69,9 @@ class NautilusCacheMarketDataProvider:
             tick_size=_maybe_float(getattr(book, "tick_size", None)),
             last_trade_price=_maybe_float(getattr(book, "last_trade_price", None)),
             last_trade_size=_maybe_float(getattr(book, "last_trade_size", None)),
-            last_trade_timestamp=_optional_text(getattr(book, "last_trade_timestamp", None)),
+            last_trade_timestamp=_optional_text(
+                getattr(book, "last_trade_timestamp", None)
+            ),
             received_at=received_at,
             ask_levels=asks,
         )
@@ -88,7 +84,9 @@ class NautilusCacheMarketDataProvider:
         if not callable(getter):
             return ()
         try:
-            rows = cast(Callable[[object], object], getter)(_nautilus_instrument_id(instrument_id))
+            rows = cast(Callable[[object], object], getter)(
+                _nautilus_instrument_id(instrument_id)
+            )
         except LookupError:
             return ()
         if not isinstance(rows, Iterable) or isinstance(rows, (str, bytes)):
@@ -97,8 +95,12 @@ class NautilusCacheMarketDataProvider:
             TradeView(
                 price=_float_attr(row, "price"),
                 size=_float_attr(row, "size"),
-                side=_optional_text(getattr(row, "aggressor_side", getattr(row, "side", None))),
-                ts=_datetime_or_none(getattr(row, "ts_event", getattr(row, "timestamp", None))),
+                side=_optional_text(
+                    getattr(row, "aggressor_side", getattr(row, "side", None))
+                ),
+                ts=_datetime_or_none(
+                    getattr(row, "ts_event", getattr(row, "timestamp", None))
+                ),
             )
             for row in rows
         )
@@ -152,5 +154,11 @@ def _freshness_ms(received_at: datetime | None, now: datetime) -> int | None:
     if received_at is None:
         return None
     current = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
-    dt = received_at if received_at.tzinfo is not None else received_at.replace(tzinfo=UTC)
-    return max(0, int((current.astimezone(UTC) - dt.astimezone(UTC)).total_seconds() * 1000))
+    dt = (
+        received_at
+        if received_at.tzinfo is not None
+        else received_at.replace(tzinfo=UTC)
+    )
+    return max(
+        0, int((current.astimezone(UTC) - dt.astimezone(UTC)).total_seconds() * 1000)
+    )

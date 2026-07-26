@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, polysignal_lab.alpha.ptb_diff_core, polysignal_lab.alpha.types, polysignal_lab.config, polysignal_lab.domain.freshness
-Output: ptb_decisions_from_view, ptb_decision_from_view, ptb_signals_from_view, ptb_signal_from_view
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from polysignal_lab.alpha.ptb_diff_core import PTBDiffAlphaCore
@@ -18,7 +9,9 @@ from polysignal_lab.nautilus_runtime.decision_policy import candidate_from_decis
 
 
 def _ptb_freshness_policy(settings: Settings) -> FreshnessPolicy:
-    lag_ms = int(settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000)
+    lag_ms = int(
+        settings.strategies.ptb_diff.exit_config.market_data_max_lag_sec * 1000
+    )
     return FreshnessPolicy(
         max_orderbook_staleness_ms=lag_ms,
         max_spot_staleness_ms=lag_ms,

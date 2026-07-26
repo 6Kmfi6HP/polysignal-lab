@@ -1,19 +1,3 @@
-/**
- * Input: { StrictMode } from 'react', ReactDOM from 'react-dom/client', { AxiosError } from 'axios', {, { RouterProvider, createRouter } from '@tanstack/react-router', { toast } from 'sonner', { handleServerError } from '@/lib/handle-server-error', { DirectionProvider } from './context/direction-provider', { FontProvider } from './context/font-provider', { ThemeProvider } from './context/theme-provider'
- * Output: None
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import { StrictMode } from 'react'
 import ReactDOM from 'react-dom/client'
 import { AxiosError } from 'axios'

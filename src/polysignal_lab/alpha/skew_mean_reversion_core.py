@@ -1,23 +1,6 @@
-"""
-Input: __future__, __future__.annotations, polysignal_lab.alpha.helpers, polysignal_lab.alpha.helpers.enabled_for_view, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaDecision, polysignal_lab.alpha.types.MarketView, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side
-Output: SkewMeanReversionAlphaCore
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
-from polysignal_lab.alpha.helpers import enabled_for_view
+from polysignal_lab.alpha.decisions import enabled_for_view
 from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.domain.enums import Side
 
@@ -36,7 +19,10 @@ class SkewMeanReversionAlphaCore:
             return []
         if view.up.best_ask is None or view.down.best_ask is None:
             return []
-        if view.seconds_to_close is None or view.seconds_to_close > cfg.max_seconds_to_close:
+        if (
+            view.seconds_to_close is None
+            or view.seconds_to_close > cfg.max_seconds_to_close
+        ):
             return []
 
         up_price = view.up.best_ask
@@ -71,7 +57,9 @@ class SkewMeanReversionAlphaCore:
         # Confidence: proportional to skew extremity
         confidence = cfg.base_confidence + min(
             cfg.max_confidence - cfg.base_confidence,
-            skew_ratio / cfg.max_skew_ratio * (cfg.max_confidence - cfg.base_confidence),
+            skew_ratio
+            / cfg.max_skew_ratio
+            * (cfg.max_confidence - cfg.base_confidence),
         )
         confidence = min(cfg.max_confidence, max(cfg.min_confidence, confidence))
 

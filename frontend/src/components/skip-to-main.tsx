@@ -1,19 +1,3 @@
-/**
- * Input: None
- * Output: SkipToMain
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 export function SkipToMain() {
   return (
     <a

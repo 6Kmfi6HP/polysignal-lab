@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, re, dataclasses, dataclasses.dataclass, pydantic, pydantic.JsonValue, polysignal_lab.data.anchor_price_service, polysignal_lab.data.anchor_price_service.AnchorPriceStore, polysignal_lab.domain.market
-Output: PriceToBeatResult, PriceToBeatProvider
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import re
@@ -24,6 +8,7 @@ from pydantic import JsonValue
 from polysignal_lab.data.anchor_price_service import AnchorPriceStore
 from polysignal_lab.domain.market import Market
 from polysignal_lab.utils import safe_float
+
 
 @dataclass(frozen=True)
 class PriceToBeatResult:
@@ -76,25 +61,40 @@ class PriceToBeatProvider:
 
         # Source 1: Direct metadata field
         if market.price_to_beat is not None:
-            return PriceToBeatResult(value=market.price_to_beat, source="market_metadata", verified=True)
+            return PriceToBeatResult(
+                value=market.price_to_beat, source="market_metadata", verified=True
+            )
 
         # Source 2: Raw payload extraction
         raw_value = self._extract_from_raw(market.raw)
         if raw_value is not None:
-            return PriceToBeatResult(value=raw_value, source="market_raw", verified=True)
+            return PriceToBeatResult(
+                value=raw_value, source="market_raw", verified=True
+            )
 
         return None
 
     def _apply_text_fallback(self, market: Market) -> PriceToBeatResult:
         """Source 4: text pattern extraction fallback."""
-        text_value = self._extract_from_text(" ".join(filter(None, [market.question, market.market_slug])))
+        text_value = self._extract_from_text(
+            " ".join(filter(None, [market.question, market.market_slug]))
+        )
         if text_value is not None:
-            return PriceToBeatResult(value=text_value, source="text_pattern", verified=False)
-        return PriceToBeatResult(value=None, source="unavailable", verified=False, reason="PTB_UNAVAILABLE")
-
+            return PriceToBeatResult(
+                value=text_value, source="text_pattern", verified=False
+            )
+        return PriceToBeatResult(
+            value=None, source="unavailable", verified=False, reason="PTB_UNAVAILABLE"
+        )
 
     def _extract_from_raw(self, raw: dict[str, JsonValue]) -> float | None:
-        for key in ["priceToBeat", "price_to_beat", "priceToBeatValue", "strikePrice", "targetPrice"]:
+        for key in [
+            "priceToBeat",
+            "price_to_beat",
+            "priceToBeatValue",
+            "strikePrice",
+            "targetPrice",
+        ]:
             value = safe_float(raw.get(key))
             if value is not None:
                 return value

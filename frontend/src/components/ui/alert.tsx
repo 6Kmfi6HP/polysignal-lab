@@ -1,19 +1,3 @@
-/**
- * Input: * as React from 'react', { cva, type VariantProps } from 'class-variance-authority', { cn } from '@/lib/utils', react, class-variance-authority, @/lib/utils
- * Output: Alert, AlertTitle, AlertDescription
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import * as React from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'

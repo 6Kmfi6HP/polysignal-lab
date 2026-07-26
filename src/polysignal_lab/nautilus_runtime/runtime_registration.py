@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, collections.abc.Sequence, typing, typing.cast, nautilus_trader.core, nautilus_trader.core.nautilus_pyo3, polysignal_lab.config
-Output: enabled_strategy_names, register_runtime_components
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence

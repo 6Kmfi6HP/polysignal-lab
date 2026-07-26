@@ -1,15 +1,3 @@
-"""
-Input: __future__, __future__.annotations, html, collections.abc, collections.abc.Callable, datetime, datetime.datetime, datetime.timezone, typing, typing.Any
-Output: toggle_callback_for, main_keyboard, leaderboard_keyboard, back_keyboard, strategies_keyboard, safe_text, parse_time, format_age, truncate_text, position_display_payload
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
 from __future__ import annotations
 
 import html
@@ -55,7 +43,9 @@ def leaderboard_keyboard(scope: Literal["all", "today"]) -> InlineKeyboardMarkup
             InlineKeyboardButton("📅 今日", callback_data="lbt"),
             InlineKeyboardButton("📈 累计 ✓", callback_data="lb"),
         ]
-    return InlineKeyboardMarkup([toggle_row, [InlineKeyboardButton("⬅️ 返回", callback_data="bk")]])
+    return InlineKeyboardMarkup(
+        [toggle_row, [InlineKeyboardButton("⬅️ 返回", callback_data="bk")]]
+    )
 
 
 def back_keyboard() -> InlineKeyboardMarkup:

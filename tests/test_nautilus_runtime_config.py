@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, pathlib, pathlib.Path, pytest, pydantic, pydantic.ValidationError, polysignal_lab.config, polysignal_lab.config.Settings
-Output: test_runtime_config_defaults_to_nautilus_and_stays_paper_safe, test_nautilus_book_type_defaults_are_paper_only, test_nautilus_requires_nonempty_sandbox_base_currency, test_nautilus_rejects_unknown_sandbox_book_type, test_nautilus_runtime_uses_sandbox_book_type_not_matching_engine, test_removed_nautilus_matching_keys_fail_fast, test_removed_shadow_risk_fields_fail_fast, test_native_risk_limits_are_runtime_configuration, test_native_risk_config_builds_with_project_limits, test_yaml_runtime_book_type_values_are_explicit
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 from pathlib import Path
 
@@ -267,7 +251,11 @@ def test_health_config_accepts_yaml_overrides(tmp_path: Path) -> None:
     assert settings.health.restart_gate.critical_components == ("runtime", "sqlite")
     assert settings.health.restart_gate.critical_down_sec == 600
     assert settings.health.restart_gate.min_consecutive_failures == 7
-    assert settings.health.restart_gate.docker_healthcheck_fails_on_restart_recommended is True
+    assert (
+        settings.health.restart_gate.docker_healthcheck_fails_on_restart_recommended
+        is True
+    )
+
 
 def test_nautilus_market_rotation_defaults_are_enabled() -> None:
     settings = Settings()
@@ -298,14 +286,18 @@ def test_polysignal_strategy_config_extends_nautilus_strategy_config() -> None:
     from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
 
     settings = Settings()
-    config = PolySignalStrategyConfig.build(settings, (), (), strategy_name="one_cent_buy")
+    config = PolySignalStrategyConfig.build(
+        settings, (), (), strategy_name="one_cent_buy"
+    )
 
     assert isinstance(config, StrategyConfig)
     assert config.strategy_id == "PolySignal-one_cent_buy"
     assert config.order_id_tag == "onecentbuy"
     assert config.strategy_name == "one_cent_buy"
     assert config.strategy_names == ("one_cent_buy",)
-    reconstructed: PolySignalStrategyConfig = PolySignalStrategyConfig.parse(config.json())
+    reconstructed: PolySignalStrategyConfig = PolySignalStrategyConfig.parse(
+        config.json()
+    )
     assert reconstructed.settings_json == config.settings_json
     assert tuple(reconstructed.condition_ids) == tuple(config.condition_ids)
     assert reconstructed.strategy_name == "one_cent_buy"
@@ -314,7 +306,9 @@ def test_polysignal_strategy_config_extends_nautilus_strategy_config() -> None:
 def test_market_rotation_actor_config_extends_nautilus_actor_config() -> None:
     from nautilus_trader.common.config import ActorConfig
 
-    from polysignal_lab.nautilus_runtime.runtime_configs import MarketRotationActorConfig
+    from polysignal_lab.nautilus_runtime.runtime_configs import (
+        MarketRotationActorConfig,
+    )
 
     config = MarketRotationActorConfig.build(Settings(), ())
 

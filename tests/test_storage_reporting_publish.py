@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, concurrent.futures, concurrent.futures.ThreadPoolExecutor, datetime, datetime.date, datetime.datetime, datetime.timedelta, datetime.timezone, pathlib
-Output: test_formatter_signal_message_within_limit, test_telegram_dry_run_publish, test_formatter_nautilus_fill_message_is_compact, test_jsonl_and_state_store, test_jsonl_and_state_restore_reporting_streams, test_sqlite_store_and_dashboard, test_schema_rejects_missing_required_columns, test_daily_report_claim_and_delivery_lease_are_atomic_across_connections, test_daily_report_publish_authorization_rejects_expired_lease, test_daily_report_publish_authorization_renews_sending_lease
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -27,14 +11,14 @@ from fastapi.testclient import TestClient
 
 from factories import sample_report_result
 from polysignal_lab.dashboard.app import create_dashboard_app
-from polysignal_lab.app.reporting_build import _publish_report
+from polysignal_lab.app.daily_report.build import _publish_report
 from polysignal_lab.domain.anchor_price import AnchorPrice
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
 from polysignal_lab.domain.reporting_result import DailyReport
 from polysignal_lab.domain.strategy_readiness import StrategyMarketStatus
 from polysignal_lab.reporting.daily_report import DailyReportService
 from polysignal_lab.publish.telegram_publisher import TelegramPublisher
-from polysignal_lab.signal_layer.formatter import MessageFormatter
+from polysignal_lab.publish.message_formatter import MessageFormatter
 from polysignal_lab.storage import sqlite_store as sqlite_store_module
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import DuplicateRecordError, SQLiteStore
@@ -146,7 +130,9 @@ def test_jsonl_and_state_restore_reporting_streams(tmp_path):
     state.write("telegram_disabled_strategies", ["late_consensus"])
 
     # When: persisted JSONL/state is restored from disk.
-    restored_streams = {stream: logs.read_all(stream)[0]["stream"] for stream in streams}
+    restored_streams = {
+        stream: logs.read_all(stream)[0]["stream"] for stream in streams
+    }
     disabled = state.read("telegram_disabled_strategies")
     (tmp_path / "logs" / "broken.jsonl").write_text("{broken\n", encoding="utf-8")
 
@@ -205,11 +191,16 @@ def _authorize_attempt(
     *,
     lease_sec: float = 1,
 ) -> None:
-    assert store.authorize_daily_report_publish(
-        str(attempt["intent_id"]),
-        int(attempt["attempt_count"]),
-        lease_sec=lease_sec,
-    ) == "AUTHORIZED"
+    attempt_count = attempt["attempt_count"]
+    assert isinstance(attempt_count, int)
+    assert (
+        store.authorize_daily_report_publish(
+            str(attempt["intent_id"]),
+            attempt_count,
+            lease_sec=lease_sec,
+        )
+        == "AUTHORIZED"
+    )
 
 
 def test_daily_report_claim_and_delivery_lease_are_atomic_across_connections(
@@ -329,11 +320,14 @@ def test_daily_report_publish_authorization_rejects_expired_lease(
         "utc_now",
         lambda: observed_at + timedelta(seconds=2),
     )
-    assert store.authorize_daily_report_publish(
-        str(attempt["intent_id"]),
-        int(attempt["attempt_count"]),
-        lease_sec=1,
-    ) == "EXPIRED"
+    assert (
+        store.authorize_daily_report_publish(
+            str(attempt["intent_id"]),
+            int(attempt["attempt_count"]),
+            lease_sec=1,
+        )
+        == "EXPIRED"
+    )
     assert store.restore_report_publish_outbox()[0]["status"] == "DELIVERING"
 
 
@@ -357,11 +351,14 @@ def test_daily_report_publish_authorization_renews_sending_lease(
         "utc_now",
         lambda: observed_at + timedelta(milliseconds=500),
     )
-    assert store.authorize_daily_report_publish(
-        str(attempt["intent_id"]),
-        int(attempt["attempt_count"]),
-        lease_sec=30,
-    ) == "AUTHORIZED"
+    assert (
+        store.authorize_daily_report_publish(
+            str(attempt["intent_id"]),
+            int(attempt["attempt_count"]),
+            lease_sec=30,
+        )
+        == "AUTHORIZED"
+    )
     outbox = store.restore_report_publish_outbox()[0]
     assert outbox["lease_until"] == "2026-07-15T12:00:30.500000Z"
 
@@ -381,11 +378,14 @@ def test_daily_report_publish_late_authorized_attempt_is_audited_after_reclaim(
     )
 
     assert first_attempt is not None
-    assert store.authorize_daily_report_publish(
-        str(first_attempt["intent_id"]),
-        int(first_attempt["attempt_count"]),
-        lease_sec=1,
-    ) == "AUTHORIZED"
+    assert (
+        store.authorize_daily_report_publish(
+            str(first_attempt["intent_id"]),
+            int(first_attempt["attempt_count"]),
+            lease_sec=1,
+        )
+        == "AUTHORIZED"
+    )
     monkeypatch.setattr(
         sqlite_store_module,
         "utc_now",
@@ -415,25 +415,31 @@ def test_daily_report_publish_late_authorized_attempt_is_audited_after_reclaim(
     assert outbox["status"] == "DELIVERING"
     assert outbox["attempt_count"] == 2
     assert store.query_json("telegram_publishes")[0]["status"] == "SENT"
-    assert store.authorize_daily_report_publish(
-        str(second_attempt["intent_id"]),
-        int(second_attempt["attempt_count"]),
-        lease_sec=30,
-    ) == "STALE"
+    assert (
+        store.authorize_daily_report_publish(
+            str(second_attempt["intent_id"]),
+            int(second_attempt["attempt_count"]),
+            lease_sec=30,
+        )
+        == "STALE"
+    )
     settled_outbox = store.restore_report_publish_outbox()[0]
     assert settled_outbox["status"] == "SENT"
     assert settled_outbox["publish_id"] == str(second_attempt["idempotency_key"])
-    assert store.complete_daily_report_publish(
-        str(second_attempt["intent_id"]),
-        int(second_attempt["attempt_count"]),
-        {
-            "publish_id": str(second_attempt["idempotency_key"]),
-            "message_type": "daily_report",
-            "status": "FAILED",
-            "error": "not authorized",
-            "sent_at": None,
-        },
-    ) is None
+    assert (
+        store.complete_daily_report_publish(
+            str(second_attempt["intent_id"]),
+            int(second_attempt["attempt_count"]),
+            {
+                "publish_id": str(second_attempt["idempotency_key"]),
+                "message_type": "daily_report",
+                "status": "FAILED",
+                "error": "not authorized",
+                "sent_at": None,
+            },
+        )
+        is None
+    )
 
 
 def test_daily_report_publish_reclaim_preserves_legacy_authorized_attempt(
@@ -452,11 +458,14 @@ def test_daily_report_publish_reclaim_preserves_legacy_authorized_attempt(
 
     assert first_attempt is not None
     intent_id = str(first_attempt["intent_id"])
-    assert store.authorize_daily_report_publish(
-        intent_id,
-        int(first_attempt["attempt_count"]),
-        lease_sec=1,
-    ) == "AUTHORIZED"
+    assert (
+        store.authorize_daily_report_publish(
+            intent_id,
+            int(first_attempt["attempt_count"]),
+            lease_sec=1,
+        )
+        == "AUTHORIZED"
+    )
     row = store._conn.execute(
         "SELECT payload_json FROM report_publish_outbox WHERE intent_id=?",
         (intent_id,),
@@ -590,10 +599,13 @@ def test_daily_report_publish_failure_does_not_downgrade_success(
     assert effective_publish["status"] == "SENT"
     assert effective_publish["sent_at"] == "2026-07-15T12:00:01Z"
     assert store.restore_report_publish_outbox()[0]["status"] == "SENT"
-    assert store.claim_daily_report_publish(
-        persisted.report_id,
-        lease_sec=1,
-    ) is None
+    assert (
+        store.claim_daily_report_publish(
+            persisted.report_id,
+            lease_sec=1,
+        )
+        is None
+    )
     publishes = store.query_json("telegram_publishes")
     assert len(publishes) == 1
     assert publishes[0]["status"] == "SENT"
@@ -624,8 +636,7 @@ def test_new_daily_report_revision_supersedes_delivering_publish(
     assert created
     assert revised.revision == 2
     outbox = {
-        int(row["revision"]): row
-        for row in store.restore_report_publish_outbox()
+        int(row["revision"]): row for row in store.restore_report_publish_outbox()
     }
     assert outbox[1]["status"] == "SUPERSEDED"
     assert outbox[1]["lease_until"] is None
@@ -659,21 +670,23 @@ def test_new_daily_report_revision_does_not_revoke_authorized_publish(
     assert created
     assert revised.revision == 2
     outbox = {
-        int(row["revision"]): row
-        for row in store.restore_report_publish_outbox()
+        int(row["revision"]): row for row in store.restore_report_publish_outbox()
     }
     assert outbox[1]["status"] == "SENDING"
     assert outbox[2]["status"] == "PENDING"
-    assert store.complete_daily_report_publish(
-        str(attempt["intent_id"]),
-        int(attempt["attempt_count"]),
-        {
-            "publish_id": str(attempt["idempotency_key"]),
-            "message_type": "daily_report",
-            "status": "SENT",
-            "sent_at": "2026-07-15T12:00:02Z",
-        },
-    ) is not None
+    assert (
+        store.complete_daily_report_publish(
+            str(attempt["intent_id"]),
+            int(attempt["attempt_count"]),
+            {
+                "publish_id": str(attempt["idempotency_key"]),
+                "message_type": "daily_report",
+                "status": "SENT",
+                "sent_at": "2026-07-15T12:00:02Z",
+            },
+        )
+        is not None
+    )
 
 
 def test_new_daily_report_revision_failed_publish_becomes_superseded(
@@ -713,8 +726,7 @@ def test_new_daily_report_revision_failed_publish_becomes_superseded(
     assert revised.revision == 2
     assert effective is not None
     outbox = {
-        int(row["revision"]): row
-        for row in store.restore_report_publish_outbox()
+        int(row["revision"]): row for row in store.restore_report_publish_outbox()
     }
     assert outbox[1]["status"] == "SUPERSEDED"
     assert outbox[1]["last_error"] == "superseded_by_revision:2"
@@ -749,26 +761,35 @@ def test_new_daily_report_revision_waits_for_authorized_publish(
     )
 
     assert second_attempt is not None
-    assert store.authorize_daily_report_publish(
-        str(second_attempt["intent_id"]),
-        int(second_attempt["attempt_count"]),
-        lease_sec=60,
-    ) == "BUSY"
-    assert store.complete_daily_report_publish(
-        str(first_attempt["intent_id"]),
-        int(first_attempt["attempt_count"]),
-        {
-            "publish_id": str(first_attempt["idempotency_key"]),
-            "message_type": "daily_report",
-            "status": "SENT",
-            "sent_at": "2026-07-15T12:00:02Z",
-        },
-    ) is not None
-    assert store.authorize_daily_report_publish(
-        str(second_attempt["intent_id"]),
-        int(second_attempt["attempt_count"]),
-        lease_sec=60,
-    ) == "AUTHORIZED"
+    assert (
+        store.authorize_daily_report_publish(
+            str(second_attempt["intent_id"]),
+            int(second_attempt["attempt_count"]),
+            lease_sec=60,
+        )
+        == "BUSY"
+    )
+    assert (
+        store.complete_daily_report_publish(
+            str(first_attempt["intent_id"]),
+            int(first_attempt["attempt_count"]),
+            {
+                "publish_id": str(first_attempt["idempotency_key"]),
+                "message_type": "daily_report",
+                "status": "SENT",
+                "sent_at": "2026-07-15T12:00:02Z",
+            },
+        )
+        is not None
+    )
+    assert (
+        store.authorize_daily_report_publish(
+            str(second_attempt["intent_id"]),
+            int(second_attempt["attempt_count"]),
+            lease_sec=60,
+        )
+        == "AUTHORIZED"
+    )
 
 
 def test_new_daily_report_revision_reclaims_expired_waiting_lease(
@@ -802,21 +823,27 @@ def test_new_daily_report_revision_reclaims_expired_waiting_lease(
     )
 
     assert second_attempt is not None
-    assert store.authorize_daily_report_publish(
-        str(second_attempt["intent_id"]),
-        int(second_attempt["attempt_count"]),
-        lease_sec=60,
-    ) == "BUSY"
+    assert (
+        store.authorize_daily_report_publish(
+            str(second_attempt["intent_id"]),
+            int(second_attempt["attempt_count"]),
+            lease_sec=60,
+        )
+        == "BUSY"
+    )
     monkeypatch.setattr(
         sqlite_store_module,
         "utc_now",
         lambda: observed_at + timedelta(seconds=2),
     )
-    assert store.authorize_daily_report_publish(
-        str(second_attempt["intent_id"]),
-        int(second_attempt["attempt_count"]),
-        lease_sec=1,
-    ) == "EXPIRED"
+    assert (
+        store.authorize_daily_report_publish(
+            str(second_attempt["intent_id"]),
+            int(second_attempt["attempt_count"]),
+            lease_sec=1,
+        )
+        == "EXPIRED"
+    )
     reclaimed = store.claim_daily_report_publish(
         revised.report_id,
         lease_sec=1,
@@ -824,11 +851,14 @@ def test_new_daily_report_revision_reclaims_expired_waiting_lease(
 
     assert reclaimed is not None
     assert reclaimed["attempt_count"] == 2
-    assert store.authorize_daily_report_publish(
-        str(reclaimed["intent_id"]),
-        int(reclaimed["attempt_count"]),
-        lease_sec=1,
-    ) == "AUTHORIZED"
+    assert (
+        store.authorize_daily_report_publish(
+            str(reclaimed["intent_id"]),
+            int(reclaimed["attempt_count"]),
+            lease_sec=1,
+        )
+        == "AUTHORIZED"
+    )
 
 
 def test_new_daily_report_revision_fences_expired_sending_completion(
@@ -873,11 +903,14 @@ def test_new_daily_report_revision_fences_expired_sending_completion(
     )
 
     assert reclaimed is not None
-    assert store.authorize_daily_report_publish(
-        str(reclaimed["intent_id"]),
-        int(reclaimed["attempt_count"]),
-        lease_sec=1,
-    ) == "AUTHORIZED"
+    assert (
+        store.authorize_daily_report_publish(
+            str(reclaimed["intent_id"]),
+            int(reclaimed["attempt_count"]),
+            lease_sec=1,
+        )
+        == "AUTHORIZED"
+    )
     effective = store.complete_daily_report_publish(
         str(first_attempt["intent_id"]),
         int(first_attempt["attempt_count"]),
@@ -891,8 +924,7 @@ def test_new_daily_report_revision_fences_expired_sending_completion(
     assert effective is not None
     assert effective["status"] == "SENT"
     outbox = {
-        int(row["revision"]): row
-        for row in store.restore_report_publish_outbox()
+        int(row["revision"]): row for row in store.restore_report_publish_outbox()
     }
     assert outbox[1]["status"] == "SUPERSEDED"
     assert outbox[1]["last_error"] == "superseded_by_revision:2"
@@ -972,9 +1004,12 @@ def test_pending_daily_report_publishes_supersedes_stale_nonterminal_rows(
     )
 
     assert revised.revision == 2
-    assert store.pending_daily_report_publishes(
-        before_date="2026-07-16",
-    ) == []
+    assert (
+        store.pending_daily_report_publishes(
+            before_date="2026-07-16",
+        )
+        == []
+    )
     outbox = store.restore_report_publish_outbox()
     assert outbox[0]["status"] == "SUPERSEDED"
     assert outbox[0]["last_error"] == "superseded_by_revision:2"
@@ -1012,9 +1047,12 @@ def test_pending_daily_report_publishes_excludes_stale_revision(
 
     assert created
     assert revised.revision == 2
-    assert store.pending_daily_report_publishes(
-        before_date="2026-07-16",
-    ) == []
+    assert (
+        store.pending_daily_report_publishes(
+            before_date="2026-07-16",
+        )
+        == []
+    )
 
 
 async def test_publish_report_skips_intent_superseded_before_delivery(
@@ -1070,9 +1108,7 @@ async def test_publish_report_skips_intent_superseded_before_delivery(
             delivered.append(str(idempotency_key))
 
     scheduler = SimpleNamespace(
-        settings=SimpleNamespace(
-            telegram=SimpleNamespace(publish_timeout_sec=20.0)
-        ),
+        settings=SimpleNamespace(telegram=SimpleNamespace(publish_timeout_sec=20.0)),
         persistence=Persistence(),
         publish_service=Publisher(),
         logger=SimpleNamespace(
@@ -1130,9 +1166,7 @@ async def test_publish_report_rejects_unknown_authorization() -> None:
             return None
 
     scheduler = SimpleNamespace(
-        settings=SimpleNamespace(
-            telegram=SimpleNamespace(publish_timeout_sec=20.0)
-        ),
+        settings=SimpleNamespace(telegram=SimpleNamespace(publish_timeout_sec=20.0)),
         persistence=Persistence(),
         publish_service=Publisher(),
         health=Health(),
@@ -1192,9 +1226,7 @@ async def test_publish_report_exception_preserves_sending_lease(
             raise TimeoutError(str(idempotency_key))
 
     scheduler = SimpleNamespace(
-        settings=SimpleNamespace(
-            telegram=SimpleNamespace(publish_timeout_sec=20.0)
-        ),
+        settings=SimpleNamespace(telegram=SimpleNamespace(publish_timeout_sec=20.0)),
         persistence=Persistence(),
         publish_service=Publisher(),
         logger=SimpleNamespace(
@@ -1302,9 +1334,7 @@ async def test_publish_report_skips_existing_success_result(
             health_metrics.append((name, metric))
 
     scheduler = SimpleNamespace(
-        settings=SimpleNamespace(
-            telegram=SimpleNamespace(publish_timeout_sec=20.0)
-        ),
+        settings=SimpleNamespace(telegram=SimpleNamespace(publish_timeout_sec=20.0)),
         persistence=Persistence(),
         publish_service=Publisher(),
         health=Health(),
@@ -1417,28 +1447,34 @@ def test_duplicate_ids_are_idempotent_or_reported(tmp_path, market_view, setting
     store.insert_signal(sig)
     store.insert_rejected_signal(lifecycle.rejected)
     store.insert_rejected_signal(lifecycle.rejected)
-    store.insert_system_event({
-        "event_id": "evt-order-dup",
-        "event_type": "nautilus_order",
-        "severity": "info",
-        "created_at": str(lifecycle.order["created_at"]),
-        **lifecycle.order,
-    })
-    store.insert_system_event({
-        "event_id": "evt-fill-dup",
-        "event_type": "nautilus_fill",
-        "severity": "info",
-        "created_at": str(lifecycle.fill["created_at"]),
-        **lifecycle.fill,
-    })
-    store.insert_system_event({
-        "event_id": "evt-pos-dup",
-        "event_type": "nautilus_position",
-        "severity": "info",
-        "created_at": str(lifecycle.position["opened_at"]),
-        **lifecycle.position,
-        "ts": lifecycle.position["opened_at"],
-    })
+    store.insert_system_event(
+        {
+            "event_id": "evt-order-dup",
+            "event_type": "nautilus_order",
+            "severity": "info",
+            "created_at": str(lifecycle.order["created_at"]),
+            **lifecycle.order,
+        }
+    )
+    store.insert_system_event(
+        {
+            "event_id": "evt-fill-dup",
+            "event_type": "nautilus_fill",
+            "severity": "info",
+            "created_at": str(lifecycle.fill["created_at"]),
+            **lifecycle.fill,
+        }
+    )
+    store.insert_system_event(
+        {
+            "event_id": "evt-pos-dup",
+            "event_type": "nautilus_position",
+            "severity": "info",
+            "created_at": str(lifecycle.position["opened_at"]),
+            **lifecycle.position,
+            "ts": lifecycle.position["opened_at"],
+        }
+    )
     assert store.insert_report_result(lifecycle.result) is True
     assert store.insert_report_result(lifecycle.result) is False
     store.insert_report_account_snapshot(lifecycle.account_snapshot)

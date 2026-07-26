@@ -1,24 +1,13 @@
-/**
- * Input: { Bar, BarChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis } from 'recharts', { Header } from '@/components/layout/header', { Main } from '@/components/layout/main', { Search } from '@/components/search', { ThemeSwitch } from '@/components/theme-switch', { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card', { Skeleton } from '@/components/ui/skeleton', {, { useLeaderboardQuery } from '@/lib/api/hooks', type { LeaderboardRow } from '@/lib/api/types'
- * Output: LeaderboardPage, PnlByStrategyChart, LeaderboardTable
- * Pos: Application code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis } from 'recharts'
-import { Header } from '@/components/layout/header'
-import { Main } from '@/components/layout/main'
-import { Search } from '@/components/search'
-import { ThemeSwitch } from '@/components/theme-switch'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import { useLeaderboardQuery } from '@/lib/api/hooks'
+import type { LeaderboardRow } from '@/lib/api/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -29,8 +18,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { useLeaderboardQuery } from '@/lib/api/hooks'
-import type { LeaderboardRow } from '@/lib/api/types'
+import { Header } from '@/components/layout/header'
+import { Main } from '@/components/layout/main'
+import { Search } from '@/components/search'
+import { ThemeSwitch } from '@/components/theme-switch'
 
 export function LeaderboardPage() {
   const leaderboard = useLeaderboardQuery()

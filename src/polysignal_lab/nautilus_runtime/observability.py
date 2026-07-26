@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, sqlite3, time, collections.abc, collections.abc.Mapping, collections.abc.Sequence, dataclasses, dataclasses.dataclass, queue
-Output: _TelemetryEvent, ObservabilityService, StrategyControl, DecisionPolicyControl
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import sqlite3
@@ -20,9 +10,13 @@ from typing import Protocol
 
 from polysignal_lab.alpha.types import AlphaDecision
 from polysignal_lab.domain.signal import RejectedSignal, SignalCandidate
-from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy, RejectedDecision
+from polysignal_lab.nautilus_runtime.decision_policy import (
+    DecisionPolicy,
+    RejectedDecision,
+)
 from polysignal_lab.nautilus_runtime.observability_persistence import (
     AcceptedSignalNotifier,
+    EventStore,
     NautilusEventStoreAdapter,
     NautilusNotifierAdapter,
     ReportResultNotifier,
@@ -48,10 +42,12 @@ class _TelemetryEvent:
     table: str
     payload: Mapping[str, object]
 
+
 # Re-exported so that existing test and application imports resolve through
 # ``from polysignal_lab.nautilus_runtime.observability import ...``.
 __all__ = [
     "DecisionPolicyControl",
+    "EventStore",
     "NautilusEventStoreAdapter",
     "NautilusNotifierAdapter",
     "ObservabilityService",
@@ -93,7 +89,7 @@ class ObservabilityService:
 
     def __init__(
         self,
-        store: NautilusEventStoreAdapter | None = None,
+        store: EventStore | None = None,
         health: HealthRegistry | None = None,
         notifier: NautilusNotifierAdapter | None = None,
         accepted_signal_notifier: AcceptedSignalNotifier | None = None,
@@ -103,13 +99,15 @@ class ObservabilityService:
         telemetry_sqlite_lock_retries: int = 3,
         telemetry_retry_backoff_sec: float = 0.01,
     ) -> None:
-        self.store: NautilusEventStoreAdapter | None = store
+        self.store: EventStore | None = store
         self.health: HealthRegistry = health or HealthRegistry()
         self.notifier: NautilusNotifierAdapter | None = notifier
         self.accepted_signal_notifier: AcceptedSignalNotifier | None = (
             accepted_signal_notifier
         )
-        self.report_result_notifier: ReportResultNotifier | None = report_result_notifier
+        self.report_result_notifier: ReportResultNotifier | None = (
+            report_result_notifier
+        )
         self._event_count: int = 0
         self._recent_rejections: dict[tuple[object, ...], float] = {}
         # Best-effort telemetry queue lives on ObservabilityService (no TelemetryWriter).
@@ -226,15 +224,10 @@ class ObservabilityService:
                 )
                 return
 
-    def _insert_best_effort(
-        self, table: str, payload: Mapping[str, object]
-    ) -> None:
+    def _insert_best_effort(self, table: str, payload: Mapping[str, object]) -> None:
         if self.store is None:
             return
-        if isinstance(self.store, NautilusEventStoreAdapter):
-            self.store.insert_json(table, payload, suppress_best_effort_locks=False)
-        else:
-            self.store.insert_json(table, payload)
+        _ = self.store.insert_json(table, payload, suppress_best_effort_locks=False)
 
     # -- Event recording --
 
@@ -242,31 +235,36 @@ class ObservabilityService:
         self._event_count += 1
         if self.store is None:
             return
-        if not accepted and self._suppress_repeat((
-            "decision",
-            decision.strategy,
-            decision.market_id,
-            decision.side.value,
-            tuple(decision.reason_codes),
-        )):
+        if not accepted and self._suppress_repeat(
+            (
+                "decision",
+                decision.strategy,
+                decision.market_id,
+                decision.side.value,
+                tuple(decision.reason_codes),
+            )
+        ):
             return
-        self._enqueue_best_effort("nautilus_decision", {
-            "ts": utc_iso(),
-            "strategy": decision.strategy,
-            "asset": decision.asset,
-            "timeframe": decision.timeframe,
-            "market_id": decision.market_id,
-            "market_slug": decision.market_slug,
-            "condition_id": decision.condition_id,
-            "token_id": decision.token_id,
-            "side": decision.side.value,
-            "confidence": decision.confidence,
-            "accepted": accepted,
-            "reason_codes": list(decision.reason_codes),
-            "seconds_to_close": decision.seconds_to_close,
-            "data_freshness_ms": decision.data_freshness_ms,
-            "metrics": dict(decision.metrics),
-        })
+        self._enqueue_best_effort(
+            "nautilus_decision",
+            {
+                "ts": utc_iso(),
+                "strategy": decision.strategy,
+                "asset": decision.asset,
+                "timeframe": decision.timeframe,
+                "market_id": decision.market_id,
+                "market_slug": decision.market_slug,
+                "condition_id": decision.condition_id,
+                "token_id": decision.token_id,
+                "side": decision.side.value,
+                "confidence": decision.confidence,
+                "accepted": accepted,
+                "reason_codes": list(decision.reason_codes),
+                "seconds_to_close": decision.seconds_to_close,
+                "data_freshness_ms": decision.data_freshness_ms,
+                "metrics": dict(decision.metrics),
+            },
+        )
 
     def record_signal(self, signal: SignalCandidate) -> None:
         self._event_count += 1
@@ -280,13 +278,15 @@ class ObservabilityService:
         if self.store is None or candidate is None:
             return
         reason_code = rejected.reason_code
-        if self._suppress_repeat((
-            "rejected",
-            candidate.strategy,
-            candidate.market_id,
-            candidate.side.value,
-            reason_code,
-        )):
+        if self._suppress_repeat(
+            (
+                "rejected",
+                candidate.strategy,
+                candidate.market_id,
+                candidate.side.value,
+                reason_code,
+            )
+        ):
             return
         self.store.insert_json(
             "rejected_signals",
@@ -303,11 +303,14 @@ class ObservabilityService:
         if self.store is None:
             return
         snapshot = self.health.snapshot()
-        self._enqueue_best_effort("health_snapshot", {
-            "ts": snapshot.generated_at,
-            "status": snapshot.status,
-            "components": [c.as_dict() for c in snapshot.components],
-        })
+        self._enqueue_best_effort(
+            "health_snapshot",
+            {
+                "ts": snapshot.generated_at,
+                "status": snapshot.status,
+                "components": [c.as_dict() for c in snapshot.components],
+            },
+        )
 
     def record_event(self, table: str, data: Mapping[str, object]) -> bool:
         self._event_count += 1
@@ -346,7 +349,9 @@ class ObservabilityService:
             self.accepted_signal_notifier(signal, stake_usdc)
         except Exception as exc:
             _health_mark_side_effect_failure(
-                self.health, kind="accepted_signal_notifier", error=exc,
+                self.health,
+                kind="accepted_signal_notifier",
+                error=exc,
             )
 
     def notify_report_result(self, result: Mapping[str, object]) -> None:
@@ -361,7 +366,9 @@ class ObservabilityService:
             self.report_result_notifier(result)
         except Exception as exc:
             _health_mark_side_effect_failure(
-                self.health, kind="report_result_notifier", error=exc,
+                self.health,
+                kind="report_result_notifier",
+                error=exc,
             )
 
     # -- Notifications --
@@ -406,6 +413,7 @@ class StrategyControl(Protocol):
 
 class DecisionPolicyControl:
     """Adapts DecisionPolicy to StrategyControl protocol."""
+
     def __init__(self, policy: DecisionPolicy) -> None:
         self._policy: DecisionPolicy = policy
 
@@ -417,7 +425,9 @@ class DecisionPolicyControl:
 
     def status_payload(self) -> dict[str, object]:
         return {
-            "disabled_strategies": sorted(str(s) for s in self._policy.disabled_strategies),
+            "disabled_strategies": sorted(
+                str(s) for s in self._policy.disabled_strategies
+            ),
         }
 
     def skip_reason_for(self, name: str) -> str | None:

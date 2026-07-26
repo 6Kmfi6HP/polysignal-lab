@@ -1,19 +1,3 @@
-/**
- * Input: * as React from 'react', { Slot } from '@radix-ui/react-slot', { cva, type VariantProps } from 'class-variance-authority', { cn } from '@/lib/utils', react, @radix-ui/react-slot, class-variance-authority, @/lib/utils
- * Output: Button
- * Pos: UI Layer - UI components
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
 import { cva, type VariantProps } from 'class-variance-authority'

@@ -1,11 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, enum, enum.StrEnum
-Output: Verdict, ComboStats, SegmentedStats, PromotionReport, render_promotion_markdown
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -47,7 +39,11 @@ class SegmentedStats:
 
     @property
     def average_realized_pnl(self) -> float:
-        return self.total_realized_pnl / self.settled_rounds if self.settled_rounds else 0.0
+        return (
+            self.total_realized_pnl / self.settled_rounds
+            if self.settled_rounds
+            else 0.0
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,7 +128,9 @@ def render_promotion_markdown(report: PromotionReport) -> str:
             "No PASS/FAIL directional conclusion is issued per ADR 0005."
         )
     elif report.verdict is Verdict.FAIL:
-        lines.append("## Directional conclusion: FAIL\n\nOOS realized PnL is not positive.")
+        lines.append(
+            "## Directional conclusion: FAIL\n\nOOS realized PnL is not positive."
+        )
     else:
         lines.append("## Directional conclusion: PASS\n\nOOS realized PnL is positive.")
     lines.append("")

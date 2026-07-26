@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.datetime, importlib, importlib.import_module, typing, typing.Final, pydantic, pydantic.JsonValue
-Output: market_from_gamma, market_status_from_gamma, binary_option_outcome_from_gamma, parse_nautilus_polymarket_instrument
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -63,8 +53,10 @@ def market_from_gamma(payload: JsonObject, asset: str, timeframe: str) -> Market
         or market_id
     )
     slug = str(payload.get("slug") or payload.get("market_slug") or market_id)
-    question_id = payload.get("questionID") or payload.get("questionId") or payload.get(
-        "question_id"
+    question_id = (
+        payload.get("questionID")
+        or payload.get("questionId")
+        or payload.get("question_id")
     )
     question = payload.get("question") or payload.get("title")
     start_ts = parse_dt(
@@ -176,7 +168,9 @@ def binary_option_outcome_from_gamma(
     outcome: str,
 ) -> str:
     """Outcome label via NT parse_polymarket_instrument — no local dual parse path."""
-    end_date = _first_text(payload, ("end_date_iso", "endDateIso", "endDate", "end_date"))
+    end_date = _first_text(
+        payload, ("end_date_iso", "endDateIso", "endDate", "end_date")
+    )
     market_info: dict[str, object] = {
         "condition_id": condition_id,
         "question": question,

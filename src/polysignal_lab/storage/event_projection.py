@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Iterable, collections.abc.Mapping, math, typing, typing.cast
-Output: normalize_report_order, normalize_report_fill, normalize_report_position, report_token_id
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -46,7 +36,7 @@ def normalize_report_order(
             "order_id",
             "id",
             metric_keys=("report_order_id", "client_order_id", "order_id"),
-        )
+        ),
     )
     _fill_missing(
         payload,
@@ -79,7 +69,9 @@ def normalize_report_order(
         metric_keys=("shares", "quantity", "contracts"),
     )
     if shares in (None, 0.0):
-        metric_shares = _number({}, metrics, metric_keys=("contracts", "shares", "quantity"))
+        metric_shares = _number(
+            {}, metrics, metric_keys=("contracts", "shares", "quantity")
+        )
         if metric_shares not in (None, 0.0):
             shares = metric_shares
     if limit_price in (None, 0.0):
@@ -106,15 +98,19 @@ def normalize_report_order(
     )
     _set_number(payload, "stake_usdc", stake)
     _set_number(payload, "shares", shares)
-    payload["status"] = _ORDER_STATUSES.get(native, "") if (
-        native := _text(
-            row,
-            metrics,
-            "status",
-            "order_status",
-            metric_keys=("status", "order_status"),
-        ).upper()
-    ) else ""
+    payload["status"] = (
+        _ORDER_STATUSES.get(native, "")
+        if (
+            native := _text(
+                row,
+                metrics,
+                "status",
+                "order_status",
+                metric_keys=("status", "order_status"),
+            ).upper()
+        )
+        else ""
+    )
     _fill_missing(
         payload,
         "reject_reason",
@@ -326,10 +322,7 @@ def _finite_payload_value(value: object) -> object:
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, Mapping):
-        return {
-            str(key): _finite_payload_value(item)
-            for key, item in value.items()
-        }
+        return {str(key): _finite_payload_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [_finite_payload_value(item) for item in value]
     return value

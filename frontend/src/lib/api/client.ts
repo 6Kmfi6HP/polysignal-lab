@@ -1,19 +1,3 @@
-/**
- * Input: type {, ./types
- * Output: ApiError, getHealth, getOverview, getSignals, getRejectedSignals, getReportOrders, getPositions, getTrades, getLeaderboard, getStrategyStatus
- * Pos: Library - Shared code
- *
- * 🔄 Self-reference: When this file changes, update this header
- */
-
-
-
-
-
-
-
-
-
 import type {
   HealthResponse,
   LeaderboardResponse,
@@ -50,7 +34,10 @@ async function request<T>(
   }
   const response = await fetch(url.toString())
   if (!response.ok) {
-    throw new ApiError(response.status, `${path} failed with status ${response.status}`)
+    throw new ApiError(
+      response.status,
+      `${path} failed with status ${response.status}`
+    )
   }
   return response.json() as Promise<T>
 }

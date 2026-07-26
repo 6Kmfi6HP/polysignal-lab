@@ -1,26 +1,10 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.date, factories, factories.MarketFactoryConfig, factories.sample_market, polysignal_lab.app.reporting_projection, polysignal_lab.app.reporting_projection.report_result_from_projection, polysignal_lab.domain.enums
-Output: test_calibration_buckets_use_signal_confidence_from_paper_flow
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import date
 
 from factories import MarketFactoryConfig, sample_market
 
-from polysignal_lab.app.reporting_projection import report_result_from_projection
+from polysignal_lab.app.daily_report.projection import report_result_from_projection
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.reporting.daily_report import DailyReportService
 

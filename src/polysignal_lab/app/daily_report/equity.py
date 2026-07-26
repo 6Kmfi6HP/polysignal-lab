@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, math, typing, typing.Any, typing.Protocol, typing.TypeGuard, typing.cast, typing.runtime_checkable, polysignal_lab.domain.reporting_result
-Output: _NautilusReportingCache
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import math
@@ -114,7 +104,8 @@ def _report_equity_inputs_from_nautilus_cache(
         open_positions = sum(
             1
             for position in positions
-            if position is not None and not bool(project_position(position).get("is_closed"))
+            if position is not None
+            and not bool(project_position(position).get("is_closed"))
         )
 
     return starting_equity, ending_equity, open_positions, equity_source

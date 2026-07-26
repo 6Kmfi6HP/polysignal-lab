@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Callable, typing, typing.cast, polysignal_lab.alpha.types, polysignal_lab.alpha.types.AlphaCore, polysignal_lab.nautilus_runtime.market_catalog, polysignal_lab.nautilus_runtime.market_catalog.MarketCatalog
-Output: dependencies_from_config
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -16,14 +6,14 @@ from typing import cast
 from polysignal_lab.alpha.types import AlphaCore
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
-from polysignal_lab.nautilus_runtime.strategy.helpers import _Assembler
+from polysignal_lab.nautilus_runtime.strategy.protocols import _Assembler
 
 
 def dependencies_from_config(
     config: PolySignalStrategyConfig,
 ) -> tuple[AlphaCore, _Assembler, MarketCatalog, Callable[[str], object]]:
     """Build a single alpha core for this Strategy instance (no Composite)."""
-    from polysignal_lab.nautilus_runtime.node_builder_components import (
+    from polysignal_lab.nautilus_runtime.configured_markets import (
         create_market_projection_components,
     )
     from polysignal_lab.nautilus_runtime.strategy_builder import _native_core_for
@@ -40,7 +30,7 @@ def dependencies_from_config(
     if core is None:
         raise RuntimeError(f"PolySignalStrategyConfig has no native core for {name!r}")
 
-    from polysignal_lab.nautilus_runtime.strategy.helpers import (
+    from polysignal_lab.nautilus_runtime.strategy.catalog_lookups import (
         catalog_instrument_id_resolver,
     )
 

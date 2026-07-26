@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, asyncio, pathlib, pathlib.Path, types, types.SimpleNamespace, typing, typing.cast, pytest
-Output: test_live_node_exposes_expected_client_ids, test_load_live_runtime_symbols_matches_livenode_api, test_live_polymarket_execution_is_rejected, test_build_sandbox_live_node_uses_polymarket_data_and_sandbox_exec, test_build_sandbox_live_node_uses_official_rtds_via_polymarket_config, test_build_polymarket_data_client_config_uses_dynamic_loading_without_bulk_refresh, test_build_sandbox_live_node_bounds_cache_config, test_build_sandbox_exec_client_config_uses_paper_venue, test_build_exec_engine_config_disables_reconciliation_for_sandbox, test_build_exec_engine_config_enables_reconciliation_for_live
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import asyncio
@@ -128,7 +118,9 @@ class FakeLiveNodeBuilder:
 
 class FakeLiveNodeType:
     @staticmethod
-    def builder(name: str, trader_id: object, environment: object) -> FakeLiveNodeBuilder:
+    def builder(
+        name: str, trader_id: object, environment: object
+    ) -> FakeLiveNodeBuilder:
         return FakeLiveNodeBuilder(name, trader_id, environment)
 
 
@@ -181,11 +173,19 @@ def test_load_live_runtime_symbols_matches_livenode_api() -> None:
     pytest.importorskip("nautilus_trader")
 
     from nautilus_trader.core import nautilus_pyo3 as pyo3
-    from polysignal_lab.nautilus_runtime.optional_imports import load_live_runtime_symbols
+    from polysignal_lab.nautilus_runtime.optional_imports import (
+        load_live_runtime_symbols,
+    )
 
     symbols = load_live_runtime_symbols()
 
-    assert symbols.live_node is pyo3.LiveNode or getattr(symbols.live_node, "__name__", "") == "LiveNode"
+    # LiveNode 运行时存在，但 pyo3 扩展模块的 stub 未导出它。
+    live_node_cls: object = getattr(pyo3, "LiveNode", None)
+
+    assert (
+        symbols.live_node is live_node_cls
+        or getattr(symbols.live_node, "__name__", "") == "LiveNode"
+    )
     assert symbols.trader_id is pyo3.TraderId
     assert symbols.environment is pyo3.Environment
 
@@ -197,9 +197,6 @@ def test_live_polymarket_execution_is_rejected() -> None:
         assert_no_live_polymarket_execution(config)
 
 
-
-
-
 def test_build_sandbox_live_node_uses_polymarket_data_and_sandbox_exec(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -208,7 +205,9 @@ def test_build_sandbox_live_node_uses_polymarket_data_and_sandbox_exec(
     settings.trading.starting_balance_usdc = 1234.0
     instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 
-    node = build_sandbox_live_node(settings, instrument_configs={"POLYMARKET-5M": instrument_config})
+    node = build_sandbox_live_node(
+        settings, instrument_configs={"POLYMARKET-5M": instrument_config}
+    )
 
     assert isinstance(node, FakeLiveNode)
     builder = node.builder
@@ -236,12 +235,16 @@ def test_build_sandbox_live_node_uses_official_rtds_via_polymarket_config(
     settings.runtime.nautilus.spot_data.source = "polymarket_rtds"
     instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 
-    node = build_sandbox_live_node(settings, instrument_configs={"POLYMARKET-5M": instrument_config})
+    node = build_sandbox_live_node(
+        settings, instrument_configs={"POLYMARKET-5M": instrument_config}
+    )
 
     builder = cast(FakeLiveNode, node).builder
     assert [item[0] for item in builder.data_clients] == ["POLYMARKET-5M"]
     market_config = builder.data_clients[0][2]
-    assert getattr(market_config, "base_url_rtds") == settings.data.polymarket.rtds_ws_url
+    assert (
+        getattr(market_config, "base_url_rtds") == settings.data.polymarket.rtds_ws_url
+    )
 
 
 def test_build_polymarket_data_client_config_subscribes_to_future_markets(
@@ -251,7 +254,9 @@ def test_build_polymarket_data_client_config_subscribes_to_future_markets(
     settings = Settings()
     instrument_config = SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))
 
-    polymarket = build_polymarket_data_client_config(settings, instrument_config=instrument_config)
+    polymarket = build_polymarket_data_client_config(
+        settings, instrument_config=instrument_config
+    )
 
     assert getattr(polymarket, "instrument_config") is instrument_config
     assert getattr(polymarket, "auto_load_missing_instruments") is True
@@ -266,7 +271,14 @@ def test_build_sandbox_live_node_bounds_cache_config(
 ) -> None:
     _patch_live_node_fakes(monkeypatch)
 
-    node = build_sandbox_live_node(Settings(), instrument_configs={"POLYMARKET-5M": SimpleNamespace(load_ids=frozenset({"up-token.POLYMARKET"}))})
+    node = build_sandbox_live_node(
+        Settings(),
+        instrument_configs={
+            "POLYMARKET-5M": SimpleNamespace(
+                load_ids=frozenset({"up-token.POLYMARKET"})
+            )
+        },
+    )
 
     builder = cast(FakeLiveNode, node).builder
     cache = builder.kwargs["cache"]
@@ -330,7 +342,6 @@ def test_live_execution_node_fails_closed_without_safety_unlock() -> None:
         )
 
 
-
 def test_live_execution_node_fails_closed_without_live_authorization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -374,7 +385,10 @@ def test_live_execution_node_registers_official_factory_only_after_all_gates(
     for name, value in credentials.items():
         monkeypatch.setenv(name, value)
 
-    node = build_live_execution_node(settings, instrument_configs={"POLYMARKET-5M": SimpleNamespace(load_ids=frozenset())})
+    node = build_live_execution_node(
+        settings,
+        instrument_configs={"POLYMARKET-5M": SimpleNamespace(load_ids=frozenset())},
+    )
 
     builder = cast(FakeLiveNode, node).builder
     assert [item[0] for item in builder.exec_clients] == [LIVE_EXEC_CLIENT_ID]

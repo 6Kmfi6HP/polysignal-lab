@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, polysignal_lab.alpha.vwap_trade_history, polysignal_lab.alpha.vwap_trade_history.(, polysignal_lab.alpha.types, polysignal_lab.alpha.types.TradeView, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side, datetime, datetime.UTC
-Output: test_latest_price_returns_last_sample, test_trades_in_window_filters_by_timestamp, test_vwap_computes_volume_weighted_average, test_momentum_uses_time_band_mean, test_samples_from_trade_views_uses_event_timestamp
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from polysignal_lab.alpha.vwap_trade_history import (

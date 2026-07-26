@@ -1,18 +1,8 @@
-"""
-Input: __future__, __future__.annotations, logging, sqlite3, collections.abc, collections.abc.Callable, collections.abc.Mapping, collections.abc.Sequence, dataclasses, dataclasses.replace
-Output: persistence_class_for_table, PersistenceClass, PersistenceWriter, Publisher, AcceptedSignalNotifier, ReportResultNotifier, EventStore, Notifier, NautilusEventStoreAdapter, NautilusNotifierAdapter
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from enum import Enum
 from queue import Empty, Queue
@@ -35,12 +25,14 @@ class PersistenceClass(Enum):
     FATAL_ON_LOSS = "fatal_on_loss"
 
 
-_DURABLE_OR_DEGRADED_TABLES = frozenset({
-    "signals",
-    "rejected_signals",
-    "nautilus_order",
-    "nautilus_position",
-})
+_DURABLE_OR_DEGRADED_TABLES = frozenset(
+    {
+        "signals",
+        "rejected_signals",
+        "nautilus_order",
+        "nautilus_position",
+    }
+)
 
 
 def persistence_class_for_table(table: str) -> PersistenceClass:
@@ -79,10 +71,19 @@ class ReportResultNotifier(Protocol):
 
 
 class EventStore(Protocol):
-    """Protocol for storing observability events."""
+    """Protocol for storing observability events.
 
-    def insert_json(self, table: str, data: Mapping[str, object]) -> bool: ...
-    def insert_many_json(self, table: str, rows: Sequence[Mapping[str, object]]) -> None: ...
+    ``suppress_best_effort_locks`` is part of the contract: best-effort telemetry
+    writes pass ``False`` so lock contention surfaces instead of being swallowed.
+    """
+
+    def insert_json(
+        self,
+        table: str,
+        data: Mapping[str, object],
+        *,
+        suppress_best_effort_locks: bool = True,
+    ) -> bool: ...
 
 
 class Notifier(Protocol):
@@ -160,7 +161,9 @@ class NautilusEventStoreAdapter:
             "nautilus_fill": "nautilus_fills",
             "nautilus_position": "nautilus_positions",
         }
-        self._append_log: Callable[[str, object], None] | None = getattr(persistence, "append_log", None)
+        self._append_log: Callable[[str, object], None] | None = getattr(
+            persistence, "append_log", None
+        )
         self._best_effort_tables = {
             table
             for table in self._routes
@@ -201,10 +204,6 @@ class NautilusEventStoreAdapter:
             except (OSError, TypeError):
                 logger.exception("JSONL append failed for table %s", table)
         return created is not False
-
-    def insert_many_json(self, table: str, rows: Sequence[Mapping[str, object]]) -> None:
-        for row in rows:
-            self.insert_json(table, row)
 
 
 class NautilusNotifierAdapter:
@@ -251,8 +250,10 @@ def _health_mark_drop(
     reason: str = "telemetry queue full",
 ) -> None:
     component = health.components.get("observability_actor")
-    current = 0 if component is None else int(
-        component.metrics.get("telemetry_queue_drops", 0) or 0
+    current = (
+        0
+        if component is None
+        else int(component.metrics.get("telemetry_queue_drops", 0) or 0)
     )
     health.mark_degraded(
         "observability_actor",
@@ -270,13 +271,17 @@ def _health_mark_side_effect_failure(
     error: BaseException,
 ) -> None:
     component = health.components.get("observability_actor")
-    current = 0 if component is None else int(
-        component.metrics.get("non_critical_side_effect_failures", 0) or 0
+    current = (
+        0
+        if component is None
+        else int(component.metrics.get("non_critical_side_effect_failures", 0) or 0)
     )
     failure_metrics: dict[str, int | str] = {}
     if telemetry_retention_policy(kind) is not None:
-        telemetry_failures = 0 if component is None else int(
-            component.metrics.get("telemetry_write_failures", 0) or 0
+        telemetry_failures = (
+            0
+            if component is None
+            else int(component.metrics.get("telemetry_write_failures", 0) or 0)
         )
         failure_metrics = {
             "telemetry_write_failures": telemetry_failures + 1,
@@ -297,8 +302,10 @@ def _health_mark_side_effect_failure(
 
 def _health_mark_sqlite_lock_retry(health: HealthRegistry, table: str) -> None:
     component = health.components.get("observability_actor")
-    current = 0 if component is None else int(
-        component.metrics.get("sqlite_lock_retries", 0) or 0
+    current = (
+        0
+        if component is None
+        else int(component.metrics.get("sqlite_lock_retries", 0) or 0)
     )
     health.set_metric(
         "observability_actor",

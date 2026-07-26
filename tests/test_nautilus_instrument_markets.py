@@ -1,11 +1,3 @@
-"""
-Input: nautilus_polymarket_fixtures, polysignal_lab
-Output: test_instrument_market_builder_emits_binary_market_after_pair
-Pos: Test Layer - Unit tests
-
-🔄 Self-reference: When this file changes, update this index and PROJECT_INDEX.md
-"""
-
 from datetime import UTC, datetime, timedelta
 
 from nautilus_polymarket_fixtures import (
@@ -43,8 +35,7 @@ def test_unknown_market_can_become_active_without_terminal_tombstone() -> None:
     )
 
     assert (
-        builder.add(polymarket_binary_instrument("uptoken", "Up", active=False))
-        is None
+        builder.add(polymarket_binary_instrument("uptoken", "Up", active=False)) is None
     )
     unknown = builder.add(
         polymarket_binary_instrument("downtoken", "Down", active=False)

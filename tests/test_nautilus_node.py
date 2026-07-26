@@ -1,12 +1,3 @@
-"""
-Input: __future__, __future__.annotations, asyncio, logging, sys, datetime, datetime.UTC, datetime.datetime, datetime.timedelta, types
-Output: test_native_runtime_rejects_spot_dependent_strategy_without_spot_ingress, test_native_runtime_rejects_unreachable_interactive_control, test_prepare_runtime_builds_context_without_python_credential_gate, test_shared_registration_uses_rotation_actor_and_one_strategy, test_shared_registration_adds_one_strategy_per_enabled_alpha, test_shared_registration_does_not_create_shadow_strategy_when_none_enabled, test_backtest_router_uses_native_builder_with_shared_registration, test_live_router_returns_native_node_and_registers_importable_components, test_build_live_node_rejects_backtest_mode, test_real_backtest_materializes_importable_native_components
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
 from __future__ import annotations
 
 import asyncio
@@ -183,10 +174,14 @@ def test_shared_registration_uses_rotation_actor_and_one_strategy() -> None:
     assert [getattr(config, "actor_path") for config in runtime.actor_configs] == [
         "polysignal_lab.nautilus_runtime.market_rotation:MarketRotationActor",
     ]
-    assert [getattr(config, "strategy_path") for config in runtime.strategy_configs] == [
+    assert [
+        getattr(config, "strategy_path") for config in runtime.strategy_configs
+    ] == [
         "polysignal_lab.nautilus_runtime.native_strategy:PolySignalNativeStrategy",
     ]
-    strategy_payload = cast(dict[str, object], getattr(runtime.strategy_configs[0], "config"))
+    strategy_payload = cast(
+        dict[str, object], getattr(runtime.strategy_configs[0], "config")
+    )
     assert strategy_payload["condition_ids"] == []
     # MarketRotationActor universe events are the sole active-set source.
     assert strategy_payload["strategy_names"] == ["one_cent_buy"]
@@ -204,7 +199,8 @@ def test_shared_registration_adds_one_strategy_per_enabled_alpha() -> None:
     assert names == ("one_cent_buy", "ptb_diff")
     assert len(runtime.strategy_configs) == 2
     payloads = [
-        cast(dict[str, object], getattr(cfg, "config")) for cfg in runtime.strategy_configs
+        cast(dict[str, object], getattr(cfg, "config"))
+        for cfg in runtime.strategy_configs
     ]
     assert [p["strategy_name"] for p in payloads] == ["one_cent_buy", "ptb_diff"]
     assert [p["strategy_id"] for p in payloads] == [
@@ -230,7 +226,9 @@ def test_shared_registration_empty_market_configs_bootstrap_from_provider() -> N
     assert settings.runtime.nautilus.market_rotation.enabled is True
 
 
-def test_shared_registration_does_not_create_shadow_strategy_when_none_enabled() -> None:
+def test_shared_registration_does_not_create_shadow_strategy_when_none_enabled() -> (
+    None
+):
     settings = Settings()
     runtime = _RecordingRuntime()
 
@@ -286,6 +284,7 @@ def test_live_router_returns_native_node_and_registers_importable_components(
 
     settings = _settings_with_strategy(mode="sandbox")
     native_node = _RecordingRuntime()
+
     def fake_build_runtime_node(
         received_settings: Settings,
         *,
@@ -344,7 +343,9 @@ def test_runtime_bundle_contains_only_native_node_and_external_io_context(
 
     from polysignal_lab.nautilus_runtime import node as node_module
 
-    monkeypatch.setattr(node_module, "build_runtime_node", lambda _settings: native_node)
+    monkeypatch.setattr(
+        node_module, "build_runtime_node", lambda _settings: native_node
+    )
     bundle = _build_nautilus_runtime_bundle(
         settings,
         cast(Any, context),
@@ -435,6 +436,7 @@ async def test_async_cli_uses_bundle_strategy_names_and_stops_observability(
         observability=cast(Any, observability),
         strategy_names=("one_cent_buy",),
     )
+
     async def fake_build(_settings: Settings) -> NautilusRuntimeBundle:
         return bundle
 

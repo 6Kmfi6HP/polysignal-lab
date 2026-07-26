@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.date, polysignal_lab.app.services.persistence_service, polysignal_lab.app.services.persistence_service.PersistenceService, polysignal_lab.config, polysignal_lab.config.Settings, polysignal_lab.config.TelegramConfig, polysignal_lab.config.load_settings
-Output: test_telegram_interactive_config_defaults_fail_closed, test_telegram_interactive_yaml_overrides_model_defaults, test_persistence_service_restores_daily_reports_and_latest_event
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from datetime import date

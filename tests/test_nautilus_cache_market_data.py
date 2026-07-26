@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, collections.abc, collections.abc.Sequence, dataclasses, dataclasses.dataclass, datetime, datetime.UTC, datetime.datetime, datetime.timedelta
-Output: test_cache_market_data_provider_reads_book_without_local_cache, test_cache_market_data_provider_reads_trades_without_trade_deque, test_cache_market_data_provider_converts_nautilus_trade_ns_timestamp, test_cache_market_data_provider_returns_none_for_unknown_token, FakeLevel, FakeBook, FakeTrade, FakeCache
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -122,7 +106,9 @@ def test_cache_market_data_provider_reads_book_without_local_cache(monkeypatch) 
     assert view.freshness_ms == 25
 
 
-def test_cache_market_data_provider_reads_trades_without_trade_deque(monkeypatch) -> None:
+def test_cache_market_data_provider_reads_trades_without_trade_deque(
+    monkeypatch,
+) -> None:
     instrument_id = "condition-btc-5m-up-token.POLYMARKET"
     provider = NautilusCacheMarketDataProvider(
         FakeCache(instrument_id),
@@ -138,7 +124,9 @@ def test_cache_market_data_provider_reads_trades_without_trade_deque(monkeypatch
     assert trades[0].ts == datetime(2026, 7, 5, tzinfo=UTC)
 
 
-def test_cache_market_data_provider_converts_nautilus_trade_ns_timestamp(monkeypatch) -> None:
+def test_cache_market_data_provider_converts_nautilus_trade_ns_timestamp(
+    monkeypatch,
+) -> None:
     instrument_id = "condition-btc-5m-up-token.POLYMARKET"
     expected = datetime(2026, 7, 5, tzinfo=UTC)
 
@@ -162,6 +150,7 @@ def test_cache_market_data_provider_converts_nautilus_trade_ns_timestamp(monkeyp
 
     assert len(trades) == 1
     assert trades[0].ts == expected
+
 
 def test_cache_market_data_provider_returns_none_for_unknown_token(monkeypatch) -> None:
     provider = NautilusCacheMarketDataProvider(

@@ -1,19 +1,3 @@
-"""
-Input: __future__, __future__.annotations, ast, importlib, re, subprocess, sys, tomllib, pathlib, pathlib.Path
-Output: test_default_import_does_not_require_nautilus, test_nautilus_node_and_strategies_do_not_import_legacy_execution, test_nautilus_is_required_dependency_for_default_runtime, test_nautilus_dependency_avoids_ephemeral_develop_wheel, test_nautilus_docker_and_lock_avoid_git_source_builds, test_cli_exposes_nautilus_mode_and_script, test_default_source_keeps_forbidden_live_symbols_out_of_runtime, test_default_nautilus_runtime_source_avoids_local_paper_executors, test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources, test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime_layers, test_nautilus_runtime_duplicate_platform_modules_are_deleted
-Pos: Test Layer - Unit/Integration tests
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
-
-
-
-
-
-
 from __future__ import annotations
 
 import ast
@@ -31,6 +15,7 @@ from polysignal_lab.app import main as app_main
 
 def test_default_import_does_not_require_nautilus() -> None:
     assert importlib.import_module("polysignal_lab") is not None
+
 
 def test_nautilus_node_and_strategies_do_not_import_legacy_execution() -> None:
     result = subprocess.run(
@@ -57,7 +42,9 @@ def test_nautilus_is_required_dependency_for_default_runtime() -> None:
     dependencies = cast(list[str], data["project"]["dependencies"])
     expected = "nautilus_trader[polymarket]==1.231.0a20260716"
     assert expected in dependencies
-    nautilus_extra = cast(list[str], data["project"]["optional-dependencies"]["nautilus"])
+    nautilus_extra = cast(
+        list[str], data["project"]["optional-dependencies"]["nautilus"]
+    )
 
     assert nautilus_extra == [
         expected,
@@ -92,14 +79,20 @@ def test_nautilus_docker_and_lock_avoid_git_source_builds() -> None:
     lock_text = Path("uv.lock").read_text(encoding="utf-8")
 
     assert "git+https://github.com/nautechsystems/nautilus_trader" not in dockerfile
-    assert 'source = { git = "https://github.com/nautechsystems/nautilus_trader' not in lock_text
+    assert (
+        'source = { git = "https://github.com/nautechsystems/nautilus_trader'
+        not in lock_text
+    )
 
 
 def test_cli_exposes_nautilus_mode_and_script() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     assert {"nautilus", "sandbox", "live", "backtest"}.issubset(app_main.MODE_VALUES)
-    assert pyproject["project"]["scripts"]["polysignal-nautilus"] == "polysignal_lab.nautilus_runtime.node:main"
+    assert (
+        pyproject["project"]["scripts"]["polysignal-nautilus"]
+        == "polysignal_lab.nautilus_runtime.node:main"
+    )
 
 
 def test_default_source_keeps_forbidden_live_symbols_out_of_runtime() -> None:
@@ -129,7 +122,9 @@ def test_default_source_keeps_forbidden_live_symbols_out_of_runtime() -> None:
             if path.name in {"live_node.py", "optional_imports.py"}:
                 tokens = tuple(token for token in forbidden if token != "exec_clients")
             else:
-                findings.extend(f"{path}:{token}" for token in live_only if token in text)
+                findings.extend(
+                    f"{path}:{token}" for token in live_only if token in text
+                )
             findings.extend(f"{path}:{token}" for token in tokens if token in text)
     live_path = Path("src/polysignal_lab/nautilus_runtime/live_node.py")
     if live_path.exists():
@@ -186,7 +181,10 @@ def test_default_nautilus_runtime_does_not_use_custom_paper_truth_sources() -> N
 
     assert findings == []
 
-def test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime_layers() -> None:
+
+def test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime_layers() -> (
+    None
+):
     forbidden = (
         "polysignal_lab.nautilus_runtime.matching",
         "polysignal_lab.nautilus_runtime.orchestrator",
@@ -197,7 +195,7 @@ def test_default_nautilus_entry_and_report_paths_do_not_reference_legacy_runtime
     default_paths = (
         Path("src/polysignal_lab/app/main.py"),
         Path("src/polysignal_lab/nautilus_runtime/node.py"),
-        Path("src/polysignal_lab/app/reporting.py"),
+        Path("src/polysignal_lab/app/daily_report/__init__.py"),
     )
     findings: list[str] = []
     for path in default_paths:
@@ -217,7 +215,9 @@ def test_nautilus_runtime_duplicate_platform_modules_are_deleted() -> None:
         Path("src/polysignal_lab/nautilus_runtime/position_policy.py"),
         Path("src/polysignal_lab/nautilus_runtime/settlement.py"),
         Path("src/polysignal_lab/nautilus_runtime/book_data.py"),
-        Path("src/polysignal_lab/nautilus_runtime/patch_nautilus_polymarket_autoload.py"),
+        Path(
+            "src/polysignal_lab/nautilus_runtime/patch_nautilus_polymarket_autoload.py"
+        ),
         Path("src/polysignal_lab/nautilus_runtime/decision_policy_actor.py"),
         Path("src/polysignal_lab/nautilus_runtime/decision_messages.py"),
     )
@@ -243,7 +243,10 @@ def test_nautilus_runtime_has_single_managed_rtds_entrypoint() -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name == "websockets" or "spot_data_client" in alias.name.split("."):
+                    if (
+                        alias.name == "websockets"
+                        or "spot_data_client" in alias.name.split(".")
+                    ):
                         findings.append(f"{path}:{node.lineno}:import:{alias.name}")
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
@@ -359,8 +362,8 @@ def test_nautilus_runtime_does_not_construct_instruments_locally() -> None:
         "BinaryOption(",
         "cache.add_instrument",
         "exchange.add_instrument",
-        "DEFAULT_VENUE = \"POLYSIGNAL_PM_PAPER\"",
-        "return f\"{condition}-{token}.POLYMARKET\"",
+        'DEFAULT_VENUE = "POLYSIGNAL_PM_PAPER"',
+        'return f"{condition}-{token}.POLYMARKET"',
     )
     findings: list[str] = []
     runtime_root = Path("src/polysignal_lab/nautilus_runtime")
@@ -417,9 +420,7 @@ def test_default_runtime_uses_live_node_builder_api() -> None:
         Path("src/polysignal_lab/nautilus_runtime/optional_imports.py"),
     )
     source = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in scanned_paths
-        if path.exists()
+        path.read_text(encoding="utf-8") for path in scanned_paths if path.exists()
     )
 
     assert [token for token in required if token not in source] == []
@@ -445,10 +446,9 @@ def test_default_runtime_has_no_dynamic_runtime_class_factories() -> None:
 
     assert findings == []
 
+
 def test_default_runtime_has_no_shared_external_data_store() -> None:
-    forbidden_paths = (
-        Path("src/polysignal_lab/nautilus_runtime/external_data.py"),
-    )
+    forbidden_paths = (Path("src/polysignal_lab/nautilus_runtime/external_data.py"),)
     forbidden_tokens = (
         "update_spot(",
         "update_price_to_beat(",
@@ -459,10 +459,13 @@ def test_default_runtime_has_no_shared_external_data_store() -> None:
     for root in scanned_roots:
         for path in root.rglob("*.py"):
             text = path.read_text(encoding="utf-8")
-            token_findings.extend(f"{path}:{token}" for token in forbidden_tokens if token in text)
+            token_findings.extend(
+                f"{path}:{token}" for token in forbidden_tokens if token in text
+            )
 
     assert path_findings == []
     assert token_findings == []
+
 
 def test_market_catalog_has_no_reverse_instrument_truth_source() -> None:
     forbidden = (
@@ -483,6 +486,8 @@ def test_market_catalog_has_no_reverse_instrument_truth_source() -> None:
         findings.extend(f"{path}:{token}" for token in forbidden if token in text)
 
     assert findings == []
+
+
 def test_default_runtime_has_no_asyncio_actor_scheduling_fallbacks() -> None:
     forbidden_by_file = {
         Path("src/polysignal_lab/nautilus_runtime/market_rotation.py"): (
@@ -509,9 +514,10 @@ def test_default_runtime_has_no_asyncio_actor_scheduling_fallbacks() -> None:
 
     assert findings == []
 
+
 def test_runtime_decision_paths_block_legacy_orderbook_and_clob_reattachment() -> None:
     forbidden = (
-        "from polysignal_lab.data.state import OrderBookRegistry",
+        "from polysignal_lab.data.registries import OrderBookRegistry",
         "OrderBookRegistry()",
         "from polysignal_lab.data.polymarket_clob_ws import",
         "from polysignal_lab.data.polymarket_clob_rest import",
@@ -519,7 +525,7 @@ def test_runtime_decision_paths_block_legacy_orderbook_and_clob_reattachment() -
     )
     roots = (
         Path("src/polysignal_lab/nautilus_runtime"),
-        Path("src/polysignal_lab/signal_layer"),
+        Path("src/polysignal_lab/pretrade"),
         Path("src/polysignal_lab/alpha"),
     )
     findings: list[str] = []
@@ -598,7 +604,7 @@ def test_final_v2_single_track_static_gates() -> None:
         "TradingNode(",
         "from nautilus_trader.live.node import TradingNode",
         "OrderBookRegistry()",
-        "from polysignal_lab.data.state import OrderBookRegistry",
+        "from polysignal_lab.data.registries import OrderBookRegistry",
         "from polysignal_lab.data.binance_spot_ws import",
         "from polysignal_lab.app.scheduler_reporting",
         "from polysignal_lab.paper.event_projection import",
@@ -687,17 +693,13 @@ def test_final_v2_single_track_static_gates() -> None:
                 continue
             if "nautilus_runtime" in path.parts:
                 findings.extend(
-                    f"{path}:{token}"
-                    for token in wall_clock_tokens
-                    if token in text
+                    f"{path}:{token}" for token in wall_clock_tokens if token in text
                 )
     assert findings == []
 
 
 def test_custom_data_registration_requires_real_arrow_codecs() -> None:
-    scanned = (
-        Path("src/polysignal_lab/nautilus_runtime/custom_data_types.py"),
-    )
+    scanned = (Path("src/polysignal_lab/nautilus_runtime/custom_data_types.py"),)
     forbidden = (
         "pa.schema([])",
         "_ARROW_REGISTRATION_SCHEMA",
@@ -717,7 +719,9 @@ def test_custom_data_registration_requires_real_arrow_codecs() -> None:
                     target.id
                     for item in node.body
                     if isinstance(item, (ast.Assign, ast.AnnAssign))
-                    for target in (item.targets if isinstance(item, ast.Assign) else [item.target])
+                    for target in (
+                        item.targets if isinstance(item, ast.Assign) else [item.target]
+                    )
                     if isinstance(target, ast.Name)
                 }
                 required = {
@@ -782,7 +786,7 @@ def test_native_strategy_does_not_expose_framework_owned_setters() -> None:
 
 
 def test_signal_gate_commit_does_not_call_channel_rate_limiter() -> None:
-    source = Path("src/polysignal_lab/signal_layer/gate.py").read_text(encoding="utf-8")
+    source = Path("src/polysignal_lab/pretrade/gate.py").read_text(encoding="utf-8")
     commit_start = source.index("def commit(")
     commit_end = source.index("\n    def ", commit_start + 1)
     commit_body = source[commit_start:commit_end]
@@ -802,7 +806,9 @@ def test_live_node_component_state_is_not_hard_disabled() -> None:
 
 
 def test_tester_contracts_do_not_restore_false_unavailable_premise() -> None:
-    source = Path("tests/test_nautilus_runtime_contracts.py").read_text(encoding="utf-8")
+    source = Path("tests/test_nautilus_runtime_contracts.py").read_text(
+        encoding="utf-8"
+    )
     forbidden = (
         "test_datatester_exectester_pyo3_matrix_unavailable",
         "DataTester unavailable",
@@ -859,8 +865,12 @@ def test_runtime_has_no_local_order_position_or_fill_truth() -> None:
 
 
 def test_local_settlement_configuration_is_deleted() -> None:
-    assert "settlement:" not in Path("config/signal_bot.yaml").read_text(encoding="utf-8")
-    assert "settlement:" not in Path("config/signal_bot.lab.yaml").read_text(encoding="utf-8")
+    assert "settlement:" not in Path("config/signal_bot.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "settlement:" not in Path("config/signal_bot.lab.yaml").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_default_cli_docker_compose_are_livenode_only() -> None:
@@ -872,7 +882,7 @@ def test_default_cli_docker_compose_are_livenode_only() -> None:
     assert "MODE_VALUES" in main_src
     assert '"scheduler"' not in main_src
     assert "SCHEDULER" not in main_src
-    assert "CMD [\"nautilus\"]" in dockerfile or "CMD ['nautilus']" in dockerfile
+    assert 'CMD ["nautilus"]' in dockerfile or "CMD ['nautilus']" in dockerfile
     assert "LiveNode" in dockerfile
     assert 'command: ["nautilus"]' in compose
     assert "TradingNode" not in dockerfile
@@ -907,5 +917,26 @@ def test_large_nautilus_runtime_functions_stay_under_limit() -> None:
                             findings.append(
                                 f"{path}:{node.lineno}-{node.end_lineno}:{node.name}:{line_count}"
                             )
+
+    assert findings == []
+
+
+def test_reporting_package_stays_free_of_io_dependencies() -> None:
+    """`reporting/` is pure computation; the I/O pipeline lives in `app/daily_report/`."""
+    forbidden_prefixes = (
+        "polysignal_lab.app",
+        "polysignal_lab.dashboard",
+        "polysignal_lab.nautilus_runtime",
+        "polysignal_lab.publish",
+        "polysignal_lab.storage",
+    )
+    findings: list[str] = []
+    for path in sorted(Path("src/polysignal_lab/reporting").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or not node.module:
+                continue
+            if node.module.startswith(forbidden_prefixes):
+                findings.append(f"{path}:{node.lineno}:{node.module}")
 
     assert findings == []

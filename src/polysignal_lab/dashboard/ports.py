@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, dataclasses, dataclasses.dataclass, datetime, datetime.datetime, pathlib, pathlib.Path, typing, typing.Any
-Output: StorageHealthRead, RuntimeHealthRead, ReportingReadPort, RuntimeHealthPort, FileRuntimeHealthReader
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from dataclasses import dataclass

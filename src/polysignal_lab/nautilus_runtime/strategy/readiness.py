@@ -1,13 +1,3 @@
-"""
-Input: __future__, __future__.annotations, datetime, datetime.datetime, typing, typing.Protocol, polysignal_lab.alpha.types, polysignal_lab.alpha.types.MarketView, polysignal_lab.domain.enums, polysignal_lab.domain.enums.Side
-Output: note_runtime_progress, note_runtime_readiness, book_readiness_detail, subscription_readiness_state, readiness_detail, stale_orderbook_recovered, orderbook_readiness_threshold_ms, orderbook_trade_threshold_ms, stale_orderbook_sides, _ReadinessStrategy
-Pos: Application code
-
-🔄 Self-reference: When this file changes, update this header
-"""
-
-
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -16,7 +6,9 @@ from typing import Protocol
 from polysignal_lab.alpha.types import MarketView
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
-from polysignal_lab.nautilus_runtime.strategy.subscriptions import MarketSubscriptionState
+from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    MarketSubscriptionState,
+)
 
 
 class _ReadinessStrategy(Protocol):
@@ -156,9 +148,7 @@ def readiness_detail(
         "subscription_state": state_name,
         "subscribe_requested": condition_id in state.subscribe_intent_condition_ids,
         "generation_started_at": (
-            None
-            if generation_started_at is None
-            else generation_started_at.isoformat()
+            None if generation_started_at is None else generation_started_at.isoformat()
         ),
         "awaiting_book_sides": sorted(side.value for side in pending_sides),
         "last_book_at_by_side": last_books,
