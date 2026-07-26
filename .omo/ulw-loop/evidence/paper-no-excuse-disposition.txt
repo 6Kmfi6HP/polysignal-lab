@@ -1,5 +1,0 @@
-no-excuse disposition:
-- The checker still reports legacy SIZE_OK/object/dynamic-script violations in large pre-existing paper/reporting modules.
-- Current blocker fixes have passing focused basedpyright (0 errors), focused pytest, full pytest, manual QA, code-review rerun APPROVE.
-- One current-fix violation was fixed: InvalidPaperTradeResultRow is intentionally mutable because Python exceptions need writable __traceback__; the line has MUTABLE_OK with runtime red-test evidence from repair test.
-- The remaining checker output is documented as typed-debt/non-blocking by .omo/evidence/paper-code-review-rerun.md; no broad refactor is attempted in this safety fix to avoid unrelated churn.

@@ -1,9 +1,0 @@
-focused_pytest=pass 48 passed after zero-money fix
-system_python_focused_pytest=pass 48 passed after zero-money fix
-full_pytest=pass
-manual_qa=pass zero money None; missing projection money None fields; malformed system/daily []/None; idempotent typed MalformedSQLitePayloadError
-basedpyright=0 errors
-compileall=pass
-diff_check=pass
-refs_check=pass
-cleanup=no server browser tmux container port spawned; CLI commands exited

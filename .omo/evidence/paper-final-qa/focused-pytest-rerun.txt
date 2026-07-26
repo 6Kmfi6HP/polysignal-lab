@@ -1,8 +1,0 @@
-surface: pytest focused reporting/storage/settlement rerun
-invocation: .venv/bin/python -m pytest -q tests/test_storage_restore.py::test_sqlite_store_rejects_boolean_money_paper_trade_rows tests/test_storage_restore.py::test_sqlite_store_excludes_open_position_events_with_boolean_money tests/test_reporting.py::test_daily_report_counts_split_as_closed_without_win_loss_void tests/test_scheduler_settlement_resolution.py tests/test_settlement.py
-observable: PASS iff pytest exits 0 with selected tests passed
-
-WORKING: running focused pytest for reporting/storage/settlement after split and boolean-money fix
-...........................                                              [100%]
-
-exit_code=0

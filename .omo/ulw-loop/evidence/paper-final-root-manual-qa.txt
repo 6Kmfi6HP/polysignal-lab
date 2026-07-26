@@ -1,8 +1,0 @@
-manual_qa_started=2026-07-09T04:54:57Z
-settlement_missing_stake None
-system_events_query []
-latest_health None
-daily_reports []
-idempotent_existing_malformed MalformedSQLitePayloadError
-manual_qa_finished=2026-07-09T04:54:58Z
-cleanup=removed paper-final-root-manual.sqlite3; no server browser tmux container port spawned

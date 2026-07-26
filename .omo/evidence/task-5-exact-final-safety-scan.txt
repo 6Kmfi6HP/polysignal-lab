@@ -1,2 +1,0 @@
-Safety scan passed
-exit=0

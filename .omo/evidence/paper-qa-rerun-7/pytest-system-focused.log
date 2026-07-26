@@ -1,5 +1,0 @@
-SURFACE: system Python CLI pytest focused selection
-INVOCATION: /usr/bin/python3 -m pytest tests/test_paper_calibration.py tests/test_scheduler_cancelled_markets.py tests/test_nautilus_projections.py tests/test_scheduler_settlement_resolution.py tests/test_settlement.py tests/test_storage_restore.py
-............................................                             [100%]
-44 passed in 0.65s
-EXIT_CODE=0

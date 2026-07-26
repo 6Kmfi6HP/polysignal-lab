@@ -1,7 +1,0 @@
-  294 .omo/evidence/orderbook-parser-migration-qa/adversarial-malformed-levels.txt
-  360 .omo/evidence/orderbook-parser-migration-qa/changed-files.txt
-12600 .omo/evidence/orderbook-parser-migration-qa/diff-summary.txt
-  686 .omo/evidence/orderbook-parser-migration-qa/focused-command.txt
-   80 .omo/evidence/orderbook-parser-migration-qa/focused-pytest.txt
-  226 .omo/evidence/orderbook-parser-migration-qa/surface-check.txt
-14246 total

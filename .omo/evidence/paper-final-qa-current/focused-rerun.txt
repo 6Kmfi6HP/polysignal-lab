@@ -1,5 +1,0 @@
-surface: pytest focused paper report boundaries and boolean money storage tests
-invocation: .venv/bin/python -m pytest tests/test_paper_report_boundaries.py tests/test_storage_restore.py::test_sqlite_store_rejects_boolean_money_paper_trade_rows tests/test_storage_restore.py::test_sqlite_store_excludes_open_position_events_with_boolean_money
-
-....                                                                     [100%]
-4 passed in 0.08s

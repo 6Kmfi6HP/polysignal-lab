@@ -1,5 +1,0 @@
-Surface: targeted no-spawn process audit
-Invocation: ps -eo pid,ppid,stat,comm,args | awk ...polysignal-lab...
-Started: 2026-07-09T01:54:24+02:00
-3238879       1 Ssl  MainThread      /home/debian/.local/lib/node_modules/@colbymchenry/codegraph/node_modules/@colbymchenry/codegraph-linux-x64/node --liftoff-only /home/debian/.local/lib/node_modules/@colbymchenry/codegraph/node_modules/@colbymchenry/codegraph-linux-x64/lib/dist/bin/codegraph.js serve --mcp --path /home/debian/polysignal-lab
-Finished: 2026-07-09T01:54:24+02:00

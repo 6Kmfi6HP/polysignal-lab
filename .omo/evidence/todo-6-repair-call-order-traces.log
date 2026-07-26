@@ -1,2 +1,0 @@
-discovery_failure_no_stream_trace=['discover_raise']
-validation_before_init_trace=['telegram_validate']

@@ -1,4 +1,0 @@
-surface=CLI/data
-invocation=PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=tests python - <<PY ... PY
-
-{"cleanup": "removed temp sqlite directory; no server browser tmux container port spawned", "projection_unknown_money": {"avg_entry_price": null, "quantity": null, "stake_usdc": null}, "settlement_rejections_are_none": {"invalid_quantity_nan": null, "missing_stake": null, "zero_money": null}, "storage_malformed_json": {"daily_reports": [], "idempotent_existing_malformed": "MalformedSQLitePayloadError", "strategy_leaderboard": [], "typed_error_is_expected": true}}

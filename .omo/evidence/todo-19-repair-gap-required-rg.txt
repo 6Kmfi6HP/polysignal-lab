@@ -1,2 +1,0 @@
-Invocation: rg -n "69\+|40%|0%|AC-002.*fail|AC-003.*fail|AC-004.*fail|TELEGRAM.*69|未接入真实|失败|待接" docs/PRD_GAP_ANALYSIS.md || true
-Explanation: no output means the previously stale exact current-state claims are absent.

@@ -1,3 +1,0 @@
-protected_refs_status:
-protected_refs_diff:
-refs_check=pass

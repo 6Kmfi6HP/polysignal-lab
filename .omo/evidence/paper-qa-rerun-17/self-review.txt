@@ -1,8 +1,0 @@
-scenario: SELF-REVIEW report and artifact completeness
-surface: CLI filesystem/text from repo root
-invocation: test -s report and required transcripts; grep required report tags; grep PASS verdicts in counted transcripts
-observable: process exit code 0
-started: 2026-07-09T11:35:15+02:00
-finished: 2026-07-09T11:35:15+02:00
-exit_code: 0
-verdict: PASS

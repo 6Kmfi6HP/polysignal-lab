@@ -1,3 +1,0 @@
-surface=CLI/data
-invocation=PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=tests python - <<PY ... PY
-

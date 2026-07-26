@@ -1,7 +1,0 @@
-focused: pass path=.omo/ulw-loop/evidence/paper-blockers-focused-pytest.txt bytes=1226
-full: pass path=.omo/ulw-loop/evidence/paper-full-pytest.txt bytes=1917
-manual: pass path=.omo/ulw-loop/evidence/paper-blockers-manual-qa.txt bytes=178
-security: pass path=.omo/ulw-loop/evidence/paper-no-excuse-security-scope.txt bytes=27
-diff: pass path=.omo/ulw-loop/evidence/paper-diff-check.txt bytes=16
-refs: pass path=.omo/ulw-loop/evidence/paper-refs-check.txt bytes=62
-artifact_validation=pass

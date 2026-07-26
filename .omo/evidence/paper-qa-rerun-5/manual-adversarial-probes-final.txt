@@ -1,3 +1,0 @@
-Traceback (most recent call last):
-  File "<stdin>", line 41, in <module>
-TypeError: _paper_trade_result_from_projection() got an unexpected keyword argument 'settlement_source'

@@ -1,3 +1,0 @@
-no violations in 17 file(s)
-
-EXIT_CODE=0

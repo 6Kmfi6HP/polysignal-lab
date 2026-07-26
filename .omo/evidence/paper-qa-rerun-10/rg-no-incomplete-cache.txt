@@ -1,4 +1,0 @@
-SURFACE: CLI rg text search
-INVOCATION: rg -n "incomplete.*cache|cache.*incomplete" tests src .omo/ulw-loop/evidence/paper-post-r10-rg-rerun.txt
-EXIT_CODE: 1
-RESULT: PASS (no incomplete-cache matches)

@@ -1,4 +1,0 @@
-surface=CLI/data
-invocation=PYTHONDONTWRITEBYTECODE=1 pytest -q tests/test_settlement.py::test_projection_settlement_rejects_missing_money tests/test_settlement.py::test_projection_settlement_rejects_missing_numeric_money tests/test_settlement.py::test_projection_settlement_rejects_zero_money_fields tests/test_nautilus_projections.py::test_project_position_leaves_missing_money_unknown tests/test_storage_restore.py::test_sqlite_store_skips_malformed_payload_paper_trade_rows tests/test_storage_restore.py::test_sqlite_store_rejects_malformed_existing_payload
-
-......                                                                   [100%]

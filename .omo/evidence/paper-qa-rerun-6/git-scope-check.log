@@ -1,3 +1,0 @@
-surface=current qa diff scope
-invocation=git status --short -- .omo/evidence/paper-qa-rerun-6 .omo/evidence/paper-qa-rerun-6.md refs docs/nautilus_reference
-?? .omo/evidence/paper-qa-rerun-6/

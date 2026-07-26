@@ -1,6 +1,0 @@
-BLOCKED cancel_all in .venv/lib/python3.11/site-packages/anyio/_backends/_asyncio.py
-BLOCKED cancel_all in .venv/lib/python3.11/site-packages/uvicorn/_compat.py
-BLOCKED create_order in .omo/tmp-safety/product_like/blocked.py
-BLOCKED create_order in .omo/tmp-safety/.venv/lib/python3.11/site-packages/blocked.py
-BLOCKED create_order in .omo/tmp-safety/data/generated.py
-exit=1

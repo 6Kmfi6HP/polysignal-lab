@@ -1,5 +1,0 @@
-git status --short -- refs @refs docs/nautilus_reference
-missing path (ok if not present): refs
-missing path (ok if not present): @refs
-
-git diff --name-only -- refs @refs docs/nautilus_reference

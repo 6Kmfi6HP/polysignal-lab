@@ -1,3 +1,0 @@
-Traceback (most recent call last):
-  File "<stdin>", line 14, in <module>
-TypeError: sample_market() got an unexpected keyword argument 'market_id'

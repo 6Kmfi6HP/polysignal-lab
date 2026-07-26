@@ -1,6 +1,0 @@
-tests/test_storage_reporting_publish.py:127:        "paper_orders",
-tests/test_storage_reporting_publish.py:128:        "paper_fills",
-tests/test_storage_reporting_publish.py:129:        "paper_positions",
-src/polysignal_lab/storage/sqlite_store.py:29:    COUNT_TABLES,
-src/polysignal_lab/storage/sqlite_store.py:311:            return {t: int(self._conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"]) for t in COUNT_TABLES}
-src/polysignal_lab/storage/sqlite_schema.py:182:COUNT_TABLES: Final = (

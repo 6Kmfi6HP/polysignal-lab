@@ -1,7 +1,0 @@
-Focused migrated-path pytest command selected:
-PYTHONPATH=src pytest tests/test_orderbook_snapshot.py tests/test_market_data.py::test_order_book_parses_hash_field tests/test_market_data.py::test_registry_reconciliation_methods tests/test_polymarket_clob_rest.py::test_get_books_falls_back_to_single_book_requests_when_batch_fails -q
-
-Rationale:
-- test_orderbook_snapshot.py exercises parse_order_book_payload direct parsing and OrderBook derived properties.
-- test_market_data hash/reconciliation tests exercise parser hash and OrderBookRegistry snapshot/delta sequence handling.
-- test_polymarket_clob_rest fallback test exercises CLOB client -> parse_order_book_payload library path.

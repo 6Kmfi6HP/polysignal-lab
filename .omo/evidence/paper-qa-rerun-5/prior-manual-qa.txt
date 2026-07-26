@@ -1,6 +1,0 @@
-telegram_missing_side=pass '暂无 open paper positions。'
-settlement_missing_side=pass None
-settlement_missing_side_store_calls=0
-settlement_missing_timestamp=pass None
-settlement_missing_timestamp_store_calls=0
-cleanup: no server/browser/tmux/container/port spawned; no temp files created

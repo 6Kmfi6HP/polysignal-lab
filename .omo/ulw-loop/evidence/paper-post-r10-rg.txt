@@ -1,2 +1,0 @@
-src/polysignal_lab/app/scheduler_reporting.py:296:    account = nautilus_cache.account()
-src/polysignal_lab/app/scheduler_reporting.py:315:    positions = nautilus_cache.positions()

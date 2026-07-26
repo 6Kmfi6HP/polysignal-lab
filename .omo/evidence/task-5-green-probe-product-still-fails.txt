@@ -1,2 +1,0 @@
-BLOCKED create_order in .omo/tmp-safety/product_like/blocked.py
-exit=1

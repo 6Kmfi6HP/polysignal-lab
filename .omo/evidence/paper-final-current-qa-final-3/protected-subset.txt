@@ -1,7 +1,0 @@
-surface: protected subset refs @refs docs/nautilus_reference
-invocation: git status --short -- refs @refs docs/nautilus_reference
-
-invocation: git diff --stat -- refs @refs docs/nautilus_reference
-
-invocation: git diff --exit-code -- refs @refs docs/nautilus_reference
-PASS protected subset has no tracked diff

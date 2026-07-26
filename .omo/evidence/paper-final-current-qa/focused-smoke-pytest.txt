@@ -1,4 +1,0 @@
-surface=CLI/data
-invocation=PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_paper_report_boundaries.py tests/test_storage_restore.py tests/test_nautilus_reporting_cache_source.py tests/test_reporting.py tests/test_strategy_stats.py -q
-................................................                         [100%]
-exit_code=0

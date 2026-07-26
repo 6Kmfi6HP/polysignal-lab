@@ -1,8 +1,0 @@
-surface=orderbook_payload_to_registry
-token_id=token-surface
-best_bid=0.44
-best_ask=0.47
-hash=surface-hash
-fail_closed=True
-unknown_metric=ws_event_unknown
-verdict=pass

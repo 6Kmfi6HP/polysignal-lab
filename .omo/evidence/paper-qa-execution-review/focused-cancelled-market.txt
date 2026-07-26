@@ -1,7 +1,0 @@
-Surface: pytest focused cancelled-market settlement behavior
-Invocation: uv run pytest -p no:cacheprovider --no-header tests/test_scheduler_cancelled_markets.py::test_runtime_settles_cancelled_market_as_void_refund
-Started: 2026-07-09T01:49:59+02:00
-.                                                                        [100%]
-1 passed in 0.92s
-Exit: 0
-Finished: 2026-07-09T01:50:02+02:00

@@ -1,3 +1,0 @@
-BLOCKED cancel_all in .venv/lib/python3.11/site-packages/anyio/_backends/_asyncio.py
-BLOCKED cancel_all in .venv/lib/python3.11/site-packages/uvicorn/_compat.py
-exit=1

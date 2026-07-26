@@ -1,3 +1,0 @@
-src/polysignal_lab/app/_settlement_check.py:33:    positions_method = getattr(nautilus_cache, "positions", None)
-src/polysignal_lab/app/scheduler_reporting_equity.py:57:    account = nautilus_cache.account()
-src/polysignal_lab/app/scheduler_reporting_equity.py:76:    positions = nautilus_cache.positions()
