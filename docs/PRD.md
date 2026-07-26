@@ -737,7 +737,7 @@ Runtime state 以 Nautilus Cache/Portfolio 为准；`state/` 下保留 heartbeat
 | [`NAUTILUS_CAPABILITY_MATRIX.md`](NAUTILUS_CAPABILITY_MATRIX.md) | 已验证 Nautilus 能力 |
 | [`STRATEGY_INDICATOR_FLOW.md`](STRATEGY_INDICATOR_FLOW.md) | 指标/行情进入 Strategy 的链路 |
 
-包级布局（文件清单以源码与各目录 `FOLDER_INDEX.md` 为准，PRD 不维护完整树）：
+包级布局（文件清单以源码为准，PRD 不维护完整树）：
 
 ```
 src/polysignal_lab/

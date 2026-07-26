@@ -1,1 +1,0 @@
-React + Vite + TypeScript frontend with TanStack Router and Radix UI components. Features overview dashboard, signal history viewer, paper trading status, strategy performance, and system health monitoring. Communicates with the FastAPI backend via REST.

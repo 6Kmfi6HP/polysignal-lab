@@ -222,36 +222,7 @@ These are the patterns I see most often. If you catch yourself doing any of thes
 
 ## 仓库布局
 
-```
-polysignal-lab/
-├── .claude/          # Claude Code 配置 (settings, hooks, skills, workflows)
-│   ├── CLAUDE.md     # CodeGraph + Fast Context 指令
-│   ├── settings.json # 权限, worktree配置, hooks
-│   ├── skills/       # 按需加载的领域技能
-│   └── hooks/        # 自动化钩子
-├── src/polysignal_lab/  # Python 后端 (FastAPI, NautilusTrader集成)
-│   ├── app/          # 应用入口 + API 路由
-│   ├── domain/       # 领域模型与业务逻辑
-│   ├── signal_layer/ # 信号生成层
-│   ├── strategies/   # 交易策略
-│   ├── nautilus_runtime/ # NautilusTrader 运行时
-│   ├── nautilus_bridge/  # 桥接适配层
-│   ├── alpha/        # Alpha 研究模块
-│   ├── data/         # 数据处理
-│   ├── storage/      # 存储层
-│   ├── paper/        # 纸面交易
-│   ├── observability/# 可观测性 (Telegram QA, safety scan)
-│   ├── publish/      # 发布模块
-│   └── dashboard/    # 后端仪表盘支持
-├── frontend/         # React + Vite 前端 (Polysignal Dashboard)
-├── tests/            # Python 测试
-├── docs/             # 文档 + Nautilus 参考
-├── config/           # 配置文件
-├── scripts/          # 工具脚本
-├── data/             # 运行时数据
-├── logs/             # 日志输出
-└── workflows/        # 工作流定义
-```
+结构以代码为准——用 CodeGraph 或 `ls` 查证，不要依赖文档里的目录树。
 
 - Python 命令在仓库根目录运行；前端命令在 `frontend/` 目录运行。
 - `docs/nautilus_reference/` 包含 NautilusTrader 开发者指南。
@@ -269,4 +240,4 @@ Issues 托管在 GitHub Issues。外部 PR 不作为 triage 来源。详见 `doc
 
 ### 领域文档
 
-单一上下文布局——`CONTEXT.md` 位于仓库根目录，ADR 位于 `docs/adr/`。详见 `docs/agents/domain.md`。
+无独立领域文档。术语与设计决定以 `src/polysignal_lab/domain/` 的代码为准。

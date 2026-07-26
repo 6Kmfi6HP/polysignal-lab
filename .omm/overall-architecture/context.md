@@ -1,1 +1,0 @@
-The system operates as a non-custodial, read-only signal and sandbox paper-validation service. No wallet secret material is required, no authenticated trading client is instantiated, and no live market action endpoint is implemented. The primary runtime is NautilusTrader TradingNode in sandbox mode, with dashboard and bounded smoke modes for inspection and verification.

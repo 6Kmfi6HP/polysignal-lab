@@ -1,1 +1,0 @@
-End-to-end data flow from external market data sources through the signal processing pipeline to storage, publication, and dashboard display. Data moves unidirectionally: market data → alpha cores → signal processing → Nautilus bridge → paper execution → storage/publication.

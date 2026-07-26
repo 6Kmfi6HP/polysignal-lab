@@ -1,1 +1,0 @@
-The boundary between the pure signal layer and the Nautilus runtime is a critical design constraint — the bridge must prevent signal-layer constructs from leaking into Nautilus strategy code. The system has two separate Python version requirements (3.11 for core, 3.12 for Nautilus) which complicates the dev environment.

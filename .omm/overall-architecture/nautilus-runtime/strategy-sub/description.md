@@ -1,1 +1,0 @@
-The strategy subsystem within the Nautilus runtime. Handles data boundary management (bridging custom Polymarket data to Nautilus types), the decision pipeline that evaluates signals and triggers orders, order event processing, position/event projection, subscription management, and observability hooks for signal tracking.

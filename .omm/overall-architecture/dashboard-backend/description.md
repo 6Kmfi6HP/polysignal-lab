@@ -1,1 +1,0 @@
-FastAPI-based web backend serving the dashboard frontend. Exposes read-only REST endpoints for health, overview, signals, and strategy status. Reads from the SQLite store to present historical signal and paper trading data. Dashboard mode is one of three runtime modes.

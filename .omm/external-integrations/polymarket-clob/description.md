@@ -1,1 +1,0 @@
-Polymarket CLOB (Central Limit Order Book) API — primary data source. REST API for market snapshots, orderbook depth, and price feeds. WebSocket for real-time orderbook streaming. All calls use public endpoints only.

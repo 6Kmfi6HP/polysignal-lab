@@ -1,1 +1,0 @@
-Core domain types used across the system: Market, Signal, Orderbook, Snapshot, PaperReport, Trade, SpotPrice, StrategyConfig, and supporting enums. Defined as Pydantic models for validation and serialization. These are data transfer objects with no business logic.

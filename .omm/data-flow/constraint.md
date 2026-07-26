@@ -1,1 +1,0 @@
-No data flows from Nautilus runtime back to alpha cores or data layer. The signal layer must never directly access storage or external APIs — it only processes what it receives from alpha cores. All external API calls must go through rate limiters.

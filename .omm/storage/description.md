@@ -1,1 +1,0 @@
-Three-tier storage architecture. SQLite stores structured signal, trade, and account data for dashboard queries and historical analysis. JSONL files provide append-only audit logging for every signal and trade decision. JSON state files enable atomic runtime state persistence for crash recovery.

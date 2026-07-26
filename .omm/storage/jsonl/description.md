@@ -1,1 +1,0 @@
-Append-only JSONL audit log files in logs/ directory. Each line is a timestamped JSON event: signal generated, trade decision, state change. Provides an immutable audit trail for compliance and replay.

@@ -1,1 +1,0 @@
-Boundary adapter between the signal/snapshot layer and NautilusTrader runtime. Converts PolySignal domain types into Nautilus-compatible data structures. Manages market catalog construction, market view assembly with spot anchor data, and state marshaling across the bridge boundary.

@@ -1,1 +1,0 @@
-All external data connections are read-only. The Telegram bot token is configured via environment/file and redacted in error messages. The Telegram publisher defaults to dry_run: true. No authenticated trading endpoints are called on any exchange.

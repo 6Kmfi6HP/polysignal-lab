@@ -1,1 +1,0 @@
-Signal processing pipeline that transforms raw alpha signals into validated, deduplicated, and formatted output. Applies configurable gates (cooldown, volatility, spread filters), selects the best signal via arbiter logic, builds consensus across strategies, deduplicates, and formats for publishing or Nautilus consumption.

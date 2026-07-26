@@ -1,1 +1,0 @@
-SQLite concurrency limits could become a bottleneck under high signal frequency. JSONL files grow unboundedly without rotation. State file corruption during crash could lose runtime context. No backup or archival strategy is implemented for long-term storage.

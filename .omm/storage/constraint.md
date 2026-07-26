@@ -1,1 +1,0 @@
-Writes to state files must be atomic (write to temp, rename). SQLite writes must use transactions. JSONL is append-only with no random access. No storage backend may block the signal processing pipeline on slow I/O.

@@ -1,1 +1,0 @@
-WebSocket disconnections from Polymarket or Binance could cause stale data without clear visibility. The Binance dependency for BTC/USDT introduces a single point of failure for anchor price computation. Telegram rate limits could delay signal publication during high-signal periods.

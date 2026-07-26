@@ -1,1 +1,0 @@
-All external HTTP calls must go through the token-bucket rate limiter. WebSocket connections must handle reconnection with exponential backoff. API keys and tokens must never appear in logs. Telegram tokens must be redacted in error output.
