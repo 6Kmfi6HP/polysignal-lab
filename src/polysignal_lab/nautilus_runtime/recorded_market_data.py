@@ -354,9 +354,13 @@ class RecordedMarketDataActor(nautilus_pyo3.DataActor):
             return
         client_id = polymarket_data_client_id(market.timeframe)
         for token in market.outcome_tokens:
-            instrument_id = get_polymarket_instrument_id(
-                market.condition_id,
-                token.token_id,
+            instrument_id = nautilus_pyo3.InstrumentId.from_str(
+                str(
+                    get_polymarket_instrument_id(
+                        market.condition_id,
+                        token.token_id,
+                    )
+                )
             )
             self.subscribe_quotes(instrument_id, client_id=client_id)
             self.subscribe_instrument_close(instrument_id, client_id=client_id)

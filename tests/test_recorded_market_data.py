@@ -14,7 +14,77 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
     PolySignalPriceToBeatData,
 )
-from polysignal_lab.nautilus_runtime.recorded_market_data import RecordedMarketDataStore
+from polysignal_lab.nautilus_runtime.recorded_market_data import (
+    RecordedMarketDataActor,
+    RecordedMarketDataActorConfig,
+    RecordedMarketDataStore,
+)
+from nautilus_polymarket_fixtures import polymarket_binary_instrument
+
+
+def test_recorder_subscribes_with_pyo3_instrument_ids(tmp_path: Path) -> None:
+    """The adapter helper returns Cython IDs, but the recorder is a PyO3 actor."""
+
+    class Probe(RecordedMarketDataActor):
+        def __init__(self) -> None:
+            settings = Settings()
+            settings.storage.recorded_market_data_dir = str(tmp_path)
+            super().__init__(RecordedMarketDataActorConfig.build(settings))
+            self.quote_ids: list[object] = []
+            self.close_ids: list[object] = []
+
+        def on_start(self) -> None:
+            self.on_instrument(polymarket_binary_instrument("uptoken", "Up"))
+            self.on_instrument(polymarket_binary_instrument("downtoken", "Down"))
+
+        def subscribe_quotes(
+            self,
+            instrument_id: object,
+            client_id: object | None = None,
+            params: dict[str, str] | None = None,
+        ) -> None:
+            super().subscribe_quotes(
+                instrument_id,  # pyright: ignore[reportArgumentType]
+                client_id=client_id,  # pyright: ignore[reportArgumentType]
+                params=params,
+            )
+            self.quote_ids.append(instrument_id)
+
+        def subscribe_instrument_close(
+            self,
+            instrument_id: object,
+            client_id: object | None = None,
+            params: dict[str, str] | None = None,
+        ) -> None:
+            super().subscribe_instrument_close(
+                instrument_id,  # pyright: ignore[reportArgumentType]
+                client_id=client_id,  # pyright: ignore[reportArgumentType]
+                params=params,
+            )
+            self.close_ids.append(instrument_id)
+
+    actor = Probe()
+    engine = pyo3.BacktestEngine(  # pyright: ignore[reportAttributeAccessIssue]
+        pyo3.BacktestEngineConfig(  # pyright: ignore[reportAttributeAccessIssue]
+            trader_id=pyo3.TraderId("RECORDER-BOUNDARY-001"),
+            bypass_logging=True,
+        )
+    )
+    engine.add_actor(actor)
+    try:
+        engine.run()
+
+        expected = [
+            "0xcondition1-uptoken.POLYMARKET",
+            "0xcondition1-downtoken.POLYMARKET",
+        ]
+        assert [str(value) for value in actor.quote_ids] == expected
+        assert [str(value) for value in actor.close_ids] == expected
+        assert all(isinstance(value, pyo3.InstrumentId) for value in actor.quote_ids)
+        assert all(isinstance(value, pyo3.InstrumentId) for value in actor.close_ids)
+    finally:
+        actor.store.close()
+        engine.dispose()
 
 
 def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path: Path) -> None:
