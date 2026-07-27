@@ -12,6 +12,7 @@ from polysignal_lab.config import Settings
 from polysignal_lab.nautilus_runtime.backtest_node import build_backtest_engine
 from polysignal_lab.nautilus_runtime.custom_data_types import (
     PolySignalMarketMetaData,
+    PolySignalMarketUniverseData,
     PolySignalPriceToBeatData,
 )
 from polysignal_lab.nautilus_runtime.recorded_market_data import (
@@ -85,6 +86,157 @@ def test_recorder_subscribes_with_pyo3_instrument_ids(tmp_path: Path) -> None:
     finally:
         actor.store.close()
         engine.dispose()
+
+
+def test_recorder_releases_exited_market_subscriptions(tmp_path: Path) -> None:
+    class Probe(RecordedMarketDataActor):
+        def __init__(self) -> None:
+            settings = Settings()
+            settings.storage.recorded_market_data_dir = str(tmp_path)
+            super().__init__(RecordedMarketDataActorConfig.build(settings))
+            self.instruments = (
+                polymarket_binary_instrument("uptoken", "Up"),
+                polymarket_binary_instrument("downtoken", "Down"),
+            )
+            self.quote_subscriptions: list[str] = []
+            self.close_subscriptions: list[str] = []
+            self.quote_unsubscriptions: list[str] = []
+            self.close_unsubscriptions: list[str] = []
+
+        def on_start(self) -> None:
+            expected = [
+                "0xcondition1-uptoken.POLYMARKET",
+                "0xcondition1-downtoken.POLYMARKET",
+            ]
+            for _ in range(2):
+                for instrument in self.instruments:
+                    self.on_instrument(instrument)
+            self.on_data(
+                PolySignalMarketUniverseData(
+                    epoch=1,
+                    active_condition_ids=("0xcondition1",),
+                    entered_condition_ids=("0xcondition1",),
+                    exited_condition_ids=("0xcondition1",),
+                    ts_event=1,
+                    ts_init=1,
+                )
+            )
+            assert self.quote_subscriptions == expected
+            assert self.quote_unsubscriptions == []
+            self.on_data(
+                PolySignalMarketUniverseData(
+                    epoch=2,
+                    active_condition_ids=(),
+                    entered_condition_ids=(),
+                    exited_condition_ids=("0xcondition1",),
+                    ts_event=2,
+                    ts_init=2,
+                )
+            )
+            for instrument in self.instruments:
+                self.on_instrument(instrument)
+            self.on_data(
+                PolySignalMarketUniverseData(
+                    epoch=3,
+                    active_condition_ids=("0xcondition1",),
+                    entered_condition_ids=("0xcondition1",),
+                    exited_condition_ids=(),
+                    ts_event=3,
+                    ts_init=3,
+                )
+            )
+            assert self.quote_subscriptions == [*expected, *expected]
+            for instrument in self.instruments:
+                self.on_instrument(instrument)
+            for instrument in self.instruments:
+                self.on_instrument_close(
+                    pyo3.InstrumentClose(
+                        instrument_id=getattr(instrument, "id"),
+                        close_price=pyo3.Price.from_str("1.00"),
+                        close_type=pyo3.InstrumentCloseType.CONTRACT_EXPIRED,
+                        ts_event=4,
+                        ts_init=4,
+                    )
+                )
+            self._subscriptions_started = True
+
+        def subscribe_quotes(
+            self,
+            instrument_id: object,
+            client_id: object | None = None,
+            params: dict[str, str] | None = None,
+        ) -> None:
+            super().subscribe_quotes(
+                instrument_id,  # pyright: ignore[reportArgumentType]
+                client_id=client_id,  # pyright: ignore[reportArgumentType]
+                params=params,
+            )
+            self.quote_subscriptions.append(str(instrument_id))
+
+        def subscribe_instrument_close(
+            self,
+            instrument_id: object,
+            client_id: object | None = None,
+            params: dict[str, str] | None = None,
+        ) -> None:
+            super().subscribe_instrument_close(
+                instrument_id,  # pyright: ignore[reportArgumentType]
+                client_id=client_id,  # pyright: ignore[reportArgumentType]
+                params=params,
+            )
+            self.close_subscriptions.append(str(instrument_id))
+
+        def unsubscribe_quotes(
+            self,
+            instrument_id: object,
+            client_id: object | None = None,
+            params: dict[str, str] | None = None,
+        ) -> None:
+            super().unsubscribe_quotes(
+                instrument_id,  # pyright: ignore[reportArgumentType]
+                client_id=client_id,  # pyright: ignore[reportArgumentType]
+                params=params,
+            )
+            self.quote_unsubscriptions.append(str(instrument_id))
+
+        def unsubscribe_instrument_close(
+            self,
+            instrument_id: object,
+            client_id: object | None = None,
+            params: dict[str, str] | None = None,
+        ) -> None:
+            super().unsubscribe_instrument_close(
+                instrument_id,  # pyright: ignore[reportArgumentType]
+                client_id=client_id,  # pyright: ignore[reportArgumentType]
+                params=params,
+            )
+            self.close_unsubscriptions.append(str(instrument_id))
+
+    actor = Probe()
+    engine = pyo3.BacktestEngine(  # pyright: ignore[reportAttributeAccessIssue]
+        pyo3.BacktestEngineConfig(  # pyright: ignore[reportAttributeAccessIssue]
+            trader_id=pyo3.TraderId("RECORDER-LIFECYCLE-001"),
+            bypass_logging=True,
+        )
+    )
+    engine.add_actor(actor)
+    expected = [
+        "0xcondition1-uptoken.POLYMARKET",
+        "0xcondition1-downtoken.POLYMARKET",
+    ]
+
+    try:
+        engine.run()
+
+        assert actor.quote_subscriptions == [*expected, *expected]
+        assert actor.close_subscriptions == expected
+        assert actor.quote_unsubscriptions == [*expected, *expected]
+        assert actor.close_unsubscriptions == expected
+    finally:
+        engine.dispose()
+        assert actor._subscriptions_started is False
+        assert actor._quote_subscriptions == {}
+        assert actor._close_subscriptions == {}
 
 
 def test_recorded_market_data_round_trip_is_backtest_ready(tmp_path: Path) -> None:

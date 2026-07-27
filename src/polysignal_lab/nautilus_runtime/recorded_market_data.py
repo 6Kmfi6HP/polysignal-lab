@@ -312,6 +312,16 @@ class RecordedMarketDataActor(nautilus_pyo3.DataActor):
         self._instrument_markets = PolymarketInstrumentMarketBuilder(
             self.settings.markets
         )
+        self._quote_subscriptions: dict[
+            str,
+            tuple[nautilus_pyo3.ClientId, tuple[nautilus_pyo3.InstrumentId, ...]],
+        ] = {}
+        self._close_subscriptions: dict[
+            str,
+            tuple[nautilus_pyo3.ClientId, tuple[nautilus_pyo3.InstrumentId, ...]],
+        ] = {}
+        self._inactive_condition_ids: set[str] = set()
+        self._subscriptions_started = False
 
     def on_start(self) -> None:
         self.store.start()
@@ -329,6 +339,7 @@ class RecordedMarketDataActor(nautilus_pyo3.DataActor):
             self.subscribe_data(data_type)
         if self.settings.runtime.nautilus.spot_data.source == "polymarket_rtds":
             self._subscribe_spot_data()
+        self._subscriptions_started = True
 
     def _subscribe_spot_data(self) -> None:
         client_id = polymarket_rtds_data_client_id(self.settings.markets.timeframes)
@@ -342,19 +353,62 @@ class RecordedMarketDataActor(nautilus_pyo3.DataActor):
             )
 
     def on_stop(self) -> None:
+        if self._subscriptions_started:
+            venue = nautilus_pyo3.Venue.from_str("POLYMARKET")
+            for condition_id in tuple(self._quote_subscriptions):
+                self._retire_quote_subscriptions((condition_id,))
+            for condition_id, (client_id, instrument_ids) in tuple(
+                self._close_subscriptions.items()
+            ):
+                for instrument_id in instrument_ids:
+                    self.unsubscribe_instrument_close(
+                        instrument_id,
+                        client_id=client_id,
+                    )
+                self._close_subscriptions.pop(condition_id, None)
+            for timeframe in self.settings.markets.timeframes:
+                self.unsubscribe_instruments(
+                    venue,
+                    client_id=polymarket_data_client_id(timeframe),
+                )
+            for data_type in (
+                custom_data_type(PolySignalPriceToBeatData),
+                custom_data_type(PolySignalMarketMetaData),
+                custom_data_type(PolySignalMarketUniverseData),
+            ):
+                self.unsubscribe_data(data_type)
+            if self.settings.runtime.nautilus.spot_data.source == "polymarket_rtds":
+                self._unsubscribe_spot_data()
+            self._inactive_condition_ids.clear()
+            self._subscriptions_started = False
         self.store.close()
 
+    def _unsubscribe_spot_data(self) -> None:
+        client_id = polymarket_rtds_data_client_id(self.settings.markets.timeframes)
+        for symbol in polymarket_rtds_crypto_symbols(
+            self.settings.markets.assets,
+            self.settings.data.binance.symbols,
+        ):
+            self.unsubscribe_data(
+                polymarket_rtds_crypto_price_data_type(symbol),
+                client_id=client_id,
+            )
+
     def on_dispose(self) -> None:
-        self.store.close()
+        self.on_stop()
 
     def on_instrument(self, instrument: object) -> None:
         self.store.record(instrument)
         market = self._instrument_markets.add(instrument)
-        if market is None:
+        if (
+            market is None
+            or market.condition_id in self._quote_subscriptions
+            or market.condition_id in self._inactive_condition_ids
+        ):
             return
         client_id = polymarket_data_client_id(market.timeframe)
-        for token in market.outcome_tokens:
-            instrument_id = nautilus_pyo3.InstrumentId.from_str(
+        instrument_ids = tuple(
+            nautilus_pyo3.InstrumentId.from_str(
                 str(
                     get_polymarket_instrument_id(
                         market.condition_id,
@@ -362,14 +416,78 @@ class RecordedMarketDataActor(nautilus_pyo3.DataActor):
                     )
                 )
             )
+            for token in market.outcome_tokens
+        )
+        close_subscription_exists = market.condition_id in self._close_subscriptions
+        for instrument_id in instrument_ids:
             self.subscribe_quotes(instrument_id, client_id=client_id)
-            self.subscribe_instrument_close(instrument_id, client_id=client_id)
+            if not close_subscription_exists:
+                self.subscribe_instrument_close(instrument_id, client_id=client_id)
+        self._quote_subscriptions[market.condition_id] = (client_id, instrument_ids)
+        self._close_subscriptions.setdefault(
+            market.condition_id,
+            (client_id, instrument_ids),
+        )
+
+    def _retire_quote_subscriptions(self, condition_ids: tuple[str, ...]) -> None:
+        self._inactive_condition_ids.update(condition_ids)
+        for condition_id in condition_ids:
+            subscription = self._quote_subscriptions.pop(condition_id, None)
+            if subscription is None:
+                continue
+            client_id, instrument_ids = subscription
+            for instrument_id in instrument_ids:
+                self.unsubscribe_quotes(instrument_id, client_id=client_id)
+
+    def _reactivate_conditions(self, condition_ids: tuple[str, ...]) -> None:
+        for condition_id in condition_ids:
+            if condition_id not in self._inactive_condition_ids:
+                continue
+            self._inactive_condition_ids.remove(condition_id)
+            subscription = self._close_subscriptions.get(condition_id)
+            if subscription is None:
+                continue
+            client_id, instrument_ids = subscription
+            for instrument_id in instrument_ids:
+                self.subscribe_quotes(instrument_id, client_id=client_id)
+            self._quote_subscriptions[condition_id] = (client_id, instrument_ids)
 
     def on_quote(self, tick: object) -> None:
         self.store.record(tick)
 
     def on_instrument_close(self, update: object) -> None:
         self.store.record(update)
+        instrument_id = getattr(update, "instrument_id", None)
+        if instrument_id is None:
+            return
+        for condition_id, (client_id, instrument_ids) in tuple(
+            self._close_subscriptions.items()
+        ):
+            remaining = tuple(item for item in instrument_ids if item != instrument_id)
+            if len(remaining) == len(instrument_ids):
+                continue
+            self.unsubscribe_instrument_close(instrument_id, client_id=client_id)
+            if remaining:
+                self._close_subscriptions[condition_id] = (client_id, remaining)
+            else:
+                self._close_subscriptions.pop(condition_id, None)
+            return
 
     def on_data(self, data: object) -> None:
-        self.store.record(data)
+        payload = unwrap_custom_data(data)
+        self.store.record(payload)
+        if isinstance(payload, PolySignalMarketUniverseData):
+            active_condition_ids = tuple(
+                dict.fromkeys(
+                    (*payload.active_condition_ids, *payload.entered_condition_ids)
+                )
+            )
+            active = set(active_condition_ids)
+            self._retire_quote_subscriptions(
+                tuple(
+                    condition_id
+                    for condition_id in payload.exited_condition_ids
+                    if condition_id not in active
+                )
+            )
+            self._reactivate_conditions(active_condition_ids)
