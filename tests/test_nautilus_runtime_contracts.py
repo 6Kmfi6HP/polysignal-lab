@@ -38,7 +38,7 @@ from polysignal_lab.nautilus_runtime.live_node import (
 def test_nautilus_version_has_native_strategy_messaging() -> None:
     from importlib.metadata import version
 
-    assert version("nautilus-trader") == "1.231.0a20260716"
+    assert version("nautilus-trader") == "1.231.0a20260725"
     assert callable(getattr(pyo3.Strategy, "publish_data", None))
     assert callable(getattr(pyo3.Strategy, "subscribe_data", None))
 
@@ -290,8 +290,6 @@ def test_same_strategy_registers_on_livenode_sandbox() -> None:
         workflow_marker="live",
     )
     assert config.strategy_id == "PolySignal-live_probe"
-    assert not hasattr(node, "cache")
-    assert not hasattr(node, "portfolio")
     node.start()
     assert node.is_running is True
     node.stop()

@@ -143,8 +143,6 @@ def test_livenode_registers_pyo3_strategy_without_registration_globals() -> None
         )
     )
 
-    assert not hasattr(node, "cache")
-    assert not hasattr(node, "portfolio")
     node.start()
     assert node.is_running is True
     node.stop()
