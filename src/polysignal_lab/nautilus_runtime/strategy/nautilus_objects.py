@@ -23,9 +23,19 @@ _instrument_id_from_str = cast(
 
 
 def _nautilus_instrument_id(value: object) -> object:
+    """Coerce any instrument id into the PyO3 family the runtime subscribes with.
+
+    nautilus_trader ships a Cython and a PyO3 `InstrumentId` of the same name.
+    Passing the wrong one into a PyO3 call raises the self-contradictory
+    `'InstrumentId' object is not an instance of 'InstrumentId'`, which is what
+    `on_instrument` failed with on every callback. The two render identically,
+    so a string round-trip is a safe normalisation.
+    """
     if isinstance(value, str):
         return _instrument_id_from_str(value)
-    return value
+    if isinstance(value, _Pyo3InstrumentId):
+        return value
+    return _instrument_id_from_str(str(value))
 
 
 def _nautilus_book_type(value: str) -> object:
