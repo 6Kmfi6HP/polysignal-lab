@@ -1117,6 +1117,35 @@ def test_dashboard_marks_unrefreshed_runtime_strategy_status_inactive(tmp_path) 
     assert rows[0]["reason"] == "status_not_refreshed"
 
 
+def test_dashboard_ages_unrefreshed_untradable_status(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "db.sqlite3")
+    store.insert_strategy_status(
+        StrategyMarketStatus(
+            strategy="ptb_diff",
+            asset="BTC",
+            timeframe="5m",
+            status="untradable",
+            reason="missing_quote_depth:DOWN",
+        )
+    )
+    client = TestClient(create_dashboard_app(store))
+
+    assert client.get("/api/strategy-status").json()[0]["status"] == "untradable"
+    assert client.get("/api/overview").json()["strategy_status"][0]["status"] == (
+        "untradable"
+    )
+
+    with store._lock, store._conn:
+        store._conn.execute(
+            "UPDATE strategy_status SET created_at='2020-01-01T00:00:00Z'"
+        )
+
+    rows = store.strategy_status_rows(limit=100)
+
+    assert rows[0]["status"] == "inactive"
+    assert rows[0]["reason"] == "status_not_refreshed"
+
+
 def test_dashboard_exposes_only_latest_status_per_strategy_market(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "strategy-status-current.sqlite3")
     store.insert_strategy_status(

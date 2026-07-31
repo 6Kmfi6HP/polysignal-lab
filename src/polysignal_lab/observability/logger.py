@@ -44,6 +44,9 @@ class RedactingJsonFormatter(logging.Formatter):
         readiness_detail = getattr(record, "readiness_detail", None)
         if isinstance(readiness_detail, dict):
             payload["readiness_detail"] = _redact_json_value(readiness_detail)
+        market_detail = getattr(record, "market_detail", None)
+        if isinstance(market_detail, dict):
+            payload["market_detail"] = _redact_json_value(market_detail)
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 

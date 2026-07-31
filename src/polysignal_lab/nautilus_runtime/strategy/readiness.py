@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
 from collections.abc import Callable
+from datetime import datetime
 from typing import Protocol
 
 from polysignal_lab.alpha.types import MarketView
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.strategy_readiness import StrategyStatus
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
@@ -18,12 +19,18 @@ class _ReadinessStrategy(Protocol):
     strategy_name: str
     _subscription_state: MarketSubscriptionState
     _runtime_readiness_miss_condition_ids: set[str]
+    _runtime_readiness_reason_by_condition: dict[str, str]
     _stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]]
+    _untradable_quote_sides_by_condition: dict[str, frozenset[Side]]
     progress_callback: Callable[[str], None] | None
     readiness_callback: Callable[[str, bool, dict[str, object]], None] | None
 
     def _framework_now(self) -> datetime: ...
     def _require_registry(self) -> MarketCatalog | None: ...
+
+
+class _UntradableStateOwner(Protocol):
+    _untradable_quote_sides_by_condition: dict[str, frozenset[Side]]
 
 
 def note_runtime_progress(strategy: _ReadinessStrategy, phase: str) -> None:
@@ -38,36 +45,151 @@ def note_runtime_readiness(
     condition_id: str,
     *,
     ready: bool,
+    status: StrategyStatus | None = None,
+    reason: str | None = None,
 ) -> None:
     if ready:
         _ = strategy._runtime_readiness_miss_condition_ids.discard(condition_id)
+        _ = strategy._runtime_readiness_reason_by_condition.pop(condition_id, None)
         _ = strategy._stale_orderbook_recovery_by_condition.pop(condition_id, None)
     else:
         strategy._runtime_readiness_miss_condition_ids.add(condition_id)
+    _record_strategy_readiness(
+        strategy,
+        condition_id,
+        ready=ready,
+        status=status,
+        reason=reason,
+    )
+
+
+def _record_strategy_readiness(
+    strategy: _ReadinessStrategy,
+    condition_id: str,
+    *,
+    ready: bool,
+    status: StrategyStatus | None,
+    reason: str | None,
+) -> None:
     observability = getattr(strategy, "observability", None)
     record_status = getattr(observability, "record_strategy_status", None)
+    record_status_value = getattr(observability, "record_strategy_status_value", None)
     callback = strategy.readiness_callback
-    if callback is None and not callable(record_status):
+    if callback is None and not callable(record_status) and not callable(
+        record_status_value
+    ):
         return
     now = strategy._framework_now()
     detail = readiness_detail(strategy, condition_id, now=now)
     asset = detail.get("asset")
     timeframe = detail.get("timeframe")
-    if (
-        callable(record_status)
-        and isinstance(asset, str)
-        and isinstance(timeframe, str)
-    ):
+    if isinstance(asset, str) and isinstance(timeframe, str):
         state = detail.get("subscription_state")
-        record_status(
-            strategy=strategy.strategy_name,
-            asset=asset,
-            timeframe=timeframe,
+        effective_status, effective_reason, explicit_status = _effective_status(
+            strategy,
+            asset,
+            timeframe,
             ready=ready,
-            reason=None if ready else str(state or "missing_data"),
+            status=status,
+            reason=reason,
+            readiness_state=state,
         )
+        if explicit_status and callable(record_status_value):
+            record_status_value(
+                strategy=strategy.strategy_name,
+                asset=asset,
+                timeframe=timeframe,
+                status=effective_status,
+                reason=effective_reason,
+            )
+        elif callable(record_status):
+            record_status(
+                strategy=strategy.strategy_name,
+                asset=asset,
+                timeframe=timeframe,
+                ready=ready,
+                reason=effective_reason,
+            )
     if callback is not None:
         callback(condition_id, ready, detail)
+
+
+def _strategy_status_reason(
+    ready: bool,
+    state: object,
+    reason: str | None,
+) -> str | None:
+    if reason is not None:
+        return reason
+    return None if ready else str(state or "missing_data")
+
+
+def _effective_status(
+    strategy: _ReadinessStrategy,
+    asset: str,
+    timeframe: str,
+    *,
+    ready: bool,
+    status: StrategyStatus | None,
+    reason: str | None,
+    readiness_state: object,
+) -> tuple[StrategyStatus, str | None, bool]:
+    readiness_miss_reason = (
+        _readiness_miss_reason_for_market(strategy, asset, timeframe)
+        if ready
+        else None
+    )
+    if readiness_miss_reason is not None:
+        return "missing_data", readiness_miss_reason, True
+    untradable_reason = (
+        _untradable_reason_for_market(strategy, asset, timeframe)
+        if ready and status in {None, "untradable"}
+        else None
+    )
+    if untradable_reason is not None:
+        return "untradable", untradable_reason, True
+    effective_status: StrategyStatus = status or (
+        "active" if ready else "missing_data"
+    )
+    return (
+        effective_status,
+        _strategy_status_reason(ready, readiness_state, reason),
+        status is not None,
+    )
+
+
+def _readiness_miss_reason_for_market(
+    strategy: _ReadinessStrategy,
+    asset: str,
+    timeframe: str,
+) -> str | None:
+    registry = strategy._require_registry()
+    for condition_id in sorted(strategy._runtime_readiness_miss_condition_ids):
+        pair = None if registry is None else registry.by_condition(condition_id)
+        if pair is None or pair.asset != asset or pair.timeframe != timeframe:
+            continue
+        return strategy._runtime_readiness_reason_by_condition.get(
+            condition_id, "missing_data"
+        )
+    return None
+
+
+def _untradable_reason_for_market(
+    strategy: _ReadinessStrategy,
+    asset: str,
+    timeframe: str,
+) -> str | None:
+    registry = strategy._require_registry()
+    missing_sides: set[Side] = set()
+    for condition_id, sides in strategy._untradable_quote_sides_by_condition.items():
+        pair = None if registry is None else registry.by_condition(condition_id)
+        if pair is None or pair.asset != asset or pair.timeframe != timeframe:
+            continue
+        missing_sides.update(sides)
+    if not missing_sides:
+        return None
+    ordered_sides = (side.value for side in (Side.UP, Side.DOWN) if side in missing_sides)
+    return f"missing_quote_depth:{','.join(ordered_sides)}"
 
 
 def book_readiness_detail(
@@ -127,9 +249,21 @@ def subscription_readiness_state(
         return "stale_orderbook"
     if pending_sides:
         return "awaiting_first_book"
+    reasons = getattr(strategy, "_runtime_readiness_reason_by_condition", {})
+    if reason := reasons.get(condition_id):
+        return reason
     if condition_id in state.subscribe_intent_condition_ids:
         return "subscribe_requested"
     return "unsubscribed"
+
+
+def clear_condition_untradable_state(
+    strategy: _UntradableStateOwner,
+    condition_id: str,
+) -> None:
+    states = getattr(strategy, "_untradable_quote_sides_by_condition", None)
+    if states is not None:
+        _ = states.pop(condition_id, None)
 
 
 def subscription_timing_detail(

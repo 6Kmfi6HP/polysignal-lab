@@ -12,6 +12,7 @@ from polysignal_lab.alpha.types import (
     MarketView,
 )
 from polysignal_lab.domain.signal import SignalCandidate
+from polysignal_lab.domain.strategy_readiness import StrategyStatus
 from polysignal_lab.nautilus_runtime.custom_data_types import unwrap_custom_data
 from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicy,
@@ -133,8 +134,21 @@ class PolySignalNativeStrategy(Strategy):
     def _note_runtime_progress(self, phase: str) -> None:
         readiness_mod.note_runtime_progress(self, phase)
 
-    def _note_runtime_readiness(self, condition_id: str, *, ready: bool) -> None:
-        readiness_mod.note_runtime_readiness(self, condition_id, ready=ready)
+    def _note_runtime_readiness(
+        self,
+        condition_id: str,
+        *,
+        ready: bool,
+        status: StrategyStatus | None = None,
+        reason: str | None = None,
+    ) -> None:
+        readiness_mod.note_runtime_readiness(
+            self,
+            condition_id,
+            ready=ready,
+            status=status,
+            reason=reason,
+        )
 
     def _readiness_detail(
         self, condition_id: str, *, now: datetime

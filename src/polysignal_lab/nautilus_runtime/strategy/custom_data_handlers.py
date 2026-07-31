@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Callable, Protocol
 
 from polysignal_lab.alpha.types import TradingStateView
+from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog, MarketPairMeta
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
@@ -15,6 +16,9 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
 )
 from polysignal_lab.nautilus_runtime.strategy.data_boundary import (
     DataBoundaryClassification,
+)
+from polysignal_lab.nautilus_runtime.strategy.readiness import (
+    clear_condition_untradable_state,
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
@@ -33,6 +37,7 @@ class _CustomDataStrategy(Protocol):
     _subscription_state: MarketSubscriptionState
     _subscription_assets: frozenset[str]
     _subscription_timeframes: frozenset[str]
+    _untradable_quote_sides_by_condition: dict[str, frozenset[Side]]
     cache: object | None
 
     def evaluate_condition(
@@ -148,6 +153,7 @@ def handle_market_universe(
             condition_id
         )
         retire_market_book_generation(strategy, condition_id)
+        clear_condition_untradable_state(strategy, condition_id)  # type: ignore[arg-type]
         strategy._note_runtime_readiness(condition_id, ready=True)
     if strategy.unsubscribe_exited and exited_condition_ids:
         strategy._unsubscribe_market_conditions(exited_condition_ids)

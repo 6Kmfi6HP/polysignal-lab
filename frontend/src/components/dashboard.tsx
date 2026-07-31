@@ -92,6 +92,7 @@ const warningStatuses = new Set([
   'unknown',
   'disabled',
   'inactive',
+  'untradable',
   'down',
 ])
 const dangerStatuses = new Set([

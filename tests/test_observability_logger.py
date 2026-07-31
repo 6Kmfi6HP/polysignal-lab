@@ -137,6 +137,28 @@ def test_file_handler_records_tracebacks(tmp_path: Path) -> None:
     assert "ValueError: boom" in str(record["exception"])
 
 
+def test_file_handler_records_redacted_market_detail(tmp_path: Path) -> None:
+    configure_logging("INFO", LoggingConfig(directory=str(tmp_path)))
+
+    logging.getLogger("polysignal_lab.probe").info(
+        "market_untraditable",
+        extra={
+            "market_detail": {
+                "condition": "btc-5m",
+                "missing_sides": ["UP"],
+                "credential": "token=8badf00d-supersecret-value-goes-here",
+            }
+        },
+    )
+
+    record = _records(tmp_path)[0]
+    assert record["market_detail"] == {
+        "condition": "btc-5m",
+        "missing_sides": ["UP"],
+        "credential": "token=***",
+    }
+
+
 def test_file_level_off_disables_file_output(tmp_path: Path) -> None:
     configure_logging("INFO", LoggingConfig(directory=str(tmp_path), file_level="OFF"))
 

@@ -177,3 +177,47 @@ restrict access to the historical logs before production sign-off.
 - `uv run basedpyright`: task changes add no errors; the command still exits 1
   with eight pre-existing unrelated errors (detached `HEAD` baseline: nine)
 - `uv run polysignal-safety-scan .`: passed
+
+## Quote-depth health separation verification (2026-07-31)
+
+Observation window: `16:27:54Z` through `16:48:00Z` in the
+production-equivalent Compose runtime. The process stayed up with restart count
+zero. Samples covered the 5m rotations at `16:30`, `16:35`, `16:40`, and
+`16:45`, including overlapping 15m rotations at `16:30` and `16:45`.
+
+### Feed readiness
+
+- `/health` and its runtime component remained `ok` throughout the sampled
+  window. Fresh empty-depth books did not add readiness details.
+- Real stale-book transitions still entered readiness with the explicit
+  `stale_orderbook` state at 60,477-60,658 ms receipt freshness. Both observed
+  recoveries completed in 41 seconds or less, within the existing 120-second
+  target and 300-second health tolerance. While stale, strategy status was
+  `missing_data` even with overlapping active and untradable conditions.
+- The overlapping 15m rotation produced first bilateral books within 141 ms.
+  The 60-second freshness and 300-second health thresholds were not changed.
+
+### Market tradability
+
+- Fresh books missing quote depth appeared only as `untradable` strategy
+  status with stable reasons such as `missing_quote_depth:DOWN`; one sampled
+  state was 6 active plus 6 untradable while `/health` remained `ok` with no
+  readiness detail. The final sample returned to 12 active with the same
+  healthy result.
+- JSONL transition records include strategy, condition, asset, timeframe,
+  missing sides, receipt timestamps, and per-side freshness. Recovery records
+  are emitted when depth returns; conditions which exit while untradable are
+  cleared by the existing market-rotation path.
+- Repeated unchanged untradable projection remained subject to the 60-second
+  refresh rule: the database contained zero consecutive same-reason
+  untradable rows under 60 seconds. Real depth loss/recovery oscillations still
+  produced distinct transition records.
+- For a representative matched untradable interval in the final run,
+  SQLite contained zero `nautilus_decision`, `nautilus_order`, or signal rows.
+  This confirms that quote-depth loss skipped core evaluation and the order
+  pipeline while the feed itself remained healthy.
+
+Feed readiness recovery time and market-untradable duration are intentionally
+separate measurements. The former ends when bilateral receipts become fresh;
+the latter ends only when required ask depth returns or the market exits. No
+periodic resubscription was used to manufacture quote depth.

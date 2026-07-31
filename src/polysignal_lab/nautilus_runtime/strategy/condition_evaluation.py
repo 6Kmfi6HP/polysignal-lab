@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -11,23 +13,34 @@ from polysignal_lab.alpha.types import (
     MarketView,
     TradingStateView,
 )
+from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.strategy_readiness import StrategyStatus
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.native_strategy_exit import NativeExitPolicy
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import DecisionPipeline
-from polysignal_lab.nautilus_runtime.strategy.data_boundary import _market_view_ready
+from polysignal_lab.nautilus_runtime.strategy.data_boundary import (
+    MarketViewClassification,
+    MarketViewState,
+    classify_market_view,
+)
 from polysignal_lab.nautilus_runtime.strategy.protocols import _Assembler
 from polysignal_lab.nautilus_runtime.strategy.readiness import (
+    clear_condition_untradable_state,
     orderbook_readiness_threshold_ms,
     orderbook_trade_threshold_ms,
     stale_orderbook_recovered,
     stale_orderbook_sides,
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    MarketSubscriptionState,
     market_book_generation_ready,
     retire_market_book_generation,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class _EvaluationStrategy(Protocol):
@@ -41,15 +54,24 @@ class _EvaluationStrategy(Protocol):
     unsubscribe_exited: bool
     _active_condition_ids: set[str]
     _runtime_readiness_miss_condition_ids: set[str]
+    _runtime_readiness_reason_by_condition: dict[str, str]
     _stale_orderbook_recovery_by_condition: dict
-    _subscription_state: object
+    _untradable_quote_sides_by_condition: dict[str, frozenset[Side]]
+    _subscription_state: MarketSubscriptionState
     _decision_pipeline: DecisionPipeline
 
     def _framework_now(self) -> datetime: ...
     def _require_registry(self) -> MarketCatalog | None: ...
     def _require_assembler(self) -> _Assembler: ...
     def _note_runtime_progress(self, phase: str) -> None: ...
-    def _note_runtime_readiness(self, condition_id: str, *, ready: bool) -> None: ...
+    def _note_runtime_readiness(
+        self,
+        condition_id: str,
+        *,
+        ready: bool,
+        status: StrategyStatus | None = None,
+        reason: str | None = None,
+    ) -> None: ...
     def _refresh_asset_conditions(self) -> None: ...
     def _unsubscribe_market_conditions(self, condition_ids: Sequence[str]) -> None: ...
 
@@ -83,6 +105,7 @@ def retire_expired_condition(
     strategy._active_condition_ids.discard(condition_id)
     strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)  # type: ignore[attr-defined]
     retire_market_book_generation(strategy, condition_id)  # type: ignore[arg-type]
+    clear_condition_untradable_state(strategy, condition_id)  # type: ignore[arg-type]
     if strategy.unsubscribe_exited:
         strategy._unsubscribe_market_conditions((condition_id,))
     strategy._refresh_asset_conditions()
@@ -90,9 +113,92 @@ def retire_expired_condition(
     return True
 
 
-def mark_condition_unready(strategy: _EvaluationStrategy, condition_id: str) -> None:
+def mark_condition_unready(
+    strategy: _EvaluationStrategy,
+    condition_id: str,
+    *,
+    reason: str,
+) -> None:
+    clear_condition_untradable_state(strategy, condition_id)  # type: ignore[arg-type]
+    strategy._runtime_readiness_reason_by_condition[condition_id] = reason
+    if reason != "stale_orderbook":
+        _ = strategy._stale_orderbook_recovery_by_condition.pop(condition_id, None)
     strategy._note_runtime_progress("readiness_miss")
     strategy._note_runtime_readiness(condition_id, ready=False)
+
+
+def _missing_quote_depth_reason(classification: MarketViewClassification) -> str:
+    sides = ",".join(
+        side.value for side in classification.missing_quote_depth_sides
+    )
+    return f"missing_quote_depth:{sides}"
+
+
+def _log_market_transition(
+    strategy: _EvaluationStrategy,
+    condition_id: str,
+    market_view: MarketView,
+    *,
+    event_type: str,
+    missing_sides: frozenset[Side],
+    now: datetime,
+) -> None:
+    receipts = strategy._subscription_state.last_book_received_at_by_condition.get(
+        condition_id, {}
+    )
+    logger.info(
+        event_type,
+        extra={
+            "market_detail": {
+                "strategy": strategy.strategy_name,
+                "condition": condition_id,
+                "asset": market_view.asset,
+                "timeframe": market_view.timeframe,
+                "observed_at": now.isoformat(),
+                "missing_sides": sorted(side.value for side in missing_sides),
+                "last_book_received_at_by_side": {
+                    side.value: (
+                        None
+                        if (received_at := receipts.get(side)) is None
+                        else received_at.isoformat()
+                    )
+                    for side in (Side.UP, Side.DOWN)
+                },
+                "freshness_ms_by_side": {
+                    side.value: market_view.book_for(side).freshness_ms
+                    for side in (Side.UP, Side.DOWN)
+                },
+            }
+        },
+    )
+
+
+def mark_condition_untradable(
+    strategy: _EvaluationStrategy,
+    condition_id: str,
+    market_view: MarketView,
+    classification: MarketViewClassification,
+    *,
+    now: datetime,
+) -> None:
+    missing_sides = frozenset(classification.missing_quote_depth_sides)
+    previous = strategy._untradable_quote_sides_by_condition.get(condition_id)
+    strategy._untradable_quote_sides_by_condition[condition_id] = missing_sides
+    strategy._note_runtime_readiness(
+        condition_id,
+        ready=True,
+        status="untradable",
+        reason=_missing_quote_depth_reason(classification),
+    )
+    if previous != missing_sides:
+        _log_market_transition(
+            strategy,
+            condition_id,
+            market_view,
+            event_type="market_untraditable",
+            missing_sides=missing_sides,
+            now=now,
+        )
 
 
 def _with_trading_state(
@@ -117,6 +223,68 @@ def _with_trading_state(
     return replace(view, trading=trading)
 
 
+def _classified_market_view(
+    strategy: _EvaluationStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+    trading_state: object | None,
+) -> tuple[MarketView, MarketViewClassification] | None:
+    view = strategy._require_assembler().build(condition_id, created_at=now)
+    classification = classify_market_view(view)
+    if classification.state is MarketViewState.INVALID:
+        mark_condition_unready(
+            strategy,
+            condition_id,
+            reason="missing_market_view",
+        )
+        return None
+    market_view = cast(MarketView, view)
+    if not isinstance(view, MarketView):
+        return market_view, classification
+    resolved_view = _with_trading_state(strategy, view, trading_state)
+    if resolved_view is None:
+        mark_condition_unready(
+            strategy,
+            condition_id,
+            reason="missing_market_view",
+        )
+        return None
+    return resolved_view, classification
+
+
+def _market_view_blocks_evaluation(
+    strategy: _EvaluationStrategy,
+    condition_id: str,
+    market_view: MarketView,
+    classification: MarketViewClassification,
+    *,
+    now: datetime,
+) -> bool:
+    stale_sides = stale_orderbook_sides(
+        market_view,
+        threshold_ms=orderbook_readiness_threshold_ms(strategy),  # type: ignore[arg-type]
+    )
+    if stale_sides is not None:
+        strategy._stale_orderbook_recovery_by_condition[condition_id] = stale_sides
+        mark_condition_unready(
+            strategy,
+            condition_id,
+            reason="stale_orderbook",
+        )
+        return True
+    if classification.state is not MarketViewState.UNTRADABLE:
+        return False
+    mark_condition_untradable(
+        strategy,
+        condition_id,
+        market_view,
+        classification,
+        now=now,
+    )
+    return True
+
+
 def evaluate_condition(
     strategy: _EvaluationStrategy,
     condition_id: str,
@@ -132,26 +300,28 @@ def evaluate_condition(
     if skip_preloaded_condition(strategy, condition_id, now=now):
         return
     if not market_book_generation_ready(strategy, condition_id):  # type: ignore[arg-type]
-        mark_condition_unready(strategy, condition_id)
+        mark_condition_unready(
+            strategy,
+            condition_id,
+            reason="awaiting_first_book",
+        )
         return
-    view = strategy._require_assembler().build(condition_id, created_at=now)
-    if view is None or not _market_view_ready(view):
-        mark_condition_unready(strategy, condition_id)
-        return
-    market_view = cast(MarketView, view)
-    if isinstance(view, MarketView):
-        resolved_view = _with_trading_state(strategy, view, trading_state)
-        if resolved_view is None:
-            mark_condition_unready(strategy, condition_id)
-            return
-        market_view = resolved_view
-    stale_sides = stale_orderbook_sides(
-        market_view,
-        threshold_ms=orderbook_readiness_threshold_ms(strategy),  # type: ignore[arg-type]
+    classified = _classified_market_view(
+        strategy,
+        condition_id,
+        now=now,
+        trading_state=trading_state,
     )
-    if stale_sides is not None:
-        strategy._stale_orderbook_recovery_by_condition[condition_id] = stale_sides
-        mark_condition_unready(strategy, condition_id)
+    if classified is None:
+        return
+    market_view, classification = classified
+    if _market_view_blocks_evaluation(
+        strategy,
+        condition_id,
+        market_view,
+        classification,
+        now=now,
+    ):
         return
     evaluate_ready_condition(
         strategy,
@@ -168,15 +338,20 @@ def evaluate_ready_condition(
     *,
     now: datetime,
 ) -> None:
-    readiness_confirmed = False
-    if condition_id in strategy._stale_orderbook_recovery_by_condition:
+    readiness_confirmed = _restore_tradable_state(
+        strategy,
+        condition_id,
+        market_view,
+        now=now,
+    )
+    if not readiness_confirmed and condition_id in strategy._stale_orderbook_recovery_by_condition:
         if not stale_orderbook_recovered(strategy, condition_id, market_view):  # type: ignore[arg-type]
             strategy._note_runtime_progress("readiness_miss")
             strategy._note_runtime_readiness(condition_id, ready=False)
             return
         strategy._note_runtime_readiness(condition_id, ready=True)
         readiness_confirmed = True
-    elif condition_id in strategy._runtime_readiness_miss_condition_ids:
+    elif not readiness_confirmed and condition_id in strategy._runtime_readiness_miss_condition_ids:
         strategy._note_runtime_readiness(condition_id, ready=True)
         readiness_confirmed = True
     evaluate_core = (
@@ -198,6 +373,30 @@ def evaluate_ready_condition(
         and condition_id not in strategy._runtime_readiness_miss_condition_ids
     ):
         strategy._note_runtime_readiness(condition_id, ready=True)
+
+
+def _restore_tradable_state(
+    strategy: _EvaluationStrategy,
+    condition_id: str,
+    market_view: MarketView,
+    *,
+    now: datetime,
+) -> bool:
+    missing_sides = strategy._untradable_quote_sides_by_condition.pop(
+        condition_id, None
+    )
+    if missing_sides is None:
+        return False
+    _log_market_transition(
+        strategy,
+        condition_id,
+        market_view,
+        event_type="market_tradable",
+        missing_sides=missing_sides,
+        now=now,
+    )
+    strategy._note_runtime_readiness(condition_id, ready=True)
+    return True
 
 
 def evaluate_decisions(

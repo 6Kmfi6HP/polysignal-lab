@@ -2110,7 +2110,7 @@ class SQLiteStore:
                 str(row["created_at"]).replace("Z", "+00:00")
             )
             if (
-                payload.get("status") in {"active", "missing_data"}
+                payload.get("status") in {"active", "missing_data", "untradable"}
                 and created_at < cutoff
             ):
                 payload["status"] = "inactive"

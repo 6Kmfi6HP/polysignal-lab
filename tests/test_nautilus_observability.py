@@ -218,6 +218,31 @@ def test_record_strategy_status_writes_current_readiness_projection() -> None:
     ]
 
 
+def test_untradable_strategy_status_uses_existing_refresh_interval() -> None:
+    store = FakeStore()
+    now = [0.0]
+    actor = ObservabilityService(store=store, monotonic_clock=lambda: now[0])
+
+    for _ in range(2):
+        actor.record_strategy_status_value(
+            strategy="late_consensus",
+            asset="BTC",
+            timeframe="5m",
+            status="untradable",
+            reason="missing_quote_depth:UP",
+        )
+    now[0] = 60.0
+    actor.record_strategy_status_value(
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        status="untradable",
+        reason="missing_quote_depth:UP",
+    )
+
+    assert len(store.tables["strategy_status"]) == 2
+
+
 def test_request_daily_report_forwards_framework_time() -> None:
     requests: list[datetime] = []
     actor = ObservabilityService(daily_report_notifier=requests.append)

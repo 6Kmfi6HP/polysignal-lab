@@ -64,6 +64,26 @@ describe('StrategyStatusPage', () => {
     expect(view.getByText('blocked')).toBeInTheDocument()
   })
 
+  it('renders and filters an untradable market status', async () => {
+    vi.spyOn(client, 'getStrategyStatus').mockResolvedValue([
+      makeStrategyStatusRow({ strategy: 'ready', status: 'active' }),
+      makeStrategyStatusRow({
+        strategy: 'empty-book',
+        status: 'untradable',
+        reason: 'missing_quote_depth:DOWN',
+      }),
+    ])
+    const user = userEvent.setup()
+    const view = renderStrategyStatusPage()
+
+    await view.findByText('empty-book')
+    await user.click(view.getByRole('button', { name: 'untradable (1)' }))
+
+    expect(view.queryByText('ready')).not.toBeInTheDocument()
+    expect(view.getByText('Untradable')).toBeInTheDocument()
+    expect(view.getByText('missing_quote_depth:DOWN')).toBeInTheDocument()
+  })
+
   it('shows an empty state when no rows are stored', async () => {
     vi.spyOn(client, 'getStrategyStatus').mockResolvedValue([])
 

@@ -9,6 +9,7 @@ from importlib import import_module
 from types import SimpleNamespace
 from typing import Any, Protocol, cast
 
+import pytest
 from typing_extensions import override
 
 from factories import sample_market_view
@@ -1630,8 +1631,6 @@ def test_native_strategy_drops_unknown_project_owned_data_with_condition_id() ->
 def test_native_strategy_readiness_gate_skips_missing_required_market_view_inputs() -> (
     None
 ):
-    from types import SimpleNamespace
-
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     calls: list[object] = []
@@ -1653,17 +1652,20 @@ def test_native_strategy_readiness_gate_skips_missing_required_market_view_input
         )
     )
     phases: list[str] = []
-    readiness: list[tuple[str, bool]] = []
+    readiness: list[tuple[str, bool, str]] = []
     strategy.progress_callback = phases.append
-    strategy.readiness_callback = lambda condition_id, ready, _detail: readiness.append(
-        (condition_id, ready)
+    strategy.readiness_callback = lambda condition_id, ready, detail: readiness.append(
+        (condition_id, ready, str(detail["subscription_state"]))
     )
+    strategy._stale_orderbook_recovery_by_condition["condition-btc-5m"] = {
+        Side.UP: 60_001.0
+    }
 
     strategy.evaluate_condition("condition-btc-5m")
 
     assert calls == []
     assert "readiness_miss" in phases
-    assert readiness == [("condition-btc-5m", False)]
+    assert readiness == [("condition-btc-5m", False, "missing_market_view")]
 
 
 def test_native_strategy_missing_view_fails_closed_without_resubscription() -> None:
@@ -1964,27 +1966,371 @@ def _real_market_view_with_empty_quote_depth() -> MarketView:
     )
 
 
-def test_native_strategy_readiness_gate_skips_real_market_view_with_empty_quote_depth() -> (
-    None
-):
+def _registered_catalog_for_view(
+    view: MarketView, *, end_ts: datetime | None = None
+) -> MarketCatalog:
+    from polysignal_lab.nautilus_runtime.market_catalog import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+    )
+
+    registry = _test_market_catalog()
+    registry.register(
+        MarketPairMeta(
+            market_id=view.market_id,
+            market_slug=view.market_slug,
+            condition_id=view.condition_id,
+            asset=view.asset,
+            timeframe=view.timeframe,
+            start_ts=view.start_ts,
+            end_ts=end_ts,
+            up=InstrumentTokenMeta(view.up.token_id, Side.UP),
+            down=InstrumentTokenMeta(view.down.token_id, Side.DOWN),
+        )
+    )
+    return registry
+
+
+@pytest.mark.parametrize(
+    ("missing_sides", "expected_reason"),
+    (
+        (frozenset({Side.UP}), "missing_quote_depth:UP"),
+        (frozenset({Side.DOWN}), "missing_quote_depth:DOWN"),
+        (frozenset({Side.UP, Side.DOWN}), "missing_quote_depth:UP,DOWN"),
+    ),
+)
+def test_native_strategy_readiness_gate_skips_real_market_view_with_empty_quote_depth(
+    missing_sides: frozenset[Side], expected_reason: str, caplog: pytest.LogCaptureFixture
+) -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
-    calls: list[object] = []
+    caplog.set_level(
+        "INFO",
+        logger="polysignal_lab.nautilus_runtime.strategy.condition_evaluation",
+    )
+    core_calls: list[object] = []
+    pipeline_calls: list[object] = []
     phases: list[str] = []
+    readiness: list[tuple[str, bool]] = []
+    statuses: list[dict[str, object]] = []
+    empty = _real_market_view_with_empty_quote_depth()
+    view = replace(
+        empty,
+        up=(empty.up if Side.UP in missing_sides else replace(empty.up, best_ask=0.51)),
+        down=(
+            empty.down
+            if Side.DOWN in missing_sides
+            else replace(empty.down, best_ask=0.52)
+        ),
+    )
     strategy = PolySignalNativeStrategy(
         core=FakeCore([]),
-        assembler=_assembler(_real_market_view_with_empty_quote_depth()),
+        assembler=_assembler(view),
         condition_ids=("condition-btc-5m",),
         strategy_name="ptb_diff",
         progress_callback=phases.append,
-        **_native_projections(),
+        readiness_callback=lambda condition_id, ready, _detail: readiness.append(
+            (condition_id, ready)
+        ),
+        observability=cast(
+            Any,
+            SimpleNamespace(
+                record_strategy_status_value=lambda **status: statuses.append(status)
+            ),
+        ),
+        registry=_registered_catalog_for_view(view),
     )
-    strategy.core.evaluate = lambda view: calls.append(view) or []  # type: ignore[method-assign]
+    strategy.core.evaluate = lambda current: core_calls.append(current) or []  # type: ignore[method-assign]
+    strategy._decision_pipeline = SimpleNamespace(
+        apply=lambda decisions, current: pipeline_calls.append((decisions, current))
+    )
 
     strategy.evaluate_condition("condition-btc-5m")
 
-    assert calls == []
-    assert "readiness_miss" in phases
+    assert core_calls == []
+    assert pipeline_calls == []
+    assert "readiness_miss" not in phases
+    assert readiness == [("condition-btc-5m", True)]
+    assert statuses == [
+        {
+            "strategy": "ptb_diff",
+            "asset": "BTC",
+            "timeframe": "5m",
+            "status": "untradable",
+            "reason": expected_reason,
+        }
+    ]
+    market_detail = getattr(caplog.records[-1], "market_detail")
+    assert market_detail["strategy"] == "ptb_diff"
+
+
+def test_native_strategy_fresh_empty_depth_clears_previous_readiness_miss() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    view = _real_market_view_with_empty_quote_depth()
+    assembler = FakeAssembler(None)
+    statuses: list[dict[str, object]] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=cast(MarketViewAssembler, cast(object, assembler)),
+        condition_ids=(view.condition_id,),
+        strategy_name="ptb_diff",
+        observability=cast(
+            Any,
+            SimpleNamespace(
+                record_strategy_status=lambda **status: statuses.append(status),
+                record_strategy_status_value=lambda **status: statuses.append(status),
+            ),
+        ),
+        registry=_registered_catalog_for_view(view),
+    )
+
+    strategy.evaluate_condition(view.condition_id)
+    assembler.view = view
+    strategy.evaluate_condition(view.condition_id)
+
+    assert view.condition_id not in strategy._runtime_readiness_miss_condition_ids
+    assert statuses[-1]["status"] == "untradable"
+
+
+def test_native_strategy_stale_empty_depth_remains_missing_data() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    empty = _real_market_view_with_empty_quote_depth()
+    stale = replace(
+        empty,
+        up=replace(empty.up, freshness_ms=60_001),
+        down=replace(empty.down, freshness_ms=60_001),
+    )
+    assembler = FakeAssembler(empty)
+    statuses: list[dict[str, object]] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=cast(MarketViewAssembler, cast(object, assembler)),
+        condition_ids=(stale.condition_id,),
+        strategy_name="ptb_diff",
+        observability=cast(
+            Any,
+            SimpleNamespace(
+                record_strategy_status=lambda **status: statuses.append(status),
+                record_strategy_status_value=lambda **status: statuses.append(status),
+            ),
+        ),
+        registry=_registered_catalog_for_view(stale),
+    )
+
+    strategy.evaluate_condition(empty.condition_id)
+    assembler.view = stale
+    strategy.evaluate_condition(stale.condition_id)
+
+    assert stale.condition_id in strategy._runtime_readiness_miss_condition_ids
+    assert stale.condition_id not in strategy._untradable_quote_sides_by_condition
+    assert statuses[-1]["ready"] is False
+    assert statuses[-1]["reason"] == "stale_orderbook"
+
+
+def test_native_strategy_depth_recovery_resumes_evaluation() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    empty = _real_market_view_with_empty_quote_depth()
+    tradable = replace(
+        empty,
+        up=replace(empty.up, best_ask=0.51),
+        down=replace(empty.down, best_ask=0.52),
+    )
+    assembler = FakeAssembler(empty)
+    core_calls: list[MarketView] = []
+    statuses: list[dict[str, object]] = []
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=cast(MarketViewAssembler, cast(object, assembler)),
+        condition_ids=(empty.condition_id,),
+        strategy_name="ptb_diff",
+        observability=cast(
+            Any,
+            SimpleNamespace(
+                record_strategy_status=lambda **status: statuses.append(status),
+                record_strategy_status_value=lambda **status: statuses.append(status),
+            ),
+        ),
+        registry=_registered_catalog_for_view(empty),
+    )
+    strategy.core.evaluate = lambda current: core_calls.append(current) or []  # type: ignore[method-assign]
+
+    strategy.evaluate_condition(empty.condition_id)
+    assembler.view = tradable
+    strategy.evaluate_condition(empty.condition_id)
+
+    assert core_calls == [tradable]
+    assert [status.get("status") for status in statuses] == ["untradable", None]
+    assert statuses[-1]["ready"] is True
+
+
+def test_native_strategy_overlapping_active_condition_does_not_overwrite_untradable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from polysignal_lab.nautilus_runtime.market_catalog import (
+        InstrumentTokenMeta,
+        MarketPairMeta,
+    )
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.observability import ObservabilityService
+
+    caplog.set_level(
+        "INFO",
+        logger="polysignal_lab.nautilus_runtime.strategy.condition_evaluation",
+    )
+
+    both_empty = _real_market_view_with_empty_quote_depth()
+    empty = replace(
+        both_empty,
+        down=replace(both_empty.down, best_ask=0.52),
+    )
+    tradable = replace(
+        empty,
+        view_id="view-overlap",
+        market_id="btc-5m-overlap",
+        market_slug="btc-updown-5m-overlap",
+        condition_id="condition-btc-5m-overlap",
+        up=replace(empty.up, token_id="overlap-up", best_ask=0.51),
+        down=replace(empty.down, token_id="overlap-down", best_ask=0.52),
+    )
+    down_empty = replace(
+        tradable,
+        view_id="view-down-empty",
+        market_id="btc-5m-down-empty",
+        market_slug="btc-updown-5m-down-empty",
+        condition_id="condition-btc-5m-down-empty",
+        up=replace(tradable.up, token_id="down-empty-up"),
+        down=replace(tradable.down, token_id="down-empty-down", best_ask=None),
+    )
+    registry = _registered_catalog_for_view(empty)
+    for view in (tradable, down_empty):
+        registry.register(
+            MarketPairMeta(
+                market_id=view.market_id,
+                market_slug=view.market_slug,
+                condition_id=view.condition_id,
+                asset=view.asset,
+                timeframe=view.timeframe,
+                start_ts=None,
+                end_ts=None,
+                up=InstrumentTokenMeta(view.up.token_id, Side.UP),
+                down=InstrumentTokenMeta(view.down.token_id, Side.DOWN),
+            )
+        )
+    views = {
+        empty.condition_id: empty,
+        tradable.condition_id: tradable,
+        down_empty.condition_id: down_empty,
+    }
+
+    class MappingAssembler:
+        def build(self, condition_id: str, *, created_at: datetime) -> MarketView:
+            _ = created_at
+            return views[condition_id]
+
+    class Store:
+        def __init__(self) -> None:
+            self.rows: list[dict[str, object]] = []
+
+        def insert_json(
+            self,
+            table: str,
+            data: Mapping[str, object],
+            *,
+            suppress_best_effort_locks: bool = True,
+        ) -> bool:
+            _ = table, suppress_best_effort_locks
+            self.rows.append(dict(data))
+            return True
+
+    store = Store()
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=cast(MarketViewAssembler, cast(object, MappingAssembler())),
+        condition_ids=(empty.condition_id, tradable.condition_id, down_empty.condition_id),
+        strategy_name="ptb_diff",
+        observability=ObservabilityService(store=store, monotonic_clock=lambda: 0.0),
+        registry=registry,
+    )
+
+    for condition_id in (
+        empty.condition_id,
+        tradable.condition_id,
+        empty.condition_id,
+        tradable.condition_id,
+        down_empty.condition_id,
+        empty.condition_id,
+        down_empty.condition_id,
+    ):
+        strategy.evaluate_condition(condition_id)
+
+    assert store.rows == [
+        {
+            "strategy": "ptb_diff",
+            "asset": "BTC",
+            "timeframe": "5m",
+            "status": "untradable",
+            "reason": "missing_quote_depth:UP",
+        },
+        {
+            "strategy": "ptb_diff",
+            "asset": "BTC",
+            "timeframe": "5m",
+            "status": "untradable",
+            "reason": "missing_quote_depth:UP,DOWN",
+        },
+    ]
+    transitions = [
+        getattr(record, "market_detail")
+        for record in caplog.records
+        if record.getMessage() == "market_untraditable"
+    ]
+    assert [detail["condition"] for detail in transitions] == [
+        empty.condition_id,
+        down_empty.condition_id,
+    ]
+
+    views[empty.condition_id] = replace(
+        empty,
+        up=replace(empty.up, freshness_ms=60_001),
+        down=replace(empty.down, freshness_ms=60_001),
+    )
+    strategy.evaluate_condition(empty.condition_id)
+    strategy.evaluate_condition(tradable.condition_id)
+
+    assert store.rows[-1] == {
+        "strategy": "ptb_diff",
+        "asset": "BTC",
+        "timeframe": "5m",
+        "status": "missing_data",
+        "reason": "stale_orderbook",
+    }
+    assert len(store.rows) == 3
+
+
+def test_native_strategy_retired_condition_clears_untradable_state() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    empty = _real_market_view_with_empty_quote_depth()
+    now = datetime.now(UTC)
+    strategy = PolySignalNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(empty),
+        condition_ids=(empty.condition_id,),
+        strategy_name="ptb_diff",
+        registry=_registered_catalog_for_view(empty, end_ts=now + timedelta(seconds=1)),
+        unsubscribe_exited=False,
+    )
+    strategy.evaluate_condition(empty.condition_id, created_at=now)
+
+    strategy.evaluate_condition(
+        empty.condition_id,
+        created_at=now + timedelta(seconds=2),
+    )
+
+    assert empty.condition_id not in strategy._untradable_quote_sides_by_condition
 
 
 def test_native_strategy_constructor_without_registry_fails_clearly() -> None:
@@ -2146,7 +2492,6 @@ def test_market_data_evaluation_is_debounced_per_condition() -> None:
     the event loop; bursts within the debounce window must evaluate once.
     """
     from datetime import UTC, datetime, timedelta
-    from types import SimpleNamespace
 
     from polysignal_lab.nautilus_runtime.strategy import market_data_events as mde
 

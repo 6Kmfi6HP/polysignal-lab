@@ -12,6 +12,7 @@ export type StrategyStatus =
   | 'inactive'
   | 'unsupported_market'
   | 'missing_data'
+  | 'untradable'
   | 'uncalibrated'
 
 export interface SignalCandidate {

@@ -9,6 +9,7 @@ StrategyStatus = Literal[
     "inactive",
     "unsupported_market",
     "missing_data",
+    "untradable",
     "uncalibrated",
 ]
 

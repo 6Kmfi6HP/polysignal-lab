@@ -233,7 +233,9 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
     )
     strategy._last_market_data_evaluation_at: dict[str, datetime] = {}
     strategy._runtime_readiness_miss_condition_ids: set[str] = set()
+    strategy._runtime_readiness_reason_by_condition = {}
     strategy._stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]] = {}
+    strategy._untradable_quote_sides_by_condition = {}
 
 
 def _bind_pipeline(strategy: Any) -> None:
