@@ -3,9 +3,6 @@ import { makeLeaderboardResponse } from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as client from '@/lib/api/client'
-import { SearchProvider } from '@/context/search-provider'
-import { ThemeProvider } from '@/context/theme-provider'
-import { SidebarProvider } from '@/components/ui/sidebar'
 import { LeaderboardPage } from './index'
 
 vi.mock('recharts', () => ({
@@ -28,15 +25,7 @@ vi.mock('recharts', () => ({
 }))
 
 function renderLeaderboardPage() {
-  return renderWithQueryClient(
-    <ThemeProvider>
-      <SearchProvider>
-        <SidebarProvider defaultOpen={false}>
-          <LeaderboardPage />
-        </SidebarProvider>
-      </SearchProvider>
-    </ThemeProvider>
-  )
+  return renderWithQueryClient(<LeaderboardPage />)
 }
 
 describe('LeaderboardPage', () => {

@@ -15,10 +15,7 @@ import {
   StatusBadge,
   TableFrame,
 } from '@/components/dashboard'
-import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
-import { Search } from '@/components/search'
-import { ThemeSwitch } from '@/components/theme-switch'
 
 export function OverviewPage() {
   const overview = useOverviewQuery()
@@ -27,12 +24,6 @@ export function OverviewPage() {
 
   return (
     <>
-      <Header fixed>
-        <div className='ml-auto flex items-center gap-2'>
-          <Search />
-          <ThemeSwitch />
-        </div>
-      </Header>
       <Main>
         <PageHeader
           title='Overview'

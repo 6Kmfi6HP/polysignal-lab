@@ -8,9 +8,6 @@ import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as client from '@/lib/api/client'
-import { SearchProvider } from '@/context/search-provider'
-import { ThemeProvider } from '@/context/theme-provider'
-import { SidebarProvider } from '@/components/ui/sidebar'
 import { ReportingPage } from './index'
 
 vi.mock('recharts', () => ({
@@ -32,15 +29,7 @@ vi.mock('recharts', () => ({
 }))
 
 function renderReportingPage() {
-  return renderWithQueryClient(
-    <ThemeProvider>
-      <SearchProvider>
-        <SidebarProvider defaultOpen={false}>
-          <ReportingPage />
-        </SidebarProvider>
-      </SearchProvider>
-    </ThemeProvider>
-  )
+  return renderWithQueryClient(<ReportingPage />)
 }
 
 describe('ReportingPage', () => {

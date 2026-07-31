@@ -7,9 +7,6 @@ import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
 import { screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as client from '@/lib/api/client'
-import { SearchProvider } from '@/context/search-provider'
-import { ThemeProvider } from '@/context/theme-provider'
-import { SidebarProvider } from '@/components/ui/sidebar'
 import { OverviewPage } from './index'
 
 const mocks = vi.hoisted(() => ({
@@ -21,15 +18,7 @@ vi.mock('@tanstack/react-router', () => ({
 }))
 
 function renderOverviewPage() {
-  return renderWithQueryClient(
-    <ThemeProvider>
-      <SearchProvider>
-        <SidebarProvider defaultOpen={false}>
-          <OverviewPage />
-        </SidebarProvider>
-      </SearchProvider>
-    </ThemeProvider>
-  )
+  return renderWithQueryClient(<OverviewPage />)
 }
 
 describe('OverviewPage', () => {

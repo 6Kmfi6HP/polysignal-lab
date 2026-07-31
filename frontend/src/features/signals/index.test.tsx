@@ -4,21 +4,10 @@ import { within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as client from '@/lib/api/client'
-import { SearchProvider } from '@/context/search-provider'
-import { ThemeProvider } from '@/context/theme-provider'
-import { SidebarProvider } from '@/components/ui/sidebar'
 import { SignalsPage } from './index'
 
 function renderSignalsPage() {
-  return renderWithQueryClient(
-    <ThemeProvider>
-      <SearchProvider>
-        <SidebarProvider defaultOpen={false}>
-          <SignalsPage />
-        </SidebarProvider>
-      </SearchProvider>
-    </ThemeProvider>
-  )
+  return renderWithQueryClient(<SignalsPage />)
 }
 
 describe('SignalsPage', () => {

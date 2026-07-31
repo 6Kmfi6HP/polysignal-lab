@@ -2,21 +2,10 @@ import { makeHealthResponse } from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as client from '@/lib/api/client'
-import { SearchProvider } from '@/context/search-provider'
-import { ThemeProvider } from '@/context/theme-provider'
-import { SidebarProvider } from '@/components/ui/sidebar'
 import { SystemHealthPage } from './index'
 
 function renderSystemHealthPage() {
-  return renderWithQueryClient(
-    <ThemeProvider>
-      <SearchProvider>
-        <SidebarProvider defaultOpen={false}>
-          <SystemHealthPage />
-        </SidebarProvider>
-      </SearchProvider>
-    </ThemeProvider>
-  )
+  return renderWithQueryClient(<SystemHealthPage />)
 }
 
 describe('SystemHealthPage', () => {
