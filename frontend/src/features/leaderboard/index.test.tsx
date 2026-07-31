@@ -10,6 +10,9 @@ import { LeaderboardPage } from './index'
 
 vi.mock('recharts', () => ({
   Bar: () => null,
+  Cell: () => null,
+  ReferenceLine: () => null,
+  Tooltip: () => null,
   CartesianGrid: () => null,
   XAxis: () => null,
   YAxis: () => null,
@@ -63,7 +66,7 @@ describe('LeaderboardPage', () => {
 
     expect(await view.findByText('late_consensus')).toBeInTheDocument()
     expect(view.getByText('50.0%')).toBeInTheDocument()
-    expect(view.getByText('4.00 USDC')).toBeInTheDocument()
+    expect(view.getByText('+4.00 USDC')).toBeInTheDocument()
     expect(view.getByText('Total PnL by strategy')).toBeInTheDocument()
     expect(
       JSON.parse(view.getByTestId('pnl-chart-data').textContent ?? '[]')

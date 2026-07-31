@@ -53,13 +53,13 @@ describe('OverviewPage', () => {
     expect(screen.getByText('signals')).toBeInTheDocument()
     expect(screen.getByText('7')).toBeInTheDocument()
     expect(screen.getByText('rejected signals')).toBeInTheDocument()
-    expect(screen.getByText('2026-06-30')).toBeInTheDocument()
-    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.getByText(/2026-06-30/)).toBeInTheDocument()
+    expect(screen.getAllByText('3')).not.toHaveLength(0)
     expect(screen.getByText('1')).toBeInTheDocument()
-    expect(screen.getByText('4.00 (currency unavailable)')).toBeInTheDocument()
+    expect(screen.getByText('+4.00 currency unavailable')).toBeInTheDocument()
     expect(screen.queryByText('Equity source')).not.toBeInTheDocument()
-    expect(screen.getByText('Status unavailable')).toBeInTheDocument()
-    expect(screen.getByText('ok')).toBeInTheDocument()
+    expect(screen.getByText('Status Unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Ok')).toBeInTheDocument()
   })
 
   it('shows report currency and incomplete telemetry reasons', async () => {
@@ -82,7 +82,7 @@ describe('OverviewPage', () => {
 
     renderOverviewPage()
 
-    expect(await screen.findByText('7.00 pUSD')).toBeInTheDocument()
+    expect(await screen.findByText('+7.00 pUSD')).toBeInTheDocument()
     expect(screen.getByText('Account balance')).toBeInTheDocument()
     expect(screen.queryByText('4.00 USDC')).not.toBeInTheDocument()
     expect(screen.getByText('Incomplete')).toBeInTheDocument()

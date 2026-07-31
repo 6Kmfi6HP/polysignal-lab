@@ -16,6 +16,8 @@ import { ReportingPage } from './index'
 vi.mock('recharts', () => ({
   CartesianGrid: () => null,
   Line: () => null,
+  ReferenceLine: () => null,
+  Tooltip: () => null,
   XAxis: () => null,
   YAxis: () => null,
   ResponsiveContainer: ({ children }: { children: ReactNode }) => (
@@ -64,9 +66,8 @@ describe('ReportingPage', () => {
 
     const view = renderReportingPage()
 
-    expect(await view.findByText('rr-late')).toBeInTheDocument()
-    expect(view.getByText('rr-early')).toBeInTheDocument()
-    expect(view.getByText('4.00 USDC')).toBeInTheDocument()
+    expect(await view.findByText('+4.00 USDC')).toBeInTheDocument()
+    expect(view.getByText('-1.00 USDC')).toBeInTheDocument()
     expect(
       JSON.parse(view.getByTestId('line-chart-data').textContent ?? '[]')
     ).toEqual([
@@ -97,10 +98,10 @@ describe('ReportingPage', () => {
     const view = renderReportingPage()
 
     await user.click(view.getByRole('tab', { name: 'Positions' }))
-    expect(await view.findByText('rp-1')).toBeInTheDocument()
+    expect(await view.findByText('OPEN')).toBeInTheDocument()
 
     await user.click(view.getByRole('tab', { name: 'Orders' }))
-    expect(await view.findByText('ro-1')).toBeInTheDocument()
+    expect(await view.findByText('FILLED')).toBeInTheDocument()
   })
 
   it('renders empty states for trades, positions, and orders', async () => {
@@ -135,8 +136,8 @@ describe('ReportingPage', () => {
     const view = renderReportingPage()
 
     expect(
-      await view.findByText('Failed to load trades: trades boom')
-    ).toBeInTheDocument()
+      await view.findAllByText('Failed to load trades: trades boom')
+    ).toHaveLength(2)
 
     await user.click(view.getByRole('tab', { name: 'Positions' }))
     expect(

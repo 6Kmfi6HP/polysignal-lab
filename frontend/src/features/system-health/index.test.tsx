@@ -52,10 +52,10 @@ describe('SystemHealthPage', () => {
     const view = renderSystemHealthPage()
 
     expect(await view.findByText('binance_ws')).toBeInTheDocument()
-    expect(view.getByText('degraded')).toBeInTheDocument()
+    expect(view.getAllByText('Degraded')).toHaveLength(2)
     expect(view.getByText('spot prices stale')).toBeInTheDocument()
     expect(view.getByText('sqlite')).toBeInTheDocument()
-    expect(view.getByText('ok')).toBeInTheDocument()
+    expect(view.getByText('Ok')).toBeInTheDocument()
     expect(view.getByText('No recent errors.')).toBeInTheDocument()
   })
 
@@ -81,9 +81,8 @@ describe('SystemHealthPage', () => {
     const view = renderSystemHealthPage()
 
     expect(await view.findByText('Recent system events')).toBeInTheDocument()
-    expect(
-      view.getByText('{"level":"warning","message":"scheduler lag detected"}')
-    ).toBeInTheDocument()
+    expect(view.getByText('scheduler lag detected')).toBeInTheDocument()
+    expect(view.getByText('Unknown Event')).toBeInTheDocument()
 
     vi.restoreAllMocks()
     vi.spyOn(client, 'getHealth').mockResolvedValue(makeHealthResponse())

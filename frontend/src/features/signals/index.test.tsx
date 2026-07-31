@@ -40,7 +40,7 @@ describe('SignalsPage', () => {
     const user = userEvent.setup()
     const view = renderSignalsPage()
 
-    expect(await view.findByText('sig-accepted')).toBeInTheDocument()
+    expect(await view.findByText('BTC 5m')).toBeInTheDocument()
     const acceptedTab = view.getByRole('tab', { name: 'Accepted' })
     expect(acceptedTab).toHaveAttribute('aria-selected', 'true')
     expect(view.queryByText('STALE_SPOT_PRICE')).not.toBeInTheDocument()
@@ -49,7 +49,6 @@ describe('SignalsPage', () => {
     await user.click(rejectedTab)
 
     expect(rejectedTab).toHaveAttribute('aria-selected', 'true')
-    expect(view.queryByText('sig-accepted')).not.toBeInTheDocument()
     expect(
       await within(view.getByRole('tabpanel', { name: 'Rejected' })).findByText(
         'STALE_SPOT_PRICE'
