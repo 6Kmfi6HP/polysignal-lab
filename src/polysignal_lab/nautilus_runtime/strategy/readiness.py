@@ -10,6 +10,7 @@ from polysignal_lab.domain.strategy_readiness import StrategyStatus
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
+    pending_condition_instrument_ids,
 )
 
 
@@ -238,6 +239,7 @@ def subscription_readiness_state(
     condition_id: str,
     *,
     preloaded: bool,
+    pending_instrument_ids: tuple[str, ...],
     pending_sides: set[Side],
 ) -> str:
     state = strategy._subscription_state
@@ -245,6 +247,8 @@ def subscription_readiness_state(
         return "preloaded"
     if condition_id in state.pending_metadata_condition_ids:
         return "pending_metadata"
+    if pending_instrument_ids:
+        return "awaiting_instrument"
     if condition_id in strategy._stale_orderbook_recovery_by_condition:
         return "stale_orderbook"
     if pending_sides:
@@ -309,6 +313,10 @@ def readiness_detail(
     registry = strategy._require_registry()
     pair = None if registry is None else registry.by_condition(condition_id)
     pending_sides = state.awaiting_book_sides_by_condition.get(condition_id, set())
+    pending_instrument_ids = pending_condition_instrument_ids(
+        strategy,  # type: ignore[arg-type]
+        condition_id,
+    )
     (
         last_books,
         last_receipts,
@@ -321,6 +329,7 @@ def readiness_detail(
         preloaded=bool(
             pair is not None and pair.start_ts is not None and now < pair.start_ts
         ),
+        pending_instrument_ids=pending_instrument_ids,
         pending_sides=pending_sides,
     )
     return {
@@ -331,6 +340,7 @@ def readiness_detail(
         "subscription_state": state_name,
         "subscribe_requested": condition_id in state.subscribe_intent_condition_ids,
         **subscription_timing_detail(state, condition_id, now=now),
+        "pending_instrument_ids": list(pending_instrument_ids),
         "awaiting_book_sides": sorted(side.value for side in pending_sides),
         "last_book_at_by_side": last_books,
         "last_book_received_at_by_side": last_receipts,

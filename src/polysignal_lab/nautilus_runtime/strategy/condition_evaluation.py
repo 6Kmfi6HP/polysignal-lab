@@ -35,7 +35,9 @@ from polysignal_lab.nautilus_runtime.strategy.readiness import (
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
+    clear_condition_subscription_state,
     market_book_generation_ready,
+    pending_condition_instrument_ids,
     retire_market_book_generation,
 )
 
@@ -104,7 +106,14 @@ def retire_expired_condition(
         return False
     strategy._active_condition_ids.discard(condition_id)
     strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)  # type: ignore[attr-defined]
-    retire_market_book_generation(strategy, condition_id)  # type: ignore[arg-type]
+    if strategy.unsubscribe_exited:
+        retire_market_book_generation(strategy, condition_id)  # type: ignore[arg-type]
+    else:
+        clear_condition_subscription_state(
+            strategy,  # type: ignore[arg-type]
+            condition_id,
+            clear_subscribed=False,
+        )
     clear_condition_untradable_state(strategy, condition_id)  # type: ignore[arg-type]
     if strategy.unsubscribe_exited:
         strategy._unsubscribe_market_conditions((condition_id,))
@@ -285,6 +294,17 @@ def _market_view_blocks_evaluation(
     return True
 
 
+def _book_generation_wait_reason(
+    strategy: _EvaluationStrategy,
+    condition_id: str,
+) -> str:
+    pending = pending_condition_instrument_ids(  # type: ignore[arg-type]
+        strategy,
+        condition_id,
+    )
+    return "awaiting_instrument" if pending else "awaiting_first_book"
+
+
 def evaluate_condition(
     strategy: _EvaluationStrategy,
     condition_id: str,
@@ -303,7 +323,7 @@ def evaluate_condition(
         mark_condition_unready(
             strategy,
             condition_id,
-            reason="awaiting_first_book",
+            reason=_book_generation_wait_reason(strategy, condition_id),
         )
         return
     classified = _classified_market_view(

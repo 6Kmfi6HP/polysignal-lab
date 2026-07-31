@@ -22,6 +22,7 @@ from polysignal_lab.nautilus_runtime.strategy.readiness import (
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
+    clear_condition_subscription_state,
     retire_market_book_generation,
     subscription_scope_condition_ids,
 )
@@ -152,7 +153,14 @@ def handle_market_universe(
         strategy._subscription_state.pending_metadata_condition_ids.discard(
             condition_id
         )
-        retire_market_book_generation(strategy, condition_id)
+        if strategy.unsubscribe_exited:
+            retire_market_book_generation(strategy, condition_id)
+        else:
+            clear_condition_subscription_state(
+                strategy,  # type: ignore[arg-type]
+                condition_id,
+                clear_subscribed=False,
+            )
         clear_condition_untradable_state(strategy, condition_id)  # type: ignore[arg-type]
         strategy._note_runtime_readiness(condition_id, ready=True)
     if strategy.unsubscribe_exited and exited_condition_ids:

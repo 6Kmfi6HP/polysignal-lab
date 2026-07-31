@@ -3502,7 +3502,7 @@ def test_native_strategy_retires_expired_preloaded_pair_before_first_leg(
     assert strategy.instrument_requests == []
 
 
-def test_native_strategy_subscribes_only_after_instrument_in_cache() -> None:
+def test_native_strategy_heartbeat_recovers_missed_instrument_callback() -> None:
     """provider → Cache / on_instrument → subscribe (never request then immediate wire)."""
     from types import SimpleNamespace
 
@@ -3527,10 +3527,15 @@ def test_native_strategy_subscribes_only_after_instrument_in_cache() -> None:
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self._cache_override = FakeCache()
+            self.now = datetime(2026, 7, 31, 12, tzinfo=UTC)
             self.instrument_requests: list[tuple[str, str | None]] = []
             self.book_subscriptions: list[tuple[str, str | None]] = []
             self.trade_subscriptions: list[tuple[str, str | None]] = []
             self.quote_subscriptions: list[tuple[str, str | None]] = []
+
+        @override
+        def _framework_now(self) -> datetime:
+            return self.now
 
         def request_instrument(
             self,
@@ -3627,11 +3632,29 @@ def test_native_strategy_subscribes_only_after_instrument_in_cache() -> None:
     }
     assert "up-a.POLYMARKET" in strategy._subscription_state.pending_instrument_ids
     assert "down-a.POLYMARKET" in strategy._subscription_state.pending_instrument_ids
+    detail = strategy._readiness_detail("condition-a", now=strategy.now)
+    assert detail["subscription_state"] == "awaiting_instrument"
+    assert detail["pending_instrument_ids"] == [
+        "down-a.POLYMARKET",
+        "up-a.POLYMARKET",
+    ]
+    generation_started_at = strategy._subscription_state.book_generation_started_at_by_condition[
+        "condition-a"
+    ]
 
-    # Simulate provider load: instrument enters Cache then on_instrument fires.
-    for iid in ("up-a.POLYMARKET", "down-a.POLYMARKET"):
-        strategy._cache_override.loaded.add(iid)
-        strategy.on_instrument(SimpleNamespace(id=iid))
+    strategy._on_evaluation_heartbeat(object())
+
+    assert strategy._runtime_readiness_reason_by_condition["condition-a"] == (
+        "awaiting_instrument"
+    )
+
+    # One provider callback arrives normally; the second is missed after Cache insert
+    strategy._cache_override.loaded.add("up-a.POLYMARKET")
+    strategy.on_instrument(SimpleNamespace(id="up-a.POLYMARKET"))
+    strategy._cache_override.loaded.add("down-a.POLYMARKET")
+
+    strategy.now += timedelta(seconds=10)
+    strategy._on_evaluation_heartbeat(object())
 
     assert strategy.book_subscriptions == [
         ("up-a.POLYMARKET", "POLYMARKET-5M"),
@@ -3646,6 +3669,69 @@ def test_native_strategy_subscribes_only_after_instrument_in_cache() -> None:
         ("down-a.POLYMARKET", "POLYMARKET-5M"),
     ]
     assert strategy._subscription_state.pending_instrument_ids == set()
+    assert (
+        strategy._subscription_state.book_generation_started_at_by_condition[
+            "condition-a"
+        ]
+        == generation_started_at
+    )
+    detail = strategy._readiness_detail("condition-a", now=strategy.now)
+    assert detail["subscription_state"] == "awaiting_first_book"
+    assert detail["pending_instrument_ids"] == []
+    assert strategy._runtime_readiness_reason_by_condition["condition-a"] == (
+        "awaiting_first_book"
+    )
+
+    strategy.now += timedelta(seconds=10)
+    strategy._on_evaluation_heartbeat(object())
+
+    assert len(strategy.book_subscriptions) == 2
+    assert len(strategy.trade_subscriptions) == 2
+    assert len(strategy.quote_subscriptions) == 2
+
+    view = _MockView()
+    view.condition_id = "condition-a"
+    strategy.assembler = _assembler(view)
+    strategy.on_book(
+        SimpleNamespace(
+            instrument_id="up-a.POLYMARKET",
+            ts_init=strategy.now,
+            ts_event=strategy.now,
+        )
+    )
+    strategy.now += timedelta(seconds=1)
+    strategy.on_book(
+        SimpleNamespace(
+            instrument_id="down-a.POLYMARKET",
+            ts_init=strategy.now,
+            ts_event=strategy.now,
+        )
+    )
+
+    assert "condition-a" not in strategy._runtime_readiness_miss_condition_ids
+    assert "condition-a" not in strategy._runtime_readiness_reason_by_condition
+
+    strategy.on_data(
+        PolySignalMarketUniverseData(
+            epoch=3,
+            active_condition_ids=(),
+            entered_condition_ids=(),
+            exited_condition_ids=("condition-a",),
+            condition_to_up_token={},
+            condition_to_down_token={},
+            condition_to_asset={},
+            condition_to_timeframe={},
+            ts_event=2,
+            ts_init=2,
+        )
+    )
+
+    state = strategy._subscription_state
+    assert "condition-a" not in state.subscribe_intent_condition_ids
+    assert "condition-a" not in state.subscribe_intent_started_at_by_condition
+    assert "condition-a" not in state.book_generation_started_at_by_condition
+    assert state.pending_instrument_ids == set()
+    assert "condition-a" not in strategy._runtime_readiness_miss_condition_ids
 
 
 def test_native_strategy_exited_market_is_gated_even_if_late_tick_arrives() -> None:
@@ -4139,8 +4225,11 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
     assert strategy.book_unsubscriptions == []
     assert strategy.trade_unsubscriptions == []
     assert strategy._subscription_state.pending_metadata_condition_ids == set()
-    assert strategy._subscription_state.subscribe_intent_condition_ids == {
-        "condition-a"
+    assert strategy._subscription_state.subscribe_intent_condition_ids == set()
+    assert strategy._subscription_state.pending_instrument_ids == set()
+    assert strategy._subscription_state.subscribed_instrument_ids == {
+        "down-a.POLYMARKET",
+        "up-a.POLYMARKET",
     }
 
 

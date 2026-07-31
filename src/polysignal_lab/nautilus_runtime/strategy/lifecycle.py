@@ -197,6 +197,12 @@ def on_strategy_stop(strategy: _LifecycleStrategy) -> None:
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
     strategy._note_runtime_progress("evaluation_heartbeat")
     now = framework_now(strategy)
+    active_condition_ids: list[str] = []
+    for condition_id in tuple(sorted(strategy._active_condition_ids)):
+        if retire_expired_condition(strategy, condition_id, now=now):  # type: ignore[arg-type]
+            continue
+        active_condition_ids.append(condition_id)
+    strategy._subscribe_market_conditions(tuple(active_condition_ids))
     registry = strategy._require_registry()
     trading_state = trading_state_from_cache(
         strategy.cache,
@@ -204,9 +210,7 @@ def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> Non
         or getattr(strategy, "id", None),
         registry=registry,
     )
-    for condition_id in tuple(sorted(strategy._active_condition_ids)):
-        if retire_expired_condition(strategy, condition_id, now=now):  # type: ignore[arg-type]
-            continue
+    for condition_id in active_condition_ids:
         last_eval = strategy._last_market_data_evaluation_at.get(condition_id)
         if last_eval is not None and now - last_eval < EVALUATION_HEARTBEAT_INTERVAL:
             continue

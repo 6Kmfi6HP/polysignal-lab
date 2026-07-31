@@ -55,6 +55,11 @@ class _SubscriptionStateOwner(Protocol):
     _subscription_state: MarketSubscriptionState
 
 
+class _ConditionSubscriptionStateOwner(_SubscriptionStateOwner, Protocol):
+    @property
+    def registry(self) -> MarketCatalog | None: ...
+
+
 class _SubscriptionScopeOwner(Protocol):
     @property
     def registry(self) -> MarketCatalog | None: ...
@@ -216,21 +221,28 @@ def _subscribe_market_condition(
     if not allow_inactive and condition_id not in strategy._active_condition_ids:
         return
     state = strategy._subscription_state
-    if condition_id in state.subscribe_intent_condition_ids:
+    first_intent = condition_id not in state.subscribe_intent_condition_ids
+    if not first_intent and not pending_condition_instrument_ids(
+        strategy,
+        condition_id,
+    ):
         state.pending_metadata_condition_ids.discard(condition_id)
         return
     instrument_ids = _instrument_ids(registry, (condition_id,))
     if not instrument_ids:
         state.pending_metadata_condition_ids.add(condition_id)
         return
-    if condition_id in strategy._active_condition_ids:
+    if first_intent and condition_id in strategy._active_condition_ids:
         begin_market_book_generation(strategy, condition_id, now=now)
     state.pending_metadata_condition_ids.discard(condition_id)
     for instrument_id in condition_instruments(strategy, condition_id):
         _ = subscribe_market_instrument(strategy, instrument_id)
     # Intent only — book readiness confirms feed, not subscribe() return.
     state.subscribe_intent_condition_ids.add(condition_id)
-    state.subscribe_intent_started_at_by_condition[condition_id] = now.astimezone(UTC)
+    state.subscribe_intent_started_at_by_condition.setdefault(
+        condition_id,
+        now.astimezone(UTC),
+    )
 
 
 def subscribe_market_conditions(
@@ -376,9 +388,30 @@ def condition_instruments(
     return _instrument_ids(strategy.registry, (condition_id,))
 
 
-def clear_condition_subscription_state(
-    strategy: _SubscriptionStrategy,
+def pending_condition_instrument_ids(
+    strategy: _ConditionSubscriptionStateOwner,
     condition_id: str,
+) -> tuple[str, ...]:
+    registry = strategy.registry
+    pair = None if registry is None else registry.by_condition(condition_id)
+    if registry is None or pair is None:
+        return ()
+    pending = strategy._subscription_state.pending_instrument_ids
+    return tuple(
+        sorted(
+            key
+            for token_id in (pair.up.token_id, pair.down.token_id)
+            if (instrument_id := registry.instrument_id_for_token(token_id)) is not None
+            if (key := _instrument_key(instrument_id)) in pending
+        )
+    )
+
+
+def clear_condition_subscription_state(
+    strategy: _ConditionSubscriptionStateOwner,
+    condition_id: str,
+    *,
+    clear_subscribed: bool = True,
 ) -> None:
     strategy._subscription_state.subscribe_intent_condition_ids.discard(condition_id)
     strategy._subscription_state.subscribe_intent_started_at_by_condition.pop(
@@ -389,7 +422,8 @@ def clear_condition_subscription_state(
         for instrument_id in _instrument_ids(strategy.registry, (condition_id,)):
             key = _instrument_key(instrument_id)
             strategy._subscription_state.pending_instrument_ids.discard(key)
-            strategy._subscription_state.subscribed_instrument_ids.discard(key)  # pyright: ignore[reportPrivateUsage]
+            if clear_subscribed:
+                strategy._subscription_state.subscribed_instrument_ids.discard(key)  # pyright: ignore[reportPrivateUsage]
     retire_market_book_generation(strategy, condition_id, clear_history=False)
 
 
