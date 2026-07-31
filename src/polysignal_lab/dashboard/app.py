@@ -362,6 +362,10 @@ def create_dashboard_app(
     async def trades(limit: int = 100) -> list[dict[str, JsonValue]]:
         return reporting.report_result_rows(_bounded_limit(limit))
 
+    @app.get("/api/report-summary", response_model=None)
+    async def report_summary() -> dict[str, JsonValue]:
+        return reporting.report_summary()
+
     @app.get("/api/leaderboard", response_model=None)
     async def leaderboard(limit: int = 100) -> dict[str, JsonValue]:
         report_limit = _bounded_limit(limit)

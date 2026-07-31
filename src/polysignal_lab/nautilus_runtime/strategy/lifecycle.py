@@ -50,6 +50,7 @@ class _LifecycleStrategy(_ClockHost, Protocol):
     _subscription_state: MarketSubscriptionState
     assembler: object
     cache: object | None
+    strategy_name: str
 
     def subscribe_data(
         self,
@@ -151,6 +152,10 @@ def on_strategy_start(strategy: _LifecycleStrategy, heartbeat_callback: object) 
 
 def on_strategy_stop(strategy: _LifecycleStrategy) -> None:
     stop_evaluation_heartbeat(strategy)
+    observability = getattr(strategy, "observability", None)
+    record_stopped = getattr(observability, "record_strategy_stopped", None)
+    if callable(record_stopped):
+        record_stopped(strategy.strategy_name)
     if not strategy._subscriptions_started:
         return
     tracked_condition_ids = tuple(

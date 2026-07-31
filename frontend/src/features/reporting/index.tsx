@@ -13,6 +13,7 @@ import {
 import {
   usePositionsQuery,
   useReportOrdersQuery,
+  useReportSummaryQuery,
   useTradesQuery,
 } from '@/lib/api/hooks'
 import type {
@@ -55,20 +56,16 @@ export function ReportingPage() {
   const orders = useReportOrdersQuery()
   const positions = usePositionsQuery()
   const trades = useTradesQuery()
-  const summary = useMemo(
+  const reportSummary = useReportSummaryQuery()
+  const activitySummary = useMemo(
     () => ({
-      pnl: trades.data?.reduce((sum, trade) => sum + trade.pnl_usdc, 0) ?? 0,
-      roi: trades.data?.length
-        ? trades.data.reduce((sum, trade) => sum + trade.roi, 0) /
-          trades.data.length
-        : 0,
       open:
         positions.data?.filter((position) => position.status === 'OPEN')
           .length ?? 0,
       rejected:
         orders.data?.filter((order) => order.status === 'REJECTED').length ?? 0,
     }),
-    [orders.data, positions.data, trades.data]
+    [orders.data, positions.data]
   )
   return (
     <>
@@ -80,28 +77,52 @@ export function ReportingPage() {
         <MetricStrip>
           <Metric
             label={t('pages.reporting.totalPnl')}
-            value={formatMoney(summary.pnl)}
-            tone={summary.pnl >= 0 ? 'positive' : 'danger'}
+            value={
+              reportSummary.data
+                ? formatMoney(reportSummary.data.total_pnl_usdc)
+                : '...'
+            }
+            tone={
+              (reportSummary.data?.total_pnl_usdc ?? 0) >= 0
+                ? 'positive'
+                : 'danger'
+            }
           />
           <Metric
             label={t('pages.reporting.averageRoi')}
-            value={formatPercent(summary.roi, true)}
-            tone={summary.roi >= 0 ? 'positive' : 'danger'}
+            value={
+              reportSummary.data
+                ? formatPercent(reportSummary.data.average_roi, true)
+                : '...'
+            }
+            tone={
+              (reportSummary.data?.average_roi ?? 0) >= 0
+                ? 'positive'
+                : 'danger'
+            }
           />
           <Metric
             label={t('pages.reporting.closedTrades')}
-            value={trades.data?.length ?? '...'}
+            value={reportSummary.data?.closed_trades ?? '...'}
           />
           <Metric
             label={t('pages.reporting.openPositions')}
-            value={positions.data ? summary.open : '...'}
+            value={positions.data ? activitySummary.open : '...'}
           />
           <Metric
             label={t('pages.reporting.rejectedOrders')}
-            value={orders.data ? summary.rejected : '...'}
-            tone={summary.rejected > 0 ? 'warning' : 'neutral'}
+            value={orders.data ? activitySummary.rejected : '...'}
+            tone={activitySummary.rejected > 0 ? 'warning' : 'neutral'}
           />
         </MetricStrip>
+        {reportSummary.isError && (
+          <ErrorState
+            message={t('ui.loadFailed', {
+              resource: t('navigation.reporting'),
+              message: reportSummary.error.message,
+            })}
+          />
+        )}
         <section className='my-7' aria-labelledby='pnl-heading'>
           <h2 id='pnl-heading' className='mb-3 text-base font-semibold'>
             {t('pages.reporting.cumulativePnl')}

@@ -47,6 +47,7 @@ class PersistenceWriter(Protocol):
     def insert_signal(self, signal: object) -> None: ...
     def insert_rejected_signal(self, rejected: object) -> None: ...
     def insert_report_result(self, result: object) -> bool | None: ...
+    def insert_strategy_status(self, status: object) -> None: ...
     def insert_system_event(self, event: dict[str, object]) -> None: ...
     def append_log(self, stream: str, payload: object) -> None: ...
 
@@ -143,6 +144,7 @@ class NautilusEventStoreAdapter:
             "signals": persistence.insert_signal,
             "rejected_signals": persistence.insert_rejected_signal,
             "settlements": persistence.insert_report_result,
+            "strategy_status": self._insert_strategy_status,
             "health_snapshot": insert_system_event,
             "system_events": insert_system_event,
             "nautilus_decision": insert_system_event,
@@ -154,6 +156,7 @@ class NautilusEventStoreAdapter:
             "signals": "signals",
             "rejected_signals": "rejected_signals",
             "settlements": "report_results",
+            "strategy_status": "strategy_status",
             "health_snapshot": "system_events",
             "system_events": "system_events",
             "nautilus_decision": "nautilus_decisions",
@@ -169,6 +172,9 @@ class NautilusEventStoreAdapter:
             for table in self._routes
             if telemetry_retention_policy(table) is not None
         }
+
+    def _insert_strategy_status(self, payload: dict[str, object]) -> object:
+        return self.persistence.insert_strategy_status(payload)
 
     def insert_json(
         self,

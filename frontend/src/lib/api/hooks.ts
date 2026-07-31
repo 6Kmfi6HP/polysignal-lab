@@ -60,6 +60,14 @@ export function useTradesQuery(limit = 100) {
   })
 }
 
+export function useReportSummaryQuery() {
+  return useQuery({
+    queryKey: ['report-summary'],
+    queryFn: api.getReportSummary,
+    refetchInterval: LIVE_REFRESH_MS,
+  })
+}
+
 export function useLeaderboardQuery(limit = 100) {
   return useQuery({
     queryKey: ['leaderboard', limit],

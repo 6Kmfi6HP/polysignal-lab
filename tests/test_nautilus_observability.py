@@ -188,6 +188,149 @@ def test_record_decision_writes_to_nautilus_decision_stream() -> None:
     assert rows[0]["side"] == "UP"
 
 
+def test_record_strategy_status_writes_current_readiness_projection() -> None:
+    store = FakeStore()
+    actor = ObservabilityService(store=store)
+
+    actor.record_strategy_status(
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        ready=False,
+        reason="awaiting_first_book",
+    )
+    actor.record_strategy_status(
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        ready=False,
+        reason="awaiting_first_book",
+    )
+
+    assert store.tables["strategy_status"] == [
+        {
+            "strategy": "late_consensus",
+            "asset": "BTC",
+            "timeframe": "5m",
+            "status": "missing_data",
+            "reason": "awaiting_first_book",
+        }
+    ]
+
+
+def test_request_daily_report_forwards_framework_time() -> None:
+    requests: list[datetime] = []
+    actor = ObservabilityService(daily_report_notifier=requests.append)
+    framework_time = datetime(2026, 7, 31, 16, 0, tzinfo=UTC)
+
+    actor.request_daily_report(framework_time)
+
+    assert requests == [framework_time]
+
+
+def test_observability_worker_requests_daily_report_without_strategy_heartbeat() -> (
+    None
+):
+    requested = threading.Event()
+    actor = ObservabilityService(
+        daily_report_notifier=lambda _framework_time: requested.set()
+    )
+
+    actor.start()
+    try:
+        assert requested.wait(timeout=1.0)
+    finally:
+        actor.stop()
+
+
+def test_daily_report_poll_uses_injected_time_for_interval_and_date_boundary() -> None:
+    monotonic_now = [0.0]
+    framework_now = [datetime(2026, 7, 31, 23, 59, tzinfo=UTC)]
+    requests: list[datetime] = []
+    actor = ObservabilityService(
+        daily_report_notifier=requests.append,
+        daily_report_now=lambda: framework_now[0],
+        monotonic_clock=lambda: monotonic_now[0],
+    )
+
+    assert actor._poll_daily_report() is True
+    monotonic_now[0] = 59.0
+    framework_now[0] = datetime(2026, 8, 1, tzinfo=UTC)
+    assert actor._poll_daily_report() is False
+    monotonic_now[0] = 60.0
+    assert actor._poll_daily_report() is True
+
+    assert requests == [
+        datetime(2026, 7, 31, 23, 59, tzinfo=UTC),
+        datetime(2026, 8, 1, tzinfo=UTC),
+    ]
+
+
+def test_strategy_stop_records_inactive_for_known_statuses() -> None:
+    store = FakeStore()
+    actor = ObservabilityService(store=store)
+    actor.record_strategy_status(
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        ready=True,
+        reason=None,
+    )
+
+    actor.record_strategy_stopped("late_consensus")
+
+    assert [row["status"] for row in store.tables["strategy_status"]] == [
+        "active",
+        "inactive",
+    ]
+    assert store.tables["strategy_status"][-1]["reason"] == "strategy_stopped"
+
+
+def test_failed_strategy_status_write_is_not_suppressed_on_retry() -> None:
+    class FailingOnceStore(FakeStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        def insert_json(
+            self,
+            table: str,
+            data: Mapping[str, object],
+            *,
+            suppress_best_effort_locks: bool = True,
+        ) -> bool:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("write failed")
+            return super().insert_json(
+                table,
+                data,
+                suppress_best_effort_locks=suppress_best_effort_locks,
+            )
+
+    store = FailingOnceStore()
+    actor = ObservabilityService(store=store)
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        actor.record_strategy_status(
+            strategy="late_consensus",
+            asset="BTC",
+            timeframe="5m",
+            ready=True,
+            reason=None,
+        )
+    actor.record_strategy_status(
+        strategy="late_consensus",
+        asset="BTC",
+        timeframe="5m",
+        ready=True,
+        reason=None,
+    )
+
+    assert store.calls == 2
+    assert store.tables["strategy_status"][0]["status"] == "active"
+
+
 def test_observability_actor_isolates_best_effort_telemetry_write_failure() -> None:
     actor = ObservabilityService(store=FailingTelemetryStore())
 

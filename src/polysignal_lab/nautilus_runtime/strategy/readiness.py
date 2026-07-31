@@ -43,12 +43,30 @@ def note_runtime_readiness(
         _ = strategy._stale_orderbook_recovery_by_condition.pop(condition_id, None)
     else:
         strategy._runtime_readiness_miss_condition_ids.add(condition_id)
+    observability = getattr(strategy, "observability", None)
+    record_status = getattr(observability, "record_strategy_status", None)
     callback = strategy.readiness_callback
-    if callback is None:
+    if callback is None and not callable(record_status):
         return
     now = strategy._framework_now()
     detail = readiness_detail(strategy, condition_id, now=now)
-    callback(condition_id, ready, detail)  # type: ignore[operator]
+    asset = detail.get("asset")
+    timeframe = detail.get("timeframe")
+    if (
+        callable(record_status)
+        and isinstance(asset, str)
+        and isinstance(timeframe, str)
+    ):
+        state = detail.get("subscription_state")
+        record_status(
+            strategy=strategy.strategy_name,
+            asset=asset,
+            timeframe=timeframe,
+            ready=ready,
+            reason=None if ready else str(state or "missing_data"),
+        )
+    if callback is not None:
+        callback(condition_id, ready, detail)  # type: ignore[operator]
 
 
 def book_readiness_detail(

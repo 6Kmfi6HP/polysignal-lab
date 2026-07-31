@@ -4,6 +4,7 @@ import type {
   OverviewResponse,
   ReportOrder,
   ReportPosition,
+  ReportSummary,
   ReportTradeResult,
   RejectedSignal,
   SignalCandidate,
@@ -68,6 +69,10 @@ export function getPositions(status?: string, limit = 100) {
 
 export function getTrades(limit = 100) {
   return request<ReportTradeResult[]>(`${API_BASE}/trades`, { limit })
+}
+
+export function getReportSummary() {
+  return request<ReportSummary>(`${API_BASE}/report-summary`)
 }
 
 export function getLeaderboard(limit = 100) {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from polysignal_lab.app.daily_report.build import (
@@ -20,12 +20,16 @@ __all__ = [
 ]
 
 
-async def generate_daily_report(scheduler: _ReportScheduler) -> DailyReport | None:
+async def generate_daily_report(
+    scheduler: _ReportScheduler,
+    *,
+    report_date: date | None = None,
+) -> DailyReport | None:
     try:
         report_tz = ZoneInfo(scheduler.settings.app.timezone)
     except ZoneInfoNotFoundError:
         report_tz = UTC
-    today = datetime.now(report_tz).date()
+    today = report_date or datetime.now(report_tz).date()
 
     if scheduler.settings.telegram.send_daily_report:
         await _retry_pending_daily_report_publishes(

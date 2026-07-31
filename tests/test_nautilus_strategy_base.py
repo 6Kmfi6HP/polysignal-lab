@@ -1108,12 +1108,18 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
             _ = trading_state
             self.evaluated.append(condition_id)
 
+    stopped_strategies: list[str] = []
+    observability = SimpleNamespace(
+        record_strategy_stopped=stopped_strategies.append,
+    )
+
     strategy = FakeNativeStrategy(
         core=FakeCore([]),
         assembler=_assembler(None),
         condition_ids=("condition-btc-5m", "condition-btc-retired"),
         strategy_name="ptb_diff",
         registry=_test_market_catalog(),
+        observability=observability,
     )
     strategy._active_condition_ids = {"condition-btc-5m"}
 
@@ -1123,7 +1129,6 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
     name, interval, callback = strategy.clock.timer
     assert name == EVALUATION_HEARTBEAT_TIMER_NAME
     assert interval == timedelta(seconds=10)
-
     callback(object())
 
     assert strategy.evaluated == ["condition-btc-5m"]
@@ -1165,6 +1170,7 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
     strategy.on_stop()
 
     assert strategy.clock.canceled == [EVALUATION_HEARTBEAT_TIMER_NAME]
+    assert stopped_strategies == ["ptb_diff"]
 
     strategy.on_start()
 
@@ -1173,6 +1179,7 @@ def test_native_strategy_on_start_sets_evaluation_heartbeat() -> None:
         EVALUATION_HEARTBEAT_TIMER_NAME,
         EVALUATION_HEARTBEAT_TIMER_NAME,
     ]
+    assert stopped_strategies == ["ptb_diff", "ptb_diff"]
 
 
 def test_native_strategy_stop_unsubscribes_market_and_custom_data() -> None:

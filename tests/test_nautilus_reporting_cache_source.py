@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import json
 from pathlib import Path
 import sqlite3
@@ -14,6 +14,7 @@ from polysignal_lab.app.daily_report import (
 from polysignal_lab.app.daily_report.sources import _collect_daily_report_inputs
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.app.services.publish_service import PublishService
+from polysignal_lab.config import Settings
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.reporting.daily_report import DailyReportService
 from polysignal_lab.publish.telegram_publisher import PublishResult
@@ -21,6 +22,9 @@ from polysignal_lab.publish.message_formatter import MessageFormatter
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
+from polysignal_lab.nautilus_runtime.runtime_context_factory import (
+    build_nautilus_runtime_context,
+)
 from factories import sample_report_result
 
 
@@ -41,6 +45,18 @@ def _settings(
         ),
         app=SimpleNamespace(timezone="UTC"),
     )
+
+
+def test_nautilus_runtime_context_generates_requested_daily_report(tmp_path) -> None:
+    settings = Settings()
+    settings.telegram.send_daily_report = False
+    runtime = build_nautilus_runtime_context(settings, base_dir=tmp_path)
+
+    report = asyncio.run(runtime.generate_daily_report_once(date(2026, 7, 31)))
+
+    assert report is not None
+    assert report.report_date == date(2026, 7, 31)
+    assert runtime.sqlite.counts()["daily_reports"] == 1
 
 
 def test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet() -> None:

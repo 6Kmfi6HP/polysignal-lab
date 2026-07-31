@@ -49,6 +49,7 @@ from polysignal_lab.observability.liveness_watchdog import LivenessWatchdog
 from polysignal_lab.nautilus_runtime.runtime_registration import enabled_strategy_names
 from polysignal_lab.nautilus_runtime.signal_notifications import (
     _notify_accepted_signal,
+    _notify_daily_report,
     _notify_report_result,
 )
 
@@ -94,6 +95,10 @@ async def _prepare_nautilus_runtime_context(
             stake_usdc,
         ),
         report_result_notifier=lambda result: _notify_report_result(context, result),
+        daily_report_notifier=lambda framework_time: _notify_daily_report(
+            context,
+            framework_time,
+        ),
     )
     # Importable strategies resolve this process-local handle during construction.
     bind_runtime_observability(observability)

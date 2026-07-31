@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -30,6 +32,8 @@ def _reset_outbox() -> None:
             except Exception:
                 break
         sn._worker_thread = None
+    with sn._DAILY_REPORT_LOCK:
+        sn._requested_daily_reports.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -205,6 +209,59 @@ def test_report_result_uses_loop_local_publisher() -> None:
     )
 
     assert _wait_until(lambda: published == ["rr_loop_local"])
+
+
+def test_daily_report_request_runs_once_per_configured_date() -> None:
+    generated: list[object] = []
+    services = _services()
+
+    async def generate_daily_report_once(report_date: object) -> object:
+        generated.append(report_date)
+        return object()
+
+    services.generate_daily_report_once = generate_daily_report_once
+    framework_time = datetime(2026, 7, 31, 20, 0, tzinfo=UTC)
+
+    sn._notify_daily_report(services, framework_time)
+    sn._notify_daily_report(services, framework_time)
+
+    assert _wait_until(lambda: len(generated) == 1)
+    assert [str(value) for value in generated] == ["2026-07-31"]
+
+    sn._notify_daily_report(
+        services,
+        datetime(2026, 8, 1, 20, 0, tzinfo=UTC),
+    )
+
+    assert _wait_until(lambda: len(generated) == 2)
+    assert [str(value) for value in generated] == ["2026-07-31", "2026-08-01"]
+
+
+def test_daily_report_none_result_can_retry() -> None:
+    attempts = 0
+    services = _services()
+
+    async def generate_daily_report_once(_report_date: object) -> object | None:
+        nonlocal attempts
+        attempts += 1
+        return None if attempts == 1 else object()
+
+    services.generate_daily_report_once = generate_daily_report_once
+    report_date = datetime(2026, 8, 1, tzinfo=UTC).date()
+    key = (id(services), report_date)
+    loop = asyncio.new_event_loop()
+    try:
+        sn._requested_daily_reports.add(key)
+        sn._generate_daily_report_in_background(services, report_date, loop=loop)
+        assert key not in sn._requested_daily_reports
+
+        sn._requested_daily_reports.add(key)
+        sn._generate_daily_report_in_background(services, report_date, loop=loop)
+        assert key in sn._requested_daily_reports
+    finally:
+        loop.close()
+
+    assert attempts == 2
 
 
 def test_accepted_signal_publish_failure_leaves_durable_audit() -> None:

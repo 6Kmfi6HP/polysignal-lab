@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
 
 _REPORT_CURRENT_STATE_SCHEMA_VERSION = 2
+_STRATEGY_STATUS_STALE_AFTER = timedelta(minutes=5)
 
 DailyReportPublishAuthorization = Literal[
     "AUTHORIZED",
@@ -2086,11 +2087,36 @@ class SQLiteStore:
         return self.query_latest_system_event("health_snapshot")
 
     def strategy_status_rows(self, limit: int) -> list[dict[str, Any]]:
-        return self.query_json(
-            "strategy_status",
-            where="ORDER BY created_at ASC",
-            limit=limit,
-        )
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT current.*
+                   FROM strategy_status AS current
+                   JOIN (
+                       SELECT strategy, asset, timeframe, MAX(rowid) AS rowid
+                       FROM strategy_status
+                       GROUP BY strategy, asset, timeframe
+                   ) AS latest ON latest.rowid = current.rowid
+                   ORDER BY current.created_at ASC, current.rowid ASC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        cutoff = utc_now() - _STRATEGY_STATUS_STALE_AFTER
+        payloads: list[dict[str, Any]] = []
+        for row in rows:
+            payload = _payload_json(row)
+            if not isinstance(payload, dict):
+                continue
+            created_at = datetime.fromisoformat(
+                str(row["created_at"]).replace("Z", "+00:00")
+            )
+            if (
+                payload.get("status") in {"active", "missing_data"}
+                and created_at < cutoff
+            ):
+                payload["status"] = "inactive"
+                payload["reason"] = "status_not_refreshed"
+            payloads.append(payload)
+        return payloads
 
     def signal_rows(self, limit: int) -> list[dict[str, Any]]:
         return self.query_json(
@@ -2150,6 +2176,20 @@ class SQLiteStore:
 
     def report_result_rows(self, limit: int) -> list[dict[str, Any]]:
         return self.query_json("report_results", limit=limit)
+
+    def report_summary(self) -> dict[str, int | float]:
+        with self._lock:
+            results = self._conn.execute(
+                """SELECT COUNT(*) AS closed_trades,
+                          COALESCE(SUM(pnl_usdc), 0.0) AS total_pnl_usdc,
+                          COALESCE(AVG(roi), 0.0) AS average_roi
+                   FROM report_results"""
+            ).fetchone()
+        return {
+            "total_pnl_usdc": float(results["total_pnl_usdc"]),
+            "average_roi": float(results["average_roi"]),
+            "closed_trades": int(results["closed_trades"]),
+        }
 
     def daily_reports(self, limit: int = 100) -> list[dict[str, Any]]:
         return self.query_json(

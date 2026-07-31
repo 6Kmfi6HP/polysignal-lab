@@ -6,7 +6,7 @@ import {
 } from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as client from '@/lib/api/client'
 import { ReportingPage } from './index'
 
@@ -33,11 +33,24 @@ function renderReportingPage() {
 }
 
 describe('ReportingPage', () => {
+  beforeEach(() => {
+    vi.spyOn(client, 'getReportSummary').mockResolvedValue({
+      total_pnl_usdc: 4,
+      average_roi: 0.4,
+      closed_trades: 1,
+    })
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
   it('renders the trades table with stored report results and a cumulative PnL chart', async () => {
+    vi.mocked(client.getReportSummary).mockResolvedValue({
+      total_pnl_usdc: 25,
+      average_roi: 0.125,
+      closed_trades: 567,
+    })
     vi.spyOn(client, 'getTrades').mockResolvedValue([
       makeReportTradeResult({
         report_result_id: 'rr-late',
@@ -55,6 +68,9 @@ describe('ReportingPage', () => {
 
     const view = renderReportingPage()
 
+    expect(await view.findByText('+25.00 USDC')).toBeInTheDocument()
+    expect(view.getByText('+12.5%')).toBeInTheDocument()
+    expect(view.getByText('567')).toBeInTheDocument()
     expect(await view.findByText('+4.00 USDC')).toBeInTheDocument()
     expect(view.getByText('-1.00 USDC')).toBeInTheDocument()
     expect(
@@ -80,6 +96,21 @@ describe('ReportingPage', () => {
     )
     expect(view.getByRole('tab', { name: 'Positions' })).toBeInTheDocument()
     expect(view.getByRole('tab', { name: 'Orders' })).toBeInTheDocument()
+  })
+
+  it('shows an error when the all-history summary cannot be loaded', async () => {
+    vi.mocked(client.getReportSummary).mockRejectedValue(
+      new Error('summary unavailable')
+    )
+    vi.spyOn(client, 'getTrades').mockResolvedValue([])
+    vi.spyOn(client, 'getPositions').mockResolvedValue([])
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue([])
+
+    const view = renderReportingPage()
+
+    expect(
+      await view.findByText(/summary unavailable/i)
+    ).toBeInTheDocument()
   })
 
   it('renders positions and orders tables on their tabs', async () => {

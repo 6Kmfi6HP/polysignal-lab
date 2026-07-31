@@ -124,6 +124,12 @@ export interface ReportTradeResult {
   details: Record<string, unknown>
 }
 
+export interface ReportSummary {
+  total_pnl_usdc: number
+  average_roi: number
+  closed_trades: number
+}
+
 export interface CalibrationBucket {
   strategy: string
   asset: string

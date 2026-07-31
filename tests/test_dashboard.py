@@ -142,6 +142,37 @@ async def test_dashboard_readonly_endpoints_return_stored_data(
     assert root.status_code == 404
 
 
+def test_dashboard_report_summary_aggregates_all_stored_results(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-report-summary.sqlite3")
+    store.insert_report_result(
+        sample_report_result(
+            report_result_id="result-win",
+            pnl_usdc=8.0,
+            roi=0.4,
+        )
+    )
+    store.insert_report_result(
+        sample_report_result(
+            report_result_id="result-loss",
+            signal_id="sig-loss",
+            report_position_id="pos-loss",
+            pnl_usdc=-3.0,
+            roi=-0.2,
+            result="LOSS",
+        )
+    )
+    client = TestClient(create_dashboard_app(store))
+
+    response = client.get("/api/report-summary")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "total_pnl_usdc": 5.0,
+        "average_roi": pytest.approx(0.1),
+        "closed_trades": 2,
+    }
+
+
 async def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "dashboard-positions.sqlite3")
     old = {
@@ -1061,6 +1092,64 @@ def test_dashboard_exposes_bounded_strategy_status_rows(tmp_path) -> None:
             "status": "uncalibrated",
             "reason": "CALIBRATION_REQUIRED",
         },
+    ]
+
+
+def test_dashboard_marks_unrefreshed_runtime_strategy_status_inactive(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "db.sqlite3")
+    store.insert_strategy_status(
+        StrategyMarketStatus(
+            strategy="ptb_diff",
+            asset="BTC",
+            timeframe="5m",
+            status="active",
+            reason=None,
+        )
+    )
+    with store._lock, store._conn:
+        store._conn.execute(
+            "UPDATE strategy_status SET created_at='2020-01-01T00:00:00Z'"
+        )
+
+    rows = store.strategy_status_rows(limit=100)
+
+    assert rows[0]["status"] == "inactive"
+    assert rows[0]["reason"] == "status_not_refreshed"
+
+
+def test_dashboard_exposes_only_latest_status_per_strategy_market(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "strategy-status-current.sqlite3")
+    store.insert_strategy_status(
+        StrategyMarketStatus(
+            strategy="late_consensus",
+            asset="BTC",
+            timeframe="5m",
+            status="missing_data",
+            reason="awaiting_first_book",
+        )
+    )
+    store.insert_strategy_status(
+        StrategyMarketStatus(
+            strategy="late_consensus",
+            asset="BTC",
+            timeframe="5m",
+            status="active",
+            reason=None,
+        )
+    )
+    client = TestClient(create_dashboard_app(store))
+
+    response = client.get("/api/strategy-status")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "strategy": "late_consensus",
+            "asset": "BTC",
+            "timeframe": "5m",
+            "status": "active",
+            "reason": None,
+        }
     ]
 
 

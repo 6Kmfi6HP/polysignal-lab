@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from queue import Empty, Full, Queue
 from threading import Event, Thread
 from typing import Protocol
@@ -35,7 +36,7 @@ from polysignal_lab.nautilus_runtime.projections import (
 )
 from polysignal_lab.observability.health import HealthRegistry
 from polysignal_lab.observability.liveness_watchdog import LivenessWatchdog
-from polysignal_lab.utils import utc_iso
+from polysignal_lab.utils import utc_iso, utc_now
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,11 +65,17 @@ __all__ = [
 # Identical rejection records within this window are suppressed; accepted
 # decisions are never suppressed.
 REPEAT_SUPPRESS_TTL_SEC = 60.0
+DAILY_REPORT_CHECK_INTERVAL_SEC = 60.0
+STRATEGY_STATUS_REFRESH_INTERVAL_SEC = 60.0
 
 # Importable Strategy/Actor configs are JSON-only and cannot carry the process
 # ObservabilityService. CLI/runtime binds the live instance before strategies
 # construct so host_init can resolve it.
 _runtime_observability: ObservabilityService | None = None
+
+
+class DailyReportNotifier(Protocol):
+    def __call__(self, framework_time: datetime) -> None: ...
 
 
 def bind_runtime_observability(service: ObservabilityService | None) -> None:
@@ -95,6 +102,9 @@ class ObservabilityService:
         notifier: NautilusNotifierAdapter | None = None,
         accepted_signal_notifier: AcceptedSignalNotifier | None = None,
         report_result_notifier: ReportResultNotifier | None = None,
+        daily_report_notifier: DailyReportNotifier | None = None,
+        daily_report_now: Callable[[], datetime] = utc_now,
+        monotonic_clock: Callable[[], float] = time.monotonic,
         telemetry_queue_size: int = 1024,
         telemetry_autostart: bool = False,
         telemetry_sqlite_lock_retries: int = 3,
@@ -111,8 +121,15 @@ class ObservabilityService:
         self.report_result_notifier: ReportResultNotifier | None = (
             report_result_notifier
         )
+        self.daily_report_notifier: DailyReportNotifier | None = daily_report_notifier
+        self._daily_report_now = daily_report_now
+        self._monotonic_clock = monotonic_clock
+        self._next_daily_report_check = 0.0
         self._event_count: int = 0
         self._recent_rejections: dict[tuple[object, ...], float] = {}
+        self._strategy_statuses: dict[
+            tuple[str, str, str], tuple[str, str | None, float]
+        ] = {}
         # Best-effort telemetry queue lives on ObservabilityService (no TelemetryWriter).
         self._telemetry_queue: Queue[_TelemetryEvent] | None = None
         self._telemetry_stop = Event()
@@ -148,11 +165,12 @@ class ObservabilityService:
         # when there is no event store to drain.
         if self.liveness_watchdog is not None:
             self.liveness_watchdog.start()
-        if self._telemetry_queue is None:
+        if self._telemetry_queue is None and self.daily_report_notifier is None:
             return
         if self._telemetry_thread is not None and self._telemetry_thread.is_alive():
             return
         self._telemetry_stop.clear()
+        self._next_daily_report_check = 0.0
         self._telemetry_thread = Thread(
             target=self._telemetry_run,
             name="polysignal-telemetry-outbox",
@@ -206,8 +224,17 @@ class ObservabilityService:
         while not self._telemetry_stop.is_set() or (
             self._telemetry_queue is not None and not self._telemetry_queue.empty()
         ):
+            self._poll_daily_report()
             if not self.drain_telemetry_once():
                 _ = self._telemetry_stop.wait(0.1)
+
+    def _poll_daily_report(self) -> bool:
+        now = self._monotonic_clock()
+        if now < self._next_daily_report_check:
+            return False
+        self.request_daily_report(self._daily_report_now())
+        self._next_daily_report_check = now + DAILY_REPORT_CHECK_INTERVAL_SEC
+        return True
 
     def _write_telemetry_event(self, event: _TelemetryEvent) -> None:
         attempts = 0
@@ -347,6 +374,71 @@ class ObservabilityService:
     def record_nautilus_position(self, position: object) -> None:
         self.record_event("nautilus_position", project_position(position))
 
+    def record_strategy_status(
+        self,
+        *,
+        strategy: str,
+        asset: str,
+        timeframe: str,
+        ready: bool,
+        reason: str | None,
+    ) -> None:
+        status = "active" if ready else "missing_data"
+        effective_reason = None if ready else reason
+        self.record_strategy_status_value(
+            strategy=strategy,
+            asset=asset,
+            timeframe=timeframe,
+            status=status,
+            reason=effective_reason,
+        )
+
+    def record_strategy_status_value(
+        self,
+        *,
+        strategy: str,
+        asset: str,
+        timeframe: str,
+        status: str,
+        reason: str | None,
+    ) -> None:
+        key = (strategy, asset, timeframe)
+        now = self._monotonic_clock()
+        current = (status, reason)
+        previous = self._strategy_statuses.get(key)
+        if (
+            previous is not None
+            and previous[:2] == current
+            and now - previous[2] < STRATEGY_STATUS_REFRESH_INTERVAL_SEC
+        ):
+            return
+        created = self.record_event(
+            "strategy_status",
+            {
+                "strategy": strategy,
+                "asset": asset,
+                "timeframe": timeframe,
+                "status": status,
+                "reason": reason,
+            },
+        )
+        if created:
+            self._strategy_statuses[key] = (*current, now)
+
+    def record_strategy_stopped(self, strategy: str) -> None:
+        for (current_strategy, asset, timeframe), _status in tuple(
+            self._strategy_statuses.items()
+        ):
+            if current_strategy != strategy:
+                continue
+            self.record_strategy_status_value(
+                strategy=strategy,
+                asset=asset,
+                timeframe=timeframe,
+                status="inactive",
+                reason="strategy_stopped",
+            )
+
     def notify_accepted_signal(
         self,
         signal: SignalCandidate,
@@ -377,6 +469,18 @@ class ObservabilityService:
             _health_mark_side_effect_failure(
                 self.health,
                 kind="report_result_notifier",
+                error=exc,
+            )
+
+    def request_daily_report(self, framework_time: datetime) -> None:
+        if self.daily_report_notifier is None:
+            return
+        try:
+            self.daily_report_notifier(framework_time)
+        except Exception as exc:
+            _health_mark_side_effect_failure(
+                self.health,
+                kind="daily_report_notifier",
                 error=exc,
             )
 

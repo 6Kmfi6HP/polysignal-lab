@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Final, cast
 
 if TYPE_CHECKING:
@@ -140,6 +142,26 @@ class NautilusRuntimeContext:
         from polysignal_lab.app.daily_report import generate_daily_report
 
         return await generate_daily_report(self)
+
+    async def generate_daily_report_once(self, report_date: date) -> DailyReport | None:
+        from polysignal_lab.app.daily_report import generate_daily_report
+
+        publish_service, publisher = _build_publish_service(
+            self.settings,
+            self.formatter,
+            self.persistence,
+        )
+        scheduler = SimpleNamespace(
+            settings=self.settings,
+            persistence=self.persistence,
+            health=self.health,
+            logger=self.logger,
+            publish_service=publish_service,
+        )
+        try:
+            return await generate_daily_report(scheduler, report_date=report_date)
+        finally:
+            await publisher.client.aclose()
 
 
 def build_nautilus_runtime_context(

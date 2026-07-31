@@ -6,7 +6,9 @@ import queue
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import Protocol, cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from polysignal_lab.app import scheduler_health
 from polysignal_lab.domain.signal import SignalCandidate
@@ -18,6 +20,8 @@ logger = logging.getLogger("polysignal_lab.nautilus_runtime.signal_notifications
 _OUTBOX: queue.SimpleQueue[object] = queue.SimpleQueue()
 _worker_thread: threading.Thread | None = None
 _WORKER_LOCK = threading.Lock()
+_DAILY_REPORT_LOCK = threading.Lock()
+_requested_daily_reports: set[tuple[int, date]] = set()
 _STOP = object()
 
 
@@ -32,6 +36,12 @@ class _AcceptedSignalJob:
 class _ReportResultJob:
     services: object
     result: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class _DailyReportJob:
+    services: object
+    report_date: date
 
 
 class _PublishResultLike(Protocol):
@@ -51,6 +61,10 @@ class _ReportResultPublisher(Protocol):
         self,
         result: Mapping[str, object],
     ) -> _PublishResultLike: ...
+
+
+class _DailyReportGenerator(Protocol):
+    async def generate_daily_report_once(self, report_date: date) -> object: ...
 
 
 async def _stop_nautilus_services(services: object) -> None:
@@ -122,6 +136,12 @@ def _outbox_worker_loop() -> None:
                     _publish_report_result_in_background(
                         job.services,
                         job.result,
+                        loop=loop,
+                    )
+                elif isinstance(job, _DailyReportJob):
+                    _generate_daily_report_in_background(
+                        job.services,
+                        job.report_date,
                         loop=loop,
                     )
             except Exception:
@@ -307,3 +327,46 @@ def _notify_report_result(
         return
     _ensure_outbox_worker()
     _OUTBOX.put(_ReportResultJob(services, dict(result)))
+
+
+def _generate_daily_report_in_background(
+    services: object,
+    report_date: date,
+    *,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    key = (id(services), report_date)
+    try:
+        report = loop.run_until_complete(
+            cast(_DailyReportGenerator, services).generate_daily_report_once(
+                report_date
+            )
+        )
+        if report is None:
+            with _DAILY_REPORT_LOCK:
+                _requested_daily_reports.discard(key)
+    except Exception as exc:
+        with _DAILY_REPORT_LOCK:
+            _requested_daily_reports.discard(key)
+        cast(logging.Logger, getattr(services, "logger", logger)).warning(
+            "Nautilus daily report generation failed for %s: %s",
+            report_date,
+            exc,
+        )
+
+
+def _notify_daily_report(services: object, framework_time: datetime) -> None:
+    app_settings = getattr(getattr(services, "settings", None), "app", None)
+    timezone_name = str(getattr(app_settings, "timezone", "UTC"))
+    try:
+        report_tz = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        report_tz = UTC
+    report_date = framework_time.astimezone(report_tz).date() - timedelta(days=1)
+    key = (id(services), report_date)
+    with _DAILY_REPORT_LOCK:
+        if key in _requested_daily_reports:
+            return
+        _requested_daily_reports.add(key)
+    _ensure_outbox_worker()
+    _OUTBOX.put(_DailyReportJob(services, report_date))
