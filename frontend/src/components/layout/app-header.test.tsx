@@ -51,7 +51,11 @@ describe('AppHeader', () => {
     const navigation = view.getByRole('navigation', {
       name: 'Primary navigation',
     })
+    const homeLink = view.getByRole('link', { name: 'PolySignal Lab home' })
     const links = Array.from(navigation.querySelectorAll('a'))
+
+    expect(homeLink).toHaveAttribute('href', '/')
+    expect(homeLink.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
 
     expect(links.map((link) => link.textContent)).toEqual([
       'Overview',

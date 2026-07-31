@@ -1,4 +1,4 @@
-# PolySignal Lab
+# ![PolySignal Lab mark](frontend/public/images/polysignal-mark.svg) PolySignal Lab
 
 PolySignal Lab is a read-only Polymarket short-cycle signal and Nautilus-backed paper trading validation system.
 

@@ -2,6 +2,7 @@ import { useNavigate, useRouter } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { BrandMark } from '@/components/brand-mark'
 
 type GeneralErrorProps = React.HTMLAttributes<HTMLDivElement> & {
   minimal?: boolean
@@ -17,6 +18,7 @@ export function GeneralError({
   return (
     <div className={cn('h-svh w-full', className)}>
       <div className='m-auto flex h-full w-full flex-col items-center justify-center gap-2'>
+        {!minimal && <BrandMark className='mb-4 size-12 text-primary' />}
         {!minimal && (
           <h1 className='text-[7rem] leading-tight font-bold'>500</h1>
         )}

@@ -34,6 +34,7 @@ export const en = {
     chart: 'chart',
   },
   navigation: {
+    home: 'PolySignal Lab home',
     overview: 'Overview',
     signals: 'Signals',
     reporting: 'Trading Reports',
@@ -304,6 +305,7 @@ export const zhCN = {
     chart: '图表',
   },
   navigation: {
+    home: 'PolySignal Lab 首页',
     overview: '概览',
     signals: '信号',
     reporting: '交易报告',

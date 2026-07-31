@@ -1,6 +1,7 @@
 import { useNavigate, useRouter } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { BrandMark } from '@/components/brand-mark'
 
 export function NotFoundError() {
   const { t } = useTranslation()
@@ -9,6 +10,7 @@ export function NotFoundError() {
   return (
     <div className='h-svh'>
       <div className='m-auto flex h-full w-full flex-col items-center justify-center gap-2'>
+        <BrandMark className='mb-4 size-12 text-primary' />
         <h1 className='text-[7rem] leading-tight font-bold'>404</h1>
         <span className='font-medium'>{t('errors.notFound')}</span>
         <p className='text-center text-muted-foreground'>

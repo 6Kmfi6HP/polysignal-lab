@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#147d76" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <style>
+    @media (prefers-color-scheme: dark) {
+      :root { stroke: #55c7bd; }
+    }
+  </style>
+  <path d="M3 6h3a4 4 0 0 1 4 4v1"/>
+  <path d="M3 18h3a4 4 0 0 0 4-4v-1"/>
+  <rect x="10" y="8" width="4" height="8" rx="1"/>
+  <path d="M14 12h7"/>
+</svg>

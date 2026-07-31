@@ -12,6 +12,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
+import { BrandMark } from '@/components/brand-mark'
 import { ConfigDrawer } from '@/components/config-drawer'
 import { LanguageSwitch } from '@/components/language-switch'
 import { Search } from '@/components/search'
@@ -25,13 +26,12 @@ export function AppHeader() {
   return (
     <header className='sticky top-0 z-40 h-16 border-b bg-background/95 backdrop-blur'>
       <div className='mx-auto flex h-full max-w-[1400px] items-center gap-3 px-4 sm:px-6'>
-        <Link to='/' className='flex shrink-0 items-center gap-2.5 rounded-lg'>
-          <img
-            src='/images/favicon.svg'
-            alt=''
-            aria-hidden='true'
-            className='size-8'
-          />
+        <Link
+          to='/'
+          aria-label={t('navigation.home')}
+          className='flex shrink-0 items-center gap-2.5 rounded-lg'
+        >
+          <BrandMark className='size-8 text-primary' />
           <span className='hidden leading-tight sm:block'>
             <span className='block text-sm font-semibold tracking-tight'>
               PolySignal Lab

@@ -1,4 +1,4 @@
-# PolySignal Lab Dashboard
+# ![PolySignal Lab mark](public/images/polysignal-mark.svg) PolySignal Lab Dashboard
 
 Read-only operations dashboard for PolySignal Lab signals, rejected signals,
 paper-trading projections, leaderboard rows, strategy status, and system health.
