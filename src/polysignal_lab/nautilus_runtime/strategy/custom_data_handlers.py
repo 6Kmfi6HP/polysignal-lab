@@ -19,6 +19,7 @@ from polysignal_lab.nautilus_runtime.strategy.data_boundary import (
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
     retire_market_book_generation,
+    subscription_scope_condition_ids,
 )
 
 
@@ -30,6 +31,8 @@ class _CustomDataStrategy(Protocol):
     _market_epoch: int | None
     unsubscribe_exited: bool
     _subscription_state: MarketSubscriptionState
+    _subscription_assets: frozenset[str]
+    _subscription_timeframes: frozenset[str]
     cache: object | None
 
     def evaluate_condition(
@@ -123,10 +126,18 @@ def handle_market_universe(
     if strategy._market_epoch is not None and data.epoch <= strategy._market_epoch:
         return True
     strategy._market_epoch = data.epoch
-    active_condition_ids = set(data.active_condition_ids)
+    active_condition_ids = set(
+        subscription_scope_condition_ids(
+            strategy,  # type: ignore[arg-type]
+            data.active_condition_ids,
+            asset_by_condition=data.condition_to_asset,
+            timeframe_by_condition=data.condition_to_timeframe,
+            include_unknown=False,
+        )
+    )
     exited_condition_ids = tuple(
         sorted(
-            set(data.exited_condition_ids)
+            (set(data.exited_condition_ids) & strategy._active_condition_ids)
             | (strategy._active_condition_ids - active_condition_ids)
         )
     )
@@ -138,7 +149,7 @@ def handle_market_universe(
         )
         retire_market_book_generation(strategy, condition_id)
         strategy._note_runtime_readiness(condition_id, ready=True)
-    if strategy.unsubscribe_exited:
+    if strategy.unsubscribe_exited and exited_condition_ids:
         strategy._unsubscribe_market_conditions(exited_condition_ids)
     strategy._subscribe_market_conditions(tuple(strategy._active_condition_ids))
     return True

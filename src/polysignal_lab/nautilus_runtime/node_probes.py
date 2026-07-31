@@ -45,6 +45,10 @@ def _log_probe_write_failure(path: Path) -> None:
 def _log_readiness_transitions(
     previous: frozenset[str] | None,
     current: frozenset[str],
+    detail_by_key: dict[str, dict[str, object]],
+    *,
+    transition_key: str | None = None,
+    transition_detail: dict[str, object] | None = None,
 ) -> None:
     """Put readiness transitions on the log stream, not just in the heartbeat file.
 
@@ -53,11 +57,24 @@ def _log_readiness_transitions(
     hours without emitting a single ERROR. Only transitions are logged — this
     runs on the market-data hot path.
     """
-    known = frozenset() if previous is None else previous
+    known: frozenset[str] = frozenset() if previous is None else previous
     for condition_id in sorted(current - known):
-        logger.error("Runtime readiness miss started: condition_id=%s", condition_id)
+        logger.error(
+            "Runtime readiness miss started: condition_id=%s",
+            condition_id,
+            extra={"readiness_detail": detail_by_key.get(condition_id, {})},
+        )
     for condition_id in sorted(known - current):
-        logger.info("Runtime readiness recovered: condition_id=%s", condition_id)
+        detail = (
+            transition_detail
+            if condition_id == transition_key and transition_detail is not None
+            else detail_by_key.get(condition_id, {})
+        )
+        logger.info(
+            "Runtime readiness recovered: condition_id=%s",
+            condition_id,
+            extra={"readiness_detail": detail},
+        )
 
 
 def _write_runtime_startup_marker_best_effort(path: Path) -> None:
@@ -125,6 +142,9 @@ def _write_runtime_heartbeat_best_effort(
     _log_readiness_transitions(
         None if previous_gate is None else previous_gate[1],
         miss_keys,
+        heartbeat.readiness_detail_by_key,
+        transition_key=readiness_key,
+        transition_detail=readiness_detail,
     )
     _HEARTBEAT_WRITE_GATES[path] = (_monotonic(), miss_keys)
 

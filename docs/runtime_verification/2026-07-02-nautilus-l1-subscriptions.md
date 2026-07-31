@@ -89,3 +89,91 @@ During monitoring a container restart was observed. Root cause identified:
 **Relationship to L1 optimization:** This error originates from the Polymarket adapter's data format, not from subscription choice. With the `quote_ticks` L1 path active, our strategies no longer subscribe to `order_book_deltas`, so this error should occur less frequently. However, the Polymarket data client may still process deltas for internal book maintenance.
 
 **Status:** This is a pre-existing upstream data quality issue, not introduced by the L1 subscription changes.
+
+## Subscription health verification (2026-07-31)
+
+This verification covers the strategy-scoped subscription fix, adapter reconnect
+replay, and Telegram URL redaction. The `/health` thresholds and HTTP semantics
+were not changed.
+
+### Dependency and subscription scope
+
+- Installed and locked `nautilus_trader[polymarket]==1.231.0a20260730` from the
+  official Nautilus package index.
+- `vwap_momentum` and `ptb_diff` were limited to their configured BTC 5m/15m
+  markets. `late_consensus` retained its configured BTC/ETH/SOL/XRP 5m/15m
+  scope.
+- The production-equivalent process held 16 active conditions. During the
+  final observation, the adapter logged 80 subscriptions each for quotes,
+  trades, order-book deltas, and instrument-close data, including startup and
+  market rotations. It logged 48 corresponding rotation unsubscriptions for
+  quotes, trades, and order-book deltas.
+- Readiness details recorded subscribe-intent age, generation age, and first
+  bilateral-book latency. The maximum observed bilateral-book generation
+  latency was 507 ms.
+
+### Forced reconnect acceptance
+
+The container network was disconnected for 15 seconds and restored without
+restarting the process. At `13:34:36Z`, both Polymarket market-data clients
+logged `Resubscribing to 16 market assets after reconnect`. Global readiness
+recovered by `13:34:41Z`; all reconnect-related condition transitions recovered
+within the existing 120-second acceptance window. The container restart count
+remained zero.
+
+The final run also recorded 12 automatic reconnect replays, each
+restoring the same 16 market assets. This exercises idle/network reconnect
+replay in the selected nightly rather than relying only on release notes.
+
+### Continuous rotation observation
+
+Observation window: approximately `14:19Z` through `14:40Z`, sampled every 30
+seconds and extended through recovery after the final sample. It covered four
+5m rotations and the overlapping 15m rotation.
+
+- All 40 health samples were `healthy`; the process did not restart.
+- Initial and rotation bilateral-book generation met the 120-second target; the
+  maximum measured first-book latency was 507 ms.
+- One XRP 15m readiness miss lasted 175 seconds, from `14:27:05Z` until the
+  market exited at `14:30:00Z`. At miss start both book receipts were only 13 ms
+  old, so this was not subscription starvation or a stale adapter replay. The
+  market view had lost required quote depth and correctly remained fail-closed
+  until retirement.
+- Recovered conditions had maximum recorded book freshness of 13,450 ms. A
+  stale-book transition was detected at 60,984 ms, confirming that the existing
+  60-second freshness gate remained fail-closed.
+- The extended observation ended with zero readiness misses, but the 175-second
+  quote-depth miss means the strict "no persistent readiness_miss" acceptance
+  criterion did not pass. Production sign-off remains blocked.
+
+### Resource and log comparison
+
+| Metric | Pre-change snapshot | Final candidate run |
+|--------|---------------------|-------------------------|
+| CPU | 119.50% | 38.03%-125.18%; final sample 55.99% |
+| Memory | 1.017 GiB | 225.3-288.0 MiB |
+| Network I/O | 8.46 GB / 369 MB cumulative | 2.03 GB / 69.5 MB over the observation |
+| Nautilus runtime log | 343 MB historical set | 7.9 MB final-run file after ~22 min |
+
+The network figures have different accumulation windows and are retained as
+snapshots, not presented as a normalized throughput benchmark.
+
+### Secret scanning and operator action
+
+The post-deployment stdout window, application JSONL records, Nautilus JSONL,
+and crash log each contained zero Telegram `/bot<token>/` path matches. Unit
+tests also cover arbitrary token lengths in text, structured JSON, and exception
+formatting. Python `httpx` and `httpcore` loggers run at `WARNING`.
+
+Historical logs still contain the previously exposed token. Per the runtime-data
+preservation constraint, this verification did not rewrite or delete them. An
+operator with Telegram credential authority must rotate the Bot Token and
+restrict access to the historical logs before production sign-off.
+
+### Quality gates
+
+- `uv run pre-commit run --all-files --hook-stage pre-commit`: passed
+- `uv run pytest`: 970 passed, 6 skipped
+- `uv run basedpyright`: task changes add no errors; the command still exits 1
+  with eight pre-existing unrelated errors (detached `HEAD` baseline: nine)
+- `uv run polysignal-safety-scan .`: passed

@@ -40,7 +40,7 @@ def test_nautilus_is_required_dependency_for_default_runtime() -> None:
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     dependencies = cast(list[str], data["project"]["dependencies"])
-    expected = "nautilus_trader[polymarket]==1.231.0a20260725"
+    expected = "nautilus_trader[polymarket]==1.231.0a20260730"
     assert expected in dependencies
     nautilus_extra = cast(
         list[str], data["project"]["optional-dependencies"]["nautilus"]

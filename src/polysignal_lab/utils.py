@@ -98,12 +98,18 @@ def mask_secret(value: str | None) -> str:
 
 def redact_text(text: str) -> str:
     patterns = [
+        r"(?i)/bot[^/\s?]+/",
         r"\b\d{8,10}:[A-Za-z0-9_-]{30,}\b",
         r"(?i)(token|secret|password|api[_-]?key)\s*[:=]\s*[^\s]+",
     ]
     out = text
     for pattern in patterns:
-        out = re.sub(
-            pattern, lambda m: m.group(0).split("=")[0].split(":")[0] + "=***", out
-        )
+        if pattern.startswith("(?i)/bot"):
+            out = re.sub(pattern, "/bot***/", out)
+        else:
+            out = re.sub(
+                pattern,
+                lambda m: m.group(0).split("=")[0].split(":")[0] + "=***",
+                out,
+            )
     return out

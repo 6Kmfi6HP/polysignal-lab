@@ -141,6 +141,7 @@ def test_readiness_miss_is_logged_as_error(probe_env, caplog) -> None:
     assert [r.message for r in caplog.records if r.levelno == logging.ERROR] == [
         "Runtime readiness miss started: condition_id=cond-1"
     ]
+    assert caplog.records[-1].readiness_detail == {"asset": "BTC"}
 
 
 def test_repeated_readiness_miss_logs_once(probe_env, caplog) -> None:
@@ -159,8 +160,18 @@ def test_readiness_recovery_is_logged(probe_env, caplog) -> None:
 
     note_readiness("cond-1", False, {"asset": "BTC"})
     with caplog.at_level(logging.INFO, logger=node_probes.logger.name):
-        note_readiness("cond-1", True, {"asset": "BTC"})
+        note_readiness(
+            "cond-1",
+            True,
+            {"asset": "BTC", "first_bilateral_book_latency_ms": 250},
+        )
 
     assert "Runtime readiness recovered: condition_id=cond-1" in [
         r.message for r in caplog.records
     ]
+    recovery = next(
+        record
+        for record in caplog.records
+        if record.message == "Runtime readiness recovered: condition_id=cond-1"
+    )
+    assert recovery.readiness_detail["first_bilateral_book_latency_ms"] == 250

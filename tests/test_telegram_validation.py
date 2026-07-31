@@ -228,7 +228,7 @@ async def test_failed_telegram_response_redacts_token() -> None:
     assert result.status == "FAILED"
     assert result.error is not None
     assert VALID_TOKEN not in result.error
-    assert "1234...fghi" in result.error
+    assert "/bot***/sendMessage" in result.error
 
 
 async def test_invalid_publisher_credentials_fail_without_http_request() -> None:

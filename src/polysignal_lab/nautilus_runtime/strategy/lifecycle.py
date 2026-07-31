@@ -19,6 +19,7 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
+    subscription_scope_condition_ids,
 )
 from polysignal_lab.nautilus_runtime.strategy.condition_evaluation import (
     retire_expired_condition,
@@ -48,6 +49,9 @@ class _LifecycleStrategy(_ClockHost, Protocol):
     _market_config: object
     _spot_data_source: str
     _subscription_state: MarketSubscriptionState
+    _subscription_assets: frozenset[str]
+    _subscription_timeframes: frozenset[str]
+    registry: MarketCatalog | None
     assembler: object
     cache: object | None
     strategy_name: str
@@ -115,7 +119,10 @@ def on_strategy_start(strategy: _LifecycleStrategy, heartbeat_callback: object) 
     if callable(bind_cache) and not bool(getattr(assembler, "is_bound", False)):
         bind_cache(strategy.cache)
     now = framework_now(strategy)
-    startup_condition_ids = tuple(strategy._startup_condition_ids)  # pyright: ignore[reportPrivateUsage]
+    startup_condition_ids = subscription_scope_condition_ids(
+        strategy,  # type: ignore[arg-type]
+        tuple(strategy._startup_condition_ids),  # pyright: ignore[reportPrivateUsage]
+    )
     active_startup_condition_ids: list[str] = []
     registry = strategy._require_registry()  # pyright: ignore[reportPrivateUsage]
     by_condition = getattr(registry, "by_condition", None)
@@ -126,6 +133,9 @@ def on_strategy_start(strategy: _LifecycleStrategy, heartbeat_callback: object) 
             strategy._active_condition_ids.discard(condition_id)  # pyright: ignore[reportPrivateUsage]
             continue
         active_startup_condition_ids.append(condition_id)
+    strategy._active_condition_ids.intersection_update(  # pyright: ignore[reportPrivateUsage]
+        active_startup_condition_ids
+    )
     strategy._subscribe_market_conditions(tuple(active_startup_condition_ids))
     rtds_timeframes = tuple(
         getattr(strategy._market_config, "timeframes", ())  # pyright: ignore[reportPrivateUsage]
@@ -161,7 +171,6 @@ def on_strategy_stop(strategy: _LifecycleStrategy) -> None:
     tracked_condition_ids = tuple(
         dict.fromkeys(
             (
-                *strategy._startup_condition_ids,
                 *strategy._active_condition_ids,
                 *strategy._subscription_state.subscribe_intent_condition_ids,
             )

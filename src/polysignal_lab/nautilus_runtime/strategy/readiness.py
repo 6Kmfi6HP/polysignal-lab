@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from collections.abc import Callable
 from typing import Protocol
 
 from polysignal_lab.alpha.types import MarketView
@@ -18,8 +19,8 @@ class _ReadinessStrategy(Protocol):
     _subscription_state: MarketSubscriptionState
     _runtime_readiness_miss_condition_ids: set[str]
     _stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]]
-    progress_callback: object | None
-    readiness_callback: object | None
+    progress_callback: Callable[[str], None] | None
+    readiness_callback: Callable[[str, bool, dict[str, object]], None] | None
 
     def _framework_now(self) -> datetime: ...
     def _require_registry(self) -> MarketCatalog | None: ...
@@ -29,7 +30,7 @@ def note_runtime_progress(strategy: _ReadinessStrategy, phase: str) -> None:
     callback = strategy.progress_callback
     if callback is None:
         return
-    callback(phase)  # type: ignore[operator]
+    callback(phase)
 
 
 def note_runtime_readiness(
@@ -66,7 +67,7 @@ def note_runtime_readiness(
             reason=None if ready else str(state or "missing_data"),
         )
     if callback is not None:
-        callback(condition_id, ready, detail)  # type: ignore[operator]
+        callback(condition_id, ready, detail)
 
 
 def book_readiness_detail(
@@ -131,6 +132,39 @@ def subscription_readiness_state(
     return "unsubscribed"
 
 
+def subscription_timing_detail(
+    state: MarketSubscriptionState,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> dict[str, object]:
+    intent_at = state.subscribe_intent_started_at_by_condition.get(condition_id)
+    generation_at = state.book_generation_started_at_by_condition.get(condition_id)
+    first_book_at = state.first_bilateral_book_at_by_condition.get(condition_id)
+
+    def age_ms(started_at: datetime | None) -> int | None:
+        if started_at is None:
+            return None
+        return max(0, int((now - started_at).total_seconds() * 1000))
+
+    return {
+        "subscribe_intent_started_at": (
+            None if intent_at is None else intent_at.isoformat()
+        ),
+        "subscribe_intent_age_ms": age_ms(intent_at),
+        "generation_started_at": (
+            None if generation_at is None else generation_at.isoformat()
+        ),
+        "generation_age_ms": age_ms(generation_at),
+        "first_bilateral_book_at": (
+            None if first_book_at is None else first_book_at.isoformat()
+        ),
+        "first_bilateral_book_latency_ms": (
+            state.first_bilateral_book_latency_ms_by_condition.get(condition_id)
+        ),
+    }
+
+
 def readiness_detail(
     strategy: _ReadinessStrategy,
     condition_id: str,
@@ -155,9 +189,6 @@ def readiness_detail(
         ),
         pending_sides=pending_sides,
     )
-    generation_started_at = state.book_generation_started_at_by_condition.get(
-        condition_id
-    )
     return {
         "condition_id": condition_id,
         "market_id": None if pair is None else pair.market_id,
@@ -165,9 +196,7 @@ def readiness_detail(
         "timeframe": None if pair is None else pair.timeframe,
         "subscription_state": state_name,
         "subscribe_requested": condition_id in state.subscribe_intent_condition_ids,
-        "generation_started_at": (
-            None if generation_started_at is None else generation_started_at.isoformat()
-        ),
+        **subscription_timing_detail(state, condition_id, now=now),
         "awaiting_book_sides": sorted(side.value for side in pending_sides),
         "last_book_at_by_side": last_books,
         "last_book_received_at_by_side": last_receipts,

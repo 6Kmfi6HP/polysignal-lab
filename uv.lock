@@ -665,7 +665,7 @@ wheels = [
 
 [[package]]
 name = "nautilus-trader"
-version = "1.231.0a20260725"
+version = "1.231.0a20260730"
 source = { registry = "https://packages.nautechsystems.io/simple" }
 dependencies = [
     { name = "click" },
@@ -681,18 +681,18 @@ dependencies = [
     { name = "uvloop", marker = "sys_platform != 'win32'" },
 ]
 wheels = [
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp312-cp312-macosx_26_0_arm64.whl", hash = "sha256:24ed92cf5da0283a170107e3383f924dd2500e4f79ebcc11834987e586451e8f" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:198b2afcf222bc0c85f9cb7b0f58ca88a60415cc430289801c78ed53eecfce43" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp312-cp312-manylinux_2_35_x86_64.whl", hash = "sha256:1470750fa88b228c6adb12bd24119ebb38820da929c501fdde17cc06553ff240" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp312-cp312-win_amd64.whl", hash = "sha256:4e895ddb122b02d7711cf1a374f94bd7bd2a3279feb4471731a0167b9e4c39d5" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp313-cp313-macosx_26_0_arm64.whl", hash = "sha256:7e194b918905817f242beae0857ddb5e7b251f2d4f9d84505397edfa3b60cbea" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:371391bcbd35059864267f2df1c2bfd75420fc9a33988fc6dab32a14778bbe72" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp313-cp313-manylinux_2_35_x86_64.whl", hash = "sha256:1ad2aa3c7ad9be45bf601bcd966e814ef1af861d96cd272d7ccc9bca4ca097a3" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp313-cp313-win_amd64.whl", hash = "sha256:b8976bf4697776e057e98e058d70dee4c6032083efcc0a5febdbb8333b24dc3f" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp314-cp314-macosx_26_0_arm64.whl", hash = "sha256:f8f1b397be050f991db17f4ab687b6eaafbb871edade53de019131bf816964e6" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp314-cp314-manylinux_2_35_aarch64.whl", hash = "sha256:8658fc9db17e44fe4a10a10268f02961fe88e447a7d91fbc72b2b21738a35cc4" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp314-cp314-manylinux_2_35_x86_64.whl", hash = "sha256:3983a4ca7de5e28f6e58b5058b5ecf9ec2b931a26efc4b736ec8747bc0b44f26" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260725-cp314-cp314-win_amd64.whl", hash = "sha256:286894f30da68a5e04a0cf9493cf649a3826ed3da804b6618ceb5f7b95425244" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp312-cp312-macosx_26_0_arm64.whl", hash = "sha256:2cf0f7e809230194b4f9e34c0aca4b09780b63473748ac6abf55f0824a180be2" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:572a1c3dce855cbac53f5554fbf5c4499027abb77026ac28fee69a16b7c5a829" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp312-cp312-manylinux_2_35_x86_64.whl", hash = "sha256:b54c7cc3f8a16bf4fd820a7e0d44e001d04a1aa8af9439c5f4219a688a13db01" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp312-cp312-win_amd64.whl", hash = "sha256:ad019e4fa12b38ab8dd07ff89ddf8b28e1a00269aab407d6a2893e4654bdc6e4" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp313-cp313-macosx_26_0_arm64.whl", hash = "sha256:1a96423a980ede05d7897351496f0171a65607c5e3251d0f2a5f827ac024dd9a" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:98f4da393cc276da8efa27a7ae0c88079ccc6002b2d14ba552aff6f455fa7feb" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp313-cp313-manylinux_2_35_x86_64.whl", hash = "sha256:3d1107cc84b22be95a0016a74c54ed25b515e15059bfb8f58592c09820448471" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp313-cp313-win_amd64.whl", hash = "sha256:a7db7c2d2b807f28e0af37bc08c3b832d0a1aeca858506d9d542b562b1699b39" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp314-cp314-macosx_26_0_arm64.whl", hash = "sha256:eb758cf714d5df69ee1b67d67a5853ca7fa775dc269b1e8ce537192c9020a830" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp314-cp314-manylinux_2_35_aarch64.whl", hash = "sha256:0e8417fb8f9d38953d870acebd52c067bb284936fbc6114bab4fb83d5e3beb01" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp314-cp314-manylinux_2_35_x86_64.whl", hash = "sha256:b38a4c09d77a8e6f7b4be4801b7c465c0863bb92357bc44effc9877d0d831440" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260730-cp314-cp314-win_amd64.whl", hash = "sha256:82f7707ecf5330f99d24ad755dc123d89d53d087f0307f22108585e1e72b7785" },
 ]
 
 [package.optional-dependencies]
@@ -924,8 +924,8 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.111" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.4" },
-    { name = "nautilus-trader", extras = ["polymarket"], specifier = "==1.231.0a20260725", index = "https://packages.nautechsystems.io/simple" },
-    { name = "nautilus-trader", extras = ["polymarket"], marker = "extra == 'nautilus'", specifier = "==1.231.0a20260725", index = "https://packages.nautechsystems.io/simple" },
+    { name = "nautilus-trader", extras = ["polymarket"], specifier = "==1.231.0a20260730", index = "https://packages.nautechsystems.io/simple" },
+    { name = "nautilus-trader", extras = ["polymarket"], marker = "extra == 'nautilus'", specifier = "==1.231.0a20260730", index = "https://packages.nautechsystems.io/simple" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.6.0" },
     { name = "py-clob-client-v2", specifier = ">=0.1.0" },
     { name = "pydantic", specifier = ">=2.8" },

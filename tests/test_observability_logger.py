@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 
 from polysignal_lab.config import LoggingConfig
-from polysignal_lab.observability.logger import configure_logging
+from polysignal_lab.observability.logger import (
+    RedactingFormatter,
+    RedactingJsonFormatter,
+    configure_logging,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +69,60 @@ def test_file_handler_redacts_secrets(tmp_path: Path) -> None:
     message = _records(tmp_path)[0]["message"]
     assert "supersecret" not in str(message)
     assert "token=***" in str(message)
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["x", "123:short", "1234567890:abcdefghijklmnopqrstuvwxyz_ABC-123"],
+)
+def test_telegram_url_token_is_redacted_from_text_and_json(token: str) -> None:
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    record = logging.LogRecord(
+        "httpx",
+        logging.ERROR,
+        __file__,
+        1,
+        "request failed: %s",
+        (url,),
+        None,
+    )
+
+    text = RedactingFormatter("%(message)s").format(record)
+    payload = json.loads(RedactingJsonFormatter().format(record))
+
+    assert f"/bot{token}/" not in text
+    assert f"/bot{token}/" not in str(payload)
+    assert "/bot***/sendMessage" in text
+
+
+def test_telegram_url_token_is_redacted_from_exception() -> None:
+    token = "arbitrary-length-token:with_symbols-123"
+    url = f"https://api.telegram.org/bot{token}/getUpdates"
+    formatter = RedactingJsonFormatter()
+
+    try:
+        raise RuntimeError(f"HTTP request failed for {url}")
+    except RuntimeError:
+        record = logging.LogRecord(
+            "httpcore",
+            logging.ERROR,
+            __file__,
+            1,
+            "transport error",
+            (),
+            exc_info=__import__("sys").exc_info(),
+        )
+
+    payload = json.loads(formatter.format(record))
+    assert token not in str(payload)
+    assert "/bot***/getUpdates" in str(payload)
+
+
+def test_http_client_loggers_default_to_warning(tmp_path: Path) -> None:
+    configure_logging("DEBUG", LoggingConfig(directory=str(tmp_path)))
+
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING
 
 
 def test_file_handler_records_tracebacks(tmp_path: Path) -> None:

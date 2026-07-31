@@ -56,7 +56,7 @@ def test_nautilus_is_required_default_dependency() -> None:
     default_deps = data["project"]["dependencies"]
     optional_deps = data["project"]["optional-dependencies"]
 
-    expected = "nautilus_trader[polymarket]==1.231.0a20260725"
+    expected = "nautilus_trader[polymarket]==1.231.0a20260730"
     assert expected in default_deps
     assert optional_deps["nautilus"] == [expected]
     assert data["project"]["requires-python"] == ">=3.12"

@@ -221,6 +221,13 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
     strategy._subscriptions_started = False
     strategy.unsubscribe_exited = host.unsubscribe_exited
     strategy._subscription_state = subs.MarketSubscriptionState()
+    core_config = getattr(host.core, "config", host.market_config)
+    strategy._subscription_assets = frozenset(
+        str(asset).upper() for asset in getattr(core_config, "assets", ())
+    )
+    strategy._subscription_timeframes = frozenset(
+        str(timeframe).lower() for timeframe in getattr(core_config, "timeframes", ())
+    )
     strategy._asset_condition_ids = _asset_conditions(
         host.registry, strategy._startup_condition_ids
     )

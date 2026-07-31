@@ -9,6 +9,16 @@ from polysignal_lab.config import LoggingConfig
 from polysignal_lab.utils import redact_text
 
 
+def _redact_json_value(value: object) -> object:
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, dict):
+        return {str(key): _redact_json_value(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_redact_json_value(item) for item in value]
+    return value
+
+
 class RedactingFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         return redact_text(super().format(record))
@@ -31,6 +41,9 @@ class RedactingJsonFormatter(logging.Formatter):
         }
         if record.exc_info:
             payload["exception"] = redact_text(self.formatException(record.exc_info))
+        readiness_detail = getattr(record, "readiness_detail", None)
+        if isinstance(readiness_detail, dict):
+            payload["readiness_detail"] = _redact_json_value(readiness_detail)
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
@@ -76,3 +89,5 @@ def configure_logging(level: str = "INFO", config: LoggingConfig | None = None) 
     # The root threshold must clear the most verbose handler, which is the file
     # when it runs at DEBUG while stdout stays at INFO.
     root.setLevel(min(handler.level for handler in handlers))
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

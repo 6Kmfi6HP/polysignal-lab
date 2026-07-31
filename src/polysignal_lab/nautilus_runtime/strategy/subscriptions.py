@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
@@ -25,6 +25,9 @@ class MarketSubscriptionState:
     """Track subscribe intent and book readiness — never claim wire confirmation."""
 
     subscribe_intent_condition_ids: set[str] = field(default_factory=set)
+    subscribe_intent_started_at_by_condition: dict[str, datetime] = field(
+        default_factory=dict
+    )
     pending_metadata_condition_ids: set[str] = field(default_factory=set)
     # Instruments expected from the Actor-owned provider but not Cache-visible yet.
     pending_instrument_ids: set[str] = field(default_factory=set)
@@ -32,6 +35,12 @@ class MarketSubscriptionState:
     subscribed_instrument_ids: set[str] = field(default_factory=set)
     awaiting_book_sides_by_condition: dict[str, set[Side]] = field(default_factory=dict)
     book_generation_started_at_by_condition: dict[str, datetime] = field(
+        default_factory=dict
+    )
+    first_bilateral_book_at_by_condition: dict[str, datetime] = field(
+        default_factory=dict
+    )
+    first_bilateral_book_latency_ms_by_condition: dict[str, int] = field(
         default_factory=dict
     )
     last_book_at_by_condition: dict[str, dict[Side, datetime]] = field(
@@ -46,6 +55,14 @@ class _SubscriptionStateOwner(Protocol):
     _subscription_state: MarketSubscriptionState
 
 
+class _SubscriptionScopeOwner(Protocol):
+    @property
+    def registry(self) -> MarketCatalog | None: ...
+
+    _subscription_assets: frozenset[str]
+    _subscription_timeframes: frozenset[str]
+
+
 class _SubscriptionStrategy(Protocol):
     @property
     def registry(self) -> MarketCatalog | None: ...
@@ -58,6 +75,8 @@ class _SubscriptionStrategy(Protocol):
     _active_condition_ids: set[str]
     _subscription_state: MarketSubscriptionState
     _asset_condition_ids: dict[str, tuple[str, ...]]
+    _subscription_assets: frozenset[str]
+    _subscription_timeframes: frozenset[str]
 
     def _readiness_detail(
         self,
@@ -112,6 +131,58 @@ def refresh_asset_conditions(strategy: _SubscriptionStrategy) -> None:
     )
 
 
+def condition_in_subscription_scope(
+    strategy: _SubscriptionScopeOwner,
+    condition_id: str,
+    *,
+    asset_by_condition: Mapping[str, str] | None = None,
+    timeframe_by_condition: Mapping[str, str] | None = None,
+    include_unknown: bool = True,
+) -> bool:
+    pair = None if strategy.registry is None else strategy.registry.by_condition(condition_id)
+    asset = (
+        pair.asset
+        if pair is not None
+        else None if asset_by_condition is None else asset_by_condition.get(condition_id)
+    )
+    timeframe = (
+        pair.timeframe
+        if pair is not None
+        else (
+            None
+            if timeframe_by_condition is None
+            else timeframe_by_condition.get(condition_id)
+        )
+    )
+    if asset is None or timeframe is None:
+        return include_unknown
+    return (
+        asset.upper() in strategy._subscription_assets
+        and timeframe.lower() in strategy._subscription_timeframes
+    )
+
+
+def subscription_scope_condition_ids(
+    strategy: _SubscriptionScopeOwner,
+    condition_ids: Sequence[str],
+    *,
+    asset_by_condition: Mapping[str, str] | None = None,
+    timeframe_by_condition: Mapping[str, str] | None = None,
+    include_unknown: bool = True,
+) -> tuple[str, ...]:
+    return tuple(
+        condition_id
+        for condition_id in condition_ids
+        if condition_in_subscription_scope(
+            strategy,
+            condition_id,
+            asset_by_condition=asset_by_condition,
+            timeframe_by_condition=timeframe_by_condition,
+            include_unknown=include_unknown,
+        )
+    )
+
+
 def _client_id_for_instrument(
     strategy: _SubscriptionStrategy,
     instrument_id: object,
@@ -140,6 +211,8 @@ def _subscribe_market_condition(
     allow_inactive: bool = False,
     allow_deferred: bool = False,
 ) -> None:
+    if not condition_in_subscription_scope(strategy, condition_id):
+        return
     if not allow_inactive and condition_id not in strategy._active_condition_ids:
         return
     state = strategy._subscription_state
@@ -157,6 +230,7 @@ def _subscribe_market_condition(
         _ = subscribe_market_instrument(strategy, instrument_id)
     # Intent only — book readiness confirms feed, not subscribe() return.
     state.subscribe_intent_condition_ids.add(condition_id)
+    state.subscribe_intent_started_at_by_condition[condition_id] = now.astimezone(UTC)
 
 
 def subscribe_market_conditions(
@@ -277,6 +351,7 @@ def unsubscribe_all_market_instruments(
         _ = unsubscribe_market_instrument(strategy, instrument_id)
     strategy._subscription_state.pending_instrument_ids.clear()
     strategy._subscription_state.subscribe_intent_condition_ids.clear()
+    strategy._subscription_state.subscribe_intent_started_at_by_condition.clear()
     strategy._subscription_state.pending_metadata_condition_ids.clear()
 
 
@@ -306,6 +381,9 @@ def clear_condition_subscription_state(
     condition_id: str,
 ) -> None:
     strategy._subscription_state.subscribe_intent_condition_ids.discard(condition_id)
+    strategy._subscription_state.subscribe_intent_started_at_by_condition.pop(
+        condition_id, None
+    )
     strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)
     if strategy.registry is not None:
         for instrument_id in _instrument_ids(strategy.registry, (condition_id,)):
@@ -330,6 +408,12 @@ def begin_market_book_generation(
     strategy._subscription_state.book_generation_started_at_by_condition[
         condition_id
     ] = observed.astimezone(UTC)
+    strategy._subscription_state.first_bilateral_book_at_by_condition.pop(
+        condition_id, None
+    )
+    strategy._subscription_state.first_bilateral_book_latency_ms_by_condition.pop(
+        condition_id, None
+    )
 
 
 def observe_market_book_side(
@@ -371,7 +455,32 @@ def observe_market_book_side(
     if started_at is not None and received < started_at:
         return False
     pending.discard(side)
-    return not pending
+    if pending:
+        return False
+    finish_market_book_generation(
+        strategy._subscription_state,
+        condition_id,
+        received_at=received,
+        started_at=started_at,
+    )
+    return True
+
+
+def finish_market_book_generation(
+    state: MarketSubscriptionState,
+    condition_id: str,
+    *,
+    received_at: datetime,
+    started_at: datetime | None,
+) -> None:
+    receipts = state.last_book_received_at_by_condition.get(condition_id, {})
+    ready_at = max(receipts.values(), default=received_at)
+    state.awaiting_book_sides_by_condition.pop(condition_id)
+    state.book_generation_started_at_by_condition.pop(condition_id, None)
+    state.first_bilateral_book_at_by_condition[condition_id] = ready_at
+    if started_at is not None:
+        latency_ms = max(0, int((ready_at - started_at).total_seconds() * 1000))
+        state.first_bilateral_book_latency_ms_by_condition[condition_id] = latency_ms
 
 
 def market_book_generation_ready(
@@ -394,6 +503,14 @@ def retire_market_book_generation(
         None,
     )
     strategy._subscription_state.book_generation_started_at_by_condition.pop(
+        condition_id,
+        None,
+    )
+    strategy._subscription_state.first_bilateral_book_at_by_condition.pop(
+        condition_id,
+        None,
+    )
+    strategy._subscription_state.first_bilateral_book_latency_ms_by_condition.pop(
         condition_id,
         None,
     )
