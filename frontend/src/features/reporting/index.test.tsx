@@ -95,10 +95,10 @@ describe('ReportingPage', () => {
     const view = renderReportingPage()
 
     await user.click(view.getByRole('tab', { name: 'Positions' }))
-    expect(await view.findByText('OPEN')).toBeInTheDocument()
+    expect(await view.findByText('Open')).toBeInTheDocument()
 
     await user.click(view.getByRole('tab', { name: 'Orders' }))
-    expect(await view.findByText('FILLED')).toBeInTheDocument()
+    expect(await view.findByText('Filled')).toBeInTheDocument()
   })
 
   it('renders empty states for trades, positions, and orders', async () => {

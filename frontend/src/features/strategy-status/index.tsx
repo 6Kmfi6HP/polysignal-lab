@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useStrategyStatusQuery } from '@/lib/api/hooks'
 import type { StrategyStatus } from '@/lib/api/types'
+import { i18n } from '@/context/locale-provider'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -21,6 +23,7 @@ import {
 import { Main } from '@/components/layout/main'
 
 export function StrategyStatusPage() {
+  const { t } = useTranslation()
   const query = useStrategyStatusQuery()
   const [filter, setFilter] = useState<StrategyStatus | 'all'>('all')
   const rows = useMemo(
@@ -37,12 +40,14 @@ export function StrategyStatusPage() {
     <>
       <Main>
         <PageHeader
-          title='Strategy Status'
-          description='Readiness and data support across every configured strategy.'
+          title={t('navigation.strategyStatus')}
+          description={t('pages.strategyStatus.description')}
           meta={
             query.data ? (
               <span className='font-mono text-sm text-muted-foreground'>
-                {query.data.length} strategies
+                {t('pages.strategyStatus.strategies', {
+                  count: query.data.length,
+                })}
               </span>
             ) : undefined
           }
@@ -50,27 +55,30 @@ export function StrategyStatusPage() {
         {query.isPending && <Skeleton className='h-64 w-full rounded-xl' />}
         {query.isError && (
           <ErrorState
-            message={`Failed to load strategy status: ${query.error.message}`}
+            message={t('ui.loadFailed', {
+              resource: t('ui.strategyStatus'),
+              message: query.error.message,
+            })}
           />
         )}
         {query.data && query.data.length === 0 && (
           <EmptyState
-            title='No strategy readiness rows recorded yet.'
-            description='Rows appear when strategy readiness evaluation has run.'
+            title={t('pages.strategyStatus.noRows')}
+            description={t('ui.rowsDescription')}
           />
         )}
         {query.data && query.data.length > 0 && (
           <>
             <div
               className='mb-4 flex flex-wrap gap-2'
-              aria-label='Filter by status'
+              aria-label={t('pages.strategyStatus.filter')}
             >
               <Button
                 size='sm'
                 variant={filter === 'all' ? 'default' : 'outline'}
                 onClick={() => setFilter('all')}
               >
-                All ({query.data.length})
+                {t('common.all')} ({query.data.length})
               </Button>
               {statuses.map((status) => (
                 <Button
@@ -79,29 +87,33 @@ export function StrategyStatusPage() {
                   variant={filter === status ? 'default' : 'outline'}
                   onClick={() => setFilter(status)}
                 >
-                  {status.replace(/_/g, ' ')} (
-                  {query.data.filter((row) => row.status === status).length})
+                  {i18n.resolvedLanguage === 'zh-CN'
+                    ? t(`status.${status}`, {
+                        defaultValue: status.replace(/_/g, ' '),
+                      })
+                    : status.replace(/_/g, ' ')}{' '}
+                  ({query.data.filter((row) => row.status === status).length})
                 </Button>
               ))}
             </div>
             {rows.length === 0 ? (
               <EmptyState
-                title='No matching strategies'
-                description='Choose another status filter to see readiness rows.'
+                title={t('pages.strategyStatus.noMatch')}
+                description={t('ui.chooseFilter')}
               />
             ) : (
               <TableFrame>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Strategy</TableHead>
-                      <TableHead>Asset</TableHead>
+                      <TableHead>{t('fields.strategy')}</TableHead>
+                      <TableHead>{t('fields.asset')}</TableHead>
                       <TableHead className='hidden md:table-cell'>
-                        Timeframe
+                        {t('fields.timeframe')}
                       </TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead>{t('fields.status')}</TableHead>
                       <TableHead className='whitespace-normal'>
-                        Reason
+                        {t('fields.reason')}
                       </TableHead>
                     </TableRow>
                   </TableHeader>

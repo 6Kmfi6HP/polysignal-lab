@@ -1,6 +1,7 @@
 import { type SVGProps } from 'react'
 import { Root as Radio, Item } from '@radix-ui/react-radio-group'
 import { CircleCheck, RotateCcw, Settings } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { IconDir } from '@/assets/custom/icon-dir'
 import { IconThemeDark } from '@/assets/custom/icon-theme-dark'
 import { IconThemeLight } from '@/assets/custom/icon-theme-light'
@@ -20,6 +21,7 @@ import {
 } from '@/components/ui/sheet'
 
 export function ConfigDrawer() {
+  const { t } = useTranslation()
   const { resetDir } = useDirection()
   const { resetTheme } = useTheme()
 
@@ -34,7 +36,7 @@ export function ConfigDrawer() {
         <Button
           size='icon'
           variant='ghost'
-          aria-label='Open theme settings'
+          aria-label={t('settings.open')}
           className='rounded-full'
         >
           <Settings aria-hidden='true' />
@@ -42,10 +44,8 @@ export function ConfigDrawer() {
       </SheetTrigger>
       <SheetContent className='flex flex-col'>
         <SheetHeader className='pb-0 text-start'>
-          <SheetTitle>Theme Settings</SheetTitle>
-          <SheetDescription>
-            Adjust the appearance and direction to suit your preferences.
-          </SheetDescription>
+          <SheetTitle>{t('settings.title')}</SheetTitle>
+          <SheetDescription>{t('settings.description')}</SheetDescription>
         </SheetHeader>
         <div className='space-y-6 overflow-y-auto px-4'>
           <ThemeConfig />
@@ -55,9 +55,9 @@ export function ConfigDrawer() {
           <Button
             variant='destructive'
             onClick={handleReset}
-            aria-label='Reset all settings to default values'
+            aria-label={t('settings.resetAll')}
           >
-            Reset
+            {t('common.reset')}
           </Button>
         </SheetFooter>
       </SheetContent>
@@ -114,11 +114,14 @@ function RadioGroupItem({
   }
   isTheme?: boolean
 }) {
+  const { t } = useTranslation()
   return (
     <Item
       value={item.value}
       className={cn('group outline-none', 'transition duration-200 ease-in')}
-      aria-label={`Select ${item.label.toLowerCase()}`}
+      aria-label={t('settings.selectOption', {
+        label: item.label.toLowerCase(),
+      })}
       aria-describedby={`${item.value}-description`}
     >
       <div
@@ -129,7 +132,7 @@ function RadioGroupItem({
         )}
         role='img'
         aria-hidden='false'
-        aria-label={`${item.label} option preview`}
+        aria-label={t('settings.optionPreview', { label: item.label })}
       >
         <CircleCheck
           className={cn(
@@ -159,36 +162,37 @@ function RadioGroupItem({
 }
 
 function ThemeConfig() {
+  const { t } = useTranslation()
   const { defaultTheme, theme, setTheme } = useTheme()
   return (
     <div>
       <SectionTitle
-        title='Theme'
+        title={t('common.theme')}
         showReset={theme !== defaultTheme}
         onReset={() => setTheme(defaultTheme)}
-        resetAriaLabel='Reset theme preference to default'
+        resetAriaLabel={t('settings.resetTheme')}
       />
       <Radio
         value={theme}
         onValueChange={setTheme}
         className='grid w-full max-w-md grid-cols-3 gap-4'
-        aria-label='Select theme preference'
+        aria-label={t('settings.selectTheme')}
         aria-describedby='theme-description'
       >
         {[
           {
             value: 'system',
-            label: 'System',
+            label: t('common.system'),
             icon: IconThemeSystem,
           },
           {
             value: 'light',
-            label: 'Light',
+            label: t('common.light'),
             icon: IconThemeLight,
           },
           {
             value: 'dark',
-            label: 'Dark',
+            label: t('common.dark'),
             icon: IconThemeDark,
           },
         ].map((item) => (
@@ -196,40 +200,41 @@ function ThemeConfig() {
         ))}
       </Radio>
       <div id='theme-description' className='sr-only'>
-        Choose between system preference, light mode, or dark mode
+        {t('settings.themeDescription')}
       </div>
     </div>
   )
 }
 
 function DirConfig() {
+  const { t } = useTranslation()
   const { defaultDir, dir, setDir } = useDirection()
   return (
     <div>
       <SectionTitle
-        title='Direction'
+        title={t('settings.direction')}
         showReset={defaultDir !== dir}
         onReset={() => setDir(defaultDir)}
-        resetAriaLabel='Reset text direction to default'
+        resetAriaLabel={t('settings.resetDirection')}
       />
       <Radio
         value={dir}
         onValueChange={setDir}
         className='grid w-full max-w-md grid-cols-3 gap-4'
-        aria-label='Select site direction'
+        aria-label={t('settings.selectDirection')}
         aria-describedby='direction-description'
       >
         {[
           {
             value: 'ltr',
-            label: 'Left to Right',
+            label: t('settings.ltr'),
             icon: (props: SVGProps<SVGSVGElement>) => (
               <IconDir dir='ltr' {...props} />
             ),
           },
           {
             value: 'rtl',
-            label: 'Right to Left',
+            label: t('settings.rtl'),
             icon: (props: SVGProps<SVGSVGElement>) => (
               <IconDir dir='rtl' {...props} />
             ),
@@ -239,7 +244,7 @@ function DirConfig() {
         ))}
       </Radio>
       <div id='direction-description' className='sr-only'>
-        Choose between left-to-right or right-to-left site direction
+        {t('settings.directionDescription')}
       </div>
     </div>
   )

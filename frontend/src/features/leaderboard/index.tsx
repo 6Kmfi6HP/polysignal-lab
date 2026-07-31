@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import {
   Bar,
   BarChart,
@@ -31,18 +32,22 @@ import {
 import { Main } from '@/components/layout/main'
 
 export function LeaderboardPage() {
+  const { t } = useTranslation()
   const query = useLeaderboardQuery()
   return (
     <>
       <Main>
         <PageHeader
-          title='Leaderboard'
-          description='Realized strategy performance and calibration sample coverage.'
+          title={t('navigation.leaderboard')}
+          description={t('pages.leaderboard.description')}
         />
         {query.isPending && <Skeleton className='h-64 w-full rounded-xl' />}
         {query.isError && (
           <ErrorState
-            message={`Failed to load leaderboard: ${query.error.message}`}
+            message={t('ui.loadFailed', {
+              resource: t('ui.leaderboard'),
+              message: query.error.message,
+            })}
           />
         )}
         {query.data && (
@@ -52,7 +57,7 @@ export function LeaderboardPage() {
                 id='comparison-heading'
                 className='mb-3 text-base font-semibold'
               >
-                Total PnL by strategy
+                {t('pages.leaderboard.pnlByStrategy')}
               </h2>
               <TableFrame>
                 <div className='p-4'>
@@ -61,12 +66,14 @@ export function LeaderboardPage() {
               </TableFrame>
             </section>
             <section>
-              <h2 className='mb-3 text-base font-semibold'>Rankings</h2>
+              <h2 className='mb-3 text-base font-semibold'>
+                {t('pages.leaderboard.rankings')}
+              </h2>
               <LeaderboardTable rows={query.data.leaderboard} />
             </section>
             <section>
               <h2 className='mb-3 text-base font-semibold'>
-                Calibration breakdown
+                {t('pages.leaderboard.calibration')}
               </h2>
               <CalibrationTable
                 buckets={Object.values(query.data.calibration_breakdown)}
@@ -79,15 +86,20 @@ export function LeaderboardPage() {
   )
 }
 function PnlByStrategyChart({ rows }: { rows: LeaderboardRow[] }) {
+  const { t } = useTranslation()
   if (!rows.length)
     return (
       <EmptyState
-        title='No stored report rows yet.'
-        description='Strategy comparisons appear after closed positions are reported.'
+        title={t('ui.noReports')}
+        description={t('ui.comparisonDescription')}
       />
     )
   return (
-    <div role='img' aria-label='Total PnL by strategy chart' className='h-64'>
+    <div
+      role='img'
+      aria-label={t('pages.leaderboard.pnlByStrategy')}
+      className='h-64'
+    >
       <ResponsiveContainer width='100%' height='100%'>
         <BarChart
           data={rows}
@@ -97,7 +109,10 @@ function PnlByStrategyChart({ rows }: { rows: LeaderboardRow[] }) {
           <XAxis dataKey='strategy' tick={{ fontSize: 11 }} interval={0} />
           <YAxis tick={{ fontSize: 11 }} />
           <Tooltip
-            formatter={(value) => [formatMoney(Number(value)), 'Total PnL']}
+            formatter={(value) => [
+              formatMoney(Number(value)),
+              t('pages.reporting.totalPnl'),
+            ]}
             contentStyle={{
               borderRadius: 12,
               borderColor: 'var(--border)',
@@ -123,11 +138,12 @@ function PnlByStrategyChart({ rows }: { rows: LeaderboardRow[] }) {
   )
 }
 function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
+  const { t } = useTranslation()
   if (!rows.length)
     return (
       <EmptyState
-        title='No stored report rows yet.'
-        description='Strategy rankings appear after closed positions are reported.'
+        title={t('ui.noReports')}
+        description={t('ui.rankingsDescription')}
       />
     )
   const sorted = [...rows].sort((a, b) => b.total_pnl_usdc - a.total_pnl_usdc)
@@ -136,13 +152,17 @@ function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Rank</TableHead>
-            <TableHead>Strategy</TableHead>
-            <TableHead>Sample</TableHead>
-            <TableHead className='hidden lg:table-cell'>Record</TableHead>
-            <TableHead>Win rate</TableHead>
-            <TableHead className='hidden lg:table-cell'>Average ROI</TableHead>
-            <TableHead>Total PnL</TableHead>
+            <TableHead>{t('fields.rank')}</TableHead>
+            <TableHead>{t('fields.strategy')}</TableHead>
+            <TableHead>{t('fields.sample')}</TableHead>
+            <TableHead className='hidden lg:table-cell'>
+              {t('fields.record')}
+            </TableHead>
+            <TableHead>{t('pages.overview.winRate')}</TableHead>
+            <TableHead className='hidden lg:table-cell'>
+              {t('pages.reporting.averageRoi')}
+            </TableHead>
+            <TableHead>{t('pages.reporting.totalPnl')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -183,11 +203,12 @@ function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
   )
 }
 function CalibrationTable({ buckets }: { buckets: CalibrationBucket[] }) {
+  const { t } = useTranslation()
   if (!buckets.length)
     return (
       <EmptyState
-        title='No calibration data available.'
-        description='Calibration status appears once confidence buckets have samples.'
+        title={t('ui.noCalibration')}
+        description={t('ui.calibrationDescription')}
       />
     )
   return (
@@ -195,13 +216,17 @@ function CalibrationTable({ buckets }: { buckets: CalibrationBucket[] }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Strategy</TableHead>
-            <TableHead>Asset</TableHead>
-            <TableHead>Timeframe</TableHead>
-            <TableHead>Bucket</TableHead>
-            <TableHead>Sample</TableHead>
-            <TableHead>Record</TableHead>
-            <TableHead>Status</TableHead>
+            {[
+              'strategy',
+              'asset',
+              'timeframe',
+              'bucket',
+              'sample',
+              'record',
+              'status',
+            ].map((key) => (
+              <TableHead key={key}>{t(`fields.${key}`)}</TableHead>
+            ))}
           </TableRow>
         </TableHeader>
         <TableBody>

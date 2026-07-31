@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useLocation } from '@tanstack/react-router'
 import { Menu } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -12,11 +13,12 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet'
 import { ConfigDrawer } from '@/components/config-drawer'
+import { LanguageSwitch } from '@/components/language-switch'
 import { Search } from '@/components/search'
-import { ThemeSwitch } from '@/components/theme-switch'
 import { navigationData } from './data/navigation-data'
 
 export function AppHeader() {
+  const { t } = useTranslation()
   const pathname = useLocation({ select: (location) => location.pathname })
   const [mobileOpen, setMobileOpen] = useState(false)
 
@@ -30,18 +32,18 @@ export function AppHeader() {
             aria-hidden='true'
             className='size-8'
           />
-          <span className='leading-tight'>
+          <span className='hidden leading-tight sm:block'>
             <span className='block text-sm font-semibold tracking-tight'>
               PolySignal Lab
             </span>
             <span className='hidden text-[10px] font-medium tracking-[0.08em] text-muted-foreground uppercase sm:block'>
-              Read-only operations
+              {t('navigation.readOnly')}
             </span>
           </span>
         </Link>
 
         <nav
-          aria-label='Primary navigation'
+          aria-label={t('navigation.primary')}
           className='mx-auto hidden items-center gap-1 xl:flex'
         >
           {navigationData.map((item) => (
@@ -55,31 +57,29 @@ export function AppHeader() {
 
         <div className='ml-auto flex shrink-0 items-center gap-1 sm:gap-2 xl:ml-0'>
           <Search />
-          <ThemeSwitch />
-          <div className='hidden sm:block'>
-            <ConfigDrawer />
-          </div>
+          <LanguageSwitch />
+          <ConfigDrawer />
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
               <Button
                 variant='outline'
                 className='h-9 gap-2 rounded-lg px-3 xl:hidden'
-                aria-label='Open navigation menu'
+                aria-label={t('navigation.openMenu')}
               >
                 <Menu className='size-4' aria-hidden='true' />
-                <span>Menu</span>
+                <span>{t('common.menu')}</span>
               </Button>
             </SheetTrigger>
             <SheetContent side='top' className='gap-0 shadow-none'>
               <div className='mx-auto w-full max-w-[1400px] px-4 pb-5 sm:px-6'>
                 <SheetHeader className='px-0 pb-4 text-start'>
-                  <SheetTitle>Navigation</SheetTitle>
+                  <SheetTitle>{t('common.navigation')}</SheetTitle>
                   <SheetDescription>
-                    PolySignal Lab read-only operations
+                    {t('navigation.description')}
                   </SheetDescription>
                 </SheetHeader>
                 <nav
-                  aria-label='Mobile navigation'
+                  aria-label={t('navigation.mobile')}
                   className='grid gap-2 sm:grid-cols-2'
                 >
                   {navigationData.map((item) => (
@@ -112,6 +112,7 @@ function NavigationLink({
   mobile?: boolean
   onClick?: () => void
 }) {
+  const { t } = useTranslation()
   const Icon = item.icon
 
   return (
@@ -127,7 +128,7 @@ function NavigationLink({
       )}
     >
       <Icon className='size-4 shrink-0' strokeWidth={1.75} aria-hidden='true' />
-      <span>{item.title}</span>
+      <span>{t(item.titleKey)}</span>
     </Link>
   )
 }

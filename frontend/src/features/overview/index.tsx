@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { useHealthQuery, useOverviewQuery } from '@/lib/api/hooks'
 import {
   formatDateTime,
@@ -18,6 +19,7 @@ import {
 import { Main } from '@/components/layout/main'
 
 export function OverviewPage() {
+  const { t } = useTranslation()
   const overview = useOverviewQuery()
   const health = useHealthQuery()
   const report = overview.data?.latest_report
@@ -26,8 +28,8 @@ export function OverviewPage() {
     <>
       <Main>
         <PageHeader
-          title='Overview'
-          description='Portfolio performance, telemetry quality, and strategy readiness at a glance.'
+          title={t('navigation.overview')}
+          description={t('pages.overview.description')}
           meta={
             health.data ? (
               <StatusBadge status={health.data.status} />
@@ -37,7 +39,10 @@ export function OverviewPage() {
         {overview.isPending && <Skeleton className='h-48 w-full rounded-xl' />}
         {overview.isError && (
           <ErrorState
-            message={`Failed to load overview: ${overview.error.message}`}
+            message={t('ui.loadFailed', {
+              resource: t('ui.overview'),
+              message: overview.error.message,
+            })}
           />
         )}
         {overview.data && (
@@ -45,7 +50,7 @@ export function OverviewPage() {
             {report ? (
               <MetricStrip>
                 <Metric
-                  label='Ending equity'
+                  label={t('pages.overview.endingEquity')}
                   value={formatMoney(
                     report.ending_equity,
                     report.equity_currency ?? 'currency unavailable'
@@ -57,7 +62,7 @@ export function OverviewPage() {
                   }
                 />
                 <Metric
-                  label='Net PnL'
+                  label={t('pages.overview.netPnl')}
                   value={formatMoney(
                     report.net_pnl,
                     report.equity_currency ?? 'currency unavailable'
@@ -65,27 +70,33 @@ export function OverviewPage() {
                   tone={report.net_pnl >= 0 ? 'positive' : 'danger'}
                 />
                 <Metric
-                  label='Return'
+                  label={t('pages.overview.return')}
                   value={formatPercent(report.return_rate, true)}
                   tone={report.return_rate >= 0 ? 'positive' : 'danger'}
                 />
-                <Metric label='Open positions' value={report.open_positions} />
                 <Metric
-                  label='Win rate'
+                  label={t('pages.overview.openPositions')}
+                  value={report.open_positions}
+                />
+                <Metric
+                  label={t('pages.overview.winRate')}
                   value={formatPercent(report.win_rate)}
-                  detail={`${report.win_count} wins / ${report.loss_count} losses`}
+                  detail={t('ui.winsLosses', {
+                    wins: report.win_count,
+                    losses: report.loss_count,
+                  })}
                 />
               </MetricStrip>
             ) : (
               <EmptyState
-                title='No daily report has been stored yet.'
-                description='Performance metrics appear after the first reporting cycle completes.'
+                title={t('pages.overview.noReport')}
+                description={t('pages.overview.noReportDescription')}
               />
             )}
 
             <section aria-labelledby='activity-heading'>
               <h2 id='activity-heading' className='mb-3 text-sm font-semibold'>
-                Stored activity
+                {t('pages.overview.storedActivity')}
               </h2>
               <div className='flex flex-wrap gap-x-6 gap-y-2 border-y px-1 py-3'>
                 {Object.entries(overview.data.counts).map(([table, count]) => (
@@ -106,10 +117,10 @@ export function OverviewPage() {
                 <div className='mb-3 flex flex-wrap items-end justify-between gap-2'>
                   <div>
                     <h2 id='report-heading' className='text-base font-semibold'>
-                      Latest daily report
+                      {t('pages.overview.latestReport')}
                     </h2>
                     <p className='text-xs text-muted-foreground'>
-                      {report.report_date} · updated{' '}
+                      {report.report_date} · {t('ui.updated')}{' '}
                       {formatDateTime(report.created_at)}
                     </p>
                   </div>
@@ -154,18 +165,18 @@ export function OverviewPage() {
 
             <div className='grid gap-6 lg:grid-cols-2'>
               <OverviewList
-                title='Calibration coverage'
+                title={t('pages.overview.calibrationCoverage')}
                 empty='No calibration rows available.'
                 values={Object.values(overview.data.calibration_breakdown).map(
                   (row) => ({
                     label: `${row.strategy} / ${row.asset} / ${row.timeframe}`,
                     status: row.calibration_status,
-                    detail: `${row.sample_size} samples`,
+                    detail: t('ui.samples', { count: row.sample_size }),
                   })
                 )}
               />
               <OverviewList
-                title='Strategy readiness'
+                title={t('pages.overview.strategyReadiness')}
                 empty='No strategy readiness rows available.'
                 values={overview.data.strategy_status.map((row) => ({
                   label: `${row.strategy} / ${row.asset} / ${row.timeframe}`,

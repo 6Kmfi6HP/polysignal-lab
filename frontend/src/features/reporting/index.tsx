@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   CartesianGrid,
   Line,
@@ -22,6 +23,7 @@ import type {
 import {
   formatDateTime,
   formatMoney,
+  formatNumber,
   formatPercent,
   formatPrice,
 } from '@/lib/format'
@@ -49,6 +51,7 @@ import {
 import { Main } from '@/components/layout/main'
 
 export function ReportingPage() {
+  const { t } = useTranslation()
   const orders = useReportOrdersQuery()
   const positions = usePositionsQuery()
   const trades = useTradesQuery()
@@ -71,41 +74,47 @@ export function ReportingPage() {
     <>
       <Main>
         <PageHeader
-          title='Trading Reports'
-          description='Paper execution, positions, and realized performance from stored projections.'
+          title={t('navigation.reporting')}
+          description={t('pages.reporting.description')}
         />
         <MetricStrip>
           <Metric
-            label='Total PnL'
+            label={t('pages.reporting.totalPnl')}
             value={formatMoney(summary.pnl)}
             tone={summary.pnl >= 0 ? 'positive' : 'danger'}
           />
           <Metric
-            label='Average ROI'
+            label={t('pages.reporting.averageRoi')}
             value={formatPercent(summary.roi, true)}
             tone={summary.roi >= 0 ? 'positive' : 'danger'}
           />
-          <Metric label='Closed trades' value={trades.data?.length ?? '...'} />
           <Metric
-            label='Open positions'
+            label={t('pages.reporting.closedTrades')}
+            value={trades.data?.length ?? '...'}
+          />
+          <Metric
+            label={t('pages.reporting.openPositions')}
             value={positions.data ? summary.open : '...'}
           />
           <Metric
-            label='Rejected orders'
+            label={t('pages.reporting.rejectedOrders')}
             value={orders.data ? summary.rejected : '...'}
             tone={summary.rejected > 0 ? 'warning' : 'neutral'}
           />
         </MetricStrip>
         <section className='my-7' aria-labelledby='pnl-heading'>
           <h2 id='pnl-heading' className='mb-3 text-base font-semibold'>
-            Cumulative PnL
+            {t('pages.reporting.cumulativePnl')}
           </h2>
           <TableFrame>
             <div className='p-4'>
               {trades.isPending && <Skeleton className='h-64 w-full' />}
               {trades.isError && (
                 <ErrorState
-                  message={`Failed to load trades: ${trades.error.message}`}
+                  message={t('ui.loadFailed', {
+                    resource: t('ui.trades'),
+                    message: trades.error.message,
+                  })}
                 />
               )}
               {trades.data && <CumulativePnlChart trades={trades.data} />}
@@ -114,15 +123,24 @@ export function ReportingPage() {
         </section>
         <Tabs defaultValue='trades'>
           <TabsList>
-            <TabsTrigger value='trades'>Trades</TabsTrigger>
-            <TabsTrigger value='positions'>Positions</TabsTrigger>
-            <TabsTrigger value='orders'>Orders</TabsTrigger>
+            <TabsTrigger value='trades'>
+              {t('pages.reporting.trades')}
+            </TabsTrigger>
+            <TabsTrigger value='positions'>
+              {t('pages.reporting.positions')}
+            </TabsTrigger>
+            <TabsTrigger value='orders'>
+              {t('pages.reporting.orders')}
+            </TabsTrigger>
           </TabsList>
           <TabsContent value='trades' className='mt-4'>
             {trades.isPending && <Skeleton className='h-64 w-full' />}
             {trades.isError && (
               <ErrorState
-                message={`Failed to load trades: ${trades.error.message}`}
+                message={t('ui.loadFailed', {
+                  resource: t('ui.trades'),
+                  message: trades.error.message,
+                })}
               />
             )}
             {trades.data && <TradesTable trades={trades.data} />}
@@ -131,7 +149,10 @@ export function ReportingPage() {
             {positions.isPending && <Skeleton className='h-64 w-full' />}
             {positions.isError && (
               <ErrorState
-                message={`Failed to load positions: ${positions.error.message}`}
+                message={t('ui.loadFailed', {
+                  resource: t('ui.positions'),
+                  message: positions.error.message,
+                })}
               />
             )}
             {positions.data && <PositionsTable positions={positions.data} />}
@@ -140,7 +161,10 @@ export function ReportingPage() {
             {orders.isPending && <Skeleton className='h-64 w-full' />}
             {orders.isError && (
               <ErrorState
-                message={`Failed to load orders: ${orders.error.message}`}
+                message={t('ui.loadFailed', {
+                  resource: t('ui.orders'),
+                  message: orders.error.message,
+                })}
               />
             )}
             {orders.data && <OrdersTable orders={orders.data} />}
@@ -157,17 +181,19 @@ interface CumulativePnlPoint {
   cumulative_pnl: number
 }
 function CumulativePnlChart({ trades }: { trades: ReportTradeResult[] }) {
+  const { t } = useTranslation()
   const points = useMemo(() => buildCumulativePnlPoints(trades), [trades])
   if (!points.length)
     return (
-      <EmptyState
-        title='No closed trades yet.'
-        description='The equity curve appears after a position is settled.'
-      />
+      <EmptyState title={t('ui.noClosed')} description={t('ui.equityCurve')} />
     )
   const last = points[points.length - 1]?.cumulative_pnl ?? 0
   return (
-    <div role='img' aria-label='Cumulative PnL chart' className='h-64 w-full'>
+    <div
+      role='img'
+      aria-label={`${t('pages.reporting.cumulativePnl')} ${t('common.chart')}`}
+      className='h-64 w-full'
+    >
       <ResponsiveContainer width='100%' height='100%'>
         <LineChart
           data={points}
@@ -180,7 +206,7 @@ function CumulativePnlChart({ trades }: { trades: ReportTradeResult[] }) {
             scale='time'
             domain={['dataMin', 'dataMax']}
             tickFormatter={(value) =>
-              new Date(Number(value)).toLocaleDateString('en', {
+              new Date(Number(value)).toLocaleDateString(undefined, {
                 month: 'short',
                 day: 'numeric',
               })
@@ -199,7 +225,7 @@ function CumulativePnlChart({ trades }: { trades: ReportTradeResult[] }) {
             }
             formatter={(value) => [
               formatMoney(Number(value)),
-              'Cumulative PnL',
+              t('pages.reporting.cumulativePnl'),
             ]}
             contentStyle={{
               borderRadius: 12,
@@ -237,11 +263,12 @@ function buildCumulativePnlPoints(
 }
 
 function TradesTable({ trades }: { trades: ReportTradeResult[] }) {
+  const { t } = useTranslation()
   if (!trades.length)
     return (
       <EmptyState
-        title='No closed trades yet.'
-        description='Settled positions appear here with realized PnL.'
+        title={t('ui.noClosed')}
+        description={t('ui.settledPositions')}
       />
     )
   return (
@@ -249,16 +276,20 @@ function TradesTable({ trades }: { trades: ReportTradeResult[] }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Closed</TableHead>
-            <TableHead>Market</TableHead>
-            <TableHead>Side</TableHead>
-            <TableHead>Result</TableHead>
-            <TableHead className='hidden lg:table-cell'>Entry</TableHead>
-            <TableHead className='hidden lg:table-cell'>Stake</TableHead>
-            <TableHead>PnL</TableHead>
-            <TableHead>ROI</TableHead>
+            <TableHead>{t('ui.closed')}</TableHead>
+            <TableHead>{t('fields.market')}</TableHead>
+            <TableHead>{t('fields.side')}</TableHead>
+            <TableHead>{t('fields.result')}</TableHead>
+            <TableHead className='hidden lg:table-cell'>
+              {t('fields.entry')}
+            </TableHead>
+            <TableHead className='hidden lg:table-cell'>
+              {t('fields.stake')}
+            </TableHead>
+            <TableHead>{t('fields.pnl')}</TableHead>
+            <TableHead>{t('fields.roi')}</TableHead>
             <TableHead>
-              <span className='sr-only'>Details</span>
+              <span className='sr-only'>{t('common.details')}</span>
             </TableHead>
           </TableRow>
         </TableHeader>
@@ -313,11 +344,12 @@ function TradesTable({ trades }: { trades: ReportTradeResult[] }) {
   )
 }
 function PositionsTable({ positions }: { positions: ReportPosition[] }) {
+  const { t } = useTranslation()
   if (!positions.length)
     return (
       <EmptyState
-        title='No stored positions yet.'
-        description='Positions appear after an order receives a fill.'
+        title={t('ui.noPositions')}
+        description={t('ui.positionsDescription')}
       />
     )
   return (
@@ -325,15 +357,21 @@ function PositionsTable({ positions }: { positions: ReportPosition[] }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Opened</TableHead>
-            <TableHead>Market</TableHead>
-            <TableHead>Side</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className='hidden lg:table-cell'>Entry</TableHead>
-            <TableHead className='hidden lg:table-cell'>Stake</TableHead>
-            <TableHead className='hidden xl:table-cell'>Shares</TableHead>
+            <TableHead>{t('fields.opened')}</TableHead>
+            <TableHead>{t('fields.market')}</TableHead>
+            <TableHead>{t('fields.side')}</TableHead>
+            <TableHead>{t('fields.status')}</TableHead>
+            <TableHead className='hidden lg:table-cell'>
+              {t('fields.entry')}
+            </TableHead>
+            <TableHead className='hidden lg:table-cell'>
+              {t('fields.stake')}
+            </TableHead>
+            <TableHead className='hidden xl:table-cell'>
+              {t('fields.shares')}
+            </TableHead>
             <TableHead>
-              <span className='sr-only'>Details</span>
+              <span className='sr-only'>{t('common.details')}</span>
             </TableHead>
           </TableRow>
         </TableHeader>
@@ -361,7 +399,7 @@ function PositionsTable({ positions }: { positions: ReportPosition[] }) {
                 {formatMoney(position.stake_usdc)}
               </TableCell>
               <TableCell className='hidden font-mono xl:table-cell'>
-                {position.shares.toFixed(2)}
+                {formatNumber(position.shares)}
               </TableCell>
               <TableCell>
                 <DetailSheet
@@ -379,11 +417,12 @@ function PositionsTable({ positions }: { positions: ReportPosition[] }) {
   )
 }
 function OrdersTable({ orders }: { orders: ReportOrder[] }) {
+  const { t } = useTranslation()
   if (!orders.length)
     return (
       <EmptyState
-        title='No stored orders yet.'
-        description='Projected paper orders appear after signal acceptance.'
+        title={t('ui.noOrders')}
+        description={t('ui.ordersDescription')}
       />
     )
   return (
@@ -391,15 +430,17 @@ function OrdersTable({ orders }: { orders: ReportOrder[] }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Created</TableHead>
-            <TableHead>Market</TableHead>
-            <TableHead>Side</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Limit</TableHead>
-            <TableHead>Stake</TableHead>
-            <TableHead className='whitespace-normal'>Reject reason</TableHead>
+            <TableHead>{t('fields.created')}</TableHead>
+            <TableHead>{t('fields.market')}</TableHead>
+            <TableHead>{t('fields.side')}</TableHead>
+            <TableHead>{t('fields.status')}</TableHead>
+            <TableHead>{t('fields.limit')}</TableHead>
+            <TableHead>{t('fields.stake')}</TableHead>
+            <TableHead className='whitespace-normal'>
+              {t('fields.rejectReason')}
+            </TableHead>
             <TableHead>
-              <span className='sr-only'>Details</span>
+              <span className='sr-only'>{t('common.details')}</span>
             </TableHead>
           </TableRow>
         </TableHeader>

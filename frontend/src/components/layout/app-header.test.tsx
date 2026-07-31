@@ -3,6 +3,7 @@ import { render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { DirectionProvider } from '@/context/direction-provider'
+import { LocaleProvider } from '@/context/locale-provider'
 import { SearchProvider } from '@/context/search-provider'
 import { ThemeProvider } from '@/context/theme-provider'
 import { AppHeader } from './app-header'
@@ -31,13 +32,15 @@ vi.mock('@tanstack/react-router', () => ({
 
 function renderHeader() {
   return render(
-    <ThemeProvider>
-      <DirectionProvider>
-        <SearchProvider>
-          <AppHeader />
-        </SearchProvider>
-      </DirectionProvider>
-    </ThemeProvider>
+    <LocaleProvider>
+      <ThemeProvider>
+        <DirectionProvider>
+          <SearchProvider>
+            <AppHeader />
+          </SearchProvider>
+        </DirectionProvider>
+      </ThemeProvider>
+    </LocaleProvider>
   )
 }
 
@@ -72,31 +75,38 @@ describe('AppHeader', () => {
     expect(navigation.querySelectorAll('svg')).toHaveLength(6)
     expect(view.getByRole('button', { name: /^Search/ })).toBeInTheDocument()
     expect(
-      view.getByRole('button', { name: 'Toggle theme' })
+      view.getByRole('button', { name: 'Select language' })
     ).toBeInTheDocument()
+    expect(
+      view.queryByRole('button', { name: 'Toggle theme' })
+    ).not.toBeInTheDocument()
   })
 
   it('keeps one shared header when authenticated route content changes', () => {
     const first = (
-      <ThemeProvider>
-        <DirectionProvider>
-          <AuthenticatedLayout>
-            <div>Overview content</div>
-          </AuthenticatedLayout>
-        </DirectionProvider>
-      </ThemeProvider>
+      <LocaleProvider>
+        <ThemeProvider>
+          <DirectionProvider>
+            <AuthenticatedLayout>
+              <div>Overview content</div>
+            </AuthenticatedLayout>
+          </DirectionProvider>
+        </ThemeProvider>
+      </LocaleProvider>
     )
     const view = render(first)
     const header = view.getByRole('banner')
 
     view.rerender(
-      <ThemeProvider>
-        <DirectionProvider>
-          <AuthenticatedLayout>
-            <div>Signals content</div>
-          </AuthenticatedLayout>
-        </DirectionProvider>
-      </ThemeProvider>
+      <LocaleProvider>
+        <ThemeProvider>
+          <DirectionProvider>
+            <AuthenticatedLayout>
+              <div>Signals content</div>
+            </AuthenticatedLayout>
+          </DirectionProvider>
+        </ThemeProvider>
+      </LocaleProvider>
     )
 
     expect(view.getAllByRole('banner')).toHaveLength(1)

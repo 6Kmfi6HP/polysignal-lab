@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { useRejectedSignalsQuery, useSignalsQuery } from '@/lib/api/hooks'
 import type { RejectedSignal, SignalCandidate } from '@/lib/api/types'
 import {
@@ -29,19 +30,24 @@ import {
 import { Main } from '@/components/layout/main'
 
 export function SignalsPage() {
+  const { t } = useTranslation()
   const signals = useSignalsQuery()
   const rejected = useRejectedSignalsQuery()
   return (
     <>
       <Main>
         <PageHeader
-          title='Signals'
-          description='Accepted candidates and gate rejections from the live strategy pipeline.'
+          title={t('navigation.signals')}
+          description={t('pages.signals.description')}
         />
         <Tabs defaultValue='accepted'>
           <TabsList>
-            <TabsTrigger value='accepted'>Accepted</TabsTrigger>
-            <TabsTrigger value='rejected'>Rejected</TabsTrigger>
+            <TabsTrigger value='accepted'>
+              {t('pages.signals.accepted')}
+            </TabsTrigger>
+            <TabsTrigger value='rejected'>
+              {t('pages.signals.rejected')}
+            </TabsTrigger>
           </TabsList>
           <TabsContent value='accepted' className='mt-4'>
             {signals.isPending && (
@@ -49,7 +55,10 @@ export function SignalsPage() {
             )}
             {signals.isError && (
               <ErrorState
-                message={`Failed to load signals: ${signals.error.message}`}
+                message={t('ui.loadFailed', {
+                  resource: t('ui.signals'),
+                  message: signals.error.message,
+                })}
               />
             )}
             {signals.data && <SignalsTable signals={signals.data} />}
@@ -60,7 +69,10 @@ export function SignalsPage() {
             )}
             {rejected.isError && (
               <ErrorState
-                message={`Failed to load rejected signals: ${rejected.error.message}`}
+                message={t('ui.loadFailed', {
+                  resource: t('ui.rejectedSignals'),
+                  message: rejected.error.message,
+                })}
               />
             )}
             {rejected.data && <RejectedSignalsTable rejected={rejected.data} />}
@@ -72,11 +84,12 @@ export function SignalsPage() {
 }
 
 function SignalsTable({ signals }: { signals: SignalCandidate[] }) {
+  const { t } = useTranslation()
   if (!signals.length)
     return (
       <EmptyState
-        title='No stored signals yet.'
-        description='Accepted candidates appear after strategy evaluation passes every gate.'
+        title={t('pages.signals.noSignals')}
+        description={t('ui.acceptedDescription')}
       />
     )
   return (
@@ -84,17 +97,23 @@ function SignalsTable({ signals }: { signals: SignalCandidate[] }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Time</TableHead>
-            <TableHead>Market</TableHead>
-            <TableHead>Side</TableHead>
-            <TableHead>Strategy</TableHead>
-            <TableHead>Confidence</TableHead>
-            <TableHead className='hidden lg:table-cell'>Reference</TableHead>
-            <TableHead className='hidden lg:table-cell'>Max entry</TableHead>
-            <TableHead className='hidden xl:table-cell'>Freshness</TableHead>
-            <TableHead className='hidden xl:table-cell'>To close</TableHead>
+            {['time', 'market', 'side', 'strategy', 'confidence'].map((key) => (
+              <TableHead key={key}>{t(`fields.${key}`)}</TableHead>
+            ))}
+            <TableHead className='hidden lg:table-cell'>
+              {t('fields.reference')}
+            </TableHead>
+            <TableHead className='hidden lg:table-cell'>
+              {t('fields.maxEntry')}
+            </TableHead>
+            <TableHead className='hidden xl:table-cell'>
+              {t('fields.freshness')}
+            </TableHead>
+            <TableHead className='hidden xl:table-cell'>
+              {t('fields.toClose')}
+            </TableHead>
             <TableHead>
-              <span className='sr-only'>Details</span>
+              <span className='sr-only'>{t('common.details')}</span>
             </TableHead>
           </TableRow>
         </TableHeader>
@@ -164,11 +183,12 @@ function SignalsTable({ signals }: { signals: SignalCandidate[] }) {
 }
 
 function RejectedSignalsTable({ rejected }: { rejected: RejectedSignal[] }) {
+  const { t } = useTranslation()
   if (!rejected.length)
     return (
       <EmptyState
-        title='No rejected signals yet.'
-        description='Gate failures and their diagnostic context appear here.'
+        title={t('pages.signals.noRejected')}
+        description={t('ui.rejectedDescription')}
       />
     )
   return (
@@ -176,13 +196,15 @@ function RejectedSignalsTable({ rejected }: { rejected: RejectedSignal[] }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Rejected</TableHead>
-            <TableHead>Market</TableHead>
-            <TableHead>Strategy</TableHead>
-            <TableHead>Gate</TableHead>
-            <TableHead className='whitespace-normal'>Reason code</TableHead>
+            <TableHead>{t('fields.rejected')}</TableHead>
+            <TableHead>{t('fields.market')}</TableHead>
+            <TableHead>{t('fields.strategy')}</TableHead>
+            <TableHead>{t('fields.gate')}</TableHead>
+            <TableHead className='whitespace-normal'>
+              {t('fields.reasonCode')}
+            </TableHead>
             <TableHead>
-              <span className='sr-only'>Details</span>
+              <span className='sr-only'>{t('common.details')}</span>
             </TableHead>
           </TableRow>
         </TableHeader>

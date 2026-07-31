@@ -1,6 +1,8 @@
 import { AlertCircle, Inbox } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { humanize } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { i18n } from '@/context/locale-provider'
 import { Badge } from '@/components/ui/badge'
 import {
   Sheet,
@@ -117,7 +119,9 @@ export function StatusBadge({ status }: { status: string }) {
           'border-destructive/30 bg-destructive/10 text-destructive'
       )}
     >
-      {humanize(status)}
+      {i18n.exists(`status.${normalized}`)
+        ? i18n.t(`status.${normalized}`)
+        : humanize(status)}
     </Badge>
   )
 }
@@ -161,7 +165,7 @@ export function TableFrame({ children }: { children: React.ReactNode }) {
 export function DetailSheet({
   title,
   description,
-  triggerLabel = 'View details',
+  triggerLabel,
   children,
 }: {
   title: string
@@ -169,10 +173,11 @@ export function DetailSheet({
   triggerLabel?: string
   children: React.ReactNode
 }) {
+  const { t } = useTranslation()
   return (
     <Sheet>
       <SheetTrigger className='rounded-md px-2 py-1 text-xs font-medium text-accent-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring'>
-        {triggerLabel}
+        {triggerLabel ?? t('common.viewDetails')}
       </SheetTrigger>
       <SheetContent className='w-full overflow-y-auto sm:max-w-lg'>
         <SheetHeader className='border-b p-5 pe-12'>
@@ -188,6 +193,7 @@ export function DetailSheet({
 }
 
 export function DetailList({ values }: { values: object }) {
+  const { t } = useTranslation()
   return (
     <dl className='space-y-3'>
       {Object.entries(values).map(([key, value]) => (
@@ -196,7 +202,7 @@ export function DetailList({ values }: { values: object }) {
           className='grid gap-1 border-b pb-3 sm:grid-cols-[9rem_1fr]'
         >
           <dt className='text-xs font-medium text-muted-foreground'>
-            {humanize(key)}
+            {i18n.exists(`fields.${key}`) ? t(`fields.${key}`) : humanize(key)}
           </dt>
           <dd className='font-mono text-xs break-all'>{renderValue(value)}</dd>
         </div>
@@ -206,7 +212,7 @@ export function DetailList({ values }: { values: object }) {
 }
 
 function renderValue(value: unknown): React.ReactNode {
-  if (value == null || value === '') return 'Unavailable'
+  if (value == null || value === '') return i18n.t('common.unavailable')
   if (typeof value === 'object')
     return (
       <pre className='whitespace-pre-wrap'>

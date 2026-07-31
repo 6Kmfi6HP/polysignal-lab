@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { useHealthQuery } from '@/lib/api/hooks'
 import { formatDateTime, humanize } from '@/lib/format'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -13,13 +14,14 @@ import {
 import { Main } from '@/components/layout/main'
 
 export function SystemHealthPage() {
+  const { t } = useTranslation()
   const health = useHealthQuery()
   return (
     <>
       <Main>
         <PageHeader
-          title='System Health'
-          description='Component freshness, recent failures, and structured system events.'
+          title={t('navigation.systemHealth')}
+          description={t('pages.systemHealth.description')}
           meta={
             health.data ? (
               <StatusBadge status={health.data.status} />
@@ -29,22 +31,28 @@ export function SystemHealthPage() {
         {health.isPending && <Skeleton className='h-64 w-full rounded-xl' />}
         {health.isError && (
           <ErrorState
-            message={`Failed to load health: ${health.error.message}`}
+            message={t('ui.loadFailed', {
+              resource: t('ui.health'),
+              message: health.error.message,
+            })}
           />
         )}
         {health.data && (
           <div className='space-y-7'>
             <section>
               <div className='mb-3 flex items-baseline justify-between gap-3'>
-                <h2 className='text-base font-semibold'>Components</h2>
+                <h2 className='text-base font-semibold'>
+                  {t('pages.systemHealth.components')}
+                </h2>
                 <span className='text-xs text-muted-foreground'>
-                  Generated {formatDateTime(health.data.generated_at)}
+                  {t('common.generated')}{' '}
+                  {formatDateTime(health.data.generated_at)}
                 </span>
               </div>
               {health.data.components.length === 0 ? (
                 <EmptyState
-                  title='No component health rows recorded yet.'
-                  description='Component checks appear after health probes have run.'
+                  title={t('ui.noComponents')}
+                  description={t('ui.componentsDescription')}
                 />
               ) : (
                 <div className='grid gap-3 lg:grid-cols-2'>
@@ -60,7 +68,7 @@ export function SystemHealthPage() {
                       <dl className='mt-4 grid gap-3 text-sm sm:grid-cols-2'>
                         <div>
                           <dt className='text-xs text-muted-foreground'>
-                            Last success
+                            {t('pages.systemHealth.lastSuccess')}
                           </dt>
                           <dd className='mt-1 font-mono text-xs'>
                             {formatDateTime(component.last_success_at)}
@@ -68,7 +76,7 @@ export function SystemHealthPage() {
                         </div>
                         <div>
                           <dt className='text-xs text-muted-foreground'>
-                            Last error
+                            {t('pages.systemHealth.lastError')}
                           </dt>
                           <dd className='mt-1 font-mono text-xs'>
                             {formatDateTime(component.last_error_at)}
@@ -76,13 +84,14 @@ export function SystemHealthPage() {
                         </div>
                       </dl>
                       <p className='mt-3 text-sm text-muted-foreground'>
-                        {component.last_error ?? 'No recent errors.'}
+                        {component.last_error ??
+                          t('pages.systemHealth.noErrors')}
                       </p>
                       {Object.keys(component.metrics).length > 0 && (
                         <div className='mt-3'>
                           <DetailSheet
                             title={`${component.name} metrics`}
-                            description='Current component measurements'
+                            description={t('ui.measurements')}
                           >
                             <DetailList values={component.metrics} />
                           </DetailSheet>
@@ -95,12 +104,12 @@ export function SystemHealthPage() {
             </section>
             <section>
               <h2 className='mb-3 text-base font-semibold'>
-                Recent system events
+                {t('pages.systemHealth.recentEvents')}
               </h2>
               {health.data.recent_system_events.length === 0 ? (
                 <EmptyState
-                  title='No system events recorded yet.'
-                  description='Operational events will appear here in reverse chronological order.'
+                  title={t('ui.noEvents')}
+                  description={t('ui.eventsDescription')}
                 />
               ) : (
                 <TableFrame>

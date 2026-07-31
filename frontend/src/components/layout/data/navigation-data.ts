@@ -9,16 +9,26 @@ import {
 } from 'lucide-react'
 
 export type NavigationItem = {
-  title: string
+  titleKey:
+    | 'navigation.overview'
+    | 'navigation.signals'
+    | 'navigation.reporting'
+    | 'navigation.leaderboard'
+    | 'navigation.strategyStatus'
+    | 'navigation.systemHealth'
   url: string
   icon: LucideIcon
 }
 
 export const navigationData: NavigationItem[] = [
-  { title: 'Overview', url: '/', icon: LayoutDashboard },
-  { title: 'Signals', url: '/signals', icon: Radio },
-  { title: 'Trading Reports', url: '/reporting', icon: Activity },
-  { title: 'Leaderboard', url: '/leaderboard', icon: Trophy },
-  { title: 'Strategy Status', url: '/strategy-status', icon: ListChecks },
-  { title: 'System Health', url: '/system-health', icon: Gauge },
+  { titleKey: 'navigation.overview', url: '/', icon: LayoutDashboard },
+  { titleKey: 'navigation.signals', url: '/signals', icon: Radio },
+  { titleKey: 'navigation.reporting', url: '/reporting', icon: Activity },
+  { titleKey: 'navigation.leaderboard', url: '/leaderboard', icon: Trophy },
+  {
+    titleKey: 'navigation.strategyStatus',
+    url: '/strategy-status',
+    icon: ListChecks,
+  },
+  { titleKey: 'navigation.systemHealth', url: '/system-health', icon: Gauge },
 ]
