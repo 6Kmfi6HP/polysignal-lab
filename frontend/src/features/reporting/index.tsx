@@ -162,6 +162,7 @@ export function ReportingPage() {
 
 interface CumulativePnlPoint {
   closed_at: string
+  closed_at_ms: number
   cumulative_pnl: number
 }
 function CumulativePnlChart({ trades }: { trades: ReportTradeResult[] }) {
@@ -183,9 +184,12 @@ function CumulativePnlChart({ trades }: { trades: ReportTradeResult[] }) {
         >
           <CartesianGrid vertical={false} stroke='var(--border)' />
           <XAxis
-            dataKey='closed_at'
+            dataKey='closed_at_ms'
+            type='number'
+            scale='time'
+            domain={['dataMin', 'dataMax']}
             tickFormatter={(value) =>
-              new Date(value).toLocaleDateString('en', {
+              new Date(Number(value)).toLocaleDateString('en', {
                 month: 'short',
                 day: 'numeric',
               })
@@ -199,7 +203,9 @@ function CumulativePnlChart({ trades }: { trades: ReportTradeResult[] }) {
             width={48}
           />
           <Tooltip
-            labelFormatter={(value) => formatDateTime(String(value))}
+            labelFormatter={(value) =>
+              formatDateTime(new Date(Number(value)).toISOString())
+            }
             formatter={(value) => [
               formatMoney(Number(value)),
               'Cumulative PnL',
@@ -234,6 +240,7 @@ function buildCumulativePnlPoints(
     )
     .map((trade) => ({
       closed_at: trade.closed_at,
+      closed_at_ms: new Date(trade.closed_at).getTime(),
       cumulative_pnl: (cumulative += trade.pnl_usdc),
     }))
 }
@@ -255,8 +262,8 @@ function TradesTable({ trades }: { trades: ReportTradeResult[] }) {
             <TableHead>Market</TableHead>
             <TableHead>Side</TableHead>
             <TableHead>Result</TableHead>
-            <TableHead>Entry</TableHead>
-            <TableHead>Stake</TableHead>
+            <TableHead className='hidden lg:table-cell'>Entry</TableHead>
+            <TableHead className='hidden lg:table-cell'>Stake</TableHead>
             <TableHead>PnL</TableHead>
             <TableHead>ROI</TableHead>
             <TableHead>
@@ -281,10 +288,10 @@ function TradesTable({ trades }: { trades: ReportTradeResult[] }) {
               <TableCell>
                 <StatusBadge status={trade.result} />
               </TableCell>
-              <TableCell className='font-mono'>
+              <TableCell className='hidden font-mono lg:table-cell'>
                 {formatPrice(trade.entry_price)}
               </TableCell>
-              <TableCell className='font-mono'>
+              <TableCell className='hidden font-mono lg:table-cell'>
                 {formatMoney(trade.stake_usdc)}
               </TableCell>
               <TableCell
@@ -331,9 +338,9 @@ function PositionsTable({ positions }: { positions: ReportPosition[] }) {
             <TableHead>Market</TableHead>
             <TableHead>Side</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead>Entry</TableHead>
-            <TableHead>Stake</TableHead>
-            <TableHead>Shares</TableHead>
+            <TableHead className='hidden lg:table-cell'>Entry</TableHead>
+            <TableHead className='hidden lg:table-cell'>Stake</TableHead>
+            <TableHead className='hidden xl:table-cell'>Shares</TableHead>
             <TableHead>
               <span className='sr-only'>Details</span>
             </TableHead>
@@ -356,13 +363,13 @@ function PositionsTable({ positions }: { positions: ReportPosition[] }) {
               <TableCell>
                 <StatusBadge status={position.status} />
               </TableCell>
-              <TableCell className='font-mono'>
+              <TableCell className='hidden font-mono lg:table-cell'>
                 {formatPrice(position.entry_price)}
               </TableCell>
-              <TableCell className='font-mono'>
+              <TableCell className='hidden font-mono lg:table-cell'>
                 {formatMoney(position.stake_usdc)}
               </TableCell>
-              <TableCell className='font-mono'>
+              <TableCell className='hidden font-mono xl:table-cell'>
                 {position.shares.toFixed(2)}
               </TableCell>
               <TableCell>

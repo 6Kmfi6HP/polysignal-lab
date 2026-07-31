@@ -71,8 +71,16 @@ describe('ReportingPage', () => {
     expect(
       JSON.parse(view.getByTestId('line-chart-data').textContent ?? '[]')
     ).toEqual([
-      { closed_at: '2026-06-30T00:05:00+00:00', cumulative_pnl: -1 },
-      { closed_at: '2026-06-30T00:10:00+00:00', cumulative_pnl: 3 },
+      {
+        closed_at: '2026-06-30T00:05:00+00:00',
+        closed_at_ms: 1782777900000,
+        cumulative_pnl: -1,
+      },
+      {
+        closed_at: '2026-06-30T00:10:00+00:00',
+        closed_at_ms: 1782778200000,
+        cumulative_pnl: 3,
+      },
     ])
     expect(
       view.getByRole('img', { name: 'Cumulative PnL chart' })

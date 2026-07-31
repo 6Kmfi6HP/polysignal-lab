@@ -148,9 +148,9 @@ function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
             <TableHead>Rank</TableHead>
             <TableHead>Strategy</TableHead>
             <TableHead>Sample</TableHead>
-            <TableHead>Record</TableHead>
+            <TableHead className='hidden lg:table-cell'>Record</TableHead>
             <TableHead>Win rate</TableHead>
-            <TableHead>Average ROI</TableHead>
+            <TableHead className='hidden lg:table-cell'>Average ROI</TableHead>
             <TableHead>Total PnL</TableHead>
           </TableRow>
         </TableHeader>
@@ -166,13 +166,13 @@ function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
               <TableCell className='font-mono'>
                 {row.closed_positions}
               </TableCell>
-              <TableCell className='font-mono text-xs'>
+              <TableCell className='hidden font-mono text-xs lg:table-cell'>
                 {row.win_count}W / {row.loss_count}L / {row.void_count}V
               </TableCell>
               <TableCell className='font-mono'>
                 {formatPercent(row.win_rate)}
               </TableCell>
-              <TableCell className='font-mono'>
+              <TableCell className='hidden font-mono lg:table-cell'>
                 {formatPercent(row.average_roi, true)}
               </TableCell>
               <TableCell

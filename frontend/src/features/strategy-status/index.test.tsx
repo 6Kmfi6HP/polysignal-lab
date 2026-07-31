@@ -1,6 +1,7 @@
 import { makeStrategyStatusRow } from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
 import { within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as client from '@/lib/api/client'
 import { SearchProvider } from '@/context/search-provider'
@@ -57,6 +58,21 @@ describe('StrategyStatusPage', () => {
     expect(within(rows[2]).getByText('5m')).toBeInTheDocument()
     expect(within(rows[2]).getByText('Active')).toBeInTheDocument()
     expect(within(rows[2]).getByText('-')).toBeInTheDocument()
+  })
+
+  it('filters readiness rows by status', async () => {
+    vi.spyOn(client, 'getStrategyStatus').mockResolvedValue([
+      makeStrategyStatusRow({ strategy: 'ready', status: 'active' }),
+      makeStrategyStatusRow({ strategy: 'blocked', status: 'missing_data' }),
+    ])
+    const user = userEvent.setup()
+    const view = renderStrategyStatusPage()
+
+    await view.findByText('ready')
+    await user.click(view.getByRole('button', { name: 'missing data (1)' }))
+
+    expect(view.queryByText('ready')).not.toBeInTheDocument()
+    expect(view.getByText('blocked')).toBeInTheDocument()
   })
 
   it('shows an empty state when no rows are stored', async () => {

@@ -105,7 +105,9 @@ export function StrategyStatusPage() {
                     <TableRow>
                       <TableHead>Strategy</TableHead>
                       <TableHead>Asset</TableHead>
-                      <TableHead>Timeframe</TableHead>
+                      <TableHead className='hidden md:table-cell'>
+                        Timeframe
+                      </TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className='whitespace-normal'>
                         Reason
@@ -121,7 +123,9 @@ export function StrategyStatusPage() {
                           {row.strategy}
                         </TableCell>
                         <TableCell>{row.asset}</TableCell>
-                        <TableCell>{row.timeframe}</TableCell>
+                        <TableCell className='hidden md:table-cell'>
+                          {row.timeframe}
+                        </TableCell>
                         <TableCell>
                           <StatusBadge status={row.status} />
                         </TableCell>

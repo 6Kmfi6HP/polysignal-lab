@@ -65,6 +65,22 @@ describe('SignalsPage', () => {
     expect(await view.findByText('No stored signals yet.')).toBeInTheDocument()
   })
 
+  it('opens and closes an accepted signal detail panel', async () => {
+    vi.spyOn(client, 'getSignals').mockResolvedValue([
+      makeSignal({ signal_id: 'sig-detail', market_slug: 'long-market-slug' }),
+    ])
+    vi.spyOn(client, 'getRejectedSignals').mockResolvedValue([])
+    const user = userEvent.setup()
+    const view = renderSignalsPage()
+
+    await user.click(await view.findByRole('button', { name: 'View details' }))
+    expect(view.getByRole('dialog')).toBeInTheDocument()
+    expect(view.getAllByText('sig-detail')).toHaveLength(2)
+
+    await user.keyboard('{Escape}')
+    expect(view.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('shows accepted and rejected load errors', async () => {
     vi.spyOn(client, 'getSignals').mockRejectedValue(new Error('accepted boom'))
     vi.spyOn(client, 'getRejectedSignals').mockRejectedValue(

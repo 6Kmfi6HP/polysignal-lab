@@ -78,6 +78,7 @@ const positiveStatuses = new Set([
   'win',
   'calibrated',
   'closed',
+  'up',
 ])
 const warningStatuses = new Set([
   'pending',
@@ -87,6 +88,9 @@ const warningStatuses = new Set([
   'uncalibrated',
   'insufficient_data',
   'unknown',
+  'disabled',
+  'inactive',
+  'down',
 ])
 const dangerStatuses = new Set([
   'error',
@@ -95,6 +99,7 @@ const dangerStatuses = new Set([
   'loss',
   'missing_data',
   'unsupported_market',
+  'degraded',
 ])
 
 export function StatusBadge({ status }: { status: string }) {
