@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -49,6 +51,15 @@ _SUBSCRIBING_PHASES = frozenset(
         ConditionSubscriptionPhase.READY,
     }
 )
+
+# How long book generation may idle at AWAITING_FIRST_BOOK before the strategy
+# forces a resubscription. Polymarket WS drops idle (read-timeout) connections
+# and the incremental book_delta subscription has no snapshot fallback, so a
+# quiet market can leave a subscribed condition without its first book forever.
+# This is the only recovery for that stall (issue: healthcheck reads miss).
+_BOOK_GENERATION_STALL_SEC = 60.0
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -735,4 +746,64 @@ def unsubscribe_market_instrument(
     _ = strategy.unsubscribe_trades(instrument_id, client_id=client_id)
     _ = strategy.unsubscribe_book_deltas(instrument_id, client_id=client_id)
     strategy._subscription_state.subscribed_instrument_ids.discard(key)  # pyright: ignore[reportPrivateUsage]
+    return True
+
+
+def _book_generation_stalled(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> bool:
+    """True when the condition awaits its first book past the stall window."""
+    state = strategy._subscription_state
+    if condition_id not in state.awaiting_book_sides_by_condition:
+        return False
+    if pending_condition_instrument_ids(strategy, condition_id):
+        # Still waiting on instrument metadata, not on the book feed.
+        return False
+    started_at = state.book_generation_started_at_by_condition.get(condition_id)
+    if started_at is None:
+        return False
+    return (now.astimezone(UTC) - started_at).total_seconds() > (
+        _BOOK_GENERATION_STALL_SEC
+    )
+
+
+def force_resubscribe_if_book_stalled(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> bool:
+    """Rebuild the book subscription for a condition stuck awaiting its first
+    book longer than _BOOK_GENERATION_STALL_SEC.
+
+    Polymarket WS drops idle connections (Read idle timeout) and the incremental
+    book_delta subscription has no snapshot fallback on reconnect, so a quiet
+    market leaves a subscribed condition permanently stuck in
+    AWAITING_FIRST_BOOK. Re-subscribing forces a fresh snapshot from the feed.
+
+    Returns True when a resubscription was issued. Idempotent: every issued
+    resubscription restarts the book-generation clock, so a subsequent heartbeat
+    inside the stall window is a no-op and cannot trigger a resubscribe storm.
+    """
+    if not _book_generation_stalled(strategy, condition_id, now=now):
+        return False
+    instruments = condition_instruments(strategy, condition_id)
+    if not instruments:
+        return False
+    for instrument_id in instruments:
+        _ = unsubscribe_market_instrument(strategy, instrument_id)
+        _ = subscribe_market_instrument(strategy, instrument_id)
+    # A new generation reopens both sides and restarts the stall clock.
+    begin_market_book_generation(strategy, condition_id, now=now)
+    logger.info(
+        "condition_book_resubscription",
+        extra={
+            "condition_id": condition_id,
+            "stall_sec": _BOOK_GENERATION_STALL_SEC,
+            "instrument_ids": [_instrument_key(iid) for iid in instruments],
+        },
+    )
     return True

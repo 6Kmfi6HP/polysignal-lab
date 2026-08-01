@@ -19,6 +19,7 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
+    force_resubscribe_if_book_stalled,
     subscription_scope_condition_ids,
 )
 from polysignal_lab.nautilus_runtime.strategy.condition_evaluation import (
@@ -203,6 +204,15 @@ def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> Non
             continue
         active_condition_ids.append(condition_id)
     strategy._subscribe_market_conditions(tuple(active_condition_ids))
+    for condition_id in active_condition_ids:
+        # Rebuild the book subscription when book generation has idled past the
+        # stall window (Polymarket WS drops idle connections with no snapshot
+        # fallback, leaving a subscribed condition stuck in AWAITING_FIRST_BOOK).
+        _ = force_resubscribe_if_book_stalled(
+            strategy,  # pyright: ignore[reportArgumentType]
+            condition_id,
+            now=now,
+        )
     registry = strategy._require_registry()
     trading_state = trading_state_from_cache(
         strategy.cache,
