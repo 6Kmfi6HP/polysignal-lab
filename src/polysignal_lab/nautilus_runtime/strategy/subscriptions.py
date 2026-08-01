@@ -13,6 +13,7 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_data_client_id,
 )
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.strategy_readiness import StrategyStatus
 from polysignal_lab.nautilus_runtime.strategy.catalog_lookups import (
     _asset_conditions,
     _instrument_ids,
@@ -58,6 +59,15 @@ _SUBSCRIBING_PHASES = frozenset(
 # quiet market can leave a subscribed condition without its first book forever.
 # This is the only recovery for that stall (issue: healthcheck reads miss).
 _BOOK_GENERATION_STALL_SEC = 60.0
+
+# How long a condition may stay stalled continuously (across resubscriptions)
+# before we conclude the market has no book data and abandon it instead of
+# resubscribing again. Repeated resubscription cannot conjure a snapshot the
+# feed never sends (a thin or defunct Polymarket market). Mirrors the liveness
+# readiness-miss threshold (health.liveness.max_readiness_miss_sec, default 300)
+# so an abandoned condition stops producing readiness misses before the node is
+# ever judged unhealthy for it.
+_BOOK_GENERATION_ABANDON_SEC = 300.0
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +338,15 @@ class _SubscriptionStrategy(_ConditionSubscriptionStateOwner, Protocol):
         *,
         now: datetime,
     ) -> dict[str, object]: ...
+
+    def _note_runtime_readiness(
+        self,
+        condition_id: str,
+        *,
+        ready: bool,
+        status: StrategyStatus | None = None,
+        reason: str | None = None,
+    ) -> None: ...
 
     def subscribe_quotes(
         self,
@@ -903,6 +922,52 @@ def _book_generation_stalled(
     )
 
 
+def abandon_book_stalled_condition(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    stall_sec: float,
+) -> bool:
+    """Drop a condition whose book never materialized despite resubscription.
+
+    Book generation that is still stalled past _BOOK_GENERATION_ABANDON_SEC is
+    treated as a market with no book data — an unrecoverable condition (the
+    feed never sends a snapshot for it, so re-subscribing is futile). Abandoning
+    removes the condition from the active set and every tracked lifecycle marker
+    so it stops generating readiness misses. Repeated resubscription (repair A)
+    is reserved for the recoverable case: a dropped subscription on a market
+    that does have a book.
+
+    Returns True when the condition was abandoned. Idempotent: once removed from
+    the active set, a subsequent heartbeat never reaches this path again, and a
+    direct second call is a no-op (the condition is no longer in
+    _active_condition_ids).
+    """
+    if condition_id not in strategy._active_condition_ids:
+        return False
+    instruments = condition_instruments(strategy, condition_id)
+    strategy._active_condition_ids.discard(condition_id)
+    for instrument_id in instruments:
+        _ = unsubscribe_market_instrument(strategy, instrument_id)
+    clear_condition_lifecycle_state(
+        strategy,
+        condition_id,
+        clear_history=True,
+    )
+    # Clear the persisted readiness-miss key so the liveness heartbeat stops
+    # tracking this condition (mirrors retire_expired_condition's ready=True).
+    strategy._note_runtime_readiness(condition_id, ready=True)
+    logger.info(
+        "condition_abandoned_no_book",
+        extra={
+            "condition_id": condition_id,
+            "stall_sec": round(stall_sec, 3),
+            "instrument_ids": [_instrument_key(iid) for iid in instruments],
+        },
+    )
+    return True
+
+
 def force_resubscribe_if_book_stalled(
     strategy: _SubscriptionStrategy,
     condition_id: str,
@@ -910,18 +975,30 @@ def force_resubscribe_if_book_stalled(
     now: datetime,
 ) -> bool:
     """Rebuild the book subscription for a condition stuck awaiting its first
-    book longer than _BOOK_GENERATION_STALL_SEC.
+    book longer than _BOOK_GENERATION_STALL_SEC. Polymarket WS drops idle
+    connections (Read idle timeout) with no snapshot fallback, so a quiet market
+    leaves a subscribed condition stuck in AWAITING_FIRST_BOOK; re-subscribing
+    forces a fresh snapshot.
 
-    Polymarket WS drops idle connections (Read idle timeout) and the incremental
-    book_delta subscription has no snapshot fallback on reconnect, so a quiet
-    market leaves a subscribed condition permanently stuck in
-    AWAITING_FIRST_BOOK. Re-subscribing forces a fresh snapshot from the feed.
+    A condition stalled past _BOOK_GENERATION_ABANDON_SEC is abandoned instead
+    (see abandon_book_stalled_condition): no-book markets never produce a
+    snapshot, so further resubscription is futile.
 
     Returns True when a resubscription was issued. Idempotent: every issued
-    resubscription restarts the book-generation clock, so a subsequent heartbeat
-    inside the stall window is a no-op and cannot trigger a resubscribe storm.
+    resubscription restarts the book-generation clock.
     """
     if not _book_generation_stalled(strategy, condition_id, now=now):
+        return False
+    started_at = strategy._subscription_state.book_generation_started_at_by_condition[
+        condition_id
+    ]
+    stall_sec = (now.astimezone(UTC) - started_at).total_seconds()
+    if stall_sec >= _BOOK_GENERATION_ABANDON_SEC:
+        _ = abandon_book_stalled_condition(
+            strategy,
+            condition_id,
+            stall_sec=stall_sec,
+        )
         return False
     instruments = condition_instruments(strategy, condition_id)
     if not instruments:
