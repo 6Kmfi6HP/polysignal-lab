@@ -22,6 +22,7 @@ from polysignal_lab.nautilus_runtime.strategy.lifecycle import (
 )
 from polysignal_lab.nautilus_runtime.strategy.readiness import readiness_detail
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    ConditionSubscriptionPhase,
     MarketSubscriptionState,
     begin_market_book_generation,
     observe_market_book_side,
@@ -271,7 +272,7 @@ def test_readiness_detail_reports_intent_and_generation_age() -> None:
     registry = MarketCatalog(instrument_id_resolver=lambda condition, token: f"{condition}-{token}")
     registry.register(_pair("btc-5m", "BTC", "5m"))
     state = MarketSubscriptionState(
-        subscribe_intent_condition_ids={"btc-5m"},
+        condition_phases={"btc-5m": ConditionSubscriptionPhase.SUBSCRIBED},
         subscribe_intent_started_at_by_condition={
             "btc-5m": now - timedelta(seconds=3)
         },

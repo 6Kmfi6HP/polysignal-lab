@@ -13,6 +13,9 @@ from polysignal_lab.data.market_discovery_helpers import match_crypto_updown
 from polysignal_lab.data.provider.gamma_market import market_status_from_gamma
 from polysignal_lab.domain.enums import MarketStatus
 from polysignal_lab.domain.market import Market
+from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
+    _nautilus_instrument_id,
+)
 
 _get_condition_id = cast(
     Callable[[InstrumentId], str],
@@ -131,12 +134,10 @@ def _is_terminal_payload(payload: dict[str, object]) -> bool:
 
 
 def _instrument_id(instrument: object) -> InstrumentId:
-    value = cast(object | None, getattr(instrument, "id", None))
-    if isinstance(value, InstrumentId):
-        return value
+    value = cast(object, getattr(instrument, "id", None))
     if value is None:
         raise ValueError("Nautilus Instrument.id is required")
-    return InstrumentId.from_str(_text_value(value))
+    return cast(InstrumentId, _nautilus_instrument_id(value))
 
 
 def _text_value(value: object) -> str:

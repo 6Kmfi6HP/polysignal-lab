@@ -5,13 +5,16 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Protocol, TypeVar, cast
 
-from nautilus_trader.core.nautilus_pyo3 import InstrumentId, OrderSide, TimeInForce
+from nautilus_trader.core.nautilus_pyo3 import OrderSide, TimeInForce
 
 from polysignal_lab.domain.enums import OrderIntent
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan
 from polysignal_lab.nautilus_runtime.polymarket_adapter import PolymarketEnumParser
+from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
+    _nautilus_instrument_id,
+)
 
 OrderT = TypeVar("OrderT")
 OrderT_co = TypeVar("OrderT_co", covariant=True)
@@ -115,17 +118,12 @@ def _submit_native_order(
 def _instrument_id(instrument: object) -> object:
     """Coerce the instrument id into the PyO3 family the OrderFactory takes.
 
-    Same boundary rule as the OrderSide/TimeInForce conversion above: the
+    Single normalization entry: nautilus_objects._nautilus_instrument_id. The
     native factory is PyO3, and the identically-named Cython `InstrumentId`
     is rejected with `'InstrumentId' object is not an instance of
     'InstrumentId'`.
     """
-    value = cast(object, getattr(instrument, "id", instrument))
-    if isinstance(value, str):
-        return InstrumentId.from_str(value)
-    if isinstance(value, InstrumentId):
-        return value
-    return InstrumentId.from_str(str(value))
+    return _nautilus_instrument_id(getattr(instrument, "id", instrument))
 
 
 def _price_value(instrument: object, value: float) -> object:

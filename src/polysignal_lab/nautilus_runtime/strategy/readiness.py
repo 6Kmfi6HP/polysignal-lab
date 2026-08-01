@@ -9,7 +9,9 @@ from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.strategy_readiness import StrategyStatus
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    ConditionSubscriptionPhase,
     MarketSubscriptionState,
+    condition_phase,
     pending_condition_instrument_ids,
 )
 
@@ -239,24 +241,29 @@ def subscription_readiness_state(
     condition_id: str,
     *,
     preloaded: bool,
-    pending_instrument_ids: tuple[str, ...],
-    pending_sides: set[Side],
 ) -> str:
-    state = strategy._subscription_state
+    """Derive the readiness string purely from the single condition phase plus
+    the orthogonal markers (_stale_orderbook_recovery, reason dict).
+
+    The phase is the source of truth for condition-level lifecycle; the
+    pending_instrument_ids / awaiting-book-sides bookkeeping it shadows is
+    maintained by the subscription transition functions in subscriptions.py.
+    """
+    phase = condition_phase(strategy, condition_id)
     if preloaded:
         return "preloaded"
-    if condition_id in state.pending_metadata_condition_ids:
+    if phase is ConditionSubscriptionPhase.PENDING_METADATA:
         return "pending_metadata"
-    if pending_instrument_ids:
+    if phase is ConditionSubscriptionPhase.PENDING_INSTRUMENT:
         return "awaiting_instrument"
     if condition_id in strategy._stale_orderbook_recovery_by_condition:
         return "stale_orderbook"
-    if pending_sides:
+    if phase is ConditionSubscriptionPhase.AWAITING_FIRST_BOOK:
         return "awaiting_first_book"
     reasons = getattr(strategy, "_runtime_readiness_reason_by_condition", {})
     if reason := reasons.get(condition_id):
         return reason
-    if condition_id in state.subscribe_intent_condition_ids:
+    if phase is not ConditionSubscriptionPhase.UNSUBSCRIBED:
         return "subscribe_requested"
     return "unsubscribed"
 
@@ -329,8 +336,6 @@ def readiness_detail(
         preloaded=bool(
             pair is not None and pair.start_ts is not None and now < pair.start_ts
         ),
-        pending_instrument_ids=pending_instrument_ids,
-        pending_sides=pending_sides,
     )
     return {
         "condition_id": condition_id,
@@ -338,7 +343,10 @@ def readiness_detail(
         "asset": None if pair is None else pair.asset,
         "timeframe": None if pair is None else pair.timeframe,
         "subscription_state": state_name,
-        "subscribe_requested": condition_id in state.subscribe_intent_condition_ids,
+        "subscribe_requested": condition_phase(
+            strategy, condition_id
+        )
+        is not ConditionSubscriptionPhase.UNSUBSCRIBED,
         **subscription_timing_detail(state, condition_id, now=now),
         "pending_instrument_ids": list(pending_instrument_ids),
         "awaiting_book_sides": sorted(side.value for side in pending_sides),

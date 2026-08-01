@@ -35,10 +35,9 @@ from polysignal_lab.nautilus_runtime.strategy.readiness import (
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
-    clear_condition_subscription_state,
+    clear_condition_lifecycle_state,
     market_book_generation_ready,
     pending_condition_instrument_ids,
-    retire_market_book_generation,
 )
 
 
@@ -105,16 +104,18 @@ def retire_expired_condition(
     if end_ts is None or now < end_ts:
         return False
     strategy._active_condition_ids.discard(condition_id)
-    strategy._subscription_state.pending_metadata_condition_ids.discard(condition_id)  # type: ignore[attr-defined]
     if strategy.unsubscribe_exited:
-        retire_market_book_generation(strategy, condition_id)  # type: ignore[arg-type]
+        clear_condition_lifecycle_state(
+            strategy,  # type: ignore[arg-type]
+            condition_id,
+            clear_history=True,
+        )
     else:
-        clear_condition_subscription_state(
+        clear_condition_lifecycle_state(
             strategy,  # type: ignore[arg-type]
             condition_id,
             clear_subscribed=False,
         )
-    clear_condition_untradable_state(strategy, condition_id)  # type: ignore[arg-type]
     if strategy.unsubscribe_exited:
         strategy._unsubscribe_market_conditions((condition_id,))
     strategy._refresh_asset_conditions()
