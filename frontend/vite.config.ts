@@ -31,6 +31,12 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test-utils/setup.ts'],
     unstubEnvs: true,
+    // CI runners run several seconds of jsdom setup per test because the
+    // shared worker is saturated by parallel transform/import work. Vitest's
+    // default 5s per-test budget was tight enough that a single heavy
+    // runner turned one AppHeader assertion into a flake; doubling the
+    // budget keeps the signal meaningful without masking real regressions.
+    testTimeout: process.env.CI ? 15000 : 5000,
     coverage: {
       // include: ['src/**/*.{js,jsx,ts,tsx}'], // Uncomment to expand the report to all src/**/* so untested modules appear as 0% coverage.
       exclude: [
