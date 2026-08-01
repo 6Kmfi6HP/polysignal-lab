@@ -74,8 +74,10 @@ STRATEGY_STATUS_REFRESH_INTERVAL_SEC = 60.0
 _runtime_observability: ObservabilityService | None = None
 
 
-class DailyReportNotifier(Protocol):
-    def __call__(self, framework_time: datetime) -> None: ...
+# NOTE: a plain callable (not a Protocol) so common callables — e.g.
+# ``requests.append`` and lambdas — are accepted by the type checker while the
+# call site still enforces ``(datetime) -> None``.
+DailyReportNotifier = Callable[[datetime], None]
 
 
 def bind_runtime_observability(service: ObservabilityService | None) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Protocol
@@ -14,7 +15,7 @@ class _ReportPersistence(Protocol):
         table: str,
         limit: int = 100,
         where: str = "",
-        params: tuple[Any, ...] = (),
+        params: Iterable[Any] = (),
     ) -> list[dict[str, Any]]: ...
 
     def claim_daily_report(
@@ -50,10 +51,10 @@ class _ReportPersistence(Protocol):
         self,
         intent_id: str,
         attempt_count: int,
-        publish: dict[str, str | None],
-    ) -> dict[str, str | None] | None: ...
+        publish: dict[str, Any],
+    ) -> dict[str, Any] | None: ...
 
-    def append_log(self, table: str, payload: Any) -> None: ...
+    def append_log(self, stream: str, payload: Any) -> None: ...
 
 
 class _ReportLogger(Protocol):
@@ -62,52 +63,77 @@ class _ReportLogger(Protocol):
     def info(self, msg: str, *args: Any) -> None: ...
 
 
+# NOTE: every attribute on the narrow Protocols below is a read-only
+# ``@property``.  Data members (even never-reassigned ones) are invariant
+# for pyright Protocol conformance, which forces wide concrete Settings to
+# be narrowed before they can be treated as a scheduler.  Read-only
+# properties are covariant, so the wide ``Settings``/``PersistenceService``
+# already satisfy the contract structurally without a wrapper.
+
+
 class _TradingSettings(Protocol):
-    starting_balance_usdc: float
+    @property
+    def starting_balance_usdc(self) -> float: ...
 
 
 class _PolymarketSettings(Protocol):
-    max_book_staleness_ms: float
+    @property
+    def max_book_staleness_ms(self) -> float: ...
 
 
 class _DataSettings(Protocol):
-    polymarket: _PolymarketSettings
+    @property
+    def polymarket(self) -> _PolymarketSettings: ...
 
 
 class _TelegramSettings(Protocol):
-    send_daily_report: bool
-    publish_timeout_sec: float
+    @property
+    def send_daily_report(self) -> bool: ...
+
+    @property
+    def publish_timeout_sec(self) -> float: ...
 
 
 class _AppSettings(Protocol):
-    timezone: str
+    @property
+    def timezone(self) -> str: ...
 
 
 class _ReportSettings(Protocol):
-    trading: _TradingSettings
-    data: _DataSettings
-    telegram: _TelegramSettings
-    app: _AppSettings
+    @property
+    def trading(self) -> _TradingSettings: ...
 
+    @property
+    def data(self) -> _DataSettings: ...
 
-class _PublishResult(Protocol):
-    def as_dict(self) -> dict[str, str | None]: ...
+    @property
+    def telegram(self) -> _TelegramSettings: ...
+
+    @property
+    def app(self) -> _AppSettings: ...
 
 
 class _DailyReportPublisher(Protocol):
     async def deliver_daily_report(
         self,
-        report: DailyReport,
+        report: Any,
         *,
         idempotency_key: str | None = None,
-    ) -> _PublishResult: ...
+    ) -> Any: ...
 
 
 class _ReportScheduler(Protocol):
-    persistence: _ReportPersistence
-    settings: _ReportSettings
-    logger: _ReportLogger
-    publish_service: _DailyReportPublisher
+    @property
+    def persistence(self) -> _ReportPersistence: ...
+
+    @property
+    def settings(self) -> _ReportSettings: ...
+
+    @property
+    def logger(self) -> _ReportLogger: ...
+
+    @property
+    def publish_service(self) -> _DailyReportPublisher: ...
 
 
 @dataclass(frozen=True, slots=True)

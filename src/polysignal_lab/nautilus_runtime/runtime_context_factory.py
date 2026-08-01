@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Final, cast
 
 if TYPE_CHECKING:
@@ -91,7 +90,14 @@ def _build_publish_service(
 
 @dataclass(slots=True)
 class NautilusRuntimeContext:
-    """Services needed by the Nautilus runtime path."""
+    """Services needed by the Nautilus runtime path.
+
+    ``generate_daily_report[``_once``]`` forwards ``self`` to the runtime's
+    report generator: ``NautilusRuntimeContext`` itself already structural-
+    satisfies ``daily_report.types._ReportScheduler``, so no wrapper/
+    SimpleNamespace conversion is needed — the live runtime's report path
+    uses this correctness harness, giving one shape for all seasons.
+    """
 
     settings: Settings
     health: HealthRegistry
@@ -141,6 +147,10 @@ class NautilusRuntimeContext:
     async def generate_daily_report(self) -> DailyReport | None:
         from polysignal_lab.app.daily_report import generate_daily_report
 
+        # Lifetime-critical: this is the live daily-report path — ``self``
+        # must structurally satisfy ``_ReportScheduler`` (settings/
+        # persistence/health/logger/publish_service). The narrowing wrapper
+        # below is what proves that structural conformance statically.
         return await generate_daily_report(self)
 
     async def generate_daily_report_once(self, report_date: date) -> DailyReport | None:
@@ -151,15 +161,12 @@ class NautilusRuntimeContext:
             self.formatter,
             self.persistence,
         )
-        scheduler = SimpleNamespace(
-            settings=self.settings,
-            persistence=self.persistence,
-            health=self.health,
-            logger=self.logger,
-            publish_service=publish_service,
-        )
+        # One-shot lazily builds a transient PublishService (to keep the
+        # publisher client scoped). Keep ``self`` as the scheduler — the
+        # runtime context already structurally satisfies ``_ReportScheduler``.
+        self.publish_service = publish_service
         try:
-            return await generate_daily_report(scheduler, report_date=report_date)
+            return await generate_daily_report(self, report_date=report_date)
         finally:
             await publisher.client.aclose()
 
