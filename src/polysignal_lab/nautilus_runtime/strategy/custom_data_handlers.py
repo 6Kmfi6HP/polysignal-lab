@@ -17,13 +17,9 @@ from polysignal_lab.nautilus_runtime.custom_data_types import (
 from polysignal_lab.nautilus_runtime.strategy.data_boundary import (
     DataBoundaryClassification,
 )
-from polysignal_lab.nautilus_runtime.strategy.readiness import (
-    clear_condition_untradable_state,
-)
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
-    clear_condition_subscription_state,
-    retire_market_book_generation,
+    clear_condition_lifecycle_state,
     subscription_scope_condition_ids,
 )
 
@@ -39,6 +35,9 @@ class _CustomDataStrategy(Protocol):
     _subscription_assets: frozenset[str]
     _subscription_timeframes: frozenset[str]
     _untradable_quote_sides_by_condition: dict[str, frozenset[Side]]
+    _stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]]
+    _runtime_readiness_reason_by_condition: dict[str, str]
+    _runtime_readiness_miss_condition_ids: set[str]
     cache: object | None
 
     def evaluate_condition(
@@ -150,18 +149,18 @@ def handle_market_universe(
     strategy._active_condition_ids = active_condition_ids
     strategy._refresh_asset_conditions()
     for condition_id in exited_condition_ids:
-        strategy._subscription_state.pending_metadata_condition_ids.discard(
-            condition_id
-        )
         if strategy.unsubscribe_exited:
-            retire_market_book_generation(strategy, condition_id)
+            clear_condition_lifecycle_state(
+                strategy,
+                condition_id,
+                clear_history=True,
+            )
         else:
-            clear_condition_subscription_state(
-                strategy,  # type: ignore[arg-type]
+            clear_condition_lifecycle_state(
+                strategy,
                 condition_id,
                 clear_subscribed=False,
             )
-        clear_condition_untradable_state(strategy, condition_id)  # type: ignore[arg-type]
         strategy._note_runtime_readiness(condition_id, ready=True)
     if strategy.unsubscribe_exited and exited_condition_ids:
         strategy._unsubscribe_market_conditions(exited_condition_ids)

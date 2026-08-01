@@ -24,6 +24,9 @@ from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.market_view_assembler import MarketViewAssembler
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData
+from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    ConditionSubscriptionPhase,
+)
 
 from polysignal_lab.nautilus_runtime.strategy_state import decode_state, state_key
 
@@ -2867,7 +2870,7 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
     )
 
     strategy.on_start()
-    strategy._subscription_state.subscribe_intent_condition_ids.clear()
+    strategy._subscription_state.condition_phases.clear()
 
     strategy.on_data(
         PolySignalMarketUniverseData(
@@ -2888,9 +2891,7 @@ def test_native_strategy_universe_update_recovers_still_active_missing_subscript
     assert strategy.book_subscriptions.count("down-a.POLYMARKET") == 1
     assert strategy.trade_subscriptions.count("up-a.POLYMARKET") == 1
     assert strategy.trade_subscriptions.count("down-a.POLYMARKET") == 1
-    assert strategy._subscription_state.subscribe_intent_condition_ids == {
-        "condition-a"
-    }
+    assert strategy._subscription_state.condition_phases["condition-a"] is not None
 
 
 def test_native_strategy_universe_update_skips_duplicate_wired_condition() -> None:
@@ -3091,9 +3092,10 @@ def test_native_strategy_active_market_without_metadata_stays_pending_until_meta
 
     assert strategy.book_subscriptions == []
     assert strategy.trade_subscriptions == []
-    assert strategy._subscription_state.pending_metadata_condition_ids == {
-        "condition-b"
-    }
+    assert (
+        strategy._subscription_state.condition_phases["condition-b"].value
+        == "pending_metadata"
+    )
 
     strategy.on_data(
         PolySignalMarketMetaData(
@@ -3113,10 +3115,14 @@ def test_native_strategy_active_market_without_metadata_stays_pending_until_meta
 
     assert strategy.book_subscriptions == ["up-b.POLYMARKET", "down-b.POLYMARKET"]
     assert strategy.trade_subscriptions == ["up-b.POLYMARKET", "down-b.POLYMARKET"]
-    assert strategy._subscription_state.pending_metadata_condition_ids == set()
-    assert strategy._subscription_state.subscribe_intent_condition_ids == {
-        "condition-b"
-    }
+    assert (
+        strategy._subscription_state.condition_phases.get("condition-b")
+        is not None
+    )
+    assert (
+        strategy._subscription_state.condition_phases["condition-b"].value
+        != "pending_metadata"
+    )
 
 
 def test_native_strategy_waits_for_actor_owned_market_universe(
@@ -3627,9 +3633,7 @@ def test_native_strategy_heartbeat_recovers_missed_instrument_callback() -> None
     assert strategy.book_subscriptions == []
     assert strategy.trade_subscriptions == []
     assert strategy.quote_subscriptions == []
-    assert strategy._subscription_state.subscribe_intent_condition_ids == {
-        "condition-a"
-    }
+    assert "condition-a" in strategy._subscription_state.condition_phases
     assert "up-a.POLYMARKET" in strategy._subscription_state.pending_instrument_ids
     assert "down-a.POLYMARKET" in strategy._subscription_state.pending_instrument_ids
     detail = strategy._readiness_detail("condition-a", now=strategy.now)
@@ -3727,7 +3731,7 @@ def test_native_strategy_heartbeat_recovers_missed_instrument_callback() -> None
     )
 
     state = strategy._subscription_state
-    assert "condition-a" not in state.subscribe_intent_condition_ids
+    assert "condition-a" not in state.condition_phases
     assert "condition-a" not in state.subscribe_intent_started_at_by_condition
     assert "condition-a" not in state.book_generation_started_at_by_condition
     assert state.pending_instrument_ids == set()
@@ -3970,7 +3974,7 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
     assert strategy.trade_subscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
     assert strategy.book_unsubscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
     assert strategy.trade_unsubscriptions == ["up-a.POLYMARKET", "down-a.POLYMARKET"]
-    assert strategy._subscription_state.subscribe_intent_condition_ids == set()
+    assert "condition-a" not in strategy._subscription_state.condition_phases
 
     strategy.on_data(
         PolySignalMarketUniverseData(
@@ -3991,9 +3995,10 @@ def test_native_strategy_exited_market_unsubscribes_when_hooks_exist() -> None:
     assert strategy.book_subscriptions.count("down-a.POLYMARKET") == 2
     assert strategy.trade_subscriptions.count("up-a.POLYMARKET") == 2
     assert strategy.trade_subscriptions.count("down-a.POLYMARKET") == 2
-    assert strategy._subscription_state.subscribe_intent_condition_ids == {
-        "condition-a"
-    }
+    assert (
+        strategy._subscription_state.condition_phases.get("condition-a")
+        is not None
+    )
 
 
 def test_native_strategy_exited_l1_market_unsubscribes_quote_ticks() -> None:
@@ -4205,7 +4210,9 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
     )
 
     strategy.on_start()
-    strategy._subscription_state.pending_metadata_condition_ids.add("condition-a")
+    strategy._subscription_state.condition_phases[
+        "condition-a"
+    ] = ConditionSubscriptionPhase.PENDING_METADATA
 
     strategy.on_data(
         PolySignalMarketUniverseData(
@@ -4224,8 +4231,7 @@ def test_native_strategy_exited_market_is_noop_when_unsubscribe_disabled() -> No
 
     assert strategy.book_unsubscriptions == []
     assert strategy.trade_unsubscriptions == []
-    assert strategy._subscription_state.pending_metadata_condition_ids == set()
-    assert strategy._subscription_state.subscribe_intent_condition_ids == set()
+    assert "condition-a" not in strategy._subscription_state.condition_phases
     assert strategy._subscription_state.pending_instrument_ids == set()
     assert strategy._subscription_state.subscribed_instrument_ids == {
         "down-a.POLYMARKET",
@@ -4296,7 +4302,7 @@ def test_native_strategy_exited_market_without_unsubscribe_hooks_clears_wire_sta
     )
 
     assert strategy._active_condition_ids == set()
-    assert strategy._subscription_state.subscribe_intent_condition_ids == set()
+    assert "condition-a" not in strategy._subscription_state.condition_phases
 
     strategy.on_data(
         PolySignalMarketUniverseData(

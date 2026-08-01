@@ -172,7 +172,7 @@ def on_strategy_stop(strategy: _LifecycleStrategy) -> None:
         dict.fromkeys(
             (
                 *strategy._active_condition_ids,
-                *strategy._subscription_state.subscribe_intent_condition_ids,
+                *tuple(strategy._subscription_state.condition_phases),
             )
         )
     )

@@ -28,6 +28,9 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicy,
     RejectedDecision,
 )
+from polysignal_lab.nautilus_runtime.observability_persistence import (
+    PersistenceWriter,
+)
 
 
 class FakeStore:
@@ -1019,8 +1022,10 @@ def test_decision_policy_control_skip_reason_for_manual_disable() -> None:
     assert ctrl.skip_reason_for("vwap_momentum") == "manual_disabled"
 
 
-class FakePersistence:
+class FakePersistence(PersistenceWriter):
     def __init__(self) -> None:
+        # Heterogeneous payload types across insert tables, so the recorded
+        # tuples stay `object`; consumers narrow with `cast`/`isinstance`.
         self.calls: list[tuple[str, object]] = []
         self.logs: list[tuple[str, dict[str, Any]]] = []
 
@@ -1033,7 +1038,10 @@ class FakePersistence:
     def insert_report_result(self, result: object) -> None:
         self.calls.append(("insert_report_result", result))
 
-    def insert_system_event(self, event: object) -> None:
+    def insert_strategy_status(self, status: object) -> None:
+        self.calls.append(("insert_strategy_status", status))
+
+    def insert_system_event(self, event: dict[str, object]) -> None:
         self.calls.append(("insert_system_event", event))
 
     def append_log(self, stream: str, payload: object) -> None:
@@ -1109,7 +1117,7 @@ def test_unknown_nautilus_persistence_table_remains_fatal() -> None:
 
 
 class LockingSystemEventPersistence(FakePersistence):
-    def insert_system_event(self, event: object) -> None:
+    def insert_system_event(self, event: dict[str, object]) -> None:
         raise sqlite3.OperationalError("database is locked")
 
 

@@ -125,6 +125,8 @@ class MarketCatalog:
         self._instrument_id_resolver = instrument_id_resolver
         # Resolution is on the market-data hot path; cache per token (issue #21).
         self._instrument_id_by_token: dict[str, str] = {}
+        # Derived instrument_key → timeframe index, rebuilt after any register.
+        self._timeframe_index: dict[str, str] | None = None
 
     def register(self, pair: MarketPairMeta) -> None:
         previous = self._by_condition.get(pair.condition_id)
@@ -139,6 +141,8 @@ class MarketCatalog:
         self._condition_by_token[pair.down.token_id] = pair.condition_id
         self._instrument_id_by_token.pop(pair.up.token_id, None)
         self._instrument_id_by_token.pop(pair.down.token_id, None)
+        # Derived index is invalidated on every structural mutation.
+        self._timeframe_index = None
 
     def by_condition(self, condition_id: str) -> MarketPairMeta | None:
         return self._by_condition.get(condition_id)
@@ -190,3 +194,25 @@ class MarketCatalog:
                 if self.instrument_id_for_token(token_id) == instrument_id:
                     return pair.market_id
         return None
+
+    def _build_timeframe_index(self) -> None:
+        index: dict[str, str] = {}
+        for pair in self._by_condition.values():
+            for token_id in (pair.up.token_id, pair.down.token_id):
+                instrument_id = self.instrument_id_for_token(token_id)
+                if instrument_id is not None:
+                    index[str(instrument_id)] = pair.timeframe
+        self._timeframe_index = index
+
+    def timeframe_for_instrument(self, instrument_id: str) -> str | None:
+        """Resolve the timeframe owning an instrument id, O(1) via cache.
+
+        Index is rebuilt lazily after any register() mutation; both up and
+        down legs of a condition map to the same timeframe, so an unresolved
+        key is a genuine unknown instrument.
+        """
+        if self._timeframe_index is None:
+            self._build_timeframe_index()
+        index = self._timeframe_index
+        assert index is not None
+        return index.get(instrument_id)

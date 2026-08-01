@@ -260,6 +260,14 @@ def _empty_stats(label: str) -> SegmentedStats:
 
 
 def _repository_root() -> Path:
+    # Derive from the module location first: the working directory may be a
+    # test tmpdir (promotion tests chdir), and probing outward from there can
+    # either hit an unrelated .git (e.g. /tmp/.git on some hosts) or none at
+    # all on CI. The module's own path pins the repo root regardless of cwd.
+    start = Path(__file__).resolve()
+    for candidate in (start.parent, *start.parents):
+        if (candidate / ".git").exists():
+            return candidate
     current = Path.cwd().resolve()
     for candidate in (current, *current.parents):
         if (candidate / ".git").exists():
