@@ -272,7 +272,7 @@ def test_readiness_detail_reports_intent_and_generation_age() -> None:
     registry = MarketCatalog(instrument_id_resolver=lambda condition, token: f"{condition}-{token}")
     registry.register(_pair("btc-5m", "BTC", "5m"))
     state = MarketSubscriptionState(
-        condition_phases={"btc-5m": ConditionSubscriptionPhase.SUBSCRIBED},
+        condition_phases={"btc-5m": ConditionSubscriptionPhase.SUBSCRIBE_ISSUED},
         subscribe_intent_started_at_by_condition={
             "btc-5m": now - timedelta(seconds=3)
         },

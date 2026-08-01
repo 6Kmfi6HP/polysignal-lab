@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Protocol
+from typing import Protocol, cast
 
 from polysignal_lab.nautilus_runtime.market_catalog import MarketCatalog
 from polysignal_lab.nautilus_runtime.polymarket_clients import (
@@ -31,10 +31,11 @@ class ConditionSubscriptionPhase(Enum):
     """
 
     UNSUBSCRIBED = "unsubscribed"
-    INTENT = "intent"
     PENDING_METADATA = "pending_metadata"
     PENDING_INSTRUMENT = "pending_instrument"
-    SUBSCRIBED = "subscribed"
+    # Locally-issued subscribe commands; never claims wire confirmation (the
+    # Nautilus subscribe API is fire-and-forget with no ACK).
+    SUBSCRIBE_ISSUED = "subscribe_issued"
     AWAITING_FIRST_BOOK = "awaiting_first_book"
     READY = "ready"
 
@@ -42,9 +43,8 @@ class ConditionSubscriptionPhase(Enum):
 # Phases that carry an active subscribe intent (excludes the metadata wait).
 _SUBSCRIBING_PHASES = frozenset(
     {
-        ConditionSubscriptionPhase.INTENT,
         ConditionSubscriptionPhase.PENDING_INSTRUMENT,
-        ConditionSubscriptionPhase.SUBSCRIBED,
+        ConditionSubscriptionPhase.SUBSCRIBE_ISSUED,
         ConditionSubscriptionPhase.AWAITING_FIRST_BOOK,
         ConditionSubscriptionPhase.READY,
     }
@@ -122,6 +122,93 @@ def _store_condition_phase(
         state.condition_phases[condition_id] = phase
 
 
+# Explicit allowed-transition table for ConditionSubscriptionPhase.
+#
+# Absent key == UNSUBSCRIBED. Cleanup (target UNSUBSCRIBED) is always legal and
+# removes the key. READY is re-entrant: rotation/recovery may reopen a book
+# generation (READY -> AWAITING_FIRST_BOOK) and re-pend instruments, and a
+# condition that carries both pending instruments and an open generation is
+# read as PENDING_INSTRUMENT.
+_ALLOWED_PHASE_TRANSITIONS: dict[
+    ConditionSubscriptionPhase, frozenset[ConditionSubscriptionPhase]
+] = {
+    ConditionSubscriptionPhase.UNSUBSCRIBED: frozenset(
+        {
+            ConditionSubscriptionPhase.PENDING_METADATA,
+            ConditionSubscriptionPhase.PENDING_INSTRUMENT,
+            ConditionSubscriptionPhase.AWAITING_FIRST_BOOK,
+        }
+    ),
+    ConditionSubscriptionPhase.PENDING_METADATA: frozenset(
+        {
+            ConditionSubscriptionPhase.PENDING_METADATA,
+            ConditionSubscriptionPhase.PENDING_INSTRUMENT,
+            ConditionSubscriptionPhase.SUBSCRIBE_ISSUED,
+            ConditionSubscriptionPhase.AWAITING_FIRST_BOOK,
+        }
+    ),
+    ConditionSubscriptionPhase.PENDING_INSTRUMENT: frozenset(
+        {
+            ConditionSubscriptionPhase.PENDING_METADATA,
+            ConditionSubscriptionPhase.PENDING_INSTRUMENT,
+            ConditionSubscriptionPhase.SUBSCRIBE_ISSUED,
+            ConditionSubscriptionPhase.AWAITING_FIRST_BOOK,
+            ConditionSubscriptionPhase.READY,
+        }
+    ),
+    ConditionSubscriptionPhase.SUBSCRIBE_ISSUED: frozenset(
+        {
+            ConditionSubscriptionPhase.PENDING_METADATA,
+            ConditionSubscriptionPhase.PENDING_INSTRUMENT,
+            ConditionSubscriptionPhase.SUBSCRIBE_ISSUED,
+            ConditionSubscriptionPhase.AWAITING_FIRST_BOOK,
+        }
+    ),
+    ConditionSubscriptionPhase.AWAITING_FIRST_BOOK: frozenset(
+        {
+            ConditionSubscriptionPhase.PENDING_INSTRUMENT,
+            ConditionSubscriptionPhase.AWAITING_FIRST_BOOK,
+            ConditionSubscriptionPhase.READY,
+        }
+    ),
+    ConditionSubscriptionPhase.READY: frozenset(
+        {
+            ConditionSubscriptionPhase.READY,
+            ConditionSubscriptionPhase.PENDING_INSTRUMENT,
+            ConditionSubscriptionPhase.AWAITING_FIRST_BOOK,
+        }
+    ),
+}
+
+
+def _transition_condition_phase(
+    state: MarketSubscriptionState,
+    condition_id: str,
+    phase: ConditionSubscriptionPhase,
+    *,
+    reconcile: bool = False,
+) -> None:
+    """Validate then apply a phase write (guarded transition).
+
+    Cleanup to UNSUBSCRIBED is always legal. ``reconcile`` marks a write that
+    mirrors derived bookkeeping (_phase_from_derived_state) rather than a
+    forward move; it shares the same table because the derived targets are a
+    subset of the legal forward targets. Illegal transitions raise instead of
+    silently corrupting the state machine.
+    """
+    if phase is ConditionSubscriptionPhase.UNSUBSCRIBED:
+        _store_condition_phase(state, condition_id, phase)
+        return
+    source = state.condition_phases.get(
+        condition_id, ConditionSubscriptionPhase.UNSUBSCRIBED
+    )
+    if phase not in _ALLOWED_PHASE_TRANSITIONS[source]:
+        raise AssertionError(
+            f"illegal condition phase transition: {source.value!r} -> {phase.value!r}"
+        )
+    _store_condition_phase(state, condition_id, phase)
+
+
 def _phase_from_derived_state(
     strategy: _ConditionSubscriptionStateOwner,
     condition_id: str,
@@ -135,7 +222,7 @@ def _phase_from_derived_state(
     current = state.condition_phases.get(condition_id)
     if current is ConditionSubscriptionPhase.READY:
         return ConditionSubscriptionPhase.READY
-    return ConditionSubscriptionPhase.SUBSCRIBED
+    return ConditionSubscriptionPhase.SUBSCRIBE_ISSUED
 
 
 def _recompute_condition_phase(
@@ -150,10 +237,33 @@ def _recompute_condition_phase(
     state = strategy._subscription_state
     if condition_id not in state.condition_phases:
         return
-    _store_condition_phase(
+    current = state.condition_phases.get(condition_id)
+    target = _phase_from_derived_state(strategy, condition_id)
+    if (
+        current is ConditionSubscriptionPhase.READY
+        and target is ConditionSubscriptionPhase.PENDING_INSTRUMENT
+    ):
+        # READY re-entry: a rotation/recovery re-pended instruments while the
+        # condition was READY. Treat re-pending as a fresh book generation:
+        # begin clears the stale first-bilateral marker and re-establishes the
+        # awaiting sides, so the condition can reach READY again once the
+        # instruments resolve — without begin, the marker would survive into
+        # SUBSCRIBE_ISSUED and wedge the condition unready until a restart.
+        # Every subscription host implements _framework_now (the Nautilus
+        # framework clock); the wall clock is deliberately not used here to
+        # keep the runtime deterministic.
+        framework_now = getattr(strategy, "_framework_now", None)
+        if callable(framework_now):
+            begin_market_book_generation(
+                strategy,
+                condition_id,
+                now=cast(Callable[[], datetime], framework_now)(),
+            )
+    _transition_condition_phase(
         state,
         condition_id,
-        _phase_from_derived_state(strategy, condition_id),
+        target,
+        reconcile=True,
     )
 
 
@@ -185,9 +295,7 @@ def _refresh_phase_for_instrument(
         _recompute_condition_phase(strategy, condition_id)
 
 
-class _SubscriptionStrategy(Protocol):
-    @property
-    def registry(self) -> MarketCatalog | None: ...
+class _SubscriptionStrategy(_ConditionSubscriptionStateOwner, Protocol):
     @property
     def cache(self) -> object | None: ...
 
@@ -195,7 +303,6 @@ class _SubscriptionStrategy(Protocol):
     unsubscribe_exited: bool
     _startup_condition_ids: tuple[str, ...]
     _active_condition_ids: set[str]
-    _subscription_state: MarketSubscriptionState
     _asset_condition_ids: dict[str, tuple[str, ...]]
     _subscription_assets: frozenset[str]
     _subscription_timeframes: frozenset[str]
@@ -329,16 +436,16 @@ def _subscribe_market_condition(
     *,
     now: datetime,
     allow_inactive: bool = False,
-    allow_deferred: bool = False,
 ) -> None:
     if not condition_in_subscription_scope(strategy, condition_id):
         return
     if not allow_inactive and condition_id not in strategy._active_condition_ids:
         return
     state = strategy._subscription_state
-    first_intent = state.condition_phases.get(
+    current_phase = state.condition_phases.get(
         condition_id, ConditionSubscriptionPhase.UNSUBSCRIBED
-    ) not in _SUBSCRIBING_PHASES
+    )
+    first_intent = current_phase not in _SUBSCRIBING_PHASES
     if not first_intent and not pending_condition_instrument_ids(
         strategy,
         condition_id,
@@ -347,7 +454,7 @@ def _subscribe_market_condition(
         return
     instrument_ids = _instrument_ids(registry, (condition_id,))
     if not instrument_ids:
-        _store_condition_phase(
+        _transition_condition_phase(
             state,
             condition_id,
             ConditionSubscriptionPhase.PENDING_METADATA,
@@ -362,10 +469,11 @@ def _subscribe_market_condition(
         condition_id,
         now.astimezone(UTC),
     )
-    _store_condition_phase(
+    _transition_condition_phase(
         state,
         condition_id,
         _phase_from_derived_state(strategy, condition_id),
+        reconcile=True,
     )
 
 
@@ -488,9 +596,22 @@ def unsubscribe_all_market_instruments(
 ) -> None:
     for instrument_id in tuple(strategy._subscription_state.subscribed_instrument_ids):
         _ = unsubscribe_market_instrument(strategy, instrument_id)
-    strategy._subscription_state.pending_instrument_ids.clear()
-    strategy._subscription_state.subscribe_intent_started_at_by_condition.clear()
-    strategy._subscription_state.condition_phases.clear()
+    state = strategy._subscription_state
+    # Retire every condition's book-generation lifecycle state (both open
+    # generations and READY first-book markers) so a delayed book callback
+    # cannot revive a torn-down lifecycle and no residue outlives teardown.
+    for condition_id in tuple(
+        {
+            *state.awaiting_book_sides_by_condition,
+            *state.book_generation_started_at_by_condition,
+            *state.first_bilateral_book_at_by_condition,
+            *state.first_bilateral_book_latency_ms_by_condition,
+        }
+    ):
+        retire_market_book_generation(strategy, condition_id, clear_history=True)
+    state.pending_instrument_ids.clear()
+    state.subscribe_intent_started_at_by_condition.clear()
+    state.condition_phases.clear()
 
 
 def unsubscribe_market_conditions(
@@ -574,7 +695,10 @@ def clear_condition_lifecycle_state(
 
     Clears the condition-level subscription phase and every orthogonal
     readiness marker (_untradable_quote_sides, _stale_orderbook_recovery,
-    runtime readiness reason/miss) so no tracked state outlives the condition.
+    runtime readiness reason/miss) so no lifecycle state outlives the condition.
+    last_book_* history is kept for observability by default (clear_history
+    mirrors clear_condition_subscription_state); pass clear_history=True on the
+    exit/retire path when the observability history should go too.
     """
     clear_condition_subscription_state(
         strategy,
@@ -610,7 +734,7 @@ def begin_market_book_generation(
     strategy._subscription_state.first_bilateral_book_latency_ms_by_condition.pop(
         condition_id, None
     )
-    _store_condition_phase(
+    _transition_condition_phase(
         strategy._subscription_state,
         condition_id,
         ConditionSubscriptionPhase.AWAITING_FIRST_BOOK,
@@ -674,6 +798,10 @@ def finish_market_book_generation(
     received_at: datetime,
     started_at: datetime | None,
 ) -> None:
+    if condition_id not in state.awaiting_book_sides_by_condition:
+        # Late/delayed callback after cleanup (or a duplicate): never revive a
+        # retired lifecycle. Record the observation for observability only.
+        return
     receipts = state.last_book_received_at_by_condition.get(condition_id, {})
     ready_at = max(receipts.values(), default=received_at)
     state.awaiting_book_sides_by_condition.pop(condition_id)
@@ -682,15 +810,20 @@ def finish_market_book_generation(
     if started_at is not None:
         latency_ms = max(0, int((ready_at - started_at).total_seconds() * 1000))
         state.first_bilateral_book_latency_ms_by_condition[condition_id] = latency_ms
-    _store_condition_phase(state, condition_id, ConditionSubscriptionPhase.READY)
+    _transition_condition_phase(state, condition_id, ConditionSubscriptionPhase.READY)
 
 
 def market_book_generation_ready(
-    strategy: _SubscriptionStateOwner,
+    strategy: _ConditionSubscriptionStateOwner,
     condition_id: str,
 ) -> bool:
-    return not strategy._subscription_state.awaiting_book_sides_by_condition.get(
-        condition_id
+    """True only for a condition that has reached READY.
+
+    The phase is the source of truth: a never-subscribed or already-cleaned
+    condition must not be treated as book-generation ready.
+    """
+    return (
+        condition_phase(strategy, condition_id) is ConditionSubscriptionPhase.READY
     )
 
 

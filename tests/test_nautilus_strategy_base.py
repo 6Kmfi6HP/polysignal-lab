@@ -26,6 +26,8 @@ from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomData
 from polysignal_lab.nautilus_runtime.custom_data_types import PolySignalPriceToBeatData
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     ConditionSubscriptionPhase,
+    begin_market_book_generation,
+    observe_market_book_side,
 )
 
 from polysignal_lab.nautilus_runtime.strategy_state import decode_state, state_key
@@ -171,6 +173,37 @@ def _native_projections(
     return {
         "registry": registry or _test_market_catalog(),
     }
+
+
+def _mark_condition_ready(strategy: object, condition_id: str) -> None:
+    """Drive a condition into READY (feed subscription converged).
+
+    Unit tests exercise evaluation logic directly and skip the subscription
+    path; evaluate_condition only proceeds for a READY condition, so establish
+    the feed-readiness phase first.
+    """
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 7, 31, 12, 0, tzinfo=UTC)
+    begin_market_book_generation(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_id,
+        now=now,
+    )
+    observe_market_book_side(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_id,
+        Side.UP,
+        received_at=now,
+        book_at=now,
+    )
+    observe_market_book_side(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_id,
+        Side.DOWN,
+        received_at=now,
+        book_at=now,
+    )
 
 
 def _minimal_native_strategy(
@@ -515,6 +548,7 @@ def test_runtime_strategy_fok_depth_counts_asks_through_max_entry() -> None:
 
     strategy._decision_pipeline.submitter = SpecCapturingSubmitter()
 
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
     assert readiness == [("condition-btc-5m", True)]
@@ -568,6 +602,7 @@ def test_native_strategy_gate_rejection_does_not_drive_data_plane_readiness() ->
     )
     _policy = _attach_decision_policy(strategy, policy)
 
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
     core.decisions = []
     strategy.evaluate_condition("condition-btc-5m")
@@ -625,6 +660,7 @@ def test_native_strategy_records_rejection_when_order_mapping_fails() -> None:
     )
     _policy = _attach_decision_policy(strategy)
 
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
     assert strategy.submitted == []
@@ -673,6 +709,7 @@ def test_native_strategy_submits_when_market_view_has_no_active_duplicate() -> N
             )
 
     strategy._decision_pipeline.submitter = RecordingSubmitter()
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
@@ -941,6 +978,7 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
     assert progress == ["dropped_frame"]
     assert strategy.submitted == []
 
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
     assert len(strategy.submitted) == 1
@@ -1368,6 +1406,7 @@ def test_native_strategy_reports_progress_on_internal_evaluation_heartbeat() -> 
         progress_callback=progress_events.append,
     )
 
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy._on_evaluation_heartbeat(object())
 
     assert progress_events == ["evaluation_heartbeat"]
@@ -1664,6 +1703,7 @@ def test_native_strategy_readiness_gate_skips_missing_required_market_view_input
         Side.UP: 60_001.0
     }
 
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
     assert calls == []
@@ -2048,6 +2088,7 @@ def test_native_strategy_readiness_gate_skips_real_market_view_with_empty_quote_
         apply=lambda decisions, current: pipeline_calls.append((decisions, current))
     )
 
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
     assert core_calls == []
@@ -2088,6 +2129,7 @@ def test_native_strategy_fresh_empty_depth_clears_previous_readiness_miss() -> N
         registry=_registered_catalog_for_view(view),
     )
 
+    _mark_condition_ready(strategy, view.condition_id)
     strategy.evaluate_condition(view.condition_id)
     assembler.view = view
     strategy.evaluate_condition(view.condition_id)
@@ -2122,6 +2164,7 @@ def test_native_strategy_stale_empty_depth_remains_missing_data() -> None:
         registry=_registered_catalog_for_view(stale),
     )
 
+    _mark_condition_ready(strategy, empty.condition_id)
     strategy.evaluate_condition(empty.condition_id)
     assembler.view = stale
     strategy.evaluate_condition(stale.condition_id)
@@ -2160,6 +2203,7 @@ def test_native_strategy_depth_recovery_resumes_evaluation() -> None:
     )
     strategy.core.evaluate = lambda current: core_calls.append(current) or []  # type: ignore[method-assign]
 
+    _mark_condition_ready(strategy, empty.condition_id)
     strategy.evaluate_condition(empty.condition_id)
     assembler.view = tradable
     strategy.evaluate_condition(empty.condition_id)
@@ -2267,6 +2311,7 @@ def test_native_strategy_overlapping_active_condition_does_not_overwrite_untrada
         empty.condition_id,
         down_empty.condition_id,
     ):
+        _mark_condition_ready(strategy, condition_id)
         strategy.evaluate_condition(condition_id)
 
     assert store.rows == [
@@ -4511,6 +4556,7 @@ def test_native_strategy_routes_ptb_custom_data_to_matching_active_condition_onl
         strategy_name="ptb_diff",
         registry=_test_market_catalog(),
     )
+    _mark_condition_ready(strategy, "condition-active")
 
     _ = cast(_DataHandler, cast(object, strategy)).on_data(
         PolySignalPriceToBeatData(
@@ -4790,6 +4836,7 @@ def test_native_strategy_on_order_accepted_preserves_ephemeral() -> None:
     )
     _policy = _attach_decision_policy(strategy)
 
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
     assert len(strategy.submitted) == 1
@@ -5032,6 +5079,7 @@ def test_native_strategy_surfaces_approved_signal_to_observability() -> None:
     )
     _policy = _attach_decision_policy(strategy)
 
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
     assert len(strategy.submitted) == 1
@@ -5085,6 +5133,7 @@ def test_native_strategy_does_not_swallow_durable_signal_persistence_failure() -
     )
     _policy = _attach_decision_policy(strategy)
 
+    _mark_condition_ready(strategy, "condition-btc-5m")
     with pytest.raises(sqlite3.OperationalError, match="database is locked"):
         strategy.evaluate_condition("condition-btc-5m")
 
@@ -5142,6 +5191,7 @@ def test_native_strategy_rejection_persistence_failure_does_not_block_evaluate()
     )
     _policy = _attach_decision_policy(strategy, RejectingPolicy())
 
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
     assert "telemetry_side_effect_failed" in phases

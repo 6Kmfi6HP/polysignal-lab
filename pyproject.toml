@@ -32,6 +32,7 @@ dev = [
   "basedpyright>=1.39.8",
   "ruff>=0.15.18",
   "ast_grep_cli>=0.44.0",
+  "hypothesis>=6.0",
 ]
 nautilus = [
   "nautilus_trader[polymarket]==1.231.0a20260730",
@@ -86,4 +87,5 @@ dev = [
     "pre-commit>=4.6.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.15.18",
+    "hypothesis>=6.0",
 ]

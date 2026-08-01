@@ -29,6 +29,40 @@ from polysignal_lab.storage.state_store import StateStore
 from polysignal_lab.app.services.persistence_service import PersistenceService
 
 
+def _mark_condition_ready(strategy: object, condition_id: str) -> None:
+    """Drive a condition into READY (feed subscription converged).
+
+    evaluate_condition only proceeds for a READY condition; these unit tests
+    exercise the exit path directly and skip the subscription flow.
+    """
+    from polysignal_lab.domain.enums import Side
+    from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+        begin_market_book_generation,
+        observe_market_book_side,
+    )
+
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    begin_market_book_generation(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_id,
+        now=now,
+    )
+    observe_market_book_side(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_id,
+        Side.UP,
+        received_at=now,
+        book_at=now,
+    )
+    observe_market_book_side(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_id,
+        Side.DOWN,
+        received_at=now,
+        book_at=now,
+    )
+
+
 class _Instrument:
     def __init__(self, instrument_id: pyo3.InstrumentId) -> None:
         self.id: pyo3.InstrumentId = instrument_id
@@ -320,6 +354,7 @@ def test_native_exit_runs_when_opposite_book_exceeds_trade_freshness() -> None:
     strategy._order_factory_override = OrderFactory()
     strategy.submitted = []
     _policy = _attach_decision_policy(strategy)
+    _mark_condition_ready(strategy, "condition-1")
 
     strategy.evaluate_condition("condition-1", created_at=now)
 
@@ -1020,6 +1055,7 @@ def test_native_exit_uses_per_position_take_profit_threshold() -> None:
     strategy._order_factory_override = OrderFactory()
     strategy.submitted = []
     _policy = _attach_decision_policy(strategy)
+    _mark_condition_ready(strategy, "condition-1")
     strategy.evaluate_condition("condition-1", created_at=now)
 
     assert len(strategy.submitted) == 1
@@ -1173,6 +1209,7 @@ def test_native_exit_flip_stop_uses_stamped_stop_price() -> None:
     strategy._order_factory_override = OrderFactory()
     strategy.submitted = []
     _policy = _attach_decision_policy(strategy)
+    _mark_condition_ready(strategy, "condition-1")
     strategy.evaluate_condition("condition-1", created_at=now)
 
     assert len(strategy.submitted) == 1
