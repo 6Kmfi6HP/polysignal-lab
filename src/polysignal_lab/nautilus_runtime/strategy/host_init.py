@@ -244,12 +244,18 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
     strategy._untradable_quote_sides_by_condition = {}
 
 
-def _bind_pipeline(strategy: Any, *, base_currency: str) -> None:
+def _bind_pipeline(
+    strategy: Any,
+    *,
+    account_id: str,
+    base_currency: str,
+) -> None:
     # Resolve the Cache lazily: at bind time the strategy has not registered with
     # its Trader yet, so the ``cache`` property is unavailable (returns None).
     # A zero-arg resolver defers the lookup until an order is actually submitted.
     balance_reader = NautilusCashBalanceReader(
         cache=lambda: getattr(strategy, "cache", None),
+        account_id=account_id,
         base_currency=base_currency,
     )
     pipeline = DecisionPipeline(
@@ -276,6 +282,12 @@ def _bind_pipeline(strategy: Any, *, base_currency: str) -> None:
     strategy.rejected_decisions = pipeline.rejected_decisions
 
 
+def _cash_account_id(host: HostConstruction) -> str:
+    if host.execution_mode == "sandbox":
+        return "POLYMARKET-SANDBOX-001"
+    return "POLYMARKET-001"
+
+
 def _cash_base_currency(host: HostConstruction) -> str:
     if host.execution_mode == "backtest":
         return "USDC"
@@ -287,7 +299,11 @@ def _cash_base_currency(host: HostConstruction) -> str:
 def bind_host_runtime(strategy: Any, host: HostConstruction) -> None:
     """Assign DI fields + pipeline collaborators after super().__init__."""
     _bind_di_fields(strategy, host)
-    _bind_pipeline(strategy, base_currency=_cash_base_currency(host))
+    _bind_pipeline(
+        strategy,
+        account_id=_cash_account_id(host),
+        base_currency=_cash_base_currency(host),
+    )
 
 
 def resolve_instrument_from_cache(

@@ -210,6 +210,7 @@ def _cache_with_sufficient_balance(
     *,
     free_usdc: float = 100_000.0,
     base_currency: str = "pUSD",
+    account_id: str = "POLYMARKET-SANDBOX-001",
 ) -> Any:
     """A Cache stand-in exposing an account with a healthy free cash balance.
 
@@ -234,15 +235,21 @@ def _cache_with_sufficient_balance(
     account = SimpleNamespace(balances=lambda: {cur: SimpleNamespace(free=free_usdc)})
 
     class _Cache:
-        def account(self, account_id: object) -> None:
-            if not isinstance(account_id, AccountId):
+        def __init__(self) -> None:
+            self.account_ids: list[object] = []
+
+        def account(self, requested_account_id: object) -> object | None:
+            if not isinstance(requested_account_id, AccountId):
                 raise TypeError("account_id must be AccountId")
+            self.account_ids.append(requested_account_id)
+            if str(requested_account_id) == account_id:
+                return account
             return None
 
         def account_for_venue(self, venue: object) -> object:
             if not isinstance(venue, Venue):
                 raise TypeError("venue must be Venue")
-            return account
+            raise AssertionError("cash preflight must use the configured AccountId")
 
         def instrument(self, instrument_id: object) -> object:
             return _StubInstrument(str(instrument_id))
@@ -1492,6 +1499,7 @@ def test_native_strategy_backtest_wires_usdc_cash_preflight() -> None:
     strategy._cache_override = _cache_with_sufficient_balance(
         free_usdc=10.0,
         base_currency="USDC",
+        account_id="POLYMARKET-001",
     )
     view = _real_market_view()
     approved = RuntimeFakePolicy().evaluate(_decision(), view)
@@ -1525,6 +1533,7 @@ def test_native_strategy_live_wires_pusd_cash_preflight() -> None:
     strategy._cache_override = _cache_with_sufficient_balance(
         free_usdc=10.0,
         base_currency="pUSD",
+        account_id="POLYMARKET-001",
     )
     view = _real_market_view()
     approved = RuntimeFakePolicy().evaluate(_decision(), view)
