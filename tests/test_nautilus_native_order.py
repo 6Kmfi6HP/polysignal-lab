@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import cast
 
-from polysignal_lab.alpha.types import AlphaDecision, OrderIntentSpec
+from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
+    BatchArbitrationResult,
+    RejectedDecision,
     candidate_from_decision,
 )
 from polysignal_lab.nautilus_runtime.native_order import (
     OrderSubmittingStrategy,
     submit_approved_decision,
+)
+from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
+    DecisionPipeline,
+    NautilusOrderSubmitter,
+    SubmittedDecision,
+    default_cash_preflight,
 )
 from factories import sample_market_view
 
@@ -478,3 +486,100 @@ def test_native_price_quantization_cannot_exceed_entry_ceiling() -> None:
         )
 
     assert strategy.submitted == []
+
+
+class _FixedBalanceReader:
+    def __init__(self, free: float | None) -> None:
+        self.free = free
+
+    def read_free_balance(self) -> float | None:
+        return self.free
+
+
+@dataclass
+class _ApprovalPolicy:
+    approved: ApprovedDecision
+
+    def batch_arbitrate(
+        self, decisions: list[tuple[AlphaDecision, MarketView]]
+    ) -> BatchArbitrationResult:
+        _ = decisions
+        return BatchArbitrationResult(approvals=(self.approved,), rejections=())
+
+
+@dataclass
+class _PipelineTelemetry:
+    accepted_calls: list[tuple[ApprovedDecision, object]] = field(default_factory=list)
+    rejected_calls: list[tuple[RejectedDecision, AlphaDecision]] = field(
+        default_factory=list
+    )
+
+    def accepted(self, approved: ApprovedDecision, order: object) -> None:
+        self.accepted_calls.append((approved, order))
+
+    def rejected(self, rejected: RejectedDecision, decision: AlphaDecision) -> None:
+        self.rejected_calls.append((rejected, decision))
+
+    def progress(self, event: str) -> None:
+        _ = event
+
+
+def _pipeline_with_cash_preflight(
+    *,
+    free_balance: float | None,
+    approved: ApprovedDecision,
+) -> tuple[DecisionPipeline, FakeStrategy, _PipelineTelemetry]:
+    strategy = FakeStrategy()
+    submitter = NautilusOrderSubmitter(
+        strategy=cast(OrderSubmittingStrategy[object], strategy),  # type: ignore[assignment]
+        fixed_stake_usdc=10.0,
+        instrument_id_resolver=lambda _token_id: FakeInstrument(),
+        now=lambda: datetime.now(UTC),
+        use_native_reduce_only=False,
+        cash_preflight=default_cash_preflight(
+            _FixedBalanceReader(free_balance),
+            "pUSD",
+            fixed_stake_usdc=10.0,
+        ),
+    )
+    telemetry = _PipelineTelemetry()
+    pipeline = DecisionPipeline(
+        policy=_ApprovalPolicy(approved),
+        submitter=submitter,  # type: ignore[arg-type]
+        telemetry=telemetry,
+    )
+    return pipeline, strategy, telemetry
+
+
+def test_pipeline_surfaces_cash_preflight_rejection_without_submitting() -> None:
+    approved = _approved(OrderIntent.PASSIVE_GTD)
+    view = sample_market_view(up_ask=0.5, down_ask=0.4)
+    pipeline, strategy, telemetry = _pipeline_with_cash_preflight(
+        free_balance=1.0,
+        approved=approved,
+    )
+
+    results = pipeline.apply((approved.decision,), view)
+
+    assert isinstance(results[0], RejectedDecision)
+    assert results[0].reason_code == "INSUFFICIENT_CASH_BALANCE"
+    assert telemetry.rejected_calls[0][1] is approved.decision
+    assert strategy.submitted == []
+    assert strategy._order_factory_override.calls == []
+
+
+def test_pipeline_submits_when_cash_preflight_allows() -> None:
+    approved = _approved(OrderIntent.PASSIVE_GTD)
+    view = sample_market_view(up_ask=0.5, down_ask=0.4)
+    pipeline, strategy, telemetry = _pipeline_with_cash_preflight(
+        free_balance=10.0,
+        approved=approved,
+    )
+
+    results = pipeline.apply((approved.decision,), view)
+
+    assert isinstance(results[0], SubmittedDecision)
+    assert len(strategy.submitted) == 1
+    assert len(strategy._order_factory_override.calls) == 1
+    assert len(telemetry.accepted_calls) == 1
+    assert telemetry.rejected_calls == []

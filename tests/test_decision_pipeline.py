@@ -4,18 +4,22 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import cast
 
-from polysignal_lab.alpha.types import AlphaDecision, MarketView
-from polysignal_lab.domain.enums import Side
+from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
+from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.signal import SignalCandidate
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
     BatchArbitrationResult,
     RejectedDecision,
+    candidate_from_decision,
 )
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
     DecisionPipeline,
+    NautilusCashBalanceReader,
     SubmittedDecision,
+    default_cash_preflight,
 )
+from factories import sample_market_view
 
 
 def _decision(*, market_id: str = "market", side: Side = Side.UP) -> AlphaDecision:
@@ -216,3 +220,174 @@ def test_apply_bounds_rejected_history() -> None:
 
     assert len(pipeline.rejected_decisions) == 1000
     assert pipeline.rejected_decisions[0].decision is decisions[1]
+
+
+class _FixedBalanceReader:
+    """BalanceReader fake whose free balance is fixed or None (unreadable)."""
+
+    def __init__(self, free: float | None) -> None:
+        self.free = free
+
+    def read_free_balance(self) -> float | None:
+        return self.free
+
+
+def test_cash_balance_reader_uses_typed_cache_keys_and_native_balance() -> None:
+    from nautilus_trader.core.nautilus_pyo3 import (
+        AccountBalance,
+        AccountId,
+        Currency,
+        Money,
+        Venue,
+    )
+
+    currency = Currency.from_str("USDC")
+    balance = AccountBalance(
+        Money(15.0, currency),
+        Money(2.5, currency),
+        Money(12.5, currency),
+    )
+    native_account = SimpleNamespace(balances=lambda: {currency: balance})
+
+    class _TypedCache:
+        def __init__(self) -> None:
+            self.account_ids: list[object] = []
+            self.venues: list[object] = []
+
+        def account(self, account_id: object) -> object | None:
+            if not isinstance(account_id, AccountId):
+                raise TypeError("account_id must be AccountId")
+            self.account_ids.append(account_id)
+            if str(account_id) == "POLYMARKET-001":
+                return native_account
+            return None
+
+        def account_for_venue(self, venue: object) -> object:
+            if not isinstance(venue, Venue):
+                raise TypeError("venue must be Venue")
+            self.venues.append(venue)
+            return native_account
+
+    cache = _TypedCache()
+    reader = NautilusCashBalanceReader(cache=cache, base_currency="USDC")
+
+    assert reader.read_free_balance() == 12.5
+    assert [str(account_id) for account_id in cache.account_ids] == ["POLYMARKET-001"]
+    assert cache.venues == []
+
+
+def _decision_with_intent(
+    *,
+    reduce_only: bool = False,
+    quantity: float | None = None,
+    notional: float | None = None,
+) -> AlphaDecision:
+    return AlphaDecision(
+        strategy="test",
+        asset="BTC",
+        timeframe="5m",
+        market_id="market",
+        market_slug="market",
+        condition_id="condition-market",
+        token_id="token-up",
+        side=Side.UP,
+        confidence=0.9,
+        entry_reference_price=0.5,
+        max_entry_price=0.6,
+        seconds_to_close=120,
+        data_freshness_ms=10,
+        reason_codes=("test",),
+        metrics={},
+        order_intent=OrderIntentSpec(
+            intent=OrderIntent.PASSIVE_GTD,
+            expiry_seconds=45,
+            pair_id="pair-1",
+            reduce_only=reduce_only,
+            quantity=quantity,
+            notional=notional,
+        ),
+        hedge_leg=False,
+    )
+
+
+def test_cash_preflight_rejects_insufficient_balance() -> None:
+    decision = _decision_with_intent()
+    view = sample_market_view(up_ask=0.5, down_ask=0.4)
+    approved = ApprovedDecision(
+        decision=decision, publish=candidate_from_decision(decision, view)
+    )
+    preflight = default_cash_preflight(
+        _FixedBalanceReader(free=1.0), "pUSD", fixed_stake_usdc=10.0
+    )
+
+    rejected = preflight(approved, view)
+
+    assert rejected is not None
+    assert isinstance(rejected, RejectedDecision)
+    assert rejected.reason_code == "INSUFFICIENT_CASH_BALANCE"
+    assert rejected.detail["free_balance_usdc"] == 1.0
+    # PASSIVE_GTD resolves at max_entry_price; fixed stake keeps notional at 10.0.
+    assert rejected.detail["notional_usdc"] == 10.0
+
+
+def test_cash_preflight_allows_sufficient_balance() -> None:
+    decision = _decision_with_intent()
+    view = sample_market_view(up_ask=0.5, down_ask=0.4)
+    approved = ApprovedDecision(
+        decision=decision, publish=candidate_from_decision(decision, view)
+    )
+    preflight = default_cash_preflight(
+        _FixedBalanceReader(free=10.0), "pUSD", fixed_stake_usdc=10.0
+    )
+
+    assert preflight(approved, view) is None
+
+
+def test_cash_preflight_exempts_reduce_only_even_with_zero_balance() -> None:
+    decision = _decision_with_intent(reduce_only=True, quantity=3.0)
+    view = sample_market_view(up_ask=0.5, down_ask=0.4)
+    approved = ApprovedDecision(
+        decision=decision, publish=candidate_from_decision(decision, view)
+    )
+    # free balance None (unreadable) would normally fail closed — reduce_only is exempt.
+    preflight = default_cash_preflight(
+        _FixedBalanceReader(free=None), "pUSD", fixed_stake_usdc=10.0
+    )
+
+    assert preflight(approved, view) is None
+
+
+def test_cash_preflight_fails_closed_when_balance_unavailable() -> None:
+    decision = _decision_with_intent()
+    view = sample_market_view(up_ask=0.5, down_ask=0.4)
+    approved = ApprovedDecision(
+        decision=decision, publish=candidate_from_decision(decision, view)
+    )
+    preflight = default_cash_preflight(
+        _FixedBalanceReader(free=None), "pUSD", fixed_stake_usdc=10.0
+    )
+
+    rejected = preflight(approved, view)
+
+    assert rejected is not None
+    assert isinstance(rejected, RejectedDecision)
+    assert rejected.reason_code == "INSUFFICIENT_CASH_BALANCE"
+    assert rejected.detail["reason"] == "free balance unavailable"
+
+
+def test_cash_preflight_uses_order_spec_price_for_explicit_quantity() -> None:
+    decision = _decision_with_intent(quantity=4.0)
+    view = sample_market_view(up_ask=0.5, down_ask=0.4)
+    approved = ApprovedDecision(
+        decision=decision, publish=candidate_from_decision(decision, view)
+    )
+    preflight = default_cash_preflight(
+        _FixedBalanceReader(free=2.2), "pUSD", fixed_stake_usdc=10.0
+    )
+
+    rejected = preflight(approved, view)
+
+    assert rejected is not None
+    assert isinstance(rejected, RejectedDecision)
+    # PASSIVE_GTD uses max_entry_price: 4.0 * 0.6 = 2.4.
+    assert rejected.detail["notional_usdc"] == 2.4
