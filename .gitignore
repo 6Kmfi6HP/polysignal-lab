@@ -34,3 +34,4 @@ backups/
 .pyscn/
 # Local investigation artefacts (container log dumps, snapshots)
 .scratch/
+graphify-out/
