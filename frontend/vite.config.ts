@@ -5,6 +5,11 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 
+// Compose publishes dashboard-web on 8091 (nginx → dashboard-api).
+// Override with VITE_DASHBOARD_PROXY_TARGET when running the API locally.
+const dashboardProxy =
+  process.env.VITE_DASHBOARD_PROXY_TARGET ?? 'http://localhost:8091'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -22,8 +27,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:8080',
-      '/health': 'http://localhost:8080',
+      '/api': dashboardProxy,
+      '/health': dashboardProxy,
     },
   },
   test: {

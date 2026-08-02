@@ -30,8 +30,9 @@ npm ci
 npm run dev
 ```
 
-The Vite dev server proxies `/api/*` and `/health` to a local dashboard API on
-`http://localhost:8080`.
+The Vite dev server proxies `/api/*` and `/health` to the compose
+`dashboard-web` port (`http://localhost:8091` by default). Override with
+`VITE_DASHBOARD_PROXY_TARGET` when pointing at a locally-run dashboard API.
 
 ## Verification
 
