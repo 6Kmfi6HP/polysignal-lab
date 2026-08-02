@@ -55,6 +55,11 @@ def note_runtime_readiness(
         _ = strategy._runtime_readiness_miss_condition_ids.discard(condition_id)
         _ = strategy._runtime_readiness_reason_by_condition.pop(condition_id, None)
         _ = strategy._stale_orderbook_recovery_by_condition.pop(condition_id, None)
+        # A recovered book ends the total-stall window; without this the clock
+        # would leak into a later stall and trigger a premature abandon.
+        _ = strategy._subscription_state.book_stalled_started_at_by_condition.pop(
+            condition_id, None
+        )
     else:
         strategy._runtime_readiness_miss_condition_ids.add(condition_id)
     _record_strategy_readiness(
@@ -285,6 +290,7 @@ def subscription_timing_detail(
 ) -> dict[str, object]:
     intent_at = state.subscribe_intent_started_at_by_condition.get(condition_id)
     generation_at = state.book_generation_started_at_by_condition.get(condition_id)
+    total_stalled_at = state.book_stalled_started_at_by_condition.get(condition_id)
     first_book_at = state.first_bilateral_book_at_by_condition.get(condition_id)
 
     def age_ms(started_at: datetime | None) -> int | None:
@@ -301,6 +307,10 @@ def subscription_timing_detail(
             None if generation_at is None else generation_at.isoformat()
         ),
         "generation_age_ms": age_ms(generation_at),
+        "total_stall_started_at": (
+            None if total_stalled_at is None else total_stalled_at.isoformat()
+        ),
+        "total_stall_age_ms": age_ms(total_stalled_at),
         "first_bilateral_book_at": (
             None if first_book_at is None else first_book_at.isoformat()
         ),
