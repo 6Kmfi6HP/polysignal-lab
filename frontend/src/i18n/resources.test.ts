@@ -18,4 +18,3 @@ describe('translation resources', () => {
     expect(zhCN.status.down).toBe('看跌')
   })
 })
-

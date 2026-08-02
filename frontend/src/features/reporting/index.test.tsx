@@ -5,10 +5,14 @@ import {
   makeReportTradeResult,
 } from '@/test-utils/fixtures'
 import { renderWithQueryClient } from '@/test-utils/render-with-query-client'
+import { waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as client from '@/lib/api/client'
+import type { NavigateFn } from '@/hooks/use-table-url-state'
 import { ReportingPage } from './index'
+
+type NavigateOpts = Parameters<NavigateFn>[0]
 
 vi.mock('recharts', () => ({
   CartesianGrid: () => null,
@@ -28,8 +32,34 @@ vi.mock('recharts', () => ({
   ),
 }))
 
-function renderReportingPage() {
-  return renderWithQueryClient(<ReportingPage />)
+function renderReportingPage(
+  search: Record<string, unknown> = {},
+  navigate = vi.fn()
+) {
+  return renderWithQueryClient(
+    <ReportingPage
+      search={search}
+      navigate={navigate as unknown as NavigateFn}
+    />
+  )
+}
+
+function lastNavigateOpts(navigate: ReturnType<typeof vi.fn>) {
+  const calls = navigate.mock.calls as Array<[NavigateOpts]>
+  return calls[calls.length - 1]?.[0]
+}
+
+function applyLastSearchFn(
+  navigate: ReturnType<typeof vi.fn>,
+  prev: Record<string, unknown>
+) {
+  const opts = lastNavigateOpts(navigate)
+  if (!opts) return undefined
+  const s = opts.search
+  if (typeof s === 'function') {
+    return s(prev) as Record<string, unknown>
+  }
+  return s as Record<string, unknown>
 }
 
 describe('ReportingPage', () => {
@@ -51,20 +81,29 @@ describe('ReportingPage', () => {
       average_roi: 0.125,
       closed_trades: 567,
     })
-    vi.spyOn(client, 'getTrades').mockResolvedValue([
-      makeReportTradeResult({
-        report_result_id: 'rr-late',
-        closed_at: '2026-06-30T00:10:00+00:00',
-        pnl_usdc: 4,
-      }),
-      makeReportTradeResult({
-        report_result_id: 'rr-early',
-        closed_at: '2026-06-30T00:05:00+00:00',
-        pnl_usdc: -1,
-      }),
-    ])
-    vi.spyOn(client, 'getPositions').mockResolvedValue([makeReportPosition()])
-    vi.spyOn(client, 'getReportOrders').mockResolvedValue([makeReportOrder()])
+    vi.spyOn(client, 'getTrades').mockResolvedValue({
+      items: [
+        makeReportTradeResult({
+          report_result_id: 'rr-late',
+          closed_at: '2026-06-30T00:10:00+00:00',
+          pnl_usdc: 4,
+        }),
+        makeReportTradeResult({
+          report_result_id: 'rr-early',
+          closed_at: '2026-06-30T00:05:00+00:00',
+          pnl_usdc: -1,
+        }),
+      ],
+      total: 2,
+    })
+    vi.spyOn(client, 'getPositions').mockResolvedValue({
+      items: [makeReportPosition()],
+      total: 1,
+    })
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue({
+      items: [makeReportOrder()],
+      total: 1,
+    })
 
     const view = renderReportingPage()
 
@@ -102,25 +141,31 @@ describe('ReportingPage', () => {
     vi.mocked(client.getReportSummary).mockRejectedValue(
       new Error('summary unavailable')
     )
-    vi.spyOn(client, 'getTrades').mockResolvedValue([])
-    vi.spyOn(client, 'getPositions').mockResolvedValue([])
-    vi.spyOn(client, 'getReportOrders').mockResolvedValue([])
+    vi.spyOn(client, 'getTrades').mockResolvedValue({ items: [], total: 0 })
+    vi.spyOn(client, 'getPositions').mockResolvedValue({ items: [], total: 0 })
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue({
+      items: [],
+      total: 0,
+    })
 
     const view = renderReportingPage()
 
-    expect(
-      await view.findByText(/summary unavailable/i)
-    ).toBeInTheDocument()
+    expect(await view.findByText(/summary unavailable/i)).toBeInTheDocument()
   })
 
   it('renders positions and orders tables on their tabs', async () => {
-    vi.spyOn(client, 'getTrades').mockResolvedValue([makeReportTradeResult()])
-    vi.spyOn(client, 'getPositions').mockResolvedValue([
-      makeReportPosition({ report_position_id: 'rp-1' }),
-    ])
-    vi.spyOn(client, 'getReportOrders').mockResolvedValue([
-      makeReportOrder({ report_order_id: 'ro-1' }),
-    ])
+    vi.spyOn(client, 'getTrades').mockResolvedValue({
+      items: [makeReportTradeResult()],
+      total: 1,
+    })
+    vi.spyOn(client, 'getPositions').mockResolvedValue({
+      items: [makeReportPosition({ report_position_id: 'rp-1' })],
+      total: 1,
+    })
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue({
+      items: [makeReportOrder({ report_order_id: 'ro-1' })],
+      total: 1,
+    })
 
     const user = userEvent.setup()
     const view = renderReportingPage()
@@ -133,9 +178,12 @@ describe('ReportingPage', () => {
   })
 
   it('renders empty states for trades, positions, and orders', async () => {
-    vi.spyOn(client, 'getTrades').mockResolvedValue([])
-    vi.spyOn(client, 'getPositions').mockResolvedValue([])
-    vi.spyOn(client, 'getReportOrders').mockResolvedValue([])
+    vi.spyOn(client, 'getTrades').mockResolvedValue({ items: [], total: 0 })
+    vi.spyOn(client, 'getPositions').mockResolvedValue({ items: [], total: 0 })
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue({
+      items: [],
+      total: 0,
+    })
 
     const user = userEvent.setup()
     const view = renderReportingPage()
@@ -199,5 +247,125 @@ describe('ReportingPage', () => {
     expect(
       view.getByRole('tabpanel').querySelector('[data-slot="skeleton"]')
     ).toBeInTheDocument()
+  })
+
+  it('uses offset/limit for the first table query and keeps the chart query independent', async () => {
+    const getTrades = vi.spyOn(client, 'getTrades').mockResolvedValue({
+      items: Array.from({ length: 25 }, (_, index) =>
+        makeReportTradeResult({ report_result_id: `rr-${index}` })
+      ),
+      total: 100,
+    })
+    vi.spyOn(client, 'getPositions').mockResolvedValue({
+      items: [makeReportPosition()],
+      total: 1,
+    })
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue({
+      items: [makeReportOrder()],
+      total: 1,
+    })
+
+    renderReportingPage({ tradesPage: 2, tradesPageSize: 25 })
+
+    await waitFor(() => {
+      expect(getTrades.mock.calls).toContainEqual([{ limit: 25, offset: 25 }])
+      expect(getTrades.mock.calls).toContainEqual([{ limit: 500, offset: 0 }])
+    })
+  })
+
+  it('writes trades pagination to the URL when next is clicked', async () => {
+    vi.spyOn(client, 'getTrades').mockResolvedValue({
+      items: Array.from({ length: 25 }, (_, index) =>
+        makeReportTradeResult({ report_result_id: `rr-next-${index}` })
+      ),
+      total: 60,
+    })
+    vi.spyOn(client, 'getPositions').mockResolvedValue({
+      items: [makeReportPosition()],
+      total: 1,
+    })
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue({
+      items: [makeReportOrder()],
+      total: 1,
+    })
+    const navigate = vi.fn()
+    const user = userEvent.setup()
+    const view = renderReportingPage({}, navigate)
+
+    await user.click(
+      await within(view.getByRole('tabpanel')).findByRole('button', {
+        name: 'Next page',
+      })
+    )
+
+    expect(
+      applyLastSearchFn(navigate, { tradesPage: 1, tradesPageSize: 25 })
+    ).toMatchObject({
+      tradesPage: 2,
+      tradesPageSize: undefined,
+    })
+  })
+
+  it('resets the page when the page size changes', async () => {
+    vi.spyOn(client, 'getTrades').mockResolvedValue({
+      items: Array.from({ length: 25 }, (_, index) =>
+        makeReportTradeResult({ report_result_id: `rr-size-${index}` })
+      ),
+      total: 101,
+    })
+    vi.spyOn(client, 'getPositions').mockResolvedValue({
+      items: [makeReportPosition()],
+      total: 1,
+    })
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue({
+      items: [makeReportOrder()],
+      total: 1,
+    })
+    const navigate = vi.fn()
+    const user = userEvent.setup()
+    const view = renderReportingPage(
+      { tradesPage: 3, tradesPageSize: 25 },
+      navigate
+    )
+
+    await user.click(
+      await within(view.getByRole('tabpanel')).findByRole('button', {
+        name: '50',
+      })
+    )
+
+    expect(
+      applyLastSearchFn(navigate, { tradesPage: 3, tradesPageSize: 25 })
+    ).toMatchObject({
+      tradesPage: undefined,
+      tradesPageSize: 50,
+    })
+  })
+
+  it('resets an out-of-range page when the total shrinks', async () => {
+    vi.spyOn(client, 'getTrades').mockResolvedValue({
+      items: [makeReportTradeResult()],
+      total: 1,
+    })
+    vi.spyOn(client, 'getPositions').mockResolvedValue({
+      items: [makeReportPosition()],
+      total: 1,
+    })
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue({
+      items: [makeReportOrder()],
+      total: 1,
+    })
+    const navigate = vi.fn()
+    renderReportingPage({ tradesPage: 3, tradesPageSize: 25 }, navigate)
+
+    await waitFor(() => {
+      expect(navigate).toHaveBeenCalled()
+    })
+
+    expect(
+      applyLastSearchFn(navigate, { tradesPage: 3, tradesPageSize: 25 })
+    ).toMatchObject({
+      tradesPage: 1,
+    })
   })
 })

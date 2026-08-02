@@ -223,3 +223,8 @@ export interface HealthResponse {
   counts: Record<string, number>
   recent_system_events: Record<string, unknown>[]
 }
+
+export type PaginatedRows<T> = {
+  items: T[]
+  total: number
+}

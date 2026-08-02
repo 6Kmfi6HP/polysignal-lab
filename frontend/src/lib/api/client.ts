@@ -2,6 +2,7 @@ import type {
   HealthResponse,
   LeaderboardResponse,
   OverviewResponse,
+  PaginatedRows,
   ReportOrder,
   ReportPosition,
   ReportSummary,
@@ -59,16 +60,37 @@ export function getRejectedSignals(limit = 100) {
   return request<RejectedSignal[]>(`${API_BASE}/rejected-signals`, { limit })
 }
 
-export function getReportOrders(status?: string, limit = 100) {
-  return request<ReportOrder[]>(`${API_BASE}/report-orders`, { status, limit })
+export function getReportOrders(
+  options: {
+    status?: string
+    limit?: number
+    offset?: number
+  } = {}
+) {
+  return request<PaginatedRows<ReportOrder>>(
+    `${API_BASE}/report-orders`,
+    options
+  )
 }
 
-export function getPositions(status?: string, limit = 100) {
-  return request<ReportPosition[]>(`${API_BASE}/positions`, { status, limit })
+export function getPositions(
+  options: {
+    status?: string
+    limit?: number
+    offset?: number
+  } = {}
+) {
+  return request<PaginatedRows<ReportPosition>>(
+    `${API_BASE}/positions`,
+    options
+  )
 }
 
-export function getTrades(limit = 100) {
-  return request<ReportTradeResult[]>(`${API_BASE}/trades`, { limit })
+export function getTrades(options: { limit?: number; offset?: number } = {}) {
+  return request<PaginatedRows<ReportTradeResult>>(
+    `${API_BASE}/trades`,
+    options
+  )
 }
 
 export function getReportSummary() {
