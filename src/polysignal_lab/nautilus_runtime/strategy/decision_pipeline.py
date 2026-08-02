@@ -173,6 +173,64 @@ class DecisionTelemetry(Protocol):
     def progress(self, event: str) -> None: ...
 
 
+def _cash_balance_unavailable_rejection(
+    approved: ApprovedDecision,
+    log_extra: Mapping[str, object] | None,
+    view_id: str,
+) -> RejectedDecision:
+    decision = approved.decision
+    extra = dict(log_extra or {})
+    extra.update(
+        {
+            "balance_unavailable": True,
+            "skip_reason": "free balance unavailable",
+            "signal_id": decision.signal_id(view_id),
+        }
+    )
+    logger.warning("order_skipped_cash_balance_unavailable", extra=extra)
+    return RejectedDecision(
+        reason_code="INSUFFICIENT_CASH_BALANCE",
+        detail={
+            "free_balance_usdc": None,
+            "notional_usdc": None,
+            "reason": "free balance unavailable",
+        },
+        decision=decision,
+        publish=approved.publish,
+    )
+
+
+def _insufficient_cash_rejection(
+    approved: ApprovedDecision,
+    log_extra: Mapping[str, object] | None,
+    free_balance: float,
+    notional: float,
+    view_id: str,
+) -> RejectedDecision:
+    decision = approved.decision
+    rounded_free = round(free_balance, 6)
+    rounded_notional = round(notional, 6)
+    extra = dict(log_extra or {})
+    extra.update(
+        {
+            "free_balance_usdc": rounded_free,
+            "notional_usdc": rounded_notional,
+            "signal_id": decision.signal_id(view_id),
+        }
+    )
+    logger.warning("order_skipped_insufficient_cash_balance", extra=extra)
+    return RejectedDecision(
+        reason_code="INSUFFICIENT_CASH_BALANCE",
+        detail={
+            "free_balance_usdc": rounded_free,
+            "notional_usdc": rounded_notional,
+            "reason": "free balance below order notional",
+        },
+        decision=decision,
+        publish=approved.publish,
+    )
+
+
 def default_cash_preflight(
     balance_reader: BalanceReader,
     base_currency: str,
@@ -198,25 +256,9 @@ def default_cash_preflight(
         if decision.reduce_only:
             return None
         free_balance = balance_reader.read_free_balance()
-        extra = dict(log_extra or {})
         if free_balance is None:
-            extra.update(
-                {
-                    "balance_unavailable": True,
-                    "skip_reason": "free balance unavailable",
-                    "signal_id": decision.signal_id(view.view_id),
-                }
-            )
-            logger.warning("order_skipped_cash_balance_unavailable", extra=extra)
-            return RejectedDecision(
-                reason_code="INSUFFICIENT_CASH_BALANCE",
-                detail={
-                    "free_balance_usdc": None,
-                    "notional_usdc": None,
-                    "reason": "free balance unavailable",
-                },
-                decision=decision,
-                publish=approved.publish,
+            return _cash_balance_unavailable_rejection(
+                approved, log_extra, view.view_id
             )
         book = view.book_for(decision.side)
         spec = order_spec_from_decision(
@@ -229,23 +271,8 @@ def default_cash_preflight(
         notional = spec.quantity * spec.price
         if free_balance >= notional:
             return None
-        extra.update(
-            {
-                "free_balance_usdc": round(free_balance, 6),
-                "notional_usdc": round(notional, 6),
-                "signal_id": decision.signal_id(view.view_id),
-            }
-        )
-        logger.warning("order_skipped_insufficient_cash_balance", extra=extra)
-        return RejectedDecision(
-            reason_code="INSUFFICIENT_CASH_BALANCE",
-            detail={
-                "free_balance_usdc": round(free_balance, 6),
-                "notional_usdc": round(notional, 6),
-                "reason": "free balance below order notional",
-            },
-            decision=decision,
-            publish=approved.publish,
+        return _insufficient_cash_rejection(
+            approved, log_extra, free_balance, notional, view.view_id
         )
 
     return preflight
@@ -285,6 +312,18 @@ class _CashPreflightRejection(Exception):
     def __init__(self, rejected: RejectedDecision) -> None:
         super().__init__("insufficient cash for order")
         self.rejected = rejected
+
+
+def _order_mapping_rejection(
+    approved: ApprovedDecision,
+    exc: ValueError,
+) -> RejectedDecision:
+    return RejectedDecision(
+        reason_code="ORDER_MAPPING_FAILED",
+        detail={"error": str(exc)},
+        decision=approved.decision,
+        publish=approved.publish,
+    )
 
 
 @dataclass(slots=True)
@@ -381,15 +420,7 @@ class DecisionPipeline:
         except _CashPreflightRejection as rejection:
             return self._reject(rejection.rejected, decision)
         except ValueError as exc:
-            return self._reject(
-                RejectedDecision(
-                    reason_code="ORDER_MAPPING_FAILED",
-                    detail={"error": str(exc)},
-                    decision=approved.decision,
-                    publish=approved.publish,
-                ),
-                decision,
-            )
+            return self._reject(_order_mapping_rejection(approved, exc), decision)
         active_dedupe_keys.add(dedupe_key)
         self.telemetry.accepted(approved, order)
         return SubmittedDecision(approved=approved, order=order)
