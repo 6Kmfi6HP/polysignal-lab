@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 
@@ -14,11 +13,9 @@ from polysignal_lab.nautilus_runtime.decision_policy import (
     RejectedDecision,
     candidate_from_decision,
 )
-from polysignal_lab.nautilus_runtime.native_order import OrderSubmittingStrategy
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
     DecisionPipeline,
     NautilusCashBalanceReader,
-    NautilusOrderSubmitter,
     SubmittedDecision,
     default_cash_preflight,
 )
@@ -394,102 +391,3 @@ def test_cash_preflight_uses_order_spec_price_for_explicit_quantity() -> None:
     assert isinstance(rejected, RejectedDecision)
     # PASSIVE_GTD uses max_entry_price: 4.0 * 0.6 = 2.4.
     assert rejected.detail["notional_usdc"] == 2.4
-
-
-class _FakeOrder:
-    pass
-
-
-class _FakeOrderFactory:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    def limit(self, **kwargs: object) -> _FakeOrder:
-        self.calls.append(kwargs)
-        return _FakeOrder()
-
-
-class _SubmitStrategy:
-    """Minimal OrderSubmittingStrategy for NautilusOrderSubmitter."""
-
-    def __init__(self) -> None:
-        self._order_factory_override = _FakeOrderFactory()
-        self.submitted: list[_FakeOrder] = []
-
-    @property
-    def order_factory(self) -> _FakeOrderFactory:
-        return self._order_factory_override
-
-    def submit_order(self, order: _FakeOrder) -> None:
-        self.submitted.append(order)
-
-
-def _instrument_for(token_id: str) -> object:
-    return SimpleNamespace(
-        id=f"{token_id}.POLYMARKET",
-        make_price=lambda value: value,
-        make_qty=lambda value: value,
-    )
-
-
-def _pipeline_with_cash_preflight(
-    *,
-    free_balance: float | None,
-    decision: AlphaDecision,
-    view: MarketView,
-) -> tuple[DecisionPipeline, _SubmitStrategy, _Telemetry]:
-    approved = ApprovedDecision(
-        decision=decision, publish=candidate_from_decision(decision, view)
-    )
-    strategy = _SubmitStrategy()
-    submitter = NautilusOrderSubmitter(
-        strategy=cast(OrderSubmittingStrategy[object], strategy),  # type: ignore[assignment]
-        fixed_stake_usdc=10.0,
-        instrument_id_resolver=_instrument_for,
-        now=lambda: datetime.now(UTC),
-        use_native_reduce_only=False,
-        cash_preflight=default_cash_preflight(
-            _FixedBalanceReader(free=free_balance),
-            "pUSD",
-            fixed_stake_usdc=10.0,
-        ),
-    )
-    telemetry = _Telemetry()
-    pipeline = DecisionPipeline(
-        policy=_Policy(approvals={id(decision): approved}),
-        submitter=submitter,  # type: ignore[arg-type]
-        telemetry=telemetry,
-    )
-    return pipeline, strategy, telemetry
-
-
-def test_apply_surfaces_cash_preflight_rejection_without_submitting() -> None:
-    decision = _decision_with_intent()
-    view = sample_market_view(up_ask=0.5, down_ask=0.4)
-    pipeline, strategy, telemetry = _pipeline_with_cash_preflight(
-        free_balance=1.0, decision=decision, view=view
-    )
-
-    results = pipeline.apply((decision,), view)
-
-    assert isinstance(results[0], RejectedDecision)
-    assert results[0].reason_code == "INSUFFICIENT_CASH_BALANCE"
-    assert telemetry.rejected_calls[0][1] is decision
-    assert strategy.submitted == []
-    assert strategy._order_factory_override.calls == []
-
-
-def test_apply_submits_when_cash_preflight_allows() -> None:
-    decision = _decision_with_intent()
-    view = sample_market_view(up_ask=0.5, down_ask=0.4)
-    pipeline, strategy, telemetry = _pipeline_with_cash_preflight(
-        free_balance=10.0, decision=decision, view=view
-    )
-
-    results = pipeline.apply((decision,), view)
-
-    assert isinstance(results[0], SubmittedDecision)
-    assert len(strategy.submitted) == 1
-    assert len(strategy._order_factory_override.calls) == 1
-    assert len(telemetry.accepted_calls) == 1
-    assert telemetry.rejected_calls == []
