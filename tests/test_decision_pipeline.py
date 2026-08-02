@@ -254,10 +254,12 @@ def test_cash_balance_reader_uses_typed_cache_keys_and_native_balance() -> None:
             self.account_ids: list[object] = []
             self.venues: list[object] = []
 
-        def account(self, account_id: object) -> None:
+        def account(self, account_id: object) -> object | None:
             if not isinstance(account_id, AccountId):
                 raise TypeError("account_id must be AccountId")
             self.account_ids.append(account_id)
+            if str(account_id) == "POLYMARKET-001":
+                return native_account
             return None
 
         def account_for_venue(self, venue: object) -> object:
@@ -270,10 +272,8 @@ def test_cash_balance_reader_uses_typed_cache_keys_and_native_balance() -> None:
     reader = NautilusCashBalanceReader(cache=cache, base_currency="USDC")
 
     assert reader.read_free_balance() == 12.5
-    assert [str(account_id) for account_id in cache.account_ids] == [
-        "POLYMARKET-SANDBOX-001"
-    ]
-    assert [str(venue) for venue in cache.venues] == ["POLYMARKET"]
+    assert [str(account_id) for account_id in cache.account_ids] == ["POLYMARKET-001"]
+    assert cache.venues == []
 
 
 def _decision_with_intent(
@@ -326,7 +326,7 @@ def test_cash_preflight_rejects_insufficient_balance() -> None:
     assert isinstance(rejected, RejectedDecision)
     assert rejected.reason_code == "INSUFFICIENT_CASH_BALANCE"
     assert rejected.detail["free_balance_usdc"] == 1.0
-    # fixed_stake / price = 10.0 / 0.5 = 20; notional = 20 * 0.5 = 10.0
+    # PASSIVE_GTD resolves at max_entry_price; fixed stake keeps notional at 10.0.
     assert rejected.detail["notional_usdc"] == 10.0
 
 

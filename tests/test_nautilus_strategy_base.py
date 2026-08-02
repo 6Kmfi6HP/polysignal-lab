@@ -1469,6 +1469,71 @@ def test_native_strategy_config_wires_cash_preflight_base_currency() -> None:
     assert submitter.cash_preflight(approved, view) is None
 
 
+def test_native_strategy_backtest_wires_usdc_cash_preflight() -> None:
+    from polysignal_lab.config import Settings
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
+    from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
+        NautilusOrderSubmitter,
+    )
+
+    settings = Settings()
+    settings.runtime.nautilus.execution_mode = "backtest"
+    settings.runtime.nautilus.sandbox_base_currency = "pUSD"
+    settings.strategies.set_explicit_strategy_names(("one_cent_buy",))
+    strategy = PolySignalNativeStrategy(
+        PolySignalStrategyConfig.build(
+            settings,
+            (),
+            (),
+            strategy_name="one_cent_buy",
+        )
+    )
+    strategy._cache_override = _cache_with_sufficient_balance(
+        free_usdc=10.0,
+        base_currency="USDC",
+    )
+    view = _real_market_view()
+    approved = RuntimeFakePolicy().evaluate(_decision(), view)
+    submitter = cast(NautilusOrderSubmitter, strategy._decision_pipeline.submitter)
+
+    assert submitter.cash_preflight is not None
+    assert submitter.cash_preflight(approved, view) is None
+
+
+def test_native_strategy_live_wires_pusd_cash_preflight() -> None:
+    from polysignal_lab.config import Settings
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
+    from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
+        NautilusOrderSubmitter,
+    )
+
+    settings = Settings()
+    settings.runtime.nautilus.execution_mode = "live"
+    settings.runtime.nautilus.allow_live_polymarket_execution = True
+    settings.runtime.nautilus.sandbox_base_currency = "USDC"
+    settings.strategies.set_explicit_strategy_names(("one_cent_buy",))
+    strategy = PolySignalNativeStrategy(
+        PolySignalStrategyConfig.build(
+            settings,
+            (),
+            (),
+            strategy_name="one_cent_buy",
+        )
+    )
+    strategy._cache_override = _cache_with_sufficient_balance(
+        free_usdc=10.0,
+        base_currency="pUSD",
+    )
+    view = _real_market_view()
+    approved = RuntimeFakePolicy().evaluate(_decision(), view)
+    submitter = cast(NautilusOrderSubmitter, strategy._decision_pipeline.submitter)
+
+    assert submitter.cash_preflight is not None
+    assert submitter.cash_preflight(approved, view) is None
+
+
 def test_native_strategy_reports_progress_on_internal_evaluation_heartbeat() -> None:
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 

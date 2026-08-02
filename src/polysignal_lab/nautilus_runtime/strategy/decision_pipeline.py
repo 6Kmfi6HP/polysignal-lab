@@ -64,7 +64,7 @@ class NautilusCashBalanceReader:
     """
 
     cache: object
-    account_id: str = "POLYMARKET-SANDBOX-001"
+    account_id: str = "POLYMARKET-001"
     base_currency: str = "pUSD"
     venue: str = "POLYMARKET"
 

@@ -276,10 +276,18 @@ def _bind_pipeline(strategy: Any, *, base_currency: str) -> None:
     strategy.rejected_decisions = pipeline.rejected_decisions
 
 
+def _cash_base_currency(host: HostConstruction) -> str:
+    if host.execution_mode == "backtest":
+        return "USDC"
+    if host.execution_mode == "live":
+        return "pUSD"
+    return host.sandbox_base_currency
+
+
 def bind_host_runtime(strategy: Any, host: HostConstruction) -> None:
     """Assign DI fields + pipeline collaborators after super().__init__."""
     _bind_di_fields(strategy, host)
-    _bind_pipeline(strategy, base_currency=host.sandbox_base_currency)
+    _bind_pipeline(strategy, base_currency=_cash_base_currency(host))
 
 
 def resolve_instrument_from_cache(
