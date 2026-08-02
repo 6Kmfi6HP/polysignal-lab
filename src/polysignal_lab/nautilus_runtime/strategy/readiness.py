@@ -291,6 +291,7 @@ def subscription_timing_detail(
     intent_at = state.subscribe_intent_started_at_by_condition.get(condition_id)
     generation_at = state.book_generation_started_at_by_condition.get(condition_id)
     total_stalled_at = state.book_stalled_started_at_by_condition.get(condition_id)
+    ever_ready_at = state.first_bilateral_book_ever_at_by_condition.get(condition_id)
     first_book_at = state.first_bilateral_book_at_by_condition.get(condition_id)
 
     def age_ms(started_at: datetime | None) -> int | None:
@@ -316,6 +317,9 @@ def subscription_timing_detail(
         ),
         "first_bilateral_book_latency_ms": (
             state.first_bilateral_book_latency_ms_by_condition.get(condition_id)
+        ),
+        "first_bilateral_book_ever_at": (
+            None if ever_ready_at is None else ever_ready_at.isoformat()
         ),
     }
 
