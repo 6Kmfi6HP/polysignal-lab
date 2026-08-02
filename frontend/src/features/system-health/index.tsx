@@ -90,7 +90,9 @@ export function SystemHealthPage() {
                       {Object.keys(component.metrics).length > 0 && (
                         <div className='mt-3'>
                           <DetailSheet
-                            title={`${component.name} metrics`}
+                            title={t('pages.systemHealth.metricsDetail', {
+                              name: component.name,
+                            })}
                             description={t('ui.measurements')}
                           >
                             <DetailList values={component.metrics} />

@@ -1,6 +1,6 @@
 import { AlertCircle, Inbox } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { humanize } from '@/lib/format'
+import { formatDateTime, humanize } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { i18n } from '@/context/locale-provider'
 import { Badge } from '@/components/ui/badge'
@@ -205,20 +205,43 @@ export function DetailList({ values }: { values: object }) {
           <dt className='text-xs font-medium text-muted-foreground'>
             {i18n.exists(`fields.${key}`) ? t(`fields.${key}`) : humanize(key)}
           </dt>
-          <dd className='font-mono text-xs break-all'>{renderValue(value)}</dd>
+          <dd className='font-mono text-xs break-all'>
+            {renderValue(key, value)}
+          </dd>
         </div>
       ))}
     </dl>
   )
 }
 
-function renderValue(value: unknown): React.ReactNode {
+function renderValue(key: string, value: unknown): React.ReactNode {
   if (value == null || value === '') return i18n.t('common.unavailable')
-  if (typeof value === 'object')
+  if (typeof value === 'boolean') {
+    return value ? i18n.t('status.yes') : i18n.t('status.no')
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return i18n.t('common.unavailable')
+    if (value.every((item) => item == null || typeof item !== 'object')) {
+      return value.map((item) => String(item)).join(', ')
+    }
     return (
       <pre className='whitespace-pre-wrap'>
         {JSON.stringify(value, null, 2)}
       </pre>
     )
+  }
+  if (typeof value === 'object') {
+    return <DetailList values={value} />
+  }
+  if (typeof value === 'string') {
+    if (key.endsWith('_at') || key === 'rejected') {
+      const formatted = formatDateTime(value)
+      if (formatted !== i18n.t('common.unavailable')) return formatted
+    }
+    const normalized = value.toLowerCase()
+    if (i18n.exists(`status.${normalized}`)) {
+      return i18n.t(`status.${normalized}`)
+    }
+  }
   return String(value)
 }

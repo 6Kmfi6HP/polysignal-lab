@@ -154,7 +154,12 @@ function SignalsTable({ signals }: { signals: SignalCandidate[] }) {
               </TableCell>
               <TableCell>
                 <DetailSheet
-                  title={`${signal.asset} ${signal.side} signal`}
+                  title={t('pages.signals.signalDetail', {
+                    asset: signal.asset,
+                    side: t(`status.${signal.side.toLowerCase()}`, {
+                      defaultValue: signal.side,
+                    }),
+                  })}
                   description={signal.signal_id}
                 >
                   <DetailList
@@ -231,7 +236,9 @@ function RejectedSignalsTable({ rejected }: { rejected: RejectedSignal[] }) {
               </TableCell>
               <TableCell>
                 <DetailSheet
-                  title={`${row.gate_name} rejection`}
+                  title={t('pages.signals.rejectionDetail', {
+                    gate: row.gate_name,
+                  })}
                   description={row.rejected_id}
                 >
                   <DetailList

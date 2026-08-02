@@ -533,7 +533,9 @@ function TradesTable({
               </TableCell>
               <TableCell>
                 <DetailSheet
-                  title={`${trade.asset} trade`}
+                  title={t('pages.reporting.tradeDetail', {
+                    asset: trade.asset,
+                  })}
                   description={trade.report_result_id}
                 >
                   <DetailList values={trade} />
@@ -621,7 +623,9 @@ function PositionsTable({
               </TableCell>
               <TableCell>
                 <DetailSheet
-                  title={`${position.asset} position`}
+                  title={t('pages.reporting.positionDetail', {
+                    asset: position.asset,
+                  })}
                   description={position.report_position_id}
                 >
                   <DetailList values={position} />
@@ -704,7 +708,9 @@ function OrdersTable({
               </TableCell>
               <TableCell>
                 <DetailSheet
-                  title={`${order.asset} order`}
+                  title={t('pages.reporting.orderDetail', {
+                    asset: order.asset,
+                  })}
                   description={order.report_order_id}
                 >
                   <DetailList values={order} />
