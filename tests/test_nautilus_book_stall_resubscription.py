@@ -23,6 +23,8 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     _BOOK_GENERATION_STALL_SEC,
     abandon_book_stalled_condition,
     force_resubscribe_if_book_stalled,
+    force_resubscribe_if_stale_orderbook,
+    observe_market_book_side,
 )
 
 
@@ -154,6 +156,7 @@ def _stalled_state(
     state.condition_phases[condition_id] = ConditionSubscriptionPhase.AWAITING_FIRST_BOOK
     state.awaiting_book_sides_by_condition[condition_id] = {Side.UP, Side.DOWN}
     state.book_generation_started_at_by_condition[condition_id] = started_at
+    state.book_stalled_started_at_by_condition[condition_id] = started_at
 
 
 def test_stalled_condition_force_resubscribes_instruments_and_refreshes_state() -> None:
@@ -704,3 +707,371 @@ def test_evaluation_heartbeat_does_not_revisit_abandoned_condition() -> None:
     assert len(strategy.unsubscribed_instruments) == unsubscribed_after_first
     assert strategy.subscribed_instruments == []
     assert strategy.evaluated == []
+
+
+def test_total_stall_clock_survives_repeated_resubscription_and_abandons() -> None:
+    """Gap A: each 60s retry re-arms the retry cadence clock but must NOT reset
+    the total-stall (first-wait) clock. At 240s total stall the condition is
+    abandoned (active + readiness state cleaned) instead of resubscribed."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    t0 = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stalled_state(strategy, "btc-5m", started_at=t0)
+
+    retried_at: dict[int, bool] = {}
+    for i in range(1, 5):  # t0+61, t0+122, t0+183, t0+244
+        retried_at[i] = force_resubscribe_if_book_stalled(
+            strategy,
+            "btc-5m",
+            now=t0 + timedelta(seconds=61 * i),
+        )
+        if i < 4:
+            # The total-stall clock is never reset by the 60s retries.
+            assert (
+                strategy._subscription_state.book_stalled_started_at_by_condition[
+                    "btc-5m"
+                ]
+                == t0
+            )
+        else:
+            # Abandon clears the total-stall clock (no leftover timestamp).
+            assert (
+                "btc-5m"
+                not in strategy._subscription_state.book_stalled_started_at_by_condition
+            )
+
+    # Below the 240s abandon threshold each retry keeps the condition active; at
+    # 244s (> 240) it is abandoned instead of resubscribed.
+    assert retried_at[1] is True
+    assert retried_at[2] is True
+    assert retried_at[3] is True
+    assert retried_at[4] is False
+    assert "btc-5m" not in strategy._active_condition_ids
+    # Abandon clears the total-stall clock too (no leftover timestamp/state).
+    assert (
+        "btc-5m"
+        not in strategy._subscription_state.book_stalled_started_at_by_condition
+    )
+    assert "btc-5m" not in strategy._subscription_state.awaiting_book_sides_by_condition
+    assert "btc-5m" not in strategy._subscription_state.condition_phases
+    assert strategy.readiness == [("btc-5m", True)]
+
+
+def _stale_ready_state(
+    strategy: _ResubscribeStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+    stalled_sec: float,
+) -> None:
+    """Set a once-READY condition that went stale (awaiting empty), with both
+    the total-stall clock and the retry cadence clock started `stalled_sec` ago.
+    """
+    state = strategy._subscription_state
+    state.condition_phases[condition_id] = ConditionSubscriptionPhase.READY
+    state.first_bilateral_book_at_by_condition[condition_id] = now - timedelta(
+        minutes=10
+    )
+    state.first_bilateral_book_ever_at_by_condition[condition_id] = now - timedelta(
+        minutes=10
+    )
+    strategy._stale_orderbook_recovery_by_condition[condition_id] = {
+        Side.UP: 60_000.0,
+        Side.DOWN: 60_000.0,
+    }
+    started_at = now - timedelta(seconds=stalled_sec)
+    state.book_stalled_started_at_by_condition[condition_id] = started_at
+    state.book_generation_started_at_by_condition[condition_id] = started_at
+
+
+def test_stale_orderbook_condition_rebuilds_book_subscription() -> None:
+    """Gap B: a once-READY condition whose book went stale (awaiting empty, so
+    force_resubscribe_if_book_stalled never fired) rebuilds its book
+    subscription after the retry window, forcing a fresh snapshot."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+    )
+    state = strategy._subscription_state
+    started_at = state.book_stalled_started_at_by_condition["btc-5m"]
+
+    triggered = force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now)
+
+    assert triggered is True
+    assert sorted(set(strategy.unsubscribed_instruments)) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
+    assert sorted(set(strategy.subscribed_instruments)) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
+    assert sorted(strategy.snapshot_requests) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
+    # Repair re-begins generation: both sides awaited again.
+    assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.UP, Side.DOWN}
+    assert state.book_generation_started_at_by_condition["btc-5m"] == now
+    # Stale marker cleared; total-stall clock preserved across the rebuild.
+    assert "btc-5m" not in strategy._stale_orderbook_recovery_by_condition
+    assert state.book_stalled_started_at_by_condition["btc-5m"] == started_at
+    # The condition never leaves the active set (W2).
+    assert "btc-5m" in strategy._active_condition_ids
+    assert strategy.readiness == []
+
+
+def test_stale_orderbook_condition_not_rebuilt_within_retry_window() -> None:
+    """A stale-orderbook condition is not rebuilt more often than the retry
+    cadence — normal staleness below the window is left alone."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC - 10,
+    )
+
+    triggered = force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now)
+
+    assert triggered is False
+    assert strategy.unsubscribed_instruments == []
+    assert strategy.subscribed_instruments == []
+    assert "btc-5m" in strategy._active_condition_ids
+
+
+def test_stale_orderbook_condition_never_abandoned_past_total_stall() -> None:
+    """W2: a stale-orderbook (once-READY) condition is never abandoned via the
+    book-stall clock even past the 240s total-stall threshold — it keeps
+    resubscribing and the active set is preserved (liveness/data-starvation is
+    the backstop for a genuinely dead feed)."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_ABANDON_SEC + 1,
+    )
+
+    triggered = force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now)
+
+    assert triggered is True  # repair, not abandon
+    assert "btc-5m" in strategy._active_condition_ids
+    assert strategy.readiness == []  # no abandon ready=True
+    assert len(strategy.unsubscribed_instruments) == 6
+    assert len(strategy.subscribed_instruments) == 6
+    # Still on the recovery path (both sides awaited again).
+    assert strategy._subscription_state.awaiting_book_sides_by_condition[
+        "btc-5m"
+    ] == {Side.UP, Side.DOWN}
+
+
+def test_previously_ready_condition_not_abandoned_via_book_stall_path() -> None:
+    """W2: after a stale repair re-begins generation (awaiting both sides), the
+    first-book path must not abandon the once-READY condition even when its
+    total stall exceeds the 240s threshold — it is retried at the cadence."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    state = strategy._subscription_state
+    state.condition_phases["btc-5m"] = ConditionSubscriptionPhase.AWAITING_FIRST_BOOK
+    state.awaiting_book_sides_by_condition["btc-5m"] = {Side.UP, Side.DOWN}
+    state.first_bilateral_book_ever_at_by_condition["btc-5m"] = now - timedelta(
+        minutes=10
+    )
+    state.book_stalled_started_at_by_condition["btc-5m"] = now - timedelta(
+        seconds=_BOOK_GENERATION_ABANDON_SEC + 1
+    )
+    state.book_generation_started_at_by_condition["btc-5m"] = now - timedelta(
+        seconds=_BOOK_GENERATION_STALL_SEC + 10
+    )
+
+    triggered = force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now)
+
+    assert triggered is True  # retried, not abandoned
+    assert "btc-5m" in strategy._active_condition_ids
+    assert strategy.readiness == []
+    assert len(strategy.unsubscribed_instruments) == 6
+    assert len(strategy.subscribed_instruments) == 6
+
+
+def test_pending_instrument_prevents_book_stall_abandon() -> None:
+    """W1: a condition whose instrument metadata is still pending is never
+    abandoned by the book-stall path, even past the total-stall threshold —
+    book-specific mechanics must not change metadata semantics."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stalled_state(
+        strategy,
+        "btc-5m",
+        started_at=now - timedelta(seconds=_BOOK_GENERATION_ABANDON_SEC + 1),
+    )
+    strategy._subscription_state.pending_instrument_ids.add("btc-5m-up.POLYMARKET")
+
+    triggered = force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now)
+
+    assert triggered is False
+    assert "btc-5m" in strategy._active_condition_ids
+    assert strategy.unsubscribed_instruments == []
+    assert strategy.subscribed_instruments == []
+    assert strategy.readiness == []
+    # Still awaiting with both clocks intact (nothing was abandoned/cleared).
+    assert strategy._subscription_state.awaiting_book_sides_by_condition[
+        "btc-5m"
+    ] == {Side.UP, Side.DOWN}
+    assert (
+        "btc-5m"
+        in strategy._subscription_state.book_stalled_started_at_by_condition
+    )
+
+
+def test_healthy_ready_condition_does_not_rebuild_or_abandon() -> None:
+    """Normal book updates on a READY condition cause no resubscribe and no
+    abandon (no false positive self-heal)."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    state = strategy._subscription_state
+    state.condition_phases["btc-5m"] = ConditionSubscriptionPhase.READY
+    state.first_bilateral_book_at_by_condition["btc-5m"] = now - timedelta(minutes=10)
+    state.first_bilateral_book_ever_at_by_condition["btc-5m"] = now - timedelta(
+        minutes=10
+    )
+    state.last_book_received_at_by_condition["btc-5m"] = {Side.UP: now, Side.DOWN: now}
+
+    resub = force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now)
+    stale = force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now)
+
+    assert resub is False
+    assert stale is False
+    assert strategy.unsubscribed_instruments == []
+    assert strategy.subscribed_instruments == []
+    assert "btc-5m" in strategy._active_condition_ids
+    assert "btc-5m" not in state.book_stalled_started_at_by_condition
+
+
+def test_evaluation_heartbeat_rebuilds_stale_orderbook_condition() -> None:
+    """A once-READY condition that went stale is rebuilt by the heartbeat —
+    it does not stay a permanent readiness miss (Gap B)."""
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m"}
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+    )
+    state = strategy._subscription_state
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert sorted(set(strategy.unsubscribed_instruments)) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
+    assert sorted(set(strategy.subscribed_instruments)) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
+    # Back onto the awaiting-first-book recovery path, not a permanent miss.
+    assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.UP, Side.DOWN}
+    assert "btc-5m" in strategy._active_condition_ids
+
+
+def test_global_starvation_does_not_wipe_active_conditions() -> None:
+    """W2: when every active condition is stale (global feed outage), the
+    heartbeat repairs them all but never abandons any — the active set is
+    preserved and liveness/data-starvation is the backstop."""
+    registry = MarketCatalog(
+        instrument_id_resolver=lambda _condition, token: f"{token}.POLYMARKET"
+    )
+    for condition_id in ("btc-5m", "eth-5m", "sol-5m"):
+        registry.register(_pair(condition_id, "BTC", "5m"))
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m", "eth-5m", "sol-5m"}
+    for condition_id in ("btc-5m", "eth-5m", "sol-5m"):
+        _stale_ready_state(
+            strategy,
+            condition_id,
+            now=now,
+            stalled_sec=_BOOK_GENERATION_ABANDON_SEC + 1,
+        )
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert strategy._active_condition_ids == {"btc-5m", "eth-5m", "sol-5m"}
+    assert strategy.readiness == []  # no abandon ready=True
+    # Every stale condition was repaired (2 instruments × 3 feeds × 3 conditions).
+    assert len(strategy.unsubscribed_instruments) == 18
+    assert len(strategy.subscribed_instruments) == 18
+
+
+def test_stale_orderbook_condition_recovers_to_ready_after_bilateral_book() -> None:
+    """W4 coherent lifecycle: READY → stale marker → heartbeat resubscribe
+    (awaiting) → bilateral book observed → READY. The total-stall clock and the
+    stale marker are cleared on recovery."""
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m"}
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+    )
+    state = strategy._subscription_state
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    # Heartbeat repair re-began generation: both sides awaited again.
+    assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.UP, Side.DOWN}
+    assert "btc-5m" not in strategy._stale_orderbook_recovery_by_condition
+
+    # The feed recovers: both sides observe a fresh bilateral book.
+    received_at = now + timedelta(seconds=2)
+    up_ready = observe_market_book_side(
+        strategy,
+        "btc-5m",
+        Side.UP,
+        received_at=received_at,
+        book_at=received_at,
+    )
+    assert up_ready is False
+    down_ready = observe_market_book_side(
+        strategy,
+        "btc-5m",
+        Side.DOWN,
+        received_at=received_at,
+        book_at=received_at,
+    )
+    assert down_ready is True
+
+    assert state.awaiting_book_sides_by_condition == {}
+    assert state.condition_phases["btc-5m"] == ConditionSubscriptionPhase.READY
+    assert "btc-5m" in state.first_bilateral_book_at_by_condition
+    assert "btc-5m" in state.first_bilateral_book_ever_at_by_condition
+    # Total-stall clock and stale marker cleared on recovery.
+    assert "btc-5m" not in state.book_stalled_started_at_by_condition
+    assert "btc-5m" not in strategy._stale_orderbook_recovery_by_condition
+    assert "btc-5m" in strategy._active_condition_ids

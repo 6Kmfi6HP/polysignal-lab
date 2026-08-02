@@ -94,7 +94,25 @@ class MarketSubscriptionState:
     book_generation_started_at_by_condition: dict[str, datetime] = field(
         default_factory=dict
     )
+    # Total-stall clock: when the condition first began waiting for a book
+    # (first generation start, or first stale-book detection). Unlike
+    # book_generation_started_at_by_condition (the 60s retry cadence, reset by
+    # every resubscription) this is NOT reset by resubscription, so repeated
+    # 60s retries cannot slip past the 240s abandon threshold. Cleared when the
+    # book truly becomes ready or the condition is retired/cleared/abandoned.
+    book_stalled_started_at_by_condition: dict[str, datetime] = field(
+        default_factory=dict
+    )
     first_bilateral_book_at_by_condition: dict[str, datetime] = field(
+        default_factory=dict
+    )
+    # When the condition first reached READY (first bilateral book) during its
+    # current active period. Unlike first_bilateral_book_at_by_condition this is
+    # NOT cleared when a stale repair re-begins generation, so the book-stall
+    # abandon path can distinguish a condition that merely went stale (retry,
+    # never abandon via book stall) from one whose first book never arrived.
+    # Cleared on retire/clear/abandon via retire_market_book_generation.
+    first_bilateral_book_ever_at_by_condition: dict[str, datetime] = field(
         default_factory=dict
     )
     first_bilateral_book_latency_ms_by_condition: dict[str, int] = field(
@@ -762,14 +780,21 @@ def begin_market_book_generation(
 ) -> None:
     """Invalidate cached-book readiness before a real subscribe attempt."""
     observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
-    strategy._subscription_state.awaiting_book_sides_by_condition[condition_id] = {
+    state = strategy._subscription_state
+    state.awaiting_book_sides_by_condition[condition_id] = {
         Side.UP,
         Side.DOWN,
     }
-    strategy._subscription_state.book_generation_started_at_by_condition[
-        condition_id
-    ] = observed.astimezone(UTC)
-    strategy._subscription_state.first_bilateral_book_at_by_condition.pop(
+    state.book_generation_started_at_by_condition[condition_id] = (
+        observed.astimezone(UTC)
+    )
+    # Total-stall clock starts on the first wait and survives every
+    # resubscription (setdefault); cleared only on book-ready / retire / clear.
+    state.book_stalled_started_at_by_condition.setdefault(
+        condition_id,
+        observed.astimezone(UTC),
+    )
+    state.first_bilateral_book_at_by_condition.pop(
         condition_id, None
     )
     strategy._subscription_state.first_bilateral_book_latency_ms_by_condition.pop(
@@ -847,7 +872,14 @@ def finish_market_book_generation(
     ready_at = max(receipts.values(), default=received_at)
     state.awaiting_book_sides_by_condition.pop(condition_id)
     state.book_generation_started_at_by_condition.pop(condition_id, None)
+    state.book_stalled_started_at_by_condition.pop(condition_id, None)
     state.first_bilateral_book_at_by_condition[condition_id] = ready_at
+    # Remembers this active period reached READY so the stale-repair re-awaiting
+    # path is never abandoned via the book-stall clock (see W2 semantics).
+    state.first_bilateral_book_ever_at_by_condition.setdefault(
+        condition_id,
+        ready_at,
+    )
     if started_at is not None:
         latency_ms = max(0, int((ready_at - started_at).total_seconds() * 1000))
         state.first_bilateral_book_latency_ms_by_condition[condition_id] = latency_ms
@@ -882,7 +914,15 @@ def retire_market_book_generation(
         condition_id,
         None,
     )
+    strategy._subscription_state.book_stalled_started_at_by_condition.pop(
+        condition_id,
+        None,
+    )
     strategy._subscription_state.first_bilateral_book_at_by_condition.pop(
+        condition_id,
+        None,
+    )
+    strategy._subscription_state.first_bilateral_book_ever_at_by_condition.pop(
         condition_id,
         None,
     )
@@ -999,50 +1039,154 @@ def _resubscribe_market_instrument(
     )
 
 
+def _total_stall_started_at(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+) -> datetime | None:
+    """Total-stall start for a condition.
+
+    Falls back to the retry-cadence clock for states created before the
+    total-stall clock existed (identical until the first resubscription).
+    """
+    state = strategy._subscription_state
+    return state.book_stalled_started_at_by_condition.get(condition_id) or (
+        state.book_generation_started_at_by_condition.get(condition_id)
+    )
+
+
+def _abandon_if_total_stall_exceeded(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    total_stalled_at: datetime,
+    now: datetime,
+) -> bool:
+    """Abandon the condition when total stall crosses the abandon threshold.
+
+    The caller must return False when this returns True. Repeated 60s retries
+    must never reset this clock, otherwise abandon becomes unreachable.
+    """
+    stall_sec = (now.astimezone(UTC) - total_stalled_at).total_seconds()
+    if stall_sec < _BOOK_GENERATION_ABANDON_SEC:
+        return False
+    _ = abandon_book_stalled_condition(strategy, condition_id, stall_sec=stall_sec)
+    return True
+
+
+def _resubscribe_and_begin_generation(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> tuple[object, ...] | None:
+    """Re-subscribe a condition's instruments (repair A + snapshot backstop)
+    and reopen both awaited sides. Returns the instruments, or None when the
+    condition has none (the caller must not proceed)."""
+    instruments = condition_instruments(strategy, condition_id)
+    if not instruments:
+        return None
+    for instrument_id in instruments:
+        _resubscribe_market_instrument(strategy, instrument_id)
+    begin_market_book_generation(strategy, condition_id, now=now)
+    return instruments
+
+
 def force_resubscribe_if_book_stalled(
     strategy: _SubscriptionStrategy,
     condition_id: str,
     *,
     now: datetime,
 ) -> bool:
-    """Rebuild the book subscription for a condition stuck awaiting its first
-    book longer than _BOOK_GENERATION_STALL_SEC. Polymarket WS drops idle
-    connections (Read idle timeout) with no snapshot fallback, so a quiet market
-    leaves a subscribed condition stuck in AWAITING_FIRST_BOOK; re-subscribing
-    forces a fresh snapshot.
+    """Rebuild a first-book subscription stalled past the stall window (Gap A).
 
-    A condition stalled past _BOOK_GENERATION_ABANDON_SEC is abandoned instead
-    (see abandon_book_stalled_condition): no-book markets never produce a
-    snapshot, so further resubscription is futile.
-
-    Returns True when a resubscription was issued. Idempotent: every issued
-    resubscription restarts the book-generation clock.
+    W1: pending metadata is never abandoned here. W2: only a condition whose
+    FIRST book never arrived is abandoned at the 240s total-stall clock; a
+    once-READY condition is retried, never fatal (liveness covers outages).
     """
-    if not _book_generation_stalled(strategy, condition_id, now=now):
+    state = strategy._subscription_state
+    if pending_condition_instrument_ids(strategy, condition_id):
         return False
-    started_at = strategy._subscription_state.book_generation_started_at_by_condition[
-        condition_id
-    ]
-    stall_sec = (now.astimezone(UTC) - started_at).total_seconds()
-    if stall_sec >= _BOOK_GENERATION_ABANDON_SEC:
-        _ = abandon_book_stalled_condition(
+    if condition_id not in state.first_bilateral_book_ever_at_by_condition:
+        total_stalled_at = _total_stall_started_at(strategy, condition_id)
+        if total_stalled_at is not None and _abandon_if_total_stall_exceeded(
             strategy,
             condition_id,
-            stall_sec=stall_sec,
-        )
+            total_stalled_at=total_stalled_at,
+            now=now,
+        ):
+            return False
+    if not _book_generation_stalled(strategy, condition_id, now=now):
         return False
-    instruments = condition_instruments(strategy, condition_id)
-    if not instruments:
+    generation_started_at = state.book_generation_started_at_by_condition.get(
+        condition_id
+    )
+    instruments = _resubscribe_and_begin_generation(
+        strategy, condition_id, now=now
+    )
+    if instruments is None:
         return False
-    for instrument_id in instruments:
-        _resubscribe_market_instrument(strategy, instrument_id)
-    # A new generation reopens both sides and restarts the stall clock.
-    begin_market_book_generation(strategy, condition_id, now=now)
+    stall_sec = (
+        round((now.astimezone(UTC) - generation_started_at).total_seconds(), 3)
+        if generation_started_at is not None
+        else _BOOK_GENERATION_STALL_SEC
+    )
     logger.info(
         "condition_book_resubscription",
         extra={
+            # Elapsed since the current generation began (retry cadence).
             "condition_id": condition_id,
-            "stall_sec": _BOOK_GENERATION_STALL_SEC,
+            "stall_sec": stall_sec,
+            "instrument_ids": [_instrument_key(iid) for iid in instruments],
+        },
+    )
+    return True
+
+
+def force_resubscribe_if_stale_orderbook(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> bool:
+    """Rebuild a once-READY condition's stale book (Gap B): not in the awaiting
+    map, so the first-book path never fires. Resubscribe only — never abandon
+    via the book-stall clock: a global/silent feed outage is reported by
+    liveness/data-starvation, not by silently dropping active conditions (W2)."""
+    state = strategy._subscription_state
+    if condition_id in state.awaiting_book_sides_by_condition:
+        return False
+    if condition_id not in strategy._stale_orderbook_recovery_by_condition:
+        return False
+    if pending_condition_instrument_ids(strategy, condition_id):
+        return False
+    now_utc = (
+        now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    ).astimezone(UTC)
+    # Stale-since clock for observability only; never drives abandon (W2).
+    total_stalled_at = state.book_stalled_started_at_by_condition.setdefault(
+        condition_id, now_utc
+    )
+    generation_at = state.book_generation_started_at_by_condition.get(condition_id)
+    if generation_at is not None and (now_utc - generation_at).total_seconds() <= (
+        _BOOK_GENERATION_STALL_SEC
+    ):
+        # Within the retry window of the last rebuild — do not re-fire.
+        return False
+    instruments = _resubscribe_and_begin_generation(
+        strategy,
+        condition_id,
+        now=now_utc,
+    )
+    if instruments is None:
+        return False
+    _ = strategy._stale_orderbook_recovery_by_condition.pop(condition_id, None)
+    stall_sec = round((now_utc - total_stalled_at).total_seconds(), 3)
+    logger.info(
+        "condition_stale_orderbook_resubscription",
+        extra={
+            "condition_id": condition_id,
+            # Elapsed since the stale orderbook was first detected.
+            "stall_sec": stall_sec,
             "instrument_ids": [_instrument_key(iid) for iid in instruments],
         },
     )
