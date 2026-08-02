@@ -7,6 +7,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "validate_commit_msg.py"
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+ZERO_SHA = "0" * 40
 
 
 def _run_with_message(tmp_path: Path, message: str) -> subprocess.CompletedProcess[str]:
@@ -101,7 +103,77 @@ def test_new_branch_range_starts_at_default_branch_merge_base(tmp_path: Path):
             "--head",
             "HEAD",
             "--before",
-            "0000000000000000000000000000000000000000",
+            ZERO_SHA,
+            "--default-branch",
+            "main",
+        ],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def _commit_message_workflow_step() -> str:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    start = workflow.index("      - name: Validate commit messages")
+    end = workflow.index("\n      - name:", start + 1)
+    return workflow[start:end]
+
+
+def test_workflow_skips_commit_gate_for_feature_branch_pushes():
+    step = _commit_message_workflow_step()
+
+    assert "github.event_name == 'pull_request'" in step
+    assert (
+        "github.ref == format('refs/heads/{0}', "
+        "github.event.repository.default_branch)" in step
+    )
+
+
+def test_workflow_skips_commit_gate_for_branch_creation():
+    step = _commit_message_workflow_step()
+
+    assert f"github.event.before != '{ZERO_SHA}'" in step
+
+
+def test_workflow_keeps_pull_request_and_default_branch_ranges():
+    step = _commit_message_workflow_step()
+
+    assert (
+        '${{ github.event.pull_request.base.sha }}..'
+        '${{ github.event.pull_request.head.sha }}' in step
+    )
+    assert '--head "${{ github.sha }}"' in step
+    assert '--before "${{ github.event.before }}"' in step
+
+
+def test_normal_push_range_starts_at_before_sha(tmp_path: Path):
+    repo = tmp_path / "normal-push-repo"
+    repo.mkdir()
+    _ = _git(repo, "init", "-b", "main")
+    _ = _git(repo, "config", "user.name", "Commit Policy Test")
+    _ = _git(repo, "config", "user.email", "commit-policy@example.com")
+
+    tracked = repo / "tracked.txt"
+    _ = tracked.write_text("legacy\n", encoding="utf-8")
+    _ = _git(repo, "add", "tracked.txt")
+    _ = _git(repo, "commit", "-m", "legacy inherited subject")
+    before = _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    _ = tracked.write_text("new\n", encoding="utf-8")
+    _ = _git(repo, "commit", "-am", "fix(ci): validate only the pushed commit")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--head",
+            "HEAD",
+            "--before",
+            before,
             "--default-branch",
             "main",
         ],
