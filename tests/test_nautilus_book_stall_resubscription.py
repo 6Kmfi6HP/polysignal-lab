@@ -217,6 +217,107 @@ def test_stalled_condition_resubscription_requests_snapshot_backstop() -> None:
     ]
 
 
+def test_real_strategy_resubscription_does_not_raise_attribute_error() -> None:
+    """Regression: PR #52's resubscribe path calls request_order_book_snapshot
+    on the real strategy. The pyo3 Strategy base exposes request_book_snapshot
+    but not request_order_book_snapshot, so before the fix this raised
+    AttributeError and crashed the heartbeat timer callback (spamming errors
+    and readiness misses). The method must exist on PolySignalNativeStrategy
+    and be safe to call during resubscription."""
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    from polysignal_lab.alpha.types import AlphaDecision
+
+    class _FakeAssembler:
+        def build(self, condition_id: str, *, created_at=None):  # noqa: ANN001
+            del condition_id, created_at
+            return None
+
+        def with_custom_data(self, custom_data: object) -> "_FakeAssembler":
+            del custom_data
+            return self
+
+    class _FakeCore:
+        def evaluate(self, view: object) -> list[AlphaDecision]:
+            del view
+            return []
+
+    class _SubscribedStrategy(PolySignalNativeStrategy):
+        """Real strategy with wire calls stubbed; snapshot method inherited."""
+
+        def subscribe_quotes(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            del args, kwargs
+            self.subscribed_instruments.append(str(instrument_id))
+
+        def subscribe_trades(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            del args, kwargs
+            self.subscribed_instruments.append(str(instrument_id))
+
+        def subscribe_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            del args, kwargs
+            self.subscribed_instruments.append(str(instrument_id))
+
+        def unsubscribe_quotes(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            del args, kwargs
+            self.unsubscribed_instruments.append(str(instrument_id))
+
+        def unsubscribe_trades(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            del args, kwargs
+            self.unsubscribed_instruments.append(str(instrument_id))
+
+        def unsubscribe_book_deltas(
+            self, instrument_id: object, *args: object, **kwargs: object
+        ) -> None:
+            del args, kwargs
+            self.unsubscribed_instruments.append(str(instrument_id))
+
+    registry = _registry()
+    strategy = _SubscribedStrategy(
+        core=_FakeCore(),  # type: ignore[arg-type]
+        assembler=_FakeAssembler(),  # type: ignore[arg-type]
+        condition_ids=("btc-5m",),
+        strategy_name="ptb_diff",
+        registry=registry,
+    )
+    strategy._cache_override = SimpleNamespace(instrument=lambda _iid: object())
+    strategy.subscribed_instruments = []
+    strategy.unsubscribed_instruments = []
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stalled_state(
+        strategy,
+        "btc-5m",
+        started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+    )
+
+    # Must not raise AttributeError (the regression).
+    triggered = force_resubscribe_if_book_stalled(
+        strategy,
+        "btc-5m",
+        now=now,
+    )
+
+    assert triggered is True
+    assert sorted(set(strategy.unsubscribed_instruments)) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
+    assert sorted(set(strategy.subscribed_instruments)) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
+
+
 def test_fresh_generation_does_not_resubscribe() -> None:
     registry = _registry()
     strategy = _ResubscribeStrategy(registry)
