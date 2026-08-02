@@ -117,7 +117,7 @@ describe('ReportingPage', () => {
     const view = renderReportingPage()
 
     expect(await view.findByText('Official settlement')).toBeInTheDocument()
-    expect(await view.findByText('Down')).toBeInTheDocument()
+    expect(await view.findByText('DOWN')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining(
         'gamma-api.polymarket.com/markets/slug/btc-updown-5m-1785710700'

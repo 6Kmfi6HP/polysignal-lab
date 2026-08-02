@@ -13,9 +13,11 @@ describe('translation resources', () => {
     expect(keys(zhCN).sort()).toEqual(keys(en).sort())
   })
 
-  it('translates UP and DOWN direction sides correctly in Chinese', () => {
-    expect(zhCN.status.up).toBe('看涨')
-    expect(zhCN.status.down).toBe('看跌')
+  it('keeps UP and DOWN direction labels untranslated', () => {
+    expect(zhCN.status.up).toBe('UP')
+    expect(zhCN.status.down).toBe('DOWN')
+    expect(en.status.up).toBe('UP')
+    expect(en.status.down).toBe('DOWN')
   })
 
   it('covers trade detail sheet field keys used by reporting payloads', () => {
