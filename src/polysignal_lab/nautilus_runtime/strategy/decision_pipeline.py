@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, SupportsFloat, cast
+
+from nautilus_trader.core.nautilus_pyo3 import AccountId, Venue
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView
 from polysignal_lab.nautilus_runtime.decision_policy import (
@@ -16,6 +19,9 @@ from polysignal_lab.nautilus_runtime.native_order import (
     OrderSubmittingStrategy,
     submit_approved_decision,
 )
+from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
+
+logger = logging.getLogger(__name__)
 
 
 class DecisionPolicyPort(Protocol):
@@ -36,10 +42,213 @@ class OrderSubmitter(Protocol):
     def submit(self, approved: ApprovedDecision, view: MarketView) -> object: ...
 
 
+class BalanceReader(Protocol):
+    """Reads free cash available for new orders, in the strategy's base currency."""
+
+    def read_free_balance(self) -> float | None: ...
+
+
+@dataclass(slots=True)
+class NautilusCashBalanceReader:
+    """Reads the account's free base-currency balance from the Nautilus Cache.
+
+    Uses ``cache.account(account_id)`` (native Cache API) or falls back to
+    ``cache.account_for_venue(venue)``; both return ``None`` when the account
+    has not arrived yet, which the preflight treats as fail-closed. ``base_currency``
+    defaults to the settings value (pUSD in sandbox).
+
+    ``cache`` may be a Cache instance or a zero-arg callable resolving the Cache
+    lazily. The latter is required when the reader is bound before the strategy
+    registers with its Trader (the ``cache`` property is unavailable until then),
+    so production wiring passes a resolver while tests pass a concrete fake.
+    """
+
+    cache: object
+    account_id: str = "POLYMARKET-SANDBOX-001"
+    base_currency: str = "pUSD"
+    venue: str = "POLYMARKET"
+
+    def read_free_balance(self) -> float | None:
+        account = self._account()
+        if account is None:
+            return None
+        balances = _account_balances(account)
+        if balances is None:
+            return None
+        for key, balance in _balance_items(balances):
+            if _balance_currency(key, balance) != self.base_currency:
+                continue
+            free = getattr(balance, "free", None)
+            if callable(free):
+                free = free()
+            return _to_float(free)
+        return None
+
+    def _resolve_cache(self) -> object | None:
+        cache = self.cache
+        if callable(cache):
+            try:
+                return cache()
+            except (TypeError, LookupError):
+                return None
+        return cache
+
+    def _account(self) -> object | None:
+        cache = self._resolve_cache()
+        if cache is None:
+            return None
+        account = getattr(cache, "account", None)
+        if callable(account):
+            try:
+                found = account(AccountId(self.account_id))
+            except (TypeError, LookupError):
+                found = None
+            if found is not None:
+                return found
+        venue_lookup = getattr(cache, "account_for_venue", None)
+        if callable(venue_lookup):
+            try:
+                return venue_lookup(Venue(self.venue))
+            except (TypeError, LookupError):
+                return None
+        return None
+
+
+def _account_balances(account: object) -> object | None:
+    balances = getattr(account, "balances", None)
+    if callable(balances):
+        balances = balances()
+    return balances
+
+
+def _balance_items(balances: object) -> Sequence[tuple[object, object]]:
+    items = getattr(balances, "items", None)
+    if callable(items):
+        return list(cast(Sequence[tuple[object, object]], items()))
+    if isinstance(balances, Sequence) and not isinstance(balances, (str, bytes)):
+        return [(getattr(balance, "currency", None), balance) for balance in balances]
+    return ()
+
+
+def _balance_currency(key: object, balance: object) -> str:
+    currency = getattr(key, "code", key)
+    if callable(currency):
+        currency = currency()
+    if currency is None or currency is balance:
+        currency = getattr(balance, "currency", None)
+        if callable(currency):
+            currency = currency()
+    return str(currency)
+
+
+def _to_float(value: object) -> float | None:
+    if value is None:
+        return None
+    for name in ("as_double", "as_decimal"):
+        numeric = getattr(value, name, None)
+        if callable(numeric):
+            try:
+                parsed = _to_float(numeric())
+            except (TypeError, ValueError):
+                continue
+            if parsed is not None:
+                return parsed
+    coerced = (
+        value
+        if isinstance(value, (int, float, str, bytes, bytearray))
+        else cast(SupportsFloat, value)
+    )
+    try:
+        return float(coerced)
+    except (TypeError, ValueError):
+        try:
+            return float(str(value))
+        except (TypeError, ValueError):
+            return None
+
+
 class DecisionTelemetry(Protocol):
     def accepted(self, approved: ApprovedDecision, order: object) -> None: ...
     def rejected(self, rejected: RejectedDecision, decision: AlphaDecision) -> None: ...
     def progress(self, event: str) -> None: ...
+
+
+def default_cash_preflight(
+    balance_reader: BalanceReader,
+    base_currency: str,
+    *,
+    fixed_stake_usdc: float,
+    log_extra: Mapping[str, object] | None = None,
+) -> Callable[[ApprovedDecision, MarketView], RejectedDecision | None]:
+    """Build the default balance preflight: reject orders whose notional exceeds
+    the free cash balance.
+
+    Reduce-only orders are exempt (closing a position collects cash rather than
+    spending it). If the free balance cannot be read, we fail closed — skip the
+    order rather than risk another cash rejection — and log the ambiguity once
+    per decision. ``log_extra`` lets the caller stamp runtime/strategy context.
+    ``fixed_stake_usdc`` mirrors the strategy's stake so quantity resolves the
+    same way the real order path does.
+    """
+
+    def preflight(
+        approved: ApprovedDecision, view: MarketView
+    ) -> RejectedDecision | None:
+        decision = approved.decision
+        if decision.reduce_only:
+            return None
+        free_balance = balance_reader.read_free_balance()
+        extra = dict(log_extra or {})
+        if free_balance is None:
+            extra.update(
+                {
+                    "balance_unavailable": True,
+                    "skip_reason": "free balance unavailable",
+                    "signal_id": decision.signal_id(view.view_id),
+                }
+            )
+            logger.warning("order_skipped_cash_balance_unavailable", extra=extra)
+            return RejectedDecision(
+                reason_code="INSUFFICIENT_CASH_BALANCE",
+                detail={
+                    "free_balance_usdc": None,
+                    "notional_usdc": None,
+                    "reason": "free balance unavailable",
+                },
+                decision=decision,
+                publish=approved.publish,
+            )
+        book = view.book_for(decision.side)
+        spec = order_spec_from_decision(
+            decision,
+            fixed_stake_usdc=fixed_stake_usdc,
+            best_ask=book.best_ask,
+            best_bid=getattr(book, "best_bid", None),
+            view_id=view.view_id,
+        )
+        notional = spec.quantity * spec.price
+        if free_balance >= notional:
+            return None
+        extra.update(
+            {
+                "free_balance_usdc": round(free_balance, 6),
+                "notional_usdc": round(notional, 6),
+                "signal_id": decision.signal_id(view.view_id),
+            }
+        )
+        logger.warning("order_skipped_insufficient_cash_balance", extra=extra)
+        return RejectedDecision(
+            reason_code="INSUFFICIENT_CASH_BALANCE",
+            detail={
+                "free_balance_usdc": round(free_balance, 6),
+                "notional_usdc": round(notional, 6),
+                "reason": "free balance below order notional",
+            },
+            decision=decision,
+            publish=approved.publish,
+        )
+
+    return preflight
 
 
 @dataclass(slots=True)
@@ -49,8 +258,13 @@ class NautilusOrderSubmitter:
     instrument_id_resolver: Callable[[str], object]
     now: Callable[[], datetime] | None = None
     use_native_reduce_only: bool = False
+    cash_preflight: Callable[[ApprovedDecision, MarketView], RejectedDecision | None] | None = None
 
     def submit(self, approved: ApprovedDecision, view: MarketView) -> object:
+        if self.cash_preflight is not None:
+            rejected = self.cash_preflight(approved, view)
+            if rejected is not None:
+                raise _CashPreflightRejection(rejected)
         book = view.book_for(approved.decision.side)
         return submit_approved_decision(
             self.strategy,
@@ -63,6 +277,14 @@ class NautilusOrderSubmitter:
             view_id=view.view_id,
             use_native_reduce_only=self.use_native_reduce_only,
         )
+
+
+class _CashPreflightRejection(Exception):
+    """Raised inside OrderSubmitter.submit to reject before order construction."""
+
+    def __init__(self, rejected: RejectedDecision) -> None:
+        super().__init__("insufficient cash for order")
+        self.rejected = rejected
 
 
 @dataclass(slots=True)
@@ -156,6 +378,8 @@ class DecisionPipeline:
             )
         try:
             order = self.submitter.submit(approved, view)
+        except _CashPreflightRejection as rejection:
+            return self._reject(rejection.rejected, decision)
         except ValueError as exc:
             return self._reject(
                 RejectedDecision(

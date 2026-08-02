@@ -22,8 +22,10 @@ from polysignal_lab.nautilus_runtime.strategy.config_deps import (
 )
 from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
     DecisionPipeline,
+    NautilusCashBalanceReader,
     NautilusOrderSubmitter,
     NativeDecisionTelemetry,
+    default_cash_preflight,
 )
 
 from polysignal_lab.nautilus_runtime.strategy.catalog_lookups import (
@@ -46,6 +48,7 @@ class HostInitRequest:
     condition_ids: Sequence[str] = ()
     strategy_name: str = ""
     fixed_stake_usdc: float = 10.0
+    sandbox_base_currency: str = "pUSD"
     orderbook_staleness_ms: float = 60_000.0
     exit_model: object | None = None
     data_names: Sequence[str] = ()
@@ -75,6 +78,7 @@ class HostConstruction:
     strategy_name: str
     condition_ids: tuple[str, ...]
     fixed_stake_usdc: float
+    sandbox_base_currency: str
     orderbook_staleness_ms: float
     exit_model: object | None
     data_names: tuple[str, ...]
@@ -117,6 +121,7 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
         condition_ids=tuple(config.condition_ids),
         strategy_name=config.strategy_name,
         fixed_stake_usdc=float(settings.trading.fixed_stake_usdc),
+        sandbox_base_currency=str(settings.runtime.nautilus.sandbox_base_currency),
         exit_model=settings.trading.exit_model,
         book_type=settings.runtime.nautilus.sandbox_book_type,
         unsubscribe_exited=settings.runtime.nautilus.market_rotation.unsubscribe_exited,
@@ -175,6 +180,7 @@ def resolve_host_construction(req: HostInitRequest) -> HostConstruction:
         strategy_name=work.strategy_name,
         condition_ids=tuple(work.condition_ids),
         fixed_stake_usdc=work.fixed_stake_usdc,
+        sandbox_base_currency=work.sandbox_base_currency,
         orderbook_staleness_ms=float(work.orderbook_staleness_ms),
         exit_model=work.exit_model,
         data_names=tuple(work.data_names),
@@ -238,7 +244,14 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
     strategy._untradable_quote_sides_by_condition = {}
 
 
-def _bind_pipeline(strategy: Any) -> None:
+def _bind_pipeline(strategy: Any, *, base_currency: str) -> None:
+    # Resolve the Cache lazily: at bind time the strategy has not registered with
+    # its Trader yet, so the ``cache`` property is unavailable (returns None).
+    # A zero-arg resolver defers the lookup until an order is actually submitted.
+    balance_reader = NautilusCashBalanceReader(
+        cache=lambda: getattr(strategy, "cache", None),
+        base_currency=base_currency,
+    )
     pipeline = DecisionPipeline(
         policy=strategy.policy,
         submitter=NautilusOrderSubmitter(
@@ -247,6 +260,15 @@ def _bind_pipeline(strategy: Any) -> None:
             instrument_id_resolver=strategy._resolved_instrument,
             now=strategy._framework_now,
             use_native_reduce_only=strategy._execution_mode in {"sandbox", "backtest"},
+            cash_preflight=default_cash_preflight(
+                balance_reader,
+                base_currency,
+                fixed_stake_usdc=strategy.fixed_stake_usdc,
+                log_extra={
+                    "strategy": strategy.strategy_name,
+                    "runtime": strategy._execution_mode,
+                },
+            ),
         ),
         telemetry=NativeDecisionTelemetry(strategy),
     )
@@ -257,7 +279,7 @@ def _bind_pipeline(strategy: Any) -> None:
 def bind_host_runtime(strategy: Any, host: HostConstruction) -> None:
     """Assign DI fields + pipeline collaborators after super().__init__."""
     _bind_di_fields(strategy, host)
-    _bind_pipeline(strategy)
+    _bind_pipeline(strategy, base_currency=host.sandbox_base_currency)
 
 
 def resolve_instrument_from_cache(

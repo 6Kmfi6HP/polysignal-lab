@@ -206,6 +206,50 @@ def _mark_condition_ready(strategy: object, condition_id: str) -> None:
     )
 
 
+def _cache_with_sufficient_balance(
+    *,
+    free_usdc: float = 100_000.0,
+    base_currency: str = "pUSD",
+) -> Any:
+    """A Cache stand-in exposing an account with a healthy free cash balance.
+
+    The cash-balance preflight fail-closes when it cannot read a balance, so
+    order-submission tests that do not otherwise exercise the account must
+    supply one here to keep exercising the submit path. Instrument lookups
+    resolve to a permissive stub so order construction sees a real object.
+    """
+    from nautilus_trader.core.nautilus_pyo3 import AccountId, Currency, Venue
+
+    class _StubInstrument:
+        def __init__(self, instrument_id: str) -> None:
+            self.id = instrument_id
+
+        def make_price(self, value: float) -> float:
+            return value
+
+        def make_qty(self, value: float) -> float:
+            return value
+
+    cur = Currency.from_str(base_currency)
+    account = SimpleNamespace(balances=lambda: {cur: SimpleNamespace(free=free_usdc)})
+
+    class _Cache:
+        def account(self, account_id: object) -> None:
+            if not isinstance(account_id, AccountId):
+                raise TypeError("account_id must be AccountId")
+            return None
+
+        def account_for_venue(self, venue: object) -> object:
+            if not isinstance(venue, Venue):
+                raise TypeError("venue must be Venue")
+            return account
+
+        def instrument(self, instrument_id: object) -> object:
+            return _StubInstrument(str(instrument_id))
+
+    return _Cache()
+
+
 def _minimal_native_strategy(
     *,
     core: object,
@@ -971,6 +1015,7 @@ def test_native_strategy_generates_signal_from_on_data_callback() -> None:
         progress_callback=lambda phase: progress.append(phase),
         **_native_projections(),
     )
+    strategy._cache_override = _cache_with_sufficient_balance()
     _policy = _attach_decision_policy(strategy)
 
     # Generic assembler fallback is removed; unknown CustomData is dropped.
@@ -1391,6 +1436,37 @@ def test_native_strategy_backtest_does_not_schedule_unbounded_evaluation_heartbe
     assert strategy.clock.timer is None
     strategy.on_stop()
     assert strategy.clock.canceled == []
+
+
+def test_native_strategy_config_wires_cash_preflight_base_currency() -> None:
+    from polysignal_lab.config import Settings
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
+    from polysignal_lab.nautilus_runtime.strategy.decision_pipeline import (
+        NautilusOrderSubmitter,
+    )
+
+    settings = Settings()
+    settings.runtime.nautilus.sandbox_base_currency = "USDC"
+    settings.strategies.set_explicit_strategy_names(("one_cent_buy",))
+    strategy = PolySignalNativeStrategy(
+        PolySignalStrategyConfig.build(
+            settings,
+            (),
+            (),
+            strategy_name="one_cent_buy",
+        )
+    )
+    strategy._cache_override = _cache_with_sufficient_balance(
+        free_usdc=10.0,
+        base_currency="USDC",
+    )
+    view = _real_market_view()
+    approved = RuntimeFakePolicy().evaluate(_decision(), view)
+    submitter = cast(NautilusOrderSubmitter, strategy._decision_pipeline.submitter)
+
+    assert submitter.cash_preflight is not None
+    assert submitter.cash_preflight(approved, view) is None
 
 
 def test_native_strategy_reports_progress_on_internal_evaluation_heartbeat() -> None:
@@ -1950,6 +2026,7 @@ def test_native_strategy_does_not_submit_when_approved_decision_view_lacks_book(
         strategy_name="ptb_diff",
         **_native_projections(),
     )
+    strategy._cache_override = _cache_with_sufficient_balance()
     _policy = _attach_decision_policy(strategy)
     base_view = _real_market_view()
     view = cast(Any, MissingBookView)(
@@ -4834,6 +4911,7 @@ def test_native_strategy_on_order_accepted_preserves_ephemeral() -> None:
         registry=registry,
         observability=observability,
     )
+    strategy._cache_override = _cache_with_sufficient_balance()
     _policy = _attach_decision_policy(strategy)
 
     _mark_condition_ready(strategy, "condition-btc-5m")
@@ -5077,6 +5155,7 @@ def test_native_strategy_surfaces_approved_signal_to_observability() -> None:
         observability=observability,
         **_native_projections(),
     )
+    strategy._cache_override = _cache_with_sufficient_balance()
     _policy = _attach_decision_policy(strategy)
 
     _mark_condition_ready(strategy, "condition-btc-5m")
@@ -5131,6 +5210,7 @@ def test_native_strategy_does_not_swallow_durable_signal_persistence_failure() -
         observability=FailingSignalObservability(),
         **_native_projections(),
     )
+    strategy._cache_override = _cache_with_sufficient_balance()
     _policy = _attach_decision_policy(strategy)
 
     _mark_condition_ready(strategy, "condition-btc-5m")
