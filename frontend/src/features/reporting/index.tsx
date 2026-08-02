@@ -30,6 +30,7 @@ import {
   formatPrice,
 } from '@/lib/format'
 import { type NavigateFn, useTableUrlState } from '@/hooks/use-table-url-state'
+import { useOfficialSettlements } from '@/lib/polymarket/use-official-settlements'
 import { PaginationBar } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -467,6 +468,9 @@ function TradesTable({
   onPageSizeChange,
 }: { trades: ReportTradeResult[] } & TablePaginationProps) {
   const { t } = useTranslation()
+  const settlements = useOfficialSettlements(
+    trades.map((trade) => trade.market_slug)
+  )
   if (!trades.length)
     return (
       <EmptyState
@@ -483,6 +487,7 @@ function TradesTable({
             <TableHead>{t('fields.market')}</TableHead>
             <TableHead>{t('fields.side')}</TableHead>
             <TableHead>{t('fields.result')}</TableHead>
+            <TableHead>{t('fields.officialSettlement')}</TableHead>
             <TableHead className='hidden lg:table-cell'>
               {t('fields.entry')}
             </TableHead>
@@ -512,6 +517,12 @@ function TradesTable({
               </TableCell>
               <TableCell>
                 <StatusBadge status={trade.result} />
+              </TableCell>
+              <TableCell>
+                <OfficialSettlementCell
+                  slug={trade.market_slug}
+                  settlements={settlements}
+                />
               </TableCell>
               <TableCell className='hidden font-mono lg:table-cell'>
                 {formatPrice(trade.entry_price)}
@@ -556,6 +567,39 @@ function TradesTable({
   )
 }
 
+function OfficialSettlementCell({
+  slug,
+  settlements,
+}: {
+  slug: string
+  settlements: ReturnType<typeof useOfficialSettlements>
+}) {
+  const { t } = useTranslation()
+  if (settlements.pending.has(slug)) {
+    return <Skeleton className='h-5 w-14' />
+  }
+  if (settlements.failed.has(slug)) {
+    return (
+      <span className='text-xs text-muted-foreground'>
+        {t('common.unavailable')}
+      </span>
+    )
+  }
+  const settlement = settlements.bySlug.get(slug)
+  if (!settlement || !settlement.resolved) {
+    return (
+      <span className='text-xs text-muted-foreground'>
+        {t('status.pending_settlement')}
+      </span>
+    )
+  }
+  if (settlement.outcome) {
+    return <StatusBadge status={settlement.outcome} />
+  }
+  return (
+    <span className='font-mono text-xs'>{settlement.label ?? t('common.unavailable')}</span>
+  )
+}
 function PositionsTable({
   positions,
   total,

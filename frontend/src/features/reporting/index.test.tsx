@@ -69,10 +69,60 @@ describe('ReportingPage', () => {
       average_roi: 0.4,
       closed_trades: 1,
     })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('gamma-api.polymarket.com/markets/slug/')) {
+          return new Response(
+            JSON.stringify({
+              closed: true,
+              umaResolutionStatus: 'resolved',
+              outcomes: '["Up", "Down"]',
+              outcomePrices: '["0", "1"]',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+        throw new Error(`unexpected fetch: ${url}`)
+      })
+    )
   })
 
   afterEach(() => {
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it('shows official Polymarket settlement outcomes from Gamma', async () => {
+    vi.spyOn(client, 'getTrades').mockResolvedValue({
+      items: [
+        makeReportTradeResult({
+          report_result_id: 'rr-settle',
+          market_slug: 'btc-updown-5m-1785710700',
+          result: 'WIN',
+        }),
+      ],
+      total: 1,
+    })
+    vi.spyOn(client, 'getPositions').mockResolvedValue({
+      items: [makeReportPosition()],
+      total: 1,
+    })
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue({
+      items: [makeReportOrder()],
+      total: 1,
+    })
+
+    const view = renderReportingPage()
+
+    expect(await view.findByText('Official settlement')).toBeInTheDocument()
+    expect(await view.findByText('Down')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'gamma-api.polymarket.com/markets/slug/btc-updown-5m-1785710700'
+      )
+    )
   })
 
   it('renders the trades table with stored report results and a cumulative PnL chart', async () => {

@@ -209,6 +209,7 @@ export const en = {
     exit_reason: 'Exit reason',
     fee_model: 'Fee model',
     source: 'Source',
+    officialSettlement: 'Official settlement',
     native_settlement_mode: 'Native settlement mode',
     native_position_mutation: 'Native position mutation',
     event_id: 'Event ID',
@@ -258,6 +259,7 @@ export const en = {
     take_profit: 'Take profit',
     stop_loss: 'Stop loss',
     max_hold_time: 'Max hold time',
+    pending_settlement: 'Pending',
   },
   errors: {
     load: 'Failed to load {{resource}}: {{message}}',
@@ -524,6 +526,7 @@ export const zhCN = {
     exit_reason: '平仓原因',
     fee_model: '手续费模型',
     source: '来源',
+    officialSettlement: '官方结算',
     native_settlement_mode: '原生结算模式',
     native_position_mutation: '原生头寸变更',
     event_id: '事件 ID',
@@ -573,6 +576,7 @@ export const zhCN = {
     take_profit: '止盈',
     stop_loss: '止损',
     max_hold_time: '最大持仓时间',
+    pending_settlement: '待结算',
   },
   errors: {
     load: '加载{{resource}}失败：{{message}}',
