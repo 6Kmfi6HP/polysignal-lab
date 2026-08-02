@@ -8,6 +8,7 @@ from hypothesis import settings
 from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
 
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.domain.strategy_readiness import StrategyStatus
 from polysignal_lab.nautilus_runtime.market_catalog import (
     InstrumentTokenMeta,
     MarketCatalog,
@@ -93,6 +94,16 @@ class _StubStrategy:
         self._clock = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)
         self.subscribe_book_deltas_raises = False
         self.subscribe_calls: list[tuple[str, str]] = []
+
+    def _note_runtime_readiness(
+        self,
+        condition_id: str,
+        *,
+        ready: bool,
+        status: StrategyStatus | None = None,
+        reason: str | None = None,
+    ) -> None:
+        _ = condition_id, ready, status, reason
 
     def _framework_now(self) -> datetime:
         self._clock += timedelta(milliseconds=100)
