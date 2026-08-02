@@ -63,11 +63,15 @@ _BOOK_GENERATION_STALL_SEC = 60.0
 # How long a condition may stay stalled continuously (across resubscriptions)
 # before we conclude the market has no book data and abandon it instead of
 # resubscribing again. Repeated resubscription cannot conjure a snapshot the
-# feed never sends (a thin or defunct Polymarket market). Mirrors the liveness
-# readiness-miss threshold (health.liveness.max_readiness_miss_sec, default 300)
-# so an abandoned condition stops producing readiness misses before the node is
-# ever judged unhealthy for it.
-_BOOK_GENERATION_ABANDON_SEC = 300.0
+# feed never sends (a thin or defunct Polymarket market).
+#
+# The value must stay BELOW the liveness readiness-miss window
+# (health.liveness.max_readiness_miss_sec, default 300): abandon only runs on
+# the 10s evaluation heartbeat, so it can lag the threshold by up to one
+# heartbeat interval. 240 + 10 < 300 guarantees the abandon fires (and clears
+# the persisted readiness-miss key via _note_runtime_readiness ready=True)
+# strictly before the node can ever be judged unhealthy for the condition.
+_BOOK_GENERATION_ABANDON_SEC = 240.0
 
 logger = logging.getLogger(__name__)
 
@@ -365,6 +369,13 @@ class _SubscriptionStrategy(_ConditionSubscriptionStateOwner, Protocol):
         book_type: object,
         client_id: object | None = None,
         managed: bool = False,
+    ) -> object: ...
+    def request_order_book_snapshot(
+        self,
+        instrument_id: object,
+        *,
+        limit: int = 0,
+        client_id: object | None = None,
     ) -> object: ...
     def unsubscribe_quotes(
         self,
@@ -968,6 +979,26 @@ def abandon_book_stalled_condition(
     return True
 
 
+def _resubscribe_market_instrument(
+    strategy: _SubscriptionStrategy,
+    instrument_id: object,
+) -> None:
+    """Re-subscribe one instrument and request a one-time snapshot backstop.
+
+    The Polymarket feed can treat a resubscribed book_delta subscription as
+    already-active and not re-send its initial snapshot (deltas alone have no
+    snapshot fallback); the explicit request guarantees a first book even then.
+    The instrument is cache-visible here (pending_instrument_ids is empty by the
+    _book_generation_stalled guard) and the request routes via venue/client id.
+    """
+    _ = unsubscribe_market_instrument(strategy, instrument_id)
+    _ = subscribe_market_instrument(strategy, instrument_id)
+    _ = strategy.request_order_book_snapshot(
+        instrument_id,
+        client_id=_client_id_for_instrument(strategy, instrument_id),
+    )
+
+
 def force_resubscribe_if_book_stalled(
     strategy: _SubscriptionStrategy,
     condition_id: str,
@@ -1004,8 +1035,7 @@ def force_resubscribe_if_book_stalled(
     if not instruments:
         return False
     for instrument_id in instruments:
-        _ = unsubscribe_market_instrument(strategy, instrument_id)
-        _ = subscribe_market_instrument(strategy, instrument_id)
+        _resubscribe_market_instrument(strategy, instrument_id)
     # A new generation reopens both sides and restarts the stall clock.
     begin_market_book_generation(strategy, condition_id, now=now)
     logger.info(

@@ -10,6 +10,9 @@ from polysignal_lab.nautilus_runtime.market_catalog import (
     MarketCatalog,
     MarketPairMeta,
 )
+from polysignal_lab.nautilus_runtime.strategy.constants import (
+    EVALUATION_HEARTBEAT_INTERVAL,
+)
 from polysignal_lab.nautilus_runtime.strategy.lifecycle import (
     on_evaluation_heartbeat,
 )
@@ -65,6 +68,7 @@ class _ResubscribeStrategy:
         self._subscription_state = MarketSubscriptionState()
         self.subscribed_instruments: list[str] = []
         self.unsubscribed_instruments: list[str] = []
+        self.snapshot_requests: list[str] = []
         self.readiness: list[tuple[str, bool]] = []
 
     def _readiness_detail(
@@ -128,6 +132,17 @@ class _ResubscribeStrategy:
         del client_id
         self.unsubscribed_instruments.append(str(instrument_id))
 
+    def request_order_book_snapshot(
+        self,
+        instrument_id: object,
+        *,
+        limit: int = 0,
+        client_id: object | None = None,
+    ) -> object:
+        del limit, client_id
+        self.snapshot_requests.append(str(instrument_id))
+        return object()
+
 
 def _stalled_state(
     strategy: _ResubscribeStrategy,
@@ -174,6 +189,32 @@ def test_stalled_condition_force_resubscribes_instruments_and_refreshes_state() 
     state = strategy._subscription_state
     assert state.book_generation_started_at_by_condition["btc-5m"] == now
     assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.UP, Side.DOWN}
+
+
+def test_stalled_condition_resubscription_requests_snapshot_backstop() -> None:
+    """Resubscription also issues a one-time snapshot request per instrument so a
+    first book arrives even when the feed treats the book_delta subscribe as
+    already-active and does not re-send its initial snapshot."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stalled_state(
+        strategy,
+        "btc-5m",
+        started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+    )
+
+    triggered = force_resubscribe_if_book_stalled(
+        strategy,
+        "btc-5m",
+        now=now,
+    )
+
+    assert triggered is True
+    assert sorted(strategy.snapshot_requests) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
 
 
 def test_fresh_generation_does_not_resubscribe() -> None:
@@ -322,6 +363,15 @@ def test_force_resubscribe_still_resubscribes_below_abandon_threshold() -> None:
     assert "btc-5m" in strategy._active_condition_ids
     assert len(strategy.unsubscribed_instruments) == 6
     assert len(strategy.subscribed_instruments) == 6
+
+
+def test_abandon_threshold_precedes_liveness_readiness_miss_threshold() -> None:
+    """Abandon must fire before the liveness readiness-miss window (300s) so a
+    no-book condition stops generating readiness misses before the node is ever
+    judged unhealthy. The abandon check only runs on the 10s evaluation
+    heartbeat, so the margin has to exceed the heartbeat interval."""
+    heartbeat_sec = EVALUATION_HEARTBEAT_INTERVAL.total_seconds()
+    assert _BOOK_GENERATION_ABANDON_SEC + heartbeat_sec < 300
 
 
 def test_abandon_condition_clears_lifecycle_state_and_readiness_miss() -> None:
