@@ -36,26 +36,70 @@ export function useRejectedSignalsQuery(limit = 100) {
   })
 }
 
-export function useReportOrdersQuery(status?: string, limit = 100) {
+export function useReportOrdersQuery({
+  status,
+  pageIndex,
+  pageSize,
+}: {
+  status?: string
+  pageIndex: number
+  pageSize: number
+}) {
   return useQuery({
-    queryKey: ['report-orders', status, limit],
-    queryFn: () => api.getReportOrders(status, limit),
-    refetchInterval: LIVE_REFRESH_MS,
+    queryKey: ['report-orders', status, pageIndex, pageSize],
+    queryFn: () =>
+      api.getReportOrders({
+        status,
+        limit: pageSize,
+        offset: pageIndex * pageSize,
+      }),
+    refetchInterval: pageIndex === 0 ? LIVE_REFRESH_MS : false,
   })
 }
 
-export function usePositionsQuery(status?: string, limit = 100) {
+export function usePositionsQuery({
+  status,
+  pageIndex,
+  pageSize,
+}: {
+  status?: string
+  pageIndex: number
+  pageSize: number
+}) {
   return useQuery({
-    queryKey: ['positions', status, limit],
-    queryFn: () => api.getPositions(status, limit),
-    refetchInterval: LIVE_REFRESH_MS,
+    queryKey: ['positions', status, pageIndex, pageSize],
+    queryFn: () =>
+      api.getPositions({
+        status,
+        limit: pageSize,
+        offset: pageIndex * pageSize,
+      }),
+    refetchInterval: pageIndex === 0 ? LIVE_REFRESH_MS : false,
   })
 }
 
-export function useTradesQuery(limit = 100) {
+export function useTradesQuery({
+  pageIndex,
+  pageSize,
+}: {
+  pageIndex: number
+  pageSize: number
+}) {
   return useQuery({
-    queryKey: ['trades', limit],
-    queryFn: () => api.getTrades(limit),
+    queryKey: ['trades', pageIndex, pageSize],
+    queryFn: () =>
+      api.getTrades({
+        limit: pageSize,
+        offset: pageIndex * pageSize,
+      }),
+    refetchInterval: pageIndex === 0 ? LIVE_REFRESH_MS : false,
+  })
+}
+
+export function useTradesChartQuery(limit = 500) {
+  return useQuery({
+    queryKey: ['trades-chart', limit],
+    queryFn: () => api.getTrades({ limit, offset: 0 }),
     refetchInterval: LIVE_REFRESH_MS,
   })
 }
