@@ -368,4 +368,74 @@ describe('ReportingPage', () => {
       tradesPage: 1,
     })
   })
+
+  it('does not reset the page while trades are still loading', async () => {
+    const pending: Array<{
+      resolve: (value: {
+        items: ReturnType<typeof makeReportTradeResult>[]
+        total: number
+      }) => void
+    }> = []
+    vi.spyOn(client, 'getTrades').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          pending.push({ resolve })
+        })
+    )
+    vi.spyOn(client, 'getPositions').mockResolvedValue({
+      items: [makeReportPosition()],
+      total: 1,
+    })
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue({
+      items: [makeReportOrder()],
+      total: 1,
+    })
+    const navigate = vi.fn()
+    renderReportingPage({ tradesPage: 2, tradesPageSize: 25 }, navigate)
+
+    await waitFor(() => {
+      expect(client.getPositions).toHaveBeenCalled()
+    })
+    expect(navigate).not.toHaveBeenCalled()
+
+    const payload = {
+      items: Array.from({ length: 25 }, (_, index) =>
+        makeReportTradeResult({ report_result_id: `rr-load-${index}` })
+      ),
+      total: 60,
+    }
+    for (const entry of pending) {
+      entry.resolve(payload)
+    }
+
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-slot="table-container"]')
+      ).not.toBeNull()
+    })
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('keeps pagination outside a constrained scroll wrapper', async () => {
+    vi.spyOn(client, 'getTrades').mockResolvedValue({
+      items: Array.from({ length: 25 }, (_, index) =>
+        makeReportTradeResult({ report_result_id: `rr-wrap-${index}` })
+      ),
+      total: 60,
+    })
+    vi.spyOn(client, 'getPositions').mockResolvedValue({
+      items: [makeReportPosition()],
+      total: 1,
+    })
+    vi.spyOn(client, 'getReportOrders').mockResolvedValue({
+      items: [makeReportOrder()],
+      total: 1,
+    })
+    const view = renderReportingPage()
+    const next = await within(view.getByRole('tabpanel')).findByRole('button', {
+      name: 'Next page',
+    })
+    const constrained = next.closest('.max-h-\\[65vh\\]')
+    expect(constrained).toBeNull()
+  })
 })

@@ -126,26 +126,35 @@ export function ReportingPage({
     }),
     [openPositions.data, rejectedOrders.data]
   )
-  const tradesPageCount = Math.max(
-    1,
-    Math.ceil((trades.data?.total ?? 0) / tradesTable.pagination.pageSize)
-  )
-  const positionsPageCount = Math.max(
-    1,
-    Math.ceil((positions.data?.total ?? 0) / positionsTable.pagination.pageSize)
-  )
-  const ordersPageCount = Math.max(
-    1,
-    Math.ceil((orders.data?.total ?? 0) / ordersTable.pagination.pageSize)
-  )
+  const tradesPageCount = trades.data
+    ? Math.max(
+        1,
+        Math.ceil(trades.data.total / tradesTable.pagination.pageSize)
+      )
+    : null
+  const positionsPageCount = positions.data
+    ? Math.max(
+        1,
+        Math.ceil(positions.data.total / positionsTable.pagination.pageSize)
+      )
+    : null
+  const ordersPageCount = orders.data
+    ? Math.max(
+        1,
+        Math.ceil(orders.data.total / ordersTable.pagination.pageSize)
+      )
+    : null
 
   useEffect(() => {
+    if (tradesPageCount == null) return
     tradesTable.ensurePageInRange(tradesPageCount, { resetTo: 'last' })
   }, [tradesPageCount, tradesTable])
   useEffect(() => {
+    if (positionsPageCount == null) return
     positionsTable.ensurePageInRange(positionsPageCount, { resetTo: 'last' })
   }, [positionsPageCount, positionsTable])
   useEffect(() => {
+    if (ordersPageCount == null) return
     ordersTable.ensurePageInRange(ordersPageCount, { resetTo: 'last' })
   }, [ordersPageCount, ordersTable])
   return (
@@ -466,86 +475,85 @@ function TradesTable({
       />
     )
   return (
-    <div className='max-h-[65vh] overflow-auto'>
-      <TableFrame>
-        <Table>
-          <TableHeader className='sticky top-0 z-10 bg-card'>
-            <TableRow>
-              <TableHead>{t('ui.closed')}</TableHead>
-              <TableHead>{t('fields.market')}</TableHead>
-              <TableHead>{t('fields.side')}</TableHead>
-              <TableHead>{t('fields.result')}</TableHead>
-              <TableHead className='hidden lg:table-cell'>
-                {t('fields.entry')}
-              </TableHead>
-              <TableHead className='hidden lg:table-cell'>
-                {t('fields.stake')}
-              </TableHead>
-              <TableHead>{t('fields.pnl')}</TableHead>
-              <TableHead>{t('fields.roi')}</TableHead>
-              <TableHead>
-                <span className='sr-only'>{t('common.details')}</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {trades.map((trade) => (
-              <TableRow key={trade.report_result_id}>
-                <TableCell className='font-mono text-xs'>
-                  {formatDateTime(trade.closed_at)}
-                </TableCell>
-                <MarketCell
-                  asset={trade.asset}
-                  timeframe={trade.timeframe}
-                  slug={trade.market_slug}
-                />
-                <TableCell>
-                  <StatusBadge status={trade.side} />
-                </TableCell>
-                <TableCell>
-                  <StatusBadge status={trade.result} />
-                </TableCell>
-                <TableCell className='hidden font-mono lg:table-cell'>
-                  {formatPrice(trade.entry_price)}
-                </TableCell>
-                <TableCell className='hidden font-mono lg:table-cell'>
-                  {formatMoney(trade.stake_usdc)}
-                </TableCell>
-                <TableCell
-                  className={
-                    trade.pnl_usdc >= 0
-                      ? 'font-mono text-positive'
-                      : 'font-mono text-destructive'
-                  }
+    <TableFrame>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t('ui.closed')}</TableHead>
+            <TableHead>{t('fields.market')}</TableHead>
+            <TableHead>{t('fields.side')}</TableHead>
+            <TableHead>{t('fields.result')}</TableHead>
+            <TableHead className='hidden lg:table-cell'>
+              {t('fields.entry')}
+            </TableHead>
+            <TableHead className='hidden lg:table-cell'>
+              {t('fields.stake')}
+            </TableHead>
+            <TableHead>{t('fields.pnl')}</TableHead>
+            <TableHead>{t('fields.roi')}</TableHead>
+            <TableHead>
+              <span className='sr-only'>{t('common.details')}</span>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {trades.map((trade) => (
+            <TableRow key={trade.report_result_id}>
+              <TableCell className='font-mono text-xs'>
+                {formatDateTime(trade.closed_at)}
+              </TableCell>
+              <MarketCell
+                asset={trade.asset}
+                timeframe={trade.timeframe}
+                slug={trade.market_slug}
+              />
+              <TableCell>
+                <StatusBadge status={trade.side} />
+              </TableCell>
+              <TableCell>
+                <StatusBadge status={trade.result} />
+              </TableCell>
+              <TableCell className='hidden font-mono lg:table-cell'>
+                {formatPrice(trade.entry_price)}
+              </TableCell>
+              <TableCell className='hidden font-mono lg:table-cell'>
+                {formatMoney(trade.stake_usdc)}
+              </TableCell>
+              <TableCell
+                className={
+                  trade.pnl_usdc >= 0
+                    ? 'font-mono text-positive'
+                    : 'font-mono text-destructive'
+                }
+              >
+                {formatMoney(trade.pnl_usdc)}
+              </TableCell>
+              <TableCell className='font-mono'>
+                {formatPercent(trade.roi, true)}
+              </TableCell>
+              <TableCell>
+                <DetailSheet
+                  title={`${trade.asset} trade`}
+                  description={trade.report_result_id}
                 >
-                  {formatMoney(trade.pnl_usdc)}
-                </TableCell>
-                <TableCell className='font-mono'>
-                  {formatPercent(trade.roi, true)}
-                </TableCell>
-                <TableCell>
-                  <DetailSheet
-                    title={`${trade.asset} trade`}
-                    description={trade.report_result_id}
-                  >
-                    <DetailList values={trade} />
-                  </DetailSheet>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        <PaginationBar
-          pageIndex={pageIndex}
-          pageSize={pageSize}
-          total={total}
-          onPageChange={onPageChange}
-          onPageSizeChange={onPageSizeChange}
-        />
-      </TableFrame>
-    </div>
+                  <DetailList values={trade} />
+                </DetailSheet>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <PaginationBar
+        pageIndex={pageIndex}
+        pageSize={pageSize}
+        total={total}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
+    </TableFrame>
   )
 }
+
 function PositionsTable({
   positions,
   total,
@@ -563,76 +571,74 @@ function PositionsTable({
       />
     )
   return (
-    <div className='max-h-[65vh] overflow-auto'>
-      <TableFrame>
-        <Table>
-          <TableHeader className='sticky top-0 z-10 bg-card'>
-            <TableRow>
-              <TableHead>{t('fields.opened')}</TableHead>
-              <TableHead>{t('fields.market')}</TableHead>
-              <TableHead>{t('fields.side')}</TableHead>
-              <TableHead>{t('fields.status')}</TableHead>
-              <TableHead className='hidden lg:table-cell'>
-                {t('fields.entry')}
-              </TableHead>
-              <TableHead className='hidden lg:table-cell'>
-                {t('fields.stake')}
-              </TableHead>
-              <TableHead className='hidden xl:table-cell'>
-                {t('fields.shares')}
-              </TableHead>
-              <TableHead>
-                <span className='sr-only'>{t('common.details')}</span>
-              </TableHead>
+    <TableFrame>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t('fields.opened')}</TableHead>
+            <TableHead>{t('fields.market')}</TableHead>
+            <TableHead>{t('fields.side')}</TableHead>
+            <TableHead>{t('fields.status')}</TableHead>
+            <TableHead className='hidden lg:table-cell'>
+              {t('fields.entry')}
+            </TableHead>
+            <TableHead className='hidden lg:table-cell'>
+              {t('fields.stake')}
+            </TableHead>
+            <TableHead className='hidden xl:table-cell'>
+              {t('fields.shares')}
+            </TableHead>
+            <TableHead>
+              <span className='sr-only'>{t('common.details')}</span>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {positions.map((position) => (
+            <TableRow key={position.report_position_id}>
+              <TableCell className='font-mono text-xs'>
+                {formatDateTime(position.opened_at)}
+              </TableCell>
+              <MarketCell
+                asset={position.asset}
+                timeframe={position.timeframe}
+                slug={position.market_slug}
+              />
+              <TableCell>
+                <StatusBadge status={position.side} />
+              </TableCell>
+              <TableCell>
+                <StatusBadge status={position.status} />
+              </TableCell>
+              <TableCell className='hidden font-mono lg:table-cell'>
+                {formatPrice(position.entry_price)}
+              </TableCell>
+              <TableCell className='hidden font-mono lg:table-cell'>
+                {formatMoney(position.stake_usdc)}
+              </TableCell>
+              <TableCell className='hidden font-mono xl:table-cell'>
+                {formatNumber(position.shares)}
+              </TableCell>
+              <TableCell>
+                <DetailSheet
+                  title={`${position.asset} position`}
+                  description={position.report_position_id}
+                >
+                  <DetailList values={position} />
+                </DetailSheet>
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {positions.map((position) => (
-              <TableRow key={position.report_position_id}>
-                <TableCell className='font-mono text-xs'>
-                  {formatDateTime(position.opened_at)}
-                </TableCell>
-                <MarketCell
-                  asset={position.asset}
-                  timeframe={position.timeframe}
-                  slug={position.market_slug}
-                />
-                <TableCell>
-                  <StatusBadge status={position.side} />
-                </TableCell>
-                <TableCell>
-                  <StatusBadge status={position.status} />
-                </TableCell>
-                <TableCell className='hidden font-mono lg:table-cell'>
-                  {formatPrice(position.entry_price)}
-                </TableCell>
-                <TableCell className='hidden font-mono lg:table-cell'>
-                  {formatMoney(position.stake_usdc)}
-                </TableCell>
-                <TableCell className='hidden font-mono xl:table-cell'>
-                  {formatNumber(position.shares)}
-                </TableCell>
-                <TableCell>
-                  <DetailSheet
-                    title={`${position.asset} position`}
-                    description={position.report_position_id}
-                  >
-                    <DetailList values={position} />
-                  </DetailSheet>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        <PaginationBar
-          pageIndex={pageIndex}
-          pageSize={pageSize}
-          total={total}
-          onPageChange={onPageChange}
-          onPageSizeChange={onPageSizeChange}
-        />
-      </TableFrame>
-    </div>
+          ))}
+        </TableBody>
+      </Table>
+      <PaginationBar
+        pageIndex={pageIndex}
+        pageSize={pageSize}
+        total={total}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
+    </TableFrame>
   )
 }
 function OrdersTable({
@@ -652,72 +658,70 @@ function OrdersTable({
       />
     )
   return (
-    <div className='max-h-[65vh] overflow-auto'>
-      <TableFrame>
-        <Table>
-          <TableHeader className='sticky top-0 z-10 bg-card'>
-            <TableRow>
-              <TableHead>{t('fields.created')}</TableHead>
-              <TableHead>{t('fields.market')}</TableHead>
-              <TableHead>{t('fields.side')}</TableHead>
-              <TableHead>{t('fields.status')}</TableHead>
-              <TableHead>{t('fields.limit')}</TableHead>
-              <TableHead>{t('fields.stake')}</TableHead>
-              <TableHead className='whitespace-normal'>
-                {t('fields.rejectReason')}
-              </TableHead>
-              <TableHead>
-                <span className='sr-only'>{t('common.details')}</span>
-              </TableHead>
+    <TableFrame>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t('fields.created')}</TableHead>
+            <TableHead>{t('fields.market')}</TableHead>
+            <TableHead>{t('fields.side')}</TableHead>
+            <TableHead>{t('fields.status')}</TableHead>
+            <TableHead>{t('fields.limit')}</TableHead>
+            <TableHead>{t('fields.stake')}</TableHead>
+            <TableHead className='whitespace-normal'>
+              {t('fields.rejectReason')}
+            </TableHead>
+            <TableHead>
+              <span className='sr-only'>{t('common.details')}</span>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {orders.map((order) => (
+            <TableRow key={order.report_order_id}>
+              <TableCell className='font-mono text-xs'>
+                {formatDateTime(order.created_at)}
+              </TableCell>
+              <MarketCell
+                asset={order.asset}
+                timeframe={order.timeframe}
+                slug={order.market_slug}
+              />
+              <TableCell>
+                <StatusBadge status={order.side} />
+              </TableCell>
+              <TableCell>
+                <StatusBadge status={order.status} />
+              </TableCell>
+              <TableCell className='font-mono'>
+                {formatPrice(order.limit_price)}
+              </TableCell>
+              <TableCell className='font-mono'>
+                {formatMoney(order.stake_usdc)}
+              </TableCell>
+              <TableCell className='max-w-xs whitespace-normal text-muted-foreground'>
+                {order.reject_reason ?? '-'}
+              </TableCell>
+              <TableCell>
+                <DetailSheet
+                  title={`${order.asset} order`}
+                  description={order.report_order_id}
+                >
+                  <DetailList values={order} />
+                </DetailSheet>
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {orders.map((order) => (
-              <TableRow key={order.report_order_id}>
-                <TableCell className='font-mono text-xs'>
-                  {formatDateTime(order.created_at)}
-                </TableCell>
-                <MarketCell
-                  asset={order.asset}
-                  timeframe={order.timeframe}
-                  slug={order.market_slug}
-                />
-                <TableCell>
-                  <StatusBadge status={order.side} />
-                </TableCell>
-                <TableCell>
-                  <StatusBadge status={order.status} />
-                </TableCell>
-                <TableCell className='font-mono'>
-                  {formatPrice(order.limit_price)}
-                </TableCell>
-                <TableCell className='font-mono'>
-                  {formatMoney(order.stake_usdc)}
-                </TableCell>
-                <TableCell className='max-w-xs whitespace-normal text-muted-foreground'>
-                  {order.reject_reason ?? '-'}
-                </TableCell>
-                <TableCell>
-                  <DetailSheet
-                    title={`${order.asset} order`}
-                    description={order.report_order_id}
-                  >
-                    <DetailList values={order} />
-                  </DetailSheet>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        <PaginationBar
-          pageIndex={pageIndex}
-          pageSize={pageSize}
-          total={total}
-          onPageChange={onPageChange}
-          onPageSizeChange={onPageSizeChange}
-        />
-      </TableFrame>
-    </div>
+          ))}
+        </TableBody>
+      </Table>
+      <PaginationBar
+        pageIndex={pageIndex}
+        pageSize={pageSize}
+        total={total}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
+    </TableFrame>
   )
 }
 function MarketCell({
