@@ -1,0 +1,94 @@
+id: no-subscription-state-bypass
+message: Subscription lifecycle containers must only be mutated inside subscriptions.py; route changes through the transition/clear functions.
+severity: error
+language: python
+ignores:
+  - "**/subscriptions.py"
+rule:
+  any:
+    # Phase container: assignment, pop (any arity), clear, del, setdefault, update.
+    - pattern: $OBJ.condition_phases[$KEY] = $VALUE
+    - pattern: $OBJ.condition_phases.pop($KEY)
+    - pattern: $OBJ.condition_phases.pop($KEY, $DEFAULT)
+    - pattern: $OBJ.condition_phases.clear()
+    - pattern: del $OBJ.condition_phases[$KEY]
+    - pattern: $OBJ.condition_phases.setdefault($KEY, $VALUE)
+    - pattern: $OBJ.condition_phases.update($VALUE)
+    # pending_instrument_ids: add/discard/remove/clear/update/|= and setdefault via alias.
+    - pattern: $OBJ.pending_instrument_ids.add($VALUE)
+    - pattern: $OBJ.pending_instrument_ids.discard($VALUE)
+    - pattern: $OBJ.pending_instrument_ids.remove($VALUE)
+    - pattern: $OBJ.pending_instrument_ids.clear()
+    - pattern: $OBJ.pending_instrument_ids.update($VALUE)
+    - pattern: $OBJ.pending_instrument_ids |= $VALUE
+    # subscribed_instrument_ids: add/discard/remove/clear/update/|=.
+    - pattern: $OBJ.subscribed_instrument_ids.add($VALUE)
+    - pattern: $OBJ.subscribed_instrument_ids.discard($VALUE)
+    - pattern: $OBJ.subscribed_instrument_ids.remove($VALUE)
+    - pattern: $OBJ.subscribed_instrument_ids.clear()
+    - pattern: $OBJ.subscribed_instrument_ids.update($VALUE)
+    - pattern: $OBJ.subscribed_instrument_ids |= $VALUE
+    # awaiting_book_sides_by_condition: whole-entry assignment/pop/clear/update/setdefault/del
+    # plus inner-set mutation (entry then .add/.discard/.remove).
+    - pattern: $OBJ.awaiting_book_sides_by_condition[$KEY] = $VALUE
+    - pattern: $OBJ.awaiting_book_sides_by_condition.pop($KEY)
+    - pattern: $OBJ.awaiting_book_sides_by_condition.pop($KEY, $DEFAULT)
+    - pattern: $OBJ.awaiting_book_sides_by_condition.clear()
+    - pattern: $OBJ.awaiting_book_sides_by_condition.update($VALUE)
+    - pattern: $OBJ.awaiting_book_sides_by_condition.setdefault($KEY, $VALUE)
+    - pattern: del $OBJ.awaiting_book_sides_by_condition[$KEY]
+    - pattern: $OBJ.awaiting_book_sides_by_condition[$KEY].add($VALUE)
+    - pattern: $OBJ.awaiting_book_sides_by_condition[$KEY].discard($VALUE)
+    - pattern: $OBJ.awaiting_book_sides_by_condition[$KEY].remove($VALUE)
+    # book_generation_started_at_by_condition.
+    - pattern: $OBJ.book_generation_started_at_by_condition[$KEY] = $VALUE
+    - pattern: $OBJ.book_generation_started_at_by_condition.pop($KEY)
+    - pattern: $OBJ.book_generation_started_at_by_condition.pop($KEY, $DEFAULT)
+    - pattern: $OBJ.book_generation_started_at_by_condition.clear()
+    - pattern: $OBJ.book_generation_started_at_by_condition.update($VALUE)
+    - pattern: $OBJ.book_generation_started_at_by_condition.setdefault($KEY, $VALUE)
+    - pattern: del $OBJ.book_generation_started_at_by_condition[$KEY]
+    # first_bilateral_book_at_by_condition.
+    - pattern: $OBJ.first_bilateral_book_at_by_condition[$KEY] = $VALUE
+    - pattern: $OBJ.first_bilateral_book_at_by_condition.pop($KEY)
+    - pattern: $OBJ.first_bilateral_book_at_by_condition.pop($KEY, $DEFAULT)
+    - pattern: $OBJ.first_bilateral_book_at_by_condition.clear()
+    - pattern: $OBJ.first_bilateral_book_at_by_condition.update($VALUE)
+    - pattern: $OBJ.first_bilateral_book_at_by_condition.setdefault($KEY, $VALUE)
+    - pattern: del $OBJ.first_bilateral_book_at_by_condition[$KEY]
+    # first_bilateral_book_latency_ms_by_condition.
+    - pattern: $OBJ.first_bilateral_book_latency_ms_by_condition[$KEY] = $VALUE
+    - pattern: $OBJ.first_bilateral_book_latency_ms_by_condition.pop($KEY)
+    - pattern: $OBJ.first_bilateral_book_latency_ms_by_condition.pop($KEY, $DEFAULT)
+    - pattern: $OBJ.first_bilateral_book_latency_ms_by_condition.clear()
+    - pattern: $OBJ.first_bilateral_book_latency_ms_by_condition.update($VALUE)
+    - pattern: $OBJ.first_bilateral_book_latency_ms_by_condition.setdefault($KEY, $VALUE)
+    - pattern: del $OBJ.first_bilateral_book_latency_ms_by_condition[$KEY]
+    # subscribe_intent_started_at_by_condition (was unguarded).
+    - pattern: $OBJ.subscribe_intent_started_at_by_condition[$KEY] = $VALUE
+    - pattern: $OBJ.subscribe_intent_started_at_by_condition.pop($KEY)
+    - pattern: $OBJ.subscribe_intent_started_at_by_condition.pop($KEY, $DEFAULT)
+    - pattern: $OBJ.subscribe_intent_started_at_by_condition.clear()
+    - pattern: $OBJ.subscribe_intent_started_at_by_condition.update($VALUE)
+    - pattern: $OBJ.subscribe_intent_started_at_by_condition.setdefault($KEY, $VALUE)
+    - pattern: del $OBJ.subscribe_intent_started_at_by_condition[$KEY]
+    # last_book_at_by_condition / last_book_received_at_by_condition (were unguarded).
+    - pattern: $OBJ.last_book_at_by_condition[$KEY] = $VALUE
+    - pattern: $OBJ.last_book_at_by_condition[$KEY][$SIDE] = $VALUE
+    - pattern: $OBJ.last_book_at_by_condition.pop($KEY)
+    - pattern: $OBJ.last_book_at_by_condition.pop($KEY, $DEFAULT)
+    - pattern: $OBJ.last_book_at_by_condition.clear()
+    - pattern: $OBJ.last_book_at_by_condition.update($VALUE)
+    - pattern: $OBJ.last_book_at_by_condition.setdefault($KEY, $VALUE)
+    - pattern: del $OBJ.last_book_at_by_condition[$KEY]
+    - pattern: $OBJ.last_book_received_at_by_condition[$KEY] = $VALUE
+    - pattern: $OBJ.last_book_received_at_by_condition[$KEY][$SIDE] = $VALUE
+    - pattern: $OBJ.last_book_received_at_by_condition.pop($KEY)
+    - pattern: $OBJ.last_book_received_at_by_condition.pop($KEY, $DEFAULT)
+    - pattern: $OBJ.last_book_received_at_by_condition.clear()
+    - pattern: $OBJ.last_book_received_at_by_condition.update($VALUE)
+    - pattern: $OBJ.last_book_received_at_by_condition.setdefault($KEY, $VALUE)
+    - pattern: del $OBJ.last_book_received_at_by_condition[$KEY]
+    # Inner receipt dicts of the last_book containers (setdefault then subscript).
+    - pattern: $OBJ.last_book_at_by_condition.setdefault($KEY, $DEFAULT)[$SIDE] = $VALUE
+    - pattern: $OBJ.last_book_received_at_by_condition.setdefault($KEY, $DEFAULT)[$SIDE] = $VALUE
