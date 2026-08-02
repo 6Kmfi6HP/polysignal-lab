@@ -27,6 +27,10 @@ def _bounded_limit(limit: int) -> int:
     return max(1, min(limit, 500))
 
 
+def _bounded_offset(offset: int) -> int:
+    return max(0, offset)
+
+
 def _fmt_money(value: JsonValue) -> str:
     try:
         amount = float(str(value))
@@ -330,9 +334,16 @@ def create_dashboard_app(
 
     @app.get("/api/report-orders", response_model=None)
     async def order_count(
-        status: str | None = None, limit: int = 100
-    ) -> list[dict[str, JsonValue]]:
-        rows = reporting.report_order_rows(status, _bounded_limit(limit))
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, JsonValue]:
+        limit = _bounded_limit(limit)
+        rows = reporting.report_order_rows(
+            status,
+            limit,
+            _bounded_offset(offset),
+        )
         by_id, by_token = _market_lookup(reporting)
         payloads = [
             normalize_report_order(
@@ -341,13 +352,25 @@ def create_dashboard_app(
             )
             for row in rows
         ]
-        return [payload for payload in payloads if _valid_order_payload(payload)]
+        return {
+            "items": [
+                payload for payload in payloads if _valid_order_payload(payload)
+            ],
+            "total": reporting.report_order_count(status),
+        }
 
     @app.get("/api/positions", response_model=None)
     async def positions(
-        status: str | None = None, limit: int = 100
-    ) -> list[dict[str, JsonValue]]:
-        rows = reporting.report_position_rows(status, _bounded_limit(limit))
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, JsonValue]:
+        limit = _bounded_limit(limit)
+        rows = reporting.report_position_rows(
+            status,
+            limit,
+            _bounded_offset(offset),
+        )
         by_id, by_token = _market_lookup(reporting)
         payloads = [
             normalize_report_position(
@@ -356,11 +379,22 @@ def create_dashboard_app(
             )
             for row in rows
         ]
-        return [payload for payload in payloads if _valid_position_payload(payload)]
+        return {
+            "items": [
+                payload for payload in payloads if _valid_position_payload(payload)
+            ],
+            "total": reporting.report_position_count(status),
+        }
 
     @app.get("/api/trades", response_model=None)
-    async def trades(limit: int = 100) -> list[dict[str, JsonValue]]:
-        return reporting.report_result_rows(_bounded_limit(limit))
+    async def trades(limit: int = 100, offset: int = 0) -> dict[str, JsonValue]:
+        return {
+            "items": reporting.report_result_rows(
+                _bounded_limit(limit),
+                _bounded_offset(offset),
+            ),
+            "total": reporting.report_result_count(),
+        }
 
     @app.get("/api/report-summary", response_model=None)
     async def report_summary() -> dict[str, JsonValue]:

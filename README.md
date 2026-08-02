@@ -81,7 +81,13 @@ Read-only endpoints:
 - `/api/rejected-signals`
 - `/api/positions`
 - `/api/trades`
+- `/api/report-orders`
 - `/api/leaderboard`
+
+Report tables use offset pagination with an `offset` (default 0) and `limit`
+(1–500) parameter; `/api/positions`, `/api/trades`, and `/api/report-orders`
+return `{ "items": [...], "total": N }` where `total` uses the same status and
+projection-invalid filtering as the rows.
 
 ## Telegram QA
 

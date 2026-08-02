@@ -137,8 +137,8 @@ async def test_dashboard_readonly_endpoints_return_stored_data(
     assert rejected.json()[0]["details"]["lag_ms"] == 3_000
     assert rejected.json()[0]["details"]["threshold_ms"] == 2_000
     assert rejected.json()[0]["details"]["policy_source"] == "strategy_and_global"
-    assert positions.json()[0]["report_position_id"] == "pp-1"
-    assert trades.json()[0]["report_result_id"] == "pt-1"
+    assert positions.json()["items"][0]["report_position_id"] == "pp-1"
+    assert trades.json()["items"][0]["report_result_id"] == "pt-1"
     assert root.status_code == 404
 
 
@@ -171,6 +171,59 @@ def test_dashboard_report_summary_aggregates_all_stored_results(tmp_path) -> Non
         "average_roi": pytest.approx(0.1),
         "closed_trades": 2,
     }
+
+
+def test_dashboard_trades_return_latest_results_with_stable_ties(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-trades.sqlite3")
+    for report_result_id, closed_at in (
+        ("result-old", "2026-07-20T00:00:00+00:00"),
+        ("result-a", "2026-08-02T00:00:00+00:00"),
+        ("result-z", "2026-08-02T00:00:00+00:00"),
+    ):
+        store.insert_report_result(
+            sample_report_result(
+                report_result_id=report_result_id,
+                signal_id=f"signal-{report_result_id}",
+                report_position_id=f"position-{report_result_id}",
+                opened_at=closed_at,
+                closed_at=closed_at,
+            )
+        )
+    client = TestClient(create_dashboard_app(store))
+
+    latest = client.get("/api/trades", params={"limit": 1})
+    all_trades = client.get("/api/trades", params={"limit": 3})
+
+    assert latest.status_code == 200
+    assert latest.json()["items"][0]["report_result_id"] == "result-z"
+    assert [row["report_result_id"] for row in all_trades.json()["items"]] == [
+        "result-z",
+        "result-a",
+        "result-old",
+    ]
+
+
+def test_dashboard_report_trades_paginate_with_offset_and_total(tmp_path) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-report-pagination.sqlite3")
+    for i in range(3):
+        store.insert_report_result(
+            sample_report_result(
+                report_result_id=f"trade-{i}",
+                signal_id=f"signal-{i}",
+                report_position_id=f"position-{i}",
+                closed_at=f"2026-08-01T00:0{i}:00+00:00",
+            )
+        )
+    client = TestClient(create_dashboard_app(store))
+
+    trades = client.get("/api/trades", params={"limit": 2, "offset": 1})
+
+    assert trades.status_code == 200
+    assert [row["report_result_id"] for row in trades.json()["items"]] == [
+        "trade-1",
+        "trade-0",
+    ]
+    assert trades.json()["total"] == 3
 
 
 async def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> None:
@@ -229,11 +282,85 @@ async def test_dashboard_positions_returns_latest_metadata_first(tmp_path) -> No
     response = await _dashboard_get(store, "/api/positions")
 
     assert response.status_code == 200
-    rows = response.json()
+    rows = response.json()["items"]
     assert rows[0]["report_position_id"] == "latest-pos"
     assert rows[0]["status"] == "OPEN"
     assert rows[0]["is_closed"] is False
     assert rows[0]["position_id"] == "latest-pos"
+
+
+def test_dashboard_report_orders_and_positions_paginate_by_offset_and_status(
+    tmp_path,
+) -> None:
+    store = SQLiteStore(tmp_path / "dashboard-order-position-pagination.sqlite3")
+    t = datetime(2026, 8, 1, 0, 10, tzinfo=timezone.utc)
+    for i, status in enumerate(("FILLED", "REJECTED", "FILLED"), start=1):
+        store.insert_system_event(
+            {
+                "event_id": f"evt-order-{i}",
+                "event_type": "nautilus_order",
+                "severity": "info",
+                "created_at": t.isoformat(),
+                "report_order_id": f"order-{i}",
+                "client_order_id": f"order-{i}",
+                "status": status,
+                "signal_id": f"signal-{i}",
+                "strategy": "ptb_diff",
+                "market_id": "mkt-1",
+                "ts": t.isoformat(),
+            }
+        )
+        store.insert_system_event(
+            {
+                "event_id": f"evt-position-{i}",
+                "event_type": "nautilus_position",
+                "severity": "info",
+                "created_at": t.isoformat(),
+                "report_position_id": f"position-{i}",
+                "market_id": "mkt-1",
+                "token_id": "token-up",
+                "side": Side.UP.value,
+                "status": PositionStatus.OPEN.value,
+                "is_closed": False,
+                "entry_price": 0.5,
+                "shares": 10.0,
+                "stake_usdc": 5.0,
+                "opened_at": t.isoformat(),
+                "ts": t.isoformat(),
+            }
+        )
+
+    client = TestClient(create_dashboard_app(store))
+
+    orders = client.get("/api/report-orders", params={"limit": 2, "offset": 1})
+    positions = client.get(
+        "/api/positions",
+        params={"limit": 2, "offset": 1, "status": "open"},
+    )
+    rejected = client.get(
+        "/api/report-orders",
+        params={"limit": 500, "offset": 0, "status": "rejected"},
+    )
+
+    assert orders.status_code == 200
+    assert {row["report_order_id"] for row in orders.json()["items"]} == {
+        "order-2",
+        "order-1",
+    }
+    assert orders.json()["total"] == 3
+
+    assert positions.status_code == 200
+    assert {row["report_position_id"] for row in positions.json()["items"]} == {
+        "position-2",
+        "position-1",
+    }
+    assert positions.json()["total"] == 3
+
+    assert rejected.status_code == 200
+    assert [row["report_order_id"] for row in rejected.json()["items"]] == [
+        "order-2"
+    ]
+    assert rejected.json()["total"] == 1
 
 
 async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(
@@ -312,16 +439,16 @@ async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(
     )
 
     assert orders.status_code == 200
-    assert len(orders.json()) == 1
-    assert orders.json()[0]["report_order_id"] == order_id
-    assert orders.json()[0]["status"] == "FILLED"
-    assert resting_orders.json() == []
+    assert len(orders.json()["items"]) == 1
+    assert orders.json()["items"][0]["report_order_id"] == order_id
+    assert orders.json()["items"][0]["status"] == "FILLED"
+    assert resting_orders.json()["items"] == []
     assert positions.status_code == 200
-    assert len(positions.json()) == 1
-    assert positions.json()[0]["report_position_id"] == position_id
-    assert positions.json()[0]["status"] == "CLOSED"
-    assert positions.json()[0]["is_closed"] is True
-    assert open_positions.json() == []
+    assert len(positions.json()["items"]) == 1
+    assert positions.json()["items"][0]["report_position_id"] == position_id
+    assert positions.json()["items"][0]["status"] == "CLOSED"
+    assert positions.json()["items"][0]["is_closed"] is True
+    assert open_positions.json()["items"] == []
 
     store.insert_system_event(
         {
@@ -336,7 +463,7 @@ async def test_dashboard_reduces_order_and_position_lifecycle_to_current_state(
     )
     invalid_orders = await _dashboard_get(store, "/api/report-orders")
 
-    assert invalid_orders.json() == []
+    assert invalid_orders.json()["items"] == []
     assert store.counts()["system_events"] == 5
 
 
@@ -386,7 +513,7 @@ async def test_dashboard_positions_normalize_nautilus_rows_with_market_lookup(
     response = await _dashboard_get(store, "/api/positions")
 
     assert response.status_code == 200
-    row = response.json()[0]
+    row = response.json()["items"][0]
     assert row["report_position_id"] == "P-001"
     assert row["report_order_id"] == "C-001"
     assert row["market_id"] == "btc-15m"
@@ -668,7 +795,8 @@ async def test_dashboard_exposes_paper_execution_quality(tmp_path) -> None:
     # Then: paper order rows and latest report aggregates expose them.
     assert orders.status_code == 200
     assert overview.status_code == 200
-    assert orders.json()[0]["reject_reason"] == "ENTRY_PRICE_MOVED"
+    assert orders.json()["items"][0]["reject_reason"] == "ENTRY_PRICE_MOVED"
+    assert orders.json()["total"] == 1
     assert overview.json()["latest_report"]["rejects_by_reason"] == {
         "ENTRY_PRICE_MOVED": 1
     }
@@ -709,7 +837,7 @@ async def test_dashboard_order_count_normalize_nautilus_rows() -> None:
     response = await _dashboard_get(store, "/api/report-orders")
 
     assert response.status_code == 200
-    row = response.json()[0]
+    row = response.json()["items"][0]
     assert row["report_order_id"] == "C-001"
     assert row["asset"] == "BTC"
     assert row["timeframe"] == "15m"
@@ -760,8 +888,10 @@ async def test_dashboard_excludes_invalid_nautilus_projection_rows() -> None:
 
     assert orders.status_code == 200
     assert positions.status_code == 200
-    assert orders.json() == []
-    assert positions.json() == []
+    assert orders.json()["items"] == []
+    assert orders.json()["total"] == 0
+    assert positions.json()["items"] == []
+    assert positions.json()["total"] == 0
 
 
 async def test_dashboard_excludes_incomplete_open_position_rows() -> None:
@@ -786,7 +916,7 @@ async def test_dashboard_excludes_incomplete_open_position_rows() -> None:
 
     assert store.query_report_open_positions() == []
     assert positions.status_code == 200
-    assert positions.json() == []
+    assert positions.json()["items"] == []
 
 
 async def test_dashboard_excludes_open_position_with_invalid_opened_at() -> None:
@@ -818,7 +948,7 @@ async def test_dashboard_excludes_open_position_with_invalid_opened_at() -> None
 
     # Then: the malformed primary timestamp blocks display.
     assert positions.status_code == 200
-    assert positions.json() == []
+    assert positions.json()["items"] == []
 
 
 async def test_dashboard_excludes_open_position_without_resolvable_side() -> None:
@@ -846,7 +976,7 @@ async def test_dashboard_excludes_open_position_without_resolvable_side() -> Non
     positions = await _dashboard_get(store, "/api/positions")
 
     assert positions.status_code == 200
-    assert positions.json() == []
+    assert positions.json()["items"] == []
 
 
 async def test_leaderboard_uses_closed_trade_results_not_report_snapshots(

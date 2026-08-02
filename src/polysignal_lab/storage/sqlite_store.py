@@ -603,6 +603,7 @@ class SQLiteStore:
         params: Iterable[Any] = (),
         order_by: str = "",
         limit: int | None = None,
+        offset: int | None = None,
     ) -> tuple[str, list[Any]]:
         """Build a SELECT SQL string + parameter list from structured components.
 
@@ -619,6 +620,9 @@ class SQLiteStore:
         if limit is not None:
             parts.append("LIMIT ?")
             param_list.append(limit)
+        if offset is not None:
+            parts.append("OFFSET ?")
+            param_list.append(offset)
         return " ".join(parts), param_list
 
     def upsert_market(self, market: Any) -> None:
@@ -2010,9 +2014,16 @@ class SQLiteStore:
         return payload
 
     def query_json(
-        self, table: str, limit: int = 100, where: str = "", params: Iterable[Any] = ()
+        self,
+        table: str,
+        limit: int = 100,
+        where: str = "",
+        params: Iterable[Any] = (),
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        return self._query_json_table(table, limit=limit, where=where, params=params)
+        return self._query_json_table(
+            table, limit=limit, where=where, params=params, offset=offset
+        )
 
     def _query_json_table(
         self,
@@ -2021,8 +2032,15 @@ class SQLiteStore:
         limit: int,
         where: str,
         params: Iterable[Any],
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        sql, bound = self._build_query(table, where=where, params=params, limit=limit)
+        sql, bound = self._build_query(
+            table,
+            where=where,
+            params=params,
+            limit=limit,
+            offset=offset,
+        )
         with self._lock:
             rows = self._conn.execute(sql, bound).fetchall()
         if table == "report_results":
@@ -2137,6 +2155,7 @@ class SQLiteStore:
         table: str,
         status: str | None,
         limit: int,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         clauses = [
             "COALESCE(json_extract(payload_json, '$._projection_invalid'), 0) != 1"
@@ -2151,14 +2170,39 @@ class SQLiteStore:
             where=f"{prefix}ORDER BY source_event_at DESC, source_event_id DESC",
             params=params,
             limit=limit,
+            offset=offset,
         )
+
+    def _report_state_count(
+        self,
+        table: str,
+        status: str | None,
+    ) -> int:
+        clauses = [
+            "COALESCE(json_extract(payload_json, '$._projection_invalid'), 0) != 1"
+        ]
+        params: tuple[str, ...] = ()
+        if status:
+            clauses.append("status=?")
+            params = (status.upper(),)
+        where = f"WHERE {' AND '.join(clauses)}"
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT COUNT(*) AS n FROM {table} {where}",
+                params,
+            ).fetchone()
+        return int(row["n"])
 
     def report_order_rows(
         self,
         status: str | None,
         limit: int,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        return self._report_state_rows("report_orders", status, limit)
+        return self._report_state_rows("report_orders", status, limit, offset)
+
+    def report_order_count(self, status: str | None = None) -> int:
+        return self._report_state_count("report_orders", status)
 
     def market_rows(self, limit: int) -> list[dict[str, Any]]:
         return self.query_json(
@@ -2171,11 +2215,33 @@ class SQLiteStore:
         self,
         status: str | None,
         limit: int,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        return self._report_state_rows("report_positions", status, limit)
+        return self._report_state_rows("report_positions", status, limit, offset)
 
-    def report_result_rows(self, limit: int) -> list[dict[str, Any]]:
-        return self.query_json("report_results", limit=limit)
+    def report_position_count(self, status: str | None = None) -> int:
+        return self._report_state_count("report_positions", status)
+
+    def report_result_rows(self, limit: int, offset: int = 0) -> list[dict[str, Any]]:
+        return self.query_json(
+            "report_results",
+            where=(
+                "WHERE COALESCE(json_extract(payload_json, '$._projection_invalid'), 0) != 1 "
+                "ORDER BY closed_at DESC, report_result_id DESC"
+            ),
+            limit=limit,
+            offset=offset,
+        )
+
+    def report_result_count(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT COUNT(*) AS n
+                   FROM report_results
+                   WHERE COALESCE(json_extract(payload_json, '$._projection_invalid'), 0) != 1"""
+            ).fetchone()
+        return int(row["n"])
+
 
     def report_summary(self) -> dict[str, int | float]:
         with self._lock:
