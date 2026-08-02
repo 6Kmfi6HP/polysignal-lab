@@ -34,6 +34,35 @@ DEFAULT_DATA_NAMES = (
 REQUIRED_DATA_NAMES = set(DEFAULT_DATA_NAMES)
 
 
+def _mark_condition_ready(strategy: object, condition_id: str) -> None:
+    """Drive a condition into READY (feed subscription converged)."""
+    from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+        begin_market_book_generation,
+        observe_market_book_side,
+    )
+
+    now = datetime(2026, 7, 31, 12, 0, tzinfo=UTC)
+    begin_market_book_generation(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_id,
+        now=now,
+    )
+    observe_market_book_side(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_id,
+        Side.UP,
+        received_at=now,
+        book_at=now,
+    )
+    observe_market_book_side(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_id,
+        Side.DOWN,
+        received_at=now,
+        book_at=now,
+    )
+
+
 WRAPPERS = [
     "ptb_diff",
     "skew_mean_reversion",
@@ -295,6 +324,7 @@ def test_evaluate_condition_uses_assembler_core_policy_and_submits_only_approved
             return order
 
     strategy._decision_pipeline.submitter = CapturingSubmitter()
+    _mark_condition_ready(strategy, "condition-btc-5m")
     strategy.evaluate_condition("condition-btc-5m")
 
     assert core.views == [view]
