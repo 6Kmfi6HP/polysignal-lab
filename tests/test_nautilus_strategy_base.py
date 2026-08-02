@@ -5390,8 +5390,16 @@ def test_native_strategy_l1_subscribes_data_names_without_snapshot_request() -> 
             _ = args, kwargs
             self.subscribed_deltas.append(str(instrument_id))
 
-        def request_order_book_snapshot(self, instrument_id):
+        def request_order_book_snapshot(
+            self,
+            instrument_id: object,
+            *,
+            limit: int = 0,
+            client_id: object | None = None,
+        ) -> object:
+            del limit, client_id
             self.snapshot_requests.append(str(instrument_id))
+            return None
 
     strategy = FakeNativeStrategy(
         core=FakeCore([]),

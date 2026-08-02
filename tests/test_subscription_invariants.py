@@ -141,6 +141,16 @@ class _StubStrategy:
             raise RuntimeError("subscribe api failed")
         return None
 
+    def request_order_book_snapshot(
+        self,
+        instrument_id: object,
+        *,
+        limit: int = 0,
+        client_id: object | None = None,
+    ) -> object:
+        _ = instrument_id, limit, client_id
+        return None
+
     def unsubscribe_quotes(
         self, instrument_id: object, client_id: object | None = None
     ) -> object:

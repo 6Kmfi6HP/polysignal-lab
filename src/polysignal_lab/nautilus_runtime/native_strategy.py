@@ -345,3 +345,33 @@ class PolySignalNativeStrategy(Strategy):
 
     def _unsubscribe_all_market_instruments(self) -> None:
         subs.unsubscribe_all_market_instruments(self)
+
+    def request_order_book_snapshot(
+        self,
+        instrument_id: object,
+        *,
+        limit: int = 0,
+        client_id: object | None = None,
+    ) -> object:
+        """Issue a one-time order book snapshot for a resubscribed instrument.
+
+        Repair-A resubscription (_resubscribe_market_instrument) calls this as a
+        snapshot backstop so a first book arrives even when the feed treats the
+        re-subscribed book_delta subscription as already-active.
+
+        This is a deliberate, logged no-op rather than a wire request: the pyo3
+        Strategy base (which this class extends) exposes ``request_book_snapshot``
+        but not ``request_order_book_snapshot``, and the Polymarket data client does
+        not implement the Nautilus order-book-snapshot request path — delegating
+        would panic before Trader registration and surface a NotImplementedError
+        from the data client at runtime. Re-subscribing book_deltas (managed=True)
+        already restarts Cache book generation, which is the actual first-book
+        recovery. Keeping this method present satisfies the _SubscriptionStrategy
+        contract so the heartbeat path never raises AttributeError.
+        """
+        del instrument_id, limit, client_id
+        logger.info(
+            "order_book_snapshot_request_unsupported",
+            extra={"detail": "Polymarket data client does not implement snapshot requests"},
+        )
+        return None
