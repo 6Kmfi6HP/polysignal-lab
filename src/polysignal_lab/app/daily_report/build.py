@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from typing import Any
 
 from polysignal_lab.app import scheduler_health
 from polysignal_lab.app.daily_report.equity import (
@@ -13,7 +14,8 @@ from polysignal_lab.app.daily_report.sources import (
     _order_metrics,
 )
 from polysignal_lab.app.daily_report.types import DailyReportInputs, _ReportScheduler
-from polysignal_lab.domain.reporting_result import DailyReport
+from polysignal_lab.domain.reporting_result import DailyReport, trade_result_float
+from polysignal_lab.reporting.aggregates import is_closed_result
 from polysignal_lab.reporting.daily_report import DailyReportService
 from polysignal_lab.reporting.rejections import is_rejected_order_payload
 
@@ -74,9 +76,16 @@ def _build_report(
     if isinstance(execution_metadata, dict):
         execution_assumptions.update(execution_metadata)
 
+    day_closed_pnl = _day_closed_pnl(inputs.trade_results)
     starting_equity, ending_equity, open_positions, equity_source = (
-        _report_equity_inputs(scheduler)
+        _report_equity_inputs(scheduler, day_closed_pnl=day_closed_pnl)
     )
+    telemetry_incomplete_reasons = inputs.telemetry_incomplete_reasons
+    if equity_source == "report_results":
+        telemetry_incomplete_reasons = (
+            *telemetry_incomplete_reasons,
+            "equity_derived_from_report_results",
+        )
     try:
         return DailyReportService().build_daily_report(
             report_date=inputs.today,
@@ -96,11 +105,18 @@ def _build_report(
             fill_payloads=today_fill_payloads,
             reject_payloads=inputs.today_reject_orders_raw,
             execution_assumptions=execution_assumptions,
-            telemetry_incomplete_reasons=inputs.telemetry_incomplete_reasons,
+            telemetry_incomplete_reasons=telemetry_incomplete_reasons,
         )
     except (KeyError, TypeError, ValueError) as exc:
         scheduler.logger.error("Failed to build daily report: %s", exc)
         return None
+
+
+def _day_closed_pnl(results: list[dict[str, Any]]) -> float | None:
+    closed = [result for result in results if is_closed_result(result)]
+    if not closed:
+        return None
+    return sum(trade_result_float(result, "pnl_usdc") for result in closed)
 
 
 def _claim_and_log_report(

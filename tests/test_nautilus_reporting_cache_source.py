@@ -6,12 +6,14 @@ import json
 from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
+from typing import cast
 
 from polysignal_lab.app.daily_report import (
     _report_equity_inputs,
     generate_daily_report,
 )
 from polysignal_lab.app.daily_report.sources import _collect_daily_report_inputs
+from polysignal_lab.app.daily_report.types import _ReportScheduler
 from polysignal_lab.app.services.persistence_service import PersistenceService
 from polysignal_lab.app.services.publish_service import PublishService
 from polysignal_lab.config import Settings
@@ -26,6 +28,11 @@ from polysignal_lab.nautilus_runtime.runtime_context_factory import (
     build_nautilus_runtime_context,
 )
 from factories import sample_report_result
+
+
+def _report_scheduler_fake(**kwargs: object) -> _ReportScheduler:
+    """Structural scheduler fake for daily-report collection tests."""
+    return cast(_ReportScheduler, cast(object, SimpleNamespace(**kwargs)))
 
 
 def _settings(
@@ -625,7 +632,7 @@ def test_daily_report_orders_use_creation_day_after_cross_day_update(
             "ts": updated_at.isoformat(),
         }
     )
-    scheduler = SimpleNamespace(
+    scheduler = _report_scheduler_fake(
         persistence=persistence,
         nautilus_cache=SimpleNamespace(fills=lambda: []),
         health=HealthRegistry(),
@@ -679,7 +686,7 @@ def test_daily_report_marks_inferred_legacy_order_creation_time(tmp_path: Path) 
         SQLiteStore(db_path),
         StateStore(tmp_path / "state"),
     )
-    scheduler = SimpleNamespace(
+    scheduler = _report_scheduler_fake(
         persistence=persistence,
         nautilus_cache=SimpleNamespace(fills=lambda: []),
         health=HealthRegistry(),
@@ -1100,6 +1107,361 @@ def test_report_equity_inputs_uses_starting_balance_for_wrapped_portfolio_withou
         0,
         "starting_balance",
     )
+
+
+def test_report_equity_inputs_derives_ending_equity_from_report_results() -> None:
+    scheduler = SimpleNamespace(settings=_settings())
+
+    assert _report_equity_inputs(scheduler, day_closed_pnl=-842.76) == (
+        1_000.0,
+        157.24,
+        0,
+        "report_results",
+    )
+
+
+def test_report_equity_inputs_keeps_starting_balance_without_closed_results() -> None:
+    scheduler = SimpleNamespace(settings=_settings())
+
+    assert _report_equity_inputs(scheduler, day_closed_pnl=None) == (
+        1_000.0,
+        1_000.0,
+        0,
+        "starting_balance",
+    )
+    assert _report_equity_inputs(scheduler) == (
+        1_000.0,
+        1_000.0,
+        0,
+        "starting_balance",
+    )
+
+
+def test_report_equity_inputs_prefers_native_cache_over_report_results() -> None:
+    cache = SimpleNamespace(
+        accounts=lambda: [
+            SimpleNamespace(
+                id="A-1",
+                balances=[SimpleNamespace(currency="USDC", total=987.65)],
+            )
+        ],
+        positions=lambda: [],
+    )
+    scheduler = SimpleNamespace(settings=_settings(), nautilus_cache=cache)
+
+    assert _report_equity_inputs(scheduler, day_closed_pnl=-842.76) == (
+        1_000.0,
+        987.65,
+        0,
+        "account_balance",
+    )
+
+
+def test_report_equity_inputs_derives_from_report_results_when_native_source_missing() -> (
+    None
+):
+    cache = SimpleNamespace(accounts=lambda: [], positions=lambda: [])
+    scheduler = SimpleNamespace(settings=_settings(), nautilus_cache=cache)
+
+    assert _report_equity_inputs(scheduler, day_closed_pnl=-42.0) == (
+        1_000.0,
+        958.0,
+        0,
+        "report_results",
+    )
+
+
+def test_collect_daily_report_inputs_returns_all_report_results_beyond_default_limit(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    persistence = PersistenceService(
+        JSONLStore(tmp_path / "logs"),
+        store,
+        StateStore(tmp_path / "state"),
+    )
+    day = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    for index in range(120):
+        persistence.insert_report_result(
+            sample_report_result(
+                report_result_id=f"rr-{index:03d}",
+                closed_at=day.isoformat(),
+            )
+        )
+    scheduler = _report_scheduler_fake(
+        persistence=persistence,
+        nautilus_cache=SimpleNamespace(fills=lambda: []),
+        health=HealthRegistry(),
+    )
+
+    inputs = _collect_daily_report_inputs(
+        scheduler,
+        today=day.date(),
+        report_tz=UTC,
+    )
+
+    assert len(inputs.trade_results) == 120
+    assert "report_result_projection_truncated" not in (
+        inputs.telemetry_incomplete_reasons
+    )
+
+
+def test_collect_daily_report_inputs_prefers_durable_report_fills_over_cache(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    persistence = PersistenceService(
+        JSONLStore(tmp_path / "logs"),
+        store,
+        StateStore(tmp_path / "state"),
+    )
+    day = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    store.insert_system_event(
+        {
+            "event_id": "fill-durable",
+            "event_type": "nautilus_fill",
+            "severity": "info",
+            "created_at": day.isoformat(),
+            "trade_id": "T-durable",
+            "client_order_id": "O-durable",
+            "quantity": 8.0,
+            "price": 0.9,
+            "ts": day.isoformat(),
+            "metrics": {
+                "signal_id": "sig-durable",
+                "strategy": "late_consensus",
+            },
+        }
+    )
+    cache = SimpleNamespace(
+        fills=lambda: [
+            SimpleNamespace(
+                trade_id="fill-native",
+                client_order_id="order-native",
+                instrument_id="token.UP",
+                last_qty=4.0,
+                last_px=0.5,
+                liquidity_side="TAKER",
+                tags=(),
+                metrics={},
+                ts_event=day,
+            )
+        ]
+    )
+    scheduler = _report_scheduler_fake(
+        persistence=persistence,
+        nautilus_cache=cache,
+        health=HealthRegistry(),
+    )
+
+    inputs = _collect_daily_report_inputs(
+        scheduler,
+        today=day.date(),
+        report_tz=UTC,
+    )
+
+    assert [fill["report_fill_id"] for fill in inputs.today_fills_raw] == [
+        "T-durable"
+    ]
+    assert inputs.telemetry_incomplete_reasons == ()
+
+
+def test_collect_daily_report_inputs_keeps_best_effort_fallback_without_durable_rows(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    persistence = PersistenceService(
+        JSONLStore(tmp_path / "logs"),
+        store,
+        StateStore(tmp_path / "state"),
+    )
+    day = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    store.insert_system_event(
+        {
+            "event_id": "fill-fallback",
+            "event_type": "nautilus_fill",
+            "severity": "info",
+            "created_at": day.isoformat(),
+            "trade_id": "T-fallback",
+            "client_order_id": "O-fallback",
+            "report_fill_id": "T-fallback",
+            "report_order_id": "O-fallback",
+            "quantity": 8.0,
+            "price": 0.9,
+            "ts": day.isoformat(),
+            "metrics": {
+                "signal_id": "sig-fallback",
+                "strategy": "late_consensus",
+            },
+        }
+    )
+    store._conn.execute("DELETE FROM report_fills")
+    scheduler = _report_scheduler_fake(
+        persistence=persistence,
+        nautilus_cache=SimpleNamespace(fills=lambda: []),
+        health=HealthRegistry(),
+    )
+
+    inputs = _collect_daily_report_inputs(
+        scheduler,
+        today=day.date(),
+        report_tz=UTC,
+    )
+
+    assert [fill["report_fill_id"] for fill in inputs.today_fills_raw] == [
+        "T-fallback"
+    ]
+    assert "fill_count_best_effort_fallback" in inputs.telemetry_incomplete_reasons
+
+
+class _TruncatedPersistence:
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+
+    def query_json(
+        self,
+        table: str,
+        limit: int = 100,
+        where: str = "",
+        params: object = (),
+    ) -> list[dict[str, object]]:
+        if table == "report_results":
+            return [
+                {"report_result_id": f"rr-{index}"}
+                for index in range(self.limit)
+            ]
+        if table == "signals":
+            return [
+                {"signal_id": f"sig-{index}"} for index in range(self.limit)
+            ]
+        if table == "report_fills":
+            return [
+                {
+                    "report_fill_id": f"T-{index}",
+                    "report_order_id": f"O-{index}",
+                    "quantity": 1.0,
+                    "price": 0.5,
+                }
+                for index in range(self.limit)
+            ]
+        if table == "report_orders":
+            return [
+                {
+                    "report_order_id": f"O-{index}",
+                    "status": "FILLED",
+                    "metrics": {},
+                }
+                for index in range(self.limit + 1)
+            ]
+        return []
+
+
+class _FallbackTruncatedPersistence:
+    def query_json(
+        self,
+        table: str,
+        limit: int = 100,
+        where: str = "",
+        params: object = (),
+    ) -> list[dict[str, object]]:
+        if table == "system_events":
+            return [
+                {
+                    "report_fill_id": f"T-{index}",
+                    "report_order_id": f"O-{index}",
+                    "quantity": 1.0,
+                    "price": 0.5,
+                    "ts": "2026-08-01T06:00:00Z",
+                }
+                for index in range(10_000)
+            ]
+        return []
+
+
+def test_collect_daily_report_inputs_marks_projection_truncation() -> None:
+    scheduler = _report_scheduler_fake(
+        persistence=_TruncatedPersistence(100_000),
+        health=HealthRegistry(),
+    )
+
+    inputs = _collect_daily_report_inputs(
+        scheduler,
+        today=date(2026, 8, 1),
+        report_tz=UTC,
+    )
+
+    reasons = inputs.telemetry_incomplete_reasons
+    assert len(inputs.trade_results) == 100_000
+    assert len(inputs.today_signals_raw) == 100_000
+    assert len(inputs.today_fills_raw) == 100_000
+    assert len(inputs.today_orders_raw) == 100_000
+    assert "report_result_projection_truncated" in reasons
+    assert "report_signal_projection_truncated" in reasons
+    assert "report_fill_projection_truncated" in reasons
+    assert "report_order_projection_truncated" in reasons
+
+
+def test_collect_daily_report_inputs_marks_fallback_fill_truncation() -> None:
+    scheduler = _report_scheduler_fake(
+        persistence=_FallbackTruncatedPersistence(),
+        health=HealthRegistry(),
+    )
+
+    inputs = _collect_daily_report_inputs(
+        scheduler,
+        today=date(2026, 8, 1),
+        report_tz=UTC,
+    )
+
+    reasons = inputs.telemetry_incomplete_reasons
+    assert len(inputs.today_fills_raw) == 10_000
+    assert "fill_count_best_effort_fallback" in reasons
+    assert "report_fill_projection_truncated" in reasons
+
+
+def test_generate_daily_report_derives_equity_from_report_results(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    persistence = PersistenceService(
+        JSONLStore(tmp_path / "logs"),
+        store,
+        StateStore(tmp_path / "state"),
+    )
+    day = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    persistence.insert_report_result(
+        sample_report_result(
+            report_result_id="rr-day",
+            closed_at=day.isoformat(),
+            pnl_usdc=42.0,
+            roi=0.4,
+        )
+    )
+    scheduler = _report_scheduler_fake(
+        settings=_settings(),
+        persistence=persistence,
+        nautilus_cache=SimpleNamespace(
+            accounts=lambda: [],
+            positions=lambda: [],
+            fills=lambda: [],
+        ),
+        health=HealthRegistry(),
+        logger=SimpleNamespace(
+            error=lambda *_args: None,
+            info=lambda *_args: None,
+        ),
+        publish_service=None,
+    )
+
+    report = asyncio.run(
+        generate_daily_report(scheduler, report_date=day.date())
+    )
+
+    assert report is not None
+    assert report.ending_equity == 1_042.0
+    assert report.equity_source == "report_results"
+    assert "equity_derived_from_report_results" in report.telemetry_incomplete_reasons
+    assert report.net_pnl == 42.0
 
 
 def test_report_equity_inputs_requires_nautilus_cache() -> None:

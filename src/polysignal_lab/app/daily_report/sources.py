@@ -10,6 +10,10 @@ from polysignal_lab.reporting.rejections import is_rejected_order_payload
 from polysignal_lab.utils import parse_dt
 
 
+_DAILY_PROJECTION_LIMIT = 100_000
+_FALLBACK_PROJECTION_LIMIT = 10_000
+
+
 def _utc_text_bound(dt: datetime) -> str:
     return dt.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
@@ -170,6 +174,38 @@ def _nautilus_fill_rows_for_day(
     return rows, True, invalid_rows
 
 
+def _durable_report_fill_rows_for_day(
+    scheduler: _ReportScheduler,
+    *,
+    day_start: datetime,
+    day_end: datetime,
+) -> tuple[list[dict[str, Any]], int, bool]:
+    """Query the durable report_fills projection for the day window.
+
+    ``report_fills`` rows carry the persisted fill projection payloads and are
+    indexed by ``source_event_at``, so they survive system_events retention and
+    stay stable across daily-report revisions.  Returns
+    ``(valid_fills, invalid_count, truncated)``.
+    """
+    rows = scheduler.persistence.query_json(
+        "report_fills",
+        where=(
+            "WHERE source_event_at >= ? AND source_event_at < ? "
+            "ORDER BY source_event_at,report_fill_id"
+        ),
+        params=(_utc_text_bound(day_start), _utc_text_bound(day_end)),
+        limit=_DAILY_PROJECTION_LIMIT,
+    )
+    valid_fills: list[dict[str, Any]] = []
+    invalid_count = 0
+    for fill in rows:
+        if not _valid_fill_projection(fill):
+            invalid_count += 1
+            continue
+        valid_fills.append(fill)
+    return valid_fills, invalid_count, len(rows) >= _DAILY_PROJECTION_LIMIT
+
+
 def _timestamp_in_report_window(
     value: object,
     *,
@@ -199,6 +235,9 @@ def _telemetry_incomplete_reasons(
     invalid_fill_projections: int,
     invalid_order_projections: int,
     order_projection_truncated: bool,
+    report_result_projection_truncated: bool,
+    report_signal_projection_truncated: bool,
+    fill_projection_truncated: bool,
 ) -> tuple[str, ...]:
     reasons = [fill_source_reason] if fill_source_reason else []
     if invalid_fill_projections > 0:
@@ -211,6 +250,12 @@ def _telemetry_incomplete_reasons(
         )
     if order_projection_truncated:
         reasons.append("report_order_projection_truncated")
+    if report_result_projection_truncated:
+        reasons.append("report_result_projection_truncated")
+    if report_signal_projection_truncated:
+        reasons.append("report_signal_projection_truncated")
+    if fill_projection_truncated:
+        reasons.append("report_fill_projection_truncated")
 
     health = getattr(scheduler, "health", None)
     components = getattr(health, "components", None)
@@ -257,30 +302,49 @@ def _collect_daily_report_inputs(
     day_start = day_start_local.astimezone(UTC)
     day_end = day_end_local.astimezone(UTC)
     day_params = (_utc_text_bound(day_start), _utc_text_bound(day_end))
-    day_created_where = "WHERE created_at >= ? AND created_at < ?"
-    day_closed_where = "WHERE closed_at >= ? AND closed_at < ?"
 
-    # TODO: derive resolution results from InstrumentClose-derived closed-position
-    # projections when the native projection schema exposes the payout value.
     trade_results = cast(
         list[dict[str, Any]],
         scheduler.persistence.query_json(
             "report_results",
-            where=day_closed_where,
+            where=(
+                "WHERE closed_at >= ? AND closed_at < ? "
+                "ORDER BY closed_at,report_result_id"
+            ),
             params=day_params,
+            limit=_DAILY_PROJECTION_LIMIT,
         ),
     )
+    report_result_projection_truncated = (
+        len(trade_results) >= _DAILY_PROJECTION_LIMIT
+    )
     (
-        today_fills_raw,
+        durable_fill_rows,
+        durable_fill_invalid,
+        durable_fill_truncated,
+    ) = _durable_report_fill_rows_for_day(
+        scheduler,
+        day_start=day_start,
+        day_end=day_end,
+    )
+    (
+        native_fill_rows,
         native_fills_available,
-        invalid_fill_projections,
+        native_fill_invalid,
     ) = _nautilus_fill_rows_for_day(
         scheduler,
         day_start=day_start,
         day_end=day_end,
     )
+    invalid_fill_projections = durable_fill_invalid + native_fill_invalid
     fill_source_reason: str | None = None
-    if not today_fills_raw:
+    fill_projection_truncated = durable_fill_truncated
+    today_fills_raw: list[dict[str, Any]] = []
+    if durable_fill_rows:
+        today_fills_raw = durable_fill_rows
+    elif native_fill_rows:
+        today_fills_raw = native_fill_rows
+    else:
         fallback_rows = _nautilus_system_event_rows(
             scheduler,
             "nautilus_fill",
@@ -312,6 +376,8 @@ def _collect_daily_report_inputs(
         if fallback_fills:
             today_fills_raw = fallback_fills
             fill_source_reason = "fill_count_best_effort_fallback"
+            if len(fallback_rows) >= _FALLBACK_PROJECTION_LIMIT:
+                fill_projection_truncated = True
         elif not native_fills_available:
             fill_source_reason = "report_fill_projection_unavailable"
 
@@ -322,7 +388,7 @@ def _collect_daily_report_inputs(
             "ORDER BY created_event_at,report_order_id"
         ),
         params=day_params,
-        limit=10_001,
+        limit=_DAILY_PROJECTION_LIMIT + 1,
     )
     invalid_updated_order_states = scheduler.persistence.query_json(
         "report_orders",
@@ -331,13 +397,16 @@ def _collect_daily_report_inputs(
             "AND status='INVALID' ORDER BY source_event_at,report_order_id"
         ),
         params=day_params,
-        limit=10_001,
+        limit=_DAILY_PROJECTION_LIMIT + 1,
     )
     order_projection_truncated = (
-        len(today_order_states) > 10_000 or len(invalid_updated_order_states) > 10_000
+        len(today_order_states) > _DAILY_PROJECTION_LIMIT
+        or len(invalid_updated_order_states) > _DAILY_PROJECTION_LIMIT
     )
-    today_order_states = today_order_states[:10_000]
-    invalid_updated_order_states = invalid_updated_order_states[:10_000]
+    today_order_states = today_order_states[:_DAILY_PROJECTION_LIMIT]
+    invalid_updated_order_states = invalid_updated_order_states[
+        :_DAILY_PROJECTION_LIMIT
+    ]
     inferred_order_creation_times = sum(
         1
         for order in today_order_states
@@ -361,9 +430,15 @@ def _collect_daily_report_inputs(
     ]
     today_signals_raw = scheduler.persistence.query_json(
         "signals",
-        where=day_created_where,
+        where=(
+            "WHERE created_at >= ? AND created_at < ? "
+            "ORDER BY created_at,signal_id"
+        ),
         params=day_params,
-        limit=10000,
+        limit=_DAILY_PROJECTION_LIMIT,
+    )
+    report_signal_projection_truncated = (
+        len(today_signals_raw) >= _DAILY_PROJECTION_LIMIT
     )
     return DailyReportInputs(
         today=today,
@@ -382,5 +457,8 @@ def _collect_daily_report_inputs(
             invalid_fill_projections=invalid_fill_projections,
             invalid_order_projections=invalid_order_projections,
             order_projection_truncated=order_projection_truncated,
+            report_result_projection_truncated=report_result_projection_truncated,
+            report_signal_projection_truncated=report_signal_projection_truncated,
+            fill_projection_truncated=fill_projection_truncated,
         ),
     )

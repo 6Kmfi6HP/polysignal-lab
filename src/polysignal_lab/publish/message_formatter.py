@@ -95,6 +95,7 @@ FillID <code>{html.escape(str(fill.get("report_fill_id", "")))}</code>"""
             "portfolio": "Portfolio",
             "account_balance": "Account balance",
             "starting_balance": "Starting balance",
+            "report_results": "Report results",
         }
         source_line = (
             f"\nSource  {html.escape(source_labels[equity_source])}"
@@ -130,11 +131,16 @@ FillID <code>{html.escape(str(fill.get("report_fill_id", "")))}</code>"""
             if not isinstance(row, dict):
                 continue
             closed = int(row.get("closed_positions", 0))
+            voids = int(row.get("void_count", 0))
             trade_word = "trade" if closed == 1 else "trades"
+            wl = f"{row.get('win_count', 0)}W/{row.get('loss_count', 0)}L"
+            if voids > 0:
+                wl += f"/{voids}V"
             lines.append(
                 f"• {html.escape(strategy)}: {closed} {trade_word}, "
-                f"{row.get('win_count', 0)}W/{row.get('loss_count', 0)}L, "
-                f"{float(row.get('total_pnl_usdc', 0.0)):+.2f} USDC"
+                f"{wl}, "
+                f"{float(row.get('total_pnl_usdc', 0.0)):+.2f} "
+                f"{html.escape(equity_currency)}"
             )
         strategy_text = "\n".join(lines) if lines else "• No closed trades"
         rejects_by_reason = report_nested_mapping(report, "rejects_by_reason")
@@ -147,6 +153,12 @@ FillID <code>{html.escape(str(fill.get("report_fill_id", "")))}</code>"""
             )
         exec_lag_value = _row_optional_float(report, "average_execution_staleness_ms")
         exec_lag = "n/a" if exec_lag_value is None else f"{exec_lag_value:.0f} ms"
+        win_count = int(report_float(report, "win_count"))
+        loss_count = int(report_float(report, "loss_count"))
+        void_count = int(report_float(report, "void_count"))
+        wl_line = f"{win_count} / {loss_count}"
+        if void_count > 0:
+            wl_line += f" / {void_count}V"
         message = f"""<b>{title}</b>
 {report_date_text(report)}
 
@@ -161,7 +173,7 @@ ExecLag {exec_lag}
 Telemetry {html.escape(telemetry_text)}
 Filled  {int(report_float(report, "fill_count"))}
 Closed  {int(report_float(report, "closed_positions"))}
-W/L     {int(report_float(report, "win_count"))} / {int(report_float(report, "loss_count"))}
+W/L     {wl_line}
 WR      {report_float(report, "win_rate"):.2%}
 
 <b>Strategies</b>

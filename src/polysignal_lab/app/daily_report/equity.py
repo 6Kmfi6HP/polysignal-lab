@@ -43,18 +43,47 @@ def _sandbox_base_currency(settings: Any) -> str:
 
 def _report_equity_inputs(
     scheduler: Any,
+    *,
+    day_closed_pnl: float | None = None,
 ) -> tuple[float, float, int, EquitySource]:
     settings = getattr(scheduler, "settings", None)
     trading = getattr(settings, "trading", None)
     starting_equity = float(getattr(trading, "starting_balance_usdc", 0.0))
     nautilus_cache = getattr(scheduler, "nautilus_cache", None)
     if not _is_nautilus_reporting_cache(nautilus_cache):
-        return starting_equity, starting_equity, 0, "starting_balance"
-    return _report_equity_inputs_from_nautilus_cache(
+        return _report_equity_inputs_without_native_cache(
+            starting_equity,
+            day_closed_pnl=day_closed_pnl,
+        )
+    (
+        starting_equity,
+        ending_equity,
+        open_positions,
+        equity_source,
+    ) = _report_equity_inputs_from_nautilus_cache(
         nautilus_cache,
         nautilus_portfolio=getattr(scheduler, "nautilus_portfolio", None),
         starting_equity=starting_equity,
         base_currency=_sandbox_base_currency(settings),
+    )
+    if equity_source == "starting_balance" and day_closed_pnl is not None:
+        ending_equity = starting_equity + day_closed_pnl
+        equity_source = "report_results"
+    return starting_equity, ending_equity, open_positions, equity_source
+
+
+def _report_equity_inputs_without_native_cache(
+    starting_equity: float,
+    *,
+    day_closed_pnl: float | None = None,
+) -> tuple[float, float, int, EquitySource]:
+    if day_closed_pnl is None:
+        return starting_equity, starting_equity, 0, "starting_balance"
+    return (
+        starting_equity,
+        starting_equity + day_closed_pnl,
+        0,
+        "report_results",
     )
 
 
