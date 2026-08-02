@@ -116,7 +116,10 @@ def test_daily_report_includes_strategy_win_rate_and_pnl() -> None:
     assert "Equity  1000.00 → 996.00 pUSD" in message
     assert "Source  Portfolio" in message
     assert "PnL     -4.00 pUSD" in message
-    assert "+6.00 USDC" in message
+    assert "W/L     1 / 1 / 1V" in message
+    assert "+6.00 pUSD" in message
+    assert "1W/0L/1V" in message
+    assert "0W/1L" in message
     assert "<b>Strategies</b>" in message
 
     legacy_payload = report.model_dump(mode="json")
@@ -155,6 +158,76 @@ def test_daily_report_counts_split_as_closed_without_win_loss_void() -> None:
     assert report.void_count == 0
     assert report.total_pnl_usdc == 2.0
     assert report.strategy_breakdown["ptb_diff"]["closed_positions"] == 1
+
+
+def test_daily_report_formatter_shows_report_results_equity_and_void_counts() -> None:
+    results = [
+        _result(
+            ResultSpec(
+                f"win-{index}",
+                TradeResultStatus.WIN,
+                2.0,
+                0.2,
+                "late_consensus",
+                "BTC",
+                "5m",
+            )
+        )
+        for index in range(47)
+    ]
+    results += [
+        _result(
+            ResultSpec(
+                f"loss-{index}",
+                TradeResultStatus.LOSS,
+                -1.0,
+                -0.1,
+                "late_consensus",
+                "BTC",
+                "5m",
+            )
+        )
+        for index in range(49)
+    ]
+    results += [
+        _result(
+            ResultSpec(
+                f"void-{index}",
+                TradeResultStatus.VOID,
+                0.0,
+                0.0,
+                "late_consensus",
+                "BTC",
+                "5m",
+            )
+        )
+        for index in range(4)
+    ]
+
+    report = DailyReportService().build_daily_report(
+        report_date=date(2026, 8, 1),
+        starting_equity=1000.0,
+        ending_equity=1045.0,
+        equity_currency="pUSD",
+        equity_source="report_results",
+        total_signals=100,
+        order_count=100,
+        fill_count=100,
+        rejected_order_count=0,
+        open_positions=0,
+        results=results,
+        telemetry_incomplete_reasons=["equity_derived_from_report_results"],
+    )
+
+    message = MessageFormatter().daily_report_message(report.model_dump(mode="json"))
+
+    assert "Source  Report results" in message
+    assert "Equity  1000.00 → 1045.00 pUSD" in message
+    assert "W/L     47 / 49 / 4V" in message
+    assert "Closed  100" in message
+    assert "late_consensus: 100 trades, 47W/49L/4V, +45.00 pUSD" in message
+    assert "Telemetry INCOMPLETE (equity_derived_from_report_results)" in message
+    assert "+0.00 USDC" not in message
 
 
 def test_daily_report_includes_strategy_asset_timeframe_calibration() -> None:

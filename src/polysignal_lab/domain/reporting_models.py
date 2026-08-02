@@ -10,7 +10,12 @@ from pydantic import BaseModel, Field
 from polysignal_lab.utils import new_id, utc_now
 
 
-EquitySource = Literal["portfolio", "account_balance", "starting_balance"]
+EquitySource = Literal[
+    "portfolio",
+    "account_balance",
+    "starting_balance",
+    "report_results",
+]
 
 
 class ReportAccountSnapshotRow(TypedDict, total=False):
