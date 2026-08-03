@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 if TYPE_CHECKING:
     from polysignal_lab.domain.reporting_result import DailyReport
@@ -107,6 +107,8 @@ class NautilusRuntimeContext:
     publish_service: PublishService
     sqlite: SQLiteStore
     logger: logging.Logger
+    nautilus_cache: Any | None = None
+    nautilus_portfolio: Any | None = None
     _running: bool = False
 
     async def publish_signal_once(

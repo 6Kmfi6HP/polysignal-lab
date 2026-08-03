@@ -356,14 +356,19 @@ def test_real_backtest_materializes_importable_native_components() -> None:
         engine.dispose()
 
 
-def test_runtime_bundle_contains_only_native_node_and_external_io_context(
+def test_runtime_bundle_exposes_native_reporting_sources_to_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = Settings()
     settings.runtime.nautilus.execution_mode = "backtest"
     context = SimpleNamespace(settings=settings)
     observability = _Observability()
-    native_node = object()
+    native_cache = object()
+    native_portfolio = object()
+    native_node = SimpleNamespace(
+        cache=native_cache,
+        portfolio=native_portfolio,
+    )
 
     from polysignal_lab.nautilus_runtime import node as node_module
 
@@ -380,8 +385,8 @@ def test_runtime_bundle_contains_only_native_node_and_external_io_context(
     assert bundle.strategy_names == ()
     assert not hasattr(bundle, "components")
     assert not hasattr(bundle, "bridge_registry")
-    assert not hasattr(context, "nautilus_cache")
-    assert not hasattr(context, "nautilus_portfolio")
+    assert context.nautilus_cache is native_cache
+    assert context.nautilus_portfolio is native_portfolio
 
 
 @pytest.mark.anyio

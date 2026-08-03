@@ -110,9 +110,12 @@ def _build_nautilus_runtime_bundle(
     context: NautilusRuntimeContext,
     observability: ObservabilityService,
 ) -> NautilusRuntimeBundle:
+    node = build_runtime_node(settings)
+    context.nautilus_cache = getattr(node, "cache", None)
+    context.nautilus_portfolio = getattr(node, "portfolio", None)
     return NautilusRuntimeBundle(
         context=context,
-        node=build_runtime_node(settings),
+        node=node,
         observability=observability,
         strategy_names=enabled_strategy_names(settings),
     )
