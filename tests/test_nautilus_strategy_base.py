@@ -5929,8 +5929,9 @@ def test_native_strategy_l1_subscribes_data_names_without_snapshot_request() -> 
             *,
             limit: int = 0,
             client_id: object | None = None,
+            params: Mapping[str, object] | None = None,
         ) -> object:
-            del limit, client_id
+            del limit, client_id, params
             self.snapshot_requests.append(str(instrument_id))
             return None
 

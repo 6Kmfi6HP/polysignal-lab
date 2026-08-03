@@ -394,6 +394,7 @@ class _SubscriptionStrategy(_ConditionSubscriptionStateOwner, Protocol):
         *,
         limit: int = 0,
         client_id: object | None = None,
+        params: Mapping[str, object] | None = None,
     ) -> object: ...
     def unsubscribe_quotes(
         self,
@@ -742,6 +743,7 @@ class _LifecycleCleanupOwner(_ConditionSubscriptionStateOwner, Protocol):
     _runtime_readiness_reason_by_condition: dict[str, str]
     _runtime_readiness_miss_condition_ids: set[str]
 
+
 def clear_condition_lifecycle_state(
     strategy: _LifecycleCleanupOwner,
     condition_id: str,
@@ -1039,10 +1041,17 @@ def _resubscribe_market_instrument(
     """
     _ = unsubscribe_market_instrument(strategy, instrument_id)
     _ = subscribe_market_instrument(strategy, instrument_id)
-    _ = strategy.request_order_book_snapshot(
-        instrument_id,
-        client_id=_client_id_for_instrument(strategy, instrument_id),
-    )
+    try:
+        _ = strategy.request_order_book_snapshot(
+            instrument_id,
+            client_id=_client_id_for_instrument(strategy, instrument_id),
+            params={"resync_live_book": True},
+        )
+    except Exception:
+        logger.exception(
+            "book_snapshot_backstop_failed",
+            extra={"instrument_id": _instrument_key(instrument_id)},
+        )
 
 
 def _total_stall_started_at(
@@ -1091,9 +1100,9 @@ def _resubscribe_and_begin_generation(
     instruments = condition_instruments(strategy, condition_id)
     if not instruments:
         return None
+    begin_market_book_generation(strategy, condition_id, now=now)
     for instrument_id in instruments:
         _resubscribe_market_instrument(strategy, instrument_id)
-    begin_market_book_generation(strategy, condition_id, now=now)
     return instruments
 
 
