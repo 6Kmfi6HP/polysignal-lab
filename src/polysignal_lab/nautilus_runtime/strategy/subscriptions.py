@@ -742,7 +742,6 @@ class _LifecycleCleanupOwner(_ConditionSubscriptionStateOwner, Protocol):
     _runtime_readiness_reason_by_condition: dict[str, str]
     _runtime_readiness_miss_condition_ids: set[str]
 
-
 def clear_condition_lifecycle_state(
     strategy: _LifecycleCleanupOwner,
     condition_id: str,
@@ -759,6 +758,13 @@ def clear_condition_lifecycle_state(
     mirrors clear_condition_subscription_state); pass clear_history=True on the
     exit/retire path when the observability history should go too.
     """
+    cancel_recovery = getattr(
+        strategy,
+        "_cancel_market_data_recovery_evaluation",
+        None,
+    )
+    if callable(cancel_recovery):
+        cancel_recovery(condition_id)
     clear_condition_subscription_state(
         strategy,
         condition_id,

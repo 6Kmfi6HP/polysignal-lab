@@ -75,6 +75,32 @@ class _NoopClock:
         return 0
 
 
+class _TimeAlertClock:
+    def __init__(self) -> None:
+        self.now_ns = 1_782_144_000_000_000_000
+        self.alerts: dict[str, tuple[int, Callable[[object], None]]] = {}
+
+    def timestamp_ns(self) -> int:
+        return self.now_ns
+
+    def set_time_alert_ns(
+        self,
+        name: str,
+        alert_time_ns: int,
+        *,
+        callback: Callable[[object], None],
+    ) -> None:
+        self.alerts[name] = (alert_time_ns, callback)
+
+    def cancel_timer(self, name: str) -> None:
+        self.alerts.pop(name, None)
+
+    def fire(self, name: str) -> None:
+        alert_time_ns, callback = self.alerts.pop(name)
+        self.now_ns = alert_time_ns
+        callback(object())
+
+
 class _NativeSubscriptionMethods:
     def subscribe_data(
         self,
@@ -2722,6 +2748,359 @@ def test_market_data_evaluation_is_debounced_per_condition() -> None:
     # A different condition is not blocked by cond-1's window.
     mde.evaluate_market_data_condition(strategy, "cond-2")
     assert evaluated == ["cond-1", "cond-1", "cond-2"]
+
+
+def test_market_data_recovery_inside_debounce_window_evaluates_at_trailing_edge() -> (
+    None
+):
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    empty = _real_market_view_with_empty_quote_depth()
+    tradable = replace(
+        empty,
+        up=replace(empty.up, best_ask=0.51),
+        down=replace(empty.down, best_ask=0.52),
+    )
+    assembler = FakeAssembler(empty)
+    core_calls: list[MarketView] = []
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        @property
+        def clock(self) -> _TimeAlertClock:
+            return self.fake_clock
+
+        def __init__(  # pyright: ignore[reportInconsistentConstructor]
+            self, **kwargs
+        ):
+            super().__init__(**kwargs)
+            self.fake_clock = _TimeAlertClock()
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=cast(MarketViewAssembler, cast(object, assembler)),
+        condition_ids=(empty.condition_id,),
+        strategy_name="ptb_diff",
+        registry=_registered_catalog_for_view(empty),
+        unsubscribe_exited=False,
+    )
+    strategy.core.evaluate = lambda current: core_calls.append(current) or []  # type: ignore[method-assign]
+    _mark_condition_ready(strategy, empty.condition_id)
+    event = SimpleNamespace(instrument_id=f"{empty.up.token_id}.POLYMARKET")
+
+    strategy.on_trade(event)
+    assert core_calls == []
+    assert empty.condition_id in strategy._untradable_quote_sides_by_condition
+
+    strategy.clock.now_ns += 100_000_000
+    assembler.view = tradable
+    strategy.on_trade(event)
+
+    assert core_calls == []
+    assert len(strategy.clock.alerts) == 1
+    timer_name, (alert_time_ns, _callback) = next(iter(strategy.clock.alerts.items()))
+    assert alert_time_ns == 1_782_144_000_500_000_000
+    for _ in range(10):
+        strategy.on_trade(event)
+    assert list(strategy.clock.alerts) == [timer_name]
+    assert strategy.clock.alerts[timer_name][0] == alert_time_ns
+
+    strategy.clock.fire(timer_name)
+
+    assert core_calls == [tradable]
+    assert strategy.clock.alerts == {}
+    assert empty.condition_id not in strategy._untradable_quote_sides_by_condition
+
+    strategy.clock.now_ns += 100_000_000
+    strategy.on_trade(event)
+    assert strategy.clock.alerts == {}
+
+    strategy.clock.now_ns += 500_000_000
+    assembler.view = empty
+    strategy.on_trade(event)
+    strategy.clock.now_ns += 100_000_000
+    strategy.on_trade(event)
+    assert len(strategy.clock.alerts) == 1
+
+    timer_name = next(iter(strategy.clock.alerts))
+    strategy.clock.fire(timer_name)
+
+    assert core_calls == [tradable]
+    assert empty.condition_id in strategy._untradable_quote_sides_by_condition
+
+    strategy.clock.now_ns += 100_000_000
+    strategy.on_trade(event)
+    assert len(strategy.clock.alerts) == 1
+
+    from polysignal_lab.nautilus_runtime.custom_data_types import (
+        PolySignalMarketUniverseData,
+    )
+
+    _alert_time_ns, late_callback = next(iter(strategy.clock.alerts.values()))
+    strategy.on_data(
+        PolySignalMarketUniverseData(
+            epoch=1,
+            active_condition_ids=(),
+            entered_condition_ids=(),
+            exited_condition_ids=(empty.condition_id,),
+            condition_to_up_token={},
+            condition_to_down_token={},
+            condition_to_asset={},
+            condition_to_timeframe={},
+            ts_event=1,
+            ts_init=1,
+        )
+    )
+
+    assert strategy.clock.alerts == {}
+    assert strategy._pending_market_data_evaluations == {}
+    late_callback(object())
+    assert core_calls == [tradable]
+
+    strategy._active_condition_ids.add(empty.condition_id)
+    strategy._untradable_quote_sides_by_condition[empty.condition_id] = frozenset(
+        {Side.UP, Side.DOWN}
+    )
+    strategy.on_trade(event)
+    assert len(strategy.clock.alerts) == 1
+
+    strategy.on_stop()
+
+    assert strategy.clock.alerts == {}
+    assert strategy._pending_market_data_evaluations == {}
+
+
+def test_first_bilateral_book_inside_debounce_window_evaluates_at_trailing_edge() -> (
+    None
+):
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    empty = _real_market_view_with_empty_quote_depth()
+    tradable = replace(
+        empty,
+        up=replace(empty.up, best_ask=0.51),
+        down=replace(empty.down, best_ask=0.52),
+    )
+    core_calls: list[MarketView] = []
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        @property
+        def clock(self) -> _TimeAlertClock:
+            return self.fake_clock
+
+        def __init__(  # pyright: ignore[reportInconsistentConstructor]
+            self, **kwargs
+        ):
+            super().__init__(**kwargs)
+            self.fake_clock = _TimeAlertClock()
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=_assembler(tradable),
+        condition_ids=(tradable.condition_id,),
+        strategy_name="ptb_diff",
+        registry=_registered_catalog_for_view(tradable),
+    )
+    strategy.core.evaluate = lambda current: core_calls.append(current) or []  # type: ignore[method-assign]
+    now = datetime.fromtimestamp(strategy.clock.now_ns / 1_000_000_000, UTC)
+    begin_market_book_generation(strategy, tradable.condition_id, now=now)
+
+    strategy.on_book(
+        SimpleNamespace(
+            instrument_id=f"{tradable.up.token_id}.POLYMARKET",
+            ts_init=now,
+            ts_event=now,
+        )
+    )
+    assert tradable.condition_id in strategy._runtime_readiness_miss_condition_ids
+    assert core_calls == []
+
+    strategy.clock.now_ns += 100_000_000
+    later = datetime.fromtimestamp(strategy.clock.now_ns / 1_000_000_000, UTC)
+    strategy.on_book(
+        SimpleNamespace(
+            instrument_id=f"{tradable.down.token_id}.POLYMARKET",
+            ts_init=later,
+            ts_event=later,
+        )
+    )
+
+    assert core_calls == []
+    assert len(strategy.clock.alerts) == 1
+    timer_name = next(iter(strategy.clock.alerts))
+    strategy.clock.fire(timer_name)
+
+    assert core_calls == [tradable]
+    assert tradable.condition_id not in strategy._runtime_readiness_miss_condition_ids
+
+
+def test_market_data_event_after_debounce_window_cancels_pending_recovery() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    empty = _real_market_view_with_empty_quote_depth()
+    tradable = replace(
+        empty,
+        up=replace(empty.up, best_ask=0.51),
+        down=replace(empty.down, best_ask=0.52),
+    )
+    assembler = FakeAssembler(empty)
+    core_calls: list[MarketView] = []
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        @property
+        def clock(self) -> _TimeAlertClock:
+            return self.fake_clock
+
+        def __init__(  # pyright: ignore[reportInconsistentConstructor]
+            self, **kwargs
+        ):
+            super().__init__(**kwargs)
+            self.fake_clock = _TimeAlertClock()
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=cast(MarketViewAssembler, cast(object, assembler)),
+        condition_ids=(empty.condition_id,),
+        strategy_name="ptb_diff",
+        registry=_registered_catalog_for_view(empty),
+    )
+    strategy.core.evaluate = lambda current: core_calls.append(current) or []  # type: ignore[method-assign]
+    _mark_condition_ready(strategy, empty.condition_id)
+    event = SimpleNamespace(instrument_id=f"{empty.up.token_id}.POLYMARKET")
+
+    strategy.on_trade(event)
+    strategy.clock.now_ns += 100_000_000
+    assembler.view = tradable
+    strategy.on_trade(event)
+    assert len(strategy.clock.alerts) == 1
+    _alert_time_ns, stale_callback = next(iter(strategy.clock.alerts.values()))
+
+    strategy.clock.now_ns += 500_000_000
+    strategy.on_trade(event)
+
+    assert core_calls == [tradable]
+    assert strategy.clock.alerts == {}
+    assert strategy._pending_market_data_evaluations == {}
+    stale_callback(object())
+    assert core_calls == [tradable]
+
+
+def test_direct_custom_data_evaluation_cancels_pending_recovery() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    empty = _real_market_view_with_empty_quote_depth()
+    tradable = replace(
+        empty,
+        up=replace(empty.up, best_ask=0.51),
+        down=replace(empty.down, best_ask=0.52),
+    )
+    assembler = FakeAssembler(empty)
+    core_calls: list[MarketView] = []
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        @property
+        def clock(self) -> _TimeAlertClock:
+            return self.fake_clock
+
+        def __init__(  # pyright: ignore[reportInconsistentConstructor]
+            self, **kwargs
+        ):
+            super().__init__(**kwargs)
+            self.fake_clock = _TimeAlertClock()
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=cast(MarketViewAssembler, cast(object, assembler)),
+        condition_ids=(empty.condition_id,),
+        strategy_name="ptb_diff",
+        registry=_registered_catalog_for_view(empty),
+    )
+    strategy.core.evaluate = lambda current: core_calls.append(current) or []  # type: ignore[method-assign]
+    _mark_condition_ready(strategy, empty.condition_id)
+    event = SimpleNamespace(instrument_id=f"{empty.up.token_id}.POLYMARKET")
+
+    strategy.on_trade(event)
+    strategy.clock.now_ns += 100_000_000
+    assembler.view = tradable
+    strategy.on_trade(event)
+    assert len(strategy.clock.alerts) == 1
+    _alert_time_ns, late_callback = next(iter(strategy.clock.alerts.values()))
+
+    _ = cast(_DataHandler, cast(object, strategy)).on_data(
+        PolySignalPriceToBeatData(
+            condition_id=empty.condition_id,
+            value=100_000.0,
+            source="anchor",
+            verified=True,
+            from_anchor_service=True,
+            anchor_source="chainlink",
+            anchor_lag_ms=5,
+            ts_event=1,
+            ts_init=2,
+        )
+    )
+
+    assert core_calls == [tradable]
+    assert strategy.clock.alerts == {}
+    assert strategy._pending_market_data_evaluations == {}
+    assert empty.condition_id not in strategy._untradable_quote_sides_by_condition
+    late_callback(object())
+    assert core_calls == [tradable]
+
+
+def test_stale_orderbook_recovery_inside_debounce_window_evaluates_at_trailing_edge() -> (
+    None
+):
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    current = _real_market_view_with_empty_quote_depth()
+    current = replace(
+        current,
+        up=replace(current.up, best_ask=0.51),
+        down=replace(current.down, best_ask=0.52),
+    )
+    stale = replace(
+        current,
+        up=replace(current.up, freshness_ms=60_001),
+        down=replace(current.down, freshness_ms=60_001),
+    )
+    assembler = FakeAssembler(stale)
+    core_calls: list[MarketView] = []
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        @property
+        def clock(self) -> _TimeAlertClock:
+            return self.fake_clock
+
+        def __init__(  # pyright: ignore[reportInconsistentConstructor]
+            self, **kwargs
+        ):
+            super().__init__(**kwargs)
+            self.fake_clock = _TimeAlertClock()
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=cast(MarketViewAssembler, cast(object, assembler)),
+        condition_ids=(current.condition_id,),
+        strategy_name="ptb_diff",
+        registry=_registered_catalog_for_view(current),
+    )
+    strategy.core.evaluate = lambda view: core_calls.append(view) or []  # type: ignore[method-assign]
+    _mark_condition_ready(strategy, current.condition_id)
+    event = SimpleNamespace(instrument_id=f"{current.up.token_id}.POLYMARKET")
+
+    strategy.on_trade(event)
+    assert current.condition_id in strategy._runtime_readiness_miss_condition_ids
+
+    strategy.clock.now_ns += 100_000_000
+    assembler.view = current
+    strategy.on_trade(event)
+    assert core_calls == []
+    assert len(strategy.clock.alerts) == 1
+
+    strategy.clock.fire(next(iter(strategy.clock.alerts)))
+
+    assert core_calls == [current]
+    assert current.condition_id not in strategy._runtime_readiness_miss_condition_ids
 
 
 def test_native_strategy_subscribes_market_data_per_strategy_instance() -> None:
