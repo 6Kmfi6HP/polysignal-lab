@@ -62,7 +62,10 @@ def register_runtime_components(
             config=rotation_config.importable_dict(),
         )
     )
-    if settings.runtime.nautilus.execution_mode == "sandbox":
+    if (
+        settings.runtime.nautilus.execution_mode == "sandbox"
+        and settings.storage.recorded_market_data_enabled
+    ):
         recorder_config = RecordedMarketDataActorConfig.build(settings)
         add_actor(
             _importable_actor_config(

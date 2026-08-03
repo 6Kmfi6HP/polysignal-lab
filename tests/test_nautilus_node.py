@@ -242,6 +242,30 @@ def test_shared_registration_does_not_create_shadow_strategy_when_none_enabled()
     assert runtime.strategy_configs == []
 
 
+def test_sandbox_recorder_skipped_when_recording_disabled() -> None:
+    settings = Settings()  # default execution_mode is sandbox
+    settings.storage.recorded_market_data_enabled = False
+    runtime = _RecordingRuntime()
+
+    register_runtime_components(runtime, settings)
+
+    assert [getattr(config, "actor_path") for config in runtime.actor_configs] == [
+        "polysignal_lab.nautilus_runtime.market_rotation:MarketRotationActor",
+    ]
+
+
+def test_sandbox_recorder_registered_by_default() -> None:
+    settings = Settings()  # default execution_mode sandbox, recording enabled True
+    runtime = _RecordingRuntime()
+
+    register_runtime_components(runtime, settings)
+
+    assert [getattr(config, "actor_path") for config in runtime.actor_configs] == [
+        "polysignal_lab.nautilus_runtime.market_rotation:MarketRotationActor",
+        "polysignal_lab.nautilus_runtime.recorded_market_data:RecordedMarketDataActor",
+    ]
+
+
 def test_backtest_router_uses_native_builder_with_shared_registration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
