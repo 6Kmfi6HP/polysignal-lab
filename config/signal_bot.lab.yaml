@@ -80,6 +80,7 @@ storage:
   jsonl_enabled: true
   jsonl_dir: logs
   state_dir: state
+  recorded_market_data_enabled: false
 
 dashboard:
   enabled: true

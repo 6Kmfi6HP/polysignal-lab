@@ -230,6 +230,7 @@ class StorageConfig(BaseModel):
     jsonl_dir: str = "logs"
     state_dir: str = "state"
     recorded_market_data_dir: str = "data/recorded_market_data"
+    recorded_market_data_enabled: bool = True
 
 
 class DashboardConfig(BaseModel):
