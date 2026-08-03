@@ -2984,6 +2984,69 @@ def test_market_data_event_after_debounce_window_cancels_pending_recovery() -> N
     assert core_calls == [tradable]
 
 
+def test_direct_custom_data_evaluation_cancels_pending_recovery() -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    empty = _real_market_view_with_empty_quote_depth()
+    tradable = replace(
+        empty,
+        up=replace(empty.up, best_ask=0.51),
+        down=replace(empty.down, best_ask=0.52),
+    )
+    assembler = FakeAssembler(empty)
+    core_calls: list[MarketView] = []
+
+    class FakeNativeStrategy(PolySignalNativeStrategy):
+        @property
+        def clock(self) -> _TimeAlertClock:
+            return self.fake_clock
+
+        def __init__(  # pyright: ignore[reportInconsistentConstructor]
+            self, **kwargs
+        ):
+            super().__init__(**kwargs)
+            self.fake_clock = _TimeAlertClock()
+
+    strategy = FakeNativeStrategy(
+        core=FakeCore([]),
+        assembler=cast(MarketViewAssembler, cast(object, assembler)),
+        condition_ids=(empty.condition_id,),
+        strategy_name="ptb_diff",
+        registry=_registered_catalog_for_view(empty),
+    )
+    strategy.core.evaluate = lambda current: core_calls.append(current) or []  # type: ignore[method-assign]
+    _mark_condition_ready(strategy, empty.condition_id)
+    event = SimpleNamespace(instrument_id=f"{empty.up.token_id}.POLYMARKET")
+
+    strategy.on_trade(event)
+    strategy.clock.now_ns += 100_000_000
+    assembler.view = tradable
+    strategy.on_trade(event)
+    assert len(strategy.clock.alerts) == 1
+    _alert_time_ns, late_callback = next(iter(strategy.clock.alerts.values()))
+
+    _ = cast(_DataHandler, cast(object, strategy)).on_data(
+        PolySignalPriceToBeatData(
+            condition_id=empty.condition_id,
+            value=100_000.0,
+            source="anchor",
+            verified=True,
+            from_anchor_service=True,
+            anchor_source="chainlink",
+            anchor_lag_ms=5,
+            ts_event=1,
+            ts_init=2,
+        )
+    )
+
+    assert core_calls == [tradable]
+    assert strategy.clock.alerts == {}
+    assert strategy._pending_market_data_evaluations == {}
+    assert empty.condition_id not in strategy._untradable_quote_sides_by_condition
+    late_callback(object())
+    assert core_calls == [tradable]
+
+
 def test_stale_orderbook_recovery_inside_debounce_window_evaluates_at_trailing_edge() -> (
     None
 ):

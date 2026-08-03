@@ -352,6 +352,26 @@ def evaluate_condition(
     )
 
 
+def _cancel_pending_recovery_if_cleared(
+    strategy: _EvaluationStrategy,
+    condition_id: str,
+) -> None:
+    """Drop a trailing recovery alert after any path clears miss/untradable state.
+
+    Market-data events already cancel before evaluating. Direct callers such as
+    RTDS spot and price-to-beat updates do not, so a pending 500 ms alert would
+    otherwise re-evaluate the same recovered observation.
+    """
+    if (
+        condition_id in strategy._runtime_readiness_miss_condition_ids
+        or condition_id in strategy._untradable_quote_sides_by_condition
+    ):
+        return
+    cancel = getattr(strategy, "_cancel_market_data_recovery_evaluation", None)
+    if callable(cancel):
+        cancel(condition_id)
+
+
 def evaluate_ready_condition(
     strategy: _EvaluationStrategy,
     condition_id: str,
@@ -394,6 +414,7 @@ def evaluate_ready_condition(
         and condition_id not in strategy._runtime_readiness_miss_condition_ids
     ):
         strategy._note_runtime_readiness(condition_id, ready=True)
+    _cancel_pending_recovery_if_cleared(strategy, condition_id)
 
 
 def _restore_tradable_state(
