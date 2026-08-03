@@ -34,6 +34,9 @@ from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
     _subscribe_custom_data,
     unsubscribe_custom_data,
 )
+from polysignal_lab.nautilus_runtime.strategy.market_data_events import (
+    cancel_pending_market_data_evaluations,
+)
 
 
 class _ClockHost(Protocol):
@@ -164,6 +167,7 @@ def on_strategy_start(strategy: _LifecycleStrategy, heartbeat_callback: object) 
 
 def on_strategy_stop(strategy: _LifecycleStrategy) -> None:
     stop_evaluation_heartbeat(strategy)
+    cancel_pending_market_data_evaluations(strategy)  # pyright: ignore[reportArgumentType]
     observability = getattr(strategy, "observability", None)
     record_stopped = getattr(observability, "record_strategy_stopped", None)
     if callable(record_stopped):

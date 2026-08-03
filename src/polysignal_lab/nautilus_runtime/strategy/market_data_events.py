@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Protocol
+from functools import partial
+from typing import Protocol, cast
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.custom_data_state import event_datetime
@@ -23,6 +24,32 @@ class _MarketDataEvaluator(Protocol):
     def _framework_now(self) -> datetime: ...
     def _note_runtime_progress(self, phase: str) -> None: ...
     def evaluate_condition(self, condition_id: str) -> None: ...
+
+
+class MarketDataTimerClock(Protocol):
+    def cancel_timer(self, name: str) -> object: ...
+    def set_time_alert_ns(
+        self,
+        name: str,
+        alert_time_ns: int,
+        *,
+        callback: object,
+    ) -> object: ...
+
+
+class _PendingMarketDataEvaluationOwner(Protocol):
+    _pending_market_data_evaluations: dict[str, tuple[str, object]]
+    clock: MarketDataTimerClock
+
+
+class _RecoveryMarketDataEvaluator(
+    _MarketDataEvaluator,
+    _PendingMarketDataEvaluationOwner,
+    Protocol,
+):
+    _active_condition_ids: set[str]
+    _runtime_readiness_miss_condition_ids: set[str]
+    _untradable_quote_sides_by_condition: dict[str, frozenset[Side]]
 
 
 class _MarketDataStrategy(_MarketDataEvaluator, Protocol):
@@ -111,6 +138,78 @@ def order_book_observation(
 # busy Polymarket books (issue #21); bursts collapse to one evaluation per
 # window, with the 10s heartbeat timer as the idle backstop.
 _MARKET_DATA_EVALUATION_MIN_INTERVAL = timedelta(milliseconds=500)
+_MARKET_DATA_RECOVERY_TIMER_PREFIX = "polysignal_market_data_recovery"
+
+
+def cancel_pending_market_data_evaluation(
+    strategy: _PendingMarketDataEvaluationOwner,
+    condition_id: str,
+) -> None:
+    pending_evaluations = getattr(strategy, "_pending_market_data_evaluations", None)
+    if not isinstance(pending_evaluations, dict):
+        return
+    typed_pending = cast(dict[str, tuple[str, object]], pending_evaluations)
+    pending = typed_pending.pop(condition_id, None)
+    if pending is None:
+        return
+    timer_name, _token = pending
+    try:
+        _ = strategy.clock.cancel_timer(timer_name)
+    except (NotImplementedError, RuntimeError):
+        if getattr(strategy, "trader_id", None) is not None:
+            raise
+
+
+def cancel_pending_market_data_evaluations(
+    strategy: _PendingMarketDataEvaluationOwner,
+) -> None:
+    pending = getattr(strategy, "_pending_market_data_evaluations", None)
+    if not isinstance(pending, dict):
+        return
+    for condition_id in tuple(pending):
+        cancel_pending_market_data_evaluation(strategy, condition_id)
+
+
+def _on_pending_market_data_evaluation(
+    strategy: _RecoveryMarketDataEvaluator,
+    condition_id: str,
+    token: object,
+    _event: object,
+) -> None:
+    pending = strategy._pending_market_data_evaluations.get(condition_id)
+    if pending is None or pending[1] is not token:
+        return
+    _ = strategy._pending_market_data_evaluations.pop(condition_id, None)
+    if condition_id not in strategy._active_condition_ids:
+        return
+    evaluate_market_data_condition(strategy, condition_id, bypass_throttle=True)
+
+
+def _schedule_pending_market_data_evaluation(
+    strategy: _RecoveryMarketDataEvaluator,
+    condition_id: str,
+    deadline: datetime,
+) -> None:
+    if condition_id in strategy._pending_market_data_evaluations:
+        return
+    timer_name = f"{_MARKET_DATA_RECOVERY_TIMER_PREFIX}:{condition_id}"
+    token = object()
+    try:
+        _ = strategy.clock.set_time_alert_ns(
+            timer_name,
+            int(deadline.timestamp() * 1_000_000_000),
+            callback=partial(
+                _on_pending_market_data_evaluation,
+                strategy,
+                condition_id,
+                token,
+            ),
+        )
+    except (NotImplementedError, RuntimeError):
+        if getattr(strategy, "trader_id", None) is not None:
+            raise
+        return
+    strategy._pending_market_data_evaluations[condition_id] = (timer_name, token)
 
 
 def evaluate_market_data_condition(
@@ -118,12 +217,31 @@ def evaluate_market_data_condition(
     condition_id: str,
     *,
     event: object | None = None,
+    bypass_throttle: bool = False,
 ) -> None:
     _ = event
     now = strategy._framework_now()
     last = strategy._last_market_data_evaluation_at.get(condition_id)
-    if last is not None and now - last < _MARKET_DATA_EVALUATION_MIN_INTERVAL:
+    if (
+        not bypass_throttle
+        and last is not None
+        and now - last < _MARKET_DATA_EVALUATION_MIN_INTERVAL
+    ):
+        if (
+            condition_id
+            in getattr(strategy, "_runtime_readiness_miss_condition_ids", ())
+            or condition_id
+            in getattr(strategy, "_untradable_quote_sides_by_condition", {})
+        ):
+            recovery_strategy = cast(_RecoveryMarketDataEvaluator, strategy)
+            _schedule_pending_market_data_evaluation(
+                recovery_strategy,
+                condition_id,
+                last + _MARKET_DATA_EVALUATION_MIN_INTERVAL,
+            )
         return
+    pending_owner = cast(_PendingMarketDataEvaluationOwner, cast(object, strategy))
+    cancel_pending_market_data_evaluation(pending_owner, condition_id)
     strategy._note_runtime_progress("market_data_evaluation")
     strategy._last_market_data_evaluation_at[condition_id] = now
     strategy.evaluate_condition(condition_id)

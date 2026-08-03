@@ -215,6 +215,9 @@ class PolySignalNativeStrategy(Strategy):
     ) -> None:
         mde.evaluate_market_data_condition(self, condition_id, event=event)
 
+    def _cancel_market_data_recovery_evaluation(self, condition_id: str) -> None:
+        mde.cancel_pending_market_data_evaluation(self, condition_id)
+
     def on_trade(self, tick: object) -> None:
         condition_id = mde.condition_from_market_data(self, tick)
         if condition_id is not None:
