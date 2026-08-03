@@ -7,6 +7,19 @@
 
 `awaiting_first_book` is a **subscription lifecycle / feed-readiness** reason, not a quote-depth failure. It means both UP and DOWN have not yet delivered a post-subscribe book event, so the condition never reaches `READY` and evaluation is blocked (`missing_data`). Brief appearances on every market rotation are expected; **prolonged** ones point to quiet books without an initial snapshot, one-sided feed silence, or a failed subscribe — not to empty asks.
 
+## Follow-up evidence and native snapshot status
+
+A 40-minute production observation on 2026-08-03 recorded 79 readiness misses, all closed. The 64 `awaiting_first_book` episodes recovered within 16 seconds; none justified a general REST probe. The only actionable long episode was a separate 120-second `stale_orderbook` case.
+
+The pinned PyO3 strategy does expose `Strategy.request_book_snapshot(instrument_id, depth=None, client_id=None, params=None)`, and the Polymarket implementation is in the Rust v2 adapter. The previous local wrapper called the project-only name without delegating to that native method. Isolated public-data probes against `1.231.0a20260730` and the first post-#4604 nightly (`1.231.0a20260731`) showed that a standard request returned an `OrderBook` through `on_book` but did not refresh the managed Cache book. The pinned response also retained `ts_last=0`; the upstream follow-up parses the REST timestamp so TC-D13 and TC-D14 callbacks can be correlated. Method presence, binary strings, and a successful REST response are therefore insufficient TC-D14 evidence.
+
+Keep these contracts separate:
+
+- **TC-D13:** a requested snapshot is returned as historical request data.
+- **TC-D14:** a live managed book is atomically replaced and remains continuous with later WS deltas.
+
+The follow-up implementation delegates to the native request and uses the explicit Rust adapter parameter `resync_live_book=true` for the existing 60-second AFB/stale recovery path. The adapter change is tracked in [NautilusTrader #4635](https://github.com/nautechsystems/nautilus_trader/issues/4635) and implemented by [PR #4638](https://github.com/nautechsystems/nautilus_trader/pull/4638). No Python side-store is used as a trading data source.
+
 ## What it means (vs `missing_quote_depth`)
 
 | | `awaiting_first_book` | `missing_quote_depth:*` |
@@ -58,9 +71,9 @@ Local comments state Polymarket WS can leave a subscribed condition without a fi
 
 Upstream: [NT #3963](https://github.com/nautechsystems/nautilus_trader/issues/3963) — without `initial_dump: true`, quiet markets may never emit a book frame until a natural update. Closed after reporter noted defaults already set `initial_dump`; residual quiet-token behavior can still delay first events.
 
-### 3. Snapshot “backstop” is a no-op here
+### 3. Snapshot backstop requires live-resync semantics
 
-Stall recovery calls `request_order_book_snapshot`, but `PolySignalNativeStrategy.request_order_book_snapshot` is an intentional logged no-op: Polymarket data client does not implement that path ([`native_strategy.py`](../src/polysignal_lab/nautilus_runtime/native_strategy.py)). Real recovery is **unsubscribe + resubscribe** managed book_deltas/quotes only.
+The historical wrapper was a logged no-op even though the PyO3 base exposes `request_book_snapshot`. A standard native request is a historical TC-D13 operation; the public-data gate did not show a TC-D14 managed Cache refresh. The follow-up keeps unsubscribe + resubscribe and requests the Rust adapter's explicit live resync in the same recovery cycle.
 
 ### 4. One side never updates
 
@@ -116,17 +129,17 @@ Do **not** “fix” by relaxing ask-depth policy — that only affects `missing
 ### Operational
 
 - Alert on **persistent** readiness miss / high `generation_age_ms`, not on every sample during 5m rotations.
-- Correlate with logs: `condition_book_resubscription`, `condition_abandoned_no_book`, `order_book_snapshot_request_unsupported`.
+- Correlate with logs: `condition_book_resubscription`, `condition_abandoned_no_book`, and `book_snapshot_backstop_*` terminal events.
 
 ### Code (only if prolonged stalls dominate lost tradable time)
 
-1. **Real snapshot backstop:** HTTP CLOB book fetch injected into Cache on stall (today’s `request_order_book_snapshot` is a no-op). Highest leverage for quiet markets; needs careful Cache/adapter integration.
+1. **Native snapshot backstop:** use Rust adapter-owned `resync_live_book` so REST snapshot replacement and buffered WS delta replay remain on the adapter side of the managed-book boundary.
 2. Keep NT nightlies past the [#4574](https://github.com/nautechsystems/nautilus_trader/issues/4574) fix (already true for `20260730`).
 3. Optional: shorten `_BOOK_GENERATION_STALL_SEC` if telemetry shows most recoveries need only a quick resubscribe — tradeoff: more WS churn.
 
 ## Open gaps
 
-- No live session capture in this note measuring how often `awaiting_first_book` lasts &gt;60 s vs &lt;1 s in current production.
+- The 40-minute follow-up measured current production (64 AFB episodes, all recovered within 16 seconds); a longer observation is still needed for rare venue-wide freezes.
 - The official AsyncAPI says `initial_dump` defaults to true. This audit did not capture a live wire subscription payload from the pinned wheel.
 
 ## Sources

@@ -7,6 +7,12 @@
 
 `stale_orderbook` is a **local freshness / readiness-miss gate**, not an upstream exception. After a condition is `READY`, if either UP or DOWN book’s `freshness_ms` exceeds the readiness threshold (default **60 000 ms** from `data.polymarket.max_book_staleness_ms`) — or freshness is missing — evaluation is blocked with strategy status `missing_data`. Short-lived hits that recover within tens of seconds match feed gaps / quiet tokens; long-lived hits match known CLOB WS “silent freeze” behavior and warrant reconnect / REST correlation.
 
+## Follow-up evidence and recovery boundary
+
+In the 2026-08-03 40-minute production window, the only readiness miss beyond 60 seconds was one 120-second XRP/15m `stale_orderbook` episode. Both token receipts were about 60.9 seconds old at entry and the next resubscribe cycle recovered it. The existing snapshot no-op was reached 24 times in that window, so the recovery hook is real but previously ineffective.
+
+The pinned PyO3 API exposes `Strategy.request_book_snapshot`, backed by the Rust v2 Polymarket REST implementation. Isolated probes on official `20260730` and post-#4604 `20260731` nightlies returned a historical `OrderBook` through `on_book` but did not demonstrate a managed Cache replacement. The follow-up tracked in [NautilusTrader #4635](https://github.com/nautechsystems/nautilus_trader/issues/4635) and implemented by [PR #4638](https://github.com/nautechsystems/nautilus_trader/pull/4638) therefore adds adapter-owned `resync_live_book=true`: buffer per-instrument WS deltas during REST, atomically replace the adapter live book, publish a snapshot delta, then replay only deltas newer than the snapshot. HTTP failure replays all buffered deltas against the old book and remains fail-closed.
+
 ## What it means (three-way comparison)
 
 | | `awaiting_first_book` | `stale_orderbook` | `missing_quote_depth:*` |
@@ -102,7 +108,7 @@ Only one outcome keeps updating; the other side’s `freshness_ms` exceeds 60 
 
 - [NT #4604](https://github.com/nautechsystems/nautilus_trader/issues/4604): closed/fixed v2 batch-dispatch bug; not evidence for this pinned v1 runtime.
 - [NT #4343](https://github.com/nautechsystems/nautilus_trader/issues/4343): RTDS reconnect dark (spot, not CLOB books).
-- Snapshot request backstop is a **no-op** locally ([`native_strategy.py`](../src/polysignal_lab/nautilus_runtime/native_strategy.py)) — stale recovery is unsubscribe/resubscribe only.
+- The former local wrapper was a **no-op** despite a native request surface. A standard request is historical TC-D13 behavior; managed-book TC-D14 recovery requires the explicit Rust live-resync path.
 
 ### H6 — Threshold too tight relative to feed cadence (weak–moderate)
 
@@ -142,7 +148,7 @@ When status shows `stale_orderbook` / `missing_data`:
 ### Code / config (only if lost tradable time is dominated by false stalls)
 
 1. Keep the readiness gate for safety; do not raise `max_book_staleness_ms` blindly without measuring quiet-market false positives.
-2. Real HTTP book snapshot inject on stale repair (today’s snapshot request is a no-op) — same gap as `awaiting_first_book`.
+2. Use the native Rust live-resync request on stale repair; do not inject directly into Nautilus Cache or maintain a Python trading side-store.
 3. Richer logs: per-side freshness + last event type when entering/leaving `stale_orderbook`.
 4. Optional: inactivity reconnect when **no** market-data events for any subscribed token for N seconds (venue #292 pattern).
 

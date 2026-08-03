@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -147,8 +148,9 @@ class _StubStrategy:
         *,
         limit: int = 0,
         client_id: object | None = None,
+        params: Mapping[str, object] | None = None,
     ) -> object:
-        _ = instrument_id, limit, client_id
+        _ = instrument_id, limit, client_id, params
         return None
 
     def unsubscribe_quotes(
@@ -773,6 +775,5 @@ def test_subscribe_issued_without_stale_first_bilateral() -> None:
         raise AssertionError(
             "SUBSCRIBE_ISSUED with stale first bilateral marker must violate invariants"
         )
-
 
 

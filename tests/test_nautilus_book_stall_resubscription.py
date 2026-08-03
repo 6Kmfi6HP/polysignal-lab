@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+
+import pytest
+
+from nautilus_trader.core.nautilus_pyo3 import Strategy  # pyright: ignore[reportAttributeAccessIssue]
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.market_catalog import (
@@ -71,6 +75,7 @@ class _ResubscribeStrategy:
         self.subscribed_instruments: list[str] = []
         self.unsubscribed_instruments: list[str] = []
         self.snapshot_requests: list[str] = []
+        self.snapshot_request_params: list[Mapping[str, object] | None] = []
         self.readiness: list[tuple[str, bool]] = []
 
     def _readiness_detail(
@@ -140,9 +145,11 @@ class _ResubscribeStrategy:
         *,
         limit: int = 0,
         client_id: object | None = None,
+        params: Mapping[str, object] | None = None,
     ) -> object:
         del limit, client_id
         self.snapshot_requests.append(str(instrument_id))
+        self.snapshot_request_params.append(params)
         return object()
 
 
@@ -218,9 +225,15 @@ def test_stalled_condition_resubscription_requests_snapshot_backstop() -> None:
         "btc-5m-down.POLYMARKET",
         "btc-5m-up.POLYMARKET",
     ]
+    assert strategy.snapshot_request_params == [
+        {"resync_live_book": True},
+        {"resync_live_book": True},
+    ]
 
 
-def test_real_strategy_resubscription_does_not_raise_attribute_error() -> None:
+def test_real_strategy_resubscription_does_not_raise_attribute_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Regression: PR #52's resubscribe path calls request_order_book_snapshot
     on the real strategy. The pyo3 Strategy base exposes request_book_snapshot
     but not request_order_book_snapshot, so before the fix this raised
@@ -284,6 +297,12 @@ def test_real_strategy_resubscription_does_not_raise_attribute_error() -> None:
             del args, kwargs
             self.unsubscribed_instruments.append(str(instrument_id))
 
+    monkeypatch.setattr(
+        Strategy,
+        "request_book_snapshot",
+        lambda self, instrument_id, depth=None, client_id=None, params=None: None,
+    )
+
     registry = _registry()
     strategy = _SubscribedStrategy(
         core=_FakeCore(),  # type: ignore[arg-type]
@@ -319,6 +338,293 @@ def test_real_strategy_resubscription_does_not_raise_attribute_error() -> None:
         "btc-5m-down.POLYMARKET",
         "btc-5m-up.POLYMARKET",
     ]
+
+
+def test_real_strategy_snapshot_wrapper_delegates_native_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+
+    calls: list[tuple[object, object, object, object]] = []
+    response = object()
+
+    def request_book_snapshot(
+        self: object,
+        instrument_id: object,
+        depth: object = None,
+        client_id: object = None,
+        params: object = None,
+    ) -> object:
+        del self
+        calls.append((instrument_id, depth, client_id, params))
+        return response
+
+    monkeypatch.setattr(Strategy, "request_book_snapshot", request_book_snapshot)
+    strategy = Strategy.__new__(PolySignalNativeStrategy)
+    strategy.strategy_name = "snapshot-probe"
+
+    result = strategy.request_order_book_snapshot(
+        "btc-up.POLYMARKET",
+        limit=10,
+        client_id="POLYMARKET-5M",
+        params={"probe": "tc-d13"},
+    )
+
+    assert result is response
+    assert calls == [
+        (
+            "btc-up.POLYMARKET",
+            10,
+            "POLYMARKET-5M",
+            {"probe": "tc-d13"},
+        )
+    ]
+
+
+def test_on_book_records_pending_historical_without_evaluation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.nautilus_runtime import native_strategy
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.strategy import snapshot_backstop
+
+    strategy = Strategy.__new__(PolySignalNativeStrategy)
+    strategy.strategy_name = "snapshot-probe"
+    request = snapshot_backstop.SnapshotBackstopRequest(
+        strategy="snapshot-probe",
+        condition="btc-5m",
+        instrument_id="btc-up.POLYMARKET",
+        token="up-token",
+        request_id="request-1",
+        started_at=10.0,
+    )
+    strategy._pending_snapshot_backstops = {"btc-up.POLYMARKET": request}
+    evaluated: list[object] = []
+    monkeypatch.setattr(
+        native_strategy.mde,
+        "evaluate_order_book_event",
+        lambda _strategy, event: evaluated.append(event),
+    )
+    historical = SimpleNamespace(
+        instrument_id="btc-up.POLYMARKET",
+        ts_last=100,
+        ts_init=110,
+    )
+
+    strategy.on_book(historical)
+
+    assert request.historical_ts_event == 100
+    assert evaluated == []
+
+
+def test_unmatched_live_snapshot_keeps_pending_backstop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.nautilus_runtime import native_strategy
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.strategy import snapshot_backstop
+
+    strategy = Strategy.__new__(PolySignalNativeStrategy)
+    strategy._pending_snapshot_backstops = {
+        "btc-up.POLYMARKET": snapshot_backstop.SnapshotBackstopRequest(
+            strategy="snapshot-probe",
+            condition="btc-5m",
+            instrument_id="btc-up.POLYMARKET",
+            token="up-token",
+            request_id="request-1",
+            started_at=10.0,
+            historical_ts_event=100,
+        )
+    }
+    evaluated: list[object] = []
+    monkeypatch.setattr(
+        native_strategy.mde,
+        "evaluate_order_book_event",
+        lambda _strategy, event: evaluated.append(event),
+    )
+    live_snapshot = SimpleNamespace(
+        instrument_id="btc-up.POLYMARKET",
+        flags=32,
+        ts_event=99,
+        ts_init=105,
+    )
+
+    strategy.on_book_deltas(live_snapshot)
+
+    assert "btc-up.POLYMARKET" in strategy._pending_snapshot_backstops
+    assert evaluated == [live_snapshot]
+
+
+def test_matching_live_snapshot_completes_pending_backstop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.nautilus_runtime import native_strategy
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.strategy import snapshot_backstop
+
+    strategy = Strategy.__new__(PolySignalNativeStrategy)
+    strategy._pending_snapshot_backstops = {
+        "btc-up.POLYMARKET": snapshot_backstop.SnapshotBackstopRequest(
+            strategy="snapshot-probe",
+            condition="btc-5m",
+            instrument_id="btc-up.POLYMARKET",
+            token="up-token",
+            request_id="request-1",
+            started_at=10.0,
+            historical_ts_event=100,
+        )
+    }
+    monkeypatch.setattr(
+        native_strategy.mde,
+        "evaluate_order_book_event",
+        lambda _strategy, _event: None,
+    )
+
+    strategy.on_book_deltas(
+        SimpleNamespace(
+            instrument_id="btc-up.POLYMARKET",
+            flags=32,
+            ts_event=100,
+            ts_init=120,
+        )
+    )
+
+    assert strategy._pending_snapshot_backstops == {}
+
+
+def test_snapshot_backstop_timeout_removes_pending_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.strategy import snapshot_backstop
+
+    strategy = Strategy.__new__(PolySignalNativeStrategy)
+    strategy._cache_override = SimpleNamespace(order_book=lambda _instrument_id: None)
+    strategy._pending_snapshot_backstops = {
+        "btc-up.POLYMARKET": snapshot_backstop.SnapshotBackstopRequest(
+            strategy="snapshot-probe",
+            condition="btc-5m",
+            instrument_id="btc-up.POLYMARKET",
+            token="up-token",
+            request_id="request-1",
+            started_at=10.0,
+        )
+    }
+    monkeypatch.setattr(snapshot_backstop.time, "monotonic", lambda: 40.0)
+
+    snapshot_backstop.expire(strategy)
+
+    assert strategy._pending_snapshot_backstops == {}
+
+
+def test_snapshot_backstop_event_fields_include_book_and_source_timestamps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.strategy import snapshot_backstop
+
+    strategy = Strategy.__new__(PolySignalNativeStrategy)
+    strategy._cache_override = SimpleNamespace(
+        order_book=lambda _instrument_id: SimpleNamespace(
+            bids=(1, 2),
+            asks=(3,),
+            ts_event=90,
+            ts_init=95,
+        )
+    )
+    request = snapshot_backstop.SnapshotBackstopRequest(
+        strategy="snapshot-probe",
+        condition="btc-5m",
+        instrument_id="btc-up.POLYMARKET",
+        token="up-token",
+        request_id="request-1",
+        started_at=10.0,
+    )
+    monkeypatch.setattr(snapshot_backstop.time, "monotonic", lambda: 10.25)
+
+    fields = snapshot_backstop._event_fields(  # pyright: ignore[reportPrivateUsage]
+        strategy,
+        request,
+        data=SimpleNamespace(ts_event=100, ts_init=105),
+    )
+
+    assert fields == {
+        "strategy": "snapshot-probe",
+        "condition": "btc-5m",
+        "instrument_id": "btc-up.POLYMARKET",
+        "token": "up-token",
+        "request_id": "request-1",
+        "latency_ms": 250.0,
+        "bid_levels": 2,
+        "ask_levels": 1,
+        "ts_event": 100,
+        "ts_init": 105,
+    }
+
+
+def test_stale_recovery_begins_generation_before_wire_requests() -> None:
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+    )
+
+    def assert_generation_started(
+        instrument_id: object,
+        *,
+        limit: int = 0,
+        client_id: object | None = None,
+        params: Mapping[str, object] | None = None,
+    ) -> object:
+        del instrument_id, limit, client_id, params
+        state = strategy._subscription_state
+        assert (
+            state.condition_phases["btc-5m"]
+            is ConditionSubscriptionPhase.AWAITING_FIRST_BOOK
+        )
+        assert state.book_generation_started_at_by_condition["btc-5m"] == now
+        return object()
+
+    strategy.request_order_book_snapshot = assert_generation_started  # type: ignore[method-assign]
+
+    assert force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now) is True
+
+
+def test_snapshot_request_failure_does_not_escape_recovery_heartbeat() -> None:
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m"}
+    _stalled_state(
+        strategy,
+        "btc-5m",
+        started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+    )
+
+    def fail_snapshot_request(
+        instrument_id: object,
+        *,
+        limit: int = 0,
+        client_id: object | None = None,
+        params: Mapping[str, object] | None = None,
+    ) -> object:
+        del instrument_id, limit, client_id, params
+        raise RuntimeError("snapshot unavailable")
+
+    strategy.request_order_book_snapshot = fail_snapshot_request  # type: ignore[method-assign]
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert sorted(set(strategy.subscribed_instruments)) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
+    assert strategy.evaluated == ["btc-5m"]
 
 
 def test_fresh_generation_does_not_resubscribe() -> None:

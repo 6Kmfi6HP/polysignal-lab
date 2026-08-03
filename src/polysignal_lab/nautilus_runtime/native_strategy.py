@@ -29,6 +29,7 @@ from polysignal_lab.nautilus_runtime.strategy import market_data_events as mde
 from polysignal_lab.nautilus_runtime.strategy import observability_hooks as obs
 from polysignal_lab.nautilus_runtime.strategy import order_events as oev
 from polysignal_lab.nautilus_runtime.strategy import readiness as readiness_mod
+from polysignal_lab.nautilus_runtime.strategy import snapshot_backstop
 from polysignal_lab.nautilus_runtime.strategy import subscriptions as subs
 from polysignal_lab.nautilus_runtime.strategy.custom_data_handlers import (
     route_strategy_data,
@@ -183,6 +184,7 @@ class PolySignalNativeStrategy(Strategy):
         life.on_strategy_start(self, self._on_evaluation_heartbeat)
 
     def on_stop(self) -> None:
+        snapshot_backstop.fail_all(self, reason="strategy_stop")
         life.on_strategy_stop(self)
 
     def on_save(self) -> dict[str, bytes]:
@@ -193,6 +195,7 @@ class PolySignalNativeStrategy(Strategy):
         self._market_epoch = None
 
     def _on_evaluation_heartbeat(self, event: object) -> None:
+        snapshot_backstop.expire(self)
         life.on_evaluation_heartbeat(self, event)
 
     def on_data(self, data: object) -> None:
@@ -208,6 +211,8 @@ class PolySignalNativeStrategy(Strategy):
         mde.evaluate_order_book_event(self, tick)
 
     def on_book(self, book: object) -> None:
+        if snapshot_backstop.record_historical(self, book):
+            return
         mde.evaluate_order_book_event(self, book)
 
     def _evaluate_market_data_condition(
@@ -224,6 +229,7 @@ class PolySignalNativeStrategy(Strategy):
             self._evaluate_market_data_condition(condition_id, event=tick)
 
     def on_book_deltas(self, deltas: object) -> None:
+        snapshot_backstop.record_live_applied(self, deltas)
         mde.evaluate_order_book_event(self, deltas)
 
     def on_order_submitted(self, event: object) -> None:
@@ -355,26 +361,23 @@ class PolySignalNativeStrategy(Strategy):
         *,
         limit: int = 0,
         client_id: object | None = None,
+        params: Mapping[str, object] | None = None,
     ) -> object:
-        """Issue a one-time order book snapshot for a resubscribed instrument.
-
-        Repair-A resubscription (_resubscribe_market_instrument) calls this as a
-        snapshot backstop so a first book arrives even when the feed treats the
-        re-subscribed book_delta subscription as already-active.
-
-        This is a deliberate, logged no-op rather than a wire request: the pyo3
-        Strategy base (which this class extends) exposes ``request_book_snapshot``
-        but not ``request_order_book_snapshot``, and the Polymarket data client does
-        not implement the Nautilus order-book-snapshot request path — delegating
-        would panic before Trader registration and surface a NotImplementedError
-        from the data client at runtime. Re-subscribing book_deltas (managed=True)
-        already restarts Cache book generation, which is the actual first-book
-        recovery. Keeping this method present satisfies the _SubscriptionStrategy
-        contract so the heartbeat path never raises AttributeError.
-        """
-        del instrument_id, limit, client_id
-        logger.info(
-            "order_book_snapshot_request_unsupported",
-            extra={"detail": "Polymarket data client does not implement snapshot requests"},
-        )
-        return None
+        """Request a live-book snapshot backstop after a managed resubscription."""
+        instrument_key = str(instrument_id)
+        _ = snapshot_backstop.begin(self, instrument_id, depth=limit or None)
+        try:
+            return super().request_book_snapshot(
+                instrument_id,
+                depth=limit or None,
+                client_id=client_id,
+                params=dict(params) if params is not None else None,
+            )
+        except Exception:
+            snapshot_backstop.fail(
+                self,
+                instrument_key,
+                reason="request_exception",
+                exc_info=True,
+            )
+            return None

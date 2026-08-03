@@ -8,6 +8,14 @@ Research date: 2026-08-03. Primary sources only (NautilusTrader docs/issues, Pol
 
 `missing_quote_depth:*` is a **local polysignal-lab gate**, not an upstream exception: it fires when a binary market’s MarketView has at least one outcome token whose cached book has no ask depth (`best_ask is None` and empty `ask_levels`). Upstream evidence shows this is **expected intermittently** for Polymarket binaries because (1) UP and DOWN are separate `token_id` books that arrive and empty independently, (2) Nautilus explicitly models one-sided / missing-side quotes and book-epoch gaps after tick-size changes, and (3) Polymarket CLOB WS has known cases of subscribe-success without book delivery. Treat short-lived events as feed/race; treat persistent same-side emptiness near resolution or thin books as true illiquidity.
 
+## 40-minute production finding
+
+The 2026-08-03 follow-up separated MQD from feed loss: persistent MQD samples had Cache freshness of only 0-127 ms while one outcome's asks were empty. The feed was current; the venue book was genuinely one-sided. A REST snapshot must preserve that empty ask and keep the condition `missing_quote_depth` / untradable.
+
+Consequently the native snapshot backstop is not invoked for MQD and does not poll REST periodically. It remains limited to the existing 60-second AFB/stale recovery path. An app-side fallback was rejected because it cannot safely replace a stale-but-nonempty managed book and could retain an ask that disappeared in later WS state.
+
+The adapter-side implementation is [NautilusTrader PR #4638](https://github.com/nautechsystems/nautilus_trader/pull/4638); it does not alter MQD classification or tradability.
+
 ## What the local reason code means
 
 ### Generation path
@@ -63,7 +71,7 @@ Relevant statements:
 | [#3963](https://github.com/nautechsystems/nautilus_trader/issues/3963) | Closed (wontfix / obsolete) | Claimed missing `initial_dump`/`level` on subscribe left quiet markets without a `book` frame until natural change. Reporter later said docs default `initial_dump=true`; maintainer closed. Still documents the **risk class**: no snapshot ⇒ empty local book until activity. |
 | [#4050](https://github.com/nautechsystems/nautilus_trader/issues/4050) | Closed | Auto-loaded instruments logged as subscribed but cache book stayed empty (`best_bid_price() is None, best_ask_price() is None`). Maintainer could not repro on develop; suspected thin/moment-specific market. |
 | [#4574](https://github.com/nautechsystems/nautilus_trader/issues/4574) | Closed (fixed in v1; v2 already correct) | Auto-load woke subscribe before instrument was in cache ⇒ WS subscribe skipped while logs said success. Reproducer used rotating Up/Down markets. Maintainer: “cached `OrderBook` … stays empty indefinitely.” Fixed by cache-before-WS ordering. |
-| [#4604](https://github.com/nautechsystems/nautilus_trader/issues/4604) | Closed / fixed, **v2** | Unknown `event_type` dropped a v2 WS batch. This is not evidence for the pinned v1 adapter or the local 500 ms recovery delay. |
+| [#4604](https://github.com/nautechsystems/nautilus_trader/issues/4604) | Closed / fixed, **v2** | Unknown `event_type` dropped a v2 WS batch. The first official nightly containing the fix was included in the native snapshot gate; its standard request still did not prove a managed Cache refresh. |
 | [#4237](https://github.com/nautechsystems/nautilus_trader/issues/4237) | Closed | Unsubscribe left stale local books in adapter/cache (memory / stale-state class; less directly about empty asks). |
 | [#4343](https://github.com/nautechsystems/nautilus_trader/issues/4343) | Closed | RTDS reconnect could leave subscriptions dark (spot/crypto custom data, not CLOB books, but same “subscribed but silent” failure mode). |
 | [#3559](https://github.com/nautechsystems/nautilus_trader/issues/3559) | Closed | Binary YES/NO parity: public book reflects both sides; own-order filtering across opposite tokens. Confirms two-token book model. |
@@ -137,7 +145,7 @@ Legend: **F** = fact grounded in sources/code; **I** = inference / recommended p
 
 1. **F/I — Classify by duration.** If `missing_quote_depth` clears within seconds–tens of seconds after subscribe or after a tick-size event → treat as H2/H3. If it persists for the market’s remaining life and REST `GET /book?token_id=` also has empty `asks` → treat as H1/H6 and do not force-trade.
 2. **F — Correlate with REST.** When reason fires, sample CLOB `GET /book` for both token IDs ([docs](https://docs.polymarket.com/api-reference/market-data/get-order-book)). Empty asks on REST ⇒ venue liquidity. Non-empty REST asks + empty NT cache ⇒ feed/adapter lag (H2/H3/H5).
-3. **F — Confirm NT version and path.** The pinned v1 wheel includes the `#4574` cache-before-subscribe repair and best-bid/best-ask parsing equivalent to unmerged `#3906`; v2-only `#4604` is not a relevant gate for this deployment.
+3. **F — Confirm NT version and path.** The deployed PyO3 wheel includes the `#4574` cache-before-subscribe repair and best-bid/best-ask parsing equivalent to unmerged `#3906`. Snapshot recovery is a Rust v2 adapter concern; `request_book_snapshot` existence alone does not prove TC-D14 live-book replacement.
 4. **I — Watch WS health.** Adopt `#292` pattern: inactivity watchdog (no `book`/`price_change` for N seconds ⇒ reconnect) plus REST midpoint/book spot-checks. PING/PONG alone is insufficient.
 5. **F — Expect one-sided near extremes.** Do not treat intermittent single-side missing asks as a crash; Nautilus documents one-sided markets and optional synthetic quotes.
 
