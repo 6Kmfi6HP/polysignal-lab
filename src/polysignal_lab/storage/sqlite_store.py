@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 from datetime import datetime, timedelta
 import math
@@ -33,6 +34,7 @@ from polysignal_lab.storage.sqlite_schema import (
     COUNT_TABLES,
     INDEX_DDL_STATEMENTS,
     PROJECTION_SCHEMA_VERSION,
+    REQUIRED_COLUMNS,
     TABLE_DDL_STATEMENTS,
     validate_sqlite_schema,
 )
@@ -409,15 +411,20 @@ class SQLiteStore:
         *,
         connect_retries: int = 0,
         retry_delay_sec: float = 0.2,
-    ):
+        read_only: bool = False,
+    ) -> None:
         self.path = Path(path)
         self._lock = Lock()
         self._conn = self._connect_with_retry(
             connect_retries=max(0, int(connect_retries)),
             retry_delay_sec=max(0.0, float(retry_delay_sec)),
+            read_only=read_only,
         )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA busy_timeout=30000")
+        if read_only:
+            self._conn.execute("PRAGMA query_only=ON")
+            return
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self.migrate()
@@ -427,11 +434,23 @@ class SQLiteStore:
         *,
         connect_retries: int,
         retry_delay_sec: float,
+        read_only: bool,
     ) -> sqlite3.Connection:
         attempts = connect_retries + 1
         last_error: sqlite3.OperationalError | None = None
         for attempt in range(attempts):
             try:
+                if read_only:
+                    options = "mode=ro"
+                    wal_path = self.path.with_name(f"{self.path.name}-wal")
+                    if not wal_path.exists():
+                        options += "&immutable=1"
+                    return sqlite3.connect(
+                        f"{self.path.resolve().as_uri()}?{options}",
+                        uri=True,
+                        timeout=30,
+                        check_same_thread=False,
+                    )
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 return sqlite3.connect(self.path, timeout=30, check_same_thread=False)
             except OSError as exc:
@@ -591,6 +610,278 @@ class SQLiteStore:
     def validate_schema(self) -> None:
         with self._lock:
             validate_sqlite_schema(self._conn)
+
+    @staticmethod
+    def _validate_retention_identifiers(
+        table: str,
+        columns: tuple[str, ...] = (),
+    ) -> None:
+        if table not in ALLOWED_TABLES:
+            raise UnknownSQLiteTableError(table=table)
+        unknown_columns = set(columns) - REQUIRED_COLUMNS[table]
+        if unknown_columns:
+            names = ", ".join(sorted(unknown_columns))
+            raise ValueError(f"Unknown columns for {table}: {names}")
+
+    def table_row_count(self, table: str) -> int:
+        self._validate_retention_identifiers(table)
+        with self._lock:
+            row = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+        return int(row[0])
+
+    def oldest_timestamp(self, table: str, time_column: str) -> str | None:
+        self._validate_retention_identifiers(table, (time_column,))
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT MIN({time_column}) FROM {table}"
+            ).fetchone()
+        return None if row[0] is None else str(row[0])
+
+    def rows_before(
+        self,
+        table: str,
+        time_column: str,
+        before_timestamp: str,
+        *,
+        excluded_event_types: tuple[str, ...] = (),
+    ) -> int:
+        self._validate_retention_identifiers(table, (time_column,))
+        exclusion_sql = ""
+        params: list[Any] = [before_timestamp]
+        if excluded_event_types:
+            if table != "system_events":
+                raise ValueError("event type exclusions require system_events")
+            placeholders = ",".join("?" for _ in excluded_event_types)
+            exclusion_sql = f" AND event_type NOT IN ({placeholders})"
+            params.extend(excluded_event_types)
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT COUNT(*) FROM {table} "
+                f"WHERE {time_column} < ?{exclusion_sql}",
+                params,
+            ).fetchone()
+        return int(row[0])
+
+    def event_rows_before(self, event_type: str, before_timestamp: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT COUNT(*) FROM system_events
+                WHERE event_type=? AND created_at<?""",
+                (event_type, before_timestamp),
+            ).fetchone()
+        return int(row[0])
+
+    def delete_rows_before(
+        self,
+        table: str,
+        time_column: str,
+        before_timestamp: str,
+    ) -> int:
+        self._validate_retention_identifiers(table, (time_column,))
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                f"DELETE FROM {table} WHERE {time_column} < ?",
+                (before_timestamp,),
+            )
+        return max(cursor.rowcount, 0)
+
+    def delete_event_rows_before(
+        self,
+        event_type: str,
+        before_timestamp: str,
+    ) -> int:
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                """DELETE FROM system_events
+                WHERE event_type=? AND created_at<?""",
+                (event_type, before_timestamp),
+            )
+        return max(cursor.rowcount, 0)
+
+    def db_file_size(self) -> int:
+        return self.path.stat().st_size
+
+    def archive_table_rows(
+        self,
+        table: str,
+        time_column: str,
+        before_timestamp: str,
+        archive_path: Path,
+        *,
+        batch_rows: int = 5_000,
+        excluded_event_types: tuple[str, ...] = (),
+    ) -> int:
+        self._validate_retention_identifiers(table, (time_column,))
+        exclusion_sql = ""
+        params: list[Any] = [before_timestamp]
+        if excluded_event_types:
+            if table != "system_events":
+                raise ValueError("event type exclusions require system_events")
+            placeholders = ",".join("?" for _ in excluded_event_types)
+            exclusion_sql = f" AND event_type NOT IN ({placeholders})"
+            params.extend(excluded_event_types)
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = Path(f"{archive_path}.tmp")
+        temporary_path.unlink(missing_ok=True)
+        temp_table = "_retention_archived_rows"
+        total = 0
+        try:
+            with self._lock:
+                columns = tuple(
+                    str(row["name"])
+                    for row in self._conn.execute(
+                        f"PRAGMA table_info({table})"
+                    ).fetchall()
+                )
+                snapshot_columns = ",".join(
+                    f"_value_{index}" for index in range(len(columns))
+                )
+                self._conn.execute(f"DROP TABLE IF EXISTS temp.{temp_table}")
+                self._conn.execute(
+                    f"CREATE TEMP TABLE {temp_table} ("
+                    f"_rid INTEGER PRIMARY KEY,{snapshot_columns})"
+                )
+                try:
+                    cursor = self._conn.execute(
+                        f"SELECT rowid AS _rid,{','.join(columns)} FROM {table} "
+                        f"WHERE {time_column} < ?{exclusion_sql}",
+                        params,
+                    )
+                    snapshot_placeholders = ",".join(
+                        "?" for _ in range(len(columns) + 1)
+                    )
+                    with gzip.open(temporary_path, "wt", encoding="utf-8") as fh:
+                        while rows := cursor.fetchmany(max(1, batch_rows)):
+                            for row in rows:
+                                fh.write(
+                                    self._json(
+                                        {column: row[column] for column in columns}
+                                    )
+                                    + "\n"
+                                )
+                            self._conn.executemany(
+                                f"INSERT INTO {temp_table} VALUES("
+                                f"{snapshot_placeholders})",
+                                (
+                                    (row["_rid"], *(row[column] for column in columns))
+                                    for row in rows
+                                ),
+                            )
+                            total += len(rows)
+                    if total == 0:
+                        return 0
+                    self._conn.commit()
+                    temporary_path.replace(archive_path)
+                    self._conn.execute("BEGIN IMMEDIATE")
+                    equality_sql = " AND ".join(
+                        f"live.{column} IS archived._value_{index}"
+                        for index, column in enumerate(columns)
+                    )
+                    matched = int(
+                        self._conn.execute(
+                            f"""SELECT COUNT(*) FROM {table} AS live
+                            JOIN {temp_table} AS archived
+                              ON live.rowid=archived._rid
+                            WHERE {equality_sql}"""
+                        ).fetchone()[0]
+                    )
+                    if matched != total:
+                        raise RuntimeError(
+                            f"Archived {total} {table} rows but only {matched} "
+                            "remain unchanged"
+                        )
+                    deleted = self._conn.execute(
+                        f"DELETE FROM {table} WHERE rowid IN ("
+                        f"SELECT _rid FROM {temp_table})"
+                    ).rowcount
+                    if deleted != total:
+                        raise RuntimeError(
+                            f"Archived {total} {table} rows but deleted {deleted}"
+                        )
+                    self._conn.commit()
+                except Exception:
+                    self._conn.rollback()
+                    raise
+        finally:
+            temporary_path.unlink(missing_ok=True)
+            with self._lock, self._conn:
+                self._conn.execute(f"DROP TABLE IF EXISTS temp.{temp_table}")
+        return total
+
+    def delete_latest_only(
+        self,
+        table: str,
+        group_columns: tuple[str, ...],
+        order_column: str,
+        keep_count: int = 1,
+    ) -> int:
+        """Delete all but the latest `keep_count` rows per group."""
+        if not group_columns:
+            raise ValueError("group_columns must not be empty")
+        if keep_count < 1:
+            raise ValueError("keep_count must be at least 1")
+        self._validate_retention_identifiers(
+            table,
+            (*group_columns, order_column),
+        )
+        group_sql = ",".join(group_columns)
+        with self._lock, self._conn:
+            self._conn.execute(
+                f"""WITH ranked AS (
+                    SELECT rowid AS _rid,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY {group_sql}
+                               ORDER BY {order_column} DESC
+                           ) AS _rn
+                    FROM {table}
+                )
+                DELETE FROM {table}
+                WHERE rowid IN (SELECT _rid FROM ranked WHERE _rn > ?)""",
+                (keep_count,),
+            )
+            deleted = int(self._conn.execute("SELECT changes()").fetchone()[0])
+        return deleted
+
+    def latest_only_delete_count(
+        self,
+        table: str,
+        group_columns: tuple[str, ...],
+        order_column: str,
+        keep_count: int = 1,
+    ) -> int:
+        if not group_columns:
+            raise ValueError("group_columns must not be empty")
+        if keep_count < 1:
+            raise ValueError("keep_count must be at least 1")
+        self._validate_retention_identifiers(
+            table,
+            (*group_columns, order_column),
+        )
+        group_sql = ",".join(group_columns)
+        with self._lock:
+            row = self._conn.execute(
+                f"""WITH ranked AS (
+                    SELECT ROW_NUMBER() OVER (
+                        PARTITION BY {group_sql}
+                        ORDER BY {order_column} DESC
+                    ) AS _rn
+                    FROM {table}
+                )
+                SELECT COUNT(*) FROM ranked WHERE _rn > ?""",
+                (keep_count,),
+            ).fetchone()
+        return int(row[0])
+
+    def vacuum(self) -> None:
+        with self._lock:
+            self._conn.execute("VACUUM")
+
+    def wal_checkpoint(self, mode: str = "PASSIVE") -> None:
+        normalized = mode.upper()
+        if normalized not in {"PASSIVE", "FULL", "RESTART", "TRUNCATE"}:
+            raise ValueError(f"Unsupported WAL checkpoint mode: {mode}")
+        with self._lock:
+            self._conn.execute(f"PRAGMA wal_checkpoint({normalized})")
 
     def _json(self, obj: Any) -> str:
         return json.dumps(to_jsonable(obj), ensure_ascii=False, sort_keys=True)
