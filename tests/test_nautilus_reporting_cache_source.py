@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
+
+import pytest
 
 from polysignal_lab.app.daily_report import (
     _report_equity_inputs,
@@ -24,6 +26,7 @@ from polysignal_lab.publish.message_formatter import MessageFormatter
 from polysignal_lab.storage.jsonl_store import JSONLStore
 from polysignal_lab.storage.sqlite_store import SQLiteStore
 from polysignal_lab.storage.state_store import StateStore
+from polysignal_lab.nautilus_runtime.node import _build_nautilus_runtime_bundle
 from polysignal_lab.nautilus_runtime.runtime_context_factory import (
     build_nautilus_runtime_context,
 )
@@ -64,6 +67,62 @@ def test_nautilus_runtime_context_generates_requested_daily_report(tmp_path) -> 
     assert report is not None
     assert report.report_date == date(2026, 7, 31)
     assert runtime.sqlite.counts()["daily_reports"] == 1
+
+
+def test_generate_daily_report_uses_native_equity_from_runtime_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_settings = _settings(sandbox_base_currency="pUSD")
+    settings = Settings()
+    settings.trading.starting_balance_usdc = (
+        report_settings.trading.starting_balance_usdc
+    )
+    settings.runtime.nautilus.sandbox_base_currency = (
+        report_settings.runtime.nautilus.sandbox_base_currency
+    )
+    settings.telegram.send_daily_report = report_settings.telegram.send_daily_report
+    settings.app.timezone = report_settings.app.timezone
+    native_cache = SimpleNamespace(
+        accounts=lambda: [
+            SimpleNamespace(
+                id="A-1",
+                balances=[SimpleNamespace(currency="pUSD", total=1_234.5)],
+            )
+        ],
+        positions=lambda: [],
+        orders=lambda: [],
+        fills=lambda: [],
+    )
+    native_portfolio = SimpleNamespace(id="PF-1", equity=1_234.5)
+    native_node = SimpleNamespace(
+        cache=native_cache,
+        portfolio=native_portfolio,
+    )
+    monkeypatch.setattr(
+        "polysignal_lab.nautilus_runtime.node.build_runtime_node",
+        lambda _settings: native_node,
+    )
+    context = build_nautilus_runtime_context(settings, base_dir=tmp_path)
+
+    bundle = _build_nautilus_runtime_bundle(
+        settings,
+        context,
+        cast(Any, SimpleNamespace()),
+    )
+    report = asyncio.run(
+        bundle.context.generate_daily_report_once(date(2026, 7, 31))
+    )
+
+    assert bundle.context.nautilus_cache is native_cache
+    assert bundle.context.nautilus_portfolio is native_portfolio
+    assert report is not None
+    assert report.equity_source == "portfolio"
+    assert (
+        "equity_derived_from_report_results"
+        not in report.telemetry_incomplete_reasons
+    )
+    assert report.ending_equity == 1_234.5
 
 
 def test_report_equity_inputs_prefers_nautilus_cache_over_shadow_wallet() -> None:
