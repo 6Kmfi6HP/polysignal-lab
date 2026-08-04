@@ -201,10 +201,7 @@ def test_stalled_condition_force_resubscribes_instruments_and_refreshes_state() 
     assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.UP, Side.DOWN}
 
 
-def test_stalled_condition_resubscription_requests_snapshot_backstop() -> None:
-    """Resubscription also issues a one-time snapshot request per instrument so a
-    first book arrives even when the feed treats the book_delta subscribe as
-    already-active and does not re-send its initial snapshot."""
+def test_stalled_condition_resubscription_does_not_request_snapshot_backstop() -> None:
     registry = _registry()
     strategy = _ResubscribeStrategy(registry)
     now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
@@ -221,25 +218,12 @@ def test_stalled_condition_resubscription_requests_snapshot_backstop() -> None:
     )
 
     assert triggered is True
-    assert sorted(strategy.snapshot_requests) == [
-        "btc-5m-down.POLYMARKET",
-        "btc-5m-up.POLYMARKET",
-    ]
-    assert strategy.snapshot_request_params == [
-        {"resync_live_book": True},
-        {"resync_live_book": True},
-    ]
+    assert strategy.snapshot_requests == []
+    assert strategy.snapshot_request_params == []
 
 
-def test_real_strategy_resubscription_does_not_raise_attribute_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Regression: PR #52's resubscribe path calls request_order_book_snapshot
-    on the real strategy. The pyo3 Strategy base exposes request_book_snapshot
-    but not request_order_book_snapshot, so before the fix this raised
-    AttributeError and crashed the heartbeat timer callback (spamming errors
-    and readiness misses). The method must exist on PolySignalNativeStrategy
-    and be safe to call during resubscription."""
+def test_real_strategy_resubscription_does_not_require_snapshot_wrapper() -> None:
+    """Keep recovery on the supported subscribe path for the real strategy."""
     from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
 
     from polysignal_lab.alpha.types import AlphaDecision
@@ -296,12 +280,6 @@ def test_real_strategy_resubscription_does_not_raise_attribute_error(
         ) -> None:
             del args, kwargs
             self.unsubscribed_instruments.append(str(instrument_id))
-
-    monkeypatch.setattr(
-        Strategy,
-        "request_book_snapshot",
-        lambda self, instrument_id, depth=None, client_id=None, params=None: None,
-    )
 
     registry = _registry()
     strategy = _SubscribedStrategy(
@@ -576,26 +554,23 @@ def test_stale_recovery_begins_generation_before_wire_requests() -> None:
 
     def assert_generation_started(
         instrument_id: object,
-        *,
-        limit: int = 0,
         client_id: object | None = None,
-        params: Mapping[str, object] | None = None,
-    ) -> object:
-        del instrument_id, limit, client_id, params
+    ) -> None:
+        del instrument_id, client_id
         state = strategy._subscription_state
         assert (
             state.condition_phases["btc-5m"]
             is ConditionSubscriptionPhase.AWAITING_FIRST_BOOK
         )
         assert state.book_generation_started_at_by_condition["btc-5m"] == now
-        return object()
+        return None
 
-    strategy.request_order_book_snapshot = assert_generation_started  # type: ignore[method-assign]
+    strategy.unsubscribe_quotes = assert_generation_started  # type: ignore[method-assign]
 
     assert force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now) is True
 
 
-def test_snapshot_request_failure_does_not_escape_recovery_heartbeat() -> None:
+def test_unavailable_snapshot_request_is_not_called_by_recovery_heartbeat() -> None:
     registry = _registry()
     now = datetime(2026, 8, 1, 12, tzinfo=UTC)
     strategy = _HeartbeatStrategy(registry, now=now)
@@ -625,6 +600,97 @@ def test_snapshot_request_failure_does_not_escape_recovery_heartbeat() -> None:
         "btc-5m-up.POLYMARKET",
     ]
     assert strategy.evaluated == ["btc-5m"]
+
+
+def test_partial_book_retry_resubscribes_only_the_missing_side() -> None:
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stalled_state(
+        strategy,
+        "btc-5m",
+        started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+    )
+
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.UP,
+            received_at=now,
+            book_at=now,
+        )
+        is False
+    )
+
+    assert (
+        force_resubscribe_if_book_stalled(
+            strategy,
+            "btc-5m",
+            now=now + timedelta(seconds=1),
+        )
+        is True
+    )
+
+    assert strategy.unsubscribed_instruments == ["btc-5m-down.POLYMARKET"] * 3
+    assert strategy.subscribed_instruments == ["btc-5m-down.POLYMARKET"] * 3
+    assert strategy.snapshot_requests == []
+    assert strategy.snapshot_request_params == []
+    assert strategy._subscription_state.awaiting_book_sides_by_condition["btc-5m"] == {
+        Side.DOWN
+    }
+
+
+def test_stale_orderbook_retry_resubscribes_only_the_stale_side() -> None:
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+        stale_sides=(Side.DOWN,),
+    )
+    state = strategy._subscription_state
+    total_stalled_at = state.book_stalled_started_at_by_condition["btc-5m"]
+
+    assert force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now) is True
+
+    assert strategy.unsubscribed_instruments == ["btc-5m-down.POLYMARKET"] * 3
+    assert strategy.subscribed_instruments == ["btc-5m-down.POLYMARKET"] * 3
+    assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.DOWN}
+    assert state.book_generation_started_at_by_condition["btc-5m"] == now
+    assert state.book_stalled_started_at_by_condition["btc-5m"] == total_stalled_at
+    assert strategy.snapshot_requests == []
+    assert strategy.snapshot_request_params == []
+
+
+def test_empty_stale_side_marker_does_not_start_empty_book_generation() -> None:
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+        stale_sides=(),
+    )
+    state = strategy._subscription_state
+    generation_started_at = state.book_generation_started_at_by_condition["btc-5m"]
+
+    assert force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now) is False
+
+    assert state.awaiting_book_sides_by_condition == {}
+    assert state.book_generation_started_at_by_condition["btc-5m"] == generation_started_at
+    assert (
+        state.condition_phases["btc-5m"] is ConditionSubscriptionPhase.READY
+    )
+    assert strategy.unsubscribed_instruments == []
+    assert strategy.subscribed_instruments == []
 
 
 def test_fresh_generation_does_not_resubscribe() -> None:
@@ -1070,6 +1136,7 @@ def _stale_ready_state(
     *,
     now: datetime,
     stalled_sec: float,
+    stale_sides: tuple[Side, ...] = (Side.UP, Side.DOWN),
 ) -> None:
     """Set a once-READY condition that went stale (awaiting empty), with both
     the total-stall clock and the retry cadence clock started `stalled_sec` ago.
@@ -1083,8 +1150,7 @@ def _stale_ready_state(
         minutes=10
     )
     strategy._stale_orderbook_recovery_by_condition[condition_id] = {
-        Side.UP: 60_000.0,
-        Side.DOWN: 60_000.0,
+        side: 60_000.0 for side in stale_sides
     }
     started_at = now - timedelta(seconds=stalled_sec)
     state.book_stalled_started_at_by_condition[condition_id] = started_at
@@ -1094,7 +1160,7 @@ def _stale_ready_state(
 def test_stale_orderbook_condition_rebuilds_book_subscription() -> None:
     """Gap B: a once-READY condition whose book went stale (awaiting empty, so
     force_resubscribe_if_book_stalled never fired) rebuilds its book
-    subscription after the retry window, forcing a fresh snapshot."""
+    subscription after the retry window for its stale outcome sides."""
     registry = _registry()
     strategy = _ResubscribeStrategy(registry)
     strategy._active_condition_ids = {"btc-5m"}
@@ -1119,10 +1185,8 @@ def test_stale_orderbook_condition_rebuilds_book_subscription() -> None:
         "btc-5m-down.POLYMARKET",
         "btc-5m-up.POLYMARKET",
     ]
-    assert sorted(strategy.snapshot_requests) == [
-        "btc-5m-down.POLYMARKET",
-        "btc-5m-up.POLYMARKET",
-    ]
+    assert strategy.snapshot_requests == []
+    assert strategy.snapshot_request_params == []
     # Repair re-begins generation: both sides awaited again.
     assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.UP, Side.DOWN}
     assert state.book_generation_started_at_by_condition["btc-5m"] == now
@@ -1303,7 +1367,7 @@ def test_evaluation_heartbeat_rebuilds_stale_orderbook_condition() -> None:
     assert "btc-5m" in strategy._active_condition_ids
 
 
-def test_global_starvation_repairs_once_without_resubscription_storm() -> None:
+def test_global_starvation_retries_only_missing_side_after_partial_recovery() -> None:
     """W2: when every active condition is stale (global feed outage), the
     heartbeat repairs them all once but does not repeat the destructive reset
     while all remain stalled. Liveness/data-starvation stays the backstop."""
@@ -1331,25 +1395,16 @@ def test_global_starvation_repairs_once_without_resubscription_storm() -> None:
     assert len(strategy.unsubscribed_instruments) == 18
     assert len(strategy.subscribed_instruments) == 18
 
-    # An old one-sided receipt does not prove that the total outage recovered.
-    _ = observe_market_book_side(
-        strategy,
-        "btc-5m",
-        Side.UP,
-        received_at=now,
-        book_at=now,
-    )
     strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    # The adapter reconnect path replays tracked subscriptions. Do not race it
-    # with another 18 unsubscribe/subscribe commands every minute.
+    # Continued global silence does not repeat the all-condition recovery batch
     assert len(strategy.unsubscribed_instruments) == 18
     assert len(strategy.subscribed_instruments) == 18
     assert strategy._active_condition_ids == {"btc-5m", "eth-5m", "sol-5m"}
 
-    # A fresh one-sided receipt proves the outage is no longer total, although
-    # the condition remains AWAITING_FIRST_BOOK for its missing DOWN side.
+    # A fresh one-sided receipt keeps global suppression active but permits the
+    # condition's missing side to retry without resetting its healthy side.
     recovered_at = now + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 2)
     assert (
         observe_market_book_side(
@@ -1367,30 +1422,361 @@ def test_global_starvation_repairs_once_without_resubscription_storm() -> None:
     strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    # Global suppression is released and stalled conditions can retry.
-    assert len(strategy.unsubscribed_instruments) == 36
-    assert len(strategy.subscribed_instruments) == 36
+    state = strategy._subscription_state
+    assert len(strategy.unsubscribed_instruments) == 21
+    assert len(strategy.subscribed_instruments) == 21
+    assert strategy.unsubscribed_instruments.count("btc-5m-up.POLYMARKET") == 3
+    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 6
+    for condition_id in ("eth-5m", "sol-5m"):
+        for side in ("up", "down"):
+            assert (
+                strategy.unsubscribed_instruments.count(
+                    f"{condition_id}-{side}.POLYMARKET"
+                )
+                == 3
+            )
+    assert state.global_book_recovery_started_at_by_condition == {
+        "btc-5m": now,
+        "eth-5m": now,
+        "sol-5m": now,
+    }
+    assert strategy.snapshot_requests == []
+    assert strategy.snapshot_request_params == []
 
     ready_at = recovered_at + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 1)
-    for side in (Side.UP, Side.DOWN):
-        _ = observe_market_book_side(
+    assert (
+        observe_market_book_side(
             strategy,
             "btc-5m",
-            side,
+            Side.DOWN,
             received_at=ready_at,
             book_at=ready_at,
         )
+        is True
+    )
     assert (
-        strategy._subscription_state.condition_phases["btc-5m"]
-        is ConditionSubscriptionPhase.READY
+        state.condition_phases["btc-5m"] is ConditionSubscriptionPhase.READY
     )
-    assert "btc-5m" not in (
-        strategy._subscription_state.awaiting_book_sides_by_condition
+    assert "btc-5m" not in state.awaiting_book_sides_by_condition
+    assert "btc-5m" not in state.global_book_recovery_started_at_by_condition
+
+    # A bilateral receipt is the recovery event that releases suppression,
+    # only the remaining stalled conditions retry; the recovered BTC pair is
+    # untouched.
+    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.unsubscribed_instruments) == 33
+    assert len(strategy.subscribed_instruments) == 33
+    assert strategy.unsubscribed_instruments.count("btc-5m-up.POLYMARKET") == 3
+    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 6
+    assert state.global_book_recovery_started_at_by_condition == {
+        "eth-5m": now,
+        "sol-5m": now,
+    }
+
+
+def test_global_recovery_requires_receipts_after_batch_timestamp() -> None:
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m"}
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
     )
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+    state = strategy._subscription_state
+    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.UP,
+            received_at=now,
+            book_at=now,
+        )
+        is False
+    )
+    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.DOWN,
+            received_at=now,
+            book_at=now,
+        )
+        is True
+    )
+    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+
+    later = now + timedelta(seconds=1)
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.UP,
+            received_at=later,
+            book_at=later,
+        )
+        is True
+    )
+    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.DOWN,
+            received_at=later,
+            book_at=later,
+        )
+        is True
+    )
+    assert "btc-5m" not in state.global_book_recovery_started_at_by_condition
+
+
+def test_marker_timestamp_receipt_does_not_enable_missing_side_retry() -> None:
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m"}
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+    )
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+    state = strategy._subscription_state
+    assert len(strategy.unsubscribed_instruments) == 6
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.UP,
+            received_at=now,
+            book_at=now,
+        )
+        is False
+    )
+
+    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.unsubscribed_instruments) == 6
+    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+
+    later = now + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 2)
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.UP,
+            received_at=later,
+            book_at=later,
+        )
+        is False
+    )
+    strategy.clock.now_ns += int(10 * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.unsubscribed_instruments) == 9
+    assert strategy.unsubscribed_instruments.count("btc-5m-up.POLYMARKET") == 3
+    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 6
+    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+
+
+def test_global_suppression_keeps_never_ready_retrying_without_resetting_ready_conditions() -> None:
+    registry = MarketCatalog(
+        instrument_id_resolver=lambda _condition, token: f"{token}.POLYMARKET"
+    )
+    for condition_id in ("btc-5m", "eth-5m", "sol-5m"):
+        registry.register(_pair(condition_id, "BTC", "5m"))
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m", "eth-5m", "sol-5m"}
+    for condition_id in ("btc-5m", "eth-5m"):
+        _stale_ready_state(
+            strategy,
+            condition_id,
+            now=now,
+            stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+        )
+    _stalled_state(
+        strategy,
+        "sol-5m",
+        started_at=now - timedelta(seconds=100),
+    )
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.unsubscribed_instruments) == 18
+    assert len(strategy.subscribed_instruments) == 18
+
+    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    # BTC and ETH are once-READY and still await bilateral books, so their
+    # first recovery batch is bounded. SOL was never READY, therefore its
+    # pre-existing retry/abandon path is not suppressed.
+    assert len(strategy.unsubscribed_instruments) == 24
+    assert len(strategy.subscribed_instruments) == 24
+    for condition_id in ("btc-5m", "eth-5m"):
+        for side in ("up", "down"):
+            assert (
+                strategy.unsubscribed_instruments.count(
+                    f"{condition_id}-{side}.POLYMARKET"
+                )
+                == 3
+            )
+    for side in ("up", "down"):
+        assert (
+            strategy.unsubscribed_instruments.count(f"sol-5m-{side}.POLYMARKET")
+            == 6
+        )
+    assert strategy._active_condition_ids == {"btc-5m", "eth-5m", "sol-5m"}
+
+
+def test_all_condition_partial_stale_recovery_keeps_missing_side_retries() -> None:
+    registry = MarketCatalog(
+        instrument_id_resolver=lambda _condition, token: f"{token}.POLYMARKET"
+    )
+    for condition_id in ("btc-5m", "eth-5m"):
+        registry.register(_pair(condition_id, "BTC", "5m"))
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m", "eth-5m"}
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+        stale_sides=(Side.DOWN,),
+    )
+    _stale_ready_state(
+        strategy,
+        "eth-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+        stale_sides=(Side.UP,),
+    )
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.unsubscribed_instruments) == 6
+    assert (
+        strategy._subscription_state.global_book_recovery_started_at_by_condition
+        == {}
+    )
+
+    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.unsubscribed_instruments) == 12
+    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 6
+    assert strategy.unsubscribed_instruments.count("btc-5m-up.POLYMARKET") == 0
+    assert strategy.unsubscribed_instruments.count("eth-5m-down.POLYMARKET") == 0
+    assert strategy.unsubscribed_instruments.count("eth-5m-up.POLYMARKET") == 6
+    assert (
+        strategy._subscription_state.global_book_recovery_started_at_by_condition
+        == {}
+    )
+
+
+def test_global_recovery_rearms_only_missing_marker_after_partial_release() -> None:
+    registry = MarketCatalog(
+        instrument_id_resolver=lambda _condition, token: f"{token}.POLYMARKET"
+    )
+    for condition_id in ("btc-5m", "eth-5m"):
+        registry.register(_pair(condition_id, "BTC", "5m"))
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m", "eth-5m"}
+    for condition_id in ("btc-5m", "eth-5m"):
+        _stale_ready_state(
+            strategy,
+            condition_id,
+            now=now,
+            stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+        )
+
+    state = strategy._subscription_state
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.unsubscribed_instruments) == 12
+    initial_eth_marker = state.global_book_recovery_started_at_by_condition[
+        "eth-5m"
+    ]
+    assert initial_eth_marker == now
+    assert state.global_book_recovery_started_at_by_condition == {
+        "btc-5m": now,
+        "eth-5m": initial_eth_marker,
+    }
+
+    recovered_at = now + timedelta(seconds=1)
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.UP,
+            received_at=recovered_at,
+            book_at=recovered_at,
+        )
+        is False
+    )
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.DOWN,
+            received_at=recovered_at,
+            book_at=recovered_at,
+        )
+        is True
+    )
+    assert "btc-5m" not in state.global_book_recovery_started_at_by_condition
+    assert (
+        state.global_book_recovery_started_at_by_condition["eth-5m"]
+        == initial_eth_marker
+    )
+
+    # BTC stalls again while ETH is still awaiting its original global batch
+    renewed_at = now + timedelta(seconds=2)
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=renewed_at,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+    )
+    strategy.clock.now_ns += int(2 * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.unsubscribed_instruments) == 18
+    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == renewed_at
+    assert (
+        state.global_book_recovery_started_at_by_condition["eth-5m"]
+        == initial_eth_marker
+    )
+
+    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.unsubscribed_instruments) == 18
+    assert state.global_book_recovery_started_at_by_condition == {
+        "btc-5m": renewed_at,
+        "eth-5m": initial_eth_marker,
+    }
 
 
 def test_stale_orderbook_condition_recovers_to_ready_after_bilateral_book() -> None:
-    """W4 coherent lifecycle: READY → stale marker → heartbeat resubscribe
+    """Verify the W4 lifecycle: READY → stale marker → heartbeat resubscribe
     (awaiting) → bilateral book observed → READY. The total-stall clock and the
     stale marker are cleared on recovery."""
     registry = _registry()

@@ -118,6 +118,13 @@ class MarketSubscriptionState:
     first_bilateral_book_latency_ms_by_condition: dict[str, int] = field(
         default_factory=dict
     )
+    # Global-silent recovery is stricter than a condition's current awaited
+    # subset: it clears only after both sides have fresh receipts after this
+    # batch timestamp. This prevents a one-sided partial-stale repair from
+    # releasing global suppression.
+    global_book_recovery_started_at_by_condition: dict[str, datetime] = field(
+        default_factory=dict
+    )
     last_book_at_by_condition: dict[str, dict[Side, datetime]] = field(
         default_factory=dict
     )
@@ -387,14 +394,6 @@ class _SubscriptionStrategy(_ConditionSubscriptionStateOwner, Protocol):
         book_type: object,
         client_id: object | None = None,
         managed: bool = False,
-    ) -> object: ...
-    def request_order_book_snapshot(
-        self,
-        instrument_id: object,
-        *,
-        limit: int = 0,
-        client_id: object | None = None,
-        params: Mapping[str, object] | None = None,
     ) -> object: ...
     def unsubscribe_quotes(
         self,
@@ -666,6 +665,7 @@ def unsubscribe_all_market_instruments(
             *state.book_generation_started_at_by_condition,
             *state.first_bilateral_book_at_by_condition,
             *state.first_bilateral_book_latency_ms_by_condition,
+            *state.global_book_recovery_started_at_by_condition,
         }
     ):
         retire_market_book_generation(strategy, condition_id, clear_history=True)
@@ -785,14 +785,14 @@ def begin_market_book_generation(
     condition_id: str,
     *,
     now: datetime,
+    awaiting_sides: Sequence[Side] | None = None,
 ) -> None:
     """Invalidate cached-book readiness before a real subscribe attempt."""
     observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
     state = strategy._subscription_state
-    state.awaiting_book_sides_by_condition[condition_id] = {
-        Side.UP,
-        Side.DOWN,
-    }
+    state.awaiting_book_sides_by_condition[condition_id] = set(
+        (Side.UP, Side.DOWN) if awaiting_sides is None else awaiting_sides
+    )
     state.book_generation_started_at_by_condition[condition_id] = (
         observed.astimezone(UTC)
     )
@@ -825,44 +825,66 @@ def observe_market_book_side(
 ) -> bool:
     received = received_at.astimezone(UTC)
     observed_book = book_at.astimezone(UTC)
-    last_receipts = (
-        strategy._subscription_state.last_book_received_at_by_condition.setdefault(
-            condition_id,
-            {},
-        )
-    )
-    previous_received = last_receipts.get(side)
-    if previous_received is None or received >= previous_received:
-        last_receipts[side] = received
-    last_books = strategy._subscription_state.last_book_at_by_condition.setdefault(
+    state = strategy._subscription_state
+    _record_market_book_side(
+        state,
         condition_id,
-        {},
+        side,
+        received=received,
+        observed_book=observed_book,
     )
-    previous = last_books.get(side)
-    if previous is None or observed_book >= previous:
-        last_books[side] = observed_book
-    pending = strategy._subscription_state.awaiting_book_sides_by_condition.get(
-        condition_id
-    )
+    pending = state.awaiting_book_sides_by_condition.get(condition_id)
     if pending is None:
         return True
-    started_at = (
-        strategy._subscription_state.book_generation_started_at_by_condition.get(
-            condition_id
-        )
-    )
+    started_at = state.book_generation_started_at_by_condition.get(condition_id)
     if started_at is not None and received < started_at:
         return False
     pending.discard(side)
     if pending:
         return False
     finish_market_book_generation(
-        strategy._subscription_state,
+        state,
         condition_id,
         received_at=received,
         started_at=started_at,
     )
     return True
+
+
+def _record_market_book_side(
+    state: MarketSubscriptionState,
+    condition_id: str,
+    side: Side,
+    *,
+    received: datetime,
+    observed_book: datetime,
+) -> None:
+    last_receipts = (
+        state.last_book_received_at_by_condition.setdefault(condition_id, {})
+    )
+    previous_received = last_receipts.get(side)
+    if previous_received is None or received >= previous_received:
+        last_receipts[side] = received
+    _clear_global_book_recovery_if_bilateral(state, condition_id)
+    last_books = state.last_book_at_by_condition.setdefault(condition_id, {})
+    previous = last_books.get(side)
+    if previous is None or observed_book >= previous:
+        last_books[side] = observed_book
+
+
+def _clear_global_book_recovery_if_bilateral(
+    state: MarketSubscriptionState,
+    condition_id: str,
+) -> None:
+    started_at = state.global_book_recovery_started_at_by_condition.get(condition_id)
+    if started_at is None:
+        return
+    receipts = state.last_book_received_at_by_condition.get(condition_id, {})
+    if all(
+        (received_at := receipts.get(side)) is not None and received_at > started_at
+        for side in (Side.UP, Side.DOWN)
+    ):
+        state.global_book_recovery_started_at_by_condition.pop(condition_id, None)
 
 
 def finish_market_book_generation(
@@ -935,6 +957,10 @@ def retire_market_book_generation(
         None,
     )
     strategy._subscription_state.first_bilateral_book_latency_ms_by_condition.pop(
+        condition_id,
+        None,
+    )
+    strategy._subscription_state.global_book_recovery_started_at_by_condition.pop(
         condition_id,
         None,
     )
@@ -1031,27 +1057,36 @@ def _resubscribe_market_instrument(
     strategy: _SubscriptionStrategy,
     instrument_id: object,
 ) -> None:
-    """Re-subscribe one instrument and request a one-time snapshot backstop.
-
-    The Polymarket feed can treat a resubscribed book_delta subscription as
-    already-active and not re-send its initial snapshot (deltas alone have no
-    snapshot fallback); the explicit request guarantees a first book even then.
-    The instrument is cache-visible here (pending_instrument_ids is empty by the
-    _book_generation_stalled guard) and the request routes via venue/client id.
-    """
     _ = unsubscribe_market_instrument(strategy, instrument_id)
     _ = subscribe_market_instrument(strategy, instrument_id)
-    try:
-        _ = strategy.request_order_book_snapshot(
-            instrument_id,
-            client_id=_client_id_for_instrument(strategy, instrument_id),
-            params={"resync_live_book": True},
+
+
+def _awaiting_condition_instruments(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+) -> tuple[object, ...]:
+    registry = strategy.registry
+    awaiting = strategy._subscription_state.awaiting_book_sides_by_condition.get(
+        condition_id
+    )
+    if registry is None or not awaiting:
+        return ()
+    pair = registry.by_condition(condition_id)
+    if pair is None:
+        return ()
+    token_by_side = {
+        Side.UP: pair.up.token_id,
+        Side.DOWN: pair.down.token_id,
+    }
+    return tuple(
+        instrument_id
+        for side in (Side.UP, Side.DOWN)
+        if side in awaiting
+        if (
+            instrument_id := registry.instrument_id_for_token(token_by_side[side])
         )
-    except Exception:
-        logger.exception(
-            "book_snapshot_backstop_failed",
-            extra={"instrument_id": _instrument_key(instrument_id)},
-        )
+        is not None
+    )
 
 
 def _total_stall_started_at(
@@ -1094,13 +1129,30 @@ def _resubscribe_and_begin_generation(
     *,
     now: datetime,
 ) -> tuple[object, ...] | None:
-    """Re-subscribe a condition's instruments (repair A + snapshot backstop)
-    and reopen both awaited sides. Returns the instruments, or None when the
-    condition has none (the caller must not proceed)."""
-    instruments = condition_instruments(strategy, condition_id)
+    state = strategy._subscription_state
+    awaiting_sides = state.awaiting_book_sides_by_condition.get(condition_id)
+
+    # New stale repair seeds stale sides, while retries preserve the awaiting
+    # set so a healthy side is never reset.
+    if awaiting_sides is None:
+        awaiting_sides = set(
+            strategy._stale_orderbook_recovery_by_condition.get(condition_id, {})
+        )
+        if not awaiting_sides:
+            return None
+        begin_market_book_generation(
+            strategy,
+            condition_id,
+            now=now,
+            awaiting_sides=tuple(awaiting_sides),
+        )
+    else:
+        if not awaiting_sides:
+            return None
+        state.book_generation_started_at_by_condition[condition_id] = now.astimezone(UTC)
+    instruments = _awaiting_condition_instruments(strategy, condition_id)
     if not instruments:
         return None
-    begin_market_book_generation(strategy, condition_id, now=now)
     for instrument_id in instruments:
         _resubscribe_market_instrument(strategy, instrument_id)
     return instruments

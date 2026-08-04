@@ -18,7 +18,7 @@ Keep these contracts separate:
 - **TC-D13:** a requested snapshot is returned as historical request data.
 - **TC-D14:** a live managed book is atomically replaced and remains continuous with later WS deltas.
 
-The follow-up implementation delegates to the native request and uses the explicit Rust adapter parameter `resync_live_book=true` for the existing 60-second AFB/stale recovery path. The adapter change is tracked in [NautilusTrader #4635](https://github.com/nautechsystems/nautilus_trader/issues/4635) and implemented by [PR #4638](https://github.com/nautechsystems/nautilus_trader/pull/4638). No Python side-store is used as a trading data source.
+The local 60-second AFB/stale recovery path does not call the historical request or pass `resync_live_book`. An adapter-owned live-book resync remains an upstream capability requirement, not a contract provided by the pinned wheel. No Python side-store is used as a trading data source.
 
 ## What it means (vs `missing_quote_depth`)
 
@@ -71,9 +71,9 @@ Local comments state Polymarket WS can leave a subscribed condition without a fi
 
 Upstream: [NT #3963](https://github.com/nautechsystems/nautilus_trader/issues/3963) — without `initial_dump: true`, quiet markets may never emit a book frame until a natural update. Closed after reporter noted defaults already set `initial_dump`; residual quiet-token behavior can still delay first events.
 
-### 3. Snapshot backstop requires live-resync semantics
+### 3. Historical snapshot boundary
 
-The historical wrapper was a logged no-op even though the PyO3 base exposes `request_book_snapshot`. A standard native request is a historical TC-D13 operation; the public-data gate did not show a TC-D14 managed Cache refresh. The follow-up keeps unsubscribe + resubscribe and requests the Rust adapter's explicit live resync in the same recovery cycle.
+The historical wrapper was a logged no-op even though the PyO3 base exposes `request_book_snapshot`. A standard native request is a historical TC-D13 operation; it is not live recovery evidence and the recovery cycle does not request it. TC-D14 managed Cache refresh needs a released adapter-owned live-resync contract.
 
 ### 4. One side never updates
 
@@ -89,11 +89,16 @@ Possible causes (ranked):
 
 Once-READY conditions that go stale are rebuilt via `force_resubscribe_if_stale_orderbook` → `begin_market_book_generation` again, so `awaiting_first_book` reappears during repair. Those are **not** abandoned by the 240 s clock (W2: only never-ready conditions abandon).
 
+Ordinary partial stale repair and global-silent recovery have different evidence:
+
+- Ordinary partial repair seeds `awaiting_book_sides` with only the stale outcome sides, so those sides can return the condition to `READY` without resetting a healthy side.
+- Only when every once-READY active condition awaits both UP and DOWN does heartbeat recovery record a per-condition global batch marker. Ordinary all-condition partial-side recovery creates no global markers and keeps the normal 60-second missing-side retry. Global suppression requires UP and DOWN receipts strictly later than the marker. While suppression remains active, a condition with a fresh post-marker receipt on one side still retries only its missing side at the 60-second cadence; fully silent conditions do not repeat the all-condition batch. Bilateral recovery of any once-READY condition releases suppression for the remaining stalled conditions; surviving markers keep their timestamps and missing markers are added only when a renewed bilateral all-awaiting batch begins.
+
 ## Built-in recovery timers
 
 | Timer | Value | Behavior |
 | --- | --- | --- |
-| Stall / resubscribe | 60 s | Heartbeat: if still awaiting first book → resubscribe both instruments + restart generation |
+| Stall / resubscribe | 60 s | Heartbeat: if still awaiting first book → resubscribe only the still-awaited instruments and retain the generation's side receipts |
 | Abandon | 240 s | If first book **never** arrived → drop condition from active set (`condition_abandoned_no_book`) |
 | Liveness readiness miss | 300 s | Node unhealthy if readiness miss persists; abandon is set below this (240+heartbeat &lt; 300) |
 
@@ -129,11 +134,11 @@ Do **not** “fix” by relaxing ask-depth policy — that only affects `missing
 ### Operational
 
 - Alert on **persistent** readiness miss / high `generation_age_ms`, not on every sample during 5m rotations.
-- Correlate with logs: `condition_book_resubscription`, `condition_abandoned_no_book`, and `book_snapshot_backstop_*` terminal events.
+- Correlate with logs: `condition_book_resubscription` and `condition_abandoned_no_book`. Recovery does not emit snapshot-backstop events.
 
 ### Code (only if prolonged stalls dominate lost tradable time)
 
-1. **Native snapshot backstop:** use Rust adapter-owned `resync_live_book` so REST snapshot replacement and buffered WS delta replay remain on the adapter side of the managed-book boundary.
+1. **Adapter boundary:** do not treat a historical snapshot request as live recovery. A future released adapter-owned live-resync operation must own any snapshot replacement and WS delta replay.
 2. Keep NT nightlies past the [#4574](https://github.com/nautechsystems/nautilus_trader/issues/4574) fix (already true for `20260730`).
 3. Optional: shorten `_BOOK_GENERATION_STALL_SEC` if telemetry shows most recoveries need only a quick resubscribe — tradeoff: more WS churn.
 

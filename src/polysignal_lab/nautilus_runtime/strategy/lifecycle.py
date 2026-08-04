@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 from typing import Protocol
 
+from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.nautilus_runtime.custom_data_publisher import framework_now
 from polysignal_lab.nautilus_runtime.custom_data_types import (
@@ -19,7 +20,6 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
-    _BOOK_GENERATION_STALL_SEC,
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
     subscription_scope_condition_ids,
@@ -201,62 +201,125 @@ def on_strategy_stop(strategy: _LifecycleStrategy) -> None:
     strategy._subscriptions_started = False
 
 
-def _global_book_feed_stalled(
+def _global_book_recovery_is_suppressed(
+    state: MarketSubscriptionState,
+    condition_ids: Sequence[str],
+) -> bool:
+    # A receipt from one outcome token does not prove that a silent feed has
+    # recovered. The timestamp marker is removed only after both sides have
+    # receipts newer than the global recovery batch. Never-READY conditions
+    # remain outside this suppression so their retry/abandon path progresses.
+    once_ready_condition_ids = tuple(
+        condition_id
+        for condition_id in condition_ids
+        if condition_id in state.first_bilateral_book_ever_at_by_condition
+    )
+    return bool(once_ready_condition_ids) and all(
+        condition_id in state.global_book_recovery_started_at_by_condition
+        for condition_id in once_ready_condition_ids
+    )
+
+
+def _condition_has_post_marker_partial_recovery(
+    state: MarketSubscriptionState,
+    condition_id: str,
+) -> bool:
+    started_at = state.global_book_recovery_started_at_by_condition.get(condition_id)
+    awaiting = state.awaiting_book_sides_by_condition.get(condition_id)
+    if started_at is None or awaiting is None or len(awaiting) != 1:
+        return False
+    receipts = state.last_book_received_at_by_condition.get(condition_id, {})
+    return any(
+        side not in awaiting
+        and (received_at := receipts.get(side)) is not None
+        and received_at > started_at
+        for side in (Side.UP, Side.DOWN)
+    )
+
+
+def _active_unexpired_condition_ids(
+    strategy: _LifecycleStrategy,
+    *,
+    now: datetime,
+) -> tuple[str, ...]:
+    active_condition_ids: list[str] = []
+    for condition_id in tuple(sorted(strategy._active_condition_ids)):
+        if retire_expired_condition(strategy, condition_id, now=now):  # type: ignore[arg-type]
+            continue
+        active_condition_ids.append(condition_id)
+    return tuple(active_condition_ids)
+
+
+def _begin_global_book_recovery_if_stalled(
     state: MarketSubscriptionState,
     condition_ids: Sequence[str],
     *,
     now: datetime,
-) -> bool:
-    recent_since = now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC)
-    recent_book_received = any(
-        received_at >= recent_since
+) -> None:
+    once_ready_condition_ids = tuple(
+        condition_id
         for condition_id in condition_ids
-        for received_at in state.last_book_received_at_by_condition.get(
-            condition_id, {}
-        ).values()
+        if condition_id in state.first_bilateral_book_ever_at_by_condition
     )
-    return bool(condition_ids) and not recent_book_received and all(
-        condition_id in state.first_bilateral_book_ever_at_by_condition
-        and condition_id in state.awaiting_book_sides_by_condition
-        for condition_id in condition_ids
+    if (
+        not once_ready_condition_ids
+        or not all(
+            state.awaiting_book_sides_by_condition.get(condition_id)
+            == {Side.UP, Side.DOWN}
+            for condition_id in once_ready_condition_ids
+        )
+    ):
+        return
+    observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    # Keep the original batch boundary for conditions still awaiting recovery
+    for condition_id in once_ready_condition_ids:
+        state.global_book_recovery_started_at_by_condition.setdefault(
+            condition_id,
+            observed.astimezone(UTC),
+        )
+
+
+def _recover_book_subscriptions(
+    strategy: _LifecycleStrategy,
+    condition_ids: Sequence[str],
+    *,
+    now: datetime,
+) -> None:
+    state = strategy._subscription_state
+    global_book_recovery_suppressed = _global_book_recovery_is_suppressed(
+        state,
+        condition_ids,
+    )
+    for condition_id in condition_ids:
+        if (
+            not global_book_recovery_suppressed
+            or condition_id
+            not in state.first_bilateral_book_ever_at_by_condition
+            or _condition_has_post_marker_partial_recovery(state, condition_id)
+        ):
+            _ = force_resubscribe_if_book_stalled(
+                strategy,  # pyright: ignore[reportArgumentType]
+                condition_id,
+                now=now,
+            )
+        _ = force_resubscribe_if_stale_orderbook(
+            strategy,  # pyright: ignore[reportArgumentType]
+            condition_id,
+            now=now,
+        )
+    _begin_global_book_recovery_if_stalled(
+        strategy._subscription_state,
+        condition_ids,
+        now=now,
     )
 
 
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
     strategy._note_runtime_progress("evaluation_heartbeat")
     now = framework_now(strategy)
-    active_condition_ids: list[str] = []
-    for condition_id in tuple(sorted(strategy._active_condition_ids)):
-        if retire_expired_condition(strategy, condition_id, now=now):  # type: ignore[arg-type]
-            continue
-        active_condition_ids.append(condition_id)
-    strategy._subscribe_market_conditions(tuple(active_condition_ids))
-    global_book_feed_stalled = _global_book_feed_stalled(
-        strategy._subscription_state,
-        active_condition_ids,
-        now=now,
-    )
-    for condition_id in active_condition_ids:
-        # Rebuild the book subscription when book generation has idled past the
-        # stall window (Polymarket WS drops idle connections with no snapshot
-        # fallback, leaving a subscribed condition stuck in AWAITING_FIRST_BOOK).
-        # Once every previously-ready market is awaiting the same recovery,
-        # leave reconnect replay in charge instead of resetting every wire
-        # subscription again on each heartbeat.
-        if not global_book_feed_stalled:
-            _ = force_resubscribe_if_book_stalled(
-                strategy,  # pyright: ignore[reportArgumentType]
-                condition_id,
-                now=now,
-            )
-        # A once-READY condition whose book went stale (awaiting empty) is not
-        # covered by the first-book path; rebuild its subscription too so it
-        # does not stay a permanent readiness miss.
-        _ = force_resubscribe_if_stale_orderbook(
-            strategy,  # pyright: ignore[reportArgumentType]
-            condition_id,
-            now=now,
-        )
+    active_condition_ids = _active_unexpired_condition_ids(strategy, now=now)
+    strategy._subscribe_market_conditions(active_condition_ids)
+    _recover_book_subscriptions(strategy, active_condition_ids, now=now)
     registry = strategy._require_registry()
     trading_state = trading_state_from_cache(
         strategy.cache,
