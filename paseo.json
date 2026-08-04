@@ -1,0 +1,40 @@
+{
+  "worktree": {
+    "setup": [
+      "uv sync --frozen",
+      "cd frontend && npm ci",
+      "mkdir -p data logs state archive"
+    ],
+    "servicePorts": {
+      "range": "20000-29999"
+    }
+  },
+  "scripts": {
+    "test-backend": {
+      "command": "uv run pytest"
+    },
+    "lint-backend": {
+      "command": "uv run ruff check src tests"
+    },
+    "typecheck-backend": {
+      "command": "uv run basedpyright"
+    },
+    "test-frontend": {
+      "command": "cd frontend && npm test"
+    },
+    "lint-frontend": {
+      "command": "cd frontend && npm run lint"
+    },
+    "build-frontend": {
+      "command": "cd frontend && npm run build"
+    },
+    "api": {
+      "type": "service",
+      "command": "POLYSIGNAL_LAB__DASHBOARD__HOST=\"$HOST\" POLYSIGNAL_LAB__DASHBOARD__PORT=\"$PASEO_PORT\" uv run python -m polysignal_lab.app.main --mode dashboard --config config/signal_bot.lab.yaml"
+    },
+    "web": {
+      "type": "service",
+      "command": "cd frontend && VITE_DASHBOARD_PROXY_TARGET=\"$PASEO_SERVICE_API_URL\" npm run dev -- --host \"$HOST\" --port \"$PASEO_PORT\""
+    }
+  }
+}
