@@ -38,7 +38,7 @@ def test_retention_does_nothing_at_or_below_soft_limit(tmp_path: Path) -> None:
     assert summary["rows_deleted"] == 0
     store.archive_table_rows.assert_not_called()
     store.delete_latest_only.assert_not_called()
-    store.wal_checkpoint.assert_not_called()
+    store.wal_checkpoint.assert_called_once_with("PASSIVE")
 
 
 @pytest.mark.parametrize("db_size", [101, 201])
@@ -66,6 +66,33 @@ def test_retention_runs_above_soft_and_hard_limits(
     assert summary["rows_deleted"] == 3
     assert summary["tables_cleaned"] == ["signals", "strategy_status"]
     store.wal_checkpoint.assert_called_once_with("PASSIVE")
+
+
+def test_retention_forwards_preserved_projection_statuses(tmp_path: Path) -> None:
+    store = Mock()
+    store.db_file_size.return_value = 101
+    store.archive_table_rows.return_value = 0
+    store.delete_latest_only.return_value = 0
+    store.delete_rows_before.return_value = 0
+    store.delete_event_rows_before.return_value = 0
+    service = _service(store)
+
+    service.run_retention(
+        RetentionConfig(sqlite_soft_limit_bytes=100, archive_dir=str(tmp_path))
+    )
+
+    calls_by_table = {
+        call.args[0]: call.kwargs for call in store.archive_table_rows.call_args_list
+    }
+    assert calls_by_table["report_orders"]["preserve_statuses"] == (
+        "PARTIAL",
+        "PARTIALLY_FILLED",
+        "ACCEPTED",
+        "RESTING",
+        "SUBMITTED",
+    )
+    assert calls_by_table["report_positions"]["preserve_statuses"] == ("OPEN",)
+    assert calls_by_table["report_fills"]["preserve_statuses"] == ()
 
 
 def test_retention_dry_run_reports_without_modifying(tmp_path: Path) -> None:

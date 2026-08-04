@@ -70,7 +70,7 @@ class JSONLStore:
         *,
         dry_run: bool = False,
     ) -> list[str]:
-        cutoff = datetime.now(UTC).timestamp() - 86_400
+        cutoff = datetime.now(UTC).timestamp() - self.hot_days * 86_400
         rotated_pattern = re.compile(r".+_\d{4}-\d{2}-\d{2}_\d{3}\.jsonl$")
         candidates = [
             path

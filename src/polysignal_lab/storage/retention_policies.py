@@ -14,6 +14,7 @@ class TableRetentionPolicy:
     keep_latest_only: bool = False
     latest_group_columns: tuple[str, ...] = ()
     latest_order_column: str = "created_at"
+    preserve_statuses: tuple[str, ...] = ()
 
 
 def default_policies() -> list[TableRetentionPolicy]:
@@ -21,10 +22,29 @@ def default_policies() -> list[TableRetentionPolicy]:
         TableRetentionPolicy("signals", "created_at", 14, True),
         TableRetentionPolicy("rejected_signals", "rejected_at", 14, True),
         TableRetentionPolicy("report_fills", "source_event_at", 30, True),
-        TableRetentionPolicy("report_orders", "source_event_at", 30, True),
-        TableRetentionPolicy("report_positions", "source_event_at", 30, True),
+        TableRetentionPolicy(
+            "report_orders",
+            "source_event_at",
+            30,
+            True,
+            preserve_statuses=(
+                "PARTIAL",
+                "PARTIALLY_FILLED",
+                "ACCEPTED",
+                "RESTING",
+                "SUBMITTED",
+            ),
+        ),
+        TableRetentionPolicy(
+            "report_positions",
+            "source_event_at",
+            30,
+            True,
+            preserve_statuses=("OPEN",),
+        ),
         TableRetentionPolicy("report_results", "closed_at", 30, True),
         TableRetentionPolicy("daily_reports", "created_at", 365, True),
+        TableRetentionPolicy("telegram_publishes", "sent_at", 30, True),
         TableRetentionPolicy(
             "strategy_status",
             "created_at",

@@ -36,19 +36,24 @@ def test_compresses_old_rotated_files_into_archive(tmp_path: Path) -> None:
     archive_dir = tmp_path / "archive"
     logs_dir = tmp_path / "logs"
     logs_dir.mkdir()
-    rotated = logs_dir / "signals_2026-08-01_001.jsonl"
-    rotated.write_text('{"signal_id":"s1"}\n', encoding="utf-8")
-    old = time() - 2 * 86_400
-    os.utime(rotated, (old, old))
-    store = JSONLStore(logs_dir, archive_dir=archive_dir)
+    hot = logs_dir / "signals_2026-08-01_001.jsonl"
+    hot.write_text('{"signal_id":"hot"}\n', encoding="utf-8")
+    old = logs_dir / "signals_2026-07-01_001.jsonl"
+    old.write_text('{"signal_id":"old"}\n', encoding="utf-8")
+    hot_mtime = time() - 2 * 86_400
+    old_mtime = time() - 15 * 86_400
+    os.utime(hot, (hot_mtime, hot_mtime))
+    os.utime(old, (old_mtime, old_mtime))
+    store = JSONLStore(logs_dir, hot_days=14, archive_dir=archive_dir)
 
     archived = store._compress_and_archive_old_files()
 
-    compressed = archive_dir / f"{rotated.name}.gz"
+    compressed = archive_dir / f"{old.name}.gz"
     assert archived == [str(compressed)]
-    assert not rotated.exists()
+    assert hot.exists()
+    assert not old.exists()
     with gzip.open(compressed, "rt", encoding="utf-8") as fh:
-        assert fh.read() == '{"signal_id":"s1"}\n'
+        assert fh.read() == '{"signal_id":"old"}\n'
 
 
 def test_cleanup_expired_archives_and_dry_run(tmp_path: Path) -> None:
