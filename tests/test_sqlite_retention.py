@@ -5,6 +5,8 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
+from types import TracebackType
+from typing import Any
 
 import pytest
 
@@ -21,14 +23,19 @@ def _pause_gzip_writes(
 
     class BlockingGzipFile:
         def __init__(self, path: Path, mode: str, encoding: str) -> None:
-            self._file = original_gzip_open(path, mode, encoding=encoding)
+            self._file: Any = original_gzip_open(path, mode, encoding=encoding)
 
         def __enter__(self) -> "BlockingGzipFile":
             self._file.__enter__()
             return self
 
-        def __exit__(self, *args: object) -> object:
-            return self._file.__exit__(*args)
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc_val: BaseException | None,
+            exc_tb: TracebackType | None,
+        ) -> object:
+            return self._file.__exit__(exc_type, exc_val, exc_tb)
 
         def write(self, value: str) -> int:
             started.set()

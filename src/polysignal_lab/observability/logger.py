@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import io
 import json
 import logging
 import os
@@ -9,7 +10,6 @@ import shutil
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from time import time
-from typing import BinaryIO, cast
 
 from polysignal_lab.config import LoggingConfig
 from polysignal_lab.utils import redact_text
@@ -63,28 +63,13 @@ class GzipRotatingFileHandler(RotatingFileHandler):
         os.remove(source)
 
 
-class _ByteCounter:
-    def __init__(self) -> None:
-        self.size = 0
-
-    def write(self, data: bytes) -> int:
-        self.size += len(data)
-        return len(data)
-
-    def flush(self) -> None:
-        return None
-
-
 def _gzip_size(path: Path) -> int:
-    counter = _ByteCounter()
+    buffer = io.BytesIO()
     with path.open("rb") as source, gzip.GzipFile(
-        fileobj=cast(BinaryIO, counter),
-        mode="wb",
-        filename="",
-        mtime=0,
+        fileobj=buffer, mode="wb", filename="", mtime=0
     ) as target:
         shutil.copyfileobj(source, target)
-    return counter.size
+    return buffer.tell()
 
 
 def cleanup_runtime_logs(

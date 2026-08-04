@@ -236,5 +236,7 @@ def test_runtime_log_cleanup_archives_only_inactive_old_jsonl(tmp_path: Path) ->
 
     assert active.exists()
     assert not inactive.exists()
-    assert len(summary["compressed"]) == 1
+    compressed = summary["compressed"]
+    assert isinstance(compressed, list)
+    assert len(compressed) == 1
     assert list((tmp_path / "archive" / "runtime_logs").glob("*.gz"))
