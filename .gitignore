@@ -35,3 +35,5 @@ backups/
 # Local investigation artefacts (container log dumps, snapshots)
 .scratch/
 graphify-out/
+# Retention maintenance output (rotated JSONL/runtime log archives)
+archive/

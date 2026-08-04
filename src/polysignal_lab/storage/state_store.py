@@ -9,9 +9,15 @@ from polysignal_lab.utils import to_jsonable
 
 
 class StateStore:
-    def __init__(self, base_dir: str | Path):
+    def __init__(
+        self,
+        base_dir: str | Path,
+        *,
+        create_base_dir: bool = True,
+    ) -> None:
         self.base_dir = Path(base_dir)
-        self.base_dir.mkdir(parents=True, exist_ok=True)
+        if create_base_dir:
+            self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def write(self, name: str, value: Any) -> Path:
         if not name.endswith(".json"):

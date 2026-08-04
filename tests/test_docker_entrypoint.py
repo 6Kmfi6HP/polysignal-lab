@@ -24,7 +24,7 @@ def test_entrypoint_retires_scheduler_execution_mode() -> None:
     assert "python -m polysignal_lab.app.main" not in scheduler
     assert "exit 2" in scheduler
     assert (
-        "Usage: $0 {nautilus|sandbox|live|backtest|dashboard|test|shell|smoke}"
+        "Usage: $0 {nautilus|sandbox|live|backtest|dashboard|test|shell|smoke|maintenance}"
         in source
     )
 
@@ -45,3 +45,12 @@ def test_entrypoint_wires_execution_mode_env_overrides() -> None:
     backtest = source.split("backtest)", 1)[1].split(";;", 1)[0]
     assert "_set_execution_mode backtest" in backtest
     assert "ALLOW_LIVE_POLYMARKET_EXECUTION" not in backtest
+
+
+def test_entrypoint_runs_retention_maintenance() -> None:
+    source = _script()
+    maintenance = source.split("maintenance)", 1)[1].split(";;", 1)[0]
+
+    assert "python -m scripts.retention_maintenance" in maintenance
+    assert "--config config/signal_bot.yaml" in maintenance
+    assert '"${@:2}"' in maintenance

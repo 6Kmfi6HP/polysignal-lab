@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Final, Iterable
 
+from polysignal_lab.config import RetentionConfig
 from polysignal_lab.domain.reporting_result import DailyReport
 from polysignal_lab.storage.jsonl_store import JSONLStore
+from polysignal_lab.storage.retention_policies import default_policies
 from polysignal_lab.storage.sqlite_store import (
     DailyReportPublishAuthorization,
     SQLiteStore,
@@ -25,6 +28,10 @@ _BEST_EFFORT_RETENTION_POLICIES: Final = {
     "nautilus_fill": TelemetryRetentionPolicy(10_000, 100, False),
     "health_snapshot": TelemetryRetentionPolicy(256, 32, False),
 }
+
+_SYSTEM_EVENT_RETENTION_TYPES: Final = frozenset(
+    {"health_snapshot", "nautilus_decision", "nautilus_fill"}
+)
 
 
 def telemetry_retention_policy(
@@ -58,6 +65,106 @@ class PersistenceService:
 
     def counts(self) -> dict[str, int]:
         return self.sqlite.counts()
+
+    def run_retention(
+        self,
+        config: RetentionConfig,
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        db_size = self.sqlite.db_file_size()
+        summary: dict[str, Any] = {
+            "db_size_bytes": db_size,
+            "tables_cleaned": [],
+            "rows_deleted": 0,
+            "archives_created": [],
+        }
+        if (
+            not config.enabled
+            or db_size <= config.sqlite_soft_limit_bytes
+        ):
+            return summary
+
+        now = datetime.now(UTC)
+        archive_dir = Path(config.archive_dir) / "sqlite"
+        for policy in default_policies():
+            rows_deleted = 0
+            cutoff = now - timedelta(days=policy.hot_days)
+            cutoff_timestamp = cutoff.isoformat().replace("+00:00", "Z")
+            if policy.table in _SYSTEM_EVENT_RETENTION_TYPES:
+                if dry_run:
+                    rows_deleted = self.sqlite.event_rows_before(
+                        policy.table,
+                        cutoff_timestamp,
+                    )
+                else:
+                    rows_deleted = self.sqlite.delete_event_rows_before(
+                        policy.table,
+                        cutoff_timestamp,
+                    )
+            elif policy.keep_latest_only:
+                if dry_run:
+                    rows_deleted = self.sqlite.latest_only_delete_count(
+                        policy.table,
+                        policy.latest_group_columns,
+                        policy.latest_order_column,
+                    )
+                else:
+                    rows_deleted = self.sqlite.delete_latest_only(
+                        policy.table,
+                        policy.latest_group_columns,
+                        policy.latest_order_column,
+                    )
+            elif policy.archive and policy.hot_days > 0:
+                archive_path = archive_dir / (
+                    f"{policy.table}_{now:%Y-%m-%dT%H%M%S%fZ}.jsonl.gz"
+                )
+                if dry_run:
+                    rows_deleted = self.sqlite.rows_before(
+                        policy.table,
+                        policy.time_column,
+                        cutoff_timestamp,
+                        excluded_event_types=(
+                            tuple(_SYSTEM_EVENT_RETENTION_TYPES)
+                            if policy.table == "system_events"
+                            else ()
+                        ),
+                    )
+                else:
+                    rows_deleted = self.sqlite.archive_table_rows(
+                        policy.table,
+                        policy.time_column,
+                        cutoff_timestamp,
+                        archive_path,
+                        batch_rows=config.sqlite_batch_rows,
+                        excluded_event_types=(
+                            tuple(_SYSTEM_EVENT_RETENTION_TYPES)
+                            if policy.table == "system_events"
+                            else ()
+                        ),
+                    )
+                if rows_deleted:
+                    summary["archives_created"].append(str(archive_path))
+            elif policy.hot_days > 0:
+                if dry_run:
+                    rows_deleted = self.sqlite.rows_before(
+                        policy.table,
+                        policy.time_column,
+                        cutoff_timestamp,
+                    )
+                else:
+                    rows_deleted = self.sqlite.delete_rows_before(
+                        policy.table,
+                        policy.time_column,
+                        cutoff_timestamp,
+                    )
+            if rows_deleted:
+                summary["tables_cleaned"].append(policy.table)
+                summary["rows_deleted"] += rows_deleted
+
+        if not dry_run:
+            self.sqlite.wal_checkpoint("PASSIVE")
+        return summary
 
     def upsert_market(self, market: Any) -> None:
         self.sqlite.upsert_market(market)

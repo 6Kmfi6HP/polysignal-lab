@@ -47,9 +47,15 @@ async def run_nautilus_cli_async(
     if settings is None:
         settings = load_settings()
     configure_runtime_logging(settings)
-    _install_crash_logger(settings.logging.directory)
+    _install_crash_logger(
+        settings.logging.directory,
+        settings.retention.crash_log_max_bytes,
+    )
     asyncio.get_running_loop().set_exception_handler(
-        _asyncio_exception_handler(_crash_log_path(settings.logging.directory))
+        _asyncio_exception_handler(
+            _crash_log_path(settings.logging.directory),
+            settings.retention.crash_log_max_bytes,
+        )
     )
     _write_runtime_startup_marker_best_effort(_runtime_startup_marker_path(settings))
     bundle = await build_nautilus_runtime(settings)

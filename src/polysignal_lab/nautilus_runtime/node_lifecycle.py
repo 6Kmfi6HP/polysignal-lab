@@ -152,7 +152,10 @@ def _run_sync_cli_main(
     except Exception:
         runtime_logger.exception("Nautilus startup notification failed")
     print(f"Nautilus runtime ready — {len(strategy_names)} strategies")
-    _install_crash_logger(settings.logging.directory)
+    _install_crash_logger(
+        settings.logging.directory,
+        settings.retention.crash_log_max_bytes,
+    )
     run_method = cast(Callable[..., None], getattr(node, "run"))
     if "raise_exception" in inspect.signature(run_method).parameters:
         run_method(raise_exception=True)

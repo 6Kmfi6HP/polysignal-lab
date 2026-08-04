@@ -42,11 +42,15 @@ case "${1:-nautilus}" in
     echo "[entrypoint] Running bounded read-only smoke..."
     exec python -m polysignal_lab.app.main --mode smoke --config config/signal_bot.yaml "${@:2}"
     ;;
+  maintenance)
+    echo "[entrypoint] Running data retention maintenance..."
+    exec python -m scripts.retention_maintenance --config config/signal_bot.yaml "${@:2}"
+    ;;
   shell)
     exec /bin/bash
     ;;
   *)
-    echo "Usage: $0 {nautilus|sandbox|live|backtest|dashboard|test|shell|smoke}"
+    echo "Usage: $0 {nautilus|sandbox|live|backtest|dashboard|test|shell|smoke|maintenance}"
     exit 1
     ;;
 esac

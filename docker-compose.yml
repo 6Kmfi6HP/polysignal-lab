@@ -23,6 +23,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./state:/app/state
+      - ./archive:/app/archive
       - ./config:/app/config:ro
     command: ["nautilus"]
     # Default 10m x 3 held under two days of a six-day run; the failure window
@@ -56,6 +57,7 @@ services:
       - ./data:/app/data:ro
       - ./logs:/app/logs:ro
       - ./state:/app/state:ro
+      - ./archive:/app/archive:ro
       - ./config:/app/config:ro
     command: ["dashboard"]
     logging:

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import gzip
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
+from time import time
 
 import pytest
 
@@ -11,6 +14,7 @@ from polysignal_lab.config import LoggingConfig
 from polysignal_lab.observability.logger import (
     RedactingFormatter,
     RedactingJsonFormatter,
+    cleanup_runtime_logs,
     configure_logging,
 )
 
@@ -196,3 +200,43 @@ def test_configure_logging_without_config_writes_no_file(tmp_path: Path) -> None
     logging.getLogger("polysignal_lab.probe").info("stdout only")
 
     assert list(tmp_path.glob("*.jsonl")) == []
+
+
+def test_rotated_python_logs_are_gzipped(tmp_path: Path) -> None:
+    configure_logging(
+        "INFO",
+        LoggingConfig(directory=str(tmp_path), file_max_bytes=20, file_backup_count=2),
+    )
+
+    logging.getLogger("polysignal_lab.probe").info("first record")
+    logging.getLogger("polysignal_lab.probe").info("second record")
+
+    rotated = tmp_path / "polysignal_lab.jsonl.1.gz"
+    assert rotated.exists()
+    with gzip.open(rotated, "rt", encoding="utf-8") as fh:
+        assert "first record" in fh.read()
+
+
+def test_runtime_log_cleanup_archives_only_inactive_old_jsonl(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    active = runtime_dir / "polysignal_lab.jsonl"
+    active.write_text("active", encoding="utf-8")
+    inactive = runtime_dir / "nautilus-2026-08-01.jsonl"
+    inactive.write_text("old runtime log", encoding="utf-8")
+    old = time() - 2 * 86_400
+    os.utime(inactive, (old, old))
+
+    summary = cleanup_runtime_logs(
+        runtime_dir,
+        tmp_path / "archive",
+        soft_limit=1,
+        hard_limit=1_000_000,
+    )
+
+    assert active.exists()
+    assert not inactive.exists()
+    compressed = summary["compressed"]
+    assert isinstance(compressed, list)
+    assert len(compressed) == 1
+    assert list((tmp_path / "archive" / "runtime_logs").glob("*.gz"))

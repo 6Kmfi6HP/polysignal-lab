@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import gzip
+import io
 import json
 import logging
+import os
+import re
+import shutil
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from time import time
 
 from polysignal_lab.config import LoggingConfig
 from polysignal_lab.utils import redact_text
@@ -50,18 +56,125 @@ class RedactingJsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
+class GzipRotatingFileHandler(RotatingFileHandler):
+    def rotate(self, source: str, dest: str) -> None:
+        with open(source, "rb") as source_fh, gzip.open(dest, "wb") as target_fh:
+            shutil.copyfileobj(source_fh, target_fh)
+        os.remove(source)
+
+
+def _gzip_size(path: Path) -> int:
+    buffer = io.BytesIO()
+    with path.open("rb") as source, gzip.GzipFile(
+        fileobj=buffer, mode="wb", filename="", mtime=0
+    ) as target:
+        shutil.copyfileobj(source, target)
+    return buffer.tell()
+
+
+def cleanup_runtime_logs(
+    runtime_log_dir: Path,
+    archive_dir: Path,
+    soft_limit: int,
+    hard_limit: int,
+    *,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    runtime_archive_dir = archive_dir / "runtime_logs"
+    files = [path for path in runtime_log_dir.rglob("*") if path.is_file()]
+    archive_files = (
+        [path for path in runtime_archive_dir.glob("*.gz") if path.is_file()]
+        if runtime_archive_dir.exists()
+        else []
+    )
+    total_size = sum(path.stat().st_size for path in files)
+    total_size += sum(path.stat().st_size for path in archive_files)
+    compressed: list[str] = []
+    deleted: list[str] = []
+    summary: dict[str, object] = {
+        "initial_size_bytes": total_size,
+        "final_size_bytes": total_size,
+        "compressed": compressed,
+        "deleted": deleted,
+    }
+    if total_size <= soft_limit:
+        return summary
+
+    cutoff = time() - 86_400
+    python_log = re.compile(r"polysignal_lab\.jsonl(?:\.\d+(?:\.gz)?)?$")
+    old_jsonl = [
+        path
+        for path in files
+        if path.suffix == ".jsonl"
+        and path.stat().st_mtime < cutoff
+        and not python_log.fullmatch(path.name)
+    ]
+    projected_archives: list[tuple[Path, int, float]] = []
+    for path in sorted(old_jsonl, key=lambda item: item.stat().st_mtime):
+        relative_name = "__".join(path.relative_to(runtime_log_dir).parts)
+        destination = runtime_archive_dir / f"{relative_name}.gz"
+        compressed.append(str(destination))
+        source_size = path.stat().st_size
+        if not dry_run:
+            runtime_archive_dir.mkdir(parents=True, exist_ok=True)
+            temporary_path = Path(f"{destination}.tmp")
+            stat = path.stat()
+            try:
+                with path.open("rb") as source, gzip.open(
+                    temporary_path, "wb"
+                ) as target:
+                    shutil.copyfileobj(source, target)
+                temporary_path.replace(destination)
+                os.utime(destination, (stat.st_atime, stat.st_mtime))
+                path.unlink()
+            finally:
+                temporary_path.unlink(missing_ok=True)
+            total_size += destination.stat().st_size - source_size
+        else:
+            compressed_size = _gzip_size(path)
+            total_size += compressed_size - source_size
+            projected_archives.append(
+                (destination, compressed_size, path.stat().st_mtime)
+            )
+
+    archives = (
+        [
+            (path, path.stat().st_size, path.stat().st_mtime)
+            for path in runtime_archive_dir.glob("*.gz")
+        ]
+        if runtime_archive_dir.exists()
+        else []
+    )
+    if dry_run:
+        archives.extend(projected_archives)
+    if total_size > hard_limit:
+        for path, archive_size, _mtime in sorted(
+            archives, key=lambda item: item[2]
+        ):
+            if total_size <= hard_limit:
+                break
+            deleted.append(str(path))
+            if not dry_run:
+                path.unlink()
+            total_size = max(0, total_size - archive_size)
+
+    summary["final_size_bytes"] = total_size
+    return summary
+
+
 def _build_file_handler(config: LoggingConfig) -> logging.Handler | None:
     file_level = config.file_level.strip().upper()
     if file_level == "OFF":
         return None
     directory = Path(config.directory)
     directory.mkdir(parents=True, exist_ok=True)
-    handler = RotatingFileHandler(
+    handler = GzipRotatingFileHandler(
         directory / "polysignal_lab.jsonl",
         maxBytes=config.file_max_bytes,
         backupCount=config.file_backup_count,
         encoding="utf-8",
     )
+    handler.namer = lambda name: f"{name}.gz"
     handler.setFormatter(RedactingJsonFormatter())
     handler.setLevel(getattr(logging, file_level, logging.INFO))
     return handler

@@ -180,7 +180,13 @@ def build_nautilus_runtime_context(
     formatter = MessageFormatter(settings.telegram.max_message_chars)
     health = HealthRegistry()
     base = Path(base_dir)
-    logs = JSONLStore(base / settings.storage.jsonl_dir)
+    logs = JSONLStore(
+        base / settings.storage.jsonl_dir,
+        max_file_bytes=settings.retention.jsonl_max_file_bytes,
+        hot_days=settings.retention.jsonl_hot_days,
+        archive_days=settings.retention.jsonl_archive_days,
+        archive_dir=base / settings.retention.archive_dir,
+    )
     state = StateStore(base / settings.storage.state_dir)
     sqlite = SQLiteStore(base / settings.storage.sqlite_path)
     persistence = PersistenceService(logs, sqlite, state)
