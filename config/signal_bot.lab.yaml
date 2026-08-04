@@ -63,7 +63,7 @@ signal:
   max_signals_per_hour: 60
 
 trading:
-  starting_balance_usdc: 1000.0
+  starting_balance_usdc: 10000.0
   stake_mode: fixed
   fixed_stake_usdc: 10.0
   exit_model:
