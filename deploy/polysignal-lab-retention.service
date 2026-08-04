@@ -1,0 +1,8 @@
+[Unit]
+Description=PolySignal Lab Data Retention Maintenance
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n /run/lock/polysignal-lab-retention.lock docker compose -f /opt/polysignal-lab/docker-compose.yml run --rm --no-deps -T polysignal-lab maintenance
+WorkingDirectory=/opt/polysignal-lab
