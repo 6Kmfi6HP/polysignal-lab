@@ -1846,7 +1846,7 @@ class SQLiteStore:
                     message_type,
                     signal_id,
                     publish_status,
-                    publish.get("sent_at"),
+                    publish.get("sent_at") or utc_iso(),
                     payload_json,
                 ),
             )
@@ -1874,7 +1874,7 @@ class SQLiteStore:
             WHERE publish_id=?""",
             (
                 publish_status,
-                publish.get("sent_at"),
+                publish.get("sent_at") or utc_iso(),
                 payload_json,
                 publish_id,
             ),
@@ -1948,7 +1948,7 @@ class SQLiteStore:
                     p["message_type"],
                     p.get("signal_id"),
                     p["status"],
-                    p.get("sent_at"),
+                    p.get("sent_at") or utc_iso(),
                     self._json(p),
                 ),
             )
