@@ -209,15 +209,25 @@ def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> Non
             continue
         active_condition_ids.append(condition_id)
     strategy._subscribe_market_conditions(tuple(active_condition_ids))
+    state = strategy._subscription_state
+    global_book_feed_stalled = bool(active_condition_ids) and all(
+        condition_id in state.first_bilateral_book_ever_at_by_condition
+        and condition_id in state.awaiting_book_sides_by_condition
+        for condition_id in active_condition_ids
+    )
     for condition_id in active_condition_ids:
         # Rebuild the book subscription when book generation has idled past the
         # stall window (Polymarket WS drops idle connections with no snapshot
         # fallback, leaving a subscribed condition stuck in AWAITING_FIRST_BOOK).
-        _ = force_resubscribe_if_book_stalled(
-            strategy,  # pyright: ignore[reportArgumentType]
-            condition_id,
-            now=now,
-        )
+        # Once every previously-ready market is awaiting the same recovery,
+        # leave reconnect replay in charge instead of resetting every wire
+        # subscription again on each heartbeat.
+        if not global_book_feed_stalled:
+            _ = force_resubscribe_if_book_stalled(
+                strategy,  # pyright: ignore[reportArgumentType]
+                condition_id,
+                now=now,
+            )
         # A once-READY condition whose book went stale (awaiting empty) is not
         # covered by the first-book path; rebuild its subscription too so it
         # does not stay a permanent readiness miss.

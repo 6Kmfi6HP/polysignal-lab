@@ -1303,10 +1303,10 @@ def test_evaluation_heartbeat_rebuilds_stale_orderbook_condition() -> None:
     assert "btc-5m" in strategy._active_condition_ids
 
 
-def test_global_starvation_does_not_wipe_active_conditions() -> None:
+def test_global_starvation_repairs_once_without_resubscription_storm() -> None:
     """W2: when every active condition is stale (global feed outage), the
-    heartbeat repairs them all but never abandons any — the active set is
-    preserved and liveness/data-starvation is the backstop."""
+    heartbeat repairs them all once but does not repeat the destructive reset
+    while all remain stalled. Liveness/data-starvation stays the backstop."""
     registry = MarketCatalog(
         instrument_id_resolver=lambda _condition, token: f"{token}.POLYMARKET"
     )
@@ -1330,6 +1330,32 @@ def test_global_starvation_does_not_wipe_active_conditions() -> None:
     # Every stale condition was repaired (2 instruments × 3 feeds × 3 conditions).
     assert len(strategy.unsubscribed_instruments) == 18
     assert len(strategy.subscribed_instruments) == 18
+
+    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    # The adapter reconnect path replays tracked subscriptions. Do not race it
+    # with another 18 unsubscribe/subscribe commands every minute.
+    assert len(strategy.unsubscribed_instruments) == 18
+    assert len(strategy.subscribed_instruments) == 18
+    assert strategy._active_condition_ids == {"btc-5m", "eth-5m", "sol-5m"}
+
+    recovered_at = now + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 2)
+    for side in (Side.UP, Side.DOWN):
+        _ = observe_market_book_side(
+            strategy,
+            "btc-5m",
+            side,
+            received_at=recovered_at,
+            book_at=recovered_at,
+        )
+    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    # One recovered market proves this is no longer a global outage, so the
+    # remaining two conditions can each retry their six subscriptions.
+    assert len(strategy.unsubscribed_instruments) == 30
+    assert len(strategy.subscribed_instruments) == 30
 
 
 def test_stale_orderbook_condition_recovers_to_ready_after_bilateral_book() -> None:
