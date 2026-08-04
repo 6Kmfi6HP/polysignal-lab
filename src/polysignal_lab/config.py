@@ -233,6 +233,27 @@ class StorageConfig(BaseModel):
     recorded_market_data_enabled: bool = True
 
 
+class RetentionConfig(BaseModel):
+    """Controls data retention for SQLite, JSONL, and runtime logs.
+
+    Maintenance runs as a separate entrypoint command (no in-process timer).
+    """
+
+    enabled: bool = True
+    archive_dir: str = "archive"
+    sqlite_soft_limit_bytes: int = 900_000_000
+    sqlite_hard_limit_bytes: int = 1_200_000_000
+    sqlite_batch_rows: int = 5_000
+    sqlite_hot_days: int = 14
+    jsonl_max_file_bytes: int = 100_000_000
+    jsonl_hot_days: int = 14
+    jsonl_archive_days: int = 365
+    runtime_log_soft_limit_bytes: int = 800_000_000
+    runtime_log_hard_limit_bytes: int = 1_000_000_000
+    crash_log_max_bytes: int = 25_000_000
+    crash_log_max_days: int = 30
+
+
 class DashboardConfig(BaseModel):
     enabled: bool = True
     host: str = "127.0.0.1"
@@ -369,6 +390,7 @@ class Settings(BaseSettings):
     signal: SignalConfig = Field(default_factory=SignalConfig)
     trading: TradingConfig = Field(default_factory=TradingConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     strategies: StrategyConfig = Field(default_factory=StrategyConfig)
