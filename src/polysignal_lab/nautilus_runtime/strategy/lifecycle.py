@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
@@ -19,6 +19,7 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
+    _BOOK_GENERATION_STALL_SEC,
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
     subscription_scope_condition_ids,
@@ -200,6 +201,27 @@ def on_strategy_stop(strategy: _LifecycleStrategy) -> None:
     strategy._subscriptions_started = False
 
 
+def _global_book_feed_stalled(
+    state: MarketSubscriptionState,
+    condition_ids: Sequence[str],
+    *,
+    now: datetime,
+) -> bool:
+    recent_since = now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC)
+    recent_book_received = any(
+        received_at >= recent_since
+        for condition_id in condition_ids
+        for received_at in state.last_book_received_at_by_condition.get(
+            condition_id, {}
+        ).values()
+    )
+    return bool(condition_ids) and not recent_book_received and all(
+        condition_id in state.first_bilateral_book_ever_at_by_condition
+        and condition_id in state.awaiting_book_sides_by_condition
+        for condition_id in condition_ids
+    )
+
+
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
     strategy._note_runtime_progress("evaluation_heartbeat")
     now = framework_now(strategy)
@@ -209,11 +231,10 @@ def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> Non
             continue
         active_condition_ids.append(condition_id)
     strategy._subscribe_market_conditions(tuple(active_condition_ids))
-    state = strategy._subscription_state
-    global_book_feed_stalled = bool(active_condition_ids) and all(
-        condition_id in state.first_bilateral_book_ever_at_by_condition
-        and condition_id in state.awaiting_book_sides_by_condition
-        for condition_id in active_condition_ids
+    global_book_feed_stalled = _global_book_feed_stalled(
+        strategy._subscription_state,
+        active_condition_ids,
+        now=now,
     )
     for condition_id in active_condition_ids:
         # Rebuild the book subscription when book generation has idled past the

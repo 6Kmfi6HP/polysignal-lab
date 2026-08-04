@@ -1331,6 +1331,14 @@ def test_global_starvation_repairs_once_without_resubscription_storm() -> None:
     assert len(strategy.unsubscribed_instruments) == 18
     assert len(strategy.subscribed_instruments) == 18
 
+    # An old one-sided receipt does not prove that the total outage recovered.
+    _ = observe_market_book_side(
+        strategy,
+        "btc-5m",
+        Side.UP,
+        received_at=now,
+        book_at=now,
+    )
     strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
@@ -1340,22 +1348,45 @@ def test_global_starvation_repairs_once_without_resubscription_storm() -> None:
     assert len(strategy.subscribed_instruments) == 18
     assert strategy._active_condition_ids == {"btc-5m", "eth-5m", "sol-5m"}
 
+    # A fresh one-sided receipt proves the outage is no longer total, although
+    # the condition remains AWAITING_FIRST_BOOK for its missing DOWN side.
     recovered_at = now + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 2)
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.UP,
+            received_at=recovered_at,
+            book_at=recovered_at,
+        )
+        is False
+    )
+    assert strategy._subscription_state.awaiting_book_sides_by_condition[
+        "btc-5m"
+    ] == {Side.DOWN}
+    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    # Global suppression is released and stalled conditions can retry.
+    assert len(strategy.unsubscribed_instruments) == 36
+    assert len(strategy.subscribed_instruments) == 36
+
+    ready_at = recovered_at + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 1)
     for side in (Side.UP, Side.DOWN):
         _ = observe_market_book_side(
             strategy,
             "btc-5m",
             side,
-            received_at=recovered_at,
-            book_at=recovered_at,
+            received_at=ready_at,
+            book_at=ready_at,
         )
-    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
-    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
-
-    # One recovered market proves this is no longer a global outage, so the
-    # remaining two conditions can each retry their six subscriptions.
-    assert len(strategy.unsubscribed_instruments) == 30
-    assert len(strategy.subscribed_instruments) == 30
+    assert (
+        strategy._subscription_state.condition_phases["btc-5m"]
+        is ConditionSubscriptionPhase.READY
+    )
+    assert "btc-5m" not in (
+        strategy._subscription_state.awaiting_book_sides_by_condition
+    )
 
 
 def test_stale_orderbook_condition_recovers_to_ready_after_bilateral_book() -> None:
