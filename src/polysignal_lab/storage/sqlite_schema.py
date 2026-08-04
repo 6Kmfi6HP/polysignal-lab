@@ -271,7 +271,7 @@ REQUIRED_COLUMNS: Final[dict[str, frozenset[str]]] = {
         }
     ),
     "telegram_publishes": frozenset(
-        {"publish_id", "message_type", "status", "payload_json"}
+        {"publish_id", "message_type", "status", "sent_at", "payload_json"}
     ),
     "system_events": frozenset(
         {"event_id", "event_type", "severity", "created_at", "payload_json"}

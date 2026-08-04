@@ -644,8 +644,12 @@ class SQLiteStore:
         before_timestamp: str,
         *,
         excluded_event_types: tuple[str, ...] = (),
+        preserve_statuses: tuple[str, ...] = (),
     ) -> int:
-        self._validate_retention_identifiers(table, (time_column,))
+        self._validate_retention_identifiers(
+            table,
+            (time_column, "status") if preserve_statuses else (time_column,),
+        )
         exclusion_sql = ""
         params: list[Any] = [before_timestamp]
         if excluded_event_types:
@@ -654,6 +658,10 @@ class SQLiteStore:
             placeholders = ",".join("?" for _ in excluded_event_types)
             exclusion_sql = f" AND event_type NOT IN ({placeholders})"
             params.extend(excluded_event_types)
+        if preserve_statuses:
+            placeholders = ",".join("?" for _ in preserve_statuses)
+            exclusion_sql += f" AND status NOT IN ({placeholders})"
+            params.extend(preserve_statuses)
         with self._lock:
             row = self._conn.execute(
                 f"SELECT COUNT(*) FROM {table} "
@@ -676,12 +684,23 @@ class SQLiteStore:
         table: str,
         time_column: str,
         before_timestamp: str,
+        *,
+        preserve_statuses: tuple[str, ...] = (),
     ) -> int:
-        self._validate_retention_identifiers(table, (time_column,))
+        self._validate_retention_identifiers(
+            table,
+            (time_column, "status") if preserve_statuses else (time_column,),
+        )
+        status_sql = ""
+        params: list[Any] = [before_timestamp]
+        if preserve_statuses:
+            placeholders = ",".join("?" for _ in preserve_statuses)
+            status_sql = f" AND status NOT IN ({placeholders})"
+            params.extend(preserve_statuses)
         with self._lock, self._conn:
             cursor = self._conn.execute(
-                f"DELETE FROM {table} WHERE {time_column} < ?",
-                (before_timestamp,),
+                f"DELETE FROM {table} WHERE {time_column} < ?{status_sql}",
+                params,
             )
         return max(cursor.rowcount, 0)
 
@@ -699,7 +718,12 @@ class SQLiteStore:
         return max(cursor.rowcount, 0)
 
     def db_file_size(self) -> int:
-        return self.path.stat().st_size
+        paths = (
+            self.path,
+            Path(f"{self.path}-wal"),
+            Path(f"{self.path}-shm"),
+        )
+        return sum(path.stat().st_size for path in paths if path.exists())
 
     def archive_table_rows(
         self,
@@ -710,8 +734,12 @@ class SQLiteStore:
         *,
         batch_rows: int = 5_000,
         excluded_event_types: tuple[str, ...] = (),
+        preserve_statuses: tuple[str, ...] = (),
     ) -> int:
-        self._validate_retention_identifiers(table, (time_column,))
+        self._validate_retention_identifiers(
+            table,
+            (time_column, "status") if preserve_statuses else (time_column,),
+        )
         exclusion_sql = ""
         params: list[Any] = [before_timestamp]
         if excluded_event_types:
@@ -720,6 +748,10 @@ class SQLiteStore:
             placeholders = ",".join("?" for _ in excluded_event_types)
             exclusion_sql = f" AND event_type NOT IN ({placeholders})"
             params.extend(excluded_event_types)
+        if preserve_statuses:
+            placeholders = ",".join("?" for _ in preserve_statuses)
+            exclusion_sql += f" AND status NOT IN ({placeholders})"
+            params.extend(preserve_statuses)
         archive_path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = Path(f"{archive_path}.tmp")
         temporary_path.unlink(missing_ok=True)
@@ -772,33 +804,37 @@ class SQLiteStore:
                         return 0
                     self._conn.commit()
                     temporary_path.replace(archive_path)
-                    self._conn.execute("BEGIN IMMEDIATE")
-                    equality_sql = " AND ".join(
-                        f"live.{column} IS archived._value_{index}"
-                        for index, column in enumerate(columns)
-                    )
-                    matched = int(
-                        self._conn.execute(
-                            f"""SELECT COUNT(*) FROM {table} AS live
-                            JOIN {temp_table} AS archived
-                              ON live.rowid=archived._rid
-                            WHERE {equality_sql}"""
-                        ).fetchone()[0]
-                    )
-                    if matched != total:
-                        raise RuntimeError(
-                            f"Archived {total} {table} rows but only {matched} "
-                            "remain unchanged"
+                    try:
+                        self._conn.execute("BEGIN IMMEDIATE")
+                        equality_sql = " AND ".join(
+                            f"live.{column} IS archived._value_{index}"
+                            for index, column in enumerate(columns)
                         )
-                    deleted = self._conn.execute(
-                        f"DELETE FROM {table} WHERE rowid IN ("
-                        f"SELECT _rid FROM {temp_table})"
-                    ).rowcount
-                    if deleted != total:
-                        raise RuntimeError(
-                            f"Archived {total} {table} rows but deleted {deleted}"
+                        matched = int(
+                            self._conn.execute(
+                                f"""SELECT COUNT(*) FROM {table} AS live
+                                JOIN {temp_table} AS archived
+                                  ON live.rowid=archived._rid
+                                WHERE {equality_sql}"""
+                            ).fetchone()[0]
                         )
-                    self._conn.commit()
+                        if matched != total:
+                            raise RuntimeError(
+                                f"Archived {total} {table} rows but only {matched} "
+                                "remain unchanged"
+                            )
+                        deleted = self._conn.execute(
+                            f"DELETE FROM {table} WHERE rowid IN ("
+                            f"SELECT _rid FROM {temp_table})"
+                        ).rowcount
+                        if deleted != total:
+                            raise RuntimeError(
+                                f"Archived {total} {table} rows but deleted {deleted}"
+                            )
+                        self._conn.commit()
+                    except Exception:
+                        archive_path.unlink(missing_ok=True)
+                        raise
                 except Exception:
                     self._conn.rollback()
                     raise
@@ -1810,7 +1846,7 @@ class SQLiteStore:
                     message_type,
                     signal_id,
                     publish_status,
-                    publish.get("sent_at"),
+                    publish.get("sent_at") or utc_iso(),
                     payload_json,
                 ),
             )
@@ -1838,7 +1874,7 @@ class SQLiteStore:
             WHERE publish_id=?""",
             (
                 publish_status,
-                publish.get("sent_at"),
+                publish.get("sent_at") or utc_iso(),
                 payload_json,
                 publish_id,
             ),
@@ -1912,7 +1948,7 @@ class SQLiteStore:
                     p["message_type"],
                     p.get("signal_id"),
                     p["status"],
-                    p.get("sent_at"),
+                    p.get("sent_at") or utc_iso(),
                     self._json(p),
                 ),
             )

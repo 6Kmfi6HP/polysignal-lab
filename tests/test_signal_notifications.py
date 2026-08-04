@@ -289,3 +289,17 @@ def test_accepted_signal_publish_failure_leaves_durable_audit() -> None:
         or row.get("status") == "FAILED"
         for row in events
     )
+    # Failed publishes must carry an ageable timestamp so retention can prune them.
+    failed_publish = next(
+        (
+            row
+            for row in events
+            if row.get("kind") == "telegram_publish"
+            and row.get("status") == "FAILED"
+        ),
+        None,
+    )
+    assert failed_publish is not None
+    assert failed_publish.get("sent_at"), (
+        "FAILED publish audit must carry an ageable sent_at"
+    )

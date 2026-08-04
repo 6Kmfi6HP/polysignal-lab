@@ -79,10 +79,11 @@ class PersistenceService:
             "rows_deleted": 0,
             "archives_created": [],
         }
-        if (
-            not config.enabled
-            or db_size <= config.sqlite_soft_limit_bytes
-        ):
+        if not config.enabled:
+            return summary
+        if db_size <= config.sqlite_soft_limit_bytes:
+            if not dry_run:
+                self.sqlite.wal_checkpoint("PASSIVE")
             return summary
 
         now = datetime.now(UTC)
@@ -129,6 +130,7 @@ class PersistenceService:
                             if policy.table == "system_events"
                             else ()
                         ),
+                        preserve_statuses=policy.preserve_statuses,
                     )
                 else:
                     rows_deleted = self.sqlite.archive_table_rows(
@@ -142,6 +144,7 @@ class PersistenceService:
                             if policy.table == "system_events"
                             else ()
                         ),
+                        preserve_statuses=policy.preserve_statuses,
                     )
                 if rows_deleted:
                     summary["archives_created"].append(str(archive_path))
@@ -151,12 +154,14 @@ class PersistenceService:
                         policy.table,
                         policy.time_column,
                         cutoff_timestamp,
+                        preserve_statuses=policy.preserve_statuses,
                     )
                 else:
                     rows_deleted = self.sqlite.delete_rows_before(
                         policy.table,
                         policy.time_column,
                         cutoff_timestamp,
+                        preserve_statuses=policy.preserve_statuses,
                     )
             if rows_deleted:
                 summary["tables_cleaned"].append(policy.table)

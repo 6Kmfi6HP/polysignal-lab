@@ -240,3 +240,27 @@ def test_runtime_log_cleanup_archives_only_inactive_old_jsonl(tmp_path: Path) ->
     assert isinstance(compressed, list)
     assert len(compressed) == 1
     assert list((tmp_path / "archive" / "runtime_logs").glob("*.gz"))
+
+
+def test_runtime_log_cleanup_evicts_rotated_gzip_at_hard_limit(
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    active = runtime_dir / "polysignal_lab.jsonl"
+    active.write_bytes(b"active")
+    rotated = runtime_dir / "polysignal_lab.jsonl.1.gz"
+    rotated.write_bytes(b"rotated-log")
+    old = time() - 2 * 86_400
+    os.utime(rotated, (old, old))
+
+    summary = cleanup_runtime_logs(
+        runtime_dir,
+        tmp_path / "archive",
+        soft_limit=1,
+        hard_limit=active.stat().st_size,
+    )
+
+    assert not rotated.exists()
+    assert active.exists()
+    assert summary["deleted"] == [str(rotated)]

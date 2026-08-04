@@ -1628,3 +1628,24 @@ async def test_formatter_truncates_long_signal_message(market_view, settings) ->
     assert len(message) <= 240
     assert message.startswith("<b>🟢 ")
     assert message.endswith("[truncated for Telegram]")
+
+
+def test_failed_telegram_publish_always_gets_sent_at(tmp_path: Path) -> None:
+    """Failed publishes must be ageable by retention (sent_at never NULL)."""
+    store = SQLiteStore(tmp_path / "reports.sqlite3")
+    store.insert_telegram_publish(
+        {
+            "publish_id": "tg_failed_retention",
+            "message_type": "signal",
+            "status": "FAILED",
+            "error": "boom",
+        }
+    )
+    with sqlite_store_module.sqlite3.connect(
+        tmp_path / "reports.sqlite3"
+    ) as conn:
+        sent_at = conn.execute(
+            "SELECT sent_at FROM telegram_publishes WHERE publish_id=?",
+            ("tg_failed_retention",),
+        ).fetchone()[0]
+    assert sent_at, "FAILED publish must carry an ageable sent_at"

@@ -137,14 +137,17 @@ def cleanup_runtime_logs(
                 (destination, compressed_size, path.stat().st_mtime)
             )
 
-    archives = (
-        [
+    archives = [
+        (path, path.stat().st_size, path.stat().st_mtime)
+        for path in runtime_log_dir.glob("polysignal_lab.jsonl.*.gz")
+        if path.is_file()
+    ]
+    if runtime_archive_dir.exists():
+        archives.extend(
             (path, path.stat().st_size, path.stat().st_mtime)
             for path in runtime_archive_dir.glob("*.gz")
-        ]
-        if runtime_archive_dir.exists()
-        else []
-    )
+            if path.is_file()
+        )
     if dry_run:
         archives.extend(projected_archives)
     if total_size > hard_limit:

@@ -28,6 +28,7 @@ def test_default_policies_match_sqlite_schema_and_retention_windows() -> None:
         "nautilus_decision",
         "nautilus_fill",
         "report_publish_outbox",
+        "telegram_publishes",
     }
     assert (policies["signals"].time_column, policies["signals"].hot_days) == (
         "created_at",
@@ -35,8 +36,18 @@ def test_default_policies_match_sqlite_schema_and_retention_windows() -> None:
     )
     assert policies["rejected_signals"].time_column == "rejected_at"
     assert policies["report_results"].time_column == "closed_at"
+    assert policies["report_orders"].preserve_statuses == (
+        "PARTIAL",
+        "PARTIALLY_FILLED",
+        "ACCEPTED",
+        "RESTING",
+        "SUBMITTED",
+    )
+    assert policies["report_positions"].preserve_statuses == ("OPEN",)
+    assert policies["report_fills"].preserve_statuses == ()
     assert policies["daily_reports"].hot_days == 365
     assert policies["report_publish_outbox"].hot_days == 90
+    assert policies["telegram_publishes"].time_column == "sent_at"
     assert policies["strategy_status"].keep_latest_only is True
     assert policies["strategy_status"].latest_group_columns == (
         "strategy",

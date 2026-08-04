@@ -197,7 +197,7 @@ def _audit_accepted_signal_publish_failure(
                     "signal_id": signal.signal_id,
                     "telegram_message_id": None,
                     "error": redact_text(str(exc)),
-                    "sent_at": None,
+                    "sent_at": utc_iso(),
                 }
             )
     except Exception:

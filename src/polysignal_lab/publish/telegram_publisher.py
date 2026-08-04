@@ -87,6 +87,7 @@ class TelegramPublisher:
                 status="FAILED",
                 signal_id=signal_id,
                 error="TELEGRAM_NOT_CONFIGURED",
+                sent_at=utc_iso(),
             )
         invalid = invalid_telegram_credential_fields(self.bot_token, self.channel_id)
         if invalid:
@@ -96,6 +97,7 @@ class TelegramPublisher:
                 status="FAILED",
                 signal_id=signal_id,
                 error=f"TELEGRAM_INVALID_CREDENTIALS: {', '.join(invalid)}",
+                sent_at=utc_iso(),
             )
         text = message[: self.config.max_message_chars]
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
@@ -133,6 +135,7 @@ class TelegramPublisher:
             status="FAILED",
             signal_id=signal_id,
             error=last_error,
+            sent_at=utc_iso(),
         )
 
 
