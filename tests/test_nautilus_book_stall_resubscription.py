@@ -1404,8 +1404,7 @@ def test_global_starvation_retries_only_missing_side_after_partial_recovery() ->
     assert len(strategy.subscribed_instruments) == 18
     assert strategy._active_condition_ids == {"btc-5m", "eth-5m", "sol-5m"}
 
-    # A fresh one-sided receipt keeps global suppression active but permits the
-    # condition's missing side to retry without resetting its healthy side.
+    # A fresh one-sided receipt keeps global suppression active.
     recovered_at = now + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 2)
     assert (
         observe_market_book_side(
@@ -1424,10 +1423,10 @@ def test_global_starvation_retries_only_missing_side_after_partial_recovery() ->
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
     state = strategy._subscription_state
-    assert len(strategy.unsubscribed_instruments) == 21
-    assert len(strategy.subscribed_instruments) == 21
+    assert len(strategy.unsubscribed_instruments) == 18
+    assert len(strategy.subscribed_instruments) == 18
     assert strategy.unsubscribed_instruments.count("btc-5m-up.POLYMARKET") == 3
-    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 6
+    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 3
     for condition_id in ("eth-5m", "sol-5m"):
         for side in ("up", "down"):
             assert (
@@ -1436,11 +1435,7 @@ def test_global_starvation_retries_only_missing_side_after_partial_recovery() ->
                 )
                 == 3
             )
-    assert state.global_book_recovery_started_at_by_condition == {
-        "btc-5m": now,
-        "eth-5m": now,
-        "sol-5m": now,
-    }
+    assert state.global_book_recovery_epoch_at == now
     assert strategy.snapshot_requests == []
     assert strategy.snapshot_request_params == []
 
@@ -1459,7 +1454,7 @@ def test_global_starvation_retries_only_missing_side_after_partial_recovery() ->
         state.condition_phases["btc-5m"] is ConditionSubscriptionPhase.READY
     )
     assert "btc-5m" not in state.awaiting_book_sides_by_condition
-    assert "btc-5m" not in state.global_book_recovery_started_at_by_condition
+    assert state.global_book_recovery_epoch_at is None
 
     # A bilateral receipt is the recovery event that releases suppression,
     # only the remaining stalled conditions retry; the recovered BTC pair is
@@ -1467,14 +1462,11 @@ def test_global_starvation_retries_only_missing_side_after_partial_recovery() ->
     strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert len(strategy.unsubscribed_instruments) == 33
-    assert len(strategy.subscribed_instruments) == 33
+    assert len(strategy.unsubscribed_instruments) == 30
+    assert len(strategy.subscribed_instruments) == 30
     assert strategy.unsubscribed_instruments.count("btc-5m-up.POLYMARKET") == 3
-    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 6
-    assert state.global_book_recovery_started_at_by_condition == {
-        "eth-5m": now,
-        "sol-5m": now,
-    }
+    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 3
+    assert state.global_book_recovery_epoch_at is None
 
 
 def test_global_recovery_requires_receipts_after_batch_timestamp() -> None:
@@ -1491,7 +1483,7 @@ def test_global_recovery_requires_receipts_after_batch_timestamp() -> None:
 
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
     state = strategy._subscription_state
-    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+    assert state.global_book_recovery_epoch_at == now
 
     assert (
         observe_market_book_side(
@@ -1503,7 +1495,7 @@ def test_global_recovery_requires_receipts_after_batch_timestamp() -> None:
         )
         is False
     )
-    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+    assert state.global_book_recovery_epoch_at == now
 
     assert (
         observe_market_book_side(
@@ -1515,7 +1507,7 @@ def test_global_recovery_requires_receipts_after_batch_timestamp() -> None:
         )
         is True
     )
-    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+    assert state.global_book_recovery_epoch_at == now
 
     later = now + timedelta(seconds=1)
     assert (
@@ -1528,7 +1520,7 @@ def test_global_recovery_requires_receipts_after_batch_timestamp() -> None:
         )
         is True
     )
-    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+    assert state.global_book_recovery_epoch_at == now
     assert (
         observe_market_book_side(
             strategy,
@@ -1539,7 +1531,7 @@ def test_global_recovery_requires_receipts_after_batch_timestamp() -> None:
         )
         is True
     )
-    assert "btc-5m" not in state.global_book_recovery_started_at_by_condition
+    assert state.global_book_recovery_epoch_at is None
 
 
 def test_marker_timestamp_receipt_does_not_enable_missing_side_retry() -> None:
@@ -1572,7 +1564,7 @@ def test_marker_timestamp_receipt_does_not_enable_missing_side_retry() -> None:
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
     assert len(strategy.unsubscribed_instruments) == 6
-    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+    assert state.global_book_recovery_epoch_at == now
 
     later = now + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 2)
     assert (
@@ -1588,10 +1580,10 @@ def test_marker_timestamp_receipt_does_not_enable_missing_side_retry() -> None:
     strategy.clock.now_ns += int(10 * 1_000_000_000)
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert len(strategy.unsubscribed_instruments) == 9
+    assert len(strategy.unsubscribed_instruments) == 6
     assert strategy.unsubscribed_instruments.count("btc-5m-up.POLYMARKET") == 3
-    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 6
-    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
+    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 3
+    assert state.global_book_recovery_epoch_at == now
 
 
 def test_global_suppression_bounds_never_ready_retry_but_preserves_abandon() -> None:
@@ -1672,7 +1664,7 @@ def test_global_outage_epoch_survives_rotation_until_real_book_arrives() -> None
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
     state = strategy._subscription_state
-    assert state.global_feed_outage_started_at == now
+    assert state.global_book_recovery_epoch_at == now
     assert len(strategy.subscribed_instruments) == 6
 
     strategy._active_condition_ids.remove("btc-5m")
@@ -1690,9 +1682,8 @@ def test_global_outage_epoch_survives_rotation_until_real_book_arrives() -> None
 
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert state.global_book_recovery_started_at_by_condition == {}
-    assert state.global_feed_outage_started_at == now
-    assert len(strategy.subscribed_instruments) == 6
+    assert state.global_book_recovery_epoch_at is None
+    assert len(strategy.subscribed_instruments) == 12
 
     received_at = rotated_at + timedelta(seconds=1)
     assert (
@@ -1705,16 +1696,16 @@ def test_global_outage_epoch_survives_rotation_until_real_book_arrives() -> None
         )
         is False
     )
-    assert state.global_feed_outage_started_at is None
+    assert state.global_book_recovery_epoch_at is None
 
     strategy.clock.now_ns += int(
         (_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000
     )
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert len(strategy.subscribed_instruments) == 9
-    assert strategy.subscribed_instruments.count("sol-5m-up.POLYMARKET") == 0
-    assert strategy.subscribed_instruments.count("sol-5m-down.POLYMARKET") == 3
+    assert len(strategy.subscribed_instruments) == 15
+    assert strategy.subscribed_instruments.count("sol-5m-up.POLYMARKET") == 3
+    assert strategy.subscribed_instruments.count("sol-5m-down.POLYMARKET") == 6
 
 
 def test_all_condition_partial_stale_recovery_keeps_missing_side_retries() -> None:
@@ -1744,23 +1735,17 @@ def test_all_condition_partial_stale_recovery_keeps_missing_side_retries() -> No
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
     assert len(strategy.unsubscribed_instruments) == 6
-    assert (
-        strategy._subscription_state.global_book_recovery_started_at_by_condition
-        == {}
-    )
+    assert strategy._subscription_state.global_book_recovery_epoch_at == now
 
     strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert len(strategy.unsubscribed_instruments) == 12
-    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 6
+    assert len(strategy.unsubscribed_instruments) == 6
+    assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 3
     assert strategy.unsubscribed_instruments.count("btc-5m-up.POLYMARKET") == 0
     assert strategy.unsubscribed_instruments.count("eth-5m-down.POLYMARKET") == 0
-    assert strategy.unsubscribed_instruments.count("eth-5m-up.POLYMARKET") == 6
-    assert (
-        strategy._subscription_state.global_book_recovery_started_at_by_condition
-        == {}
-    )
+    assert strategy.unsubscribed_instruments.count("eth-5m-up.POLYMARKET") == 3
+    assert strategy._subscription_state.global_book_recovery_epoch_at == now
 
 
 def test_global_recovery_rearms_only_missing_marker_after_partial_release() -> None:
@@ -1784,14 +1769,7 @@ def test_global_recovery_rearms_only_missing_marker_after_partial_release() -> N
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
     assert len(strategy.unsubscribed_instruments) == 12
-    initial_eth_marker = state.global_book_recovery_started_at_by_condition[
-        "eth-5m"
-    ]
-    assert initial_eth_marker == now
-    assert state.global_book_recovery_started_at_by_condition == {
-        "btc-5m": now,
-        "eth-5m": initial_eth_marker,
-    }
+    assert state.global_book_recovery_epoch_at == now
 
     recovered_at = now + timedelta(seconds=1)
     assert (
@@ -1814,11 +1792,7 @@ def test_global_recovery_rearms_only_missing_marker_after_partial_release() -> N
         )
         is True
     )
-    assert "btc-5m" not in state.global_book_recovery_started_at_by_condition
-    assert (
-        state.global_book_recovery_started_at_by_condition["eth-5m"]
-        == initial_eth_marker
-    )
+    assert state.global_book_recovery_epoch_at is None
 
     # BTC stalls again while ETH is still awaiting its original global batch
     renewed_at = now + timedelta(seconds=2)
@@ -1832,20 +1806,15 @@ def test_global_recovery_rearms_only_missing_marker_after_partial_release() -> N
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
     assert len(strategy.unsubscribed_instruments) == 18
-    assert state.global_book_recovery_started_at_by_condition["btc-5m"] == renewed_at
-    assert (
-        state.global_book_recovery_started_at_by_condition["eth-5m"]
-        == initial_eth_marker
-    )
+    assert state.global_book_recovery_epoch_at is None
 
     strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert len(strategy.unsubscribed_instruments) == 18
-    assert state.global_book_recovery_started_at_by_condition == {
-        "btc-5m": renewed_at,
-        "eth-5m": initial_eth_marker,
-    }
+    assert len(strategy.unsubscribed_instruments) == 30
+    assert state.global_book_recovery_epoch_at == renewed_at + timedelta(
+        seconds=_BOOK_GENERATION_STALL_SEC + 1
+    )
 
 
 def test_stale_orderbook_condition_recovers_to_ready_after_bilateral_book() -> None:

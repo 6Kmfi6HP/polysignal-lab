@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, cast
 
-from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.nautilus_runtime.custom_data_publisher import framework_now
 from polysignal_lab.nautilus_runtime.custom_data_types import (
@@ -19,9 +18,11 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_rtds_data_client_id,
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    _BOOK_GENERATION_STALL_SEC,
     MarketSubscriptionState,
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
+    pending_condition_instrument_ids,
     subscription_scope_condition_ids,
 )
 from polysignal_lab.nautilus_runtime.strategy.condition_evaluation import (
@@ -201,44 +202,6 @@ def on_strategy_stop(strategy: _LifecycleStrategy) -> None:
     strategy._subscriptions_started = False
 
 
-def _global_book_recovery_is_suppressed(
-    state: MarketSubscriptionState,
-    condition_ids: Sequence[str],
-) -> bool:
-    # A receipt from one outcome token does not prove that a silent feed has
-    # recovered. The timestamp marker is removed only after both sides have
-    # receipts newer than the global recovery batch. While it remains active,
-    # never-READY conditions retain their abandon clock without adding more
-    # per-condition wire churn to the same feed-wide outage.
-    once_ready_condition_ids = tuple(
-        condition_id
-        for condition_id in condition_ids
-        if condition_id in state.first_bilateral_book_ever_at_by_condition
-    )
-    condition_batch_active = bool(once_ready_condition_ids) and all(
-        condition_id in state.global_book_recovery_started_at_by_condition
-        for condition_id in once_ready_condition_ids
-    )
-    return state.global_feed_outage_started_at is not None or condition_batch_active
-
-
-def _condition_has_post_marker_partial_recovery(
-    state: MarketSubscriptionState,
-    condition_id: str,
-) -> bool:
-    started_at = state.global_book_recovery_started_at_by_condition.get(condition_id)
-    awaiting = state.awaiting_book_sides_by_condition.get(condition_id)
-    if started_at is None or awaiting is None or len(awaiting) != 1:
-        return False
-    receipts = state.last_book_received_at_by_condition.get(condition_id, {})
-    return any(
-        side not in awaiting
-        and (received_at := receipts.get(side)) is not None
-        and received_at > started_at
-        for side in (Side.UP, Side.DOWN)
-    )
-
-
 def _active_unexpired_condition_ids(
     strategy: _LifecycleStrategy,
     *,
@@ -252,36 +215,52 @@ def _active_unexpired_condition_ids(
     return tuple(active_condition_ids)
 
 
-def _begin_global_book_recovery_if_stalled(
-    state: MarketSubscriptionState,
+def _global_book_recovery_decision(
+    strategy: _LifecycleStrategy,
     condition_ids: Sequence[str],
     *,
     now: datetime,
-) -> None:
+) -> tuple[bool, datetime | None]:
+    state = strategy._subscription_state
     once_ready_condition_ids = tuple(
         condition_id
         for condition_id in condition_ids
         if condition_id in state.first_bilateral_book_ever_at_by_condition
     )
-    if (
-        not once_ready_condition_ids
-        or not all(
-            state.awaiting_book_sides_by_condition.get(condition_id)
-            == {Side.UP, Side.DOWN}
-            for condition_id in once_ready_condition_ids
-        )
-    ):
-        return
-    observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
-    state.global_feed_outage_started_at = (
-        state.global_feed_outage_started_at or observed.astimezone(UTC)
+    if not once_ready_condition_ids:
+        state.global_book_recovery_epoch_at = None
+        return True, None
+    epoch_at = state.global_book_recovery_epoch_at
+    if epoch_at is not None:
+        return False, epoch_at
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
     )
-    # Keep the original batch boundary for conditions still awaiting recovery
-    for condition_id in once_ready_condition_ids:
-        state.global_book_recovery_started_at_by_condition.setdefault(
-            condition_id,
-            observed.astimezone(UTC),
+    stale_recovery = cast(
+        dict[str, object],
+        getattr(strategy, "_stale_orderbook_recovery_by_condition", {}),
+    )
+    all_need_recovery = all(
+        condition_id in stale_recovery
+        or (
+            bool(state.awaiting_book_sides_by_condition.get(condition_id))
+            and not pending_condition_instrument_ids(strategy, condition_id)  # type: ignore[arg-type]
+            and (
+                started_at := state.book_generation_started_at_by_condition.get(
+                    condition_id
+                )
+            )
+            is not None
+            and (now_utc - started_at).total_seconds() > _BOOK_GENERATION_STALL_SEC
         )
+        for condition_id in once_ready_condition_ids
+    )
+    if not all_need_recovery:
+        return True, None
+    observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    epoch_at = observed.astimezone(UTC)
+    state.global_book_recovery_epoch_at = epoch_at
+    return True, epoch_at
 
 
 def _recover_book_subscriptions(
@@ -290,38 +269,29 @@ def _recover_book_subscriptions(
     *,
     now: datetime,
 ) -> None:
-    state = strategy._subscription_state
-    global_book_recovery_suppressed = _global_book_recovery_is_suppressed(
-        state,
+    allow_wire_retry, recovery_epoch_at = _global_book_recovery_decision(
+        strategy,
         condition_ids,
+        now=now,
     )
+    recovery_scope = "global" if recovery_epoch_at is not None else "condition"
     for condition_id in condition_ids:
-        if (
-            not global_book_recovery_suppressed
-            or _condition_has_post_marker_partial_recovery(state, condition_id)
-        ):
-            _ = force_resubscribe_if_book_stalled(
-                strategy,  # pyright: ignore[reportArgumentType]
-                condition_id,
-                now=now,
-            )
-        else:
-            _ = force_resubscribe_if_book_stalled(
-                strategy,  # pyright: ignore[reportArgumentType]
-                condition_id,
-                now=now,
-                allow_wire_retry=False,
-            )
+        _ = force_resubscribe_if_book_stalled(
+            strategy,  # pyright: ignore[reportArgumentType]
+            condition_id,
+            now=now,
+            allow_wire_retry=allow_wire_retry,
+            recovery_epoch_at=recovery_epoch_at,
+            recovery_scope=recovery_scope,
+        )
         _ = force_resubscribe_if_stale_orderbook(
             strategy,  # pyright: ignore[reportArgumentType]
             condition_id,
             now=now,
+            allow_wire_retry=allow_wire_retry,
+            recovery_epoch_at=recovery_epoch_at,
+            recovery_scope=recovery_scope,
         )
-    _begin_global_book_recovery_if_stalled(
-        strategy._subscription_state,
-        condition_ids,
-        now=now,
-    )
 
 
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:

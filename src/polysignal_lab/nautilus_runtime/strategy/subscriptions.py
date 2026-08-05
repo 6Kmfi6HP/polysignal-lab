@@ -118,18 +118,9 @@ class MarketSubscriptionState:
     first_bilateral_book_latency_ms_by_condition: dict[str, int] = field(
         default_factory=dict
     )
-    # Global-silent recovery is stricter than a condition's current awaited
-    # subset: it clears only after both sides have fresh receipts after this
-    # batch timestamp. This prevents a one-sided partial-stale repair from
-    # releasing global suppression.
-    global_book_recovery_started_at_by_condition: dict[str, datetime] = field(
-        default_factory=dict
-    )
-    # Feed-wide recovery epoch. Unlike the per-condition markers above, this
-    # survives market rotation so newly-discovered never-READY conditions do
-    # not restart wire retries during the same total outage. Any real book
-    # receipt clears it.
-    global_feed_outage_started_at: datetime | None = None
+    # A feed-wide recovery batch remains authoritative until one once-READY
+    # condition receives both outcome books after this timestamp.
+    global_book_recovery_epoch_at: datetime | None = None
     last_book_at_by_condition: dict[str, dict[Side, datetime]] = field(
         default_factory=dict
     )
@@ -670,14 +661,13 @@ def unsubscribe_all_market_instruments(
             *state.book_generation_started_at_by_condition,
             *state.first_bilateral_book_at_by_condition,
             *state.first_bilateral_book_latency_ms_by_condition,
-            *state.global_book_recovery_started_at_by_condition,
         }
     ):
         retire_market_book_generation(strategy, condition_id, clear_history=True)
     state.pending_instrument_ids.clear()
     state.subscribe_intent_started_at_by_condition.clear()
     state.condition_phases.clear()
-    state.global_feed_outage_started_at = None
+    state.global_book_recovery_epoch_at = None
 
 
 def unsubscribe_market_conditions(
@@ -865,7 +855,6 @@ def _record_market_book_side(
     received: datetime,
     observed_book: datetime,
 ) -> None:
-    state.global_feed_outage_started_at = None
     last_receipts = (
         state.last_book_received_at_by_condition.setdefault(condition_id, {})
     )
@@ -883,15 +872,18 @@ def _clear_global_book_recovery_if_bilateral(
     state: MarketSubscriptionState,
     condition_id: str,
 ) -> None:
-    started_at = state.global_book_recovery_started_at_by_condition.get(condition_id)
-    if started_at is None:
+    epoch_at = state.global_book_recovery_epoch_at
+    if (
+        epoch_at is None
+        or condition_id not in state.first_bilateral_book_ever_at_by_condition
+    ):
         return
     receipts = state.last_book_received_at_by_condition.get(condition_id, {})
     if all(
-        (received_at := receipts.get(side)) is not None and received_at > started_at
+        (received_at := receipts.get(side)) is not None and received_at > epoch_at
         for side in (Side.UP, Side.DOWN)
     ):
-        state.global_book_recovery_started_at_by_condition.pop(condition_id, None)
+        state.global_book_recovery_epoch_at = None
 
 
 def finish_market_book_generation(
@@ -964,10 +956,6 @@ def retire_market_book_generation(
         None,
     )
     strategy._subscription_state.first_bilateral_book_latency_ms_by_condition.pop(
-        condition_id,
-        None,
-    )
-    strategy._subscription_state.global_book_recovery_started_at_by_condition.pop(
         condition_id,
         None,
     )
@@ -1165,14 +1153,38 @@ def _resubscribe_and_begin_generation(
     return instruments
 
 
-def force_resubscribe_if_book_stalled(
+def _recovery_log_extra(
+    state: MarketSubscriptionState,
+    condition_id: str,
+    instruments: Sequence[object],
+    *,
+    stall_sec: float,
+    recovery_epoch_at: datetime | None,
+    recovery_scope: str,
+) -> dict[str, object]:
+    return {
+        "condition_id": condition_id,
+        "stall_sec": stall_sec,
+        "instrument_ids": [_instrument_key(iid) for iid in instruments],
+        "recovery_epoch_at": (
+            recovery_epoch_at.isoformat() if recovery_epoch_at is not None else None
+        ),
+        "recovery_scope": recovery_scope,
+        "awaiting_sides": sorted(
+            side.value
+            for side in state.awaiting_book_sides_by_condition.get(condition_id, ())
+        ),
+        "wire_retry_suppressed": False,
+    }
+
+
+def _first_book_wire_retry_due(
     strategy: _SubscriptionStrategy,
     condition_id: str,
     *,
     now: datetime,
-    allow_wire_retry: bool = True,
+    allow_wire_retry: bool,
 ) -> bool:
-    """Retry a stalled first book while preserving abandon without wire churn."""
     state = strategy._subscription_state
     if pending_condition_instrument_ids(strategy, condition_id):
         return False
@@ -1185,9 +1197,28 @@ def force_resubscribe_if_book_stalled(
             now=now,
         ):
             return False
-    if not allow_wire_retry:
-        return False
-    if not _book_generation_stalled(strategy, condition_id, now=now):
+    return allow_wire_retry and _book_generation_stalled(
+        strategy, condition_id, now=now
+    )
+
+
+def force_resubscribe_if_book_stalled(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+    allow_wire_retry: bool = True,
+    recovery_epoch_at: datetime | None = None,
+    recovery_scope: str = "condition",
+) -> bool:
+    """Retry a stalled first book while preserving abandon without wire churn."""
+    state = strategy._subscription_state
+    if not _first_book_wire_retry_due(
+        strategy,
+        condition_id,
+        now=now,
+        allow_wire_retry=allow_wire_retry,
+    ):
         return False
     generation_started_at = state.book_generation_started_at_by_condition.get(
         condition_id
@@ -1204,37 +1235,36 @@ def force_resubscribe_if_book_stalled(
     )
     logger.info(
         "condition_book_resubscription",
-        extra={
-            # Elapsed since the current generation began (retry cadence).
-            "condition_id": condition_id,
-            "stall_sec": stall_sec,
-            "instrument_ids": [_instrument_key(iid) for iid in instruments],
-        },
+        extra=_recovery_log_extra(
+            state,
+            condition_id,
+            instruments,
+            stall_sec=stall_sec,
+            recovery_epoch_at=recovery_epoch_at,
+            recovery_scope=recovery_scope,
+        ),
     )
     return True
 
 
-def force_resubscribe_if_stale_orderbook(
+def _stale_book_wire_retry_due(
     strategy: _SubscriptionStrategy,
     condition_id: str,
     *,
     now: datetime,
-) -> bool:
-    """Rebuild a once-READY condition's stale book (Gap B): not in the awaiting
-    map, so the first-book path never fires. Resubscribe only — never abandon
-    via the book-stall clock: a global/silent feed outage is reported by
-    liveness/data-starvation, not by silently dropping active conditions (W2)."""
+    allow_wire_retry: bool,
+) -> tuple[datetime, datetime] | None:
     state = strategy._subscription_state
-    if condition_id in state.awaiting_book_sides_by_condition:
-        return False
-    if condition_id not in strategy._stale_orderbook_recovery_by_condition:
-        return False
-    if pending_condition_instrument_ids(strategy, condition_id):
-        return False
-    now_utc = (
-        now if now.tzinfo is not None else now.replace(tzinfo=UTC)
-    ).astimezone(UTC)
-    # Stale-since clock for observability only; never drives abandon (W2).
+    if (
+        condition_id in state.awaiting_book_sides_by_condition
+        or condition_id not in strategy._stale_orderbook_recovery_by_condition
+        or pending_condition_instrument_ids(strategy, condition_id)
+        or not allow_wire_retry
+    ):
+        return None
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
     total_stalled_at = state.book_stalled_started_at_by_condition.setdefault(
         condition_id, now_utc
     )
@@ -1242,8 +1272,33 @@ def force_resubscribe_if_stale_orderbook(
     if generation_at is not None and (now_utc - generation_at).total_seconds() <= (
         _BOOK_GENERATION_STALL_SEC
     ):
-        # Within the retry window of the last rebuild — do not re-fire.
+        return None
+    return now_utc, total_stalled_at
+
+
+def force_resubscribe_if_stale_orderbook(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+    allow_wire_retry: bool = True,
+    recovery_epoch_at: datetime | None = None,
+    recovery_scope: str = "condition",
+) -> bool:
+    """Rebuild a once-READY condition's stale book (Gap B): not in the awaiting
+    map, so the first-book path never fires. Resubscribe only — never abandon
+    via the book-stall clock: a global/silent feed outage is reported by
+    liveness/data-starvation, not by silently dropping active conditions (W2)."""
+    state = strategy._subscription_state
+    retry_due = _stale_book_wire_retry_due(
+        strategy,
+        condition_id,
+        now=now,
+        allow_wire_retry=allow_wire_retry,
+    )
+    if retry_due is None:
         return False
+    now_utc, total_stalled_at = retry_due
     instruments = _resubscribe_and_begin_generation(
         strategy,
         condition_id,
@@ -1255,11 +1310,13 @@ def force_resubscribe_if_stale_orderbook(
     stall_sec = round((now_utc - total_stalled_at).total_seconds(), 3)
     logger.info(
         "condition_stale_orderbook_resubscription",
-        extra={
-            "condition_id": condition_id,
-            # Elapsed since the stale orderbook was first detected.
-            "stall_sec": stall_sec,
-            "instrument_ids": [_instrument_key(iid) for iid in instruments],
-        },
+        extra=_recovery_log_extra(
+            state,
+            condition_id,
+            instruments,
+            stall_sec=stall_sec,
+            recovery_epoch_at=recovery_epoch_at,
+            recovery_scope=recovery_scope,
+        ),
     )
     return True
