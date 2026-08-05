@@ -1382,6 +1382,53 @@ def test_evaluation_heartbeat_rebuilds_stale_orderbook_condition() -> None:
     assert "btc-5m" in strategy._active_condition_ids
 
 
+def test_shared_market_outage_preserves_three_strategy_recovery_intents() -> None:
+    """The application owns per-strategy readiness, while the shared adapter
+    owns process-wide wire deduplication for identical recovery intent."""
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    shared_refresh_intents: list[tuple[str, str]] = []
+
+    class _SharedMarketHeartbeat(_HeartbeatStrategy):
+        def refresh_book_subscription(
+            self,
+            instrument_id: object,
+            client_id: object | None = None,
+            params: Mapping[str, object] | None = None,
+        ) -> None:
+            del client_id, params
+            shared_refresh_intents.append((self.strategy_name, str(instrument_id)))
+
+    strategies = []
+    for strategy_name in ("vwap_momentum", "late_consensus", "ptb_diff"):
+        strategy = _SharedMarketHeartbeat(registry, now=now)
+        strategy.strategy_name = strategy_name
+        strategy._active_condition_ids = {"btc-5m"}
+        _stale_ready_state(
+            strategy,
+            "btc-5m",
+            now=now,
+            stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+        )
+        strategies.append(strategy)
+
+    for strategy in strategies:
+        on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert sorted(shared_refresh_intents) == [
+        (strategy_name, f"btc-5m-{side}.POLYMARKET")
+        for strategy_name in ("late_consensus", "ptb_diff", "vwap_momentum")
+        for side in ("down", "up")
+    ]
+    assert all(strategy._active_condition_ids == {"btc-5m"} for strategy in strategies)
+    assert all(strategy.readiness == [] for strategy in strategies)
+    assert all(
+        strategy._subscription_state.awaiting_book_sides_by_condition["btc-5m"]
+        == {Side.UP, Side.DOWN}
+        for strategy in strategies
+    )
+
+
 def test_global_starvation_retries_only_missing_side_after_partial_recovery() -> None:
     """W2: when every active condition is stale (global feed outage), the
     heartbeat repairs them all once but does not repeat the destructive reset

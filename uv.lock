@@ -519,8 +519,8 @@ wheels = [
 
 [[package]]
 name = "nautilus-trader"
-version = "1.231.0a20260730+polysignal.6"
-source = { url = "https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.6/nautilus_trader-1.231.0a20260730%2Bpolysignal.6-cp312-cp312-manylinux_2_36_x86_64.whl" }
+version = "1.231.0a20260730+polysignal.7"
+source = { url = "https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.7/nautilus_trader-1.231.0a20260730%2Bpolysignal.7-cp312-cp312-manylinux_2_36_x86_64.whl" }
 dependencies = [
     { name = "click" },
     { name = "fsspec" },
@@ -535,7 +535,7 @@ dependencies = [
     { name = "uvloop", marker = "sys_platform != 'win32'" },
 ]
 wheels = [
-    { url = "https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.6/nautilus_trader-1.231.0a20260730%2Bpolysignal.6-cp312-cp312-manylinux_2_36_x86_64.whl", hash = "sha256:df7c8c871f79b4ae5cd880a2a20f40c193ad35a267d45373e60f1b3c5079cc93" },
+    { url = "https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.7/nautilus_trader-1.231.0a20260730%2Bpolysignal.7-cp312-cp312-manylinux_2_36_x86_64.whl", hash = "sha256:4b72073a0ea27a6302eff2abf5159695e04f6d0872cb9d8e75b77bcf3aa61d8d" },
 ]
 
 [package.optional-dependencies]
@@ -737,8 +737,8 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.4" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.0" },
-    { name = "nautilus-trader", extras = ["polymarket"], url = "https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.6/nautilus_trader-1.231.0a20260730%2Bpolysignal.6-cp312-cp312-manylinux_2_36_x86_64.whl" },
-    { name = "nautilus-trader", extras = ["polymarket"], marker = "extra == 'nautilus'", url = "https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.6/nautilus_trader-1.231.0a20260730%2Bpolysignal.6-cp312-cp312-manylinux_2_36_x86_64.whl" },
+    { name = "nautilus-trader", extras = ["polymarket"], url = "https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.7/nautilus_trader-1.231.0a20260730%2Bpolysignal.7-cp312-cp312-manylinux_2_36_x86_64.whl" },
+    { name = "nautilus-trader", extras = ["polymarket"], marker = "extra == 'nautilus'", url = "https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.7/nautilus_trader-1.231.0a20260730%2Bpolysignal.7-cp312-cp312-manylinux_2_36_x86_64.whl" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.6.0" },
     { name = "py-clob-client-v2", specifier = ">=0.1.0" },
     { name = "pydantic", specifier = ">=2.8" },
