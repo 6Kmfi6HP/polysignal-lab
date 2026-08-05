@@ -125,6 +125,11 @@ class MarketSubscriptionState:
     global_book_recovery_started_at_by_condition: dict[str, datetime] = field(
         default_factory=dict
     )
+    # Feed-wide recovery epoch. Unlike the per-condition markers above, this
+    # survives market rotation so newly-discovered never-READY conditions do
+    # not restart wire retries during the same total outage. Any real book
+    # receipt clears it.
+    global_feed_outage_started_at: datetime | None = None
     last_book_at_by_condition: dict[str, dict[Side, datetime]] = field(
         default_factory=dict
     )
@@ -672,6 +677,7 @@ def unsubscribe_all_market_instruments(
     state.pending_instrument_ids.clear()
     state.subscribe_intent_started_at_by_condition.clear()
     state.condition_phases.clear()
+    state.global_feed_outage_started_at = None
 
 
 def unsubscribe_market_conditions(
@@ -859,6 +865,7 @@ def _record_market_book_side(
     received: datetime,
     observed_book: datetime,
 ) -> None:
+    state.global_feed_outage_started_at = None
     last_receipts = (
         state.last_book_received_at_by_condition.setdefault(condition_id, {})
     )
@@ -1163,13 +1170,9 @@ def force_resubscribe_if_book_stalled(
     condition_id: str,
     *,
     now: datetime,
+    allow_wire_retry: bool = True,
 ) -> bool:
-    """Rebuild a first-book subscription stalled past the stall window (Gap A).
-
-    W1: pending metadata is never abandoned here. W2: only a condition whose
-    FIRST book never arrived is abandoned at the 240s total-stall clock; a
-    once-READY condition is retried, never fatal (liveness covers outages).
-    """
+    """Retry a stalled first book while preserving abandon without wire churn."""
     state = strategy._subscription_state
     if pending_condition_instrument_ids(strategy, condition_id):
         return False
@@ -1182,6 +1185,8 @@ def force_resubscribe_if_book_stalled(
             now=now,
         ):
             return False
+    if not allow_wire_retry:
+        return False
     if not _book_generation_stalled(strategy, condition_id, now=now):
         return False
     generation_started_at = state.book_generation_started_at_by_condition.get(

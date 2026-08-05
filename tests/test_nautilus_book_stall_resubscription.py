@@ -29,6 +29,7 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
     observe_market_book_side,
+    retire_market_book_generation,
 )
 
 
@@ -1593,7 +1594,7 @@ def test_marker_timestamp_receipt_does_not_enable_missing_side_retry() -> None:
     assert state.global_book_recovery_started_at_by_condition["btc-5m"] == now
 
 
-def test_global_suppression_keeps_never_ready_retrying_without_resetting_ready_conditions() -> None:
+def test_global_suppression_bounds_never_ready_retry_but_preserves_abandon() -> None:
     registry = MarketCatalog(
         instrument_id_resolver=lambda _condition, token: f"{token}.POLYMARKET"
     )
@@ -1623,11 +1624,10 @@ def test_global_suppression_keeps_never_ready_retrying_without_resetting_ready_c
     strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    # BTC and ETH are once-READY and still await bilateral books, so their
-    # first recovery batch is bounded. SOL was never READY, therefore its
-    # pre-existing retry/abandon path is not suppressed.
-    assert len(strategy.unsubscribed_instruments) == 24
-    assert len(strategy.subscribed_instruments) == 24
+    # A feed-wide outage bounds all further wire retries, including a mixed
+    # never-READY condition. Its independent total-stall clock remains active.
+    assert len(strategy.unsubscribed_instruments) == 18
+    assert len(strategy.subscribed_instruments) == 18
     for condition_id in ("btc-5m", "eth-5m"):
         for side in ("up", "down"):
             assert (
@@ -1639,9 +1639,82 @@ def test_global_suppression_keeps_never_ready_retrying_without_resetting_ready_c
     for side in ("up", "down"):
         assert (
             strategy.unsubscribed_instruments.count(f"sol-5m-{side}.POLYMARKET")
-            == 6
+            == 3
         )
     assert strategy._active_condition_ids == {"btc-5m", "eth-5m", "sol-5m"}
+
+    strategy.clock.now_ns += int(80 * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert strategy._active_condition_ids == {"btc-5m", "eth-5m"}
+    # Abandon performs one unsubscribe-only cleanup for SOL's six streams.
+    assert len(strategy.unsubscribed_instruments) == 24
+    assert len(strategy.subscribed_instruments) == 18
+    assert strategy.readiness[-1] == ("sol-5m", True)
+
+
+def test_global_outage_epoch_survives_rotation_until_real_book_arrives() -> None:
+    registry = MarketCatalog(
+        instrument_id_resolver=lambda _condition, token: f"{token}.POLYMARKET"
+    )
+    for condition_id in ("btc-5m", "sol-5m"):
+        registry.register(_pair(condition_id, "BTC", "5m"))
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m"}
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+    )
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    state = strategy._subscription_state
+    assert state.global_feed_outage_started_at == now
+    assert len(strategy.subscribed_instruments) == 6
+
+    strategy._active_condition_ids.remove("btc-5m")
+    retire_market_book_generation(strategy, "btc-5m", clear_history=True)
+    strategy._active_condition_ids.add("sol-5m")
+    rotated_at = now + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 1)
+    _stalled_state(
+        strategy,
+        "sol-5m",
+        started_at=rotated_at - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 1),
+    )
+    strategy.clock.now_ns += int(
+        (_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000
+    )
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert state.global_book_recovery_started_at_by_condition == {}
+    assert state.global_feed_outage_started_at == now
+    assert len(strategy.subscribed_instruments) == 6
+
+    received_at = rotated_at + timedelta(seconds=1)
+    assert (
+        observe_market_book_side(
+            strategy,
+            "sol-5m",
+            Side.UP,
+            received_at=received_at,
+            book_at=received_at,
+        )
+        is False
+    )
+    assert state.global_feed_outage_started_at is None
+
+    strategy.clock.now_ns += int(
+        (_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000
+    )
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.subscribed_instruments) == 9
+    assert strategy.subscribed_instruments.count("sol-5m-up.POLYMARKET") == 0
+    assert strategy.subscribed_instruments.count("sol-5m-down.POLYMARKET") == 3
 
 
 def test_all_condition_partial_stale_recovery_keeps_missing_side_retries() -> None:

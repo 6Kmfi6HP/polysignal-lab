@@ -207,17 +207,19 @@ def _global_book_recovery_is_suppressed(
 ) -> bool:
     # A receipt from one outcome token does not prove that a silent feed has
     # recovered. The timestamp marker is removed only after both sides have
-    # receipts newer than the global recovery batch. Never-READY conditions
-    # remain outside this suppression so their retry/abandon path progresses.
+    # receipts newer than the global recovery batch. While it remains active,
+    # never-READY conditions retain their abandon clock without adding more
+    # per-condition wire churn to the same feed-wide outage.
     once_ready_condition_ids = tuple(
         condition_id
         for condition_id in condition_ids
         if condition_id in state.first_bilateral_book_ever_at_by_condition
     )
-    return bool(once_ready_condition_ids) and all(
+    condition_batch_active = bool(once_ready_condition_ids) and all(
         condition_id in state.global_book_recovery_started_at_by_condition
         for condition_id in once_ready_condition_ids
     )
+    return state.global_feed_outage_started_at is not None or condition_batch_active
 
 
 def _condition_has_post_marker_partial_recovery(
@@ -271,6 +273,9 @@ def _begin_global_book_recovery_if_stalled(
     ):
         return
     observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    state.global_feed_outage_started_at = (
+        state.global_feed_outage_started_at or observed.astimezone(UTC)
+    )
     # Keep the original batch boundary for conditions still awaiting recovery
     for condition_id in once_ready_condition_ids:
         state.global_book_recovery_started_at_by_condition.setdefault(
@@ -293,14 +298,19 @@ def _recover_book_subscriptions(
     for condition_id in condition_ids:
         if (
             not global_book_recovery_suppressed
-            or condition_id
-            not in state.first_bilateral_book_ever_at_by_condition
             or _condition_has_post_marker_partial_recovery(state, condition_id)
         ):
             _ = force_resubscribe_if_book_stalled(
                 strategy,  # pyright: ignore[reportArgumentType]
                 condition_id,
                 now=now,
+            )
+        else:
+            _ = force_resubscribe_if_book_stalled(
+                strategy,  # pyright: ignore[reportArgumentType]
+                condition_id,
+                now=now,
+                allow_wire_retry=False,
             )
         _ = force_resubscribe_if_stale_orderbook(
             strategy,  # pyright: ignore[reportArgumentType]

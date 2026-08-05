@@ -93,12 +93,13 @@ Ordinary partial stale repair and global-silent recovery have different evidence
 
 - Ordinary partial repair seeds `awaiting_book_sides` with only the stale outcome sides, so those sides can return the condition to `READY` without resetting a healthy side.
 - Only when every once-READY active condition awaits both UP and DOWN does heartbeat recovery record a per-condition global batch marker. Ordinary all-condition partial-side recovery creates no global markers and keeps the normal 60-second missing-side retry. Global suppression requires UP and DOWN receipts strictly later than the marker. While suppression remains active, a condition with a fresh post-marker receipt on one side still retries only its missing side at the 60-second cadence; fully silent conditions do not repeat the all-condition batch. Bilateral recovery of any once-READY condition releases suppression for the remaining stalled conditions; surviving markers keep their timestamps and missing markers are added only when a renewed bilateral all-awaiting batch begins.
+- The same recovery batch opens a feed-outage epoch which survives condition retirement and market rotation. New never-READY conditions may subscribe once but do not add periodic wire retries during that epoch; their 240-second abandon clock remains active. Any real book receipt clears the feed-outage epoch, while the per-condition markers continue to enforce bilateral recovery semantics.
 
 ## Built-in recovery timers
 
 | Timer | Value | Behavior |
 | --- | --- | --- |
-| Stall / resubscribe | 60 s | Heartbeat: if still awaiting first book → resubscribe only the still-awaited instruments and retain the generation's side receipts |
+| Stall / resubscribe | 60 s | Heartbeat: if still awaiting first book → resubscribe only the still-awaited instruments and retain the generation's side receipts; during a detected feed-wide outage, the first recovery batch is bounded across once-READY and never-READY conditions |
 | Abandon | 240 s | If first book **never** arrived → drop condition from active set (`condition_abandoned_no_book`) |
 | Liveness readiness miss | 300 s | Node unhealthy if readiness miss persists; abandon is set below this (240+heartbeat &lt; 300) |
 
@@ -124,7 +125,7 @@ When status shows `awaiting_first_book` / `missing_data`:
 1. Read readiness detail: `awaiting_book_sides`, `generation_age_ms`, `subscribe_intent_age_ms`, `last_book_received_at_by_side`.
 2. **generation_age_ms ≪ 60 s** after rotation → warm-up; wait.
 3. **One side in `awaiting_book_sides`, other has receipts** → one-sided feed silence; check REST `/book` for that token; watch for `condition_book_resubscription` at ~60 s.
-4. **Both sides empty past 60 s** → stall recovery path; if still empty past ~240 s expect `condition_abandoned_no_book`.
+4. **Both sides empty past 60 s** → stall recovery path; during a feed-wide outage, later wire retries are suppressed but a never-READY condition still abandons past ~240 s.
 5. **REST has updates but Cache never observes** → subscribe/adapter path (#4574 family); confirm NT version and subscribe logs.
 
 Do **not** “fix” by relaxing ask-depth policy — that only affects `missing_quote_depth` after READY.
