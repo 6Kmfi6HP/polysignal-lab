@@ -45,7 +45,7 @@ def test_nautilus_is_required_dependency_for_default_runtime() -> None:
         for dependency in dependencies
         if dependency.startswith("nautilus_trader[polymarket] @ ")
     )
-    assert "#sha256=6fde27a2f4ed14b1e6a11c38c8a066aaca139afd02e47a1afc7719171109e55c" in expected
+    assert "#sha256=400419cef770f6c0bab4732d6a84ab6e504aab7f49b158d08856e1c4decb0f9a" in expected
     nautilus_extra = cast(
         list[str], data["project"]["optional-dependencies"]["nautilus"]
     )

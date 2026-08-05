@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -1468,6 +1469,37 @@ def test_global_starvation_retries_only_missing_side_after_partial_recovery() ->
     assert strategy.unsubscribed_instruments.count("btc-5m-down.POLYMARKET") == 3
     assert state.global_book_recovery_epoch_at is None
 
+
+def test_global_recovery_logs_suppressed_wire_retry(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m"}
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 1,
+    )
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+    caplog.clear()
+    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
+
+    with caplog.at_level(logging.INFO):
+        on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    suppressed = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "condition_book_recovery_suppressed"
+    ]
+    assert len(suppressed) == 1
+    assert getattr(suppressed[0], "wire_retry_suppressed") is True
+    assert getattr(suppressed[0], "recovery_scope") == "global"
+    assert getattr(suppressed[0], "awaiting_sides") == ["DOWN", "UP"]
 
 def test_global_recovery_requires_receipts_after_batch_timestamp() -> None:
     registry = _registry()

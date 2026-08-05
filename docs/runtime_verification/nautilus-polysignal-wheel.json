@@ -1,12 +1,12 @@
 {
-  "version": "1.231.0a20260730+polysignal.1",
+  "version": "1.231.0a20260730+polysignal.4",
   "upstream_base_sha": "a930c8afe380025fc0a10c6b2cd6907d6b983e86",
-  "patch_commit_sha": "623eb74a52aa6520b3b9a1f569045110fe14180f",
+  "patch_commit_sha": "04716129990181bffe37c293ef8158e327a040fd",
   "upstream_pr": "https://github.com/nautechsystems/nautilus_trader/pull/4656",
-  "release_tag": "polysignal-1.231.0a20260730.1",
-  "release_url": "https://github.com/6Kmfi6HP/nautilus_trader/releases/tag/polysignal-1.231.0a20260730.1",
-  "wheel_filename": "nautilus_trader-1.231.0a20260730+polysignal.1-cp312-cp312-manylinux_2_36_x86_64.whl",
-  "wheel_sha256": "6fde27a2f4ed14b1e6a11c38c8a066aaca139afd02e47a1afc7719171109e55c",
+  "release_tag": "polysignal-1.231.0a20260730.4",
+  "release_url": "https://github.com/6Kmfi6HP/nautilus_trader/releases/tag/polysignal-1.231.0a20260730.4",
+  "wheel_filename": "nautilus_trader-1.231.0a20260730+polysignal.4-cp312-cp312-manylinux_2_36_x86_64.whl",
+  "wheel_sha256": "400419cef770f6c0bab4732d6a84ab6e504aab7f49b158d08856e1c4decb0f9a",
   "toolchain": {
     "platform": "Linux x86_64",
     "python": "CPython 3.12.13",
@@ -14,5 +14,5 @@
     "cython": "3.2.9",
     "uv": "0.11.33"
   },
-  "build_command": "PYO3_PYTHON=python3.12 uvx uv@0.11.33 build --wheel --python 3.12 --out-dir dist-polysignal --clear"
+  "build_command": "uv run python scripts/verify_nautilus_wheel_provenance.py --source /path/to/nautilus_trader --build-output /path/to/nautilus_trader/dist-polysignal"
 }

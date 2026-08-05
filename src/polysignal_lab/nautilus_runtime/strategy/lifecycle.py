@@ -22,6 +22,7 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
+    log_suppressed_book_recovery,
     pending_condition_instrument_ids,
     subscription_scope_condition_ids,
 )
@@ -244,7 +245,10 @@ def _global_book_recovery_decision(
         condition_id in stale_recovery
         or (
             bool(state.awaiting_book_sides_by_condition.get(condition_id))
-            and not pending_condition_instrument_ids(strategy, condition_id)  # type: ignore[arg-type]
+            and not pending_condition_instrument_ids(
+                strategy,  # type: ignore[arg-type]
+                condition_id,
+            )
             and (
                 started_at := state.book_generation_started_at_by_condition.get(
                     condition_id
@@ -276,6 +280,13 @@ def _recover_book_subscriptions(
     )
     recovery_scope = "global" if recovery_epoch_at is not None else "condition"
     for condition_id in condition_ids:
+        if not allow_wire_retry and recovery_epoch_at is not None:
+            log_suppressed_book_recovery(
+                strategy,  # pyright: ignore[reportArgumentType]
+                condition_id,
+                now=now,
+                recovery_epoch_at=recovery_epoch_at,
+            )
         _ = force_resubscribe_if_book_stalled(
             strategy,  # pyright: ignore[reportArgumentType]
             condition_id,

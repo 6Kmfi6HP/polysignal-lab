@@ -1161,6 +1161,7 @@ def _recovery_log_extra(
     stall_sec: float,
     recovery_epoch_at: datetime | None,
     recovery_scope: str,
+    wire_retry_suppressed: bool = False,
 ) -> dict[str, object]:
     return {
         "condition_id": condition_id,
@@ -1174,8 +1175,41 @@ def _recovery_log_extra(
             side.value
             for side in state.awaiting_book_sides_by_condition.get(condition_id, ())
         ),
-        "wire_retry_suppressed": False,
+        "wire_retry_suppressed": wire_retry_suppressed,
     }
+
+
+def log_suppressed_book_recovery(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+    recovery_epoch_at: datetime,
+) -> None:
+    """Record a due retry blocked by the active global recovery epoch."""
+    state = strategy._subscription_state
+    instruments = _awaiting_condition_instruments(strategy, condition_id)
+    started_at = state.book_generation_started_at_by_condition.get(condition_id)
+    if not instruments or started_at is None:
+        return
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
+    stall_sec = (now_utc - started_at).total_seconds()
+    if stall_sec <= _BOOK_GENERATION_STALL_SEC:
+        return
+    logger.info(
+        "condition_book_recovery_suppressed",
+        extra=_recovery_log_extra(
+            state,
+            condition_id,
+            instruments,
+            stall_sec=round(stall_sec, 3),
+            recovery_epoch_at=recovery_epoch_at,
+            recovery_scope="global",
+            wire_retry_suppressed=True,
+        ),
+    )
 
 
 def _first_book_wire_retry_due(
