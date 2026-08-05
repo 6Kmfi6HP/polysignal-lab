@@ -20,7 +20,7 @@ dependencies = [
   "uvicorn>=0.30",
   "py-clob-client-v2>=0.1.0",
   "python-telegram-bot[rate-limiter]>=22.5",
-  "nautilus_trader[polymarket] @ https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.6/nautilus_trader-1.231.0a20260730%2Bpolysignal.6-cp312-cp312-manylinux_2_36_x86_64.whl#sha256=f938fcdd8d8956be8c3443ab6cf64f931ec518bde8ea60514ecde26f231f1c3f",
+  "nautilus_trader[polymarket] @ https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.6/nautilus_trader-1.231.0a20260730%2Bpolysignal.6-cp312-cp312-manylinux_2_36_x86_64.whl#sha256=df7c8c871f79b4ae5cd880a2a20f40c193ad35a267d45373e60f1b3c5079cc93",
 ]
 
 [project.optional-dependencies]
@@ -35,7 +35,7 @@ dev = [
   "hypothesis>=6.0",
 ]
 nautilus = [
-  "nautilus_trader[polymarket] @ https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.6/nautilus_trader-1.231.0a20260730%2Bpolysignal.6-cp312-cp312-manylinux_2_36_x86_64.whl#sha256=f938fcdd8d8956be8c3443ab6cf64f931ec518bde8ea60514ecde26f231f1c3f",
+  "nautilus_trader[polymarket] @ https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.6/nautilus_trader-1.231.0a20260730%2Bpolysignal.6-cp312-cp312-manylinux_2_36_x86_64.whl#sha256=df7c8c871f79b4ae5cd880a2a20f40c193ad35a267d45373e60f1b3c5079cc93",
 ]
 [project.scripts]
 polysignal-lab = "polysignal_lab.app.main:main"

@@ -535,7 +535,7 @@ dependencies = [
     { name = "uvloop", marker = "sys_platform != 'win32'" },
 ]
 wheels = [
-    { url = "https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.6/nautilus_trader-1.231.0a20260730%2Bpolysignal.6-cp312-cp312-manylinux_2_36_x86_64.whl", hash = "sha256:f938fcdd8d8956be8c3443ab6cf64f931ec518bde8ea60514ecde26f231f1c3f" },
+    { url = "https://github.com/6Kmfi6HP/nautilus_trader/releases/download/polysignal-1.231.0a20260730.6/nautilus_trader-1.231.0a20260730%2Bpolysignal.6-cp312-cp312-manylinux_2_36_x86_64.whl", hash = "sha256:df7c8c871f79b4ae5cd880a2a20f40c193ad35a267d45373e60f1b3c5079cc93" },
 ]
 
 [package.optional-dependencies]
