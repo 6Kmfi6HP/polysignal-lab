@@ -882,10 +882,7 @@ def _clear_global_book_recovery_if_bilateral(
     condition_id: str,
 ) -> None:
     epoch_at = state.global_book_recovery_epoch_at
-    if (
-        epoch_at is None
-        or condition_id not in state.first_bilateral_book_ever_at_by_condition
-    ):
+    if epoch_at is None:
         return
     receipts = state.last_book_received_at_by_condition.get(condition_id, {})
     if all(
@@ -1357,7 +1354,7 @@ def force_resubscribe_if_stale_orderbook(
     _ = strategy._stale_orderbook_recovery_by_condition.pop(condition_id, None)
     stall_sec = round((now_utc - total_stalled_at).total_seconds(), 3)
     logger.info(
-        "condition_stale_orderbook_resubscription",
+        "condition_book_refresh_requested",
         extra=_recovery_log_extra(
             state,
             condition_id,

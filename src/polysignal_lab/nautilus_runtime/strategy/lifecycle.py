@@ -223,6 +223,9 @@ def _global_book_recovery_decision(
     now: datetime,
 ) -> tuple[bool, datetime | None]:
     state = strategy._subscription_state
+    epoch_at = state.global_book_recovery_epoch_at
+    if epoch_at is not None:
+        return False, epoch_at
     once_ready_condition_ids = tuple(
         condition_id
         for condition_id in condition_ids
@@ -231,9 +234,6 @@ def _global_book_recovery_decision(
     if not once_ready_condition_ids:
         state.global_book_recovery_epoch_at = None
         return True, None
-    epoch_at = state.global_book_recovery_epoch_at
-    if epoch_at is not None:
-        return False, epoch_at
     now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
         UTC
     )

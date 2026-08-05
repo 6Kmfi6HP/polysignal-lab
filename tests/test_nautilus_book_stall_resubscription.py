@@ -1723,8 +1723,8 @@ def test_global_outage_epoch_survives_rotation_until_real_book_arrives() -> None
 
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert state.global_book_recovery_epoch_at is None
-    assert len(strategy.refreshed_instruments) == 4
+    assert state.global_book_recovery_epoch_at == now
+    assert len(strategy.refreshed_instruments) == 2
 
     received_at = rotated_at + timedelta(seconds=1)
     assert (
@@ -1737,16 +1737,29 @@ def test_global_outage_epoch_survives_rotation_until_real_book_arrives() -> None
         )
         is False
     )
-    assert state.global_book_recovery_epoch_at is None
+    assert state.global_book_recovery_epoch_at == now
 
     strategy.clock.now_ns += int(
         (_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000
     )
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert len(strategy.refreshed_instruments) == 5
-    assert strategy.refreshed_instruments.count("sol-5m-up.POLYMARKET") == 1
-    assert strategy.refreshed_instruments.count("sol-5m-down.POLYMARKET") == 2
+    assert len(strategy.refreshed_instruments) == 2
+    assert strategy.refreshed_instruments.count("sol-5m-up.POLYMARKET") == 0
+    assert strategy.refreshed_instruments.count("sol-5m-down.POLYMARKET") == 0
+
+    received_at = received_at + timedelta(seconds=1)
+    assert (
+        observe_market_book_side(
+            strategy,
+            "sol-5m",
+            Side.DOWN,
+            received_at=received_at,
+            book_at=received_at,
+        )
+        is True
+    )
+    assert state.global_book_recovery_epoch_at is None
 
 
 def test_all_condition_partial_stale_recovery_keeps_missing_side_retries() -> None:
