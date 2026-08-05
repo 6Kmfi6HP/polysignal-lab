@@ -146,6 +146,15 @@ class _SubscriptionScopeOwner(Protocol):
     _subscription_timeframes: frozenset[str]
 
 
+class _BookRefreshStrategy(Protocol):
+    def refresh_book_subscription(
+        self,
+        instrument_id: object,
+        client_id: object | None = None,
+        params: Mapping[str, object] | None = None,
+    ) -> object: ...
+
+
 def condition_phase(
     strategy: _ConditionSubscriptionStateOwner,
     condition_id: str,
@@ -1048,12 +1057,17 @@ def abandon_book_stalled_condition(
     return True
 
 
-def _resubscribe_market_instrument(
+def _refresh_market_instrument(
     strategy: _SubscriptionStrategy,
     instrument_id: object,
 ) -> None:
-    _ = unsubscribe_market_instrument(strategy, instrument_id)
-    _ = subscribe_market_instrument(strategy, instrument_id)
+    instrument_id = _nautilus_instrument_id(instrument_id)
+    client_id = _client_id_for_instrument(strategy, instrument_id)
+    refresh_strategy = cast(_BookRefreshStrategy, cast(object, strategy))
+    _ = refresh_strategy.refresh_book_subscription(
+        instrument_id,
+        client_id=client_id,
+    )
 
 
 def _awaiting_condition_instruments(
@@ -1149,7 +1163,7 @@ def _resubscribe_and_begin_generation(
     if not instruments:
         return None
     for instrument_id in instruments:
-        _resubscribe_market_instrument(strategy, instrument_id)
+        _refresh_market_instrument(strategy, instrument_id)
     return instruments
 
 
@@ -1268,7 +1282,7 @@ def force_resubscribe_if_book_stalled(
         else _BOOK_GENERATION_STALL_SEC
     )
     logger.info(
-        "condition_book_resubscription",
+        "condition_book_refresh_requested",
         extra=_recovery_log_extra(
             state,
             condition_id,

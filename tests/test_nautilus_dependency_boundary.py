@@ -62,7 +62,7 @@ def test_nautilus_is_required_default_dependency() -> None:
         for dependency in default_deps
         if dependency.startswith("nautilus_trader[polymarket] @ ")
     )
-    assert "#sha256=13ea1fb0dc9400f3de36ec59869d90f6e312162f25ac14074051a6667a33d4b6" in expected
+    assert "#sha256=f938fcdd8d8956be8c3443ab6cf64f931ec518bde8ea60514ecde26f231f1c3f" in expected
     assert expected in default_deps
     assert optional_deps["nautilus"] == [expected]
     assert data["project"]["requires-python"] == ">=3.12,<3.13"
