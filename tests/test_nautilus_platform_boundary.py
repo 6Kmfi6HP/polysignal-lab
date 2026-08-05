@@ -40,8 +40,12 @@ def test_nautilus_is_required_dependency_for_default_runtime() -> None:
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     dependencies = cast(list[str], data["project"]["dependencies"])
-    expected = "nautilus_trader[polymarket]==1.231.0a20260730"
-    assert expected in dependencies
+    expected = next(
+        dependency
+        for dependency in dependencies
+        if dependency.startswith("nautilus_trader[polymarket] @ ")
+    )
+    assert "#sha256=6fde27a2f4ed14b1e6a11c38c8a066aaca139afd02e47a1afc7719171109e55c" in expected
     nautilus_extra = cast(
         list[str], data["project"]["optional-dependencies"]["nautilus"]
     )
@@ -49,7 +53,7 @@ def test_nautilus_is_required_dependency_for_default_runtime() -> None:
     assert nautilus_extra == [
         expected,
     ]
-    assert data["project"]["requires-python"] == ">=3.12"
+    assert data["project"]["requires-python"] == ">=3.12,<3.13"
 
 
 def test_nautilus_dependency_avoids_ephemeral_develop_wheel() -> None:

@@ -56,10 +56,15 @@ def test_nautilus_is_required_default_dependency() -> None:
     default_deps = data["project"]["dependencies"]
     optional_deps = data["project"]["optional-dependencies"]
 
-    expected = "nautilus_trader[polymarket]==1.231.0a20260730"
+    expected = next(
+        dependency
+        for dependency in default_deps
+        if dependency.startswith("nautilus_trader[polymarket] @ ")
+    )
+    assert "#sha256=6fde27a2f4ed14b1e6a11c38c8a066aaca139afd02e47a1afc7719171109e55c" in expected
     assert expected in default_deps
     assert optional_deps["nautilus"] == [expected]
-    assert data["project"]["requires-python"] == ">=3.12"
+    assert data["project"]["requires-python"] == ">=3.12,<3.13"
 
 
 def test_nautilus_node_does_not_import_legacy_trading_state() -> None:

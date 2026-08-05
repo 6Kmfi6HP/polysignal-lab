@@ -38,7 +38,7 @@ from polysignal_lab.nautilus_runtime.live_node import (
 def test_nautilus_version_has_native_strategy_messaging() -> None:
     from importlib.metadata import version
 
-    assert version("nautilus-trader") == "1.231.0a20260730"
+    assert version("nautilus-trader") == "1.231.0a20260730+polysignal.1"
     assert callable(getattr(pyo3.Strategy, "publish_data", None))
     assert callable(getattr(pyo3.Strategy, "subscribe_data", None))
 
