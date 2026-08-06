@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+import logging
 from typing import Protocol, cast
 
+from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.nautilus_runtime.custom_data_publisher import framework_now
 from polysignal_lab.nautilus_runtime.custom_data_types import (
@@ -23,6 +25,7 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
     log_suppressed_book_recovery,
+    observe_market_book_side,
     pending_condition_instrument_ids,
     subscription_scope_condition_ids,
 )
@@ -43,6 +46,8 @@ from polysignal_lab.nautilus_runtime.strategy.feed_resume_bridge import (
 from polysignal_lab.nautilus_runtime.strategy.market_data_events import (
     cancel_pending_market_data_evaluations,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _ClockHost(Protocol):
@@ -79,7 +84,18 @@ class _LifecycleStrategy(_ClockHost, Protocol):
         data_type: object,
         client_id: object | None = None,
     ) -> object: ...
-    def _note_runtime_progress(self, phase: str) -> None: ...
+    def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids: Sequence[str] | None = None,
+    ) -> None: ...
+    def _note_runtime_readiness(
+        self,
+        condition_id: str,
+        *,
+        ready: bool,
+    ) -> None: ...
     def _require_registry(self) -> MarketCatalog: ...
     def _require_assembler(self) -> object: ...
     def _subscribe_market_conditions(self, condition_ids: Sequence[str]) -> None: ...
@@ -331,13 +347,87 @@ def _recover_book_subscriptions(
         )
 
 
+def _reconcile_awaiting_books_from_cache(
+    strategy: _LifecycleStrategy,
+    condition_ids: Sequence[str],
+    *,
+    now: datetime,
+) -> None:
+    """Credit awaiting sides when Cache already holds a book (quiet markets).
+
+    Refresh/snapshot may populate the managed book without a subsequent WS
+    delta. Observing with received_at=now lets quiet markets reach READY on the
+    next heartbeat instead of stalling until abandon.
+    """
+    state = strategy._subscription_state
+    awaiting_active = tuple(
+        condition_id
+        for condition_id in condition_ids
+        if condition_id in state.awaiting_book_sides_by_condition
+    )
+    if awaiting_active:
+        logger.info(
+            "awaiting_first_book_active_count",
+            extra={"awaiting_first_book_active_count": len(awaiting_active)},
+        )
+    registry = strategy.registry
+    assembler = strategy.assembler
+    books = getattr(assembler, "books", None)
+    if registry is None or books is None:
+        return
+    book_for_token = getattr(books, "book_for_token", None)
+    if not callable(book_for_token):
+        return
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
+    for condition_id in awaiting_active:
+        awaiting = state.awaiting_book_sides_by_condition.get(condition_id)
+        if not awaiting:
+            continue
+        pair = registry.by_condition(condition_id)
+        if pair is None:
+            continue
+        token_by_side = {Side.UP: pair.up.token_id, Side.DOWN: pair.down.token_id}
+        finished = False
+        for side in tuple(awaiting):
+            book = book_for_token(token_by_side[side], now=now_utc)
+            if book is None:
+                continue
+            book_at = getattr(book, "received_at", None)
+            if not isinstance(book_at, datetime):
+                book_at = now_utc
+            finished = observe_market_book_side(
+                strategy,  # pyright: ignore[reportArgumentType]
+                condition_id,
+                side,
+                received_at=now_utc,
+                book_at=book_at,
+            )
+            logger.info(
+                "generation_reconciled_from_cache",
+                extra={
+                    "condition_id": condition_id,
+                    "side": side.value,
+                    "generation_ready": finished,
+                },
+            )
+            if finished:
+                strategy._note_runtime_readiness(condition_id, ready=True)
+                break
+
+
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
-    strategy._note_runtime_progress("evaluation_heartbeat")
     # A3: reopen global recovery after market WS feed_resumed (JSONL bridge).
     _ = poll_feed_resume_from_logs(strategy)  # pyright: ignore[reportArgumentType]
     now = framework_now(strategy)
     active_condition_ids = _active_unexpired_condition_ids(strategy, now=now)
+    strategy._note_runtime_progress(
+        "evaluation_heartbeat",
+        active_condition_ids=active_condition_ids,
+    )
     strategy._subscribe_market_conditions(active_condition_ids)
+    _reconcile_awaiting_books_from_cache(strategy, active_condition_ids, now=now)
     _recover_book_subscriptions(strategy, active_condition_ids, now=now)
     registry = strategy._require_registry()
     trading_state = trading_state_from_cache(

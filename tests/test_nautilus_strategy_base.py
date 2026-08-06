@@ -2729,7 +2729,12 @@ def test_market_data_evaluation_is_debounced_per_condition() -> None:
         def _framework_now(self) -> datetime:
             return clock["now"]
 
-        def _note_runtime_progress(self, phase: str) -> None:
+        def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids=None,
+    ) -> None:
             _ = phase
 
         def evaluate_condition(self, condition_id: str) -> None:

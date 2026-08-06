@@ -91,13 +91,21 @@ class MarketSubscriptionState:
     # Instrument-level intent keeps repeated provider updates idempotent.
     subscribed_instrument_ids: set[str] = field(default_factory=set)
     awaiting_book_sides_by_condition: dict[str, set[Side]] = field(default_factory=dict)
+    # Generation validity clock: set only by begin_market_book_generation.
+    # observe_market_book_side rejects received_at < this timestamp. Wire
+    # retries must NOT bump this — otherwise post-generation books are
+    # recorded as receipts yet never discard awaiting sides.
     book_generation_started_at_by_condition: dict[str, datetime] = field(
         default_factory=dict
     )
+    # 60s wire-retry cadence for an open generation. Updated on awaiting
+    # refresh retries; cleared when a true new generation begins.
+    last_book_wire_retry_at_by_condition: dict[str, datetime] = field(
+        default_factory=dict
+    )
     # Total-stall clock: when the condition first began waiting for a book
-    # (first generation start, or first stale-book detection). Unlike
-    # book_generation_started_at_by_condition (the 60s retry cadence, reset by
-    # every resubscription) this is NOT reset by resubscription, so repeated
+    # (first generation start, or first stale-book detection). Unlike the
+    # wire-retry cadence this is NOT reset by resubscription, so repeated
     # 60s retries cannot slip past the 240s abandon threshold. Cleared when the
     # book truly becomes ready or the condition is retired/cleared/abandoned.
     book_stalled_started_at_by_condition: dict[str, datetime] = field(
@@ -796,18 +804,24 @@ def begin_market_book_generation(
 ) -> None:
     """Invalidate cached-book readiness before a real subscribe attempt."""
     observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    observed_utc = observed.astimezone(UTC)
     state = strategy._subscription_state
-    state.awaiting_book_sides_by_condition[condition_id] = set(
+    awaiting = set(
         (Side.UP, Side.DOWN) if awaiting_sides is None else awaiting_sides
     )
-    state.book_generation_started_at_by_condition[condition_id] = (
-        observed.astimezone(UTC)
-    )
+    state.awaiting_book_sides_by_condition[condition_id] = awaiting
+    state.book_generation_started_at_by_condition[condition_id] = observed_utc
+    # New generation resets wire-retry cadence; only begin may raise the
+    # validity clock.
+    state.last_book_wire_retry_at_by_condition.pop(condition_id, None)
+    # Drop prior receipts for sides this generation awaits so detail cannot
+    # show "already received" while observe rejects received < started_at.
+    _clear_awaiting_side_book_receipts(state, condition_id, awaiting)
     # Total-stall clock starts on the first wait and survives every
     # resubscription (setdefault); cleared only on book-ready / retire / clear.
     state.book_stalled_started_at_by_condition.setdefault(
         condition_id,
-        observed.astimezone(UTC),
+        observed_utc,
     )
     state.first_bilateral_book_at_by_condition.pop(
         condition_id, None
@@ -820,6 +834,27 @@ def begin_market_book_generation(
         condition_id,
         ConditionSubscriptionPhase.AWAITING_FIRST_BOOK,
     )
+
+
+def _clear_awaiting_side_book_receipts(
+    state: MarketSubscriptionState,
+    condition_id: str,
+    awaiting: set[Side],
+) -> None:
+    if not awaiting:
+        return
+    receipts = state.last_book_received_at_by_condition.get(condition_id)
+    if receipts is not None:
+        for side in awaiting:
+            _ = receipts.pop(side, None)
+        if not receipts:
+            _ = state.last_book_received_at_by_condition.pop(condition_id, None)
+    books = state.last_book_at_by_condition.get(condition_id)
+    if books is not None:
+        for side in awaiting:
+            _ = books.pop(side, None)
+        if not books:
+            _ = state.last_book_at_by_condition.pop(condition_id, None)
 
 
 def observe_market_book_side(
@@ -909,6 +944,7 @@ def finish_market_book_generation(
     ready_at = max(receipts.values(), default=received_at)
     state.awaiting_book_sides_by_condition.pop(condition_id)
     state.book_generation_started_at_by_condition.pop(condition_id, None)
+    state.last_book_wire_retry_at_by_condition.pop(condition_id, None)
     state.book_stalled_started_at_by_condition.pop(condition_id, None)
     state.first_bilateral_book_at_by_condition[condition_id] = ready_at
     # Remembers this active period reached READY so the stale-repair re-awaiting
@@ -948,6 +984,10 @@ def retire_market_book_generation(
         None,
     )
     strategy._subscription_state.book_generation_started_at_by_condition.pop(
+        condition_id,
+        None,
+    )
+    strategy._subscription_state.last_book_wire_retry_at_by_condition.pop(
         condition_id,
         None,
     )
@@ -1002,10 +1042,14 @@ def _book_generation_stalled(
     if pending_condition_instrument_ids(strategy, condition_id):
         # Still waiting on instrument metadata, not on the book feed.
         return False
-    started_at = state.book_generation_started_at_by_condition.get(condition_id)
-    if started_at is None:
+    # Cadence uses last wire retry when present; generation start otherwise.
+    # Generation validity clock is intentionally not advanced by retries.
+    cadence_at = state.last_book_wire_retry_at_by_condition.get(
+        condition_id
+    ) or state.book_generation_started_at_by_condition.get(condition_id)
+    if cadence_at is None:
         return False
-    return (now.astimezone(UTC) - started_at).total_seconds() > (
+    return (now.astimezone(UTC) - cadence_at).total_seconds() > (
         _BOOK_GENERATION_STALL_SEC
     )
 
@@ -1157,7 +1201,10 @@ def _resubscribe_and_begin_generation(
     else:
         if not awaiting_sides:
             return None
-        state.book_generation_started_at_by_condition[condition_id] = now.astimezone(UTC)
+        # Wire retry only: refresh the subscription. Do NOT bump
+        # book_generation_started_at — that would invalidate books already
+        # received after the original generation start.
+        state.last_book_wire_retry_at_by_condition[condition_id] = now.astimezone(UTC)
     instruments = _awaiting_condition_instruments(strategy, condition_id)
     if not instruments:
         return None
@@ -1315,8 +1362,10 @@ def _stale_book_wire_retry_due(
     total_stalled_at = state.book_stalled_started_at_by_condition.setdefault(
         condition_id, now_utc
     )
-    generation_at = state.book_generation_started_at_by_condition.get(condition_id)
-    if generation_at is not None and (now_utc - generation_at).total_seconds() <= (
+    cadence_at = state.last_book_wire_retry_at_by_condition.get(
+        condition_id
+    ) or state.book_generation_started_at_by_condition.get(condition_id)
+    if cadence_at is not None and (now_utc - cadence_at).total_seconds() <= (
         _BOOK_GENERATION_STALL_SEC
     ):
         return None

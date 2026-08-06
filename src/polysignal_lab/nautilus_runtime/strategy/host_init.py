@@ -56,7 +56,7 @@ class HostInitRequest:
     instrument_id_resolver: Callable[[str], object] | None = None
     registry: MarketCatalog | None = None
     observability: _Observability | None = None
-    progress_callback: Callable[[str], None] | None = None
+    progress_callback: Callable[..., None] | None = None
     readiness_callback: Callable[[str, bool, dict[str, object]], None] | None = None
     unsubscribe_exited: bool = True
     l1_book_snapshot_interval_ms: int = 0
@@ -88,7 +88,7 @@ class HostConstruction:
     unsubscribe_exited: bool
     execution_mode: str
     observability: _Observability | None
-    progress_callback: Callable[[str], None] | None
+    progress_callback: Callable[..., None] | None
     readiness_callback: Callable[[str, bool, dict[str, object]], None] | None
     market_config: MarketConfig
     spot_data_source: str

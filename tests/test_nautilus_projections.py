@@ -142,7 +142,12 @@ def test_fill_without_cache_order_is_quarantined() -> None:
             self.recorded: list[object] = []
             self.progress: list[str] = []
 
-        def _note_runtime_progress(self, phase: str) -> None:
+        def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids=None,
+    ) -> None:
             self.progress.append(phase)
 
         def _record_nautilus_fill(self, event: object, metrics: object) -> None:
@@ -209,7 +214,12 @@ def test_fill_recovers_association_tags_from_cache_order() -> None:
             self.recorded: list[dict[str, object]] = []
             self._settled_position_keys: set[tuple[str, str]] = set()
 
-        def _note_runtime_progress(self, phase: str) -> None:
+        def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids=None,
+    ) -> None:
             _ = phase
 
         def _record_nautilus_fill(
@@ -282,7 +292,12 @@ def test_order_event_merges_partial_event_tags_with_cache_order() -> None:
             self.recorded: list[dict[str, object]] = []
             self.progress: list[str] = []
 
-        def _note_runtime_progress(self, phase: str) -> None:
+        def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids=None,
+    ) -> None:
             self.progress.append(phase)
 
         def _record_nautilus_order(
@@ -330,7 +345,12 @@ def test_order_event_quarantines_cache_order_without_project_identity() -> None:
             self.recorded: list[dict[str, object]] = []
             self.progress: list[str] = []
 
-        def _note_runtime_progress(self, phase: str) -> None:
+        def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids=None,
+    ) -> None:
             self.progress.append(phase)
 
         def _record_nautilus_order(
@@ -384,7 +404,12 @@ def test_tagless_cache_miss_fill_is_quarantined() -> None:
             self.progress: list[str] = []
             self.recorded: list[object] = []
 
-        def _note_runtime_progress(self, phase: str) -> None:
+        def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids=None,
+    ) -> None:
             self.progress.append(phase)
 
         def _record_nautilus_fill(

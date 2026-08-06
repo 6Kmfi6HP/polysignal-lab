@@ -238,8 +238,13 @@ class _ResubscribeStrategy:
         del status, reason
         self.readiness.append((condition_id, ready))
 
-    def _note_runtime_progress(self, phase: str) -> None:
-        del phase
+    def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids=None,
+    ) -> None:
+        del phase, active_condition_ids
 
     def _require_registry(self) -> MarketCatalog:
         if self.registry is None:

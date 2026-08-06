@@ -117,6 +117,7 @@ def write_runtime_heartbeat(
     readiness_key: str | None = None,
     readiness_ok: bool | None = None,
     readiness_detail: dict[str, object] | None = None,
+    active_readiness_keys: frozenset[str] | None = None,
     now: datetime | None = None,
 ) -> RuntimeHeartbeat:
     timestamp = (now or _utc_now()).astimezone(UTC).isoformat()
@@ -161,6 +162,19 @@ def write_runtime_heartbeat(
     elif phase not in {"market_data_evaluation", "evaluation_heartbeat"}:
         _ = readiness_misses.pop(_GLOBAL_READINESS_KEY, None)
         _ = readiness_details.pop(_GLOBAL_READINESS_KEY, None)
+    if active_readiness_keys is not None:
+        keep = set(active_readiness_keys)
+        for key in tuple(readiness_details):
+            if key == _GLOBAL_READINESS_KEY:
+                continue
+            if key not in keep:
+                _ = readiness_details.pop(key, None)
+                _ = readiness_misses.pop(key, None)
+        for key in tuple(readiness_misses):
+            if key == _GLOBAL_READINESS_KEY:
+                continue
+            if key not in keep:
+                _ = readiness_misses.pop(key, None)
     heartbeat = RuntimeHeartbeat(
         updated_at=timestamp,
         phase=phase,

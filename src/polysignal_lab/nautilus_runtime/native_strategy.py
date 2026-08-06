@@ -91,7 +91,7 @@ class PolySignalNativeStrategy(Strategy):
         instrument_id_resolver: Callable[[str], object] | None = None,
         registry: MarketCatalog | None = None,
         observability: _Observability | None = None,
-        progress_callback: Callable[[str], None] | None = None,
+        progress_callback: Callable[..., None] | None = None,
         readiness_callback: Callable[[str, bool, dict[str, object]], None]
         | None = None,
         unsubscribe_exited: bool = True,
@@ -132,8 +132,17 @@ class PolySignalNativeStrategy(Strategy):
     def _require_assembler(self) -> _Assembler:
         return self.assembler
 
-    def _note_runtime_progress(self, phase: str) -> None:
-        readiness_mod.note_runtime_progress(self, phase)
+    def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids: Sequence[str] | None = None,
+    ) -> None:
+        readiness_mod.note_runtime_progress(
+            self,
+            phase,
+            active_condition_ids=active_condition_ids,
+        )
 
     def _note_runtime_readiness(
         self,

@@ -115,6 +115,7 @@ def _write_runtime_heartbeat_best_effort(
     readiness_key: str | None = None,
     readiness_ok: bool | None = None,
     readiness_detail: dict[str, object] | None = None,
+    active_readiness_keys: frozenset[str] | None = None,
 ) -> None:
     if not _heartbeat_write_due(
         path,
@@ -134,6 +135,7 @@ def _write_runtime_heartbeat_best_effort(
             readiness_key=readiness_key,
             readiness_ok=readiness_ok,
             readiness_detail=readiness_detail,
+            active_readiness_keys=active_readiness_keys,
         )
     except OSError:
         _log_probe_write_failure(path)
@@ -149,11 +151,18 @@ def _write_runtime_heartbeat_best_effort(
     _HEARTBEAT_WRITE_GATES[path] = (_monotonic(), miss_keys)
 
 
-def _runtime_progress_callback(settings: Settings) -> Callable[[str], None]:
+def _runtime_progress_callback(settings: Settings) -> Callable[..., None]:
     path = _runtime_heartbeat_path(settings)
 
-    def note_progress(phase: str) -> None:
-        _write_runtime_heartbeat_best_effort(path, phase=phase)
+    def note_progress(
+        phase: str,
+        active_readiness_keys: frozenset[str] | None = None,
+    ) -> None:
+        _write_runtime_heartbeat_best_effort(
+            path,
+            phase=phase,
+            active_readiness_keys=active_readiness_keys,
+        )
 
     return note_progress
 

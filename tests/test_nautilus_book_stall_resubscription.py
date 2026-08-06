@@ -27,6 +27,7 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     _BOOK_GENERATION_ABANDON_SEC,
     _BOOK_GENERATION_STALL_SEC,
     abandon_book_stalled_condition,
+    begin_market_book_generation,
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
     observe_market_book_side,
@@ -205,9 +206,13 @@ def test_stalled_condition_refreshes_books_and_generation_state() -> None:
     ]
     assert strategy.unsubscribed_instruments == []
     assert strategy.subscribed_instruments == []
-    # Book generation clock restarted so the next heartbeat does not re-fire.
+    # Book generation validity clock stays at the original start; wire retry
+    # only advances the retry cadence so the next heartbeat does not re-fire.
     state = strategy._subscription_state
-    assert state.book_generation_started_at_by_condition["btc-5m"] == now
+    assert state.book_generation_started_at_by_condition["btc-5m"] == (
+        now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10)
+    )
+    assert state.last_book_wire_retry_at_by_condition["btc-5m"] == now
     assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.UP, Side.DOWN}
 
 
@@ -960,8 +965,13 @@ class _HeartbeatStrategy(_ResubscribeStrategy):
         self.assembler = object()
         self.evaluated: list[str] = []
 
-    def _note_runtime_progress(self, phase: str) -> None:
-        del phase
+    def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids: Sequence[str] | None = None,
+    ) -> None:
+        del phase, active_condition_ids
 
     def _require_registry(self) -> MarketCatalog:
         if self.registry is None:
@@ -1025,7 +1035,11 @@ def test_evaluation_heartbeat_resubscribes_stalled_condition() -> None:
     ]
     assert strategy.unsubscribed_instruments == []
     assert strategy.subscribed_instruments == []
+    started_at = now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10)
     assert strategy._subscription_state.book_generation_started_at_by_condition[
+        "btc-5m"
+    ] == started_at
+    assert strategy._subscription_state.last_book_wire_retry_at_by_condition[
         "btc-5m"
     ] == now
     # Evaluation still proceeds for the active condition after resubscription.
@@ -1967,3 +1981,252 @@ def test_stale_orderbook_condition_recovers_to_ready_after_bilateral_book() -> N
     assert "btc-5m" not in state.book_stalled_started_at_by_condition
     assert "btc-5m" not in strategy._stale_orderbook_recovery_by_condition
     assert "btc-5m" in strategy._active_condition_ids
+
+
+def test_awaiting_wire_retry_does_not_bump_generation_clock_or_invalidate_receipts() -> (
+    None
+):
+    """Production stall shape: wire retry bumps generation_started_at, then books
+    with received_at after the original begin but before the bump are recorded
+    as receipts yet rejected for pending.discard — leaving awaiting=[UP,DOWN]
+    with bilateral last_book_received_at forever."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    started_at = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    begin_market_book_generation(strategy, "btc-5m", now=started_at)
+    state = strategy._subscription_state
+
+    retry_at = started_at + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10)
+    assert force_resubscribe_if_book_stalled(strategy, "btc-5m", now=retry_at) is True
+
+    # Generation validity clock must stay at the first begin — not the retry.
+    assert state.book_generation_started_at_by_condition["btc-5m"] == started_at
+
+    # Books that arrived after the original generation start must still count.
+    book_at = started_at + timedelta(seconds=30)
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.UP,
+            received_at=book_at,
+            book_at=book_at,
+        )
+        is False
+    )
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.DOWN,
+            received_at=book_at,
+            book_at=book_at,
+        )
+        is True
+    )
+    assert "btc-5m" not in state.awaiting_book_sides_by_condition
+    assert state.condition_phases["btc-5m"] is ConditionSubscriptionPhase.READY
+
+
+def test_bumped_generation_clock_creates_bilateral_receipt_awaiting_false_state() -> (
+    None
+):
+    """Document the pre-fix failure mode: if generation_started_at is raised
+    past already-arrived book times, receipts accumulate while both sides stay
+    awaiting — the production false state."""
+    registry = _registry()
+    owner = SimpleNamespace(_subscription_state=MarketSubscriptionState())
+    started_at = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    begin_market_book_generation(
+        owner,  # pyright: ignore[reportArgumentType]
+        "btc-5m",
+        now=started_at,
+    )
+    state = owner._subscription_state
+    # Simulate the buggy awaiting-retry bump.
+    bumped = started_at + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10)
+    state.book_generation_started_at_by_condition["btc-5m"] = bumped
+
+    book_at = started_at + timedelta(seconds=30)
+    assert (
+        observe_market_book_side(
+            owner,  # pyright: ignore[reportArgumentType]
+            "btc-5m",
+            Side.UP,
+            received_at=book_at,
+            book_at=book_at,
+        )
+        is False
+    )
+    assert (
+        observe_market_book_side(
+            owner,  # pyright: ignore[reportArgumentType]
+            "btc-5m",
+            Side.DOWN,
+            received_at=book_at,
+            book_at=book_at,
+        )
+        is False
+    )
+    assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.UP, Side.DOWN}
+    assert state.last_book_received_at_by_condition["btc-5m"] == {
+        Side.UP: book_at,
+        Side.DOWN: book_at,
+    }
+    assert "btc-5m" not in state.first_bilateral_book_at_by_condition
+
+
+def test_begin_generation_clears_awaiting_side_receipts() -> None:
+    """A true new generation must clear prior receipts so old timestamps cannot
+    falsely look like progress against the new started_at."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    started_at = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    begin_market_book_generation(strategy, "btc-5m", now=started_at)
+    old_receipt = started_at + timedelta(seconds=1)
+    state = strategy._subscription_state
+    state.last_book_received_at_by_condition["btc-5m"] = {
+        Side.UP: old_receipt,
+        Side.DOWN: old_receipt,
+    }
+    state.last_book_at_by_condition["btc-5m"] = {
+        Side.UP: old_receipt,
+        Side.DOWN: old_receipt,
+    }
+
+    new_start = started_at + timedelta(seconds=30)
+    begin_market_book_generation(strategy, "btc-5m", now=new_start)
+
+    assert state.book_generation_started_at_by_condition["btc-5m"] == new_start
+    assert state.last_book_received_at_by_condition.get("btc-5m", {}) == {}
+    assert state.last_book_at_by_condition.get("btc-5m", {}) == {}
+    # Old receipt timestamps must not finish the new generation.
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.UP,
+            received_at=old_receipt,
+            book_at=old_receipt,
+        )
+        is False
+    )
+    assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.UP, Side.DOWN}
+    # Fresh now-stamped events still reach READY.
+    now = new_start + timedelta(seconds=1)
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.UP,
+            received_at=now,
+            book_at=now,
+        )
+        is False
+    )
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.DOWN,
+            received_at=now,
+            book_at=now,
+        )
+        is True
+    )
+    assert state.condition_phases["btc-5m"] is ConditionSubscriptionPhase.READY
+
+
+def test_repeated_stall_refresh_preserves_partial_awaiting_progress() -> None:
+    """Two 61s stall refreshes must not wipe a side that already discarded via
+    a valid post-generation receipt (no bilateral-receipt + still-awaiting-both
+    false state from clock bumps)."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    t0 = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    begin_market_book_generation(strategy, "btc-5m", now=t0)
+    state = strategy._subscription_state
+
+    up_at = t0 + timedelta(seconds=10)
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.UP,
+            received_at=up_at,
+            book_at=up_at,
+        )
+        is False
+    )
+    assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.DOWN}
+
+    first_retry = t0 + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 1)
+    assert force_resubscribe_if_book_stalled(strategy, "btc-5m", now=first_retry) is True
+    assert state.book_generation_started_at_by_condition["btc-5m"] == t0
+    assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.DOWN}
+    assert state.last_book_received_at_by_condition["btc-5m"][Side.UP] == up_at
+
+    second_retry = t0 + timedelta(seconds=2 * (_BOOK_GENERATION_STALL_SEC + 1))
+    assert (
+        force_resubscribe_if_book_stalled(strategy, "btc-5m", now=second_retry) is True
+    )
+    assert state.book_generation_started_at_by_condition["btc-5m"] == t0
+    assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.DOWN}
+    # Still only DOWN awaiting — not the production false [UP, DOWN] with receipts.
+    assert Side.UP not in state.awaiting_book_sides_by_condition["btc-5m"]
+    assert state.last_book_received_at_by_condition["btc-5m"][Side.UP] == up_at
+
+    assert (
+        observe_market_book_side(
+            strategy,
+            "btc-5m",
+            Side.DOWN,
+            received_at=second_retry,
+            book_at=second_retry,
+        )
+        is True
+    )
+    assert "btc-5m" not in state.awaiting_book_sides_by_condition
+
+
+def test_evaluation_heartbeat_reconciles_awaiting_sides_from_cache() -> None:
+    """Quiet markets: cache already holds both books after refresh, but no new
+    WS delta arrives — heartbeat must observe from cache and reach READY."""
+    from polysignal_lab.alpha.types import SideBookView
+
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m"}
+    started_at = now - timedelta(seconds=30)
+    begin_market_book_generation(strategy, "btc-5m", now=started_at)
+
+    class _Books:
+        def book_for_token(
+            self, token_id: str, *, now: datetime | None = None
+        ) -> SideBookView | None:
+            del now
+            return SideBookView(
+                token_id=token_id,
+                best_bid=0.49,
+                best_ask=0.51,
+                spread=0.02,
+                freshness_ms=100,
+                ask_levels=((0.51, 10.0),),
+                received_at=started_at + timedelta(seconds=1),
+            )
+
+        def trades_for_token(self, token_id: str) -> tuple[object, ...]:
+            del token_id
+            return ()
+
+    strategy.assembler = SimpleNamespace(books=_Books(), is_bound=True)
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    state = strategy._subscription_state
+    assert "btc-5m" not in state.awaiting_book_sides_by_condition
+    assert state.condition_phases["btc-5m"] is ConditionSubscriptionPhase.READY
+    assert "btc-5m" in state.first_bilateral_book_at_by_condition
