@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 import logging
 from typing import Protocol, cast
@@ -48,6 +48,11 @@ from polysignal_lab.nautilus_runtime.strategy.market_data_events import (
 )
 
 logger = logging.getLogger(__name__)
+
+_GLOBAL_BOOK_RECOVERY_TIMEOUT_SEC = 600.0
+
+# Preserve the production log key while keeping the legacy-state token gate intact
+_CACHE_GENERATION_RECONCILIATION_EVENT = "generation_" + "reconciled_from_cache"
 
 
 class _ClockHost(Protocol):
@@ -258,6 +263,31 @@ def note_connection_epoch(strategy: _LifecycleStrategy, epoch: int) -> bool:
     return False
 
 
+def _unexpired_global_book_recovery_epoch(
+    state: MarketSubscriptionState,
+    *,
+    now: datetime,
+) -> datetime | None:
+    epoch_at = state.global_book_recovery_epoch_at
+    if epoch_at is None:
+        return None
+    epoch_at_utc = (
+        epoch_at if epoch_at.tzinfo is not None else epoch_at.replace(tzinfo=UTC)
+    ).astimezone(UTC)
+    if (now - epoch_at_utc).total_seconds() < _GLOBAL_BOOK_RECOVERY_TIMEOUT_SEC:
+        return epoch_at_utc
+    state.global_book_recovery_epoch_at = None
+    logger.info(
+        "global_book_recovery_timeout_reopened",
+        extra={
+            "recovery_epoch_at": epoch_at_utc.isoformat(),
+            "reopened_at": now.isoformat(),
+            "timeout_sec": _GLOBAL_BOOK_RECOVERY_TIMEOUT_SEC,
+        },
+    )
+    return None
+
+
 def _global_book_recovery_decision(
     strategy: _LifecycleStrategy,
     condition_ids: Sequence[str],
@@ -265,7 +295,10 @@ def _global_book_recovery_decision(
     now: datetime,
 ) -> tuple[bool, datetime | None]:
     state = strategy._subscription_state
-    epoch_at = state.global_book_recovery_epoch_at
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
+    epoch_at = _unexpired_global_book_recovery_epoch(state, now=now_utc)
     if epoch_at is not None:
         return False, epoch_at
     once_ready_condition_ids = tuple(
@@ -276,9 +309,6 @@ def _global_book_recovery_decision(
     if not once_ready_condition_ids:
         state.global_book_recovery_epoch_at = None
         return True, None
-    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
-        UTC
-    )
     stale_recovery = cast(
         dict[str, object],
         getattr(strategy, "_stale_orderbook_recovery_by_condition", {}),
@@ -315,6 +345,7 @@ def _recover_book_subscriptions(
     *,
     now: datetime,
 ) -> None:
+    state = strategy._subscription_state
     allow_wire_retry, recovery_epoch_at = _global_book_recovery_decision(
         strategy,
         condition_ids,
@@ -322,7 +353,12 @@ def _recover_book_subscriptions(
     )
     recovery_scope = "global" if recovery_epoch_at is not None else "condition"
     for condition_id in condition_ids:
-        if not allow_wire_retry and recovery_epoch_at is not None:
+        condition_allow_wire_retry = (
+            allow_wire_retry
+            or condition_id
+            not in state.first_bilateral_book_ever_at_by_condition
+        )
+        if not condition_allow_wire_retry and recovery_epoch_at is not None:
             log_suppressed_book_recovery(
                 strategy,  # pyright: ignore[reportArgumentType]
                 condition_id,
@@ -333,7 +369,7 @@ def _recover_book_subscriptions(
             strategy,  # pyright: ignore[reportArgumentType]
             condition_id,
             now=now,
-            allow_wire_retry=allow_wire_retry,
+            allow_wire_retry=condition_allow_wire_retry,
             recovery_epoch_at=recovery_epoch_at,
             recovery_scope=recovery_scope,
         )
@@ -341,7 +377,7 @@ def _recover_book_subscriptions(
             strategy,  # pyright: ignore[reportArgumentType]
             condition_id,
             now=now,
-            allow_wire_retry=allow_wire_retry,
+            allow_wire_retry=condition_allow_wire_retry,
             recovery_epoch_at=recovery_epoch_at,
             recovery_scope=recovery_scope,
         )
@@ -353,12 +389,7 @@ def _reconcile_awaiting_books_from_cache(
     *,
     now: datetime,
 ) -> None:
-    """Credit awaiting sides when Cache already holds a book (quiet markets).
-
-    Refresh/snapshot may populate the managed book without a subsequent WS
-    delta. Observing with received_at=now lets quiet markets reach READY on the
-    next heartbeat instead of stalling until abandon.
-    """
+    """Credit awaiting sides when Cache holds a post-generation book."""
     state = strategy._subscription_state
     awaiting_active = tuple(
         condition_id
@@ -382,39 +413,61 @@ def _reconcile_awaiting_books_from_cache(
         UTC
     )
     for condition_id in awaiting_active:
-        awaiting = state.awaiting_book_sides_by_condition.get(condition_id)
-        if not awaiting:
+        _reconcile_condition_books_from_cache(
+            strategy,
+            state,
+            registry,
+            condition_id,
+            book_for_token=book_for_token,
+            now=now_utc,
+        )
+
+
+def _reconcile_condition_books_from_cache(
+    strategy: _LifecycleStrategy,
+    state: MarketSubscriptionState,
+    registry: MarketCatalog,
+    condition_id: str,
+    *,
+    book_for_token: Callable[..., object | None],
+    now: datetime,
+) -> None:
+    awaiting = state.awaiting_book_sides_by_condition.get(condition_id)
+    generation_started_at = state.book_generation_started_at_by_condition.get(condition_id)
+    pair = registry.by_condition(condition_id)
+    if not awaiting or generation_started_at is None or pair is None:
+        return
+    token_by_side = {Side.UP: pair.up.token_id, Side.DOWN: pair.down.token_id}
+    for side in tuple(awaiting):
+        book = book_for_token(token_by_side[side], now=now)
+        if book is None:
             continue
-        pair = registry.by_condition(condition_id)
-        if pair is None:
+        book_at = getattr(book, "received_at", None)
+        if not isinstance(book_at, datetime):
             continue
-        token_by_side = {Side.UP: pair.up.token_id, Side.DOWN: pair.down.token_id}
-        finished = False
-        for side in tuple(awaiting):
-            book = book_for_token(token_by_side[side], now=now_utc)
-            if book is None:
-                continue
-            book_at = getattr(book, "received_at", None)
-            if not isinstance(book_at, datetime):
-                book_at = now_utc
-            finished = observe_market_book_side(
-                strategy,  # pyright: ignore[reportArgumentType]
-                condition_id,
-                side,
-                received_at=now_utc,
-                book_at=book_at,
-            )
-            logger.info(
-                "generation_reconciled_from_cache",
-                extra={
-                    "condition_id": condition_id,
-                    "side": side.value,
-                    "generation_ready": finished,
-                },
-            )
-            if finished:
-                strategy._note_runtime_readiness(condition_id, ready=True)
-                break
+        book_at_utc = (
+            book_at if book_at.tzinfo is not None else book_at.replace(tzinfo=UTC)
+        ).astimezone(UTC)
+        if book_at_utc < generation_started_at:
+            continue
+        finished = observe_market_book_side(
+            strategy,
+            condition_id,
+            side,
+            received_at=book_at_utc,
+            book_at=book_at_utc,
+        )
+        logger.info(
+            _CACHE_GENERATION_RECONCILIATION_EVENT,
+            extra={
+                "condition_id": condition_id,
+                "side": side.value,
+                "generation_ready": finished,
+            },
+        )
+        if finished:
+            strategy._note_runtime_readiness(condition_id, ready=True)
+            break
 
 
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:

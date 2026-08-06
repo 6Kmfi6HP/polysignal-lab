@@ -1572,6 +1572,56 @@ def test_global_recovery_logs_suppressed_wire_retry(
     assert getattr(suppressed[0], "recovery_scope") == "global"
     assert getattr(suppressed[0], "awaiting_sides") == ["DOWN", "UP"]
 
+def test_global_recovery_timeout_reopens_one_batch(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m"}
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 1,
+    )
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+    state = strategy._subscription_state
+    assert len(strategy.refreshed_instruments) == 2
+    assert state.global_book_recovery_epoch_at == now
+
+    strategy.clock.now_ns += int(599 * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.refreshed_instruments) == 2
+    assert state.global_book_recovery_epoch_at == now
+
+    caplog.clear()
+    strategy.clock.now_ns += int(1 * 1_000_000_000)
+    with caplog.at_level(logging.INFO):
+        on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    reopened_at = now + timedelta(seconds=600)
+    assert len(strategy.refreshed_instruments) == 4
+    assert state.global_book_recovery_epoch_at == reopened_at
+    reopened = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "global_book_recovery_timeout_reopened"
+    ]
+    assert len(reopened) == 1
+    assert getattr(reopened[0], "recovery_epoch_at") == now.isoformat()
+    assert getattr(reopened[0], "reopened_at") == reopened_at.isoformat()
+    assert getattr(reopened[0], "timeout_sec") == 600.0
+
+    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.refreshed_instruments) == 4
+    assert state.global_book_recovery_epoch_at == reopened_at
+
+
 def test_global_recovery_requires_receipts_after_batch_timestamp() -> None:
     registry = _registry()
     now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
@@ -1689,7 +1739,7 @@ def test_marker_timestamp_receipt_does_not_enable_missing_side_retry() -> None:
     assert state.global_book_recovery_epoch_at == now
 
 
-def test_global_suppression_bounds_never_ready_retry_but_preserves_abandon() -> None:
+def test_global_suppression_allows_never_ready_retry_and_preserves_abandon() -> None:
     registry = MarketCatalog(
         instrument_id_resolver=lambda _condition, token: f"{token}.POLYMARKET"
     )
@@ -1718,9 +1768,9 @@ def test_global_suppression_bounds_never_ready_retry_but_preserves_abandon() -> 
     strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    # A feed-wide outage bounds all further wire retries, including a mixed
-    # never-READY condition. Its independent total-stall clock remains active.
-    assert len(strategy.refreshed_instruments) == 6
+    # The global epoch suppresses once-READY repairs, but a mixed never-READY
+    # condition keeps its bounded first-book retry path.
+    assert len(strategy.refreshed_instruments) == 8
     for condition_id in ("btc-5m", "eth-5m"):
         for side in ("up", "down"):
             assert (
@@ -1732,7 +1782,7 @@ def test_global_suppression_bounds_never_ready_retry_but_preserves_abandon() -> 
     for side in ("up", "down"):
         assert (
             strategy.refreshed_instruments.count(f"sol-5m-{side}.POLYMARKET")
-            == 1
+            == 2
         )
     assert strategy._active_condition_ids == {"btc-5m", "eth-5m", "sol-5m"}
 
@@ -1743,7 +1793,7 @@ def test_global_suppression_bounds_never_ready_retry_but_preserves_abandon() -> 
     # Abandon performs one unsubscribe-only cleanup for SOL's six streams.
     assert len(strategy.unsubscribed_instruments) == 6
     assert strategy.subscribed_instruments == []
-    assert len(strategy.refreshed_instruments) == 6
+    assert len(strategy.refreshed_instruments) == 8
     assert strategy.readiness[-1] == ("sol-5m", True)
 
 
@@ -1785,7 +1835,7 @@ def test_global_outage_epoch_survives_rotation_until_real_book_arrives() -> None
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
     assert state.global_book_recovery_epoch_at == now
-    assert len(strategy.refreshed_instruments) == 2
+    assert len(strategy.refreshed_instruments) == 4
 
     received_at = rotated_at + timedelta(seconds=1)
     assert (
@@ -1805,9 +1855,9 @@ def test_global_outage_epoch_survives_rotation_until_real_book_arrives() -> None
     )
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert len(strategy.refreshed_instruments) == 2
-    assert strategy.refreshed_instruments.count("sol-5m-up.POLYMARKET") == 0
-    assert strategy.refreshed_instruments.count("sol-5m-down.POLYMARKET") == 0
+    assert len(strategy.refreshed_instruments) == 5
+    assert strategy.refreshed_instruments.count("sol-5m-up.POLYMARKET") == 1
+    assert strategy.refreshed_instruments.count("sol-5m-down.POLYMARKET") == 2
 
     received_at = received_at + timedelta(seconds=1)
     assert (
@@ -2035,7 +2085,6 @@ def test_bumped_generation_clock_creates_bilateral_receipt_awaiting_false_state(
     """Document the pre-fix failure mode: if generation_started_at is raised
     past already-arrived book times, receipts accumulate while both sides stay
     awaiting — the production false state."""
-    registry = _registry()
     owner = SimpleNamespace(_subscription_state=MarketSubscriptionState())
     started_at = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
     begin_market_book_generation(
@@ -2230,3 +2279,78 @@ def test_evaluation_heartbeat_reconciles_awaiting_sides_from_cache() -> None:
     assert "btc-5m" not in state.awaiting_book_sides_by_condition
     assert state.condition_phases["btc-5m"] is ConditionSubscriptionPhase.READY
     assert "btc-5m" in state.first_bilateral_book_at_by_condition
+
+
+def test_evaluation_heartbeat_rejects_pre_generation_cached_books() -> None:
+    """Verify a cached book from before generation cannot satisfy readiness."""
+    from polysignal_lab.alpha.types import SideBookView
+
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m"}
+    started_at = now - timedelta(seconds=30)
+    begin_market_book_generation(strategy, "btc-5m", now=started_at)
+    state = strategy._subscription_state
+    state.global_book_recovery_epoch_at = started_at
+
+    class _Books:
+        def book_for_token(
+            self, token_id: str, *, now: datetime | None = None
+        ) -> SideBookView | None:
+            del now
+            return SideBookView(
+                token_id=token_id,
+                best_bid=0.49,
+                best_ask=0.51,
+                spread=0.02,
+                freshness_ms=31_000,
+                ask_levels=((0.51, 10.0),),
+                received_at=started_at - timedelta(seconds=1),
+            )
+
+        def trades_for_token(self, token_id: str) -> tuple[object, ...]:
+            del token_id
+            return ()
+
+    strategy.assembler = SimpleNamespace(books=_Books(), is_bound=True)
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert state.awaiting_book_sides_by_condition["btc-5m"] == {
+        Side.UP,
+        Side.DOWN,
+    }
+    assert state.condition_phases["btc-5m"] is ConditionSubscriptionPhase.AWAITING_FIRST_BOOK
+    assert state.last_book_received_at_by_condition.get("btc-5m", {}) == {}
+    assert state.global_book_recovery_epoch_at == started_at
+
+
+def test_evaluation_heartbeat_rejects_cache_books_without_received_at() -> None:
+    """Verify a cached book without an arrival time cannot satisfy readiness."""
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m"}
+    started_at = now - timedelta(seconds=30)
+    begin_market_book_generation(strategy, "btc-5m", now=started_at)
+    state = strategy._subscription_state
+    state.global_book_recovery_epoch_at = started_at
+
+    class _Books:
+        def book_for_token(
+            self, token_id: str, *, now: datetime | None = None
+        ) -> object:
+            del token_id, now
+            return SimpleNamespace(received_at=None)
+
+    strategy.assembler = SimpleNamespace(books=_Books(), is_bound=True)
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert state.awaiting_book_sides_by_condition["btc-5m"] == {
+        Side.UP,
+        Side.DOWN,
+    }
+    assert state.last_book_received_at_by_condition.get("btc-5m", {}) == {}
+    assert state.global_book_recovery_epoch_at == started_at
