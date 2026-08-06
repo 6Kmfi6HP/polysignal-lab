@@ -37,6 +37,9 @@ from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
     _subscribe_custom_data,
     unsubscribe_custom_data,
 )
+from polysignal_lab.nautilus_runtime.strategy.feed_resume_bridge import (
+    poll_feed_resume_from_logs,
+)
 from polysignal_lab.nautilus_runtime.strategy.market_data_events import (
     cancel_pending_market_data_evaluations,
 )
@@ -59,6 +62,8 @@ class _LifecycleStrategy(_ClockHost, Protocol):
     _subscription_state: MarketSubscriptionState
     _subscription_assets: frozenset[str]
     _subscription_timeframes: frozenset[str]
+    _runtime_log_directory: str | None
+    _feed_resume_log_cursor: object | None
     registry: MarketCatalog | None
     assembler: object
     cache: object | None
@@ -328,6 +333,8 @@ def _recover_book_subscriptions(
 
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
     strategy._note_runtime_progress("evaluation_heartbeat")
+    # A3: reopen global recovery after market WS feed_resumed (JSONL bridge).
+    _ = poll_feed_resume_from_logs(strategy)  # pyright: ignore[reportArgumentType]
     now = framework_now(strategy)
     active_condition_ids = _active_unexpired_condition_ids(strategy, now=now)
     strategy._subscribe_market_conditions(active_condition_ids)

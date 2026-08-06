@@ -63,6 +63,7 @@ class HostInitRequest:
     policy: DecisionPolicy | None = None
     market_config: MarketConfig = field(default_factory=MarketConfig)
     spot_data_source: str = "polymarket_rtds"
+    runtime_log_directory: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +92,7 @@ class HostConstruction:
     readiness_callback: Callable[[str, bool, dict[str, object]], None] | None
     market_config: MarketConfig
     spot_data_source: str
+    runtime_log_directory: str | None
 
 
 def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
@@ -133,6 +135,7 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
         readiness_callback=readiness_callback,
         market_config=settings.markets,
         spot_data_source=settings.runtime.nautilus.spot_data.source,
+        runtime_log_directory=str(settings.logging.directory),
     )
 
 
@@ -193,6 +196,7 @@ def resolve_host_construction(req: HostInitRequest) -> HostConstruction:
         readiness_callback=work.readiness_callback,
         market_config=work.market_config,
         spot_data_source=work.spot_data_source,
+        runtime_log_directory=work.runtime_log_directory,
     )
 
 
@@ -209,6 +213,8 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
     strategy.registry = host.registry
     strategy._market_config = host.market_config
     strategy._spot_data_source = host.spot_data_source
+    strategy._runtime_log_directory = host.runtime_log_directory
+    strategy._feed_resume_log_cursor = None
     strategy.policy = host.policy  # Strategy-owned DecisionPolicy (not Actor bus)
     strategy.fixed_stake_usdc = host.fixed_stake_usdc
     strategy.exit_policy = NativeExitPolicy.from_config(host.exit_model)
