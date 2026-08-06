@@ -14,6 +14,10 @@ from pathlib import Path
 import re
 from typing import Protocol
 
+from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
+    MarketSubscriptionState,
+)
+
 _FEED_RESUMED_EPOCH_RE = re.compile(
     r"\bfeed_resumed\b.*\bconnection_epoch=(?P<epoch>\d+)",
 )
@@ -21,7 +25,7 @@ _NAUTILUS_JSONL_GLOB = "PolySignal-Nautilus-*.jsonl"
 
 
 class _FeedResumeStrategy(Protocol):
-    _subscription_state: object
+    _subscription_state: MarketSubscriptionState
     _runtime_log_directory: str | None
     _feed_resume_log_cursor: FeedResumeLogCursor | None
 
@@ -105,15 +109,18 @@ def _epochs_from_jsonl_chunk(chunk: bytes) -> list[int]:
 
 
 def record_feed_resumed(strategy: _FeedResumeStrategy, *, connection_epoch: int) -> None:
-    """Observe a feed resume; always reopen the global recovery epoch."""
-    from polysignal_lab.nautilus_runtime.strategy.lifecycle import note_feed_resumed
+    """Observe a feed resume; always reopen the global recovery epoch.
 
+    Clears ``global_book_recovery_epoch_at`` inline (same effect as
+    ``lifecycle.note_feed_resumed``) so this module does not import lifecycle
+    and create a basedpyright import cycle.
+    """
     state = strategy._subscription_state
-    previous = getattr(state, "last_observed_connection_epoch", None)
+    previous = state.last_observed_connection_epoch
     epoch = int(connection_epoch)
-    if previous is None or epoch > int(previous):
-        state.last_observed_connection_epoch = epoch  # type: ignore[attr-defined]
-    note_feed_resumed(strategy)  # pyright: ignore[reportArgumentType]
+    if previous is None or epoch > previous:
+        state.last_observed_connection_epoch = epoch
+    state.global_book_recovery_epoch_at = None
 
 
 def poll_feed_resume_from_logs(strategy: _FeedResumeStrategy) -> bool:

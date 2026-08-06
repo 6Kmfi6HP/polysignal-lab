@@ -573,10 +573,12 @@ def test_dashboard_health_reports_persistent_readiness_detail(tmp_path) -> None:
     store = SQLiteStore(tmp_path / "dashboard-health.sqlite3")
     heartbeat_path = tmp_path / "state" / "runtime_heartbeat.json"
     started_at = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    # Once-READY miss: never-READY awaiting_first_book no longer arms liveness.
     detail: dict[str, object] = {
         "condition_id": "condition-a",
         "market_id": "m-a",
-        "subscription_state": "awaiting_first_book",
+        "subscription_state": "ready",
+        "first_bilateral_book_ever_at": started_at.isoformat(),
         "last_book_at_by_side": {"UP": started_at.isoformat(), "DOWN": None},
         "freshness_ms_by_side": {"UP": 302_000, "DOWN": None},
         "max_freshness_ms": 302_000,

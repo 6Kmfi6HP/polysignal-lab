@@ -410,8 +410,8 @@ def test_once_ready_quiet_book_skips_trade_without_readiness_miss_or_wire_refres
         def clock(self) -> _Clock:
             return self._test_clock
 
-        def __init__(self, **kwargs: object) -> None:  # pyright: ignore[reportInconsistentConstructor]
-            super().__init__(**kwargs)  # type: ignore[arg-type]
+        def __init__(self, **kwargs: Any) -> None:  # pyright: ignore[reportInconsistentConstructor]
+            super().__init__(**kwargs)
             self._test_clock = _Clock(int(T0.timestamp() * 1_000_000_000))
 
     strategy = _Strategy(

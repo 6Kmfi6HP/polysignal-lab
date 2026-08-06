@@ -225,14 +225,14 @@ def test_start_and_stop_only_track_conditions_in_strategy_scope() -> None:
     strategy = _LifecycleStrategy(registry)
 
     on_strategy_start(
-        strategy,
+        strategy,  # pyright: ignore[reportArgumentType]
         object(),
     )
 
     assert strategy._active_condition_ids == {"btc-5m"}
     assert strategy.subscribed == [("btc-5m",)]
 
-    on_strategy_stop(strategy)
+    on_strategy_stop(strategy)  # pyright: ignore[reportArgumentType]
 
     assert strategy.unsubscribed == [("btc-5m",)]
 
