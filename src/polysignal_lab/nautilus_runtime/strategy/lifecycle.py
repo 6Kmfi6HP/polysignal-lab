@@ -216,6 +216,27 @@ def _active_unexpired_condition_ids(
     return tuple(active_condition_ids)
 
 
+def note_feed_resumed(strategy: _LifecycleStrategy) -> None:
+    """Clear the global recovery epoch after a reconnect / feed resume.
+
+    A feed-wide outage opens one bounded refresh batch and then suppresses
+    per-minute wire retries. When the market WS resumes (or its connection
+    epoch advances), allow one new bounded batch for the new transport life.
+    """
+    strategy._subscription_state.global_book_recovery_epoch_at = None
+
+
+def note_connection_epoch(strategy: _LifecycleStrategy, epoch: int) -> bool:
+    """Record a market-data connection epoch; clear recovery on advance."""
+    state = strategy._subscription_state
+    previous = state.last_observed_connection_epoch
+    state.last_observed_connection_epoch = int(epoch)
+    if previous is not None and int(epoch) > previous:
+        note_feed_resumed(strategy)
+        return True
+    return False
+
+
 def _global_book_recovery_decision(
     strategy: _LifecycleStrategy,
     condition_ids: Sequence[str],

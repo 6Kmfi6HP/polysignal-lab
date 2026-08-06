@@ -119,8 +119,10 @@ class MarketSubscriptionState:
         default_factory=dict
     )
     # A feed-wide recovery batch remains authoritative until one once-READY
-    # condition receives both outcome books after this timestamp.
+    # condition receives both outcome books after this timestamp, or until a
+    # feed_resumed / connection-epoch advance clears it for a new batch.
     global_book_recovery_epoch_at: datetime | None = None
+    last_observed_connection_epoch: int | None = None
     last_book_at_by_condition: dict[str, dict[Side, datetime]] = field(
         default_factory=dict
     )

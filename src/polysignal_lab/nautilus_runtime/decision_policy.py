@@ -116,7 +116,7 @@ class DecisionPolicy:
         )
 
     def orderbook_readiness_threshold_ms(self) -> float:
-        return float(self.gate.poly_config.max_book_staleness_ms)
+        return float(self.gate.poly_config.max_book_readiness_staleness_ms)
 
     def orderbook_trade_threshold_ms(self, strategy: str) -> float:
         return self.gate.orderbook_freshness_threshold_ms(
