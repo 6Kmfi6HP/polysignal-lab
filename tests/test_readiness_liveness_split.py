@@ -17,6 +17,7 @@ from polysignal_lab.alpha.types import (
 )
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.nautilus_runtime.book_recovery import BookRecoveryCoordinator
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.market_catalog import (
     InstrumentTokenMeta,
@@ -200,6 +201,9 @@ class _ResubscribeStrategy:
         self._stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]] = {}
         self._runtime_readiness_reason_by_condition: dict[str, str] = {}
         self._runtime_readiness_miss_condition_ids: set[str] = set()
+        self.book_recovery_coordinator: BookRecoveryCoordinator = (
+            BookRecoveryCoordinator()
+        )
         self._subscription_state = MarketSubscriptionState()
         self.subscribed_instruments: list[str] = []
         self.unsubscribed_instruments: list[str] = []

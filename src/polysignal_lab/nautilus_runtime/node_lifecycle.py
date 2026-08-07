@@ -124,10 +124,14 @@ async def _finalize_async_cli_runtime(
             _ = stopper()
         await _stop_nautilus_services(bundle.context)
     finally:
+        from polysignal_lab.nautilus_runtime.book_recovery import (
+            bind_runtime_book_recovery_coordinator,
+        )
         from polysignal_lab.nautilus_runtime.observability import (
             bind_runtime_observability,
         )
 
+        bind_runtime_book_recovery_coordinator(None)
         bind_runtime_observability(None)
         cleanup_signals()
 
@@ -187,9 +191,13 @@ def _finalize_sync_cli_runtime(
         if isinstance(node, _Disposable):
             node.dispose()
     finally:
+        from polysignal_lab.nautilus_runtime.book_recovery import (
+            bind_runtime_book_recovery_coordinator,
+        )
         from polysignal_lab.nautilus_runtime.observability import (
             bind_runtime_observability,
         )
 
+        bind_runtime_book_recovery_coordinator(None)
         bind_runtime_observability(None)
         cleanup_signals()

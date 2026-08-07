@@ -303,6 +303,62 @@ def test_polysignal_strategy_config_extends_nautilus_strategy_config() -> None:
     assert reconstructed.strategy_name == "one_cent_buy"
 
 
+def test_importable_strategy_without_runtime_recovery_coordinator_fails_closed() -> None:
+    from polysignal_lab.nautilus_runtime.book_recovery import (
+        bind_runtime_book_recovery_coordinator,
+        runtime_book_recovery_coordinator,
+    )
+    from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
+    from polysignal_lab.nautilus_runtime.strategy.host_init import (
+        HostInitRequest,
+        resolve_host_construction,
+    )
+
+    settings = Settings()
+    settings.strategies.set_explicit_strategy_names(("one_cent_buy",))
+    config = PolySignalStrategyConfig.build(
+        settings, (), (), strategy_name="one_cent_buy"
+    )
+    previous = runtime_book_recovery_coordinator()
+    try:
+        bind_runtime_book_recovery_coordinator(None)
+        host = resolve_host_construction(HostInitRequest(config=config))
+    finally:
+        bind_runtime_book_recovery_coordinator(previous)
+
+    assert host.book_recovery_coordinator is None
+
+
+def test_importable_strategies_share_runtime_recovery_coordinator() -> None:
+    from polysignal_lab.nautilus_runtime.book_recovery import (
+        BookRecoveryCoordinator,
+        bind_runtime_book_recovery_coordinator,
+        runtime_book_recovery_coordinator,
+    )
+    from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
+    from polysignal_lab.nautilus_runtime.strategy.host_init import (
+        HostInitRequest,
+        resolve_host_construction,
+    )
+
+    settings = Settings()
+    settings.strategies.set_explicit_strategy_names(("one_cent_buy",))
+    config = PolySignalStrategyConfig.build(
+        settings, (), (), strategy_name="one_cent_buy"
+    )
+    coordinator = BookRecoveryCoordinator()
+    previous = runtime_book_recovery_coordinator()
+    try:
+        bind_runtime_book_recovery_coordinator(coordinator)
+        hosts = tuple(
+            resolve_host_construction(HostInitRequest(config=config)) for _index in range(3)
+        )
+    finally:
+        bind_runtime_book_recovery_coordinator(previous)
+
+    assert all(host.book_recovery_coordinator is coordinator for host in hosts)
+
+
 def test_market_rotation_actor_config_extends_nautilus_actor_config() -> None:
     from nautilus_trader.common.config import ActorConfig
 

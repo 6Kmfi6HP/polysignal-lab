@@ -8,6 +8,10 @@ from typing import Any
 from polysignal_lab.alpha.types import AlphaCore
 from polysignal_lab.config import MarketConfig
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.nautilus_runtime.book_recovery import (
+    BookRecoveryCoordinator,
+    runtime_book_recovery_coordinator,
+)
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicy,
@@ -47,6 +51,7 @@ class HostInitRequest:
     assembler: _Assembler | None = None
     condition_ids: Sequence[str] = ()
     strategy_name: str = ""
+    book_recovery_coordinator: BookRecoveryCoordinator | None = None
     fixed_stake_usdc: float = 10.0
     sandbox_base_currency: str = "pUSD"
     orderbook_staleness_ms: float = 60_000.0
@@ -77,6 +82,7 @@ class HostConstruction:
     instrument_id_resolver: Callable[[str], object]
     policy: DecisionPolicy
     strategy_name: str
+    book_recovery_coordinator: BookRecoveryCoordinator | None
     condition_ids: tuple[str, ...]
     fixed_stake_usdc: float
     sandbox_base_currency: str
@@ -113,6 +119,9 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
     progress_callback = req.progress_callback or _runtime_progress_callback(settings)
     readiness_callback = req.readiness_callback or _runtime_readiness_callback(settings)
     observability = req.observability or runtime_observability()
+    # Importable strategies share one market-data runtime. Keep recovery
+    # unavailable when the node has not bound its process-level coordinator.
+    coordinator = req.book_recovery_coordinator or runtime_book_recovery_coordinator()
     return HostInitRequest(
         config=config,
         core=core,
@@ -122,6 +131,7 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
         policy=resolved_policy,
         condition_ids=tuple(config.condition_ids),
         strategy_name=config.strategy_name,
+        book_recovery_coordinator=coordinator,
         fixed_stake_usdc=float(settings.trading.fixed_stake_usdc),
         sandbox_base_currency=str(settings.runtime.nautilus.sandbox_base_currency),
         exit_model=settings.trading.exit_model,
@@ -181,6 +191,7 @@ def resolve_host_construction(req: HostInitRequest) -> HostConstruction:
         instrument_id_resolver=resolver,
         policy=work.policy or DecisionPolicy(),
         strategy_name=work.strategy_name,
+        book_recovery_coordinator=work.book_recovery_coordinator,
         condition_ids=tuple(work.condition_ids),
         fixed_stake_usdc=work.fixed_stake_usdc,
         sandbox_base_currency=work.sandbox_base_currency,
@@ -306,6 +317,7 @@ def _cash_base_currency(host: HostConstruction) -> str:
 def bind_host_runtime(strategy: Any, host: HostConstruction) -> None:
     """Assign DI fields + pipeline collaborators after super().__init__."""
     _bind_di_fields(strategy, host)
+    strategy.book_recovery_coordinator = host.book_recovery_coordinator
     _bind_pipeline(
         strategy,
         account_id=_cash_account_id(host),

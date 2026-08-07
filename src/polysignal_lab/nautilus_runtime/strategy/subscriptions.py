@@ -14,6 +14,7 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
 )
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.strategy_readiness import StrategyStatus
+from polysignal_lab.nautilus_runtime.book_recovery import BookRecoveryCoordinator
 from polysignal_lab.nautilus_runtime.strategy.catalog_lookups import (
     _asset_conditions,
     _instrument_ids,
@@ -375,7 +376,6 @@ class _SubscriptionStrategy(_ConditionSubscriptionStateOwner, Protocol):
     _stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]]
     _runtime_readiness_reason_by_condition: dict[str, str]
     _runtime_readiness_miss_condition_ids: set[str]
-
     def _readiness_detail(
         self,
         condition_id: str,
@@ -890,7 +890,22 @@ def observe_market_book_side(
         received_at=received,
         started_at=started_at,
     )
+    _rearm_condition_book_recovery(strategy, condition_id)
     return True
+
+
+def _rearm_condition_book_recovery(
+    strategy: _SubscriptionStateOwner,
+    condition_id: str,
+) -> None:
+    coordinator = cast(
+        BookRecoveryCoordinator | None,
+        getattr(strategy, "book_recovery_coordinator", None),
+    )
+    registry = getattr(strategy, "registry", None)
+    if coordinator is None or not isinstance(registry, MarketCatalog):
+        return
+    coordinator.rearm(_instrument_ids(registry, (condition_id,)))
 
 
 def _record_market_book_side(
@@ -1113,6 +1128,48 @@ def _refresh_market_instrument(
     )
 
 
+def _dispatch_book_recovery(
+    strategy: _SubscriptionStrategy,
+    instrument_ids: Sequence[object],
+    *,
+    now: datetime,
+) -> tuple[object, ...] | None:
+    coordinator = cast(
+        BookRecoveryCoordinator | None,
+        getattr(strategy, "book_recovery_coordinator", None),
+    )
+    if coordinator is None:
+        return None
+    claimed = coordinator.claim(instrument_ids, now=now)
+    dispatched: list[object] = []
+    try:
+        for instrument_id in claimed.instrument_ids:
+            _refresh_market_instrument(strategy, instrument_id)
+            dispatched.append(instrument_id)
+    except Exception:
+        released = claimed.instrument_ids[len(dispatched) :]
+        coordinator.release(claimed, released)
+        logger.exception(
+            "book_recovery_batch_failed",
+            extra={
+                "strategy": getattr(strategy, "strategy_name", None),
+                "dispatched_instrument_ids": [str(value) for value in dispatched],
+                "released_instrument_ids": [str(value) for value in released],
+            },
+        )
+        raise
+    if dispatched:
+        logger.info(
+            "book_recovery_batch_dispatched",
+            extra={
+                "strategy": getattr(strategy, "strategy_name", None),
+                "instrument_ids": [str(value) for value in dispatched],
+                "instrument_count": len(dispatched),
+            },
+        )
+    return tuple(dispatched)
+
+
 def _awaiting_condition_instruments(
     strategy: _SubscriptionStrategy,
     condition_id: str,
@@ -1180,7 +1237,7 @@ def _resubscribe_and_begin_generation(
     condition_id: str,
     *,
     now: datetime,
-) -> tuple[object, ...] | None:
+) -> tuple[tuple[object, ...], tuple[object, ...] | None] | None:
     state = strategy._subscription_state
     awaiting_sides = state.awaiting_book_sides_by_condition.get(condition_id)
 
@@ -1208,9 +1265,19 @@ def _resubscribe_and_begin_generation(
     instruments = _awaiting_condition_instruments(strategy, condition_id)
     if not instruments:
         return None
-    for instrument_id in instruments:
-        _refresh_market_instrument(strategy, instrument_id)
-    return instruments
+    dispatched = _dispatch_book_recovery(strategy, instruments, now=now)
+    return instruments, dispatched
+
+
+def _recovery_event(
+    instruments: Sequence[object],
+    dispatched: Sequence[object] | None,
+) -> tuple[str, bool]:
+    if dispatched is None:
+        return "condition_book_recovery_unavailable", True
+    if dispatched:
+        return "condition_book_refresh_requested", len(dispatched) < len(instruments)
+    return "condition_book_recovery_coalesced", True
 
 
 def _recovery_log_extra(
@@ -1221,12 +1288,19 @@ def _recovery_log_extra(
     stall_sec: float,
     recovery_epoch_at: datetime | None,
     recovery_scope: str,
+    dispatched: Sequence[object] | None = None,
     wire_retry_suppressed: bool = False,
 ) -> dict[str, object]:
+    dispatched_keys = {
+        _instrument_key(instrument_id) for instrument_id in (dispatched or ())
+    }
+    instrument_keys = [_instrument_key(iid) for iid in instruments]
     return {
         "condition_id": condition_id,
         "stall_sec": stall_sec,
-        "instrument_ids": [_instrument_key(iid) for iid in instruments],
+        "instrument_ids": instrument_keys,
+        "dispatched_instrument_ids": sorted(dispatched_keys),
+        "suppressed_instrument_ids": sorted(set(instrument_keys) - dispatched_keys),
         "recovery_epoch_at": (
             recovery_epoch_at.isoformat() if recovery_epoch_at is not None else None
         ),
@@ -1317,18 +1391,20 @@ def force_resubscribe_if_book_stalled(
     generation_started_at = state.book_generation_started_at_by_condition.get(
         condition_id
     )
-    instruments = _resubscribe_and_begin_generation(
+    attempt = _resubscribe_and_begin_generation(
         strategy, condition_id, now=now
     )
-    if instruments is None:
+    if attempt is None:
         return False
+    instruments, dispatched = attempt
     stall_sec = (
         round((now.astimezone(UTC) - generation_started_at).total_seconds(), 3)
         if generation_started_at is not None
         else _BOOK_GENERATION_STALL_SEC
     )
+    event, wire_retry_suppressed = _recovery_event(instruments, dispatched)
     logger.info(
-        "condition_book_refresh_requested",
+        event,
         extra=_recovery_log_extra(
             state,
             condition_id,
@@ -1336,6 +1412,8 @@ def force_resubscribe_if_book_stalled(
             stall_sec=stall_sec,
             recovery_epoch_at=recovery_epoch_at,
             recovery_scope=recovery_scope,
+            dispatched=dispatched,
+            wire_retry_suppressed=wire_retry_suppressed,
         ),
     )
     return True
@@ -1395,17 +1473,19 @@ def force_resubscribe_if_stale_orderbook(
     if retry_due is None:
         return False
     now_utc, total_stalled_at = retry_due
-    instruments = _resubscribe_and_begin_generation(
+    attempt = _resubscribe_and_begin_generation(
         strategy,
         condition_id,
         now=now_utc,
     )
-    if instruments is None:
+    if attempt is None:
         return False
+    instruments, dispatched = attempt
     _ = strategy._stale_orderbook_recovery_by_condition.pop(condition_id, None)
     stall_sec = round((now_utc - total_stalled_at).total_seconds(), 3)
+    event, wire_retry_suppressed = _recovery_event(instruments, dispatched)
     logger.info(
-        "condition_book_refresh_requested",
+        event,
         extra=_recovery_log_extra(
             state,
             condition_id,
@@ -1413,6 +1493,8 @@ def force_resubscribe_if_stale_orderbook(
             stall_sec=stall_sec,
             recovery_epoch_at=recovery_epoch_at,
             recovery_scope=recovery_scope,
+            dispatched=dispatched,
+            wire_retry_suppressed=wire_retry_suppressed,
         ),
     )
     return True

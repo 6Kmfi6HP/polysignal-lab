@@ -9,6 +9,10 @@ from nautilus_trader.core.nautilus_pyo3 import InstrumentId
 
 from polysignal_lab.config import Settings, load_settings
 from polysignal_lab.domain.market import Market
+from polysignal_lab.nautilus_runtime.book_recovery import (
+    BookRecoveryCoordinator,
+    bind_runtime_book_recovery_coordinator,
+)
 from polysignal_lab.nautilus_runtime.configured_markets import (
     configured_condition_ids,
     instrument_load_ids,
@@ -102,6 +106,7 @@ def build_runtime_node(
             condition_ids=configured_ids,
         )
 
+    bind_runtime_book_recovery_coordinator(BookRecoveryCoordinator())
     # Official pyo3 providers own Gamma instrument load and dynamic slug refresh.
     # One provider per timeframe preserves the native single-interval builder contract.
     instrument_configs = _polymarket_instrument_configs(

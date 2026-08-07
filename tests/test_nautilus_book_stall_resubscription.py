@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 import logging
+from threading import Barrier
 from types import SimpleNamespace
+from typing import override
 
 import pytest
 
 from nautilus_trader.core.nautilus_pyo3 import Strategy  # pyright: ignore[reportAttributeAccessIssue]
 
 from polysignal_lab.domain.enums import Side
+from polysignal_lab.nautilus_runtime.book_recovery import BookRecoveryCoordinator
 from polysignal_lab.nautilus_runtime.market_catalog import (
     InstrumentTokenMeta,
     MarketCatalog,
@@ -78,6 +83,9 @@ class _ResubscribeStrategy:
         self._stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]] = {}
         self._runtime_readiness_reason_by_condition: dict[str, str] = {}
         self._runtime_readiness_miss_condition_ids: set[str] = set()
+        self.book_recovery_coordinator: BookRecoveryCoordinator = (
+            BookRecoveryCoordinator()
+        )
         self._subscription_state = MarketSubscriptionState()
         self.subscribed_instruments: list[str] = []
         self.unsubscribed_instruments: list[str] = []
@@ -85,6 +93,42 @@ class _ResubscribeStrategy:
         self.snapshot_requests: list[str] = []
         self.snapshot_request_params: list[Mapping[str, object] | None] = []
         self.readiness: list[tuple[str, bool]] = []
+
+    def configure_book_recovery(
+        self,
+        *,
+        coordinator: BookRecoveryCoordinator,
+    ) -> None:
+        self.book_recovery_coordinator = coordinator
+
+    def clear_book_recovery_coordinator_for_test(self) -> None:
+        del self.book_recovery_coordinator
+
+    def activate_for_test(self, *condition_ids: str) -> None:
+        self._active_condition_ids = set(condition_ids)
+
+    def mark_ready_for_test(self, condition_id: str, *, now: datetime) -> None:
+        state = self._subscription_state
+        state.condition_phases[condition_id] = ConditionSubscriptionPhase.READY
+        state.first_bilateral_book_ever_at_by_condition[condition_id] = now
+        state.last_book_received_at_by_condition[condition_id] = {
+            Side.UP: now,
+            Side.DOWN: now,
+        }
+
+    def condition_phase_for_test(
+        self,
+        condition_id: str,
+    ) -> ConditionSubscriptionPhase | None:
+        return self._subscription_state.condition_phases.get(condition_id)
+
+    def awaiting_sides_for_test(self, condition_id: str) -> set[Side]:
+        return set(
+            self._subscription_state.awaiting_book_sides_by_condition.get(
+                condition_id,
+                (),
+            )
+        )
 
     def _readiness_detail(
         self,
@@ -310,6 +354,8 @@ def test_real_strategy_resubscription_does_not_require_snapshot_wrapper() -> Non
         strategy_name="ptb_diff",
         registry=registry,
     )
+    strategy.book_recovery_coordinator = BookRecoveryCoordinator()
+    assert strategy.book_recovery_coordinator is not None
     strategy._cache_override = SimpleNamespace(instrument=lambda _iid: object())
     strategy.subscribed_instruments = []
     strategy.unsubscribed_instruments = []
@@ -1396,14 +1442,42 @@ def test_evaluation_heartbeat_rebuilds_stale_orderbook_condition() -> None:
     assert "btc-5m" in strategy._active_condition_ids
 
 
-def test_shared_market_outage_preserves_three_strategy_recovery_intents() -> None:
-    """The application owns per-strategy readiness, while the shared adapter
-    owns process-wide wire deduplication for identical recovery intent."""
+def test_book_recovery_claims_each_instrument_once_under_concurrency() -> None:
+    """Claim each shared instrument once across concurrent strategies."""
+    coordinator = BookRecoveryCoordinator()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    instrument_ids = tuple(f"instrument-{index}" for index in range(8))
+    barrier = Barrier(3)
+
+    def claim(_worker: int) -> tuple[object, ...]:
+        barrier.wait()
+        return coordinator.claim(instrument_ids, now=now).instrument_ids
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        claims = tuple(executor.map(claim, range(3)))
+
+    claimed = tuple(str(instrument_id) for batch in claims for instrument_id in batch)
+    assert Counter(claimed) == Counter(instrument_ids)
+
+
+def test_shared_market_outage_dispatches_one_wire_recovery_batch() -> None:
+    """Keep per-strategy readiness while coalescing shared wire recovery."""
     registry = _registry()
+    condition_assets = (
+        ("btc-5m", "BTC"),
+        ("eth-5m", "ETH"),
+        ("sol-5m", "SOL"),
+        ("xrp-5m", "XRP"),
+    )
+    for condition_id, asset in condition_assets[1:]:
+        registry.register(_pair(condition_id, asset, "5m"))
+    condition_ids = tuple(condition_id for condition_id, _asset in condition_assets)
     now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
     shared_refresh_intents: list[tuple[str, str]] = []
+    coordinator = BookRecoveryCoordinator()
 
     class _SharedMarketHeartbeat(_HeartbeatStrategy):
+        @override
         def refresh_book_subscription(
             self,
             instrument_id: object,
@@ -1413,34 +1487,163 @@ def test_shared_market_outage_preserves_three_strategy_recovery_intents() -> Non
             del client_id, params
             shared_refresh_intents.append((self.strategy_name, str(instrument_id)))
 
-    strategies = []
+    strategies: list[_SharedMarketHeartbeat] = []
     for strategy_name in ("vwap_momentum", "late_consensus", "ptb_diff"):
         strategy = _SharedMarketHeartbeat(registry, now=now)
         strategy.strategy_name = strategy_name
-        strategy._active_condition_ids = {"btc-5m"}
-        _stale_ready_state(
-            strategy,
-            "btc-5m",
-            now=now,
-            stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
-        )
+        strategy.configure_book_recovery(coordinator=coordinator)
+        strategy.activate_for_test(*condition_ids)
+        for condition_id in condition_ids:
+            _stale_ready_state(
+                strategy,
+                condition_id,
+                now=now,
+                stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+            )
         strategies.append(strategy)
 
     for strategy in strategies:
         on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
     assert sorted(shared_refresh_intents) == [
-        (strategy_name, f"btc-5m-{side}.POLYMARKET")
-        for strategy_name in ("late_consensus", "ptb_diff", "vwap_momentum")
+        ("vwap_momentum", f"{condition_id}-{side}.POLYMARKET")
+        for condition_id in sorted(condition_ids)
         for side in ("down", "up")
     ]
-    assert all(strategy._active_condition_ids == {"btc-5m"} for strategy in strategies)
+    assert all(
+        strategy._active_condition_ids == set(condition_ids) for strategy in strategies
+    )
     assert all(strategy.readiness == [] for strategy in strategies)
     assert all(
-        strategy._subscription_state.awaiting_book_sides_by_condition["btc-5m"]
+        strategy._subscription_state.awaiting_book_sides_by_condition[condition_id]
         == {Side.UP, Side.DOWN}
         for strategy in strategies
+        for condition_id in condition_ids
     )
+def test_unique_strategy_stall_dispatches_without_global_owner() -> None:
+    """Dispatch a unique recovery claim without a designated owner."""
+    registry = _registry()
+    registry.register(_pair("eth-5m", "ETH", "5m"))
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    coordinator = BookRecoveryCoordinator()
+    shared_refresh_intents: list[tuple[str, str]] = []
+
+    class _SharedMarketHeartbeat(_HeartbeatStrategy):
+        @override
+        def refresh_book_subscription(
+            self,
+            instrument_id: object,
+            client_id: object | None = None,
+            params: Mapping[str, object] | None = None,
+        ) -> None:
+            del client_id, params
+            shared_refresh_intents.append((self.strategy_name, str(instrument_id)))
+
+    follower = _SharedMarketHeartbeat(registry, now=now)
+    follower.strategy_name = "vwap_momentum"
+    follower.configure_book_recovery(coordinator=coordinator)
+    follower.activate_for_test("eth-5m")
+    _stale_ready_state(
+        follower,
+        "eth-5m",
+        now=now,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+    )
+
+    observer = _SharedMarketHeartbeat(registry, now=now)
+    observer.strategy_name = "late_consensus"
+    observer.configure_book_recovery(coordinator=coordinator)
+    observer.activate_for_test("btc-5m")
+    observer.mark_ready_for_test("btc-5m", now=now)
+
+    on_evaluation_heartbeat(follower, object())  # pyright: ignore[reportArgumentType]
+    assert shared_refresh_intents == [
+        ("vwap_momentum", "eth-5m-up.POLYMARKET"),
+        ("vwap_momentum", "eth-5m-down.POLYMARKET"),
+    ]
+
+    on_evaluation_heartbeat(observer, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(shared_refresh_intents) == 2
+    assert (
+        observer.condition_phase_for_test("btc-5m")
+        is ConditionSubscriptionPhase.READY
+    )
+    assert follower.awaiting_sides_for_test("eth-5m") == {Side.UP, Side.DOWN}
+
+
+def test_partial_shared_claim_dispatches_only_unclaimed_instrument() -> None:
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    coordinator = BookRecoveryCoordinator()
+    strategy.configure_book_recovery(coordinator=coordinator)
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    up_id = "btc-5m-up.POLYMARKET"
+    down_id = "btc-5m-down.POLYMARKET"
+    _ = coordinator.claim((up_id,), now=now)
+    _stalled_state(
+        strategy,
+        "btc-5m",
+        started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 1),
+    )
+
+    triggered = force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now)
+
+    assert triggered is True
+    assert strategy.refreshed_instruments == [down_id]
+
+
+def test_failed_refresh_releases_only_failed_recovery_claim() -> None:
+    registry = _registry()
+    coordinator = BookRecoveryCoordinator()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    started_at = now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 1)
+
+    class _FailingStrategy(_ResubscribeStrategy):
+        @override
+        def refresh_book_subscription(
+            self,
+            instrument_id: object,
+            client_id: object | None = None,
+            params: Mapping[str, object] | None = None,
+        ) -> None:
+            del client_id, params
+            if str(instrument_id) == "btc-5m-down.POLYMARKET":
+                raise RuntimeError("synthetic refresh failure")
+            self.refreshed_instruments.append(str(instrument_id))
+
+    failing = _FailingStrategy(registry)
+    failing.configure_book_recovery(coordinator=coordinator)
+    _stalled_state(failing, "btc-5m", started_at=started_at)
+    follower = _ResubscribeStrategy(registry)
+    follower.configure_book_recovery(coordinator=coordinator)
+    _stalled_state(follower, "btc-5m", started_at=started_at)
+
+    with pytest.raises(RuntimeError, match="synthetic refresh failure"):
+        _ = force_resubscribe_if_book_stalled(failing, "btc-5m", now=now)
+
+    triggered = force_resubscribe_if_book_stalled(follower, "btc-5m", now=now)
+
+    assert failing.refreshed_instruments == ["btc-5m-up.POLYMARKET"]
+    assert triggered is True
+    assert follower.refreshed_instruments == ["btc-5m-down.POLYMARKET"]
+
+
+def test_missing_recovery_coordinator_fails_closed() -> None:
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy.clear_book_recovery_coordinator_for_test()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    _stalled_state(
+        strategy,
+        "btc-5m",
+        started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 1),
+    )
+
+    triggered = force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now)
+
+    assert triggered is True
+    assert strategy.refreshed_instruments == []
 
 
 def test_global_starvation_retries_only_missing_side_after_partial_recovery() -> None:
