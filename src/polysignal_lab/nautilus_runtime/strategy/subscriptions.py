@@ -14,7 +14,6 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
 )
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.domain.strategy_readiness import StrategyStatus
-from polysignal_lab.nautilus_runtime.book_recovery import BookRecoveryCoordinator
 from polysignal_lab.nautilus_runtime.strategy.catalog_lookups import (
     _asset_conditions,
     _instrument_ids,
@@ -99,16 +98,16 @@ class MarketSubscriptionState:
     book_generation_started_at_by_condition: dict[str, datetime] = field(
         default_factory=dict
     )
-    # 60s wire-retry cadence for an open generation. Updated on awaiting
-    # refresh retries; cleared when a true new generation begins.
-    last_book_wire_retry_at_by_condition: dict[str, datetime] = field(
+    # Strategy-local recovery intent ownership. Once the heartbeat submits a
+    # missing side for the current generation, only a valid managed-book
+    # receipt for that side clears it. Adapter code owns wire retry/coalescing.
+    pending_book_recovery_sides_by_condition: dict[str, set[Side]] = field(
         default_factory=dict
     )
     # Total-stall clock: when the condition first began waiting for a book
-    # (first generation start, or first stale-book detection). Unlike the
-    # wire-retry cadence this is NOT reset by resubscription, so repeated
-    # 60s retries cannot slip past the 240s abandon threshold. Cleared when the
-    # book truly becomes ready or the condition is retired/cleared/abandoned.
+    # (first generation start, or first stale-book detection). A pending
+    # recovery intent does not reset it, so the 240s abandon threshold remains
+    # reachable. Cleared on ready, retire, clear, or abandon.
     book_stalled_started_at_by_condition: dict[str, datetime] = field(
         default_factory=dict
     )
@@ -118,7 +117,7 @@ class MarketSubscriptionState:
     # When the condition first reached READY (first bilateral book) during its
     # current active period. Unlike first_bilateral_book_at_by_condition this is
     # NOT cleared when a stale repair re-begins generation, so the book-stall
-    # abandon path can distinguish a condition that merely went stale (retry,
+    # abandon path can distinguish a condition that merely went stale (recover,
     # never abandon via book stall) from one whose first book never arrived.
     # Cleared on retire/clear/abandon via retire_market_book_generation.
     first_bilateral_book_ever_at_by_condition: dict[str, datetime] = field(
@@ -127,11 +126,6 @@ class MarketSubscriptionState:
     first_bilateral_book_latency_ms_by_condition: dict[str, int] = field(
         default_factory=dict
     )
-    # A feed-wide recovery batch remains authoritative until one once-READY
-    # condition receives both outcome books after this timestamp, or until a
-    # feed_resumed / connection-epoch advance clears it for a new batch.
-    global_book_recovery_epoch_at: datetime | None = None
-    last_observed_connection_epoch: int | None = None
     last_book_at_by_condition: dict[str, dict[Side, datetime]] = field(
         default_factory=dict
     )
@@ -686,7 +680,6 @@ def unsubscribe_all_market_instruments(
     state.pending_instrument_ids.clear()
     state.subscribe_intent_started_at_by_condition.clear()
     state.condition_phases.clear()
-    state.global_book_recovery_epoch_at = None
 
 
 def unsubscribe_market_conditions(
@@ -811,9 +804,9 @@ def begin_market_book_generation(
     )
     state.awaiting_book_sides_by_condition[condition_id] = awaiting
     state.book_generation_started_at_by_condition[condition_id] = observed_utc
-    # New generation resets wire-retry cadence; only begin may raise the
-    # validity clock.
-    state.last_book_wire_retry_at_by_condition.pop(condition_id, None)
+    # A new generation owns a fresh set of recovery intents. Only begin may
+    # raise the validity clock.
+    state.pending_book_recovery_sides_by_condition.pop(condition_id, None)
     # Drop prior receipts for sides this generation awaits so detail cannot
     # show "already received" while observe rejects received < started_at.
     _clear_awaiting_side_book_receipts(state, condition_id, awaiting)
@@ -881,6 +874,7 @@ def observe_market_book_side(
     started_at = state.book_generation_started_at_by_condition.get(condition_id)
     if started_at is not None and received < started_at:
         return False
+    _complete_book_recovery_receipt(state, condition_id, side)
     pending.discard(side)
     if pending:
         return False
@@ -890,22 +884,20 @@ def observe_market_book_side(
         received_at=received,
         started_at=started_at,
     )
-    _rearm_condition_book_recovery(strategy, condition_id)
     return True
 
 
-def _rearm_condition_book_recovery(
-    strategy: _SubscriptionStateOwner,
+def _complete_book_recovery_receipt(
+    state: MarketSubscriptionState,
     condition_id: str,
+    side: Side,
 ) -> None:
-    coordinator = cast(
-        BookRecoveryCoordinator | None,
-        getattr(strategy, "book_recovery_coordinator", None),
-    )
-    registry = getattr(strategy, "registry", None)
-    if coordinator is None or not isinstance(registry, MarketCatalog):
+    pending = state.pending_book_recovery_sides_by_condition.get(condition_id)
+    if pending is None:
         return
-    coordinator.rearm(_instrument_ids(registry, (condition_id,)))
+    pending.discard(side)
+    if not pending:
+        _ = state.pending_book_recovery_sides_by_condition.pop(condition_id, None)
 
 
 def _record_market_book_side(
@@ -922,26 +914,10 @@ def _record_market_book_side(
     previous_received = last_receipts.get(side)
     if previous_received is None or received >= previous_received:
         last_receipts[side] = received
-    _clear_global_book_recovery_if_bilateral(state, condition_id)
     last_books = state.last_book_at_by_condition.setdefault(condition_id, {})
     previous = last_books.get(side)
     if previous is None or observed_book >= previous:
         last_books[side] = observed_book
-
-
-def _clear_global_book_recovery_if_bilateral(
-    state: MarketSubscriptionState,
-    condition_id: str,
-) -> None:
-    epoch_at = state.global_book_recovery_epoch_at
-    if epoch_at is None:
-        return
-    receipts = state.last_book_received_at_by_condition.get(condition_id, {})
-    if all(
-        (received_at := receipts.get(side)) is not None and received_at > epoch_at
-        for side in (Side.UP, Side.DOWN)
-    ):
-        state.global_book_recovery_epoch_at = None
 
 
 def finish_market_book_generation(
@@ -959,7 +935,7 @@ def finish_market_book_generation(
     ready_at = max(receipts.values(), default=received_at)
     state.awaiting_book_sides_by_condition.pop(condition_id)
     state.book_generation_started_at_by_condition.pop(condition_id, None)
-    state.last_book_wire_retry_at_by_condition.pop(condition_id, None)
+    state.pending_book_recovery_sides_by_condition.pop(condition_id, None)
     state.book_stalled_started_at_by_condition.pop(condition_id, None)
     state.first_bilateral_book_at_by_condition[condition_id] = ready_at
     # Remembers this active period reached READY so the stale-repair re-awaiting
@@ -1002,7 +978,7 @@ def retire_market_book_generation(
         condition_id,
         None,
     )
-    strategy._subscription_state.last_book_wire_retry_at_by_condition.pop(
+    strategy._subscription_state.pending_book_recovery_sides_by_condition.pop(
         condition_id,
         None,
     )
@@ -1057,14 +1033,12 @@ def _book_generation_stalled(
     if pending_condition_instrument_ids(strategy, condition_id):
         # Still waiting on instrument metadata, not on the book feed.
         return False
-    # Cadence uses last wire retry when present; generation start otherwise.
-    # Generation validity clock is intentionally not advanced by retries.
-    cadence_at = state.last_book_wire_retry_at_by_condition.get(
+    generation_started_at = state.book_generation_started_at_by_condition.get(
         condition_id
-    ) or state.book_generation_started_at_by_condition.get(condition_id)
-    if cadence_at is None:
+    )
+    if generation_started_at is None:
         return False
-    return (now.astimezone(UTC) - cadence_at).total_seconds() > (
+    return (now.astimezone(UTC) - generation_started_at).total_seconds() > (
         _BOOK_GENERATION_STALL_SEC
     )
 
@@ -1130,31 +1104,29 @@ def _refresh_market_instrument(
 
 def _dispatch_book_recovery(
     strategy: _SubscriptionStrategy,
-    instrument_ids: Sequence[object],
-    *,
-    now: datetime,
-) -> tuple[object, ...] | None:
-    coordinator = cast(
-        BookRecoveryCoordinator | None,
-        getattr(strategy, "book_recovery_coordinator", None),
-    )
-    if coordinator is None:
-        return None
-    claimed = coordinator.claim(instrument_ids, now=now)
+    condition_id: str,
+    targets: Sequence[tuple[Side, object]],
+) -> tuple[object, ...]:
+    state = strategy._subscription_state
     dispatched: list[object] = []
+    dispatched_sides: list[Side] = []
     try:
-        for instrument_id in claimed.instrument_ids:
+        for side, instrument_id in targets:
             _refresh_market_instrument(strategy, instrument_id)
             dispatched.append(instrument_id)
+            dispatched_sides.append(side)
+            state.pending_book_recovery_sides_by_condition.setdefault(
+                condition_id,
+                set(),
+            ).add(side)
     except Exception:
-        released = claimed.instrument_ids[len(dispatched) :]
-        coordinator.release(claimed, released)
         logger.exception(
             "book_recovery_batch_failed",
             extra={
                 "strategy": getattr(strategy, "strategy_name", None),
+                "condition_id": condition_id,
                 "dispatched_instrument_ids": [str(value) for value in dispatched],
-                "released_instrument_ids": [str(value) for value in released],
+                "pending_sides": sorted(side.value for side in dispatched_sides),
             },
         )
         raise
@@ -1163,6 +1135,7 @@ def _dispatch_book_recovery(
             "book_recovery_batch_dispatched",
             extra={
                 "strategy": getattr(strategy, "strategy_name", None),
+                "condition_id": condition_id,
                 "instrument_ids": [str(value) for value in dispatched],
                 "instrument_count": len(dispatched),
             },
@@ -1170,14 +1143,13 @@ def _dispatch_book_recovery(
     return tuple(dispatched)
 
 
-def _awaiting_condition_instruments(
+def _awaiting_condition_recovery_targets(
     strategy: _SubscriptionStrategy,
     condition_id: str,
-) -> tuple[object, ...]:
+) -> tuple[tuple[Side, object], ...]:
     registry = strategy.registry
-    awaiting = strategy._subscription_state.awaiting_book_sides_by_condition.get(
-        condition_id
-    )
+    state = strategy._subscription_state
+    awaiting = state.awaiting_book_sides_by_condition.get(condition_id)
     if registry is None or not awaiting:
         return ()
     pair = registry.by_condition(condition_id)
@@ -1187,10 +1159,15 @@ def _awaiting_condition_instruments(
         Side.UP: pair.up.token_id,
         Side.DOWN: pair.down.token_id,
     }
+    already_pending = state.pending_book_recovery_sides_by_condition.get(
+        condition_id,
+        set(),
+    )
     return tuple(
-        instrument_id
+        (side, instrument_id)
         for side in (Side.UP, Side.DOWN)
         if side in awaiting
+        if side not in already_pending
         if (
             instrument_id := registry.instrument_id_for_token(token_by_side[side])
         )
@@ -1204,8 +1181,8 @@ def _total_stall_started_at(
 ) -> datetime | None:
     """Total-stall start for a condition.
 
-    Falls back to the retry-cadence clock for states created before the
-    total-stall clock existed (identical until the first resubscription).
+    Falls back to the generation clock for states created before the dedicated
+    total-stall clock existed.
     """
     state = strategy._subscription_state
     return state.book_stalled_started_at_by_condition.get(condition_id) or (
@@ -1222,8 +1199,8 @@ def _abandon_if_total_stall_exceeded(
 ) -> bool:
     """Abandon the condition when total stall crosses the abandon threshold.
 
-    The caller must return False when this returns True. Repeated 60s retries
-    must never reset this clock, otherwise abandon becomes unreachable.
+    The caller must return False when this returns True. Pending recovery
+    intent must never bypass this check.
     """
     stall_sec = (now.astimezone(UTC) - total_stalled_at).total_seconds()
     if stall_sec < _BOOK_GENERATION_ABANDON_SEC:
@@ -1237,12 +1214,12 @@ def _resubscribe_and_begin_generation(
     condition_id: str,
     *,
     now: datetime,
-) -> tuple[tuple[object, ...], tuple[object, ...] | None] | None:
+) -> tuple[tuple[object, ...], tuple[object, ...]] | None:
     state = strategy._subscription_state
     awaiting_sides = state.awaiting_book_sides_by_condition.get(condition_id)
 
-    # New stale repair seeds stale sides, while retries preserve the awaiting
-    # set so a healthy side is never reset.
+    # New stale repair seeds stale sides. An existing generation preserves the
+    # awaiting set so a healthy side is never reset.
     if awaiting_sides is None:
         awaiting_sides = set(
             strategy._stale_orderbook_recovery_by_condition.get(condition_id, {})
@@ -1258,26 +1235,12 @@ def _resubscribe_and_begin_generation(
     else:
         if not awaiting_sides:
             return None
-        # Wire retry only: refresh the subscription. Do NOT bump
-        # book_generation_started_at — that would invalidate books already
-        # received after the original generation start.
-        state.last_book_wire_retry_at_by_condition[condition_id] = now.astimezone(UTC)
-    instruments = _awaiting_condition_instruments(strategy, condition_id)
-    if not instruments:
+    targets = _awaiting_condition_recovery_targets(strategy, condition_id)
+    if not targets:
         return None
-    dispatched = _dispatch_book_recovery(strategy, instruments, now=now)
+    instruments = tuple(instrument_id for _side, instrument_id in targets)
+    dispatched = _dispatch_book_recovery(strategy, condition_id, targets)
     return instruments, dispatched
-
-
-def _recovery_event(
-    instruments: Sequence[object],
-    dispatched: Sequence[object] | None,
-) -> tuple[str, bool]:
-    if dispatched is None:
-        return "condition_book_recovery_unavailable", True
-    if dispatched:
-        return "condition_book_refresh_requested", len(dispatched) < len(instruments)
-    return "condition_book_recovery_coalesced", True
 
 
 def _recovery_log_extra(
@@ -1286,10 +1249,7 @@ def _recovery_log_extra(
     instruments: Sequence[object],
     *,
     stall_sec: float,
-    recovery_epoch_at: datetime | None,
-    recovery_scope: str,
-    dispatched: Sequence[object] | None = None,
-    wire_retry_suppressed: bool = False,
+    dispatched: Sequence[object] = (),
 ) -> dict[str, object]:
     dispatched_keys = {
         _instrument_key(instrument_id) for instrument_id in (dispatched or ())
@@ -1300,58 +1260,25 @@ def _recovery_log_extra(
         "stall_sec": stall_sec,
         "instrument_ids": instrument_keys,
         "dispatched_instrument_ids": sorted(dispatched_keys),
-        "suppressed_instrument_ids": sorted(set(instrument_keys) - dispatched_keys),
-        "recovery_epoch_at": (
-            recovery_epoch_at.isoformat() if recovery_epoch_at is not None else None
-        ),
-        "recovery_scope": recovery_scope,
         "awaiting_sides": sorted(
             side.value
             for side in state.awaiting_book_sides_by_condition.get(condition_id, ())
         ),
-        "wire_retry_suppressed": wire_retry_suppressed,
+        "pending_recovery_sides": sorted(
+            side.value
+            for side in state.pending_book_recovery_sides_by_condition.get(
+                condition_id,
+                (),
+            )
+        ),
     }
 
 
-def log_suppressed_book_recovery(
+def _first_book_recovery_due(
     strategy: _SubscriptionStrategy,
     condition_id: str,
     *,
     now: datetime,
-    recovery_epoch_at: datetime,
-) -> None:
-    """Record a due retry blocked by the active global recovery epoch."""
-    state = strategy._subscription_state
-    instruments = _awaiting_condition_instruments(strategy, condition_id)
-    started_at = state.book_generation_started_at_by_condition.get(condition_id)
-    if not instruments or started_at is None:
-        return
-    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
-        UTC
-    )
-    stall_sec = (now_utc - started_at).total_seconds()
-    if stall_sec <= _BOOK_GENERATION_STALL_SEC:
-        return
-    logger.info(
-        "condition_book_recovery_suppressed",
-        extra=_recovery_log_extra(
-            state,
-            condition_id,
-            instruments,
-            stall_sec=round(stall_sec, 3),
-            recovery_epoch_at=recovery_epoch_at,
-            recovery_scope="global",
-            wire_retry_suppressed=True,
-        ),
-    )
-
-
-def _first_book_wire_retry_due(
-    strategy: _SubscriptionStrategy,
-    condition_id: str,
-    *,
-    now: datetime,
-    allow_wire_retry: bool,
 ) -> bool:
     state = strategy._subscription_state
     if pending_condition_instrument_ids(strategy, condition_id):
@@ -1365,8 +1292,12 @@ def _first_book_wire_retry_due(
             now=now,
         ):
             return False
-    return allow_wire_retry and _book_generation_stalled(
-        strategy, condition_id, now=now
+    awaiting = state.awaiting_book_sides_by_condition.get(condition_id, set())
+    pending = state.pending_book_recovery_sides_by_condition.get(condition_id, set())
+    return not awaiting.issubset(pending) and _book_generation_stalled(
+        strategy,
+        condition_id,
+        now=now,
     )
 
 
@@ -1375,17 +1306,13 @@ def force_resubscribe_if_book_stalled(
     condition_id: str,
     *,
     now: datetime,
-    allow_wire_retry: bool = True,
-    recovery_epoch_at: datetime | None = None,
-    recovery_scope: str = "condition",
 ) -> bool:
-    """Retry a stalled first book while preserving abandon without wire churn."""
+    """Submit each missing-side recovery intent once for this generation."""
     state = strategy._subscription_state
-    if not _first_book_wire_retry_due(
+    if not _first_book_recovery_due(
         strategy,
         condition_id,
         now=now,
-        allow_wire_retry=allow_wire_retry,
     ):
         return False
     generation_started_at = state.book_generation_started_at_by_condition.get(
@@ -1402,36 +1329,30 @@ def force_resubscribe_if_book_stalled(
         if generation_started_at is not None
         else _BOOK_GENERATION_STALL_SEC
     )
-    event, wire_retry_suppressed = _recovery_event(instruments, dispatched)
     logger.info(
-        event,
+        "condition_book_refresh_requested",
         extra=_recovery_log_extra(
             state,
             condition_id,
             instruments,
             stall_sec=stall_sec,
-            recovery_epoch_at=recovery_epoch_at,
-            recovery_scope=recovery_scope,
             dispatched=dispatched,
-            wire_retry_suppressed=wire_retry_suppressed,
         ),
     )
     return True
 
 
-def _stale_book_wire_retry_due(
+def _stale_book_recovery_due(
     strategy: _SubscriptionStrategy,
     condition_id: str,
     *,
     now: datetime,
-    allow_wire_retry: bool,
 ) -> tuple[datetime, datetime] | None:
     state = strategy._subscription_state
     if (
         condition_id in state.awaiting_book_sides_by_condition
         or condition_id not in strategy._stale_orderbook_recovery_by_condition
         or pending_condition_instrument_ids(strategy, condition_id)
-        or not allow_wire_retry
     ):
         return None
     now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
@@ -1440,10 +1361,10 @@ def _stale_book_wire_retry_due(
     total_stalled_at = state.book_stalled_started_at_by_condition.setdefault(
         condition_id, now_utc
     )
-    cadence_at = state.last_book_wire_retry_at_by_condition.get(
-        condition_id
-    ) or state.book_generation_started_at_by_condition.get(condition_id)
-    if cadence_at is not None and (now_utc - cadence_at).total_seconds() <= (
+    generation_started_at = state.book_generation_started_at_by_condition.get(condition_id)
+    if generation_started_at is not None and (
+        now_utc - generation_started_at
+    ).total_seconds() <= (
         _BOOK_GENERATION_STALL_SEC
     ):
         return None
@@ -1455,20 +1376,16 @@ def force_resubscribe_if_stale_orderbook(
     condition_id: str,
     *,
     now: datetime,
-    allow_wire_retry: bool = True,
-    recovery_epoch_at: datetime | None = None,
-    recovery_scope: str = "condition",
 ) -> bool:
     """Rebuild a once-READY condition's stale book (Gap B): not in the awaiting
     map, so the first-book path never fires. Resubscribe only — never abandon
     via the book-stall clock: a global/silent feed outage is reported by
     liveness/data-starvation, not by silently dropping active conditions (W2)."""
     state = strategy._subscription_state
-    retry_due = _stale_book_wire_retry_due(
+    retry_due = _stale_book_recovery_due(
         strategy,
         condition_id,
         now=now,
-        allow_wire_retry=allow_wire_retry,
     )
     if retry_due is None:
         return False
@@ -1483,18 +1400,14 @@ def force_resubscribe_if_stale_orderbook(
     instruments, dispatched = attempt
     _ = strategy._stale_orderbook_recovery_by_condition.pop(condition_id, None)
     stall_sec = round((now_utc - total_stalled_at).total_seconds(), 3)
-    event, wire_retry_suppressed = _recovery_event(instruments, dispatched)
     logger.info(
-        event,
+        "condition_book_refresh_requested",
         extra=_recovery_log_extra(
             state,
             condition_id,
             instruments,
             stall_sec=stall_sec,
-            recovery_epoch_at=recovery_epoch_at,
-            recovery_scope=recovery_scope,
             dispatched=dispatched,
-            wire_retry_suppressed=wire_retry_suppressed,
         ),
     )
     return True

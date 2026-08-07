@@ -138,6 +138,16 @@ def _assert_derived_containers_shadow_phases(
         assert condition_id in state.awaiting_book_sides_by_condition, (
             f"{condition_id}: generation start without awaiting sides"
         )
+    for condition_id, pending_sides in (
+        state.pending_book_recovery_sides_by_condition.items()
+    ):
+        assert condition_id in phase_ids, (
+            f"{condition_id}: pending recovery without a lifecycle phase"
+        )
+        awaiting_sides = state.awaiting_book_sides_by_condition.get(condition_id)
+        assert awaiting_sides is not None and pending_sides <= awaiting_sides, (
+            f"{condition_id}: pending recovery sides are not awaiting receipts"
+        )
     for condition_id in state.first_bilateral_book_at_by_condition:
         assert condition_id in phase_ids, (
             f"{condition_id}: first bilateral book without a lifecycle phase"

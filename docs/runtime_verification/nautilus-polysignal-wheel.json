@@ -1,12 +1,14 @@
 {
-  "version": "1.231.0a20260730+polysignal.8",
+  "version": "1.231.0a20260730+polysignal.10",
   "upstream_base_sha": "a930c8afe380025fc0a10c6b2cd6907d6b983e86",
-  "patch_commit_sha": "4d8894cc5ce4725590a0f34c3b11adc3c8b97c6a",
+  "patch_commit_sha": "3064b29f070be71a30d739cc00f5acb69f43b5f1",
   "upstream_pr": "https://github.com/nautechsystems/nautilus_trader/pull/4656",
-  "release_tag": "polysignal-1.231.0a20260730.8",
-  "release_url": "https://github.com/6Kmfi6HP/nautilus_trader/releases/tag/polysignal-1.231.0a20260730.8",
-  "wheel_filename": "nautilus_trader-1.231.0a20260730+polysignal.8-cp312-cp312-manylinux_2_36_x86_64.whl",
-  "wheel_sha256": "53466d3ac1aa979d1a45fb5a4f4c6aff596e3698fca86084fecc8b0b09e00ea1",
+  "fork_recovery_pr": "https://github.com/6Kmfi6HP/nautilus_trader/pull/1",
+  "fork_compatibility_pr": "https://github.com/6Kmfi6HP/nautilus_trader/pull/2",
+  "release_tag": "polysignal-1.231.0a20260730.10",
+  "release_url": "https://github.com/6Kmfi6HP/nautilus_trader/releases/tag/polysignal-1.231.0a20260730.10",
+  "wheel_filename": "nautilus_trader-1.231.0a20260730+polysignal.10-cp312-cp312-manylinux_2_36_x86_64.whl",
+  "wheel_sha256": "537a62b83a72289f3334f0acc26be6f414c7d770d054e346979cff84aabbc004",
   "toolchain": {
     "platform": "Linux x86_64",
     "python": "CPython 3.12.13",
@@ -14,5 +16,6 @@
     "cython": "3.2.9",
     "uv": "0.11.33"
   },
-  "build_command": "uv run python scripts/verify_nautilus_wheel_provenance.py --source /path/to/nautilus_trader --build-output /path/to/nautilus_trader/dist-polysignal"
+  "build_command": "PATH=/home/debian/.cargo/bin:/home/debian/.local/bin:/usr/local/bin:/usr/bin:/bin UV_PYTHON=/path/to/python3.12 BUILD_MODE=release uv build --wheel --out-dir /path/to/nautilus_trader/dist-polysignal",
+  "verification_command": "uv run python scripts/verify_nautilus_wheel_provenance.py --source /path/to/nautilus_trader --wheel /path/to/nautilus_trader/dist-polysignal/nautilus_trader-1.231.0a20260730+polysignal.10-cp312-cp312-manylinux_2_36_x86_64.whl"
 }

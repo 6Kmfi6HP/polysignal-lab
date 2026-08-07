@@ -446,7 +446,10 @@ def test_cleanup_late_callback_does_not_revive_lifecycle() -> None:
     state = strategy._subscription_state
 
     begin_market_book_generation(strategy, "cond-a", now=now)  # type: ignore[arg-type]
-    state.global_book_recovery_epoch_at = now
+    state.pending_book_recovery_sides_by_condition["cond-a"] = {
+        Side.UP,
+        Side.DOWN,
+    }
     observe_market_book_side(  # type: ignore[arg-type]
         strategy,
         "cond-a",
@@ -461,7 +464,7 @@ def test_cleanup_late_callback_does_not_revive_lifecycle() -> None:
         clear_history=True,
     )
     assert condition_phase(strategy, "cond-a") is ConditionSubscriptionPhase.UNSUBSCRIBED
-    assert state.global_book_recovery_epoch_at == now
+    assert "cond-a" not in state.pending_book_recovery_sides_by_condition
 
     # A delayed DOWN book arrives after cleanup; it must not resurrect READY.
     late = now + timedelta(seconds=60)
@@ -484,7 +487,10 @@ def test_unsubscribe_all_retires_open_generations() -> None:
     state = strategy._subscription_state
 
     begin_market_book_generation(strategy, "cond-a", now=now)  # type: ignore[arg-type]
-    state.global_book_recovery_epoch_at = now
+    state.pending_book_recovery_sides_by_condition["cond-a"] = {
+        Side.UP,
+        Side.DOWN,
+    }
     observe_market_book_side(  # type: ignore[arg-type]
         strategy,
         "cond-a",
@@ -498,7 +504,7 @@ def test_unsubscribe_all_retires_open_generations() -> None:
     assert (
         "cond-a" not in strategy._subscription_state.book_generation_started_at_by_condition
     )
-    assert state.global_book_recovery_epoch_at is None
+    assert "cond-a" not in state.pending_book_recovery_sides_by_condition
     assert condition_phase(strategy, "cond-a") is ConditionSubscriptionPhase.UNSUBSCRIBED
 
     late = now + timedelta(seconds=60)

@@ -1,4 +1,4 @@
-"""PR #64 app-side readiness/liveness split: quiet books, never-READY, feed_resumed."""
+"""PR #64 app-side readiness/liveness split: quiet books and never-READY."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from polysignal_lab.alpha.types import (
 )
 from polysignal_lab.config import BinanceDataConfig, PolymarketDataConfig, SignalConfig
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.nautilus_runtime.book_recovery import BookRecoveryCoordinator
 from polysignal_lab.nautilus_runtime.decision_policy import DecisionPolicy
 from polysignal_lab.nautilus_runtime.market_catalog import (
     InstrumentTokenMeta,
@@ -28,7 +27,6 @@ from polysignal_lab.nautilus_runtime.strategy.lifecycle import on_evaluation_hea
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     ConditionSubscriptionPhase,
     MarketSubscriptionState,
-    _BOOK_GENERATION_STALL_SEC,
     begin_market_book_generation,
     observe_market_book_side,
 )
@@ -201,9 +199,6 @@ class _ResubscribeStrategy:
         self._stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]] = {}
         self._runtime_readiness_reason_by_condition: dict[str, str] = {}
         self._runtime_readiness_miss_condition_ids: set[str] = set()
-        self.book_recovery_coordinator: BookRecoveryCoordinator = (
-            BookRecoveryCoordinator()
-        )
         self._subscription_state = MarketSubscriptionState()
         self.subscribed_instruments: list[str] = []
         self.unsubscribed_instruments: list[str] = []
@@ -220,8 +215,6 @@ class _ResubscribeStrategy:
         self._last_market_data_evaluation_at: dict[str, datetime] = {}
         self._market_config: object = SimpleNamespace(timeframes=("5m",))
         self._spot_data_source: str = "none"
-        self._runtime_log_directory: str | None = None
-        self._feed_resume_log_cursor: object | None = None
         self.assembler = object()
         self.evaluated: list[str] = []
 
@@ -563,131 +556,3 @@ def test_once_ready_miss_still_trips_readiness_liveness(tmp_path: Path) -> None:
     )
     assert result.ok is False
     assert result.reason == "readiness_miss"
-
-
-def test_feed_resumed_clears_global_epoch_and_allows_one_new_refresh_batch() -> None:
-    from polysignal_lab.nautilus_runtime.strategy.lifecycle import note_feed_resumed
-
-    registry = _registry("btc-5m", "eth-5m")
-    now = T0
-    strategy = _ResubscribeStrategy(registry, now=now)
-    strategy._active_condition_ids = {"btc-5m", "eth-5m"}
-    for condition_id in ("btc-5m", "eth-5m"):
-        _stale_ready_state(
-            strategy,
-            condition_id,
-            now=now,
-            stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
-        )
-
-    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
-    state = strategy._subscription_state
-    assert state.global_book_recovery_epoch_at == now
-    assert len(strategy.refreshed_instruments) == 4
-
-    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
-    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
-    assert len(strategy.refreshed_instruments) == 4
-    assert state.global_book_recovery_epoch_at == now
-
-    note_feed_resumed(strategy)  # pyright: ignore[reportArgumentType]
-    assert state.global_book_recovery_epoch_at is None
-
-    resumed_at = now + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 2)
-    strategy.clock.now_ns = int(resumed_at.timestamp() * 1_000_000_000)
-    for condition_id in ("btc-5m", "eth-5m"):
-        _stale_ready_state(
-            strategy,
-            condition_id,
-            now=resumed_at,
-            stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
-        )
-    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
-
-    assert len(strategy.refreshed_instruments) == 8
-    assert state.global_book_recovery_epoch_at == resumed_at
-
-    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
-    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
-    assert len(strategy.refreshed_instruments) == 8
-    assert state.global_book_recovery_epoch_at == resumed_at
-
-
-def test_feed_resumed_jsonl_bridge_clears_epoch_and_allows_next_recovery_batch(
-    tmp_path: Path,
-) -> None:
-    """Real adapter signal today is JSONL `feed_resumed`; heartbeat must bridge it."""
-    import json
-
-    from polysignal_lab.nautilus_runtime.strategy.feed_resume_bridge import (
-        FeedResumeLogCursor,
-    )
-
-    log_dir = tmp_path / "runtime"
-    log_dir.mkdir()
-    log_path = log_dir / (
-        "PolySignal-Nautilus-001_2026-08-06_000000-000_"
-        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"
-    )
-    log_path.write_text("", encoding="utf-8")
-
-    registry = _registry("btc-5m", "eth-5m")
-    now = T0
-    strategy = _ResubscribeStrategy(registry, now=now)
-    strategy._runtime_log_directory = str(log_dir)
-    strategy._feed_resume_log_cursor = FeedResumeLogCursor.starting_at_end(log_dir)
-    strategy._active_condition_ids = {"btc-5m", "eth-5m"}
-    for condition_id in ("btc-5m", "eth-5m"):
-        _stale_ready_state(
-            strategy,
-            condition_id,
-            now=now,
-            stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
-        )
-
-    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
-    state = strategy._subscription_state
-    assert state.global_book_recovery_epoch_at == now
-    assert len(strategy.refreshed_instruments) == 4
-
-    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
-    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
-    assert len(strategy.refreshed_instruments) == 4
-    assert state.global_book_recovery_epoch_at == now
-
-    with log_path.open("a", encoding="utf-8") as handle:
-        handle.write(
-            json.dumps(
-                {
-                    "timestamp": "2026-08-06T05:29:00.643212676Z",
-                    "trader_id": "PolySignal-Nautilus-001",
-                    "level": "INFO",
-                    "color": "NORMAL",
-                    "component": "nautilus_polymarket::websocket::handler",
-                    "message": (
-                        "feed_resumed shard_id=2 channel=Market connection_epoch=25"
-                    ),
-                }
-            )
-            + "\n"
-        )
-
-    resumed_at = now + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 2)
-    strategy.clock.now_ns = int(resumed_at.timestamp() * 1_000_000_000)
-    for condition_id in ("btc-5m", "eth-5m"):
-        _stale_ready_state(
-            strategy,
-            condition_id,
-            now=resumed_at,
-            stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
-        )
-    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
-
-    assert state.last_observed_connection_epoch == 25
-    assert len(strategy.refreshed_instruments) == 8
-    assert state.global_book_recovery_epoch_at == resumed_at
-
-    strategy.clock.now_ns += int((_BOOK_GENERATION_STALL_SEC + 1) * 1_000_000_000)
-    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
-    assert len(strategy.refreshed_instruments) == 8
-    assert state.global_book_recovery_epoch_at == resumed_at

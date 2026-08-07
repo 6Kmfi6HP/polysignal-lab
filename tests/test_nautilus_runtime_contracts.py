@@ -3,6 +3,8 @@ from __future__ import annotations
 # ruff: noqa: E402
 
 from decimal import Decimal
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -38,7 +40,10 @@ from polysignal_lab.nautilus_runtime.live_node import (
 def test_nautilus_version_has_native_strategy_messaging() -> None:
     from importlib.metadata import version
 
-    assert version("nautilus-trader") == "1.231.0a20260730+polysignal.8"
+    manifest = json.loads(
+        Path("docs/runtime_verification/nautilus-polysignal-wheel.json").read_text()
+    )
+    assert version("nautilus-trader") == manifest["version"]
     assert callable(getattr(pyo3.Strategy, "publish_data", None))
     assert callable(getattr(pyo3.Strategy, "subscribe_data", None))
 

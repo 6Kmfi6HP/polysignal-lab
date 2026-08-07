@@ -53,6 +53,9 @@ def test_order_plan_dto_import_does_not_require_nautilus() -> None:
 
 def test_nautilus_is_required_default_dependency() -> None:
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        Path("docs/runtime_verification/nautilus-polysignal-wheel.json").read_text()
+    )
 
     default_deps = data["project"]["dependencies"]
     optional_deps = data["project"]["optional-dependencies"]
@@ -62,7 +65,7 @@ def test_nautilus_is_required_default_dependency() -> None:
         for dependency in default_deps
         if dependency.startswith("nautilus_trader[polymarket] @ ")
     )
-    assert "#sha256=53466d3ac1aa979d1a45fb5a4f4c6aff596e3698fca86084fecc8b0b09e00ea1" in expected
+    assert f"#sha256={manifest['wheel_sha256']}" in expected
     assert expected in default_deps
     assert optional_deps["nautilus"] == [expected]
     assert data["project"]["requires-python"] == ">=3.12,<3.13"
@@ -91,7 +94,8 @@ def test_nautilus_wheel_provenance_is_consistent_across_build_inputs() -> None:
         ("wheel_sha256", "wheel-sha256"),
     ):
         assert f'io.polysignal.nautilus.{label}="{manifest[key]}"' in dockerfile
-    assert "verify_nautilus_wheel_provenance.py" in manifest["build_command"]
+    assert "uv build --wheel" in manifest["build_command"]
+    assert "verify_nautilus_wheel_provenance.py" in manifest["verification_command"]
 
 
 def test_nautilus_node_does_not_import_legacy_trading_state() -> None:

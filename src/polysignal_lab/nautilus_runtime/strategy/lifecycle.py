@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 import logging
-from typing import Protocol, cast
+from typing import Protocol
 
 from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
@@ -20,13 +20,10 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_rtds_data_client_id,
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
-    _BOOK_GENERATION_STALL_SEC,
     MarketSubscriptionState,
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
-    log_suppressed_book_recovery,
     observe_market_book_side,
-    pending_condition_instrument_ids,
     subscription_scope_condition_ids,
 )
 from polysignal_lab.nautilus_runtime.strategy.condition_evaluation import (
@@ -40,16 +37,11 @@ from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
     _subscribe_custom_data,
     unsubscribe_custom_data,
 )
-from polysignal_lab.nautilus_runtime.strategy.feed_resume_bridge import (
-    poll_feed_resume_from_logs,
-)
 from polysignal_lab.nautilus_runtime.strategy.market_data_events import (
     cancel_pending_market_data_evaluations,
 )
 
 logger = logging.getLogger(__name__)
-
-_GLOBAL_BOOK_RECOVERY_TIMEOUT_SEC = 600.0
 
 # Preserve the production log key while keeping the legacy-state token gate intact
 _CACHE_GENERATION_RECONCILIATION_EVENT = "generation_" + "reconciled_from_cache"
@@ -72,8 +64,6 @@ class _LifecycleStrategy(_ClockHost, Protocol):
     _subscription_state: MarketSubscriptionState
     _subscription_assets: frozenset[str]
     _subscription_timeframes: frozenset[str]
-    _runtime_log_directory: str | None
-    _feed_resume_log_cursor: object | None
     registry: MarketCatalog | None
     assembler: object
     cache: object | None
@@ -242,144 +232,22 @@ def _active_unexpired_condition_ids(
     return tuple(active_condition_ids)
 
 
-def note_feed_resumed(strategy: _LifecycleStrategy) -> None:
-    """Clear the global recovery epoch after a reconnect / feed resume.
-
-    A feed-wide outage opens one bounded refresh batch and then suppresses
-    per-minute wire retries. When the market WS resumes (or its connection
-    epoch advances), allow one new bounded batch for the new transport life.
-    """
-    strategy._subscription_state.global_book_recovery_epoch_at = None
-
-
-def note_connection_epoch(strategy: _LifecycleStrategy, epoch: int) -> bool:
-    """Record a market-data connection epoch; clear recovery on advance."""
-    state = strategy._subscription_state
-    previous = state.last_observed_connection_epoch
-    state.last_observed_connection_epoch = int(epoch)
-    if previous is not None and int(epoch) > previous:
-        note_feed_resumed(strategy)
-        return True
-    return False
-
-
-def _unexpired_global_book_recovery_epoch(
-    state: MarketSubscriptionState,
-    *,
-    now: datetime,
-) -> datetime | None:
-    epoch_at = state.global_book_recovery_epoch_at
-    if epoch_at is None:
-        return None
-    epoch_at_utc = (
-        epoch_at if epoch_at.tzinfo is not None else epoch_at.replace(tzinfo=UTC)
-    ).astimezone(UTC)
-    if (now - epoch_at_utc).total_seconds() < _GLOBAL_BOOK_RECOVERY_TIMEOUT_SEC:
-        return epoch_at_utc
-    state.global_book_recovery_epoch_at = None
-    logger.info(
-        "global_book_recovery_timeout_reopened",
-        extra={
-            "recovery_epoch_at": epoch_at_utc.isoformat(),
-            "reopened_at": now.isoformat(),
-            "timeout_sec": _GLOBAL_BOOK_RECOVERY_TIMEOUT_SEC,
-        },
-    )
-    return None
-
-
-def _global_book_recovery_decision(
-    strategy: _LifecycleStrategy,
-    condition_ids: Sequence[str],
-    *,
-    now: datetime,
-) -> tuple[bool, datetime | None]:
-    state = strategy._subscription_state
-    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
-        UTC
-    )
-    epoch_at = _unexpired_global_book_recovery_epoch(state, now=now_utc)
-    if epoch_at is not None:
-        return False, epoch_at
-    once_ready_condition_ids = tuple(
-        condition_id
-        for condition_id in condition_ids
-        if condition_id in state.first_bilateral_book_ever_at_by_condition
-    )
-    if not once_ready_condition_ids:
-        state.global_book_recovery_epoch_at = None
-        return True, None
-    stale_recovery = cast(
-        dict[str, object],
-        getattr(strategy, "_stale_orderbook_recovery_by_condition", {}),
-    )
-    all_need_recovery = all(
-        condition_id in stale_recovery
-        or (
-            bool(state.awaiting_book_sides_by_condition.get(condition_id))
-            and not pending_condition_instrument_ids(
-                strategy,  # type: ignore[arg-type]
-                condition_id,
-            )
-            and (
-                started_at := state.book_generation_started_at_by_condition.get(
-                    condition_id
-                )
-            )
-            is not None
-            and (now_utc - started_at).total_seconds() > _BOOK_GENERATION_STALL_SEC
-        )
-        for condition_id in once_ready_condition_ids
-    )
-    if not all_need_recovery:
-        return True, None
-    observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
-    epoch_at = observed.astimezone(UTC)
-    state.global_book_recovery_epoch_at = epoch_at
-    return True, epoch_at
-
-
 def _recover_book_subscriptions(
     strategy: _LifecycleStrategy,
     condition_ids: Sequence[str],
     *,
     now: datetime,
 ) -> None:
-    state = strategy._subscription_state
-    allow_wire_retry, recovery_epoch_at = _global_book_recovery_decision(
-        strategy,
-        condition_ids,
-        now=now,
-    )
-    recovery_scope = "global" if recovery_epoch_at is not None else "condition"
     for condition_id in condition_ids:
-        condition_allow_wire_retry = (
-            allow_wire_retry
-            or condition_id
-            not in state.first_bilateral_book_ever_at_by_condition
-        )
-        if not condition_allow_wire_retry and recovery_epoch_at is not None:
-            log_suppressed_book_recovery(
-                strategy,  # pyright: ignore[reportArgumentType]
-                condition_id,
-                now=now,
-                recovery_epoch_at=recovery_epoch_at,
-            )
         _ = force_resubscribe_if_book_stalled(
             strategy,  # pyright: ignore[reportArgumentType]
             condition_id,
             now=now,
-            allow_wire_retry=condition_allow_wire_retry,
-            recovery_epoch_at=recovery_epoch_at,
-            recovery_scope=recovery_scope,
         )
         _ = force_resubscribe_if_stale_orderbook(
             strategy,  # pyright: ignore[reportArgumentType]
             condition_id,
             now=now,
-            allow_wire_retry=condition_allow_wire_retry,
-            recovery_epoch_at=recovery_epoch_at,
-            recovery_scope=recovery_scope,
         )
 
 
@@ -471,8 +339,6 @@ def _reconcile_condition_books_from_cache(
 
 
 def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
-    # A3: reopen global recovery after market WS feed_resumed (JSONL bridge).
-    _ = poll_feed_resume_from_logs(strategy)  # pyright: ignore[reportArgumentType]
     now = framework_now(strategy)
     active_condition_ids = _active_unexpired_condition_ids(strategy, now=now)
     strategy._note_runtime_progress(

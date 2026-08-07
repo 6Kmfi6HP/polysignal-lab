@@ -8,10 +8,6 @@ from typing import Any
 from polysignal_lab.alpha.types import AlphaCore
 from polysignal_lab.config import MarketConfig
 from polysignal_lab.domain.enums import Side
-from polysignal_lab.nautilus_runtime.book_recovery import (
-    BookRecoveryCoordinator,
-    runtime_book_recovery_coordinator,
-)
 from polysignal_lab.nautilus_runtime.custom_data_state import StrategyCustomDataState
 from polysignal_lab.nautilus_runtime.decision_policy import (
     DecisionPolicy,
@@ -51,7 +47,6 @@ class HostInitRequest:
     assembler: _Assembler | None = None
     condition_ids: Sequence[str] = ()
     strategy_name: str = ""
-    book_recovery_coordinator: BookRecoveryCoordinator | None = None
     fixed_stake_usdc: float = 10.0
     sandbox_base_currency: str = "pUSD"
     orderbook_staleness_ms: float = 60_000.0
@@ -68,7 +63,6 @@ class HostInitRequest:
     policy: DecisionPolicy | None = None
     market_config: MarketConfig = field(default_factory=MarketConfig)
     spot_data_source: str = "polymarket_rtds"
-    runtime_log_directory: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +76,6 @@ class HostConstruction:
     instrument_id_resolver: Callable[[str], object]
     policy: DecisionPolicy
     strategy_name: str
-    book_recovery_coordinator: BookRecoveryCoordinator | None
     condition_ids: tuple[str, ...]
     fixed_stake_usdc: float
     sandbox_base_currency: str
@@ -98,7 +91,6 @@ class HostConstruction:
     readiness_callback: Callable[[str, bool, dict[str, object]], None] | None
     market_config: MarketConfig
     spot_data_source: str
-    runtime_log_directory: str | None
 
 
 def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
@@ -119,9 +111,6 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
     progress_callback = req.progress_callback or _runtime_progress_callback(settings)
     readiness_callback = req.readiness_callback or _runtime_readiness_callback(settings)
     observability = req.observability or runtime_observability()
-    # Importable strategies share one market-data runtime. Keep recovery
-    # unavailable when the node has not bound its process-level coordinator.
-    coordinator = req.book_recovery_coordinator or runtime_book_recovery_coordinator()
     return HostInitRequest(
         config=config,
         core=core,
@@ -131,7 +120,6 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
         policy=resolved_policy,
         condition_ids=tuple(config.condition_ids),
         strategy_name=config.strategy_name,
-        book_recovery_coordinator=coordinator,
         fixed_stake_usdc=float(settings.trading.fixed_stake_usdc),
         sandbox_base_currency=str(settings.runtime.nautilus.sandbox_base_currency),
         exit_model=settings.trading.exit_model,
@@ -145,7 +133,6 @@ def _from_strategy_config(req: HostInitRequest) -> HostInitRequest:
         readiness_callback=readiness_callback,
         market_config=settings.markets,
         spot_data_source=settings.runtime.nautilus.spot_data.source,
-        runtime_log_directory=str(settings.logging.directory),
     )
 
 
@@ -191,7 +178,6 @@ def resolve_host_construction(req: HostInitRequest) -> HostConstruction:
         instrument_id_resolver=resolver,
         policy=work.policy or DecisionPolicy(),
         strategy_name=work.strategy_name,
-        book_recovery_coordinator=work.book_recovery_coordinator,
         condition_ids=tuple(work.condition_ids),
         fixed_stake_usdc=work.fixed_stake_usdc,
         sandbox_base_currency=work.sandbox_base_currency,
@@ -207,7 +193,6 @@ def resolve_host_construction(req: HostInitRequest) -> HostConstruction:
         readiness_callback=work.readiness_callback,
         market_config=work.market_config,
         spot_data_source=work.spot_data_source,
-        runtime_log_directory=work.runtime_log_directory,
     )
 
 
@@ -224,8 +209,6 @@ def _bind_di_fields(strategy: Any, host: HostConstruction) -> None:
     strategy.registry = host.registry
     strategy._market_config = host.market_config
     strategy._spot_data_source = host.spot_data_source
-    strategy._runtime_log_directory = host.runtime_log_directory
-    strategy._feed_resume_log_cursor = None
     strategy.policy = host.policy  # Strategy-owned DecisionPolicy (not Actor bus)
     strategy.fixed_stake_usdc = host.fixed_stake_usdc
     strategy.exit_policy = NativeExitPolicy.from_config(host.exit_model)
@@ -317,7 +300,6 @@ def _cash_base_currency(host: HostConstruction) -> str:
 def bind_host_runtime(strategy: Any, host: HostConstruction) -> None:
     """Assign DI fields + pipeline collaborators after super().__init__."""
     _bind_di_fields(strategy, host)
-    strategy.book_recovery_coordinator = host.book_recovery_coordinator
     _bind_pipeline(
         strategy,
         account_id=_cash_account_id(host),

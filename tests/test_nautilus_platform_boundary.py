@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import json
 import re
 import subprocess
 import sys
@@ -38,6 +39,9 @@ def test_nautilus_node_and_strategies_do_not_import_legacy_execution() -> None:
 
 def test_nautilus_is_required_dependency_for_default_runtime() -> None:
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        Path("docs/runtime_verification/nautilus-polysignal-wheel.json").read_text()
+    )
 
     dependencies = cast(list[str], data["project"]["dependencies"])
     expected = next(
@@ -45,7 +49,7 @@ def test_nautilus_is_required_dependency_for_default_runtime() -> None:
         for dependency in dependencies
         if dependency.startswith("nautilus_trader[polymarket] @ ")
     )
-    assert "#sha256=53466d3ac1aa979d1a45fb5a4f4c6aff596e3698fca86084fecc8b0b09e00ea1" in expected
+    assert f"#sha256={manifest['wheel_sha256']}" in expected
     nautilus_extra = cast(
         list[str], data["project"]["optional-dependencies"]["nautilus"]
     )
