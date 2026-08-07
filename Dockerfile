@@ -22,9 +22,9 @@ PY
 FROM python:3.12-slim AS nautilus-runtime
 
 LABEL io.polysignal.nautilus.upstream-sha="a930c8afe380025fc0a10c6b2cd6907d6b983e86" \
-      io.polysignal.nautilus.patch-sha="e8b573154453aecc9e2208fb763b3f7737b13995" \
-      io.polysignal.nautilus.version="1.231.0a20260730+polysignal.11" \
-      io.polysignal.nautilus.wheel-sha256="490a942139b595f392abdc9ec4228ff69519f8f29beddb2abbaf68237dcee74a"
+      io.polysignal.nautilus.patch-sha="ec0629c4f13287a4f57a65bebaf129e5bfdeeaab" \
+      io.polysignal.nautilus.version="1.231.0a20260730+polysignal.12" \
+      io.polysignal.nautilus.wheel-sha256="3777860870acce7559df1788ebab21f18170fdcfb74cf86bf1ada475cc70e2c5"
 
 WORKDIR /app
 

@@ -1,15 +1,16 @@
 {
-  "version": "1.231.0a20260730+polysignal.11",
+  "version": "1.231.0a20260730+polysignal.12",
   "upstream_base_sha": "a930c8afe380025fc0a10c6b2cd6907d6b983e86",
-  "patch_commit_sha": "e8b573154453aecc9e2208fb763b3f7737b13995",
+  "patch_commit_sha": "ec0629c4f13287a4f57a65bebaf129e5bfdeeaab",
   "upstream_pr": "https://github.com/nautechsystems/nautilus_trader/pull/4656",
   "fork_recovery_pr": "https://github.com/6Kmfi6HP/nautilus_trader/pull/1",
   "fork_compatibility_pr": "https://github.com/6Kmfi6HP/nautilus_trader/pull/2",
   "fork_timestamp_fence_pr": "https://github.com/6Kmfi6HP/nautilus_trader/pull/3",
-  "release_tag": "polysignal-1.231.0a20260730.11",
-  "release_url": "https://github.com/6Kmfi6HP/nautilus_trader/releases/tag/polysignal-1.231.0a20260730.11",
-  "wheel_filename": "nautilus_trader-1.231.0a20260730+polysignal.11-cp312-cp312-manylinux_2_36_x86_64.whl",
-  "wheel_sha256": "490a942139b595f392abdc9ec4228ff69519f8f29beddb2abbaf68237dcee74a",
+  "fork_regression_storm_pr": "https://github.com/6Kmfi6HP/nautilus_trader/pull/4",
+  "release_tag": "polysignal-1.231.0a20260730.12",
+  "release_url": "https://github.com/6Kmfi6HP/nautilus_trader/releases/tag/polysignal-1.231.0a20260730.12",
+  "wheel_filename": "nautilus_trader-1.231.0a20260730+polysignal.12-cp312-cp312-manylinux_2_36_x86_64.whl",
+  "wheel_sha256": "3777860870acce7559df1788ebab21f18170fdcfb74cf86bf1ada475cc70e2c5",
   "toolchain": {
     "platform": "Linux x86_64",
     "python": "CPython 3.12.13",
@@ -18,5 +19,5 @@
     "uv": "0.11.33"
   },
   "build_command": "PATH=/home/debian/.cargo/bin:/home/debian/.local/bin:/usr/local/bin:/usr/bin:/bin UV_PYTHON=/path/to/python3.12 BUILD_MODE=release uv build --wheel --out-dir /path/to/nautilus_trader/dist-polysignal",
-  "verification_command": "uv run python scripts/verify_nautilus_wheel_provenance.py --source /path/to/nautilus_trader --wheel /path/to/nautilus_trader/dist-polysignal/nautilus_trader-1.231.0a20260730+polysignal.11-cp312-cp312-manylinux_2_36_x86_64.whl"
+  "verification_command": "uv run python scripts/verify_nautilus_wheel_provenance.py --source /path/to/nautilus_trader --wheel /path/to/nautilus_trader/dist/nautilus_trader-1.231.0a20260730+polysignal.12-cp312-cp312-manylinux_2_36_x86_64.whl"
 }
