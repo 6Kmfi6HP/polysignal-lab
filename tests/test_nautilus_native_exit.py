@@ -468,7 +468,9 @@ def test_reduce_only_fill_missing_economic_tags_is_quarantined() -> None:
         )
     )
     strategy._record_nautilus_fill = lambda event, metrics: None
-    strategy._note_runtime_progress = lambda phase: progress.append(phase)
+    strategy._note_runtime_progress = (
+        lambda phase, *, active_condition_ids=None: progress.append(phase)
+    )
 
     handle_order_filled(
         strategy,
@@ -537,7 +539,9 @@ def test_reduce_only_partial_fills_emit_one_result_after_position_closes() -> No
         )
     )
     strategy._record_nautilus_fill = lambda event, metrics: None
-    strategy._note_runtime_progress = lambda phase: progress.append(phase)
+    strategy._note_runtime_progress = (
+        lambda phase, *, active_condition_ids=None: progress.append(phase)
+    )
 
     first = SimpleNamespace(
         client_order_id="partial-exit",
@@ -630,7 +634,7 @@ def test_reduce_only_exit_uses_position_average_when_order_price_is_missing() ->
         )
     )
     strategy._record_nautilus_fill = lambda event, metrics: None
-    strategy._note_runtime_progress = lambda phase: None
+    strategy._note_runtime_progress = lambda phase, *, active_condition_ids=None: None
 
     handle_order_filled(
         strategy,
@@ -678,7 +682,7 @@ def test_reduce_only_replay_after_restart_is_durably_idempotent(
             report_result_notifier=lambda result: notifications.append(dict(result)),
         )
         strategy._record_nautilus_fill = lambda event, metrics: None
-        strategy._note_runtime_progress = lambda phase: None
+        strategy._note_runtime_progress = lambda phase, *, active_condition_ids=None: None
         handle_order_filled(strategy, event)
 
     results = persistence.sqlite.query_json("report_results")
@@ -724,7 +728,7 @@ def test_reduce_only_fill_records_early_exit_paper_result() -> None:
         record_nautilus_fill_event=lambda event: None,
     )
     strategy._record_nautilus_fill = lambda event, metrics: None
-    strategy._note_runtime_progress = lambda phase: None
+    strategy._note_runtime_progress = lambda phase, *, active_condition_ids=None: None
 
     handle_order_filled(
         strategy,
@@ -804,7 +808,7 @@ def test_reduce_only_fill_notifies_paper_result_after_durable_record() -> None:
         record_nautilus_fill_event=lambda event: None,
     )
     strategy._record_nautilus_fill = lambda event, metrics: None
-    strategy._note_runtime_progress = lambda phase: None
+    strategy._note_runtime_progress = lambda phase, *, active_condition_ids=None: None
 
     handle_order_filled(
         strategy,
@@ -881,7 +885,9 @@ def test_reduce_only_fill_durable_when_report_result_notifier_raises() -> None:
         record_nautilus_fill_event=lambda event: None,
     )
     strategy._record_nautilus_fill = lambda event, metrics: None
-    strategy._note_runtime_progress = lambda phase: progress.append(phase)
+    strategy._note_runtime_progress = (
+        lambda phase, *, active_condition_ids=None: progress.append(phase)
+    )
 
     handle_order_filled(
         strategy,
