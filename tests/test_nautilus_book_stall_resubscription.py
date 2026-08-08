@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -25,10 +26,13 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
     _BOOK_GENERATION_ABANDON_SEC,
     _BOOK_GENERATION_STALL_SEC,
+    _GLOBAL_RECOVERY_COOLDOWN_SEC,
     abandon_book_stalled_condition,
     begin_market_book_generation,
+    condition_needs_book_recovery,
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
+    global_book_feed_stalled,
     observe_market_book_side,
     retire_market_book_generation,
 )
@@ -2002,3 +2006,251 @@ def test_evaluation_heartbeat_rejects_cache_books_without_received_at() -> None:
         Side.DOWN,
     }
     assert state.last_book_received_at_by_condition.get("btc-5m", {}) == {}
+
+
+def _registry_with(*conditions: tuple[str, str, str]) -> MarketCatalog:
+    registry = MarketCatalog(
+        instrument_id_resolver=lambda _condition, token: f"{token}.POLYMARKET"
+    )
+    for condition_id, asset, timeframe in conditions:
+        registry.register(_pair(condition_id, asset, timeframe))
+    return registry
+
+
+def _once_ready_stalled_state(
+    strategy: _ResubscribeStrategy,
+    condition_id: str,
+    *,
+    started_at: datetime,
+    now: datetime,
+) -> None:
+    """A previously-READY condition now mid-generation and patently stalled."""
+    _stalled_state(strategy, condition_id, started_at=started_at)
+    strategy._subscription_state.first_bilateral_book_ever_at_by_condition[
+        condition_id
+    ] = now - timedelta(minutes=10)
+
+
+def test_global_book_feed_stall_holds_wire_retries_inside_cooldown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A whole once-READY set stuck on the same feed outage must not re-arm each
+    condition's refresh on every heartbeat while the last coordinated batch is
+    still inside the cooldown window — that storm races the adapter's recovery
+    delta buffer and never lets the book converge."""
+    registry = _registry_with(("btc-5m", "BTC", "5m"), ("eth-5m", "ETH", "5m"))
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m", "eth-5m"}
+    state = strategy._subscription_state
+    for condition_id in ("btc-5m", "eth-5m"):
+        _once_ready_stalled_state(
+            strategy,
+            condition_id,
+            started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+            now=now,
+        )
+    # Simulate a coordinated batch that went out moments ago.
+    state.global_book_recovery_batch_at = now
+
+    with caplog.at_level(logging.INFO):
+        on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert strategy.refreshed_instruments == []
+    assert strategy.unsubscribed_instruments == []
+    assert [r.getMessage() for r in caplog.records].count(
+        "condition_book_recovery_suppressed"
+    ) == 2
+
+
+def test_global_book_feed_stall_dispatches_batch_after_cooldown() -> None:
+    """After the cooldown window elapses while the stall persists, a fresh
+    coordinated batch is allowed so recovery is retried, not starved."""
+    registry = _registry_with(("btc-5m", "BTC", "5m"), ("eth-5m", "ETH", "5m"))
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m", "eth-5m"}
+    state = strategy._subscription_state
+    for condition_id in ("btc-5m", "eth-5m"):
+        _once_ready_stalled_state(
+            strategy,
+            condition_id,
+            started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+            now=now,
+        )
+    # A batch already dispatched before the cooldown started.
+    state.global_book_recovery_batch_at = now
+
+    later = now + timedelta(seconds=_GLOBAL_RECOVERY_COOLDOWN_SEC + 10)
+    strategy.clock.now_ns = int(later.timestamp() * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    # Both conditions are awaiting-without-pending, so the fresh batch re-arms
+    # each side's recovery (2 conditions x 2 instruments).
+    assert len(strategy.refreshed_instruments) == 4
+    assert state.global_book_recovery_batch_at == later.astimezone(UTC)
+
+
+def test_global_book_feed_stall_releases_when_condition_recovers() -> None:
+    """A single recovered condition proves the feed is moving again and lifts
+    the global suppression, so the still-stuck sibling resumes per-condition
+    recovery immediately instead of waiting out the cooldown."""
+    registry = _registry_with(("btc-5m", "BTC", "5m"), ("eth-5m", "ETH", "5m"))
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m", "eth-5m"}
+    state = strategy._subscription_state
+    for condition_id in ("btc-5m", "eth-5m"):
+        _once_ready_stalled_state(
+            strategy,
+            condition_id,
+            started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+            now=now,
+        )
+    state.global_book_recovery_batch_at = now
+
+    # eth-5m receives a genuine bilateral book and reaches READY.
+    receive_at = now + timedelta(seconds=1)
+    assert (
+        observe_market_book_side(
+            strategy,
+            "eth-5m",
+            Side.UP,
+            received_at=receive_at,
+            book_at=receive_at,
+        )
+        is False
+    )
+    assert (
+        observe_market_book_side(
+            strategy,
+            "eth-5m",
+            Side.DOWN,
+            received_at=receive_at,
+            book_at=receive_at,
+        )
+        is True
+    )
+    # The completed book cleared the global cooldown.
+    assert state.global_book_recovery_batch_at is None
+
+    later = now + timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10)
+    strategy.clock.now_ns = int(later.timestamp() * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    # btc-5m is still stuck and is now repaired per-condition; eth-5m is healthy.
+    assert sorted(strategy.refreshed_instruments) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
+
+
+def test_never_ready_first_book_recovery_not_suppressed_by_global_stall() -> None:
+    """Never-READY (fresh subscription) conditions are not part of the once-READY
+    global set: their first-book/abandon path keeps running during a global
+    outage so a genuinely book-less market is still abandoned."""
+    registry = _registry_with(("btc-5m", "BTC", "5m"), ("eth-5m", "ETH", "5m"))
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    strategy._active_condition_ids = {"btc-5m", "eth-5m"}
+    state = strategy._subscription_state
+    _once_ready_stalled_state(
+        strategy,
+        "btc-5m",
+        started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+        now=now,
+    )
+    # eth-5m is brand new — never READY — and not part of the global set.
+    _stalled_state(
+        strategy,
+        "eth-5m",
+        started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+    )
+    state.global_book_recovery_batch_at = now
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    # btc-5m (once-READY, global set) is suppressed; eth-5m still gets its
+    # first-book wire retry.
+    assert sorted(strategy.refreshed_instruments) == [
+        "eth-5m-down.POLYMARKET",
+        "eth-5m-up.POLYMARKET",
+    ]
+
+
+def test_bilateral_recovery_clears_global_batch_cooldown() -> None:
+    """finish_market_book_generation (bilateral book) drops the global cooldown
+    so a subsequent whole-set stall may batch immediately."""
+    registry = _registry()
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m"}
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    begin_market_book_generation(strategy, "btc-5m", now=now)
+    state = strategy._subscription_state
+    state.global_book_recovery_batch_at = now
+
+    receive_at = now + timedelta(seconds=1)
+    _ = observe_market_book_side(
+        strategy,
+        "btc-5m",
+        Side.UP,
+        received_at=receive_at,
+        book_at=receive_at,
+    )
+    assert state.global_book_recovery_batch_at == now
+    _ = observe_market_book_side(
+        strategy,
+        "btc-5m",
+        Side.DOWN,
+        received_at=receive_at,
+        book_at=receive_at,
+    )
+
+    assert state.global_book_recovery_batch_at is None
+    assert state.condition_phases["btc-5m"] is ConditionSubscriptionPhase.READY
+
+
+def test_global_book_feed_stalled_predicate_membership() -> None:
+    """The global-stall predicate counts only once-READY conditions that
+    currently need a wire retry; a healthy READY condition breaks the whole
+    set out of the global regime."""
+    registry = _registry_with(("btc-5m", "BTC", "5m"), ("eth-5m", "ETH", "5m"))
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _ResubscribeStrategy(registry)
+    strategy._active_condition_ids = {"btc-5m", "eth-5m"}
+    for condition_id in ("btc-5m", "eth-5m"):
+        _once_ready_stalled_state(
+            strategy,
+            condition_id,
+            started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+            now=now,
+        )
+
+    # Both once-READY conditions need recovery -> a genuine global stall.
+    assert global_book_feed_stalled(
+        strategy,
+        ("btc-5m", "eth-5m"),
+        now=now,
+    )
+
+    # One healthy once-READY condition breaks the whole set out of the global
+    # regime: it is no longer awaiting any book side.
+    state = strategy._subscription_state
+    _ = state.awaiting_book_sides_by_condition.pop("eth-5m", None)
+    _ = state.book_generation_started_at_by_condition.pop("eth-5m", None)
+    _ = state.pending_book_recovery_sides_by_condition.pop("eth-5m", None)
+    state.condition_phases["eth-5m"] = ConditionSubscriptionPhase.READY
+    state.first_bilateral_book_at_by_condition["eth-5m"] = now - timedelta(minutes=10)
+    state.first_bilateral_book_ever_at_by_condition["eth-5m"] = now - timedelta(
+        minutes=10
+    )
+    assert not global_book_feed_stalled(
+        strategy,
+        ("btc-5m", "eth-5m"),
+        now=now,
+    )
+    assert condition_needs_book_recovery(
+        strategy,
+        "btc-5m",
+        now=now,
+    )

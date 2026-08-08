@@ -21,8 +21,12 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
+    condition_needs_book_recovery,
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
+    global_book_feed_stalled,
+    global_recovery_batch_due,
+    log_suppressed_book_recovery,
     observe_market_book_side,
     subscription_scope_condition_ids,
 )
@@ -238,7 +242,60 @@ def _recover_book_subscriptions(
     *,
     now: datetime,
 ) -> None:
+    state = strategy._subscription_state
+    if global_book_feed_stalled(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_ids,
+        now=now,
+    ):
+        if not global_recovery_batch_due(
+            strategy,  # pyright: ignore[reportArgumentType]
+            now=now,
+        ):
+            _hold_recovery_during_global_stall(strategy, condition_ids, now=now)
+            return
+        # One coordinated batch for the whole stalled set, then back off.
+        state.global_book_recovery_batch_at = now.astimezone(UTC)
     for condition_id in condition_ids:
+        _ = force_resubscribe_if_book_stalled(
+            strategy,  # pyright: ignore[reportArgumentType]
+            condition_id,
+            now=now,
+        )
+        _ = force_resubscribe_if_stale_orderbook(
+            strategy,  # pyright: ignore[reportArgumentType]
+            condition_id,
+            now=now,
+        )
+
+
+def _hold_recovery_during_global_stall(
+    strategy: _LifecycleStrategy,
+    condition_ids: Sequence[str],
+    *,
+    now: datetime,
+) -> None:
+    """Hold the once-READY set's wire retries during a global feed outage.
+
+    While the whole once-READY set is stalled and the last coordinated batch is
+    still inside the cooldown window, re-arming each subscription every 10s
+    heartbeat races the adapter's transport replay and its book recovery delta
+    buffer, so keep those conditions on hold while the adapter converges.
+    Never-READY (fresh subscription) conditions — not part of the once-READY
+    global set — keep their own first-book recovery and abandon path.
+    """
+    for condition_id in condition_ids:
+        if condition_needs_book_recovery(
+            strategy,  # pyright: ignore[reportArgumentType]
+            condition_id,
+            now=now,
+        ):
+            log_suppressed_book_recovery(
+                strategy,  # pyright: ignore[reportArgumentType]
+                condition_id,
+                now=now,
+            )
+            continue
         _ = force_resubscribe_if_book_stalled(
             strategy,  # pyright: ignore[reportArgumentType]
             condition_id,

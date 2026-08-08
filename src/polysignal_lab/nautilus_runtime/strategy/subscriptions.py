@@ -73,6 +73,18 @@ _BOOK_GENERATION_STALL_SEC = 60.0
 # strictly before the node can ever be judged unhealthy for the condition.
 _BOOK_GENERATION_ABANDON_SEC = 240.0
 
+# Cooldown between coordinated global book-recovery batches. When every
+# once-READY active condition is simultaneously stuck awaiting a book (a
+# global feed event, e.g. the Polymarket WS being dropped with
+# 'no ping received'), the heartbeat would otherwise re-arm each condition's
+# refresh on its own 60s cadence. Each refresh starts an adapter book recovery
+# that competes with the adapter's own reconnect/replay and fails with
+# "Recovery delta buffer limit exceeded", so the per-condition retries
+# actively prevent the storm from converging. While the global stall persists,
+# the heartbeat emits one coordinated refresh batch and then suppresses further
+# wire retries for this window; any recovered condition lifts the suppression.
+_GLOBAL_RECOVERY_COOLDOWN_SEC = 120.0
+
 logger = logging.getLogger(__name__)
 
 
@@ -132,6 +144,11 @@ class MarketSubscriptionState:
     last_book_received_at_by_condition: dict[str, dict[Side, datetime]] = field(
         default_factory=dict
     )
+    # Last time the heartbeat emitted one coordinated global recovery batch
+    # after a whole-set book stall. Cleared on any completed bilateral book so
+    # the next stall can batch immediately. While set and recent, per-condition
+    # wire retries for the stalled once-READY set are suppressed.
+    global_book_recovery_batch_at: datetime | None = field(default=None)
 
 
 class _SubscriptionStateOwner(Protocol):
@@ -947,6 +964,9 @@ def finish_market_book_generation(
     if started_at is not None:
         latency_ms = max(0, int((ready_at - started_at).total_seconds() * 1000))
         state.first_bilateral_book_latency_ms_by_condition[condition_id] = latency_ms
+    # A completed bilateral book proves the feed is moving again; drop the
+    # global recovery cooldown so a later stall may batch immediately.
+    clear_global_book_recovery_batch(state)
     _transition_condition_phase(state, condition_id, ConditionSubscriptionPhase.READY)
 
 
@@ -1040,6 +1060,111 @@ def _book_generation_stalled(
         return False
     return (now.astimezone(UTC) - generation_started_at).total_seconds() > (
         _BOOK_GENERATION_STALL_SEC
+    )
+
+
+def condition_needs_book_recovery(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> bool:
+    """True when a once-READY condition currently needs a wire retry.
+
+    An awaiting-first-book condition that has idled past the stall window and a
+    stale-orderbook condition both need a refresh; a healthy READY condition, a
+    pending-instrument wait, or a freshly restarted generation (inside the stall
+    window) do not. Never-READY warmup conditions are excluded — their first-book
+    wait is governed by the per-condition abandon clock, not the global stall.
+    """
+    state = strategy._subscription_state
+    if condition_id not in state.first_bilateral_book_ever_at_by_condition:
+        return False
+    if pending_condition_instrument_ids(strategy, condition_id):
+        return False
+    if condition_id in state.awaiting_book_sides_by_condition:
+        return _book_generation_stalled(strategy, condition_id, now=now)
+    return bool(
+        strategy._stale_orderbook_recovery_by_condition.get(condition_id)
+    )
+
+
+def global_book_feed_stalled(
+    strategy: _SubscriptionStrategy,
+    condition_ids: Sequence[str] | None = None,
+    *,
+    now: datetime,
+) -> bool:
+    """True when every once-READY active condition is awaiting the same recovery.
+
+    A global book-feed event (the Polymarket WS dropped with 'no ping received'
+    and every previously-READY market lost its book at once) is distinct from a
+    per-condition market that simply went dark. While every once-READY condition
+    needs recovery, per-condition refresh storms cannot help — they only race the
+    adapter's own transport recovery, so the coordinated response is one bounded
+    batch rather than a per-condition retry. The moment any once-READY condition
+    recovers, ``all()`` turns false and the gate releases.
+    """
+    once_ready_ids = [
+        condition_id
+        for condition_id in (condition_ids or ())
+        if condition_id
+        in strategy._subscription_state.first_bilateral_book_ever_at_by_condition
+    ]
+    if not once_ready_ids:
+        return False
+    return all(
+        condition_needs_book_recovery(strategy, condition_id, now=now)
+        for condition_id in once_ready_ids
+    )
+
+
+def global_recovery_batch_due(
+    strategy: _SubscriptionStrategy,
+    *,
+    now: datetime,
+) -> bool:
+    """True when a new coordinated global recovery batch may be dispatched.
+
+    Kept bounded by the cooldown window since the last batch: a global feed
+    outage is not resolved by re-arming every condition's wire retry every 10s
+    heartbeat — the adapter's reconnect/replay needs time to converge.
+    """
+    batch_at = strategy._subscription_state.global_book_recovery_batch_at
+    if batch_at is None:
+        return True
+    batch_at_utc = (
+        batch_at if batch_at.tzinfo is not None else batch_at.replace(tzinfo=UTC)
+    ).astimezone(UTC)
+    return (now.astimezone(UTC) - batch_at_utc).total_seconds() >= (
+        _GLOBAL_RECOVERY_COOLDOWN_SEC
+    )
+
+
+def clear_global_book_recovery_batch(state: MarketSubscriptionState) -> None:
+    """Drop the batch cooldown after any completed bilateral book.
+
+    A freshly recovered condition proves the feed is flowing again, so the next
+    stall must be allowed to batch immediately instead of waiting out the prior
+    window.
+    """
+    state.global_book_recovery_batch_at = None
+
+
+def log_suppressed_book_recovery(
+    strategy: _SubscriptionStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> None:
+    logger.info(
+        "condition_book_recovery_suppressed",
+        extra={
+            "strategy": getattr(strategy, "strategy_name", None),
+            "condition_id": condition_id,
+            "suppressed_at": now.astimezone(UTC).isoformat(),
+            "cooldown_sec": _GLOBAL_RECOVERY_COOLDOWN_SEC,
+        },
     )
 
 
