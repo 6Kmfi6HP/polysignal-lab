@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Protocol
 
@@ -25,7 +25,7 @@ class _ReadinessStrategy(Protocol):
     _runtime_readiness_reason_by_condition: dict[str, str]
     _stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]]
     _untradable_quote_sides_by_condition: dict[str, frozenset[Side]]
-    progress_callback: Callable[[str], None] | None
+    progress_callback: Callable[..., None] | None
     readiness_callback: Callable[[str, bool, dict[str, object]], None] | None
 
     def _framework_now(self) -> datetime: ...
@@ -36,10 +36,24 @@ class _UntradableStateOwner(Protocol):
     _untradable_quote_sides_by_condition: dict[str, frozenset[Side]]
 
 
-def note_runtime_progress(strategy: _ReadinessStrategy, phase: str) -> None:
+def note_runtime_progress(
+    strategy: _ReadinessStrategy,
+    phase: str,
+    *,
+    active_condition_ids: Sequence[str] | None = None,
+) -> None:
     callback = strategy.progress_callback
     if callback is None:
         return
+    if active_condition_ids is not None:
+        try:
+            callback(
+                phase,
+                active_readiness_keys=frozenset(active_condition_ids),
+            )
+            return
+        except TypeError:
+            pass
     callback(phase)
 
 

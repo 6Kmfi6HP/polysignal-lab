@@ -128,8 +128,13 @@ class _LifecycleStrategy:
         self.subscribed: list[tuple[str, ...]] = []
         self.unsubscribed: list[tuple[str, ...]] = []
 
-    def _note_runtime_progress(self, phase: str) -> None:
-        del phase
+    def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids=None,
+    ) -> None:
+        del phase, active_condition_ids
 
     def _require_registry(self) -> MarketCatalog:
         if self.registry is None:
@@ -225,14 +230,14 @@ def test_start_and_stop_only_track_conditions_in_strategy_scope() -> None:
     strategy = _LifecycleStrategy(registry)
 
     on_strategy_start(
-        strategy,
+        strategy,  # pyright: ignore[reportArgumentType]
         object(),
     )
 
     assert strategy._active_condition_ids == {"btc-5m"}
     assert strategy.subscribed == [("btc-5m",)]
 
-    on_strategy_stop(strategy)
+    on_strategy_stop(strategy)  # pyright: ignore[reportArgumentType]
 
     assert strategy.unsubscribed == [("btc-5m",)]
 

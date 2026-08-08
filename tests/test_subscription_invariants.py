@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -140,17 +139,6 @@ class _StubStrategy:
         self.subscribe_calls.append(("book", str(instrument_id)))
         if self.subscribe_book_deltas_raises:
             raise RuntimeError("subscribe api failed")
-        return None
-
-    def request_order_book_snapshot(
-        self,
-        instrument_id: object,
-        *,
-        limit: int = 0,
-        client_id: object | None = None,
-        params: Mapping[str, object] | None = None,
-    ) -> object:
-        _ = instrument_id, limit, client_id, params
         return None
 
     def unsubscribe_quotes(
@@ -455,8 +443,13 @@ def test_market_book_generation_ready_false_for_unsubscribed_condition() -> None
 def test_cleanup_late_callback_does_not_revive_lifecycle() -> None:
     strategy = _StubStrategy(_make_registry())
     now = strategy._framework_now()
+    state = strategy._subscription_state
 
     begin_market_book_generation(strategy, "cond-a", now=now)  # type: ignore[arg-type]
+    state.pending_book_recovery_sides_by_condition["cond-a"] = {
+        Side.UP,
+        Side.DOWN,
+    }
     observe_market_book_side(  # type: ignore[arg-type]
         strategy,
         "cond-a",
@@ -471,6 +464,7 @@ def test_cleanup_late_callback_does_not_revive_lifecycle() -> None:
         clear_history=True,
     )
     assert condition_phase(strategy, "cond-a") is ConditionSubscriptionPhase.UNSUBSCRIBED
+    assert "cond-a" not in state.pending_book_recovery_sides_by_condition
 
     # A delayed DOWN book arrives after cleanup; it must not resurrect READY.
     late = now + timedelta(seconds=60)
@@ -490,8 +484,13 @@ def test_cleanup_late_callback_does_not_revive_lifecycle() -> None:
 def test_unsubscribe_all_retires_open_generations() -> None:
     strategy = _StubStrategy(_make_registry())
     now = strategy._framework_now()
+    state = strategy._subscription_state
 
     begin_market_book_generation(strategy, "cond-a", now=now)  # type: ignore[arg-type]
+    state.pending_book_recovery_sides_by_condition["cond-a"] = {
+        Side.UP,
+        Side.DOWN,
+    }
     observe_market_book_side(  # type: ignore[arg-type]
         strategy,
         "cond-a",
@@ -505,6 +504,7 @@ def test_unsubscribe_all_retires_open_generations() -> None:
     assert (
         "cond-a" not in strategy._subscription_state.book_generation_started_at_by_condition
     )
+    assert "cond-a" not in state.pending_book_recovery_sides_by_condition
     assert condition_phase(strategy, "cond-a") is ConditionSubscriptionPhase.UNSUBSCRIBED
 
     late = now + timedelta(seconds=60)
@@ -775,5 +775,3 @@ def test_subscribe_issued_without_stale_first_bilateral() -> None:
         raise AssertionError(
             "SUBSCRIBE_ISSUED with stale first bilateral marker must violate invariants"
         )
-
-

@@ -10,5 +10,8 @@ __pycache__/
 data/
 logs/
 state/
-docs/
+docs/*
+!docs/runtime_verification/
+docs/runtime_verification/*
+!docs/runtime_verification/nautilus-polysignal-wheel.json
 assets/

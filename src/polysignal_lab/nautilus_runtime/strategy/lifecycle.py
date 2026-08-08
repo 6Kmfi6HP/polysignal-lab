@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+import logging
 from typing import Protocol
 
+from polysignal_lab.domain.enums import Side
 from polysignal_lab.nautilus_runtime.cache_trading_state import trading_state_from_cache
 from polysignal_lab.nautilus_runtime.custom_data_publisher import framework_now
 from polysignal_lab.nautilus_runtime.custom_data_types import (
@@ -21,6 +23,7 @@ from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
+    observe_market_book_side,
     subscription_scope_condition_ids,
 )
 from polysignal_lab.nautilus_runtime.strategy.condition_evaluation import (
@@ -37,6 +40,11 @@ from polysignal_lab.nautilus_runtime.strategy.nautilus_objects import (
 from polysignal_lab.nautilus_runtime.strategy.market_data_events import (
     cancel_pending_market_data_evaluations,
 )
+
+logger = logging.getLogger(__name__)
+
+# Preserve the production log key while keeping the legacy-state token gate intact
+_CACHE_GENERATION_RECONCILIATION_EVENT = "generation_" + "reconciled_from_cache"
 
 
 class _ClockHost(Protocol):
@@ -71,7 +79,18 @@ class _LifecycleStrategy(_ClockHost, Protocol):
         data_type: object,
         client_id: object | None = None,
     ) -> object: ...
-    def _note_runtime_progress(self, phase: str) -> None: ...
+    def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids: Sequence[str] | None = None,
+    ) -> None: ...
+    def _note_runtime_readiness(
+        self,
+        condition_id: str,
+        *,
+        ready: bool,
+    ) -> None: ...
     def _require_registry(self) -> MarketCatalog: ...
     def _require_assembler(self) -> object: ...
     def _subscribe_market_conditions(self, condition_ids: Sequence[str]) -> None: ...
@@ -200,32 +219,135 @@ def on_strategy_stop(strategy: _LifecycleStrategy) -> None:
     strategy._subscriptions_started = False
 
 
-def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
-    strategy._note_runtime_progress("evaluation_heartbeat")
-    now = framework_now(strategy)
+def _active_unexpired_condition_ids(
+    strategy: _LifecycleStrategy,
+    *,
+    now: datetime,
+) -> tuple[str, ...]:
     active_condition_ids: list[str] = []
     for condition_id in tuple(sorted(strategy._active_condition_ids)):
         if retire_expired_condition(strategy, condition_id, now=now):  # type: ignore[arg-type]
             continue
         active_condition_ids.append(condition_id)
-    strategy._subscribe_market_conditions(tuple(active_condition_ids))
-    for condition_id in active_condition_ids:
-        # Rebuild the book subscription when book generation has idled past the
-        # stall window (Polymarket WS drops idle connections with no snapshot
-        # fallback, leaving a subscribed condition stuck in AWAITING_FIRST_BOOK).
+    return tuple(active_condition_ids)
+
+
+def _recover_book_subscriptions(
+    strategy: _LifecycleStrategy,
+    condition_ids: Sequence[str],
+    *,
+    now: datetime,
+) -> None:
+    for condition_id in condition_ids:
         _ = force_resubscribe_if_book_stalled(
             strategy,  # pyright: ignore[reportArgumentType]
             condition_id,
             now=now,
         )
-        # A once-READY condition whose book went stale (awaiting empty) is not
-        # covered by the first-book path; rebuild its subscription too so it
-        # does not stay a permanent readiness miss.
         _ = force_resubscribe_if_stale_orderbook(
             strategy,  # pyright: ignore[reportArgumentType]
             condition_id,
             now=now,
         )
+
+
+def _reconcile_awaiting_books_from_cache(
+    strategy: _LifecycleStrategy,
+    condition_ids: Sequence[str],
+    *,
+    now: datetime,
+) -> None:
+    """Credit awaiting sides when Cache holds a post-generation book."""
+    state = strategy._subscription_state
+    awaiting_active = tuple(
+        condition_id
+        for condition_id in condition_ids
+        if condition_id in state.awaiting_book_sides_by_condition
+    )
+    if awaiting_active:
+        logger.info(
+            "awaiting_first_book_active_count",
+            extra={"awaiting_first_book_active_count": len(awaiting_active)},
+        )
+    registry = strategy.registry
+    assembler = strategy.assembler
+    books = getattr(assembler, "books", None)
+    if registry is None or books is None:
+        return
+    book_for_token = getattr(books, "book_for_token", None)
+    if not callable(book_for_token):
+        return
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
+    for condition_id in awaiting_active:
+        _reconcile_condition_books_from_cache(
+            strategy,
+            state,
+            registry,
+            condition_id,
+            book_for_token=book_for_token,
+            now=now_utc,
+        )
+
+
+def _reconcile_condition_books_from_cache(
+    strategy: _LifecycleStrategy,
+    state: MarketSubscriptionState,
+    registry: MarketCatalog,
+    condition_id: str,
+    *,
+    book_for_token: Callable[..., object | None],
+    now: datetime,
+) -> None:
+    awaiting = state.awaiting_book_sides_by_condition.get(condition_id)
+    generation_started_at = state.book_generation_started_at_by_condition.get(condition_id)
+    pair = registry.by_condition(condition_id)
+    if not awaiting or generation_started_at is None or pair is None:
+        return
+    token_by_side = {Side.UP: pair.up.token_id, Side.DOWN: pair.down.token_id}
+    for side in tuple(awaiting):
+        book = book_for_token(token_by_side[side], now=now)
+        if book is None:
+            continue
+        book_at = getattr(book, "received_at", None)
+        if not isinstance(book_at, datetime):
+            continue
+        book_at_utc = (
+            book_at if book_at.tzinfo is not None else book_at.replace(tzinfo=UTC)
+        ).astimezone(UTC)
+        if book_at_utc < generation_started_at:
+            continue
+        finished = observe_market_book_side(
+            strategy,
+            condition_id,
+            side,
+            received_at=book_at_utc,
+            book_at=book_at_utc,
+        )
+        logger.info(
+            _CACHE_GENERATION_RECONCILIATION_EVENT,
+            extra={
+                "condition_id": condition_id,
+                "side": side.value,
+                "generation_ready": finished,
+            },
+        )
+        if finished:
+            strategy._note_runtime_readiness(condition_id, ready=True)
+            break
+
+
+def on_evaluation_heartbeat(strategy: _LifecycleStrategy, _event: object) -> None:
+    now = framework_now(strategy)
+    active_condition_ids = _active_unexpired_condition_ids(strategy, now=now)
+    strategy._note_runtime_progress(
+        "evaluation_heartbeat",
+        active_condition_ids=active_condition_ids,
+    )
+    strategy._subscribe_market_conditions(active_condition_ids)
+    _reconcile_awaiting_books_from_cache(strategy, active_condition_ids, now=now)
+    _recover_book_subscriptions(strategy, active_condition_ids, now=now)
     registry = strategy._require_registry()
     trading_state = trading_state_from_cache(
         strategy.cache,

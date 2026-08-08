@@ -2321,8 +2321,8 @@ def test_native_strategy_stale_empty_depth_remains_missing_data() -> None:
     empty = _real_market_view_with_empty_quote_depth()
     stale = replace(
         empty,
-        up=replace(empty.up, freshness_ms=60_001),
-        down=replace(empty.down, freshness_ms=60_001),
+        up=replace(empty.up, freshness_ms=180_001),
+        down=replace(empty.down, freshness_ms=180_001),
     )
     assembler = FakeAssembler(empty)
     statuses: list[dict[str, object]] = []
@@ -2519,8 +2519,8 @@ def test_native_strategy_overlapping_active_condition_does_not_overwrite_untrada
 
     views[empty.condition_id] = replace(
         empty,
-        up=replace(empty.up, freshness_ms=60_001),
-        down=replace(empty.down, freshness_ms=60_001),
+        up=replace(empty.up, freshness_ms=180_001),
+        down=replace(empty.down, freshness_ms=180_001),
     )
     strategy.evaluate_condition(empty.condition_id)
     strategy.evaluate_condition(tradable.condition_id)
@@ -2729,7 +2729,12 @@ def test_market_data_evaluation_is_debounced_per_condition() -> None:
         def _framework_now(self) -> datetime:
             return clock["now"]
 
-        def _note_runtime_progress(self, phase: str) -> None:
+        def _note_runtime_progress(
+        self,
+        phase: str,
+        *,
+        active_condition_ids=None,
+    ) -> None:
             _ = phase
 
         def evaluate_condition(self, condition_id: str) -> None:
@@ -3060,8 +3065,8 @@ def test_stale_orderbook_recovery_inside_debounce_window_evaluates_at_trailing_e
     )
     stale = replace(
         current,
-        up=replace(current.up, freshness_ms=60_001),
-        down=replace(current.down, freshness_ms=60_001),
+        up=replace(current.up, freshness_ms=180_001),
+        down=replace(current.down, freshness_ms=180_001),
     )
     assembler = FakeAssembler(stale)
     core_calls: list[MarketView] = []

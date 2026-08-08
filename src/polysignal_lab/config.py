@@ -166,7 +166,10 @@ class PolymarketDataConfig(BaseModel):
     use_market_ws: bool = True
     rtds_ws_url: str = "wss://ws-live-data.polymarket.com"
     rest_rate_limit_per_sec: float = 8.0
-    max_book_staleness_ms: int = 60000  # 60s — books refetched every ~30-40s via REST
+    max_book_staleness_ms: int = 60000  # 60s — trade/core freshness gate
+    # Readiness miss / recovery uses a wider window so quiet markets do not
+    # immediately arm Docker liveness or per-minute wire refresh thrash.
+    max_book_readiness_staleness_ms: int = 180000
     max_market_metadata_staleness_ms: int = 10000
 
 

@@ -17,6 +17,28 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _detail_counts_toward_readiness_miss(
+    detail: dict[str, object] | None,
+) -> bool:
+    """Once-READY misses arm the 300s liveness clock; never-READY do not.
+
+    Warmup ``awaiting_first_book`` / ``awaiting_instrument`` conditions stay
+    visible in readiness detail for observation, but must not make Docker
+    liveness unhealthy while global ``last_data_at`` is still advancing.
+    Missing or legacy detail fails closed.
+    """
+    if detail is None:
+        return True
+    ever_at = detail.get("first_bilateral_book_ever_at")
+    once_ready = isinstance(ever_at, str) and bool(ever_at)
+    if once_ready:
+        return True
+    state = detail.get("subscription_state")
+    if state in {"awaiting_first_book", "awaiting_instrument"}:
+        return False
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeHeartbeat:
     updated_at: str
@@ -95,6 +117,7 @@ def write_runtime_heartbeat(
     readiness_key: str | None = None,
     readiness_ok: bool | None = None,
     readiness_detail: dict[str, object] | None = None,
+    active_readiness_keys: frozenset[str] | None = None,
     now: datetime | None = None,
 ) -> RuntimeHeartbeat:
     timestamp = (now or _utc_now()).astimezone(UTC).isoformat()
@@ -123,14 +146,35 @@ def write_runtime_heartbeat(
             _ = readiness_misses.pop(readiness_key, None)
             _ = readiness_details.pop(readiness_key, None)
         elif readiness_ok is False:
-            _ = readiness_misses.setdefault(readiness_key, timestamp)
             if readiness_detail is not None:
                 readiness_details[readiness_key] = dict(readiness_detail)
+            detail_for_clock = (
+                readiness_details.get(readiness_key)
+                if readiness_detail is None
+                else readiness_detail
+            )
+            if _detail_counts_toward_readiness_miss(detail_for_clock):
+                _ = readiness_misses.setdefault(readiness_key, timestamp)
+            else:
+                _ = readiness_misses.pop(readiness_key, None)
     elif phase == "readiness_miss":
         _ = readiness_misses.setdefault(_GLOBAL_READINESS_KEY, timestamp)
     elif phase not in {"market_data_evaluation", "evaluation_heartbeat"}:
         _ = readiness_misses.pop(_GLOBAL_READINESS_KEY, None)
         _ = readiness_details.pop(_GLOBAL_READINESS_KEY, None)
+    if active_readiness_keys is not None:
+        keep = set(active_readiness_keys)
+        for key in tuple(readiness_details):
+            if key == _GLOBAL_READINESS_KEY:
+                continue
+            if key not in keep:
+                _ = readiness_details.pop(key, None)
+                _ = readiness_misses.pop(key, None)
+        for key in tuple(readiness_misses):
+            if key == _GLOBAL_READINESS_KEY:
+                continue
+            if key not in keep:
+                _ = readiness_misses.pop(key, None)
     heartbeat = RuntimeHeartbeat(
         updated_at=timestamp,
         phase=phase,
@@ -202,8 +246,6 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
         if not isinstance(key, str) or not isinstance(value, str):
             raise TypeError("heartbeat readiness miss entries must be strings")
         readiness_misses[key] = value
-    if not readiness_misses and phase == "readiness_miss":
-        readiness_misses[_GLOBAL_READINESS_KEY] = phase_started_at
     readiness_detail_raw = payload.get("readiness_detail_by_key", {})
     if not isinstance(readiness_detail_raw, dict):
         raise TypeError("heartbeat readiness details must be a JSON object")
@@ -212,6 +254,15 @@ def read_runtime_heartbeat(path: Path) -> RuntimeHeartbeat:
         if not isinstance(key, str) or not isinstance(value, dict):
             raise TypeError("heartbeat readiness detail entries must be objects")
         readiness_details[key] = dict(value)
+    # Legacy heartbeats only had phase=readiness_miss. Do not invent a global
+    # miss when modern payloads already carry per-condition detail without a
+    # once-READY miss clock (never-READY warmup stays observational only).
+    if (
+        not readiness_misses
+        and phase == "readiness_miss"
+        and not readiness_details
+    ):
+        readiness_misses[_GLOBAL_READINESS_KEY] = phase_started_at
 
     return RuntimeHeartbeat(
         updated_at=updated_at,
@@ -317,11 +368,12 @@ def evaluate_liveness(
     try:
         heartbeat = read_runtime_heartbeat(path)
         updated_at = datetime.fromisoformat(heartbeat.updated_at).astimezone(UTC)
+        readiness_details = dict(heartbeat.readiness_detail_by_key)
         readiness_started_at = tuple(
             datetime.fromisoformat(value).astimezone(UTC)
-            for value in heartbeat.readiness_miss_started_at_by_key.values()
+            for key, value in heartbeat.readiness_miss_started_at_by_key.items()
+            if _detail_counts_toward_readiness_miss(readiness_details.get(key))
         )
-        readiness_details = dict(heartbeat.readiness_detail_by_key)
     except FileNotFoundError:
         if inside_startup_grace:
             return LivenessResult(ok=True)

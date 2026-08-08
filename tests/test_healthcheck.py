@@ -201,6 +201,44 @@ def test_read_runtime_heartbeat_round_trips(tmp_path) -> None:
     assert read.fatal is False
 
 
+def test_write_runtime_heartbeat_prunes_detail_to_active_keys(tmp_path) -> None:
+    """Exited/abandoned conditions must not accumulate forever in detail/miss."""
+    path = tmp_path / "runtime_heartbeat.json"
+    write_runtime_heartbeat(
+        path,
+        phase="readiness_miss",
+        readiness_key="retired",
+        readiness_ok=False,
+        readiness_detail={
+            "subscription_state": "awaiting_first_book",
+            "first_bilateral_book_ever_at": None,
+        },
+        now=_dt(0),
+    )
+    write_runtime_heartbeat(
+        path,
+        phase="readiness_miss",
+        readiness_key="active",
+        readiness_ok=False,
+        readiness_detail={
+            "subscription_state": "awaiting_first_book",
+            "first_bilateral_book_ever_at": None,
+        },
+        now=_dt(1),
+    )
+
+    pruned = write_runtime_heartbeat(
+        path,
+        phase="evaluation_heartbeat",
+        active_readiness_keys=frozenset({"active"}),
+        now=_dt(2),
+    )
+
+    assert set(pruned.readiness_detail_by_key) == {"active"}
+    assert "retired" not in pruned.readiness_miss_started_at_by_key
+    assert "retired" not in pruned.readiness_detail_by_key
+
+
 def test_read_runtime_heartbeat_supports_legacy_readiness_miss_payload(
     tmp_path,
 ) -> None:
