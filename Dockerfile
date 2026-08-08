@@ -23,6 +23,7 @@ FROM python:3.12-slim AS nautilus-runtime
 
 LABEL io.polysignal.nautilus.upstream-sha="a930c8afe380025fc0a10c6b2cd6907d6b983e86" \
       io.polysignal.nautilus.patch-sha="b73d600a25d8f9e385391613679888b9d665d551" \
+      io.polysignal.nautilus.release-tag="polysignal-1.231.0a20260730.13" \
       io.polysignal.nautilus.version="1.231.0a20260730+polysignal.13" \
       io.polysignal.nautilus.wheel-sha256="4cc86d6353c6f1d59aedea8b1b098a67bf804ba56a6e196e6e9b4fb33fd59ed6"
 

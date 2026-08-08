@@ -1,0 +1,120 @@
+name: promote-nautilus
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: >-
+          Immutable Nautilus fork release tag to promote, e.g.
+          polysignal-1.231.0a20260730.14
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-nautilus
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+
+      - name: Verify immutable fork release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release verify "$RELEASE_TAG" --repo 6Kmfi6HP/nautilus_trader
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          mkdir -p dist
+          gh release download "$RELEASE_TAG" \
+            --repo 6Kmfi6HP/nautilus_trader \
+            --pattern 'polysignal-release.json' \
+            --pattern '*.whl' \
+            --pattern 'SHA256SUMS' \
+            --dir dist
+
+      - name: Verify release checksums
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS
+
+      - name: Verify manifest attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          wheel="$(find dist -maxdepth 1 -name 'nautilus_trader-*.whl' -print -quit)"
+          test -n "$wheel"
+          gh attestation verify "$wheel" \
+            --repo 6Kmfi6HP/nautilus_trader \
+            --signer-workflow 6Kmfi6HP/nautilus_trader/.github/workflows/polysignal-release.yml
+
+      - name: Verify manifest whitelist and wheel digest
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: >-
+          python3 scripts/promote_nautilus_release.py verify
+          --manifest dist/polysignal-release.json
+          --wheel "$(find dist -maxdepth 1 -name 'nautilus_trader-*.whl' -print -quit)"
+          --release-tag "$RELEASE_TAG"
+
+      - name: Promote release into repo
+        run: >-
+          python3 scripts/promote_nautilus_release.py sync
+          --manifest dist/polysignal-release.json
+
+      - name: Regenerate lockfile
+        run: uv lock
+
+      - name: Drift check
+        run: uv run python scripts/verify_nautilus_manifest_drift.py
+
+      - name: Frozen install and tests
+        env:
+          NAUTILUS_REQUIRED: "1"
+        run: |
+          uv sync --extra nautilus --extra dev --frozen
+          uv run pytest
+
+      - name: Open promotion PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git switch -c "promote-nautilus-${RELEASE_TAG}"
+          git add docs/runtime_verification/nautilus-polysignal-wheel.json \
+                  pyproject.toml uv.lock Dockerfile \
+                  scripts/promote_nautilus_release.py \
+                  scripts/verify_nautilus_manifest_drift.py
+          if git diff --cached --quiet; then
+            echo "No provenance changes to promote; nothing to do."
+            exit 0
+          fi
+          git commit -m "chore(nautilus): promote ${RELEASE_TAG}"
+          git push origin "promote-nautilus-${RELEASE_TAG}"
+          gh pr create \
+            --base main \
+            --head "promote-nautilus-${RELEASE_TAG}" \
+            --title "chore(nautilus): promote ${RELEASE_TAG}" \
+            --body "Promotes the verified immutable wheel release ${RELEASE_TAG} from 6Kmfi6HP/nautilus_trader. CI must confirm the manifest, pyproject.toml, uv.lock and Docker labels all agree before merge."
