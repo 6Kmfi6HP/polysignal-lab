@@ -2,10 +2,7 @@
 
 services:
   polysignal-lab:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: nautilus-runtime
+    image: ghcr.io/6kmfi6hp/polysignal-lab:${POLYSIGNAL_IMAGE_TAG:-main}
     container_name: polysignal-lab
     restart: unless-stopped
     env_file:
@@ -42,9 +39,7 @@ services:
       start_period: 180s
 
   dashboard-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/6kmfi6hp/polysignal-lab:${POLYSIGNAL_IMAGE_TAG:-main}
     container_name: polysignal-lab-dashboard-api
     restart: unless-stopped
     env_file:
