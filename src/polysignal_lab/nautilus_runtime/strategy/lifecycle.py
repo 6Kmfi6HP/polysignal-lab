@@ -315,6 +315,7 @@ def _recover_book_subscriptions(
             now=now,
         )
 
+
 def _reconcile_awaiting_books_from_cache(
     strategy: _LifecycleStrategy,
     condition_ids: Sequence[str],
