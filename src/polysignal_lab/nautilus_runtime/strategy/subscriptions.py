@@ -952,6 +952,7 @@ def finish_market_book_generation(
         # Late/delayed callback after cleanup (or a duplicate): never revive a
         # retired lifecycle. Record the observation for observability only.
         return
+    was_once_ready = condition_id in state.first_bilateral_book_ever_at_by_condition
     receipts = state.last_book_received_at_by_condition.get(condition_id, {})
     ready_at = max(receipts.values(), default=received_at)
     state.awaiting_book_sides_by_condition.pop(condition_id)
@@ -968,9 +969,10 @@ def finish_market_book_generation(
     if started_at is not None:
         latency_ms = max(0, int((ready_at - started_at).total_seconds() * 1000))
         state.first_bilateral_book_latency_ms_by_condition[condition_id] = latency_ms
-    # A completed bilateral book proves the feed is moving again; drop the
-    # global recovery cooldown so a later stall may batch immediately.
-    clear_global_book_recovery_batch(state)
+    # Only a once-READY recovery proves the fleet-wide feed is moving again. A
+    # never-READY warmup first book does not close the global recovery epoch.
+    if was_once_ready:
+        clear_global_book_recovery_batch(state)
     _transition_condition_phase(state, condition_id, ConditionSubscriptionPhase.READY)
 
 

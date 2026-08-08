@@ -1619,6 +1619,113 @@ def test_global_recovery_backoff_clears_after_completed_book() -> None:
     assert state.global_book_recovery_batch_at is None
 
 
+def test_global_book_recovery_batch_only_advances_on_dispatch() -> None:
+    """A cooldown timestamp is only renewed when a wire refresh actually goes
+    out; pending intents left over from the previous batch must not starve the
+    setup."""
+    registry = _registry_with_pairs("btc-5m", "eth-5m", "sol-5m")
+    t0 = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=t0)
+    strategy._active_condition_ids = {"btc-5m", "eth-5m", "sol-5m"}
+    for condition_id in ("btc-5m", "eth-5m", "sol-5m"):
+        _stale_ready_state(
+            strategy,
+            condition_id,
+            now=t0,
+            stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+        )
+    state = strategy._subscription_state
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.refreshed_instruments) == 6
+    assert state.global_book_recovery_batch_at == t0
+
+    # Adapter has not consumed the first batch: no new dispatch is possible,
+    # so reaching the old cooldown expiry must not replace the timestamp.
+    t2 = t0 + timedelta(seconds=_GLOBAL_BOOK_RECOVERY_BACKOFF_SEC + 10)
+    strategy.clock.now_ns = int(t2.timestamp() * 1_000_000_000)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.refreshed_instruments) == 6
+    assert state.global_book_recovery_batch_at == t0
+
+    # Once the adapter clears the pending intents, the same heartbeat may
+    # dispatch the next coordinated batch and start its backoff.
+    state.pending_book_recovery_sides_by_condition.clear()
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.refreshed_instruments) == 12
+    assert state.global_book_recovery_batch_at == t2
+
+
+def test_never_ready_dispatch_does_not_renew_global_backoff() -> None:
+    """Ordinary never-READY retries must not advance the fleet backoff."""
+    registry = _registry_with_pairs("btc-5m", "warmup-5m")
+    t0 = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=t0)
+    strategy._active_condition_ids = {"btc-5m", "warmup-5m"}
+    _stale_ready_state(
+        strategy,
+        "btc-5m",
+        now=t0,
+        stalled_sec=_BOOK_GENERATION_STALL_SEC + 10,
+    )
+    _stalled_state(
+        strategy,
+        "warmup-5m",
+        started_at=t0 - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+    )
+    state = strategy._subscription_state
+
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.refreshed_instruments) == 4
+    assert state.global_book_recovery_batch_at == t0
+
+    # Let only the never-READY condition dispatch again. The once-READY fleet
+    # still has its pending intents from the first coordinated batch.
+    t2 = t0 + timedelta(seconds=_GLOBAL_BOOK_RECOVERY_BACKOFF_SEC + 10)
+    strategy.clock.now_ns = int(t2.timestamp() * 1_000_000_000)
+    state.pending_book_recovery_sides_by_condition.pop("warmup-5m", None)
+    on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
+
+    assert len(strategy.refreshed_instruments) == 6
+    assert state.global_book_recovery_batch_at == t0
+
+
+def test_never_ready_first_book_does_not_clear_global_backoff() -> None:
+    registry = _registry()
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+    strategy = _HeartbeatStrategy(registry, now=now)
+    state = strategy._subscription_state
+    state.global_book_recovery_batch_at = now
+    _stalled_state(
+        strategy,
+        "btc-5m",
+        started_at=now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10),
+    )
+
+    received_at = now + timedelta(seconds=2)
+    observe_market_book_side(
+        strategy,
+        "btc-5m",
+        Side.UP,
+        received_at=received_at,
+        book_at=received_at,
+    )
+    observe_market_book_side(
+        strategy,
+        "btc-5m",
+        Side.DOWN,
+        received_at=received_at,
+        book_at=received_at,
+    )
+
+    assert "btc-5m" in state.first_bilateral_book_ever_at_by_condition
+    assert state.global_book_recovery_batch_at == now
+
+
 def test_global_book_recovery_suppression_emits_log(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

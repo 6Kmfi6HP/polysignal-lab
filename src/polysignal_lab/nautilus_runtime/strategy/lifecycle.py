@@ -266,16 +266,30 @@ def _suppress_global_book_recovery(
                 },
             )
             continue
-        _ = force_resubscribe_if_book_stalled(
-            strategy,  # pyright: ignore[reportArgumentType]
+        _ = _dispatch_condition_book_recovery(
+            strategy,
             condition_id,
             now=now,
         )
-        _ = force_resubscribe_if_stale_orderbook(
-            strategy,  # pyright: ignore[reportArgumentType]
-            condition_id,
-            now=now,
-        )
+
+
+def _dispatch_condition_book_recovery(
+    strategy: _LifecycleStrategy,
+    condition_id: str,
+    *,
+    now: datetime,
+) -> bool:
+    first_book_dispatched = force_resubscribe_if_book_stalled(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_id,
+        now=now,
+    )
+    stale_book_dispatched = force_resubscribe_if_stale_orderbook(
+        strategy,  # pyright: ignore[reportArgumentType]
+        condition_id,
+        now=now,
+    )
+    return first_book_dispatched or stale_book_dispatched
 
 
 def _recover_book_subscriptions(
@@ -301,16 +315,29 @@ def _recover_book_subscriptions(
                 now=now,
             )
             return
-        # One coordinated batch for the whole stalled set, then back off.
-        state.global_book_recovery_batch_at = now.astimezone(UTC)
+        # One coordinated batch for the whole stalled set. Start the next
+        # backoff only if at least one once-READY wire refresh was actually
+        # dispatched; pending intents from the previous batch or a never-READY
+        # warmup refresh must not advance the fleet-wide gate.
+        dispatched_any = False
+        for condition_id in condition_ids:
+            condition_dispatched = _dispatch_condition_book_recovery(
+                strategy,
+                condition_id,
+                now=now,
+            )
+            if (
+                condition_dispatched
+                and condition_id
+                in state.first_bilateral_book_ever_at_by_condition
+            ):
+                dispatched_any = True
+        if dispatched_any:
+            state.global_book_recovery_batch_at = now.astimezone(UTC)
+        return
     for condition_id in condition_ids:
-        _ = force_resubscribe_if_book_stalled(
-            strategy,  # pyright: ignore[reportArgumentType]
-            condition_id,
-            now=now,
-        )
-        _ = force_resubscribe_if_stale_orderbook(
-            strategy,  # pyright: ignore[reportArgumentType]
+        _ = _dispatch_condition_book_recovery(
+            strategy,
             condition_id,
             now=now,
         )
