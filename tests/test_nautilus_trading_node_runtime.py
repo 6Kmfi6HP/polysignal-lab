@@ -454,11 +454,12 @@ def test_build_sandbox_live_node_enables_rtds_only_on_primary_data_client(
 
 
 async def test_run_nautilus_cli_async_starts_and_stops_observability_writer(
-    monkeypatch, tmp_path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls: list[str] = []
     settings = Settings()
     settings.storage.state_dir = str(tmp_path / "state")
+    settings.logging.directory = str(tmp_path / "logs")
 
     class FakeObservability:
         def start(self) -> None:

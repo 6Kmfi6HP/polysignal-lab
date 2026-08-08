@@ -4,6 +4,7 @@ import asyncio
 import logging
 import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -447,10 +448,12 @@ async def test_sync_live_node_run_is_offloaded_from_event_loop(
 @pytest.mark.anyio
 async def test_async_cli_uses_bundle_strategy_names_and_stops_observability(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     from polysignal_lab.nautilus_runtime import node as node_module
 
     settings = Settings()
+    settings.logging.directory = str(tmp_path / "logs")
     observability = _Observability()
     context = SimpleNamespace(
         settings=settings,
