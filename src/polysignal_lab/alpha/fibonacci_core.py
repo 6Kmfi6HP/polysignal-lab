@@ -12,6 +12,7 @@ from polysignal_lab.alpha.state_json import json_safe_state
 from polysignal_lab.alpha.stats import _RollingPriceStats
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.strategy_config import FibonacciBotConfig
 
 
 class _FibState(TypedDict):
@@ -127,7 +128,7 @@ class FibonacciCalculator:
 class FibonacciAlphaCore:
     name = "fibonacci_bot"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: FibonacciBotConfig) -> None:
         self.config = config
         self._candles: dict[str, deque[float]] = {}
         self._zigzag: dict[str, ZigZagDetector] = {}

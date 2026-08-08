@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.strategy_config import LateConsensusConfig
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ class LateConsensusAlphaCore:
 
     name = "late_consensus"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: LateConsensusConfig) -> None:
         self.config = config
 
     # ------------------------------------------------------------------

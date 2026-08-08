@@ -4,12 +4,13 @@ from typing import Any
 
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
+from polysignal_lab.domain.strategy_config import MidPriceSizingConfig
 
 
 class MidPriceSizingAlphaCore:
     name = "mid_price_sizing"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: MidPriceSizingConfig) -> None:
         self.config = config
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
