@@ -21,8 +21,12 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
 )
 from polysignal_lab.nautilus_runtime.strategy.subscriptions import (
     MarketSubscriptionState,
+    _GLOBAL_BOOK_RECOVERY_BACKOFF_SEC,
+    condition_needs_book_recovery,
     force_resubscribe_if_book_stalled,
     force_resubscribe_if_stale_orderbook,
+    global_book_feed_stalled,
+    global_recovery_batch_due,
     observe_market_book_side,
     subscription_scope_condition_ids,
 )
@@ -62,6 +66,7 @@ class _LifecycleStrategy(_ClockHost, Protocol):
     _market_config: object
     _spot_data_source: str
     _subscription_state: MarketSubscriptionState
+    _stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]]
     _subscription_assets: frozenset[str]
     _subscription_timeframes: frozenset[str]
     registry: MarketCatalog | None
@@ -232,13 +237,35 @@ def _active_unexpired_condition_ids(
     return tuple(active_condition_ids)
 
 
-def _recover_book_subscriptions(
+def _suppress_global_book_recovery(
     strategy: _LifecycleStrategy,
     condition_ids: Sequence[str],
     *,
     now: datetime,
 ) -> None:
+    """Hold per-condition wire retries while a whole-fleet recovery converges.
+
+    A global feed outage re-arming every condition's refresh on each heartbeat
+    races adapter replay and its book recovery delta buffer. Never-READY
+    warmup conditions are excluded from the global set and keep their own
+    per-condition first-book/abandon path.
+    """
     for condition_id in condition_ids:
+        if condition_needs_book_recovery(
+            strategy,
+            condition_id,
+            now=now,
+        ):
+            logger.info(
+                "condition_book_recovery_suppressed",
+                extra={
+                    "strategy": strategy.strategy_name,
+                    "condition_id": condition_id,
+                    "suppressed_at": now.astimezone(UTC).isoformat(),
+                    "backoff_sec": _GLOBAL_BOOK_RECOVERY_BACKOFF_SEC,
+                },
+            )
+            continue
         _ = force_resubscribe_if_book_stalled(
             strategy,  # pyright: ignore[reportArgumentType]
             condition_id,
@@ -250,6 +277,43 @@ def _recover_book_subscriptions(
             now=now,
         )
 
+
+def _recover_book_subscriptions(
+    strategy: _LifecycleStrategy,
+    condition_ids: Sequence[str],
+    *,
+    now: datetime,
+) -> None:
+    state = strategy._subscription_state
+    if global_book_feed_stalled(
+        strategy,
+        condition_ids,
+        now=now,
+    ):
+        if not global_recovery_batch_due(
+            strategy,
+            now=now,
+        ):
+            # One batch already went out inside the backoff window.
+            _suppress_global_book_recovery(
+                strategy,
+                condition_ids,
+                now=now,
+            )
+            return
+        # One coordinated batch for the whole stalled set, then back off.
+        state.global_book_recovery_batch_at = now.astimezone(UTC)
+    for condition_id in condition_ids:
+        _ = force_resubscribe_if_book_stalled(
+            strategy,  # pyright: ignore[reportArgumentType]
+            condition_id,
+            now=now,
+        )
+        _ = force_resubscribe_if_stale_orderbook(
+            strategy,  # pyright: ignore[reportArgumentType]
+            condition_id,
+            now=now,
+        )
 
 def _reconcile_awaiting_books_from_cache(
     strategy: _LifecycleStrategy,
