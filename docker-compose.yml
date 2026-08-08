@@ -2,7 +2,7 @@
 
 services:
   polysignal-lab:
-    image: ghcr.io/6kmfi6hp/polysignal-lab:${POLYSIGNAL_IMAGE_TAG:-main}
+    image: ${POLYSIGNAL_IMAGE_REF:-ghcr.io/6kmfi6hp/polysignal-lab:main}
     container_name: polysignal-lab
     restart: unless-stopped
     env_file:
@@ -39,7 +39,7 @@ services:
       start_period: 180s
 
   dashboard-api:
-    image: ghcr.io/6kmfi6hp/polysignal-lab:${POLYSIGNAL_IMAGE_TAG:-main}
+    image: ${POLYSIGNAL_IMAGE_REF:-ghcr.io/6kmfi6hp/polysignal-lab:main}
     container_name: polysignal-lab-dashboard-api
     restart: unless-stopped
     env_file:

@@ -17,6 +17,7 @@
 - Python 命令在仓库根目录运行；前端命令在 `frontend/` 目录运行。
 - `docs/nautilus_reference/` 包含 NautilusTrader 开发者指南。
 - `data/`、`logs/`、`state/` 是运行时目录，通常不提交。
+- 版本与镜像统一遵循 `docs/versioning.md`：`debug/**`、`main` 和 `vX.Y.Z` 分别对应调试、候选和正式渠道，生产部署须通过 `POLYSIGNAL_IMAGE_REF` 固定镜像引用，除非用户明确要求否则 Agent 不得创建 PR。
 
 ## Agent skills
 

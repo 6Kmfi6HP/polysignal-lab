@@ -1,0 +1,115 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: read
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release version
+        id: version
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          VERSION_TAG: ${{ github.ref_name }}
+        run: >-
+          python3 scripts/image_version.py release
+          --tag "$VERSION_TAG"
+          --source-sha "$SOURCE_SHA"
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Require a main branch commit
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Normalize image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        with:
+          version: v0.21.9
+
+      - name: Resolve and validate main candidate
+        id: candidate
+        env:
+          BASE_VERSION: ${{ steps.version.outputs.base_version }}
+          IMAGE: ${{ steps.image.outputs.name }}
+          IMMUTABLE_TAG: ${{ steps.version.outputs.immutable_tag }}
+        run: |
+          set -euo pipefail
+          digest="$(crane digest "${IMAGE}:${IMMUTABLE_TAG}")"
+          config="$(crane config "${IMAGE}@${digest}")"
+          revision="$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' <<<"$config")"
+          channel="$(jq -r '.config.Labels["io.polysignal.build.channel"] // empty' <<<"$config")"
+          version="$(jq -r '.config.Labels["org.opencontainers.image.version"] // empty' <<<"$config")"
+          test "$revision" = "$GITHUB_SHA"
+          test "$channel" = "main"
+          test "$version" = "$BASE_VERSION"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Verify candidate provenance
+        env:
+          DIGEST: ${{ steps.candidate.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: >-
+          gh attestation verify "oci://${IMAGE}@${DIGEST}"
+          --repo "$GITHUB_REPOSITORY"
+          --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml"
+          --source-digest "$GITHUB_SHA"
+          --source-ref refs/heads/main
+
+      - name: Promote candidate digest
+        env:
+          DIGEST: ${{ steps.candidate.outputs.digest }}
+          IMAGE: ${{ steps.image.outputs.name }}
+          MAJOR_MINOR_TAG: ${{ steps.version.outputs.major_minor_tag }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          existing_digest="$(crane digest "${IMAGE}:${RELEASE_TAG}" 2>/dev/null || true)"
+          if [[ -n "$existing_digest" && "$existing_digest" != "$DIGEST" ]]; then
+            echo "Release tag ${RELEASE_TAG} already points to ${existing_digest}" >&2
+            exit 1
+          fi
+          crane tag "${IMAGE}@${DIGEST}" "$RELEASE_TAG"
+          crane tag "${IMAGE}@${DIGEST}" "$MAJOR_MINOR_TAG"
+          crane tag "${IMAGE}@${DIGEST}" stable
+
+      - name: Create GitHub release
+        env:
+          DIGEST: ${{ steps.candidate.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.image.outputs.name }}
+          VERSION: ${{ steps.version.outputs.release_tag }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            exit 0
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Container: ${IMAGE}@${DIGEST}"
