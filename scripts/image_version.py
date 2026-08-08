@@ -4,19 +4,20 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import re
+import sys
 from pathlib import Path
 
 import tomllib
 
-SEMVER_RE = re.compile(
-    r"^(?P<major>0|[1-9][0-9]*)\."
-    r"(?P<minor>0|[1-9][0-9]*)\."
-    r"(?P<patch>0|[1-9][0-9]*)$"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from polysignal_lab.build_info import (  # noqa: E402
+    SEMVER_RE,
+    build_info_from_plan,
+    plan_build,
+    plan_release,
 )
-SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _base_version(pyproject: Path) -> str:
@@ -25,68 +26,6 @@ def _base_version(pyproject: Path) -> str:
     if not isinstance(version, str) or SEMVER_RE.fullmatch(version) is None:
         raise ValueError("project.version must be a stable X.Y.Z SemVer version")
     return version
-
-
-def _require_sha(value: str) -> None:
-    if SHA_RE.fullmatch(value) is None:
-        raise ValueError("source SHA must be a full lowercase commit SHA")
-
-
-def _debug_tag(ref_name: str) -> str:
-    branch_name = ref_name.removeprefix("debug/")
-    slug = re.sub(r"[^a-z0-9._-]+", "-", branch_name.lower()).strip(".-")
-    slug = re.sub(r"-+", "-", slug)
-    if not slug:
-        raise ValueError("debug branch must have a name after debug/")
-    branch_id = hashlib.sha256(ref_name.encode()).hexdigest()[:8]
-    return f"debug-{slug[:96]}-{branch_id}"
-
-
-def plan_build(
-    *, ref_name: str, source_sha: str, run_number: int, base_version: str
-) -> dict[str, str]:
-    _require_sha(source_sha)
-    if run_number < 1:
-        raise ValueError("run number must be a positive integer")
-
-    if ref_name == "main":
-        channel = "main"
-        moving_tag = "main"
-    elif ref_name.startswith("debug/"):
-        channel = "debug"
-        moving_tag = _debug_tag(ref_name)
-    else:
-        raise ValueError("image builds are allowed only from main or debug/**")
-
-    return {
-        "base_version": base_version,
-        "build_version": (
-            f"{base_version}-{channel}.{run_number}+{source_sha[:12]}"
-        ),
-        "channel": channel,
-        "immutable_tag": f"sha-{source_sha}",
-        "moving_tag": moving_tag,
-        "source_ref": ref_name,
-        "source_sha": source_sha,
-    }
-
-
-def plan_release(*, tag: str, source_sha: str, base_version: str) -> dict[str, str]:
-    _require_sha(source_sha)
-    match = SEMVER_RE.fullmatch(base_version)
-    assert match is not None
-    expected_tag = f"v{base_version}"
-    if tag != expected_tag:
-        raise ValueError(
-            f"release tag {tag!r} must exactly match project version {expected_tag!r}"
-        )
-    return {
-        "base_version": base_version,
-        "immutable_tag": f"sha-{source_sha}",
-        "major_minor_tag": f"{match.group('major')}.{match.group('minor')}",
-        "release_tag": base_version,
-        "source_sha": source_sha,
-    }
 
 
 def _write_github_output(path: Path, values: dict[str, str]) -> None:
@@ -112,6 +51,14 @@ def _run(args: argparse.Namespace) -> None:
         )
     if args.github_output is not None:
         _write_github_output(args.github_output, values)
+    if args.manifest_output is not None:
+        if args.command != "build":
+            raise ValueError("only build plans can create a build info manifest")
+        manifest = build_info_from_plan(values)
+        args.manifest_output.write_text(
+            json.dumps(manifest.to_dict(), sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     print(json.dumps(values, sort_keys=True))
 
 
@@ -125,6 +72,7 @@ def main() -> None:
     build_parser.add_argument("--run-number", required=True, type=int)
     build_parser.add_argument("--pyproject", type=Path, default=Path("pyproject.toml"))
     build_parser.add_argument("--github-output", type=Path)
+    build_parser.add_argument("--manifest-output", type=Path)
 
     release_parser = subparsers.add_parser("release")
     release_parser.add_argument("--tag", required=True)
@@ -133,6 +81,7 @@ def main() -> None:
         "--pyproject", type=Path, default=Path("pyproject.toml")
     )
     release_parser.add_argument("--github-output", type=Path)
+    release_parser.set_defaults(manifest_output=None)
 
     args = parser.parse_args()
     try:

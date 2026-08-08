@@ -16,6 +16,7 @@ data/*.sqlite3
 scan_results.json
 refined_results.json
 .env
+build-info.json
 .env.*
 .ruff_cache/
 .mypy_cache/

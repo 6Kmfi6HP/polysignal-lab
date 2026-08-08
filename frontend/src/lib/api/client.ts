@@ -1,4 +1,5 @@
 import type {
+  BuildInfoResponse,
   HealthResponse,
   LeaderboardResponse,
   OverviewResponse,
@@ -46,6 +47,10 @@ async function request<T>(
 
 export function getHealth() {
   return request<HealthResponse>('/health')
+}
+
+export function getVersion() {
+  return request<BuildInfoResponse>(`${API_BASE}/version`)
 }
 
 export function getOverview() {

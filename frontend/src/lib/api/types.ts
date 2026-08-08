@@ -224,6 +224,16 @@ export interface HealthResponse {
   recent_system_events: Record<string, unknown>[]
 }
 
+export interface BuildInfoResponse {
+  application_version: string
+  build_version: string
+  channel: string
+  source_ref: string
+  commit_sha: string | null
+  short_commit_sha: string | null
+  immutable_tag: string | null
+}
+
 export type PaginatedRows<T> = {
   items: T[]
   total: number

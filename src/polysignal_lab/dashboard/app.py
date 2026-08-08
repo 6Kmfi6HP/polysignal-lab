@@ -6,6 +6,8 @@ from typing import Any, TypeAlias
 
 from fastapi import FastAPI
 
+from polysignal_lab.build_info import BUILD_INFO, BuildInfo
+
 from polysignal_lab.dashboard.ports import (
     ReportingReadPort,
     RuntimeHealthPort,
@@ -296,11 +298,25 @@ def _valid_position_payload(payload: dict[str, JsonValue]) -> bool:
 def create_dashboard_app(
     reporting: ReportingReadPort,
     runtime_health: RuntimeHealthPort | None = None,
+    build_info: BuildInfo = BUILD_INFO,
 ) -> FastAPI:
-    app = FastAPI(title="PolySignal Lab Dashboard", version="1.0.0")
+    app = FastAPI(
+        title="PolySignal Lab Dashboard",
+        version=build_info.application_version,
+    )
 
     def strategy_status_rows(limit: int = 100) -> list[dict[str, JsonValue]]:
         return reporting.strategy_status_rows(_bounded_limit(limit))
+
+    async def build_identity() -> dict[str, str | None]:
+        return build_info.to_dict()
+
+    app.add_api_route(
+        "/api/version",
+        build_identity,
+        methods=["GET"],
+        response_model=None,
+    )
 
     @app.get("/health", response_model=None)
     async def health() -> dict[str, JsonValue]:

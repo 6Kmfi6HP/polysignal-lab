@@ -4,6 +4,16 @@ import * as api from './client'
 export const LIVE_REFRESH_MS = 15_000
 export const HEALTH_REFRESH_MS = 30_000
 
+export function useVersionQuery() {
+  return useQuery({
+    queryKey: ['version'],
+    queryFn: api.getVersion,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
+}
+
 export function useHealthQuery() {
   return useQuery({
     queryKey: ['health'],

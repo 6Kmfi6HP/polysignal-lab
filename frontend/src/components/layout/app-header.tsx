@@ -13,6 +13,7 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet'
 import { BrandMark } from '@/components/brand-mark'
+import { BuildVersion } from '@/components/build-version'
 import { ConfigDrawer } from '@/components/config-drawer'
 import { LanguageSwitch } from '@/components/language-switch'
 import { Search } from '@/components/search'
@@ -56,6 +57,7 @@ export function AppHeader() {
         </nav>
 
         <div className='ml-auto flex shrink-0 items-center gap-1 sm:gap-2 xl:ml-0'>
+          <BuildVersion />
           <Search />
           <LanguageSwitch />
           <ConfigDrawer />

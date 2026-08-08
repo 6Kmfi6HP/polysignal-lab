@@ -141,6 +141,7 @@ jobs:
           --ref-name "$SOURCE_REF"
           --source-sha "$SOURCE_SHA"
           --run-number "$RUN_NUMBER"
+          --manifest-output build-info.json
           --github-output "$GITHUB_OUTPUT"
 
       - name: Build and push image
@@ -156,8 +157,8 @@ jobs:
             ${{ steps.image.outputs.name }}:${{ steps.version.outputs.moving_tag }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.version.outputs.base_version }}
+            org.opencontainers.image.revision=${{ steps.version.outputs.commit_sha }}
+            org.opencontainers.image.version=${{ steps.version.outputs.application_version }}
             org.opencontainers.image.ref.name=${{ steps.version.outputs.source_ref }}
             io.polysignal.build.channel=${{ steps.version.outputs.channel }}
             io.polysignal.build.version=${{ steps.version.outputs.build_version }}
@@ -166,6 +167,42 @@ jobs:
             io.polysignal.nautilus.release-tag=${{ steps.manifest.outputs.release_tag }}
             io.polysignal.nautilus.version=${{ steps.manifest.outputs.version }}
             io.polysignal.nautilus.wheel-sha256=${{ steps.manifest.outputs.wheel_sha256 }}
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        with:
+          version: v0.21.9
+
+      - name: Verify embedded build info matches OCI labels
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          config="$(crane config "${IMAGE}@${DIGEST}")"
+          embedded="$(crane export "${IMAGE}@${DIGEST}" - | tar -xO app/build-info.json)"
+          python3 - "$config" "$embedded" <<'PY'
+          import json
+          import sys
+
+          labels = json.loads(sys.argv[1])["config"]["Labels"]
+          embedded = json.loads(sys.argv[2])
+          expected = {
+              "application_version": labels["org.opencontainers.image.version"],
+              "build_version": labels["io.polysignal.build.version"],
+              "channel": labels["io.polysignal.build.channel"],
+              "source_ref": labels["org.opencontainers.image.ref.name"],
+              "commit_sha": labels["org.opencontainers.image.revision"],
+          }
+          mismatches = [
+              f"{key}: embedded={embedded.get(key)!r} label={value!r}"
+              for key, value in expected.items()
+              if embedded.get(key) != value
+          ]
+          if mismatches:
+              raise SystemExit("label/build info mismatch: " + "; ".join(mismatches))
+          print("embedded build info matches OCI labels")
 
       - name: Attest image provenance
         uses: actions/attest-build-provenance@8beda2b7ed98355c0e97c0a63bec38ae472e66c4 # v4.1.0

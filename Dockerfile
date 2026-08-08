@@ -34,6 +34,7 @@ COPY --from=builder /install /usr/local
 
 # Application code & config
 COPY pyproject.toml ./
+COPY build-info.json /app/build-info.json
 COPY config/ config/
 COPY src/ src/
 COPY scripts/ scripts/
@@ -41,7 +42,9 @@ COPY tests/ tests/
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
 # Persistence directories (bind-mount from host)
-RUN mkdir -p data logs state && chmod +x /app/docker-entrypoint.sh
+RUN touch /app/.require-build-info && \
+    PYTHONPATH=src python -c 'from polysignal_lab.build_info import BUILD_INFO; assert BUILD_INFO.commit_sha' && \
+    mkdir -p data logs state && chmod +x /app/docker-entrypoint.sh
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["nautilus"]

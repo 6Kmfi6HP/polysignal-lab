@@ -30,6 +30,10 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => vi.fn(),
 }))
 
+vi.mock('@/components/build-version', () => ({
+  BuildVersion: () => <button aria-label='View build information' />,
+}))
+
 function renderHeader() {
   return render(
     <LocaleProvider>
@@ -80,6 +84,9 @@ describe('AppHeader', () => {
     expect(view.getByRole('button', { name: /^Search/ })).toBeInTheDocument()
     expect(
       view.getByRole('button', { name: 'Select language' })
+    ).toBeInTheDocument()
+    expect(
+      view.getByRole('button', { name: 'View build information' })
     ).toBeInTheDocument()
     expect(
       view.queryByRole('button', { name: 'Toggle theme' })

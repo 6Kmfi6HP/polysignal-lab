@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from polysignal_lab.dashboard.app import create_dashboard_app
+from polysignal_lab.build_info import BuildInfo
 from polysignal_lab.dashboard.ports import (
     FileRuntimeHealthReader,
     ReportingReadPort,
@@ -104,6 +105,27 @@ def test_dashboard_uses_injected_reporting_read_port() -> None:
     assert response.status_code == 200
     assert response.json() == [{"signal_id": "sig-port", "limit": 7}]
     reporting.signal_rows.assert_called_once_with(7)
+
+
+def test_dashboard_exposes_the_injected_build_identity() -> None:
+    reporting = Mock(spec=ReportingReadPort)
+    sha = "abcdef1234567890abcdef1234567890abcdef12"
+    build_info = BuildInfo.production(
+        application_version="1.0.0",
+        build_version="1.0.0-main.185+abcdef123456",
+        channel="main",
+        source_ref="main",
+        commit_sha=sha,
+        short_commit_sha="abcdef123456",
+        immutable_tag=f"sha-{sha}",
+    )
+    client = TestClient(create_dashboard_app(reporting, build_info=build_info))
+
+    response = client.get("/api/version")
+
+    assert response.status_code == 200
+    assert response.json() == build_info.to_dict()
+    assert client.get("/openapi.json").json()["info"]["version"] == "1.0.0"
 
 
 async def test_dashboard_readonly_endpoints_return_stored_data(

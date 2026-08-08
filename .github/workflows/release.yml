@@ -54,7 +54,7 @@ jobs:
       - name: Resolve and validate main candidate
         id: candidate
         env:
-          BASE_VERSION: ${{ steps.version.outputs.base_version }}
+          BASE_VERSION: ${{ steps.version.outputs.application_version }}
           IMAGE: ${{ steps.image.outputs.name }}
           IMMUTABLE_TAG: ${{ steps.version.outputs.immutable_tag }}
         run: |
@@ -64,9 +64,13 @@ jobs:
           revision="$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' <<<"$config")"
           channel="$(jq -r '.config.Labels["io.polysignal.build.channel"] // empty' <<<"$config")"
           version="$(jq -r '.config.Labels["org.opencontainers.image.version"] // empty' <<<"$config")"
+          build_version="$(jq -r '.config.Labels["io.polysignal.build.version"] // empty' <<<"$config")"
+          short_sha="${GITHUB_SHA:0:12}"
+          escaped_base="${BASE_VERSION//./\\.}"
           test "$revision" = "$GITHUB_SHA"
           test "$channel" = "main"
           test "$version" = "$BASE_VERSION"
+          [[ "$build_version" =~ ^${escaped_base}-main\.[1-9][0-9]*\+${short_sha}$ ]]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Verify candidate provenance

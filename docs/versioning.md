@@ -16,6 +16,26 @@ The registry digest is the immutable deployment identity. The `sha-*` tag
 records source identity, while `main`, `debug-*`, minor-version, and `stable`
 tags are movable channels. Do not use `latest`.
 
+## Runtime build identity
+
+CI writes the same build identity to OCI labels and to `/app/build-info.json`
+inside the backend image. The manifest contains the application version, build
+version, channel, source ref, full and short commit SHA, and immutable `sha-*`
+tag. Image builds fail if these fields are missing or inconsistent.
+
+The dashboard publishes this non-sensitive identity at `GET /api/version` and
+shows a compact build version and commit in the application header. The details
+panel exposes the complete values for incident and deployment correlation.
+OpenAPI's application version comes from the same manifest.
+
+Source checkouts without an embedded manifest use an explicit local identity:
+`<application-version>-local`, channel/ref `local`, and null commit/image tag.
+This fallback is for development only. Runtime images contain a marker that
+makes a missing manifest fatal rather than silently reporting a local build.
+
+`frontend/package.json` versions the frontend toolchain package only. It is not
+the PolySignal application version and is not displayed as deployment identity.
+
 Pushes to `main` and `debug/**` run the complete test and frontend gates before
 publishing images. Other branches and pull requests run validation but do not
 receive image publishing permissions.
