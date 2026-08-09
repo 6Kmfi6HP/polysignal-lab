@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, RootModel
 
@@ -277,6 +277,8 @@ class NinetyNineCentSniperConfig(BaseModel):
     name: Literal["ninety_nine_cent_sniper"] = "ninety_nine_cent_sniper"
     enabled: bool = True
 
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     max_entry_price: float = 0.99
     min_external_probability: float = 0.995
     min_seconds_before_close: float = 0.0
@@ -290,6 +292,8 @@ class OneCentBuyConfig(BaseModel):
     name: Literal["one_cent_buy"] = "one_cent_buy"
     enabled: bool = True
 
+    assets: list[str] = Field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
     entry_prices: tuple[float, ...] = (0.01, 0.02, 0.03)
     shares_per_level: int = 10
     cancel_before_close_seconds: float = 20.0

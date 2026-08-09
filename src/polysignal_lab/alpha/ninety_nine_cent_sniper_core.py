@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from polysignal_lab.alpha.decisions import enabled_for_view
 from polysignal_lab.alpha.types import (
     AlphaDecision,
     MarketView,
@@ -34,6 +35,8 @@ class NinetyNineCentSniperAlphaCore:
         return self._book_mid(view.book_for(side))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
+        if not enabled_for_view(self.config, view):
+            return []
         seconds_to_close = view.seconds_to_close
         if seconds_to_close is None or not self._in_time_window(seconds_to_close):
             return []

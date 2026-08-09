@@ -210,6 +210,31 @@ def test_shared_registration_adds_one_strategy_per_enabled_alpha() -> None:
     ]
 
 
+def test_shared_registration_activates_all_production_strategies() -> None:
+    settings = Settings.from_yaml("config/signal_bot.yaml")
+    runtime = _RecordingRuntime()
+
+    names = register_runtime_components(runtime, settings)
+
+    assert names == (
+        "vwap_momentum",
+        "late_consensus",
+        "ptb_diff",
+        "binary_momentum",
+        "dump_hedge",
+        "fibonacci_bot",
+        "low_side_dual_reversion",
+        "mid_price_sizing",
+        "ninety_nine_cent_sniper",
+        "one_cent_buy",
+        "pre_order_market",
+        "skew_mean_reversion",
+    )
+    assert [getattr(cfg, "config")["strategy_name"] for cfg in runtime.strategy_configs] == [
+        *names,
+    ]
+
+
 def test_shared_registration_empty_market_configs_bootstrap_from_provider() -> None:
     settings = Settings()
     settings.strategies.set_explicit_strategy_names(("one_cent_buy",))

@@ -176,8 +176,12 @@ strategies:
     enabled: true
   ninety_nine_cent_sniper:
     enabled: true
+    assets: [BTC, ETH, SOL, XRP]
+    timeframes: [5m, 15m]
   one_cent_buy:
     enabled: true
+    assets: [BTC, ETH, SOL, XRP]
+    timeframes: [5m, 15m]
   pre_order_market:
     enabled: true
   skew_mean_reversion:

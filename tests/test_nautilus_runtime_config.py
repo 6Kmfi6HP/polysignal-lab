@@ -303,6 +303,25 @@ def test_polysignal_strategy_config_extends_nautilus_strategy_config() -> None:
     assert reconstructed.strategy_name == "one_cent_buy"
 
 
+def test_all_production_strategy_configs_expose_subscription_scope() -> None:
+    from nautilus_optional import require_nautilus
+
+    require_nautilus()
+
+    from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
+    from polysignal_lab.nautilus_runtime.runtime_configs import (
+        PolySignalStrategyConfig,
+    )
+
+    settings = Settings.from_yaml("config/signal_bot.yaml")
+    for name in settings.strategies.explicit_strategy_names():
+        strategy = PolySignalNativeStrategy(
+            PolySignalStrategyConfig.build(settings, (), (), strategy_name=name)
+        )
+        assert strategy._subscription_assets  # pyright: ignore[reportUnknownMemberType]
+        assert strategy._subscription_timeframes  # pyright: ignore[reportUnknownMemberType]
+
+
 def test_market_rotation_actor_config_extends_nautilus_actor_config() -> None:
     from nautilus_trader.common.config import ActorConfig
 

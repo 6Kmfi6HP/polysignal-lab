@@ -210,6 +210,42 @@ strategies:
       take_profit_rr: 1.0
       take_profit_cap: 0.99
       market_data_max_lag_sec: 1.2
+  binary_momentum:
+    enabled: true
+    assets: [BTC, ETH, SOL, XRP]
+    timeframes: [5m, 15m]
+  dump_hedge:
+    enabled: true
+    assets: [BTC, ETH, SOL, XRP]
+    timeframes: [5m, 15m]
+  fibonacci_bot:
+    enabled: true
+    assets: [BTC, ETH, SOL, XRP]
+    timeframes: [5m, 15m]
+  low_side_dual_reversion:
+    enabled: true
+    assets: [BTC, ETH, SOL, XRP]
+    timeframes: [5m, 15m]
+  mid_price_sizing:
+    enabled: true
+    assets: [BTC, ETH, SOL, XRP]
+    timeframes: [5m, 15m]
+  ninety_nine_cent_sniper:
+    enabled: true
+    assets: [BTC, ETH, SOL, XRP]
+    timeframes: [5m, 15m]
+  one_cent_buy:
+    enabled: true
+    assets: [BTC, ETH, SOL, XRP]
+    timeframes: [5m, 15m]
+  pre_order_market:
+    enabled: true
+    assets: [BTC, ETH, SOL, XRP]
+    timeframes: [5m, 15m]
+  skew_mean_reversion:
+    enabled: true
+    assets: [BTC, ETH, SOL, XRP]
+    timeframes: [5m, 15m]
 
 runtime:
   nautilus:

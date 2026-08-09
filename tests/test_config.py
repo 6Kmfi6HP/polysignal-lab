@@ -61,6 +61,15 @@ def test_enabled_strategy_names_builds_default_configured_strategies() -> None:
         "vwap_momentum",
         "late_consensus",
         "ptb_diff",
+        "binary_momentum",
+        "dump_hedge",
+        "fibonacci_bot",
+        "low_side_dual_reversion",
+        "mid_price_sizing",
+        "ninety_nine_cent_sniper",
+        "one_cent_buy",
+        "pre_order_market",
+        "skew_mean_reversion",
     ]
 
 
@@ -193,11 +202,33 @@ def test_prd_result_states_exclude_partial_settlement() -> None:
     assert result_states == {"WIN", "LOSS", "VOID", "UNKNOWN"}
 
 
-def test_production_config_uses_reviewed_strategy_subset() -> None:
+def test_production_config_activates_all_registered_strategies() -> None:
     settings = Settings.from_yaml("config/signal_bot.yaml")
     names = _enabled_strategy_names(settings)
 
-    assert names == ["vwap_momentum", "late_consensus", "ptb_diff"]
+    assert names == [
+        "vwap_momentum",
+        "late_consensus",
+        "ptb_diff",
+        "binary_momentum",
+        "dump_hedge",
+        "fibonacci_bot",
+        "low_side_dual_reversion",
+        "mid_price_sizing",
+        "ninety_nine_cent_sniper",
+        "one_cent_buy",
+        "pre_order_market",
+        "skew_mean_reversion",
+    ]
+
+
+def test_production_strategies_declare_runtime_subscription_scope() -> None:
+    settings = Settings.from_yaml("config/signal_bot.yaml")
+
+    for name in settings.strategies.explicit_strategy_names():
+        config = getattr(settings.strategies, name)  # pyright: ignore[reportAny]
+        assert getattr(config, "assets")  # pyright: ignore[reportAny]
+        assert getattr(config, "timeframes")  # pyright: ignore[reportAny]
 
 
 def test_lab_config_preserves_experimental_strategy_breadth() -> None:

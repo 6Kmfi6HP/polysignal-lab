@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from polysignal_lab.alpha.decisions import enabled_for_view
 from polysignal_lab.alpha.types import AlphaDecision, MarketView, OrderIntentSpec
 from polysignal_lab.domain.enums import OrderIntent, Side
 from polysignal_lab.domain.strategy_config import OneCentBuyConfig
@@ -23,6 +24,8 @@ class OneCentBuyAlphaCore:
         return None
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
+        if not enabled_for_view(self.config, view):
+            return []
         cfg = self.config
         seconds_to_close = view.seconds_to_close
         if seconds_to_close is None:
