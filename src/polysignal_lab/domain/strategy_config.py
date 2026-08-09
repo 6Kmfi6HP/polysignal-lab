@@ -4,7 +4,14 @@ from collections.abc import Iterable, Iterator, Mapping
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, RootModel
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    RootModel,
+    model_validator,
+)
 
 from polysignal_lab.domain.enums import Side
 
@@ -338,12 +345,43 @@ class SkewMeanReversionConfig(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# External strategy plugins (loaded from outside the image)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ExternalStrategySpec(BaseModel):
+    """A strategy whose alpha core is loaded from a mounted volume or module.
+
+    This is the no-rebuild path: operators add a strategy by editing the YAML
+    config and dropping a ``.py`` file into the configured strategy root, with
+    no container rebuild. The referenced class must satisfy the ``AlphaCore``
+    protocol (``evaluate(view) -> list[AlphaDecision]``) and will receive a
+    config object exposing ``name``, ``assets``, ``timeframes`` and ``params``.
+
+    ``module`` is either an importable Python module path or a path to a ``.py``
+    file relative to the strategy root (``POLYSIGNAL_STRATEGY_ROOT``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    enabled: bool = True
+    module: str
+    class_name: str
+    assets: list[str] = Field(default_factory=lambda: ["BTC"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Master strategy config — superset of all strategy configs
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class StrategyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    external: list[ExternalStrategySpec] = Field(default_factory=list)
 
     vwap_momentum: VWAPMomentumConfig = Field(default_factory=VWAPMomentumConfig)
     late_consensus: LateConsensusConfig = Field(default_factory=LateConsensusConfig)
@@ -375,3 +413,27 @@ class StrategyConfig(BaseModel):
     def __iter__(self) -> Iterator[BaseModel]:
         for name in self._explicit_strategy_names:
             yield getattr(self, name)
+
+    def external_by_name(self, name: str) -> ExternalStrategySpec | None:
+        """Resolve an external plugin by its configured name."""
+        for spec in self.external:
+            if spec.name == name:
+                return spec
+        return None
+
+    @model_validator(mode="after")
+    def _validate_external_names(self) -> "StrategyConfig":
+        reserved = set(self.__class__.model_fields.keys())
+        seen: set[str] = set()
+        for spec in self.external:
+            if spec.name in reserved:
+                raise ValueError(
+                    f"external strategy name {spec.name!r} collides with a "
+                    "built-in strategy field; choose a unique name"
+                )
+            if spec.name in seen:
+                raise ValueError(
+                    f"duplicate external strategy name {spec.name!r}"
+                )
+            seen.add(spec.name)
+        return self
