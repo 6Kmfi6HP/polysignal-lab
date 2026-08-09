@@ -56,8 +56,13 @@ def _registry(condition_id: str = "btc-5m") -> MarketCatalog:
     return registry
 
 
-def test_pinned_nautilus_strategy_exposes_atomic_book_refresh() -> None:
-    assert hasattr(Strategy, "refresh_book_subscription")
+def test_pinned_nautilus_strategy_exposes_standard_book_refresh_api() -> None:
+    """Official-nightly surface: the standard book_deltas pair must exist, and
+    the fork-only refresh_book_subscription must NOT (guard against a fork
+    pullback)."""
+    assert hasattr(Strategy, "subscribe_book_deltas")
+    assert hasattr(Strategy, "unsubscribe_book_deltas")
+    assert not hasattr(Strategy, "refresh_book_subscription")
 
 
 class _ResubscribeStrategy:
@@ -80,7 +85,6 @@ class _ResubscribeStrategy:
         self._subscription_state = MarketSubscriptionState()
         self.subscribed_instruments: list[str] = []
         self.unsubscribed_instruments: list[str] = []
-        self.refreshed_instruments: list[str] = []
         self.snapshot_requests: list[str] = []
         self.snapshot_request_params: list[Mapping[str, object] | None] = []
         self.readiness: list[tuple[str, bool]] = []
@@ -172,15 +176,6 @@ class _ResubscribeStrategy:
         del client_id
         self.unsubscribed_instruments.append(str(instrument_id))
 
-    def refresh_book_subscription(
-        self,
-        instrument_id: object,
-        client_id: object | None = None,
-        params: Mapping[str, object] | None = None,
-    ) -> None:
-        del client_id, params
-        self.refreshed_instruments.append(str(instrument_id))
-
     def request_order_book_snapshot(
         self,
         instrument_id: object,
@@ -225,12 +220,14 @@ def test_stalled_condition_refreshes_books_and_generation_state() -> None:
     )
 
     assert triggered is True
-    assert sorted(strategy.refreshed_instruments) == [
+    assert sorted(strategy.unsubscribed_instruments) == [
         "btc-5m-down.POLYMARKET",
         "btc-5m-up.POLYMARKET",
     ]
-    assert strategy.unsubscribed_instruments == []
-    assert strategy.subscribed_instruments == []
+    assert sorted(strategy.subscribed_instruments) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
     # Book generation validity clock stays at the original start; the local
     # pending intent prevents a second heartbeat from re-firing.
     state = strategy._subscription_state
@@ -324,12 +321,6 @@ def test_real_strategy_resubscription_does_not_require_snapshot_wrapper() -> Non
             del args, kwargs
             self.unsubscribed_instruments.append(str(instrument_id))
 
-        def refresh_book_subscription(
-            self, instrument_id: object, *args: object, **kwargs: object
-        ) -> None:
-            del args, kwargs
-            self.refreshed_instruments.append(str(instrument_id))
-
     registry = _registry()
     strategy = _SubscribedStrategy(
         core=_FakeCore(),  # type: ignore[arg-type]
@@ -341,7 +332,6 @@ def test_real_strategy_resubscription_does_not_require_snapshot_wrapper() -> Non
     strategy._cache_override = SimpleNamespace(instrument=lambda _iid: object())
     strategy.subscribed_instruments = []
     strategy.unsubscribed_instruments = []
-    strategy.refreshed_instruments = []
     strategy._active_condition_ids = {"btc-5m"}
     now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
     _stalled_state(
@@ -358,12 +348,14 @@ def test_real_strategy_resubscription_does_not_require_snapshot_wrapper() -> Non
     )
 
     assert triggered is True
-    assert sorted(strategy.refreshed_instruments) == [
+    assert sorted(strategy.unsubscribed_instruments) == [
         "btc-5m-down.POLYMARKET",
         "btc-5m-up.POLYMARKET",
     ]
-    assert strategy.unsubscribed_instruments == []
-    assert strategy.subscribed_instruments == []
+    assert sorted(strategy.subscribed_instruments) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
 
 
 def test_real_strategy_snapshot_wrapper_delegates_native_request(
@@ -613,7 +605,7 @@ def test_stale_recovery_begins_generation_before_wire_requests() -> None:
         assert state.book_generation_started_at_by_condition["btc-5m"] == now
         return None
 
-    strategy.refresh_book_subscription = assert_generation_started  # pyright: ignore[reportAttributeAccessIssue]
+    strategy.unsubscribe_book_deltas = assert_generation_started
 
     assert force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now) is True
 
@@ -643,7 +635,11 @@ def test_unavailable_snapshot_request_is_not_called_by_recovery_heartbeat() -> N
 
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert sorted(strategy.refreshed_instruments) == [
+    assert sorted(strategy.unsubscribed_instruments) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
+    assert sorted(strategy.subscribed_instruments) == [
         "btc-5m-down.POLYMARKET",
         "btc-5m-up.POLYMARKET",
     ]
@@ -680,9 +676,8 @@ def test_partial_book_retry_resubscribes_only_the_missing_side() -> None:
         is True
     )
 
-    assert strategy.refreshed_instruments == ["btc-5m-down.POLYMARKET"]
-    assert strategy.unsubscribed_instruments == []
-    assert strategy.subscribed_instruments == []
+    assert strategy.unsubscribed_instruments == ["btc-5m-down.POLYMARKET"]
+    assert strategy.subscribed_instruments == ["btc-5m-down.POLYMARKET"]
     assert strategy.snapshot_requests == []
     assert strategy.snapshot_request_params == []
     assert strategy._subscription_state.awaiting_book_sides_by_condition["btc-5m"] == {
@@ -707,9 +702,8 @@ def test_stale_orderbook_retry_resubscribes_only_the_stale_side() -> None:
 
     assert force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now) is True
 
-    assert strategy.refreshed_instruments == ["btc-5m-down.POLYMARKET"]
-    assert strategy.unsubscribed_instruments == []
-    assert strategy.subscribed_instruments == []
+    assert strategy.unsubscribed_instruments == ["btc-5m-down.POLYMARKET"]
+    assert strategy.subscribed_instruments == ["btc-5m-down.POLYMARKET"]
     assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.DOWN}
     assert state.book_generation_started_at_by_condition["btc-5m"] == now
     assert state.book_stalled_started_at_by_condition["btc-5m"] == total_stalled_at
@@ -778,7 +772,8 @@ def test_recovery_intent_starts_only_after_exact_60_second_boundary() -> None:
         )
         is False
     )
-    assert strategy.refreshed_instruments == []
+    assert strategy.unsubscribed_instruments == []
+    assert strategy.subscribed_instruments == []
 
     assert (
         force_resubscribe_if_book_stalled(
@@ -856,9 +851,8 @@ def test_resubscription_is_idempotent_within_stall_window() -> None:
 
     assert first is True
     assert second is False
-    assert len(strategy.refreshed_instruments) == 2
-    assert strategy.unsubscribed_instruments == []
-    assert strategy.subscribed_instruments == []
+    assert len(strategy.unsubscribed_instruments) == 2
+    assert len(strategy.subscribed_instruments) == 2
 
 
 def test_force_resubscribe_abandons_condition_past_abandon_threshold() -> None:
@@ -914,9 +908,8 @@ def test_force_resubscribe_still_resubscribes_below_abandon_threshold() -> None:
 
     assert triggered is True
     assert "btc-5m" in strategy._active_condition_ids
-    assert len(strategy.refreshed_instruments) == 2
-    assert strategy.unsubscribed_instruments == []
-    assert strategy.subscribed_instruments == []
+    assert len(strategy.unsubscribed_instruments) == 2
+    assert len(strategy.subscribed_instruments) == 2
 
 
 def test_abandon_threshold_precedes_liveness_readiness_miss_threshold() -> None:
@@ -1083,12 +1076,14 @@ def test_evaluation_heartbeat_resubscribes_stalled_condition() -> None:
 
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert sorted(strategy.refreshed_instruments) == [
+    assert sorted(strategy.unsubscribed_instruments) == [
         "btc-5m-down.POLYMARKET",
         "btc-5m-up.POLYMARKET",
     ]
-    assert strategy.unsubscribed_instruments == []
-    assert strategy.subscribed_instruments == []
+    assert sorted(strategy.subscribed_instruments) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
     started_at = now - timedelta(seconds=_BOOK_GENERATION_STALL_SEC + 10)
     assert strategy._subscription_state.book_generation_started_at_by_condition[
         "btc-5m"
@@ -1260,12 +1255,14 @@ def test_stale_orderbook_condition_rebuilds_book_subscription() -> None:
     triggered = force_resubscribe_if_stale_orderbook(strategy, "btc-5m", now=now)
 
     assert triggered is True
-    assert sorted(strategy.refreshed_instruments) == [
+    assert sorted(strategy.unsubscribed_instruments) == [
         "btc-5m-down.POLYMARKET",
         "btc-5m-up.POLYMARKET",
     ]
-    assert strategy.unsubscribed_instruments == []
-    assert strategy.subscribed_instruments == []
+    assert sorted(strategy.subscribed_instruments) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
     assert strategy.snapshot_requests == []
     assert strategy.snapshot_request_params == []
     # Repair re-begins generation: both sides awaited again.
@@ -1322,9 +1319,8 @@ def test_stale_orderbook_condition_never_abandoned_past_total_stall() -> None:
     assert triggered is True  # repair, not abandon
     assert "btc-5m" in strategy._active_condition_ids
     assert strategy.readiness == []  # no abandon ready=True
-    assert len(strategy.refreshed_instruments) == 2
-    assert strategy.unsubscribed_instruments == []
-    assert strategy.subscribed_instruments == []
+    assert len(strategy.unsubscribed_instruments) == 2
+    assert len(strategy.subscribed_instruments) == 2
     # Still on the recovery path (both sides awaited again).
     assert strategy._subscription_state.awaiting_book_sides_by_condition[
         "btc-5m"
@@ -1357,9 +1353,8 @@ def test_previously_ready_condition_not_abandoned_via_book_stall_path() -> None:
     assert triggered is True  # retried, not abandoned
     assert "btc-5m" in strategy._active_condition_ids
     assert strategy.readiness == []
-    assert len(strategy.refreshed_instruments) == 2
-    assert strategy.unsubscribed_instruments == []
-    assert strategy.subscribed_instruments == []
+    assert len(strategy.unsubscribed_instruments) == 2
+    assert len(strategy.subscribed_instruments) == 2
 
 
 def test_pending_instrument_prevents_book_stall_abandon() -> None:
@@ -1437,12 +1432,14 @@ def test_evaluation_heartbeat_rebuilds_stale_orderbook_condition() -> None:
 
     on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert sorted(strategy.refreshed_instruments) == [
+    assert sorted(strategy.unsubscribed_instruments) == [
         "btc-5m-down.POLYMARKET",
         "btc-5m-up.POLYMARKET",
     ]
-    assert strategy.unsubscribed_instruments == []
-    assert strategy.subscribed_instruments == []
+    assert sorted(strategy.subscribed_instruments) == [
+        "btc-5m-down.POLYMARKET",
+        "btc-5m-up.POLYMARKET",
+    ]
     # Back onto the awaiting-first-book recovery path, not a permanent miss.
     assert state.awaiting_book_sides_by_condition["btc-5m"] == {Side.UP, Side.DOWN}
     assert "btc-5m" in strategy._active_condition_ids
@@ -1514,7 +1511,11 @@ def test_each_strategy_owns_its_book_recovery_intent() -> None:
     for strategy in strategies:
         on_evaluation_heartbeat(strategy, object())  # pyright: ignore[reportArgumentType]
 
-    assert all(len(strategy.refreshed_instruments) == 2 for strategy in strategies)
+    assert all(
+        len(strategy.unsubscribed_instruments) == 2
+        and len(strategy.subscribed_instruments) == 2
+        for strategy in strategies
+    )
     assert all(
         strategy._subscription_state.pending_book_recovery_sides_by_condition[
             "btc-5m"
@@ -1575,17 +1576,14 @@ def test_failed_refresh_leaves_only_successful_side_pending_for_retry() -> None:
     class _FailingStrategy(_ResubscribeStrategy):
         fail_down = True
 
-        def refresh_book_subscription(
-            self,
-            instrument_id: object,
-            client_id: object | None = None,
-            params: Mapping[str, object] | None = None,
+        def unsubscribe_book_deltas(  # pyright: ignore[reportImplicitOverride]
+            self, instrument_id: object, client_id: object | None = None
         ) -> None:
-            del client_id, params
+            del client_id
             instrument_key = str(instrument_id)
             if self.fail_down and instrument_key == "btc-5m-down.POLYMARKET":
                 raise RuntimeError("synthetic refresh failure")
-            self.refreshed_instruments.append(instrument_key)
+            self.unsubscribed_instruments.append(instrument_key)
 
     strategy = _FailingStrategy(registry)
     _stalled_state(
@@ -1598,13 +1596,18 @@ def test_failed_refresh_leaves_only_successful_side_pending_for_retry() -> None:
         _ = force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now)
 
     state = strategy._subscription_state
-    assert strategy.refreshed_instruments == ["btc-5m-up.POLYMARKET"]
+    assert strategy.unsubscribed_instruments == ["btc-5m-up.POLYMARKET"]
+    assert strategy.subscribed_instruments == ["btc-5m-up.POLYMARKET"]
     assert state.pending_book_recovery_sides_by_condition["btc-5m"] == {Side.UP}
 
     strategy.fail_down = False
     assert force_resubscribe_if_book_stalled(strategy, "btc-5m", now=now) is True
 
-    assert strategy.refreshed_instruments == [
+    assert strategy.unsubscribed_instruments == [
+        "btc-5m-up.POLYMARKET",
+        "btc-5m-down.POLYMARKET",
+    ]
+    assert strategy.subscribed_instruments == [
         "btc-5m-up.POLYMARKET",
         "btc-5m-down.POLYMARKET",
     ]
@@ -1636,7 +1639,8 @@ def test_pending_recovery_intent_never_redispatches_on_elapsed_time() -> None:
         )
         is False
     )
-    assert len(strategy.refreshed_instruments) == 2
+    assert len(strategy.unsubscribed_instruments) == 2
+    assert len(strategy.subscribed_instruments) == 2
 
 
 def test_retire_clears_pending_recovery_intent() -> None:

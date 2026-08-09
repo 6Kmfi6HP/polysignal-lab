@@ -151,15 +151,6 @@ class _SubscriptionScopeOwner(Protocol):
     _subscription_timeframes: frozenset[str]
 
 
-class _BookRefreshStrategy(Protocol):
-    def refresh_book_subscription(
-        self,
-        instrument_id: object,
-        client_id: object | None = None,
-        params: Mapping[str, object] | None = None,
-    ) -> object: ...
-
-
 def condition_phase(
     strategy: _ConditionSubscriptionStateOwner,
     condition_id: str,
@@ -1095,10 +1086,21 @@ def _refresh_market_instrument(
 ) -> None:
     instrument_id = _nautilus_instrument_id(instrument_id)
     client_id = _client_id_for_instrument(strategy, instrument_id)
-    refresh_strategy = cast(_BookRefreshStrategy, cast(object, strategy))
-    _ = refresh_strategy.refresh_book_subscription(
+    book_type = _nautilus_book_type(strategy.book_type)
+    # Standard-API book refresh: dropping the book_deltas subscription lets the
+    # Polymarket adapter discard its local book copy (once the last subscriber
+    # leaves); the re-subscribe then re-seeds a full snapshot (CLEAR +
+    # F_SNAPSHOT delta) -- the official equivalent of the fork-only
+    # refresh_book_subscription. Unsubscribe MUST precede subscribe: the
+    # strategy-side refcount is keyed on (instrument_id, client_id), and
+    # subscribe-then-unsubscribe never drops to zero so the adapter never
+    # re-seeds. Quotes/trades are intentionally untouched.
+    _ = strategy.unsubscribe_book_deltas(instrument_id, client_id=client_id)
+    _ = strategy.subscribe_book_deltas(
         instrument_id,
+        book_type=book_type,
         client_id=client_id,
+        managed=True,
     )
 
 

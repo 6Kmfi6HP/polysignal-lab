@@ -202,7 +202,6 @@ class _ResubscribeStrategy:
         self._subscription_state = MarketSubscriptionState()
         self.subscribed_instruments: list[str] = []
         self.unsubscribed_instruments: list[str] = []
-        self.refreshed_instruments: list[str] = []
         self.snapshot_requests: list[str] = []
         self.snapshot_request_params: list[Mapping[str, object] | None] = []
         self.readiness: list[tuple[str, bool]] = []
@@ -323,15 +322,6 @@ class _ResubscribeStrategy:
     ) -> None:
         del client_id
         self.unsubscribed_instruments.append(str(instrument_id))
-
-    def refresh_book_subscription(
-        self,
-        instrument_id: object,
-        client_id: object | None = None,
-        params: Mapping[str, object] | None = None,
-    ) -> None:
-        del client_id, params
-        self.refreshed_instruments.append(str(instrument_id))
 
     def request_order_book_snapshot(
         self,
@@ -454,7 +444,8 @@ def test_once_ready_quiet_book_skips_trade_without_readiness_miss_or_wire_refres
         strategy._stale_orderbook_recovery_by_condition
     )
     on_evaluation_heartbeat(hb, object())  # pyright: ignore[reportArgumentType]
-    assert hb.refreshed_instruments == []
+    assert hb.unsubscribed_instruments == []
+    assert hb.subscribed_instruments == []
 
 
 def test_never_ready_awaiting_first_book_does_not_trip_readiness_miss_liveness(
