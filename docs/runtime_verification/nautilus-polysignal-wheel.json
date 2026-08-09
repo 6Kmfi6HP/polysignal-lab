@@ -1,10 +1,16 @@
 {
+  "schema_version": 1,
+  "source_kind": "official-nightly",
+  "repository": "nautechsystems/nautilus_trader",
+  "source_ref": "nightly",
   "version": "1.231.0a20260802",
+  "source_commit_sha": "d16b3462a1178a762e65eaada8b49a478e186143",
   "upstream_base_sha": "a930c8afe380025fc0a10c6b2cd6907d6b983e86",
   "patch_commit_sha": "d16b3462a1178a762e65eaada8b49a478e186143",
   "upstream_pr": "https://github.com/nautechsystems/nautilus_trader/pull/4656",
   "release_tag": "nightly",
   "release_url": "https://packages.nautechsystems.io/simple/nautilus-trader/",
+  "wheel_url": "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-1.231.0a20260802-cp312-cp312-manylinux_2_35_x86_64.whl",
   "wheel_filename": "nautilus_trader-1.231.0a20260802-cp312-cp312-manylinux_2_35_x86_64.whl",
   "wheel_sha256": "a5067497f370b4e2b35375bbf237a144a6affabb3f11a96fbe8dbd77f8907a4c",
   "toolchain": {

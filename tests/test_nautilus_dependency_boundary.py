@@ -7,6 +7,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import yaml
+
 
 def _run_python(code: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -84,23 +86,42 @@ def test_nautilus_wheel_provenance_is_consistent_across_build_inputs() -> None:
         if dependency.startswith("nautilus_trader[polymarket] @ ")
     )
 
-    # The wheel must come from the official Nautech Systems package index,
-    # never from the fork's GitHub Releases.
-    assert "packages.nautechsystems.io/simple/nautilus-trader" in requirement
-    assert "6Kmfi6HP" not in requirement
-    assert "github.com" not in requirement
-    assert manifest["wheel_filename"] in requirement
-    assert f"#sha256={manifest['wheel_sha256']}" in requirement
+    # The canonical manifest is the source of truth. It may point at official,
+    # fork, private, or local wheels, but all build inputs must agree.
+    expected = (
+        f"nautilus_trader[polymarket] @ {manifest['wheel_url']}"
+        f"#sha256={manifest['wheel_sha256']}"
+    )
+    assert requirement == expected
+    assert manifest["wheel_filename"] in manifest["wheel_url"]
     for key, label in (
+        ("source_commit_sha", "patch-sha"),
         ("upstream_base_sha", "upstream-sha"),
-        ("patch_commit_sha", "patch-sha"),
         ("version", "version"),
         ("wheel_sha256", "wheel-sha256"),
     ):
         assert f'io.polysignal.nautilus.{label}="{manifest[key]}"' in dockerfile
-    assert manifest["release_tag"] == "nightly"
-    # PEP-440 nightly suffix: <base>aYYYYMMDD (alpha date build).
-    assert "a20" in manifest["version"]
+    assert manifest["source_kind"]
+    assert manifest["repository"]
+    assert manifest["source_ref"]
+    assert manifest["wheel_sha256"]
+
+
+def test_promote_nautilus_workflow_supports_any_wheel_url() -> None:
+    workflow = yaml.safe_load(
+        Path(".github/workflows/promote-nautilus.yml").read_text(encoding="utf-8")
+    )
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert "official-nightly" in inputs["source"]["options"]
+    assert "wheel-url" in inputs["source"]["options"]
+    assert "wheel_url" in inputs
+    promote_run = next(
+        step["run"]
+        for step in workflow["jobs"]["promote"]["steps"]
+        if step.get("name") == "Verify and resolve wheel"
+    )
+    assert 'curl -fsSL "$WHEEL_URL" -o wheel.whl' in promote_run
+    assert 'printf \'%s  wheel.whl\\n\' "$WHEEL_SHA256"' in promote_run
 
 
 def test_nautilus_node_does_not_import_legacy_trading_state() -> None:

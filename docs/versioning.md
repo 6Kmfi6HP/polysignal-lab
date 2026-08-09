@@ -93,8 +93,22 @@ POLYSIGNAL_IMAGE_REF=ghcr.io/6kmfi6hp/polysignal-lab@sha256:<digest> docker comp
 
 ## Nautilus 依赖版本
 
-NautilusTrader wheel 具有独立的不可变发布标识。
-应用程序镜像必须继续在权威清单和 OCI 标签中记录其确切的 Nautilus 源提交、
-发布标签和 wheel SHA256。正常的
-应用程序调试分支使用当前固定的 wheel；候选 fork
-wheel 不得覆盖生产清单或稳定镜像标签。
+NautilusTrader wheel 具有独立的不可变发布标识，但获取机制不是单一路径。
+`docs/runtime_verification/nautilus-polysignal-wheel.json` 是权威清单，
+支持官方 nightly、官方 release、候选 fork 和私有/本地 wheel URL。
+
+- 权威清单必须记录 `wheel_url`、`wheel_filename`、`wheel_sha256`、
+  `version`、`release_tag`、`source_kind`、`repository`、`source_ref`
+  以及可追溯的 source commit SHA。
+- 切换 wheel 时先更新权威清单，再运行
+  `python scripts/sync_nautilus_wheel.py sync --manifest docs/runtime_verification/nautilus-polysignal-wheel.json`
+  和 `uv lock`；CI 的 drift 检查必须通过。
+- `promote-nautilus` 工作流支持 `official-nightly` 和 `wheel-url` 两种来源；
+  `wheel-url` 必须提供 wheel URL、SHA-256、release tag、source ref 和 source
+  commit SHA，工作流会下载并校验 wheel 后自动同步权威清单与构建输入。
+- `pyproject.toml`、`uv.lock`、`requirements/nautilus.txt` 和 Docker OCI
+  标签都必须与权威清单指向同一个 wheel 和同一个 SHA-256。
+- `main` 和 `vX.Y.Z`/`stable` 应使用已批准的不可变 wheel；候选 fork wheel
+  可以提升到 debug/candidate 通道，但不得覆盖生产清单或稳定镜像标签。
+- 所有非本地通道都必须保留来源仓库、来源引用、发布标签和 wheel SHA-256。
+  本地调试可以使用 `file://` wheel，但仍必须记录文件哈希。
