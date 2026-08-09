@@ -40,11 +40,40 @@ The referenced class must satisfy the `AlphaCore` protocol:
 def evaluate(self, view: MarketView) -> list[AlphaDecision]: ...
 ```
 
+This is checked when the plugin is resolved: a class without a callable
+`evaluate` is rejected at startup rather than failing per market update.
+
 The host passes a config object with `name`, `assets`, `timeframes` and
 `params` (the YAML block above). `assets`/`timeframes` drive market
 subscriptions; `params` is your free-form configuration. See
 `example_external_strategy.py` for a working, minimal implementation that emits
 an `AlphaDecision`.
+
+After construction the host assigns `config` and `name` onto the instance, so
+the class must permit attribute assignment — a `__slots__` class that omits
+those names, or a frozen dataclass, is refused with an explanatory error.
+
+Note the sandbox applies to the **file** form of `module` only. A dotted
+importable module path is resolved through the normal import system and is not
+confined to this directory, so treat it as trusted-code configuration.
+
+## Enabling it on a deployment
+
+The bundled `docker-compose.yml` mounts this directory read-only and sets
+`POLYSIGNAL_STRATEGY_ROOT`, but ships the feature **off**: nothing loads until
+you both open the safety gate and declare a `strategies.external` block. Opting
+in is a deliberate, two-part step:
+
+1. Add the `safety.allow_external_strategies` and `strategies.external` keys to
+   the config the container reads, and
+2. rebuild/pin an image that understands those keys.
+
+Order matters. `config/` is bind-mounted read-only and `Settings` forbids
+unknown keys, so a config carrying `strategies.external` fed to an image built
+before this feature makes every in-container `load_settings` fail — the failure
+mode documented at the top of `config/signal_bot.yaml`. Pin the image
+explicitly (`POLYSIGNAL_IMAGE_REF`, see `docs/versioning.md`) when you switch
+the config over.
 
 ## Reloading
 

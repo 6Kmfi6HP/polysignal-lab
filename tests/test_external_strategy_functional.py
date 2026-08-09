@@ -17,6 +17,7 @@ from polysignal_lab.config import Settings
 from polysignal_lab.domain.strategy_config import ExternalStrategySpec
 from polysignal_lab.nautilus_runtime.decision_policy import (
     ApprovedDecision,
+    DecisionPolicy,
     decision_policy_from_settings,
 )
 from polysignal_lab.nautilus_runtime.runtime_configs import PolySignalStrategyConfig
@@ -26,6 +27,7 @@ from polysignal_lab.nautilus_runtime.strategy_loader import build_external_core
 REPO_STRATEGIES = Path(__file__).resolve().parent.parent / "strategies"
 
 STRATEGY_SPECS = [
+    ("example_external_strategy", "ExampleExternalAlphaCore"),
     ("momentum_breakout_external", "MomentumBreakoutExternalAlphaCore"),
     ("mean_reversion_external", "MeanReversionExternalAlphaCore"),
     ("pairs_hedge_external", "PairsHedgeExternalAlphaCore"),
@@ -35,7 +37,7 @@ STRATEGY_SPECS = [
 
 
 @pytest.fixture(autouse=True)
-def _strategy_root(monkeypatch) -> None:
+def _strategy_root(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POLYSIGNAL_STRATEGY_ROOT", str(REPO_STRATEGIES))
 
 
@@ -72,11 +74,15 @@ def _make_view(fresh_ms: int = 500, ask_up: float = 0.30, ask_down: float = 0.75
     )
 
 
-def _policy():
+def _policy() -> DecisionPolicy:
     return decision_policy_from_settings(Settings())
 
 
-def _spec(module: str, class_name: str, params: dict[str, object] | None = None) -> ExternalStrategySpec:
+def _spec(
+    module: str,
+    class_name: str,
+    params: dict[str, object] | None = None,
+) -> ExternalStrategySpec:
     return ExternalStrategySpec(
         name=module, enabled=True, module=f"{module}.py", class_name=class_name,
         assets=["BTC"], timeframes=["5m"], params=params or {},

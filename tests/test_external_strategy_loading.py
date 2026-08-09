@@ -8,7 +8,10 @@ from pydantic import ValidationError
 from polysignal_lab.config import SecurityConfigError, Settings, load_settings
 from polysignal_lab.domain.strategy_config import ExternalStrategySpec
 from polysignal_lab.nautilus_runtime.runtime_registration import enabled_strategy_names
-from polysignal_lab.nautilus_runtime.strategy_loader import build_external_core
+from polysignal_lab.nautilus_runtime.strategy_loader import (
+    build_external_core,
+    resolve_external_class,
+)
 
 
 def _write_plugin(directory: Path, filename: str = "my_plugin.py") -> Path:
@@ -221,3 +224,160 @@ def test_external_name_collision_with_builtin_rejected() -> None:
                 }
             }
         )
+
+
+def test_same_file_different_classes_resolve_independently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two specs naming different classes in one file must not alias each other."""
+    monkeypatch.setenv("POLYSIGNAL_STRATEGY_ROOT", str(tmp_path))
+    (tmp_path / "pair.py").write_text(
+        """
+class CoreA:
+    marker = "A"
+
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def evaluate(self, view):
+        return [self.marker]
+
+
+class CoreB:
+    marker = "B"
+
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def evaluate(self, view):
+        return [self.marker]
+""",
+        encoding="utf-8",
+    )
+    first = build_external_core(
+        ExternalStrategySpec(name="a", module="pair.py", class_name="CoreA")
+    )
+    second = build_external_core(
+        ExternalStrategySpec(name="b", module="pair.py", class_name="CoreB")
+    )
+
+    assert type(first).__name__ == "CoreA"
+    assert type(second).__name__ == "CoreB"
+    # Distinct behaviour, not just distinct names: aliasing would hand both
+    # specs the same class and so the same marker.
+    assert getattr(first, "marker") == "A"
+    assert getattr(second, "marker") == "B"
+
+
+def test_plugin_file_executes_once_per_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resolving two classes from one file must not re-execute the file."""
+    monkeypatch.setenv("POLYSIGNAL_STRATEGY_ROOT", str(tmp_path))
+    receipt = tmp_path / "executions.log"
+    (tmp_path / "counted.py").write_text(
+        f"""
+with open({str(receipt)!r}, "a", encoding="utf-8") as handle:
+    handle.write("x")
+
+
+class CoreA:
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def evaluate(self, view):
+        return []
+
+
+class CoreB:
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def evaluate(self, view):
+        return []
+""",
+        encoding="utf-8",
+    )
+    first = resolve_external_class(
+        ExternalStrategySpec(name="a", module="counted.py", class_name="CoreA")
+    )
+    second = resolve_external_class(
+        ExternalStrategySpec(name="b", module="counted.py", class_name="CoreB")
+    )
+
+    assert first is not second
+    assert receipt.read_text() == "x"
+
+
+def test_class_without_evaluate_is_rejected_at_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The AlphaCore protocol is enforced at load, not inside the strategy loop."""
+    monkeypatch.setenv("POLYSIGNAL_STRATEGY_ROOT", str(tmp_path))
+    (tmp_path / "not_a_core.py").write_text(
+        """
+class NotACore:
+    def __init__(self, config) -> None:
+        self.config = config
+""",
+        encoding="utf-8",
+    )
+    spec = ExternalStrategySpec(
+        name="bad", module="not_a_core.py", class_name="NotACore"
+    )
+    with pytest.raises(TypeError, match="AlphaCore protocol"):
+        build_external_core(spec)
+
+
+def test_non_class_target_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("POLYSIGNAL_STRATEGY_ROOT", str(tmp_path))
+    (tmp_path / "func_mod.py").write_text(
+        "def evaluate(view):\n    return []\n", encoding="utf-8"
+    )
+    spec = ExternalStrategySpec(
+        name="fn", module="func_mod.py", class_name="evaluate"
+    )
+    with pytest.raises(TypeError, match="is not a class"):
+        build_external_core(spec)
+
+
+def test_core_refusing_host_attributes_reports_actionable_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A __slots__ core without 'name' cannot take the host identity stamp."""
+    monkeypatch.setenv("POLYSIGNAL_STRATEGY_ROOT", str(tmp_path))
+    (tmp_path / "slotted.py").write_text(
+        """
+class SlottedCore:
+    __slots__ = ("config",)
+
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def evaluate(self, view):
+        return []
+""",
+        encoding="utf-8",
+    )
+    spec = ExternalStrategySpec(
+        name="slotted", module="slotted.py", class_name="SlottedCore"
+    )
+    with pytest.raises(RuntimeError, match="host-assigned 'name'"):
+        build_external_core(spec)
+
+
+def test_external_name_collision_with_model_attribute_rejected() -> None:
+    """A plugin named after a StrategyConfig method would shadow that method."""
+    for name in ("external_by_name", "explicit_strategy_names", "model_dump"):
+        with pytest.raises(ValidationError):
+            Settings.model_validate(
+                {
+                    "strategies": {
+                        "external": [
+                            {"name": name, "module": "x.py", "class_name": "Y"}
+                        ]
+                    }
+                }
+            )

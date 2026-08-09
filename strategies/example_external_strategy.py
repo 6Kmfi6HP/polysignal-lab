@@ -7,6 +7,7 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
     Side,
 )
+from polysignal_lab.nautilus_runtime.strategy_loader import ExternalCoreConfig
 
 
 class ExampleExternalAlphaCore:
@@ -18,11 +19,11 @@ class ExampleExternalAlphaCore:
     and the bid/ask spread is tight enough.
     """
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: ExternalCoreConfig) -> None:
         self.config = config
-        self.name = getattr(config, "name", "example_external")
-        self.threshold = float(getattr(config, "params", {}).get("threshold", 0.40))
-        self.max_spread = float(getattr(config, "params", {}).get("max_spread", 0.05))
+        self.name = config.name
+        self.threshold = float(config.params.get("threshold", 0.40))
+        self.max_spread = float(config.params.get("max_spread", 0.05))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         up = view.up

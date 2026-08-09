@@ -6,6 +6,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Final, Protocol
 from uuid import uuid4
 
@@ -16,7 +17,11 @@ from polysignal_lab.domain.strategy_config import ExternalStrategySpec
 DEFAULT_STRATEGY_ROOT: Final = "strategies"
 _ENV_STRATEGY_ROOT: Final = "POLYSIGNAL_STRATEGY_ROOT"
 
-# Cache resolved classes by path/module so a plugin is imported once per process.
+# A plugin file is executed once per process; several specs may name different
+# classes in the same file, so classes are resolved off the cached module rather
+# than cached per path. Importable modules are cached per module+class instead,
+# since the import system already deduplicates their execution
+_LOADED_MODULES: dict[str, ModuleType] = {}
 _LOADED_CLASSES: dict[str, type] = {}
 
 
@@ -71,7 +76,7 @@ def _load_class_from_path(path_str: str, class_name: str) -> type:
     root = external_strategy_root().resolve()
     candidate = Path(path_str)
     target = (root / path_str).resolve() if not candidate.is_absolute() else candidate.resolve()
-    # Refuse anything that escapes the sandboxed strategy root.
+    # Refuse anything that escapes the sandboxed strategy root
     try:
         target.relative_to(root)
     except ValueError:
@@ -82,8 +87,17 @@ def _load_class_from_path(path_str: str, class_name: str) -> type:
     if not target.is_file():
         raise FileNotFoundError(f"External strategy module not found: {target}")
 
-    cache_key = f"path:{target}"
-    cached = _LOADED_CLASSES.get(cache_key)
+    module = _module_from_path(target)
+    cls = getattr(module, class_name, None)
+    if cls is None:
+        raise AttributeError(f"{class_name} not found in {target}")
+    return cls
+
+
+def _module_from_path(target: Path) -> ModuleType:
+    """Import (once per process) the plugin module living at ``target``."""
+    cache_key = str(target)
+    cached = _LOADED_MODULES.get(cache_key)
     if cached is not None:
         return cached
 
@@ -97,13 +111,12 @@ def _load_class_from_path(path_str: str, class_name: str) -> type:
         spec.loader.exec_module(module)
     except Exception as exc:  # noqa: BLE001 - surface user code errors clearly
         sys.modules.pop(mod_name, None)
-        raise RuntimeError(f"Failed to execute external strategy {target}: {exc}") from exc
+        raise RuntimeError(
+            f"Failed to execute external strategy {target}: {exc}"
+        ) from exc
 
-    cls = getattr(module, class_name, None)
-    if cls is None:
-        raise AttributeError(f"{class_name} not found in {target}")
-    _LOADED_CLASSES[cache_key] = cls
-    return cls
+    _LOADED_MODULES[cache_key] = module
+    return module
 
 
 def _load_class_by_name(module_str: str, class_name: str) -> type:
@@ -122,8 +135,31 @@ def _load_class_by_name(module_str: str, class_name: str) -> type:
 def resolve_external_class(spec: ExternalStrategySpec) -> type:
     """Resolve the alpha core class referenced by a plugin spec."""
     if _is_path_reference(spec.module):
-        return _load_class_from_path(spec.module, spec.class_name)
-    return _load_class_by_name(spec.module, spec.class_name)
+        cls = _load_class_from_path(spec.module, spec.class_name)
+    else:
+        cls = _load_class_by_name(spec.module, spec.class_name)
+    _require_alpha_core(spec, cls)
+    return cls
+
+
+def _require_alpha_core(spec: ExternalStrategySpec, cls: type) -> None:
+    """Reject a resolved class that cannot act as an ``AlphaCore``.
+
+    The protocol is structural, so it is checked here rather than deep in the
+    strategy loop where a missing ``evaluate`` would surface as an opaque
+    ``AttributeError`` per market update.
+    """
+    if not isinstance(cls, type):
+        raise TypeError(
+            f"External strategy {spec.name!r} target {spec.class_name!r} in "
+            f"{spec.module!r} is not a class, was {type(cls).__name__}"
+        )
+    if not callable(getattr(cls, "evaluate", None)):
+        raise TypeError(
+            f"External strategy {spec.name!r} core {spec.class_name!r} does not "
+            "satisfy the AlphaCore protocol: a callable "
+            "evaluate(view) -> list[AlphaDecision] is required"
+        )
 
 
 def build_external_core(spec: ExternalStrategySpec) -> ExternalAlphaCore:
@@ -147,6 +183,23 @@ def build_external_core(spec: ExternalStrategySpec) -> ExternalAlphaCore:
             f"External strategy {spec.name!r} core {spec.class_name!r} failed to "
             f"construct from config: {exc}"
         ) from exc
-    core.config = core_config
-    core.name = spec.name
+    _inject_host_identity(spec, core, core_config)
     return core
+
+
+def _inject_host_identity(
+    spec: ExternalStrategySpec,
+    core: object,
+    core_config: ExternalCoreConfig,
+) -> None:
+    """Stamp the host-owned ``name`` and ``config`` onto a constructed core."""
+    for attribute, value in (("config", core_config), ("name", spec.name)):
+        try:
+            setattr(core, attribute, value)
+        except AttributeError as exc:
+            raise RuntimeError(
+                f"External strategy {spec.name!r} core {spec.class_name!r} does "
+                f"not accept the host-assigned {attribute!r} attribute: {exc}; "
+                "the core must allow attribute assignment (no __slots__ without "
+                f"{attribute!r}, no frozen dataclass)"
+            ) from exc

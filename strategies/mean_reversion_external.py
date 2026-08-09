@@ -7,6 +7,7 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
     Side,
 )
+from polysignal_lab.nautilus_runtime.strategy_loader import ExternalCoreConfig
 
 
 class MeanReversionExternalAlphaCore:
@@ -17,10 +18,10 @@ class MeanReversionExternalAlphaCore:
     mean reversion toward parity.
     """
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: ExternalCoreConfig) -> None:
         self.config = config
-        self.name = getattr(config, "name", "mean_reversion_external")
-        self.inefficiency = float(getattr(config, "params", {}).get("inefficiency", 1.01))
+        self.name = config.name
+        self.inefficiency = float(config.params.get("inefficiency", 1.01))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         up, down = view.up, view.down

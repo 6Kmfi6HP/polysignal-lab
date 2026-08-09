@@ -7,6 +7,7 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
     Side,
 )
+from polysignal_lab.nautilus_runtime.strategy_loader import ExternalCoreConfig
 
 
 class MomentumBreakoutExternalAlphaCore:
@@ -17,11 +18,11 @@ class MomentumBreakoutExternalAlphaCore:
     the selected ask is under ``params.threshold`` and the spread is tight.
     """
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: ExternalCoreConfig) -> None:
         self.config = config
-        self.name = getattr(config, "name", "momentum_breakout_external")
-        self.threshold = float(getattr(config, "params", {}).get("threshold", 0.45))
-        self.max_spread = float(getattr(config, "params", {}).get("max_spread", 0.03))
+        self.name = config.name
+        self.threshold = float(config.params.get("threshold", 0.45))
+        self.max_spread = float(config.params.get("max_spread", 0.03))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         up, down = view.up, view.down

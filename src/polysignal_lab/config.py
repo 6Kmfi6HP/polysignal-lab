@@ -427,7 +427,7 @@ class Settings(BaseSettings):
         explicit_strategy_names: tuple[str, ...] = ()
         strategies_data = data.get("strategies")
         if isinstance(strategies_data, dict):
-            # "external" is a list of plugin specs, not a built-in strategy field.
+            # "external" is a list of plugin specs, not a built-in strategy field
             explicit_strategy_names = tuple(
                 k for k in strategies_data if k != "external"
             )

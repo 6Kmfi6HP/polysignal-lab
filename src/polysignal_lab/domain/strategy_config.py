@@ -423,13 +423,17 @@ class StrategyConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_external_names(self) -> "StrategyConfig":
-        reserved = set(self.__class__.model_fields.keys())
+        # Any resolvable attribute is reserved, not just the built-in strategy
+        # fields: the runtime resolves a strategy by getattr on this model, so a
+        # plugin named after a method would silently resolve to that method.
+        cls = self.__class__
+        reserved = set(cls.model_fields.keys()) | set(dir(cls))
         seen: set[str] = set()
         for spec in self.external:
             if spec.name in reserved:
                 raise ValueError(
                     f"external strategy name {spec.name!r} collides with a "
-                    "built-in strategy field; choose a unique name"
+                    "built-in strategy field or attribute; choose a unique name"
                 )
             if spec.name in seen:
                 raise ValueError(

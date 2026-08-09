@@ -7,6 +7,7 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
     Side,
 )
+from polysignal_lab.nautilus_runtime.strategy_loader import ExternalCoreConfig
 
 
 class PairsHedgeExternalAlphaCore:
@@ -17,10 +18,10 @@ class PairsHedgeExternalAlphaCore:
     native exit policy treats it as a covering leg rather than a new position.
     """
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: ExternalCoreConfig) -> None:
         self.config = config
-        self.name = getattr(config, "name", "pairs_hedge_external")
-        self.threshold = float(getattr(config, "params", {}).get("threshold", 0.40))
+        self.name = config.name
+        self.threshold = float(config.params.get("threshold", 0.40))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         up, down = view.up, view.down

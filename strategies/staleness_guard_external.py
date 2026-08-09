@@ -7,6 +7,7 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
     Side,
 )
+from polysignal_lab.nautilus_runtime.strategy_loader import ExternalCoreConfig
 
 
 class StalenessGuardExternalAlphaCore:
@@ -17,13 +18,13 @@ class StalenessGuardExternalAlphaCore:
     acting on stale prices.
     """
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: ExternalCoreConfig) -> None:
         self.config = config
-        self.name = getattr(config, "name", "staleness_guard_external")
+        self.name = config.name
         self.max_freshness_ms = int(
-            getattr(config, "params", {}).get("max_freshness_ms", 5000)
+            config.params.get("max_freshness_ms", 5000)
         )
-        self.threshold = float(getattr(config, "params", {}).get("threshold", 0.45))
+        self.threshold = float(config.params.get("threshold", 0.45))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         lag = view.freshness.max_ms

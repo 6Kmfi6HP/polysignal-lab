@@ -7,6 +7,7 @@ from polysignal_lab.alpha.types import (
     OrderIntentSpec,
     Side,
 )
+from polysignal_lab.nautilus_runtime.strategy_loader import ExternalCoreConfig
 
 
 class SpotConfirmedExternalAlphaCore:
@@ -16,12 +17,12 @@ class SpotConfirmedExternalAlphaCore:
     exercises the spot-data branch that some native strategies depend on.
     """
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: ExternalCoreConfig) -> None:
         self.config = config
-        self.name = getattr(config, "name", "spot_confirmed_external")
-        band = getattr(config, "params", {}).get("price_band", [0.0, 1.0])
+        self.name = config.name
+        band = config.params.get("price_band", [0.0, 1.0])
         self.low, self.high = float(band[0]), float(band[1])
-        self.threshold = float(getattr(config, "params", {}).get("threshold", 0.45))
+        self.threshold = float(config.params.get("threshold", 0.45))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         spot = view.spot
