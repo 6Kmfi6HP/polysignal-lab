@@ -16,11 +16,11 @@ services:
       POLYSIGNAL_LAB__TELEGRAM__SEND_REPORT_RESULTS: "true"
       POLYSIGNAL_LAB__TELEGRAM__SEND_DAILY_REPORT: "true"
       POLYSIGNAL_LAB__APP__TIMEZONE: "${TZ:-Asia/Bangkok}"
-      # Where external alpha cores are read from when the safety gate is opened.
-      # Mounting the directory is inert on its own: loading additionally requires
+      # Where external alpha cores are read from when the safety gate is opened
+      # Mounting the directory is inert on its own; loading additionally requires
       # POLYSIGNAL_LAB__SAFETY__ALLOW_EXTERNAL_STRATEGIES=true plus a
-      # strategies.external block, neither of which is enabled here. See
-      # strategies/README.md before opting in — external code runs in-process.
+      # strategies.external block, neither of which is enabled here
+      # See strategies/README.md before opting in, external code runs in-process.
       POLYSIGNAL_STRATEGY_ROOT: "/app/strategies"
     volumes:
       - ./data:/app/data

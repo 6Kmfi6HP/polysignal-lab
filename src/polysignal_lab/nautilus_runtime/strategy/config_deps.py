@@ -11,13 +11,14 @@ from polysignal_lab.nautilus_runtime.strategy.protocols import _Assembler
 
 
 def _build_core(settings: Settings, name: str) -> AlphaCore:
-    """Resolve the alpha core for a strategy name (native or external plugin)."""
     from polysignal_lab.nautilus_runtime.strategy_loader import build_external_core
 
     strategy_config = getattr(settings.strategies, name, None)
     if strategy_config is not None:
         if not bool(getattr(strategy_config, "enabled", False)):
-            raise RuntimeError(f"PolySignalStrategyConfig alpha {name!r} is not enabled")
+            raise RuntimeError(
+                f"PolySignalStrategyConfig alpha {name!r} is not enabled"
+            )
         from polysignal_lab.nautilus_runtime.strategy_builder import _native_core_for
 
         core = _native_core_for(name, strategy_config)

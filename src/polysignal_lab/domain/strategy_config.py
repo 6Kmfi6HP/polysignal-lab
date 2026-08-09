@@ -10,6 +10,7 @@ from pydantic import (
     Field,
     PrivateAttr,
     RootModel,
+    field_validator,
     model_validator,
 )
 
@@ -350,13 +351,13 @@ class SkewMeanReversionConfig(BaseModel):
 
 
 class ExternalStrategySpec(BaseModel):
-    """A strategy whose alpha core is loaded from a mounted volume or module.
+    """Define a strategy whose alpha core is loaded from a mounted volume or module.
 
     This is the no-rebuild path: operators add a strategy by editing the YAML
     config and dropping a ``.py`` file into the configured strategy root, with
     no container rebuild. The referenced class must satisfy the ``AlphaCore``
     protocol (``evaluate(view) -> list[AlphaDecision]``) and will receive a
-    config object exposing ``name``, ``assets``, ``timeframes`` and ``params``.
+    config object exposing ``name``, ``assets``, ``timeframes`` and ``parameters``.
 
     ``module`` is either an importable Python module path or a path to a ``.py``
     file relative to the strategy root (``POLYSIGNAL_STRATEGY_ROOT``).
@@ -370,7 +371,17 @@ class ExternalStrategySpec(BaseModel):
     class_name: str
     assets: list[str] = Field(default_factory=lambda: ["BTC"])
     timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
-    params: dict[str, Any] = Field(default_factory=dict)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(
+                "external strategy name must not be empty or whitespace-only"
+            )
+        return normalized
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -436,8 +447,6 @@ class StrategyConfig(BaseModel):
                     "built-in strategy field or attribute; choose a unique name"
                 )
             if spec.name in seen:
-                raise ValueError(
-                    f"duplicate external strategy name {spec.name!r}"
-                )
+                raise ValueError(f"duplicate external strategy name {spec.name!r}")
             seen.add(spec.name)
         return self

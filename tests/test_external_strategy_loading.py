@@ -22,7 +22,7 @@ from polysignal_lab.alpha.types import AlphaDecision, MarketView
 
 
 class MyCore:
-    def __init__(self, config) -> None:
+    def __init__(self, config: object) -> None:
         self.config = config
         self.name = getattr(config, "name", "my_core")
 
@@ -34,7 +34,9 @@ class MyCore:
     return path
 
 
-def test_settings_rejects_external_strategy_without_safety_unlock(tmp_path: Path) -> None:
+def test_settings_rejects_external_strategy_without_safety_unlock(
+    tmp_path: Path,
+) -> None:
     config_path = tmp_path / "signal_bot.yaml"
     config_path.write_text(
         """
@@ -65,7 +67,7 @@ strategies:
       class_name: MyCore
       assets: [btc]
       timeframes: [5m]
-      params:
+      parameters:
         threshold: 0.42
 """.strip(),
         encoding="utf-8",
@@ -73,7 +75,7 @@ strategies:
     settings = load_settings(config_path)
     spec = settings.strategies.external_by_name("my_strat")
     assert spec is not None
-    assert spec.params == {"threshold": 0.42}
+    assert spec.parameters == {"threshold": 0.42}
     # explicit names must not include the "external" key
     assert "external" not in settings.strategies.explicit_strategy_names()
 
@@ -127,7 +129,9 @@ def test_enabled_strategy_names_raises_when_external_disabled() -> None:
         enabled_strategy_names(settings)
 
 
-def test_build_external_core_from_file(tmp_path: Path, monkeypatch) -> None:
+def test_build_external_core_from_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("POLYSIGNAL_STRATEGY_ROOT", str(tmp_path))
     plugin_path = _write_plugin(tmp_path)
     spec = ExternalStrategySpec(
@@ -137,14 +141,14 @@ def test_build_external_core_from_file(tmp_path: Path, monkeypatch) -> None:
         class_name="MyCore",
         assets=["btc"],
         timeframes=["5m"],
-        params={"threshold": 0.42},
+        parameters={"threshold": 0.42},
     )
     core = build_external_core(spec)
     assert core.name == "my_strat"
     assert core.config.name == "my_strat"
     assert core.config.assets == ["BTC"]
     assert core.config.timeframes == ["5m"]
-    assert core.config.params == {"threshold": 0.42}
+    assert core.config.parameters == {"threshold": 0.42}
     from datetime import UTC, datetime
 
     from polysignal_lab.alpha.types import (
@@ -156,21 +160,38 @@ def test_build_external_core_from_file(tmp_path: Path, monkeypatch) -> None:
 
     now = datetime.now(UTC)
     side = SideBookView(
-        token_id="t", best_bid=None, best_ask=None, spread=None, freshness_ms=None,
+        token_id="t",
+        best_bid=None,
+        best_ask=None,
+        spread=None,
+        freshness_ms=None,
     )
     empty = MarketView(
-        view_id="v", market_id="m", market_slug="s", condition_id="c",
-        asset="BTC", timeframe="5m", start_ts=now, end_ts=now, created_at=now,
-        seconds_to_close=0, up=side, down=side, spot=None, price_to_beat=None,
-        up_trades=(), down_trades=(),
-        metrics={}, freshness=FreshnessView(None, None, None, None),
+        view_id="v",
+        market_id="m",
+        market_slug="s",
+        condition_id="c",
+        asset="BTC",
+        timeframe="5m",
+        start_ts=now,
+        end_ts=now,
+        created_at=now,
+        seconds_to_close=0,
+        up=side,
+        down=side,
+        spot=None,
+        price_to_beat=None,
+        up_trades=(),
+        down_trades=(),
+        metrics={},
+        freshness=FreshnessView(None, None, None, None),
         trading=TradingStateView(),
     )
     assert core.evaluate(empty) == []
 
 
 def test_build_external_core_from_importable_module(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pkg = tmp_path / "ext_pkg"
     pkg.mkdir()
@@ -188,7 +209,7 @@ def test_build_external_core_from_importable_module(
 
 
 def test_loader_refuses_paths_outside_strategy_root(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("POLYSIGNAL_STRATEGY_ROOT", str(tmp_path))
     spec = ExternalStrategySpec(
@@ -226,6 +247,73 @@ def test_external_name_collision_with_builtin_rejected() -> None:
         )
 
 
+def test_external_name_padding_cannot_bypass_reserved_check() -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate(
+            {
+                "strategies": {
+                    "external": [
+                        {
+                            "name": "vwap_momentum ",
+                            "module": "x.py",
+                            "class_name": "Y",
+                        }
+                    ]
+                }
+            }
+        )
+
+
+def test_external_name_padding_normalized_before_duplicate_check() -> None:
+    with pytest.raises(ValidationError, match="duplicate external strategy name"):
+        Settings.model_validate(
+            {
+                "strategies": {
+                    "external": [
+                        {"name": "plugin_x", "module": "a.py", "class_name": "A"},
+                        {"name": " plugin_x ", "module": "b.py", "class_name": "B"},
+                    ]
+                }
+            }
+        )
+
+
+def test_external_name_whitespace_only_rejected() -> None:
+    with pytest.raises(ValidationError, match="whitespace-only"):
+        Settings.model_validate(
+            {
+                "strategies": {
+                    "external": [
+                        {
+                            "name": "   ",
+                            "module": "x.py",
+                            "class_name": "Y",
+                        }
+                    ]
+                }
+            }
+        )
+
+
+def test_external_name_padding_normalized_for_lookup() -> None:
+    settings = Settings.model_validate(
+        {
+            "strategies": {
+                "external": [
+                    {
+                        "name": " plugin_x ",
+                        "module": "x.py",
+                        "class_name": "Y",
+                    }
+                ]
+            }
+        }
+    )
+    spec = settings.strategies.external_by_name("plugin_x")
+    assert spec is not None
+    assert spec.name == "plugin_x"
+
+
 def test_same_file_different_classes_resolve_independently(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -233,23 +321,26 @@ def test_same_file_different_classes_resolve_independently(
     monkeypatch.setenv("POLYSIGNAL_STRATEGY_ROOT", str(tmp_path))
     (tmp_path / "pair.py").write_text(
         """
+from polysignal_lab.alpha.types import MarketView
+
+
 class CoreA:
     marker = "A"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: object) -> None:
         self.config = config
 
-    def evaluate(self, view):
+    def evaluate(self, view: MarketView) -> list[str]:
         return [self.marker]
 
 
 class CoreB:
     marker = "B"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: object) -> None:
         self.config = config
 
-    def evaluate(self, view):
+    def evaluate(self, view: MarketView) -> list[str]:
         return [self.marker]
 """,
         encoding="utf-8",
@@ -277,23 +368,26 @@ def test_plugin_file_executes_once_per_process(
     receipt = tmp_path / "executions.log"
     (tmp_path / "counted.py").write_text(
         f"""
+from polysignal_lab.alpha.types import MarketView
+
+
 with open({str(receipt)!r}, "a", encoding="utf-8") as handle:
     handle.write("x")
 
 
 class CoreA:
-    def __init__(self, config) -> None:
+    def __init__(self, config: object) -> None:
         self.config = config
 
-    def evaluate(self, view):
+    def evaluate(self, view: MarketView) -> list[object]:
         return []
 
 
 class CoreB:
-    def __init__(self, config) -> None:
+    def __init__(self, config: object) -> None:
         self.config = config
 
-    def evaluate(self, view):
+    def evaluate(self, view: MarketView) -> list[object]:
         return []
 """,
         encoding="utf-8",
@@ -317,7 +411,7 @@ def test_class_without_evaluate_is_rejected_at_load(
     (tmp_path / "not_a_core.py").write_text(
         """
 class NotACore:
-    def __init__(self, config) -> None:
+    def __init__(self, config: object) -> None:
         self.config = config
 """,
         encoding="utf-8",
@@ -334,11 +428,10 @@ def test_non_class_target_is_rejected(
 ) -> None:
     monkeypatch.setenv("POLYSIGNAL_STRATEGY_ROOT", str(tmp_path))
     (tmp_path / "func_mod.py").write_text(
-        "def evaluate(view):\n    return []\n", encoding="utf-8"
+        "def evaluate(view: object) -> list[object]:\n    return []\n",
+        encoding="utf-8",
     )
-    spec = ExternalStrategySpec(
-        name="fn", module="func_mod.py", class_name="evaluate"
-    )
+    spec = ExternalStrategySpec(name="fn", module="func_mod.py", class_name="evaluate")
     with pytest.raises(TypeError, match="is not a class"):
         build_external_core(spec)
 
@@ -350,13 +443,16 @@ def test_core_refusing_host_attributes_reports_actionable_error(
     monkeypatch.setenv("POLYSIGNAL_STRATEGY_ROOT", str(tmp_path))
     (tmp_path / "slotted.py").write_text(
         """
+from polysignal_lab.alpha.types import MarketView
+
+
 class SlottedCore:
     __slots__ = ("config",)
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: object) -> None:
         self.config = config
 
-    def evaluate(self, view):
+    def evaluate(self, view: MarketView) -> list[object]:
         return []
 """,
         encoding="utf-8",

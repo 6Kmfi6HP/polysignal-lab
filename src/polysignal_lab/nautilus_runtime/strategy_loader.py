@@ -20,30 +20,30 @@ _ENV_STRATEGY_ROOT: Final = "POLYSIGNAL_STRATEGY_ROOT"
 # A plugin file is executed once per process; several specs may name different
 # classes in the same file, so classes are resolved off the cached module rather
 # than cached per path. Importable modules are cached per module+class instead,
-# since the import system already deduplicates their execution
+# since the import system already deduplicates their execution.
 _LOADED_MODULES: dict[str, ModuleType] = {}
 _LOADED_CLASSES: dict[str, type] = {}
 
 
 @dataclass(frozen=True, slots=True)
 class ExternalCoreConfig:
-    """Config object handed to an external alpha core constructor.
+    """Hold the config handed to an external alpha core constructor.
 
-    Mirrors the shape the native host reads for subscriptions: ``assets`` and
-    ``timeframes`` drive market subscriptions, while ``params`` carries the
+    Mirror the shape the native host reads for subscriptions: ``assets`` and
+    ``timeframes`` drive market subscriptions, while ``parameters`` carries the
     free-form plugin parameters declared in YAML.
     """
 
     name: str
     assets: list[str]
     timeframes: list[str]
-    params: dict[str, Any] = field(default_factory=dict)
+    parameters: dict[str, Any] = field(default_factory=dict)
 
 
 class ExternalAlphaCore(Protocol):
-    """Runtime shape of an external alpha core plugin.
+    """Describe the runtime shape of an external alpha core plugin.
 
-    Satisfies the ``AlphaCore`` protocol (``evaluate``) plus the host-injected
+    Satisfy the ``AlphaCore`` protocol (``evaluate``) plus the host-injected
     ``name`` and ``config`` attributes that the runtime relies on for identity
     and market subscriptions.
     """
@@ -55,7 +55,7 @@ class ExternalAlphaCore(Protocol):
 
 
 def external_strategy_root() -> Path:
-    """Root directory scanned for file-based external strategy modules."""
+    """Return the root directory for file-based external strategies."""
     raw = os.environ.get(_ENV_STRATEGY_ROOT)
     return Path(raw) if raw else Path(DEFAULT_STRATEGY_ROOT)
 
@@ -75,7 +75,11 @@ def _normalized_timeframes(values: list[str]) -> list[str]:
 def _load_class_from_path(path_str: str, class_name: str) -> type:
     root = external_strategy_root().resolve()
     candidate = Path(path_str)
-    target = (root / path_str).resolve() if not candidate.is_absolute() else candidate.resolve()
+    target = (
+        (root / path_str).resolve()
+        if not candidate.is_absolute()
+        else candidate.resolve()
+    )
     # Refuse anything that escapes the sandboxed strategy root
     try:
         target.relative_to(root)
@@ -95,7 +99,6 @@ def _load_class_from_path(path_str: str, class_name: str) -> type:
 
 
 def _module_from_path(target: Path) -> ModuleType:
-    """Import (once per process) the plugin module living at ``target``."""
     cache_key = str(target)
     cached = _LOADED_MODULES.get(cache_key)
     if cached is not None:
@@ -174,7 +177,7 @@ def build_external_core(spec: ExternalStrategySpec) -> ExternalAlphaCore:
         name=spec.name,
         assets=_normalized_assets(spec.assets),
         timeframes=_normalized_timeframes(spec.timeframes),
-        params=dict(spec.params),
+        parameters=dict(spec.parameters),
     )
     try:
         core = cls(core_config)
@@ -192,7 +195,6 @@ def _inject_host_identity(
     core: object,
     core_config: ExternalCoreConfig,
 ) -> None:
-    """Stamp the host-owned ``name`` and ``config`` onto a constructed core."""
     for attribute, value in (("config", core_config), ("name", spec.name)):
         try:
             setattr(core, attribute, value)

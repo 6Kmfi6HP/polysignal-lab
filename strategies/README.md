@@ -18,7 +18,7 @@ strategies:
       class_name: ExampleExternalAlphaCore
       assets: [BTC]
       timeframes: [5m, 15m]
-      params:
+      parameters:
         threshold: 0.40
         max_spread: 0.05
 ```
@@ -44,8 +44,8 @@ This is checked when the plugin is resolved: a class without a callable
 `evaluate` is rejected at startup rather than failing per market update.
 
 The host passes a config object with `name`, `assets`, `timeframes` and
-`params` (the YAML block above). `assets`/`timeframes` drive market
-subscriptions; `params` is your free-form configuration. See
+`parameters` (the YAML block above). `assets`/`timeframes` drive market
+subscriptions; `parameters` is your free-form configuration. See
 `example_external_strategy.py` for a working, minimal implementation that emits
 an `AlphaDecision`.
 
@@ -90,10 +90,10 @@ point for your own strategy:
 - `example_external_strategy.py` — minimal buy-when-cheap demo of the contract.
 - `momentum_breakout_external.py` — picks the cheaper side below a threshold.
 - `mean_reversion_external.py` — buys the cheaper leg when the pair is mispriced
-  above parity (`up.best_ask + down.best_ask > params.inefficiency`).
+  above parity (`up.best_ask + down.best_ask > parameters.inefficiency`).
 - `pairs_hedge_external.py` — emits an entry plus a `reduce_only` hedge leg on
   the opposite side (covers the hedge/exit contract).
 - `spot_confirmed_external.py` — only trades when `view.spot` is present and in
-  `params.price_band` (covers the spot-data branch).
+  `parameters.price_band` (covers the spot-data branch).
 - `staleness_guard_external.py` — returns no decisions when
-  `view.freshness.max_ms` exceeds `params.max_freshness_ms`.
+  `view.freshness.max_ms` exceeds `parameters.max_freshness_ms`.

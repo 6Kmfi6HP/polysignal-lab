@@ -303,6 +303,27 @@ def test_polysignal_strategy_config_extends_nautilus_strategy_config() -> None:
     assert reconstructed.strategy_name == "one_cent_buy"
 
 
+def test_polysignal_strategy_config_order_id_tags_are_unique() -> None:
+    from polysignal_lab.nautilus_runtime.runtime_configs import (
+        PolySignalStrategyConfig,
+    )
+
+    names = (
+        "a_b_c_d_e_f_g_h_i_j_k_1",
+        "ab_c_d_e_f_g_h_i_j_k_1",
+        f"{'x' * 21}1",
+        f"{'x' * 21}2",
+    )
+    tags = [
+        PolySignalStrategyConfig.build(
+            Settings(), markets=(), condition_ids=(), strategy_name=name
+        ).order_id_tag
+        for name in names
+    ]
+    assert len(set(tags)) == len(tags)
+    assert all(tag is not None and len(tag) <= 20 for tag in tags)
+
+
 def test_all_production_strategy_configs_expose_subscription_scope() -> None:
     from nautilus_optional import require_nautilus
 

@@ -15,14 +15,14 @@ class MomentumBreakoutExternalAlphaCore:
 
     Functional-test stand-in for a momentum/breakout alpha: it compares the UP
     and DOWN books, selects the cheaper side, and emits a TAKER_IOC entry when
-    the selected ask is under ``params.threshold`` and the spread is tight.
+    the selected ask is under ``parameters.threshold`` and the spread is tight.
     """
 
     def __init__(self, config: ExternalCoreConfig) -> None:
         self.config = config
         self.name = config.name
-        self.threshold = float(config.params.get("threshold", 0.45))
-        self.max_spread = float(config.params.get("max_spread", 0.03))
+        self.threshold = float(config.parameters.get("threshold", 0.45))
+        self.max_spread = float(config.parameters.get("max_spread", 0.03))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         up, down = view.up, view.down
@@ -52,6 +52,8 @@ class MomentumBreakoutExternalAlphaCore:
                 data_freshness_ms=view.freshness.max_ms,
                 reason_codes=("MOMENTUM_BREAKOUT", "CHEAP_SIDE"),
                 metrics={"threshold": self.threshold, "ask": book.best_ask},
-                order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_IOC, notional=10.0),
+                order_intent=OrderIntentSpec(
+                    intent=OrderIntent.TAKER_IOC, notional=10.0
+                ),
             )
         ]

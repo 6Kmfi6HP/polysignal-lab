@@ -21,7 +21,7 @@ class PairsHedgeExternalAlphaCore:
     def __init__(self, config: ExternalCoreConfig) -> None:
         self.config = config
         self.name = config.name
-        self.threshold = float(config.params.get("threshold", 0.40))
+        self.threshold = float(config.parameters.get("threshold", 0.40))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         up, down = view.up, view.down

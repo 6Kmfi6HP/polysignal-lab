@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 from nautilus_trader.common.config import ActorConfig
@@ -13,8 +14,19 @@ from polysignal_lab.domain.market import Market
 _MARKETS_ADAPTER = TypeAdapter(tuple[Market, ...])
 
 
+def _order_id_tag(name: str) -> str:
+    canonical = name.strip()
+    base = canonical.replace("_", "") or "alpha"
+    # Hash long names so legacy 20-char truncation cannot silently collide,
+    # including underscore-heavy spellings with the same stripped base.
+    if len(canonical) <= 14:
+        return base
+    digest = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:6]
+    return f"{base[:14]}{digest}"
+
+
 def importable_config_dict(config: StrategyConfig | ActorConfig) -> dict[str, object]:
-    """JSON-safe dict for ImportableStrategy/ActorConfig payloads."""
+    """Return JSON-safe data for ImportableStrategy/ActorConfig payloads."""
     return json.loads(config.json())
 
 
@@ -39,8 +51,8 @@ class PolySignalStrategyConfig(StrategyConfig, frozen=True):
         name = str(strategy_name).strip()
         if not name:
             raise ValueError("strategy_name is required for PolySignalStrategyConfig")
-        # Nautilus order_id_tag must be short and unique per strategy instance.
-        order_tag = name.replace("_", "")[:20] or "alpha"
+        # Nautilus order_id_tag must be short and unique per strategy instance
+        order_tag = _order_id_tag(name)
         return cls(
             settings_json=settings.model_dump_json(),
             markets_json=_MARKETS_ADAPTER.dump_json(markets).decode(),
@@ -53,7 +65,7 @@ class PolySignalStrategyConfig(StrategyConfig, frozen=True):
 
     def settings(self) -> Settings:
         settings = Settings.model_validate_json(self.settings_json)
-        # Keep full enabled list on Settings for observability; this host owns one alpha.
+        # Keep full enabled list on Settings for observability; this host owns one alpha
         settings.strategies.set_explicit_strategy_names(tuple(self.strategy_names))
         return settings
 

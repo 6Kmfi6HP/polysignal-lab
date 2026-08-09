@@ -14,14 +14,14 @@ class MeanReversionExternalAlphaCore:
     """Buy the cheaper leg when the pair is mispriced above parity.
 
     Polymarket binary pairs should sum to ~1.0. When ``up.best_ask +
-    down.best_ask > params.inefficiency`` we buy the cheaper side expecting
+    down.best_ask > parameters.inefficiency`` we buy the cheaper side expecting
     mean reversion toward parity.
     """
 
     def __init__(self, config: ExternalCoreConfig) -> None:
         self.config = config
         self.name = config.name
-        self.inefficiency = float(config.params.get("inefficiency", 1.01))
+        self.inefficiency = float(config.parameters.get("inefficiency", 1.01))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         up, down = view.up, view.down
@@ -49,6 +49,8 @@ class MeanReversionExternalAlphaCore:
                 data_freshness_ms=view.freshness.max_ms,
                 reason_codes=("MEAN_REVERSION", "PAIR_INEFFICIENCY"),
                 metrics={"pair_cost": pair_cost, "inefficiency": self.inefficiency},
-                order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_IOC, notional=10.0),
+                order_intent=OrderIntentSpec(
+                    intent=OrderIntent.TAKER_IOC, notional=10.0
+                ),
             )
         ]

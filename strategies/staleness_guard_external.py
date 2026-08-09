@@ -14,17 +14,15 @@ class StalenessGuardExternalAlphaCore:
     """Return no decisions when market data is too stale to trust.
 
     Demonstrates the common guard pattern: bail out entirely when
-    ``view.freshness.max_ms`` exceeds ``params.max_freshness_ms`` rather than
+    ``view.freshness.max_ms`` exceeds ``parameters.max_freshness_ms`` rather than
     acting on stale prices.
     """
 
     def __init__(self, config: ExternalCoreConfig) -> None:
         self.config = config
         self.name = config.name
-        self.max_freshness_ms = int(
-            config.params.get("max_freshness_ms", 5000)
-        )
-        self.threshold = float(config.params.get("threshold", 0.45))
+        self.max_freshness_ms = int(config.parameters.get("max_freshness_ms", 5000))
+        self.threshold = float(config.parameters.get("threshold", 0.45))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         lag = view.freshness.max_ms
@@ -53,6 +51,8 @@ class StalenessGuardExternalAlphaCore:
                 data_freshness_ms=view.freshness.max_ms,
                 reason_codes=("STALENESS_GUARD_OK",),
                 metrics={"lag_ms": lag, "max_freshness_ms": self.max_freshness_ms},
-                order_intent=OrderIntentSpec(intent=OrderIntent.TAKER_IOC, notional=10.0),
+                order_intent=OrderIntentSpec(
+                    intent=OrderIntent.TAKER_IOC, notional=10.0
+                ),
             )
         ]

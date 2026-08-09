@@ -14,16 +14,16 @@ class ExampleExternalAlphaCore:
     """No-rebuild strategy demo.
 
     The native host passes a config object exposing ``name``, ``assets``,
-    ``timeframes`` and ``params`` (the free-form YAML block). This example buys
-    the UP token when its best ask is below ``params.threshold`` (default 0.40)
+    ``timeframes`` and ``parameters`` (the free-form YAML block). This example buys
+    the UP token when its best ask is below ``parameters.threshold`` (default 0.40)
     and the bid/ask spread is tight enough.
     """
 
     def __init__(self, config: ExternalCoreConfig) -> None:
         self.config = config
         self.name = config.name
-        self.threshold = float(config.params.get("threshold", 0.40))
-        self.max_spread = float(config.params.get("max_spread", 0.05))
+        self.threshold = float(config.parameters.get("threshold", 0.40))
+        self.max_spread = float(config.parameters.get("max_spread", 0.05))
 
     def evaluate(self, view: MarketView) -> list[AlphaDecision]:
         up = view.up

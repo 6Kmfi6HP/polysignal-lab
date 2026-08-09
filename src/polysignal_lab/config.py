@@ -101,8 +101,8 @@ class SafetyConfig(BaseModel):
     allow_secure_polymarket_client: bool = False
     allow_live_market_actions: bool = False
     allow_position_redemption: bool = False
-    # Load alpha cores from a mounted volume / importable module instead of the
-    # built image. Off by default: external code executes in the runtime process.
+    # Load alpha cores from a mounted volume or importable module instead of the
+    # built image, off by default because external code runs in-process.
     allow_external_strategies: bool = False
     fail_on_disallowed_env_keys: bool = True
 
@@ -434,7 +434,10 @@ class Settings(BaseSettings):
         settings = cls.model_validate(data)
         settings.strategies.set_explicit_strategy_names(explicit_strategy_names)
         settings.validate_runtime_environment()
-        if settings.strategies.external and not settings.safety.allow_external_strategies:
+        if (
+            settings.strategies.external
+            and not settings.safety.allow_external_strategies
+        ):
             raise SecurityConfigError(
                 "External strategy loading is disabled. Enable "
                 "safety.allow_external_strategies to load alpha cores from "
