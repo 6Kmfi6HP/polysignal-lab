@@ -3,10 +3,10 @@ name: promote-nautilus
 on:
   workflow_dispatch:
     inputs:
-      release_tag:
+      wheel_version:
         description: >-
-          Immutable Nautilus fork release tag to promote, e.g.
-          polysignal-1.231.0a20260730.14
+          Official nightly wheel version to promote, e.g. 1.231.0a20260802.
+          Must exist on https://packages.nautechsystems.io/simple/nautilus-trader/
         required: true
         type: string
 
@@ -34,53 +34,107 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Verify immutable fork release
+      - name: Verify official nightly wheel on the Nautech index
+        id: verify-wheel
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          WHEEL_VERSION: ${{ inputs.wheel_version }}
         run: |
-          gh release verify "$RELEASE_TAG" --repo 6Kmfi6HP/nautilus_trader
+          set -euo pipefail
+          # The wheel version carries the PEP-440 aYYYYMMDD nightly suffix.
+          if ! grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+a[0-9]{8}$' <<<"$WHEEL_VERSION"; then
+            echo "refusing: version $WHEEL_VERSION is not a nightly aYYYYMMDD release" >&2
+            exit 1
+          fi
+          # Exact wheel URL and SHA-256 come from the official PEP-503 index.
+          wheel_url="https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-${WHEEL_VERSION}-cp312-cp312-manylinux_2_35_x86_64.whl"
+          page="$(curl -fsSL https://packages.nautechsystems.io/simple/nautilus-trader/index.html)"
+          sha256="$(grep -oP 'nautilus_trader-\Q'${WHEEL_VERSION}'\E-cp312-cp312-manylinux_2_35_x86_64\.whl#sha256=\K[0-9a-f]{64}' <<<"$page" | head -1)"
+          if [ -z "$sha256" ]; then
+            echo "refusing: $WHEEL_VERSION not found on the official Nautech index" >&2
+            exit 1
+          fi
+          # Fetch the wheel and verify its digest before promoting anything.
+          curl -fsSL "$wheel_url" -o wheel.whl
+          printf '%s  wheel.whl\n' "$sha256" | sha256sum --check -
+          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
 
-      - name: Download release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+      - name: Resolve nightly branch source SHA
+        id: source-sha
         run: |
-          mkdir -p dist
-          gh release download "$RELEASE_TAG" \
-            --repo 6Kmfi6HP/nautilus_trader \
-            --pattern 'polysignal-release.json' \
-            --pattern '*.whl' \
-            --pattern 'SHA256SUMS' \
-            --dir dist
+          # The nightly wheel is built from the head of the official nightly
+          # branch on the build day; record it for provenance.
+          sha="$(gh api 'repos/nautechsystems/nautilus_trader/commits?sha=nightly&per_page=1' --jq '.[0].sha')"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify release checksums
-        working-directory: dist
-        run: sha256sum --check SHA256SUMS
-
-      - name: Verify manifest attestation
+      - name: Promote nightly wheel into repo
         env:
-          GH_TOKEN: ${{ github.token }}
+          WHEEL_VERSION: ${{ inputs.wheel_version }}
+          WHEEL_SHA256: ${{ steps.verify-wheel.outputs.sha256 }}
+          SOURCE_SHA: ${{ steps.source-sha.outputs.sha }}
         run: |
-          wheel="$(find dist -maxdepth 1 -name 'nautilus_trader-*.whl' -print -quit)"
-          test -n "$wheel"
-          gh attestation verify "$wheel" \
-            --repo 6Kmfi6HP/nautilus_trader \
-            --signer-workflow 6Kmfi6HP/nautilus_trader/.github/workflows/polysignal-release.yml
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
 
-      - name: Verify manifest whitelist and wheel digest
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: >-
-          python3 scripts/promote_nautilus_release.py verify
-          --manifest dist/polysignal-release.json
-          --wheel "$(find dist -maxdepth 1 -name 'nautilus_trader-*.whl' -print -quit)"
-          --release-tag "$RELEASE_TAG"
+          version = os.environ["WHEEL_VERSION"]
+          sha256 = os.environ["WHEEL_SHA256"]
+          source_sha = os.environ["SOURCE_SHA"]
+          wheel_filename = f"nautilus_trader-{version}-cp312-cp312-manylinux_2_35_x86_64.whl"
+          wheel_url = (
+              f"https://packages.nautechsystems.io/simple/nautilus-trader/{wheel_filename}"
+          )
 
-      - name: Promote release into repo
-        run: >-
-          python3 scripts/promote_nautilus_release.py sync
-          --manifest dist/polysignal-release.json
+          # Canonical manifest
+          manifest_path = Path("docs/runtime_verification/nautilus-polysignal-wheel.json")
+          manifest = json.loads(manifest_path.read_text())
+          manifest.update({
+              "version": version,
+              "release_tag": "nightly",
+              "release_url": "https://packages.nautechsystems.io/simple/nautilus-trader/",
+              "wheel_filename": wheel_filename,
+              "wheel_sha256": sha256,
+              "patch_commit_sha": source_sha,
+              "verification_command": "uv run python scripts/verify_nautilus_manifest_drift.py",
+          })
+          manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+          # pyproject.toml direct references (2 occurrences)
+          import re
+
+          requirement = (
+              f"nautilus_trader[polymarket] @ {wheel_url}#sha256={sha256}"
+          )
+          pyproject = Path("pyproject.toml")
+          text = pyproject.read_text()
+          count = text.count(
+              "nautilus_trader[polymarket] @ https://packages.nautechsystems.io/simple/nautilus-trader/"
+          )
+          if count != 2:
+              raise SystemExit(f"pyproject.toml expected 2 nautilus references, found {count}")
+          text = re.sub(
+              r"nautilus_trader\[polymarket\] @ https://packages\.nautechsystems\.io/simple/nautilus-trader/nautilus_trader-[^\"']+",
+              requirement,
+              text,
+          )
+          pyproject.write_text(text)
+
+          # Dockerfile OCI labels
+          dockerfile = Path("Dockerfile")
+          text = dockerfile.read_text()
+          for label, value in (
+              ("patch-sha", source_sha),
+              ("release-tag", "nightly"),
+              ("version", version),
+              ("wheel-sha256", sha256),
+          ):
+              pattern = re.compile(rf'(io\.polysignal\.nautilus\.{label}=")[^"]*(")')
+              text, count = pattern.subn(lambda m: f"{m.group(1)}{value}{m.group(2)}", text)
+              if count != 1:
+                  raise SystemExit(f"Dockerfile label {label} expected once, found {count}")
+          dockerfile.write_text(text)
+          PY
 
       - name: Regenerate lockfile
         run: uv lock
@@ -98,23 +152,22 @@ jobs:
       - name: Open promotion PR
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          WHEEL_VERSION: ${{ inputs.wheel_version }}
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git switch -c "promote-nautilus-${RELEASE_TAG}"
+          git switch -c "promote-nautilus-${WHEEL_VERSION}"
           git add docs/runtime_verification/nautilus-polysignal-wheel.json \
                   pyproject.toml uv.lock Dockerfile \
-                  scripts/promote_nautilus_release.py \
                   scripts/verify_nautilus_manifest_drift.py
           if git diff --cached --quiet; then
             echo "No provenance changes to promote; nothing to do."
             exit 0
           fi
-          git commit -m "chore(nautilus): promote ${RELEASE_TAG}"
-          git push origin "promote-nautilus-${RELEASE_TAG}"
+          git commit -m "chore(nautilus): promote official nightly ${WHEEL_VERSION}"
+          git push origin "promote-nautilus-${WHEEL_VERSION}"
           gh pr create \
             --base main \
-            --head "promote-nautilus-${RELEASE_TAG}" \
-            --title "chore(nautilus): promote ${RELEASE_TAG}" \
-            --body "Promotes the verified immutable wheel release ${RELEASE_TAG} from 6Kmfi6HP/nautilus_trader. CI must confirm the manifest, pyproject.toml, uv.lock and Docker labels all agree before merge."
+            --head "promote-nautilus-${WHEEL_VERSION}" \
+            --title "chore(nautilus): promote official nightly ${WHEEL_VERSION}" \
+            --body "Promotes the official nightly wheel ${WHEEL_VERSION} from packages.nautechsystems.io (source: nautechsystems/nautilus_trader @nightly). CI must confirm the manifest, pyproject.toml, uv.lock and Docker labels all agree before merge."

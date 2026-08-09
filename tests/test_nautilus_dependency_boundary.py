@@ -84,8 +84,12 @@ def test_nautilus_wheel_provenance_is_consistent_across_build_inputs() -> None:
         if dependency.startswith("nautilus_trader[polymarket] @ ")
     )
 
-    assert manifest["release_tag"] in requirement
-    assert manifest["wheel_filename"].replace("+", "%2B") in requirement
+    # The wheel must come from the official Nautech Systems package index,
+    # never from the fork's GitHub Releases.
+    assert "packages.nautechsystems.io/simple/nautilus-trader" in requirement
+    assert "6Kmfi6HP" not in requirement
+    assert "github.com" not in requirement
+    assert manifest["wheel_filename"] in requirement
     assert f"#sha256={manifest['wheel_sha256']}" in requirement
     for key, label in (
         ("upstream_base_sha", "upstream-sha"),
@@ -94,8 +98,9 @@ def test_nautilus_wheel_provenance_is_consistent_across_build_inputs() -> None:
         ("wheel_sha256", "wheel-sha256"),
     ):
         assert f'io.polysignal.nautilus.{label}="{manifest[key]}"' in dockerfile
-    assert "uv build --wheel" in manifest["build_command"]
-    assert "verify_nautilus_wheel_provenance.py" in manifest["verification_command"]
+    assert manifest["release_tag"] == "nightly"
+    # PEP-440 nightly suffix: <base>aYYYYMMDD (alpha date build).
+    assert "a20" in manifest["version"]
 
 
 def test_nautilus_node_does_not_import_legacy_trading_state() -> None:

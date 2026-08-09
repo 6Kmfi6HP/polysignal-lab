@@ -4,7 +4,6 @@
 
 - For any NautilusTrader-related development, refactor, testing, or integration work in this project, consult `docs/nautilus_reference/` before implementation.
 - Treat `docs/nautilus_reference/developer_guide/` as the default guidance for design principles, coding standards, Python/Rust implementation details, testing, adapters, and FFI constraints unless the current task explicitly overrides it.
-- NautilusTrader 定制补丁须经 PR 合入 `/home/debian/nautilus-trader-polysignal` 的 `polysignal/<version>` 维护分支并发布不可变 tag/wheel，PolySignal 镜像仅使用固定 commit SHA 和 wheel SHA256 的该制品。
 
 ## Reference code
 
