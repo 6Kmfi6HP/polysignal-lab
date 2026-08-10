@@ -34,7 +34,7 @@ class FakeOrder:
     price: object
     time_in_force: object
     reduce_only: bool
-    expire_time: object | None
+    expire_time: int | None
     tags: list[str]
 
 
@@ -55,7 +55,7 @@ class FakeOrderFactory:
         price: object,
         time_in_force: object,
         reduce_only: bool,
-        expire_time: datetime | None,
+        expire_time: int | None,
         tags: Sequence[str],
     ) -> FakeOrder:
         call = {
@@ -309,7 +309,11 @@ def test_submit_approved_decision_maps_passive_gtd_expiry() -> None:
     )
 
     assert _enum_name(order.time_in_force) == "GTD"
-    assert order.expire_time == datetime(2026, 6, 27, 0, 0, 45, tzinfo=UTC)
+    expected_expire = datetime(2026, 6, 27, 0, 0, 45, tzinfo=UTC)
+    assert isinstance(order.expire_time, int)
+    assert order.expire_time == int(expected_expire.timestamp() * 1_000_000_000)
+    call = strategy.order_factory.calls[-1]
+    assert call["expire_time"] == order.expire_time
 
 
 def test_submit_approved_decision_requires_runtime_clock_for_gtd_expiry() -> None:
@@ -486,6 +490,48 @@ def test_native_price_quantization_cannot_exceed_entry_ceiling() -> None:
         )
 
     assert strategy.submitted == []
+
+
+def test_submit_approved_decision_passes_native_gtd_expiry_as_unix_ns() -> None:
+    from nautilus_trader.core import nautilus_pyo3 as pyo3
+
+    price_increment = pyo3.Price.from_str("0.01")
+    size_increment = pyo3.Quantity.from_str("0.01")
+    instrument = pyo3.BinaryOption(
+        instrument_id=pyo3.InstrumentId.from_str("up-token.POLYMARKET"),
+        raw_symbol=pyo3.Symbol("up-token"),
+        asset_class=pyo3.AssetClass.ALTERNATIVE,
+        currency=pyo3.Currency.from_str("USDC"),
+        price_precision=price_increment.precision,
+        size_precision=size_increment.precision,
+        price_increment=price_increment,
+        size_increment=size_increment,
+        activation_ns=0,
+        expiration_ns=10_000_000_000,
+        ts_event=0,
+        ts_init=0,
+        min_quantity=size_increment,
+        outcome="Yes",
+    )
+    strategy = FakeStrategy()
+    strategy._order_factory_override = pyo3.OrderFactory(  # pyright: ignore[reportAttributeAccessIssue, reportPrivateUsage, reportUnknownMemberType]
+        pyo3.TraderId.from_str("TEST-001"),
+        pyo3.StrategyId.from_str("TEST-001"),
+        pyo3.Clock.new_test(),  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    )
+
+    order = submit_approved_decision(
+        cast(OrderSubmittingStrategy[object], strategy),
+        _approved(OrderIntent.PASSIVE_GTD),
+        fixed_stake_usdc=10.0,
+        best_ask=0.50,
+        instrument_id_resolver=lambda _token_id: instrument,
+        now=lambda: datetime(2026, 6, 27, tzinfo=UTC),
+    )
+
+    assert strategy.submitted == [order]
+    native_expire_time = getattr(order, "expire_time")  # pyright: ignore[reportAny]
+    assert isinstance(native_expire_time, int)
 
 
 class _FixedBalanceReader:

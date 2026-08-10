@@ -5,7 +5,7 @@ from typing import cast
 
 from nautilus_trader.core import nautilus_pyo3
 
-from polysignal_lab.config import Settings
+from polysignal_lab.config import SecurityConfigError, Settings
 from polysignal_lab.domain.market import Market
 from polysignal_lab.nautilus_runtime.market_rotation import MarketRotationActor
 from polysignal_lab.nautilus_runtime.native_strategy import PolySignalNativeStrategy
@@ -34,11 +34,18 @@ def _fqn(component: type[object]) -> str:
 
 
 def enabled_strategy_names(settings: Settings) -> tuple[str, ...]:
-    return tuple(
-        name
-        for name in settings.strategies.explicit_strategy_names()
-        if bool(getattr(settings.strategies, name).enabled)
-    )
+    internal: list[str] = []
+    for name in settings.strategies.explicit_strategy_names():
+        cfg = getattr(settings.strategies, name, None)
+        if cfg is not None and bool(getattr(cfg, "enabled", False)):
+            internal.append(name)
+    external = [spec.name for spec in settings.strategies.external if spec.enabled]
+    if external and not settings.safety.allow_external_strategies:
+        raise SecurityConfigError(
+            "External strategies are configured but disabled by "
+            "safety.allow_external_strategies"
+        )
+    return tuple(internal + external)
 
 
 def register_runtime_components(

@@ -101,6 +101,9 @@ class SafetyConfig(BaseModel):
     allow_secure_polymarket_client: bool = False
     allow_live_market_actions: bool = False
     allow_position_redemption: bool = False
+    # Load alpha cores from a mounted volume or importable module instead of the
+    # built image, off by default because external code runs in-process.
+    allow_external_strategies: bool = False
     fail_on_disallowed_env_keys: bool = True
 
 
@@ -424,10 +427,22 @@ class Settings(BaseSettings):
         explicit_strategy_names: tuple[str, ...] = ()
         strategies_data = data.get("strategies")
         if isinstance(strategies_data, dict):
-            explicit_strategy_names = tuple(strategies_data)
+            # "external" is a list of plugin specs, not a built-in strategy field
+            explicit_strategy_names = tuple(
+                k for k in strategies_data if k != "external"
+            )
         settings = cls.model_validate(data)
         settings.strategies.set_explicit_strategy_names(explicit_strategy_names)
         settings.validate_runtime_environment()
+        if (
+            settings.strategies.external
+            and not settings.safety.allow_external_strategies
+        ):
+            raise SecurityConfigError(
+                "External strategy loading is disabled. Enable "
+                "safety.allow_external_strategies to load alpha cores from "
+                "outside the image."
+            )
         return settings
 
     def validate_runtime_environment(

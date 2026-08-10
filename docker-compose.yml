@@ -16,12 +16,19 @@ services:
       POLYSIGNAL_LAB__TELEGRAM__SEND_REPORT_RESULTS: "true"
       POLYSIGNAL_LAB__TELEGRAM__SEND_DAILY_REPORT: "true"
       POLYSIGNAL_LAB__APP__TIMEZONE: "${TZ:-Asia/Bangkok}"
+      # Where external alpha cores are read from when the safety gate is opened
+      # Mounting the directory is inert on its own; loading additionally requires
+      # POLYSIGNAL_LAB__SAFETY__ALLOW_EXTERNAL_STRATEGIES=true plus a
+      # strategies.external block, neither of which is enabled here
+      # See strategies/README.md before opting in, external code runs in-process.
+      POLYSIGNAL_STRATEGY_ROOT: "/app/strategies"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./state:/app/state
       - ./archive:/app/archive
       - ./config:/app/config:ro
+      - ./strategies:/app/strategies:ro
     command: ["nautilus"]
     # Default 10m x 3 held under two days of a six-day run; the failure window
     # had rotated away before anyone looked. Files under ./logs/runtime are the
@@ -48,12 +55,16 @@ services:
       POLYSIGNAL_LAB__TELEGRAM__DRY_RUN: "true"
       POLYSIGNAL_LAB__DASHBOARD__HOST: "0.0.0.0"
       POLYSIGNAL_LAB__DASHBOARD__PORT: "8080"
+      # Kept identical to the nautilus service so both resolve the same plugin
+      # paths when the gate is opened; the dashboard never executes plugins.
+      POLYSIGNAL_STRATEGY_ROOT: "/app/strategies"
     volumes:
       - ./data:/app/data:ro
       - ./logs:/app/logs:ro
       - ./state:/app/state:ro
       - ./archive:/app/archive:ro
       - ./config:/app/config:ro
+      - ./strategies:/app/strategies:ro
     command: ["dashboard"]
     logging:
       driver: json-file

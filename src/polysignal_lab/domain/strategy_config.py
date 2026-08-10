@@ -4,7 +4,15 @@ from collections.abc import Iterable, Iterator, Mapping
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, RootModel
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    RootModel,
+    field_validator,
+    model_validator,
+)
 
 from polysignal_lab.domain.enums import Side
 
@@ -338,12 +346,53 @@ class SkewMeanReversionConfig(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# External strategy plugins (loaded from outside the image)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ExternalStrategySpec(BaseModel):
+    """Define a strategy whose alpha core is loaded from a mounted volume or module.
+
+    This is the no-rebuild path: operators add a strategy by editing the YAML
+    config and dropping a ``.py`` file into the configured strategy root, with
+    no container rebuild. The referenced class must satisfy the ``AlphaCore``
+    protocol (``evaluate(view) -> list[AlphaDecision]``) and will receive a
+    config object exposing ``name``, ``assets``, ``timeframes`` and ``parameters``.
+
+    ``module`` is either an importable Python module path or a path to a ``.py``
+    file relative to the strategy root (``POLYSIGNAL_STRATEGY_ROOT``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    enabled: bool = True
+    module: str
+    class_name: str
+    assets: list[str] = Field(default_factory=lambda: ["BTC"])
+    timeframes: list[str] = Field(default_factory=lambda: ["5m", "15m"])
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(
+                "external strategy name must not be empty or whitespace-only"
+            )
+        return normalized
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Master strategy config — superset of all strategy configs
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class StrategyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    external: list[ExternalStrategySpec] = Field(default_factory=list)
 
     vwap_momentum: VWAPMomentumConfig = Field(default_factory=VWAPMomentumConfig)
     late_consensus: LateConsensusConfig = Field(default_factory=LateConsensusConfig)
@@ -375,3 +424,29 @@ class StrategyConfig(BaseModel):
     def __iter__(self) -> Iterator[BaseModel]:
         for name in self._explicit_strategy_names:
             yield getattr(self, name)
+
+    def external_by_name(self, name: str) -> ExternalStrategySpec | None:
+        """Resolve an external plugin by its configured name."""
+        for spec in self.external:
+            if spec.name == name:
+                return spec
+        return None
+
+    @model_validator(mode="after")
+    def _validate_external_names(self) -> "StrategyConfig":
+        # Any resolvable attribute is reserved, not just the built-in strategy
+        # fields: the runtime resolves a strategy by getattr on this model, so a
+        # plugin named after a method would silently resolve to that method.
+        cls = self.__class__
+        reserved = set(cls.model_fields.keys()) | set(dir(cls))
+        seen: set[str] = set()
+        for spec in self.external:
+            if spec.name in reserved:
+                raise ValueError(
+                    f"external strategy name {spec.name!r} collides with a "
+                    "built-in strategy field or attribute; choose a unique name"
+                )
+            if spec.name in seen:
+                raise ValueError(f"duplicate external strategy name {spec.name!r}")
+            seen.add(spec.name)
+        return self
