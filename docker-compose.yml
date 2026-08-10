@@ -1,9 +1,55 @@
 # version: "3.9"
 
 services:
+  # Cloudflare WARP sidecar. The trading runtime below joins this container's
+  # network namespace (network_mode: service:warp), so ALL of its egress
+  # (Polymarket REST/WS, Binance WS, Telegram) exits through the WARP tunnel.
+  # Verified on this host on 2026-08-10: warp=on, MASQUE, Connected.
+  warp:
+    image: caomingjun/warp:2026.6.880.0-2.12.0
+    container_name: polysignal-lab-warp
+    restart: unless-stopped
+    # runc PR#3468: containerd >= 1.7.24 (this host: 1.7.24 / runc 1.2.2)
+    # removed tun/tap from the default device cgroup rules, which fails
+    # warp-svc with "open tun: Operation not permitted" unless re-added.
+    device_cgroup_rules:
+      - 'c 10:200 rwm'
+    cap_add:
+      - NET_ADMIN
+      - MKNOD
+      - AUDIT_WRITE
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv4.conf.all.src_valid_mark=1
+    environment:
+      - WARP_SLEEP=2
+      # Optional WARP+ license key; leave unset for free WARP.
+      - WARP_LICENSE_KEY=${WARP_LICENSE_KEY:-}
+    volumes:
+      # Persist the WARP device registration so restarts don't re-register.
+      - ./state/warp:/var/lib/cloudflare-warp
+    healthcheck:
+      # Only "healthy" once the tunnel actually exits via Cloudflare.
+      test: ["CMD-SHELL", "curl -fsS https://www.cloudflare.com/cdn-cgi/trace | grep -qE 'warp=(on|plus)' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    # watchtower runs on this host; keep the pinned WARP client from being
+    # auto-recreated (a recreation would briefly drop the tunnel).
+    labels:
+      - com.centurylinklabs.watchtower.enable=false
+
   polysignal-lab:
     image: ${POLYSIGNAL_IMAGE_REF:-ghcr.io/6kmfi6hp/polysignal-lab:main}
     container_name: polysignal-lab
+    # Tip into the WARP tunnel: share the warp sidecar's network namespace so
+    # every outbound socket (including the Rust pyo3 WebSocket client, which
+    # ignores HTTP/SOCKS proxy env vars) transparently egresses via WARP.
+    network_mode: "service:warp"
+    depends_on:
+      warp:
+        condition: service_healthy
     restart: unless-stopped
     env_file:
       - .env
