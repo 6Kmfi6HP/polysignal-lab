@@ -32,6 +32,9 @@ from polysignal_lab.nautilus_runtime.polymarket_clients import (
     polymarket_data_client_id,
     polymarket_rtds_data_client_id,
 )
+from polysignal_lab.nautilus_runtime.strategy import (
+    subscriptions as subscription_coordinator,
+)
 
 logger = logging.getLogger(__name__)
 _RECORDING_FILE = "market_data.jsonl"
@@ -324,6 +327,7 @@ class RecordedMarketDataActor(nautilus_pyo3.DataActor):
         self._subscriptions_started = False
 
     def on_start(self) -> None:
+        subscription_coordinator._register_quote_subscription_owner(self)  # pyright: ignore[reportPrivateUsage]
         self.store.start()
         venue = nautilus_pyo3.Venue.from_str("POLYMARKET")
         for timeframe in self.settings.markets.timeframes:
@@ -353,6 +357,7 @@ class RecordedMarketDataActor(nautilus_pyo3.DataActor):
             )
 
     def on_stop(self) -> None:
+        subscription_coordinator._unregister_quote_subscription_owner(self)  # pyright: ignore[reportPrivateUsage]
         if self._subscriptions_started:
             venue = nautilus_pyo3.Venue.from_str("POLYMARKET")
             for condition_id in tuple(self._quote_subscriptions):
@@ -451,6 +456,13 @@ class RecordedMarketDataActor(nautilus_pyo3.DataActor):
             for instrument_id in instrument_ids:
                 self.subscribe_quotes(instrument_id, client_id=client_id)
             self._quote_subscriptions[condition_id] = (client_id, instrument_ids)
+
+    def recovery_quote_client_id(self, instrument_id: object) -> object | None:
+        target = str(instrument_id)
+        for client_id, instrument_ids in self._quote_subscriptions.values():
+            if any(str(candidate) == target for candidate in instrument_ids):
+                return client_id
+        return None
 
     def on_quote(self, tick: object) -> None:
         self.store.record(tick)

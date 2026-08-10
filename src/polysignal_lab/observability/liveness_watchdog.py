@@ -15,6 +15,7 @@ from polysignal_lab.observability.liveness_alert import (
 from polysignal_lab.observability.runtime_health import (
     _utc_now,
     evaluate_liveness,
+    read_runtime_heartbeat,
     read_runtime_startup_started_at,
 )
 
@@ -35,10 +36,14 @@ class LivenessWatchdog:
         send: Callable[[str], None],
         *,
         now: Callable[[], datetime] | None = None,
+        restart: Callable[[str], None] | None = None,
     ) -> None:
         self._settings: Settings = settings
         self._send: Callable[[str], None] = send
         self._now: Callable[[], datetime] | None = now
+        self._restart: Callable[[str], None] | None = restart
+        self._restart_requested: bool = False
+        self._fleet_never_ready_started_at: datetime | None = None
         self._state: AlertState = AlertState()
         self._stop: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -57,6 +62,65 @@ class LivenessWatchdog:
         except (OSError, ValueError, KeyError):
             return None
 
+    def set_restart_callback(self, restart: Callable[[str], None]) -> None:
+        self._restart = restart
+
+    def _fleet_never_ready(self, *, now: datetime, threshold_sec: int) -> bool:
+        try:
+            heartbeat = read_runtime_heartbeat(self._heartbeat_path())
+        except (OSError, ValueError, KeyError, TypeError):
+            self._fleet_never_ready_started_at = None
+            return False
+        details = tuple(heartbeat.readiness_detail_by_key.values())
+        bookless_states = {"awaiting_first_book", "stale_orderbook"}
+        all_waiting = bool(details) and all(
+            detail.get("subscription_state") in bookless_states for detail in details
+        )
+        if not all_waiting:
+            self._fleet_never_ready_started_at = None
+            return False
+        if self._fleet_never_ready_started_at is None:
+            self._fleet_never_ready_started_at = now
+            return False
+        elapsed = (now - self._fleet_never_ready_started_at).total_seconds()
+        return elapsed > threshold_sec
+
+    def _restart_if_recovery_exhausted(self, *, now: datetime | None) -> None:
+        restart = self._restart
+        gate = self._settings.health.restart_gate
+        if restart is None or self._restart_requested or not gate.enabled:
+            return
+        health = self._settings.health
+        result = evaluate_liveness(
+            self._heartbeat_path(),
+            max_age_sec=health.liveness.heartbeat_max_age_sec,
+            startup_started_at=self._startup_started_at(),
+            startup_grace_sec=health.startup_grace_sec,
+            max_readiness_miss_sec=gate.critical_down_sec,
+            max_data_starvation_sec=gate.critical_down_sec,
+            now=now,
+        )
+        reason = (
+            result.reason
+            if result.reason in {"data_starvation", "readiness_miss"}
+            else None
+        )
+        observed_at = now or _utc_now()
+        if reason is None and self._fleet_never_ready(
+            now=observed_at,
+            threshold_sec=gate.critical_down_sec,
+        ):
+            reason = "fleet_never_ready"
+        if reason is None:
+            return
+        self._restart_requested = True
+        logger.error(
+            "runtime_restart_requested reason=%s threshold_sec=%s",
+            reason,
+            gate.critical_down_sec,
+        )
+        restart(reason)
+
     def poll_once(self) -> str | None:
         """Evaluate liveness once and send an alert if the gate says so."""
         health = self._settings.health
@@ -70,6 +134,7 @@ class LivenessWatchdog:
             max_data_starvation_sec=health.liveness.max_data_starvation_sec,
             now=now,
         )
+        self._restart_if_recovery_exhausted(now=now)
         previous = self._state
         decision = evaluate_liveness_alert(
             liveness,
@@ -102,7 +167,7 @@ class LivenessWatchdog:
                 logger.exception("Liveness watchdog poll failed")
 
     def start(self) -> None:
-        if not self._settings.health.alert.enabled:
+        if not self._settings.health.alert.enabled and self._restart is None:
             return
         if self._thread is not None and self._thread.is_alive():
             return

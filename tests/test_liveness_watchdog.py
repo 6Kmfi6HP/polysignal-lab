@@ -181,6 +181,72 @@ def test_missing_heartbeat_alerts_after_the_grace_window(tmp_path: Path) -> None
     assert "heartbeat_missing" in sent[0]
 
 
+def test_fleet_never_ready_requests_one_supervised_restart(tmp_path: Path) -> None:
+    restarts: list[str] = []
+    clock = {"now": T0}
+    watchdog = LivenessWatchdog(
+        _settings(tmp_path),
+        lambda _message: None,
+        now=lambda: clock["now"],
+        restart=restarts.append,
+    )
+
+    for observed_at, phase in (
+        (T0, "awaiting_first_book"),
+        (T0 + timedelta(seconds=301), "stale_orderbook"),
+    ):
+        clock["now"] = observed_at
+        _write_heartbeat(tmp_path, updated_at=observed_at, readiness_miss_at=None)
+        payload_path = tmp_path / "runtime_heartbeat.json"
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        payload["readiness_detail_by_key"] = {"cond-1": {"subscription_state": phase}}
+        payload_path.write_text(json.dumps(payload), encoding="utf-8")
+        _ = watchdog.poll_once()
+
+    _ = watchdog.poll_once()
+    assert restarts == ["fleet_never_ready"]
+
+
+def test_readiness_miss_requests_one_supervised_restart(tmp_path: Path) -> None:
+    restarts: list[str] = []
+    _write_heartbeat(
+        tmp_path,
+        updated_at=T0,
+        readiness_miss_at=T0 - timedelta(seconds=301),
+    )
+    watchdog = LivenessWatchdog(
+        _settings(tmp_path),
+        lambda _message: None,
+        now=lambda: T0,
+        restart=restarts.append,
+    )
+
+    _ = watchdog.poll_once()
+    _ = watchdog.poll_once()
+
+    assert restarts == ["readiness_miss"]
+
+
+def test_data_starvation_requests_one_supervised_restart(tmp_path: Path) -> None:
+    restarts: list[str] = []
+    _write_heartbeat(tmp_path, updated_at=T0, readiness_miss_at=None)
+    payload_path = tmp_path / "runtime_heartbeat.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    payload["last_data_at"] = (T0 - timedelta(seconds=301)).isoformat()
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+    watchdog = LivenessWatchdog(
+        _settings(tmp_path),
+        lambda _message: None,
+        now=lambda: T0,
+        restart=restarts.append,
+    )
+
+    _ = watchdog.poll_once()
+    _ = watchdog.poll_once()
+
+    assert restarts == ["data_starvation"]
+
+
 def test_disabled_alerting_never_starts_a_thread(tmp_path: Path) -> None:
     watchdog = LivenessWatchdog(_settings(tmp_path, enabled=False), lambda _m: None)
 

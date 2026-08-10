@@ -60,18 +60,18 @@ logger = logging.getLogger(__name__)
 def _build_liveness_watchdog(
     settings: Settings,
     notifier: NautilusNotifierAdapter,
-) -> LivenessWatchdog | None:
-    """Wire the health watchdog to the Telegram channel the runtime already uses."""
+) -> LivenessWatchdog:
+    """Wire alerting and supervised restart to the runtime watchdog."""
     telegram = settings.telegram
-    if not (telegram.enabled and telegram.send_health_alerts):
-        return None
+    notify_enabled = telegram.enabled and telegram.send_health_alerts
 
     # One long-lived loop for the watchdog thread, matching the notify outbox:
-    # the publisher's httpx client is shared with the startup and signal paths,
-    # and asyncio.run() per alert would bind it to a loop it then tears down.
+    # the publisher's httpx client is shared with the startup and signal paths.
     loop: list[asyncio.AbstractEventLoop] = []
 
     def send(message: str) -> None:
+        if not notify_enabled:
+            return
         if not loop:
             loop.append(asyncio.new_event_loop())
         _ = loop[0].run_until_complete(notifier.send(message, "health_alert"))
@@ -132,6 +132,20 @@ def _prepare_sync_cli_bundle(settings: Settings) -> NautilusRuntimeBundle:
     return bundle
 
 
+def _bind_supervised_restart(bundle: NautilusRuntimeBundle, node: object) -> None:
+    watchdog = bundle.observability.liveness_watchdog
+    if watchdog is None:
+        return
+
+    def restart_node(reason: str) -> None:
+        logger.error("supervised_node_restart reason=%s", reason)
+        stopper = getattr(node, "stop", None)
+        if callable(stopper):
+            _ = stopper()
+
+    watchdog.set_restart_callback(restart_node)
+
+
 def run_nautilus_cli(settings: Settings | None = None) -> None:
     resolved = settings or load_settings()
     configure_runtime_logging(resolved)
@@ -144,6 +158,8 @@ def run_nautilus_cli(settings: Settings | None = None) -> None:
             _ = stopper()
             return
         raise KeyboardInterrupt
+
+    _bind_supervised_restart(bundle, node)
 
     def cleanup_signals() -> None:
         return None

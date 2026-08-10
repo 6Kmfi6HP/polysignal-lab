@@ -4,7 +4,7 @@ import logging
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Protocol, cast
 
@@ -73,7 +73,46 @@ _BOOK_GENERATION_STALL_SEC = 60.0
 # strictly before the node can ever be judged unhealthy for the condition.
 _BOOK_GENERATION_ABANDON_SEC = 240.0
 
+# A strategy recovery command has no wire ACK. Keep its intent pending long
+# enough for adapter reconnect/replay to converge, then permit another atomic
+# refresh if no qualifying book receipt arrived.
+_BOOK_RECOVERY_RETRY_SEC = 120.0
+
 logger = logging.getLogger(__name__)
+
+# All strategies in one TradingNode share the underlying Polymarket adapter
+# tokens. Coordinate at process scope so separately constructed strategy
+# catalogs cannot duplicate the same wire refresh.
+_global_book_recovery_times: dict[str, datetime] = {}
+_global_subscription_strategies: dict[int, object] = {}
+_global_quote_subscription_owners: dict[int, object] = {}
+
+
+def _register_subscription_strategy(strategy: object) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Register one owner of the process-wide adapter subscriptions."""
+    _global_subscription_strategies[id(strategy)] = strategy
+
+
+def _unregister_subscription_strategy(strategy: object) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Remove a stopped strategy from process-wide recovery coordination."""
+    _ = _global_subscription_strategies.pop(id(strategy), None)
+
+
+def _register_quote_subscription_owner(owner: object) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Register a non-strategy owner of adapter quote subscriptions."""
+    _global_quote_subscription_owners[id(owner)] = owner
+
+
+def _unregister_quote_subscription_owner(owner: object) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Remove a stopped quote owner from recovery coordination."""
+    _ = _global_quote_subscription_owners.pop(id(owner), None)
+
+
+def _clear_global_book_recovery_state() -> None:  # pyright: ignore[reportUnusedFunction]
+    """Reset process recovery coordination during node teardown/tests."""
+    _global_book_recovery_times.clear()
+    _global_subscription_strategies.clear()
+    _global_quote_subscription_owners.clear()
 
 
 @dataclass(slots=True)
@@ -102,6 +141,9 @@ class MarketSubscriptionState:
     # missing side for the current generation, only a valid managed-book
     # receipt for that side clears it. Adapter code owns wire retry/coalescing.
     pending_book_recovery_sides_by_condition: dict[str, set[Side]] = field(
+        default_factory=dict
+    )
+    book_recovery_dispatched_at_by_condition: dict[str, dict[Side, datetime]] = field(
         default_factory=dict
     )
     # Total-stall clock: when the condition first began waiting for a book
@@ -346,6 +388,22 @@ def _refresh_phase_for_instrument(
         _recompute_condition_phase(strategy, condition_id)
 
 
+class _QuoteSubscriptionOwner(Protocol):
+    def recovery_quote_client_id(self, instrument_id: object) -> object | None: ...
+
+    def subscribe_quotes(
+        self,
+        instrument_id: object,
+        client_id: object | None = None,
+    ) -> object: ...
+
+    def unsubscribe_quotes(
+        self,
+        instrument_id: object,
+        client_id: object | None = None,
+    ) -> object: ...
+
+
 class _SubscriptionStrategy(_ConditionSubscriptionStateOwner, Protocol):
     @property
     def cache(self) -> object | None: ...
@@ -361,6 +419,7 @@ class _SubscriptionStrategy(_ConditionSubscriptionStateOwner, Protocol):
     _stale_orderbook_recovery_by_condition: dict[str, dict[Side, float]]
     _runtime_readiness_reason_by_condition: dict[str, str]
     _runtime_readiness_miss_condition_ids: set[str]
+
     def _readiness_detail(
         self,
         condition_id: str,
@@ -431,11 +490,17 @@ def condition_in_subscription_scope(
     timeframe_by_condition: Mapping[str, str] | None = None,
     include_unknown: bool = True,
 ) -> bool:
-    pair = None if strategy.registry is None else strategy.registry.by_condition(condition_id)
+    pair = (
+        None
+        if strategy.registry is None
+        else strategy.registry.by_condition(condition_id)
+    )
     asset = (
         pair.asset
         if pair is not None
-        else None if asset_by_condition is None else asset_by_condition.get(condition_id)
+        else None
+        if asset_by_condition is None
+        else asset_by_condition.get(condition_id)
     )
     timeframe = (
         pair.timeframe
@@ -639,8 +704,7 @@ def on_instrument_available(
                 | {
                     condition_id
                     for condition_id, phase in strategy._subscription_state.condition_phases.items()  # pyright: ignore[reportPrivateUsage]
-                    if phase
-                    is not ConditionSubscriptionPhase.UNSUBSCRIBED
+                    if phase is not ConditionSubscriptionPhase.UNSUBSCRIBED
                 }
             ),
         )
@@ -790,14 +854,13 @@ def begin_market_book_generation(
     observed = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
     observed_utc = observed.astimezone(UTC)
     state = strategy._subscription_state
-    awaiting = set(
-        (Side.UP, Side.DOWN) if awaiting_sides is None else awaiting_sides
-    )
+    awaiting = set((Side.UP, Side.DOWN) if awaiting_sides is None else awaiting_sides)
     state.awaiting_book_sides_by_condition[condition_id] = awaiting
     state.book_generation_started_at_by_condition[condition_id] = observed_utc
     # A new generation owns a fresh set of recovery intents. Only begin may
     # raise the validity clock.
     state.pending_book_recovery_sides_by_condition.pop(condition_id, None)
+    _ = state.book_recovery_dispatched_at_by_condition.pop(condition_id, None)
     # Drop prior receipts for sides this generation awaits so detail cannot
     # show "already received" while observe rejects received < started_at.
     _clear_awaiting_side_book_receipts(state, condition_id, awaiting)
@@ -807,9 +870,7 @@ def begin_market_book_generation(
         condition_id,
         observed_utc,
     )
-    state.first_bilateral_book_at_by_condition.pop(
-        condition_id, None
-    )
+    _ = state.first_bilateral_book_at_by_condition.pop(condition_id, None)
     strategy._subscription_state.first_bilateral_book_latency_ms_by_condition.pop(
         condition_id, None
     )
@@ -883,6 +944,11 @@ def _complete_book_recovery_receipt(
     condition_id: str,
     side: Side,
 ) -> None:
+    dispatched_at = state.book_recovery_dispatched_at_by_condition.get(condition_id)
+    if dispatched_at is not None:
+        _ = dispatched_at.pop(side, None)
+        if not dispatched_at:
+            _ = state.book_recovery_dispatched_at_by_condition.pop(condition_id, None)
     pending = state.pending_book_recovery_sides_by_condition.get(condition_id)
     if pending is None:
         return
@@ -899,8 +965,8 @@ def _record_market_book_side(
     received: datetime,
     observed_book: datetime,
 ) -> None:
-    last_receipts = (
-        state.last_book_received_at_by_condition.setdefault(condition_id, {})
+    last_receipts = state.last_book_received_at_by_condition.setdefault(
+        condition_id, {}
     )
     previous_received = last_receipts.get(side)
     if previous_received is None or received >= previous_received:
@@ -927,6 +993,7 @@ def finish_market_book_generation(
     state.awaiting_book_sides_by_condition.pop(condition_id)
     state.book_generation_started_at_by_condition.pop(condition_id, None)
     state.pending_book_recovery_sides_by_condition.pop(condition_id, None)
+    _ = state.book_recovery_dispatched_at_by_condition.pop(condition_id, None)
     state.book_stalled_started_at_by_condition.pop(condition_id, None)
     state.first_bilateral_book_at_by_condition[condition_id] = ready_at
     # Remembers this active period reached READY so the stale-repair re-awaiting
@@ -950,9 +1017,7 @@ def market_book_generation_ready(
     The phase is the source of truth: a never-subscribed or already-cleaned
     condition must not be treated as book-generation ready.
     """
-    return (
-        condition_phase(strategy, condition_id) is ConditionSubscriptionPhase.READY
-    )
+    return condition_phase(strategy, condition_id) is ConditionSubscriptionPhase.READY
 
 
 def retire_market_book_generation(
@@ -970,6 +1035,10 @@ def retire_market_book_generation(
         None,
     )
     strategy._subscription_state.pending_book_recovery_sides_by_condition.pop(
+        condition_id,
+        None,
+    )
+    _ = strategy._subscription_state.book_recovery_dispatched_at_by_condition.pop(  # pyright: ignore[reportPrivateUsage]
         condition_id,
         None,
     )
@@ -1080,47 +1149,211 @@ def abandon_book_stalled_condition(
     return True
 
 
+def _subscription_owners_for_instrument(
+    strategy: _SubscriptionStrategy,
+    instrument_id: object,
+) -> tuple[_SubscriptionStrategy, ...]:
+    del instrument_id
+    candidates = (*_global_subscription_strategies.values(), strategy)
+    owners: list[_SubscriptionStrategy] = []
+    seen: set[int] = set()
+    for candidate in candidates:
+        owner = cast(_SubscriptionStrategy, candidate)
+        owner_id = id(owner)
+        if owner_id in seen:
+            continue
+        seen.add(owner_id)
+        # The registry is authoritative. Local state can lead adapter command
+        # processing, so filtering it can leave a shared token ref stranded.
+        owners.append(owner)
+    return tuple(owners)
+
+
+def _quote_owners_for_instrument(
+    instrument_id: object,
+) -> tuple[tuple[_QuoteSubscriptionOwner, object], ...]:
+    owners: list[tuple[_QuoteSubscriptionOwner, object]] = []
+    for candidate in _global_quote_subscription_owners.values():
+        owner = cast(_QuoteSubscriptionOwner, candidate)
+        client_id = owner.recovery_quote_client_id(instrument_id)
+        if client_id is not None:
+            owners.append((owner, client_id))
+    return tuple(owners)
+
+
+def _attempt_subscription_operation(
+    failures: list[Exception],
+    operation: Callable[[], object],
+) -> None:
+    try:
+        _ = operation()
+    except Exception as exc:
+        failures.append(exc)
+
+
+def _drain_market_subscription_owners(
+    owners: Sequence[_SubscriptionStrategy],
+    quote_owners: Sequence[tuple[_QuoteSubscriptionOwner, object]],
+    instrument_id: object,
+    failures: list[Exception],
+) -> None:
+    for owner in owners:
+        client_id = _client_id_for_instrument(owner, instrument_id)
+        for operation in (
+            owner.unsubscribe_quotes,
+            owner.unsubscribe_trades,
+            owner.unsubscribe_book_deltas,
+        ):
+            _attempt_subscription_operation(
+                failures,
+                lambda operation=operation, client_id=client_id: operation(
+                    instrument_id,
+                    client_id=client_id,
+                ),
+            )
+    for owner, client_id in quote_owners:
+        _attempt_subscription_operation(
+            failures,
+            lambda owner=owner, client_id=client_id: owner.unsubscribe_quotes(
+                instrument_id,
+                client_id=client_id,
+            ),
+        )
+
+
+def _restore_market_subscription_owners(
+    owners: Sequence[_SubscriptionStrategy],
+    quote_owners: Sequence[tuple[_QuoteSubscriptionOwner, object]],
+    instrument_id: object,
+    failures: list[Exception],
+) -> None:
+    for owner in owners:
+        client_id = _client_id_for_instrument(owner, instrument_id)
+        book_type = _nautilus_book_type(owner.book_type)
+        _attempt_subscription_operation(
+            failures,
+            lambda owner=owner, client_id=client_id, book_type=book_type: (
+                owner.subscribe_book_deltas(
+                    instrument_id,
+                    book_type=book_type,
+                    client_id=client_id,
+                    managed=True,
+                )
+            ),
+        )
+    for owner in owners:
+        client_id = _client_id_for_instrument(owner, instrument_id)
+        for operation in (owner.subscribe_quotes, owner.subscribe_trades):
+            _attempt_subscription_operation(
+                failures,
+                lambda operation=operation, client_id=client_id: operation(
+                    instrument_id,
+                    client_id=client_id,
+                ),
+            )
+    for owner, client_id in quote_owners:
+        _attempt_subscription_operation(
+            failures,
+            lambda owner=owner, client_id=client_id: owner.subscribe_quotes(
+                instrument_id,
+                client_id=client_id,
+            ),
+        )
+
+
 def _refresh_market_instrument(
     strategy: _SubscriptionStrategy,
     instrument_id: object,
 ) -> None:
+    """Force an official-adapter token reset across all subscription owners.
+
+    Every quote, trade, and book owner releases the shared token before any
+    restore. Managed books return first so the replacement snapshot cannot
+    arrive before the adapter has recreated book state.
+    """
     instrument_id = _nautilus_instrument_id(instrument_id)
-    client_id = _client_id_for_instrument(strategy, instrument_id)
-    book_type = _nautilus_book_type(strategy.book_type)
-    # Standard-API book refresh: dropping the book_deltas subscription lets the
-    # Polymarket adapter discard its local book copy (once the last subscriber
-    # leaves); the re-subscribe then re-seeds a full snapshot (CLEAR +
-    # F_SNAPSHOT delta) -- the official equivalent of the fork-only
-    # refresh_book_subscription. Unsubscribe MUST precede subscribe: the
-    # strategy-side refcount is keyed on (instrument_id, client_id), and
-    # subscribe-then-unsubscribe never drops to zero so the adapter never
-    # re-seeds. Quotes/trades are intentionally untouched.
-    _ = strategy.unsubscribe_book_deltas(instrument_id, client_id=client_id)
-    _ = strategy.subscribe_book_deltas(
-        instrument_id,
-        book_type=book_type,
-        client_id=client_id,
-        managed=True,
+    owners = _subscription_owners_for_instrument(strategy, instrument_id)
+    quote_owners = _quote_owners_for_instrument(instrument_id)
+    logger.info(
+        "book_recovery_boundary",
+        extra={
+            "instrument_id": _instrument_key(instrument_id),
+            "strategy_owner_count": len(owners),
+            "quote_owner_count": len(quote_owners),
+        },
     )
+    failures: list[Exception] = []
+    _drain_market_subscription_owners(owners, quote_owners, instrument_id, failures)
+    _restore_market_subscription_owners(owners, quote_owners, instrument_id, failures)
+    if failures:
+        raise RuntimeError(
+            "Official adapter refresh failed for {} in {} subscription operation(s)".format(
+                _instrument_key(instrument_id),
+                len(failures),
+            )
+        ) from failures[0]
+
+
+def _global_book_refresh_due(
+    strategy: _SubscriptionStrategy,
+    instrument_id: object,
+    *,
+    now: datetime,
+) -> bool:
+    del strategy
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
+    cutoff = now_utc - timedelta(seconds=_BOOK_RECOVERY_RETRY_SEC * 2)
+    for key, attempted_at in tuple(_global_book_recovery_times.items()):
+        if attempted_at < cutoff:
+            del _global_book_recovery_times[key]
+    key = _instrument_key(instrument_id)
+    attempted_at = _global_book_recovery_times.get(key)
+    return (
+        attempted_at is None
+        or (now_utc - attempted_at).total_seconds() >= _BOOK_RECOVERY_RETRY_SEC
+    )
+
+
+def _mark_global_book_refresh(
+    strategy: _SubscriptionStrategy,
+    instrument_id: object,
+    *,
+    now: datetime,
+) -> None:
+    del strategy
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
+    _global_book_recovery_times[_instrument_key(instrument_id)] = now_utc
 
 
 def _dispatch_book_recovery(
     strategy: _SubscriptionStrategy,
     condition_id: str,
     targets: Sequence[tuple[Side, object]],
+    *,
+    now: datetime,
 ) -> tuple[object, ...]:
     state = strategy._subscription_state
     dispatched: list[object] = []
     dispatched_sides: list[Side] = []
     try:
         for side, instrument_id in targets:
-            _refresh_market_instrument(strategy, instrument_id)
-            dispatched.append(instrument_id)
+            if _global_book_refresh_due(strategy, instrument_id, now=now):
+                _refresh_market_instrument(strategy, instrument_id)
+                _mark_global_book_refresh(strategy, instrument_id, now=now)
+                dispatched.append(instrument_id)
             dispatched_sides.append(side)
             state.pending_book_recovery_sides_by_condition.setdefault(
                 condition_id,
                 set(),
             ).add(side)
+            state.book_recovery_dispatched_at_by_condition.setdefault(
+                condition_id,
+                {},
+            )[side] = now.astimezone(UTC)
     except Exception:
         logger.exception(
             "book_recovery_batch_failed",
@@ -1148,6 +1381,8 @@ def _dispatch_book_recovery(
 def _awaiting_condition_recovery_targets(
     strategy: _SubscriptionStrategy,
     condition_id: str,
+    *,
+    now: datetime,
 ) -> tuple[tuple[Side, object], ...]:
     registry = strategy.registry
     state = strategy._subscription_state
@@ -1165,14 +1400,23 @@ def _awaiting_condition_recovery_targets(
         condition_id,
         set(),
     )
+    dispatched_at = state.book_recovery_dispatched_at_by_condition.get(
+        condition_id,
+        {},
+    )
+    now_utc = (now if now.tzinfo is not None else now.replace(tzinfo=UTC)).astimezone(
+        UTC
+    )
     return tuple(
         (side, instrument_id)
         for side in (Side.UP, Side.DOWN)
         if side in awaiting
         if side not in already_pending
-        if (
-            instrument_id := registry.instrument_id_for_token(token_by_side[side])
+        or (
+            (attempt_at := dispatched_at.get(side)) is None
+            or (now_utc - attempt_at).total_seconds() >= _BOOK_RECOVERY_RETRY_SEC
         )
+        if (instrument_id := registry.instrument_id_for_token(token_by_side[side]))
         is not None
     )
 
@@ -1237,11 +1481,11 @@ def _resubscribe_and_begin_generation(
     else:
         if not awaiting_sides:
             return None
-    targets = _awaiting_condition_recovery_targets(strategy, condition_id)
+    targets = _awaiting_condition_recovery_targets(strategy, condition_id, now=now)
     if not targets:
         return None
     instruments = tuple(instrument_id for _side, instrument_id in targets)
-    dispatched = _dispatch_book_recovery(strategy, condition_id, targets)
+    dispatched = _dispatch_book_recovery(strategy, condition_id, targets, now=now)
     return instruments, dispatched
 
 
@@ -1294,9 +1538,8 @@ def _first_book_recovery_due(
             now=now,
         ):
             return False
-    awaiting = state.awaiting_book_sides_by_condition.get(condition_id, set())
-    pending = state.pending_book_recovery_sides_by_condition.get(condition_id, set())
-    return not awaiting.issubset(pending) and _book_generation_stalled(
+    targets = _awaiting_condition_recovery_targets(strategy, condition_id, now=now)
+    return bool(targets) and _book_generation_stalled(
         strategy,
         condition_id,
         now=now,
@@ -1320,9 +1563,7 @@ def force_resubscribe_if_book_stalled(
     generation_started_at = state.book_generation_started_at_by_condition.get(
         condition_id
     )
-    attempt = _resubscribe_and_begin_generation(
-        strategy, condition_id, now=now
-    )
+    attempt = _resubscribe_and_begin_generation(strategy, condition_id, now=now)
     if attempt is None:
         return False
     instruments, dispatched = attempt
@@ -1363,12 +1604,12 @@ def _stale_book_recovery_due(
     total_stalled_at = state.book_stalled_started_at_by_condition.setdefault(
         condition_id, now_utc
     )
-    generation_started_at = state.book_generation_started_at_by_condition.get(condition_id)
+    generation_started_at = state.book_generation_started_at_by_condition.get(
+        condition_id
+    )
     if generation_started_at is not None and (
         now_utc - generation_started_at
-    ).total_seconds() <= (
-        _BOOK_GENERATION_STALL_SEC
-    ):
+    ).total_seconds() <= (_BOOK_GENERATION_STALL_SEC):
         return None
     return now_utc, total_stalled_at
 

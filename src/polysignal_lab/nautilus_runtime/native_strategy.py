@@ -193,6 +193,7 @@ class PolySignalNativeStrategy(Strategy):
         life.on_strategy_start(self, self._on_evaluation_heartbeat)
 
     def on_stop(self) -> None:
+        subs._unregister_subscription_strategy(self)  # pyright: ignore[reportPrivateUsage]
         snapshot_backstop.fail_all(self, reason="strategy_stop")
         life.on_strategy_stop(self)
 
