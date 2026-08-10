@@ -8,6 +8,7 @@ from typing import Protocol, TypeVar, cast
 from nautilus_trader.core.nautilus_pyo3 import OrderSide, TimeInForce
 
 from polysignal_lab.domain.enums import OrderIntent
+from polysignal_lab.nautilus_runtime.custom_data_publisher import timestamp_ns
 from polysignal_lab.nautilus_runtime.decision_policy import ApprovedDecision
 from polysignal_lab.nautilus_runtime.order_mapping import order_spec_from_decision
 from polysignal_lab.nautilus_runtime.order_plan import OrderSubmissionPlan
@@ -30,7 +31,7 @@ class NautilusOrderFactory(Protocol[OrderT_co]):
         price: object,
         time_in_force: object,
         reduce_only: bool,
-        expire_time: datetime | None,
+        expire_time: int | None,
         tags: Sequence[str],
     ) -> OrderT_co: ...
 
@@ -96,7 +97,9 @@ def _submit_native_order(
     if spec.intent == OrderIntent.PASSIVE_GTD:
         if now is None:
             raise RuntimeError("Nautilus framework clock is required for GTD expiry")
-        expire_time = now() + timedelta(seconds=spec.expiry_seconds or 300)
+        expire_time = timestamp_ns(
+            now() + timedelta(seconds=spec.expiry_seconds or 300)
+        )
 
     native_price = _price_value(instrument, spec.price)
     _validate_entry_price_ceiling(native_price, spec.max_entry_price)
