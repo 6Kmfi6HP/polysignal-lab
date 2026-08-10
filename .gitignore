@@ -30,6 +30,7 @@ refs/*
 .cursor/
 .opencode/
 .omo/lsp.json
+.prime/
 data/*
 backups/
 .pyscn/
