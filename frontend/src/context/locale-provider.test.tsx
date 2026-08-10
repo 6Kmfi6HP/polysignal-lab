@@ -65,7 +65,7 @@ describe('LocaleProvider', () => {
     expect(await screen.findByText('zh-CN:zh-CN')).toBeInTheDocument()
     expect(screen.getByText('概览')).toBeInTheDocument()
     expect(document.documentElement.lang).toBe('zh-CN')
-    expect(document.title).toContain('只读运维')
+    expect(document.title).toContain('控制面板')
     expect(getCookie('polysignal-language')).toBe('zh-CN')
 
     await user.click(screen.getByRole('button', { name: '选择语言' }))

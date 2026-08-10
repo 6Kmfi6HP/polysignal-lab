@@ -385,8 +385,8 @@ export const zhCN = {
     primary: '主导航',
     mobile: '移动端导航',
     openMenu: '打开导航菜单',
-    readOnly: '只读运维',
-    description: 'PolySignal Lab 只读运维控制台',
+    readOnly: '控制面板',
+    description: 'PolySignal Lab 控制面板',
   },
   version: {
     open: '查看构建信息',
@@ -663,7 +663,7 @@ export const zhCN = {
     samples: '{{count}} 个样本',
   },
   metadata: {
-    title: 'PolySignal Lab — 只读运维',
+    title: 'PolySignal Lab — 控制面板',
     description:
       '监控 PolySignal Lab 投资组合表现、信号、策略就绪状态与系统健康。',
   },
