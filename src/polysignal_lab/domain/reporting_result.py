@@ -19,6 +19,7 @@ from polysignal_lab.domain.reporting_models import (
     report_text,
     account_float,
 )
+from polysignal_lab.domain import missing_values
 from polysignal_lab.domain.enums import ExitMode, Side, TradeResultStatus
 from polysignal_lab.utils import parse_dt
 
@@ -38,11 +39,16 @@ __all__ = [
     "report_nested_mapping",
     "report_text",
     "trade_result_details",
+    "trade_result_display",
     "trade_result_float",
+    "trade_result_identifier",
+    "trade_result_number",
     "trade_result_status",
     "trade_result_text",
     "account_float",
 ]
+
+_REPORT_RESULT_SOURCE = "report_results"
 
 
 @dataclass(slots=True)
@@ -109,6 +115,51 @@ def trade_result_float(row: Mapping[str, Any], key: str, default: float = 0.0) -
             return default
         return parsed if math.isfinite(parsed) else default
     return default
+
+
+def trade_result_number(
+    row: Mapping[str, Any],
+    *keys: str,
+    metrics: Mapping[str, Any] | None = None,
+    metric_keys: tuple[str, ...] = (),
+) -> float | None:
+    """Read a trade-result number without collapsing a missing value to zero."""
+    return missing_values.number(row, metrics or {}, *keys, metric_keys=metric_keys)
+
+
+def trade_result_identifier(
+    row: Mapping[str, Any],
+    *keys: str,
+    metrics: Mapping[str, Any] | None = None,
+    metric_keys: tuple[str, ...] = (),
+) -> str:
+    """Read an identifier that must be present, naming the record when it is not."""
+    return missing_values.identifier(
+        row,
+        metrics or {},
+        *keys,
+        metric_keys=metric_keys,
+        source=_result_source(row),
+    )
+
+
+def trade_result_display(
+    row: Mapping[str, Any],
+    *keys: str,
+    metrics: Mapping[str, Any] | None = None,
+    metric_keys: tuple[str, ...] = (),
+) -> str:
+    """Read a display-only text where a missing value legitimately renders empty."""
+    return missing_values.display(row, metrics or {}, *keys, metric_keys=metric_keys)
+
+
+def _result_source(row: Mapping[str, Any]) -> str:
+    # Reuse the vocabulary's presence rules so a blank id never names the record.
+    try:
+        record = missing_values.identifier(row, {}, "report_result_id", "signal_id")
+    except missing_values.MissingIdentifierError:
+        return _REPORT_RESULT_SOURCE
+    return f"{_REPORT_RESULT_SOURCE}:{record}"
 
 
 def parse_report_result_row(row: Mapping[str, Any]) -> ReportResultRow:
