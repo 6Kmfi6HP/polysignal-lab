@@ -6,6 +6,7 @@ from datetime import timezone
 from typing import cast
 
 from polysignal_lab.config import Settings, load_settings
+from polysignal_lab.domain.missing_values import bind_missing_value_counter
 from polysignal_lab.nautilus_runtime.node_builder import (
     NautilusRuntimeBundle,
     NautilusRuntimeContext,
@@ -102,6 +103,9 @@ async def _prepare_nautilus_runtime_context(
     )
     # Importable strategies resolve this process-local handle during construction.
     bind_runtime_observability(observability)
+    # Missing-value collapses on the persistence path are counted into the same
+    # health registry; unbound (offline scripts, tests) simply means no counting.
+    bind_missing_value_counter(context.health)
     return context, observability
 
 

@@ -4,6 +4,8 @@ from collections.abc import Iterable, Mapping
 import math
 from typing import cast
 
+from polysignal_lab.domain.missing_values import display, number, set_number
+
 _ORDER_STATUSES = {
     "FILLED": "FILLED",
     "PARTIAL": "PARTIAL",
@@ -28,7 +30,7 @@ def normalize_report_order(
     _fill_missing(
         payload,
         "report_order_id",
-        _text(
+        display(
             row,
             metrics,
             "report_order_id",
@@ -41,27 +43,27 @@ def normalize_report_order(
     _fill_missing(
         payload,
         "signal_id",
-        _text(row, metrics, "signal_id", metric_keys=("signal_id",)),
+        display(row, metrics, "signal_id", metric_keys=("signal_id",)),
     )
-    _fill_missing(payload, "created_at", _text(row, metrics, "ts", "created_at"))
+    _fill_missing(payload, "created_at", display(row, metrics, "ts", "created_at"))
     _fill_missing(
         payload,
         "order_intent",
-        _text(
+        display(
             row,
             metrics,
             "order_intent",
             metric_keys=("order_intent",),
         ),
     )
-    limit_price = _number(
+    limit_price = number(
         row,
         metrics,
         "limit_price",
         "price",
         metric_keys=("price", "level_price"),
     )
-    shares = _number(
+    shares = number(
         row,
         metrics,
         "shares",
@@ -69,39 +71,39 @@ def normalize_report_order(
         metric_keys=("shares", "quantity", "contracts"),
     )
     if shares in (None, 0.0):
-        metric_shares = _number(
+        metric_shares = number(
             {}, metrics, metric_keys=("contracts", "shares", "quantity")
         )
         if metric_shares not in (None, 0.0):
             shares = metric_shares
     if limit_price in (None, 0.0):
-        metric_price = _number(
+        metric_price = number(
             {},
             metrics,
             metric_keys=("level_price", "price"),
         )
         if metric_price not in (None, 0.0):
             limit_price = metric_price
-    stake = _number(row, metrics, "stake_usdc", metric_keys=("stake_usdc",))
+    stake = number(row, metrics, "stake_usdc", metric_keys=("stake_usdc",))
     if stake is None and limit_price is not None and shares is not None:
         stake = limit_price * abs(shares)
-    _set_number(payload, "limit_price", limit_price)
-    _set_number(
+    set_number(payload, "limit_price", limit_price)
+    set_number(
         payload,
         "reference_price",
-        _number(
+        number(
             row,
             metrics,
             "reference_price",
             metric_keys=("reference_price", "level_price", "price"),
         ),
     )
-    _set_number(payload, "stake_usdc", stake)
-    _set_number(payload, "shares", shares)
+    set_number(payload, "stake_usdc", stake)
+    set_number(payload, "shares", shares)
     payload["status"] = (
         _ORDER_STATUSES.get(native, "")
         if (
-            native := _text(
+            native := display(
                 row,
                 metrics,
                 "status",
@@ -114,7 +116,7 @@ def normalize_report_order(
     _fill_missing(
         payload,
         "reject_reason",
-        _text(
+        display(
             row,
             metrics,
             "reject_reason",
@@ -132,7 +134,7 @@ def normalize_report_fill(
     market: object | None = None,
 ) -> dict[str, object]:
     payload, metrics, _ = _base_payload(row, market)
-    fill_id = _text(
+    fill_id = display(
         row,
         metrics,
         "report_fill_id",
@@ -141,7 +143,7 @@ def normalize_report_fill(
         metric_keys=("report_fill_id", "trade_id", "fill_id"),
     )
     _fill_missing(payload, "report_fill_id", fill_id)
-    order_id = _text(
+    order_id = display(
         row,
         metrics,
         "report_order_id",
@@ -154,9 +156,9 @@ def normalize_report_fill(
     _fill_missing(
         payload,
         "signal_id",
-        _text(row, metrics, "signal_id", metric_keys=("signal_id",)),
+        display(row, metrics, "signal_id", metric_keys=("signal_id",)),
     )
-    fill_price = _number(
+    fill_price = number(
         row,
         metrics,
         "fill_price",
@@ -164,7 +166,7 @@ def normalize_report_fill(
         "last_px",
         metric_keys=("fill_price", "price"),
     )
-    shares = _number(
+    shares = number(
         row,
         metrics,
         "shares",
@@ -172,7 +174,7 @@ def normalize_report_fill(
         "last_qty",
         metric_keys=("shares", "quantity"),
     )
-    stake = _number(
+    stake = number(
         row,
         metrics,
         "stake_usdc",
@@ -181,9 +183,9 @@ def normalize_report_fill(
     )
     if stake is None and fill_price is not None and shares is not None:
         stake = fill_price * abs(shares)
-    _set_number(payload, "fill_price", fill_price)
-    _set_number(payload, "shares", shares)
-    _set_number(payload, "stake_usdc", stake)
+    set_number(payload, "fill_price", fill_price)
+    set_number(payload, "shares", shares)
+    set_number(payload, "stake_usdc", stake)
     return payload
 
 
@@ -193,7 +195,7 @@ def normalize_report_position(
     market: object | None = None,
 ) -> dict[str, object]:
     payload, metrics, _ = _base_payload(row, market)
-    position_id = _text(
+    position_id = display(
         row,
         metrics,
         "report_position_id",
@@ -204,9 +206,9 @@ def normalize_report_position(
     _fill_missing(
         payload,
         "signal_id",
-        _text(row, metrics, "signal_id", metric_keys=("signal_id",)),
+        display(row, metrics, "signal_id", metric_keys=("signal_id",)),
     )
-    order_id = _text(
+    order_id = display(
         row,
         metrics,
         "report_order_id",
@@ -216,7 +218,7 @@ def normalize_report_position(
         metric_keys=("report_order_id", "client_order_id", "order_id"),
     )
     _fill_missing(payload, "report_order_id", order_id)
-    fill_id = _text(
+    fill_id = display(
         row,
         metrics,
         "report_fill_id",
@@ -225,7 +227,7 @@ def normalize_report_position(
         metric_keys=("report_fill_id", "trade_id", "fill_id"),
     )
     _fill_missing(payload, "report_fill_id", fill_id)
-    entry_price = _number(
+    entry_price = number(
         row,
         metrics,
         "entry_price",
@@ -234,7 +236,7 @@ def normalize_report_position(
         "last_px",
         metric_keys=("entry_price", "avg_entry_price", "price"),
     )
-    shares = _number(
+    shares = number(
         row,
         metrics,
         "shares",
@@ -242,18 +244,18 @@ def normalize_report_position(
         "signed_qty",
         metric_keys=("shares", "quantity", "signed_qty"),
     )
-    stake = _number(row, metrics, "stake_usdc", metric_keys=("stake_usdc",))
+    stake = number(row, metrics, "stake_usdc", metric_keys=("stake_usdc",))
     if stake is None and entry_price is not None and shares is not None:
         stake = entry_price * abs(shares)
-    _set_number(payload, "entry_price", entry_price)
-    _set_number(payload, "shares", shares)
-    _set_number(payload, "stake_usdc", stake)
+    set_number(payload, "entry_price", entry_price)
+    set_number(payload, "shares", shares)
+    set_number(payload, "stake_usdc", stake)
     _fill_missing(
         payload,
         "opened_at",
-        _text(row, metrics, "opened_at", "ts", "created_at"),
+        display(row, metrics, "opened_at", "ts", "created_at"),
     )
-    status = _text(row, metrics, "status", metric_keys=("status",)).upper()
+    status = display(row, metrics, "status", metric_keys=("status",)).upper()
     is_closed = row.get("is_closed")
     payload["status"] = (
         status
@@ -267,7 +269,7 @@ def normalize_report_position(
     _fill_missing(
         payload,
         "closed_at",
-        _text(row, metrics, "closed_at", metric_keys=("closed_at",)),
+        display(row, metrics, "closed_at", metric_keys=("closed_at",)),
     )
     payload["is_closed"] = payload["status"] == "CLOSED"
     return payload
@@ -310,7 +312,7 @@ def _base_payload(
         _fill_missing(
             payload,
             key,
-            _text(row, metrics, key, metric_keys=(key,)) or fallback,
+            display(row, metrics, key, metric_keys=(key,)) or fallback,
         )
     token_id = _report_token_id(row, metrics)
     payload["token_id"] = token_id
@@ -333,45 +335,13 @@ def _metrics(row: Mapping[str, object]) -> Mapping[str, object]:
     return cast(Mapping[str, object], metrics) if isinstance(metrics, Mapping) else {}
 
 
-def _text(
-    row: Mapping[str, object],
-    metrics: Mapping[str, object],
-    *keys: str,
-    metric_keys: tuple[str, ...] = (),
-) -> str:
-    for source, names in ((row, keys), (metrics, metric_keys)):
-        for key in names:
-            value = source.get(key)
-            if value not in (None, ""):
-                return str(value)
-    return ""
-
-
-def _number(
-    row: Mapping[str, object],
-    metrics: Mapping[str, object],
-    *keys: str,
-    metric_keys: tuple[str, ...] = (),
-) -> float | None:
-    for source, names in ((row, keys), (metrics, metric_keys)):
-        for key in names:
-            value = source.get(key)
-            if value in (None, ""):
-                continue
-            try:
-                parsed = float(str(value))
-            except (TypeError, ValueError):
-                continue
-            if math.isfinite(parsed):
-                return parsed
-    return None
-
-
 def _report_token_id(
     row: Mapping[str, object],
     metrics: Mapping[str, object],
 ) -> str:
-    value = _text(row, metrics, "instrument_id", "token_id", metric_keys=("token_id",))
+    value = display(
+        row, metrics, "instrument_id", "token_id", metric_keys=("token_id",)
+    )
     token_id, _, _ = value.partition(".")
     return token_id or value
 
@@ -403,9 +373,4 @@ def _attribute_text(source: object | None, name: str) -> str:
 
 def _fill_missing(payload: dict[str, object], key: str, value: object) -> None:
     if payload.get(key) in (None, "") and value not in (None, ""):
-        payload[key] = value
-
-
-def _set_number(payload: dict[str, object], key: str, value: float | None) -> None:
-    if value is not None and math.isfinite(value):
         payload[key] = value

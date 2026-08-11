@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -519,3 +520,116 @@ def test_bundle_strategy_names_have_no_component_introspection() -> None:
 
     assert enabled_strategy_names(_settings_with_strategy()) == ("one_cent_buy",)
     assert _strategy_names_from_bundle(bundle) == ["one_cent_buy", "ptb_diff"]
+
+
+async def _noop_async() -> None:
+    return None
+
+
+@pytest.fixture
+def _unbind_missing_value_counter() -> Iterator[None]:
+    from polysignal_lab.domain.missing_values import bind_missing_value_counter
+
+    bind_missing_value_counter(None)
+    yield
+    bind_missing_value_counter(None)
+
+
+def _fake_runtime_context(health: object) -> SimpleNamespace:
+    return SimpleNamespace(
+        settings=Settings(),
+        health=health,
+        persistence=SimpleNamespace(
+            insert_system_event=lambda _payload: None,
+            insert_signal=lambda _payload: None,
+            insert_rejected_signal=lambda _payload: None,
+            insert_report_result=lambda _payload: None,
+            append_log=lambda _stream, _payload: None,
+        ),
+        publisher=SimpleNamespace(send=lambda *_args: None),
+        publish_signal_once=lambda *_args: None,
+        logger=logging.getLogger("test_nautilus_node"),
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("_unbind_missing_value_counter")
+async def test_prepare_runtime_binds_missing_value_collapse_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polysignal_lab.domain.missing_values import missing_value_counter
+    from polysignal_lab.nautilus_runtime import node as node_module
+    from polysignal_lab.observability.health import HealthRegistry
+
+    health = HealthRegistry()
+    context = _fake_runtime_context(health)
+    monkeypatch.setattr(
+        node_module,
+        "build_nautilus_runtime_context",
+        lambda _settings: context,
+    )
+
+    _prepared, _observability = await _prepare_nautilus_runtime_context(Settings())
+
+    assert missing_value_counter() is health
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("_unbind_missing_value_counter")
+async def test_async_runtime_shutdown_unbinds_missing_value_collapse_counter() -> None:
+    from polysignal_lab.domain.missing_values import (
+        bind_missing_value_counter,
+        missing_value_counter,
+    )
+    from polysignal_lab.nautilus_runtime.node_lifecycle import (
+        _finalize_async_cli_runtime,
+    )
+    from polysignal_lab.observability.health import HealthRegistry
+
+    health = HealthRegistry()
+    bind_missing_value_counter(health)
+    bundle = NautilusRuntimeBundle(
+        context=cast(Any, _fake_runtime_context(health)),
+        node=SimpleNamespace(),
+        observability=cast(Any, SimpleNamespace(notify_shutdown=_noop_async)),
+        strategy_names=(),
+    )
+
+    await _finalize_async_cli_runtime(
+        bundle,
+        asyncio.Event(),
+        logging.getLogger("test_nautilus_node"),
+        lambda: None,
+    )
+
+    assert missing_value_counter() is None
+
+
+@pytest.mark.usefixtures("_unbind_missing_value_counter")
+def test_sync_runtime_shutdown_unbinds_missing_value_collapse_counter() -> None:
+    from polysignal_lab.domain.missing_values import (
+        bind_missing_value_counter,
+        missing_value_counter,
+    )
+    from polysignal_lab.nautilus_runtime.node_lifecycle import (
+        _finalize_sync_cli_runtime,
+    )
+    from polysignal_lab.observability.health import HealthRegistry
+
+    health = HealthRegistry()
+    bind_missing_value_counter(health)
+    bundle = NautilusRuntimeBundle(
+        context=cast(Any, _fake_runtime_context(health)),
+        node=SimpleNamespace(),
+        observability=cast(Any, SimpleNamespace(notify_shutdown=_noop_async)),
+        strategy_names=(),
+    )
+
+    _finalize_sync_cli_runtime(
+        bundle,
+        SimpleNamespace(),
+        logging.getLogger("test_nautilus_node"),
+        lambda: None,
+    )
+
+    assert missing_value_counter() is None

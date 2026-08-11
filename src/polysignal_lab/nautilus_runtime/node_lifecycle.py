@@ -8,6 +8,7 @@ from contextlib import suppress
 from typing import cast
 
 from polysignal_lab.config import Settings
+from polysignal_lab.domain.missing_values import bind_missing_value_counter
 from polysignal_lab.nautilus_runtime.node_builder import (
     NautilusRuntimeBundle,
     _Disposable,
@@ -129,6 +130,7 @@ async def _finalize_async_cli_runtime(
         )
 
         bind_runtime_observability(None)
+        bind_missing_value_counter(None)
         cleanup_signals()
 
 
@@ -192,4 +194,5 @@ def _finalize_sync_cli_runtime(
         )
 
         bind_runtime_observability(None)
+        bind_missing_value_counter(None)
         cleanup_signals()
