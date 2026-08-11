@@ -1,41 +1,10 @@
 # frontend/ — Polysignal Dashboard
 
-这是一个独立的 React + Vite 前端项目，位于 `frontend/` 目录下。
-与 `src/` 中的 Python 后端独立运行。
+独立的 React + Vite 前端项目，位于 `frontend/`，与 `src/` 的 Python 后端独立运行。
 
 ## 技术栈
 
-- **框架**: React 19 + TypeScript 6
-- **构建**: Vite 8
-- **路由**: TanStack Router
-- **数据获取**: TanStack Query + Axios
-- **组件**: Radix UI (Dialog, DropdownMenu, Tabs, Tooltip, etc.)
-- **样式**: TailwindCSS v4 + `class-variance-authority` + `tailwind-merge`
-- **图表**: Recharts
-- **测试**: Vitest + Testing Library + jsdom
-- **格式化**: Prettier (with `prettier-plugin-tailwindcss`)
-- **Lint**: ESLint 10 + `typescript-eslint`
-
-## 常用命令
-
-所有命令在 `frontend/` 目录下运行：
-
-| 命令 | 说明 |
-|------|------|
-| `npm run dev` | 启动开发服务器 |
-| `npm run build` | TypeScript 检查 + 构建 |
-| `npm run lint` | ESLint 代码检查 |
-| `npm test` | 运行 Vitest 测试 |
-| `npm test:watch` | 测试监听模式 |
-| `npm run format` | Prettier 格式化 |
-| `npm run format:check` | 检查格式 |
-
-## 项目结构
-
-- `src/` - 应用代码，包括路由、组件
-- `public/` - 静态资源
-- `vite.config.ts` - Vite 配置
-- `package.json` - 依赖管理（非 monorepo，独立运行 `npm install`）
+React · TypeScript · Vite · TanStack Router · TanStack Query + Axios · Radix UI · TailwindCSS v4 + `class-variance-authority` + `tailwind-merge` · Recharts · Vitest + Testing Library · Prettier + ESLint。版本以 `package.json` 为准。
 
 ## 约定
 
@@ -46,6 +15,10 @@
 - 测试使用 Testing Library 的 `render()` + `screen`
 - 使用 `tsconfig.app.json` 作为源文件配置
 - 不要修改 `knip.config.ts`
+
+## 命令
+
+脚本定义在 `package.json`，全部在 `frontend/` 目录下运行（`dev` / `build` / `lint` / `test` / `format`）。
 
 ## 相关
 
